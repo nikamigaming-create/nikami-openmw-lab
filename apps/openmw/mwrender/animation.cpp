@@ -1,4 +1,7 @@
 #include "animation.hpp"
+#include "falloutanimationtargets.hpp"
+#include "fallouthitreaction.hpp"
+#include "falloutweaponanimation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,8 +23,10 @@
 #include <osg/FrameStamp>
 #include <osg/Geode>
 #include <osg/LightModel>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
+#include <osg/PolygonMode>
 #include <osg/Switch>
 
 #include <osgParticle/ParticleProcessor>
@@ -35,6 +40,7 @@
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/defs.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/resource/animblendrulesmanager.hpp>
 #include <components/resource/keyframemanager.hpp>
@@ -55,6 +61,7 @@
 
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/nifosg/falloutkf.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -82,6 +89,7 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "actorutil.hpp"
@@ -245,6 +253,26 @@ namespace
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
         return ref != nullptr && ref->mBase != nullptr && (ref->mBase->mIsFO3 || ref->mBase->mIsFONV);
+    }
+
+    bool isStrictFonvNpcAnimationContext(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV && !ref->mBase->mIsFO3;
+    }
+
+    bool isFalloutDeathFallbackContext(const MWWorld::Ptr& ptr)
+    {
+        if (isFalloutNpcAnimationContext(ptr))
+            return true;
+        if (ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -3128,7 +3156,14 @@ namespace MWRender
             osg::Matrix mat = transform->getMatrix();
             osg::Vec3f position = mat.getTrans();
             position = mResetAllTranslation ? osg::Vec3f() : osg::componentMultiply(mResetAxes, position);
-            mat.setTrans(position);
+            if (mBindRotation)
+            {
+                const osg::Vec3f scale = mat.getScale();
+                mat = osg::Matrix::scale(scale) * osg::Matrix::rotate(*mBindRotation)
+                    * osg::Matrix::translate(position);
+            }
+            else
+                mat.setTrans(position);
             transform->setMatrix(mat);
 
             traverse(transform, nv);
@@ -3147,9 +3182,15 @@ namespace MWRender
             mResetAllTranslation = resetAll;
         }
 
+        void setBindRotation(std::optional<osg::Quat> rotation)
+        {
+            mBindRotation = std::move(rotation);
+        }
+
     private:
         osg::Vec3f mResetAxes;
         bool mResetAllTranslation = false;
+        std::optional<osg::Quat> mBindRotation;
     };
 
     Animation::Animation(
@@ -3308,8 +3349,6 @@ namespace MWRender
             return { "bip01 luparmtwist", "bip01 l uparmtwist" };
         if (name == "bip01 r upperarmtwist")
             return { "bip01 ruparmtwist", "bip01 r uparmtwist" };
-        if (name == "bip01 spin1")
-            return { "bip01 spin01" };
         if (name == "screen01" || name == "screen01root")
             return { "bip01 screen01", "screen01root" };
         if (name == "screenstatic" || name == "screenstaticroot")
@@ -3320,36 +3359,19 @@ namespace MWRender
         return {};
     }
 
-    Animation::NodeMap::const_iterator findNodeMapBone(
-        const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName)
-    {
-        Animation::NodeMap::const_iterator found = nodeMap.find(name);
-        if (found != nodeMap.end())
-        {
-            resolvedName = found->first;
-            return found;
-        }
-
-        for (Animation::NodeMap::const_iterator it = nodeMap.begin(); it != nodeMap.end(); ++it)
-        {
-            if (Misc::StringUtils::ciEqual(it->first, name))
-            {
-                resolvedName = it->first;
-                return it;
-            }
-        }
-
-        return nodeMap.end();
-    }
-
     Animation::NodeMap::const_iterator findFonvAnimationBone(
         const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName)
     {
         for (const std::string& alias : getFonvBoneAliases(name))
         {
-            Animation::NodeMap::const_iterator found = findNodeMapBone(nodeMap, alias, resolvedName);
+            // The alias table describes an explicit skeleton-dialect conversion. Keep this lookup exact so a
+            // broader numeric/semantic match cannot redirect an authored thumb segment onto an unrelated finger.
+            Animation::NodeMap::const_iterator found = nodeMap.find(alias);
             if (found != nodeMap.end())
+            {
+                resolvedName = found->first;
                 return found;
+            }
         }
 
         return nodeMap.end();
@@ -3546,10 +3568,26 @@ namespace MWRender
     }
 
 
-    float getFalloutIdleSeedSeconds()
+    float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
         if (std::getenv("OPENMW_FNV_DISABLE_IDLE_SEED") != nullptr)
             return -1.f;
+
+        const char* layerSpecificEnv = nullptr;
+        if (groupname == "idle")
+            layerSpecificEnv = std::getenv("OPENMW_FNV_OVERLAY_IDLE_SEED_SECONDS");
+        else if (const char* forcedGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
+        {
+            if (groupname == forcedGroup)
+                layerSpecificEnv = std::getenv("OPENMW_FNV_BASE_IDLE_SEED_SECONDS");
+        }
+        if (layerSpecificEnv != nullptr)
+        {
+            char* end = nullptr;
+            const float value = std::strtof(layerSpecificEnv, &end);
+            if (end != layerSpecificEnv && std::isfinite(value) && value >= 0.f)
+                return value;
+        }
 
         if (const char* env = std::getenv("OPENMW_FNV_IDLE_SEED_SECONDS"))
         {
@@ -4381,45 +4419,44 @@ namespace MWRender
             stem.resize(dot);
         Misc::StringUtils::lowerCaseInPlace(stem);
 
-        if (stem == "swimidle")
-            return "swimidle";
+        if (stem.find("unequip") != std::string::npos)
+            return "unequip";
+        if (stem.find("equip") != std::string::npos)
+            return "equip";
+        if (stem.find("reload") != std::string::npos)
+            return "reload";
+        if (stem.find("attack") != std::string::npos)
+        {
+            if (stem.find("attackright") != std::string::npos)
+                return "attack2";
+            if (stem.find("attack3") != std::string::npos || stem.find("attack4") != std::string::npos
+                || stem.find("attack5") != std::string::npos || stem.find("attack6") != std::string::npos
+                || stem.find("attack7") != std::string::npos || stem.find("attack8") != std::string::npos
+                || stem.find("attack9") != std::string::npos)
+                return "attack3";
+            return "attack1";
+        }
+        if (stem.find("aim") != std::string::npos)
+            return "weaponpose";
+        if (stem.find("crouch") != std::string::npos || stem.find("kneel") != std::string::npos
+            || stem == "specialidle_sitcycle" || stem == "mtspecialidle_deactivateloop")
+            return "kneel";
+        if (stem.find("floorsleep") != std::string::npos || stem.find("prone") != std::string::npos
+            || stem == "specialidle_sleepcycle" || stem == "mtspecialidle_knockdownfacedown")
+            return "prone";
+        if (stem == "talking" || stem.starts_with("talk") || stem.find("_talk") != std::string::npos)
+            return "talk";
+        if (stem.find("wave") != std::string::npos || stem.find("gesture") != std::string::npos
+            || stem == "specialidle_mtponder" || stem == "specialidle_salutes")
+            return "wave";
         if (stem.find("flyaway") != std::string::npos)
             return "flyforward";
         if (stem.find("specialidle") != std::string::npos)
             return "idle2";
+        if (const std::string_view movement = NifOsg::getFalloutKfMovementGroup(kfname); !movement.empty())
+            return std::string(movement);
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
-            return "turnleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
-            return "turnright";
-        if (stem == "mtforward")
-            return "walkforward";
-        if (stem == "mtbackward")
-            return "walkback";
-        if (stem == "mtleft")
-            return "walkleft";
-        if (stem == "mtright")
-            return "walkright";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastforward") || Misc::StringUtils::ciEndsWith(stem, "runforward"))
-            return "runforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastbackward") || Misc::StringUtils::ciEndsWith(stem, "runbackward"))
-            return "runback";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastleft") || Misc::StringUtils::ciEndsWith(stem, "runleft"))
-            return "runleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastright") || Misc::StringUtils::ciEndsWith(stem, "runright"))
-            return "runright";
-        if (Misc::StringUtils::ciEndsWith(stem, "forward") || Misc::StringUtils::ciEndsWith(stem, "walkforward"))
-            return "walkforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "backward") || Misc::StringUtils::ciEndsWith(stem, "walkbackward"))
-            return "walkback";
-        if (Misc::StringUtils::ciEndsWith(stem, "left") || Misc::StringUtils::ciEndsWith(stem, "walkleft"))
-            return "walkleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
-            return "walkright";
-        if (stem.find("attack") != std::string::npos)
-            return "attack1";
-
         return {};
     }
 
@@ -4506,8 +4543,27 @@ namespace MWRender
         textkeys.emplace(stop, group + ": stop");
     }
 
-    std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(
-        const std::string& kfname, const std::string& baseModel, bool falloutProcedureIdle)
+    void addSyntheticOneShotTextKeys(SceneUtil::TextKeyMap& textkeys, const std::string& group)
+    {
+        constexpr float start = 0.f;
+        const float stop = inferFalloutTextKeyStop(textkeys, 1.f);
+        textkeys.emplace(start, group + ": start");
+        textkeys.emplace(stop, group + ": stop");
+    }
+
+    bool isSyntheticFalloutLoopingGroup(std::string_view group)
+    {
+        return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
+            || group == "idleswim" || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
+            || group == "talk" || group == "flyforward"
+            || group.starts_with("walk") || group.starts_with("run")
+            || group.starts_with("turn") || group.starts_with("sneak") || group.starts_with("swimwalk")
+            || group.starts_with("swimrun") || group.starts_with("swimturn");
+    }
+
+    std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
+        const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
+        std::string_view falloutSemanticGroup)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4515,6 +4571,25 @@ namespace MWRender
         auto animsrc = std::make_shared<AnimSource>();
         animsrc->mKeyframes = mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(kfname));
         animsrc->mSourceName = kfname;
+
+        if (!controllerOverlayKf.empty())
+        {
+            const std::string overlayPath(controllerOverlayKf);
+            if (mResourceSystem->getVFS()->exists(overlayPath))
+            {
+                const osg::ref_ptr<const SceneUtil::KeyframeHolder> overlay
+                    = mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(overlayPath));
+                if (animsrc->mKeyframes != nullptr && overlay != nullptr
+                    && !overlay->mKeyframeControllers.empty())
+                {
+                    animsrc->mKeyframes = mergeFonvWeaponControllerOverlay(*animsrc->mKeyframes, *overlay);
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: merged " << overlay->mKeyframeControllers.size()
+                                        << " controller(s) from " << overlayPath << " over " << kfname;
+                }
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4: controller overlay is absent: " << overlayPath;
+        }
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
         std::string lowerBaseModel = Misc::StringUtils::lowerCase(baseModel);
@@ -4533,30 +4608,75 @@ namespace MWRender
                                     << " for Starfield human skeleton " << baseModel;
             return nullptr;
         }
-        const bool isFonvActorAnim = isFalloutNpcAnimationContext(mPtr)
+        const bool isFonvActorAnim
+            = shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup)
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
+                || lowerKf.find("meshes/characters/_1stperson/") != std::string::npos
+                || lowerKf.find("meshes\\characters\\_1stperson\\") != std::string::npos
                 || lowerKf.find("characters/_male/") != std::string::npos
                 || lowerKf.find("characters\\_male\\") != std::string::npos
+                || lowerKf.find("characters/_1stperson/") != std::string::npos
+                || lowerKf.find("characters\\_1stperson\\") != std::string::npos
                 || lowerBaseModel.find("characters\\_male\\") != std::string::npos
-                || lowerBaseModel.find("characters/_male/") != std::string::npos);
+                || lowerBaseModel.find("characters/_male/") != std::string::npos
+                || lowerBaseModel.find("characters\\_1stperson\\") != std::string::npos
+                || lowerBaseModel.find("characters/_1stperson/") != std::string::npos);
         const bool isFonvCreatureAnim = lowerKf.find("meshes/creatures/") != std::string::npos
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
         const bool isFonvAnim = isFonvActorAnim || isFonvCreatureAnim;
 
-        if (animsrc->mKeyframes && animsrc->mKeyframes->mTextKeys.empty()
-            && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvCreatureAnim)
+        if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
-            const std::string group = getFalloutSyntheticGroupFromKf(kfname);
-            if (!group.empty())
+            // Callers that selected an exact retail action manifest provide the semantic group explicitly. Filename
+            // inference remains for legacy locomotion/creature sources, but never overrides an authored manifest.
+            const std::string group = falloutSemanticGroup.empty()
+                ? getFalloutSyntheticGroupFromKf(kfname)
+                : std::string(falloutSemanticGroup);
+            if (!group.empty() && !animsrc->mKeyframes->mTextKeys.hasGroupStart(group))
             {
                 osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
-                addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+                if (isSyntheticFalloutLoopingGroup(group))
+                    addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+                else
+                    addSyntheticOneShotTextKeys(keyframes->mTextKeys, group);
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized creature KF text key group '" << group
-                                 << "' for " << kfname;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized "
+                                    << (isSyntheticFalloutLoopingGroup(group) ? "looping" : "one-shot")
+                                    << " KF text key group '" << group << "' for " << kfname;
+            }
+        }
+        if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty()
+            && isFonvCreatureAnim && !falloutSemanticGroup.empty()
+            && !animsrc->mKeyframes->mTextKeys.hasGroupStart(falloutSemanticGroup))
+        {
+            // Creature directories contain many transitions and special idles which can expose the same retail
+            // groups. A caller that selected one exact same-rig KF gives it a proof-facing semantic alias, making
+            // source choice independent of recursive VFS iteration and of unrelated transition filenames.
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            const std::string group(falloutSemanticGroup);
+            if (isSyntheticFalloutLoopingGroup(group))
+                addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+            else
+                addSyntheticOneShotTextKeys(keyframes->mTextKeys, group);
+            animsrc->mKeyframes = keyframes;
+            Log(Debug::Verbose) << "FNV/ESM4 diag: aliased selected creature KF " << kfname
+                                << " to semantic group '" << group << "'";
+        }
+        if (animsrc->mKeyframes && isFonvCreatureAnim
+            && falloutSemanticGroup == FonvCreatureHitReactionSemanticGroup)
+        {
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutCreatureHitReactionTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected creature hit KF " << kfname
+                                    << " from generic idle groups";
             }
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
@@ -4616,11 +4736,19 @@ namespace MWRender
         const NodeMap& nodeMap = getNodeMap();
         const auto& controllerMap = animsrc->mKeyframes->mKeyframeControllers;
         unsigned int matchedControllers = 0;
-        unsigned int missingControllers = 0;
+        unsigned int missingRequiredControllers = 0;
+        unsigned int controllerCollisions = 0;
+        unsigned int exactControllers = 0;
+        unsigned int aliasedControllers = 0;
+        unsigned int deferredVisualControllers = 0;
+        unsigned int skippedExactDuplicateControllers = 0;
         unsigned int skippedSyntheticAttachmentHelperControllers = 0;
         unsigned int falloutActorBasisApplied = 0;
         unsigned int falloutActorBasisMissed = 0;
         unsigned int falloutActorBasisAudited = 0;
+        std::map<std::pair<std::size_t, std::string>, std::string> resolvedControllerAuthors;
+        const bool auditFalloutControllerTargets
+            = isFonvAnim && std::getenv("OPENMW_FNV_CONTROLLER_TARGET_AUDIT") != nullptr;
         const bool auditFalloutActorControllers = isFonvActorAnim
             && (lowerKf.find("locomotion/mtidle.kf") != std::string::npos
                 || lowerKf.find("locomotion\\mtidle.kf") != std::string::npos);
@@ -4641,25 +4769,88 @@ namespace MWRender
              it != controllerMap.end(); ++it)
         {
             std::string bonename = Misc::StringUtils::lowerCase(it->first);
-            NodeMap::const_iterator found = isFonvAnim ? findNodeMapBone(nodeMap, bonename, bonename)
-                                                       : nodeMap.find(bonename);
+            const std::string authoredBonename = bonename;
+            const std::string_view duplicateOf = isFonvAnim
+                ? getFonvExactDuplicateControllerTarget(authoredBonename)
+                : std::string_view{};
+            if (!duplicateOf.empty())
+            {
+                const bool canonicalTrackIsAuthored = std::any_of(controllerMap.begin(), controllerMap.end(),
+                    [duplicateOf](const auto& controller) {
+                        return Misc::StringUtils::lowerCase(controller.first) == duplicateOf;
+                    });
+                if (canonicalTrackIsAuthored)
+                {
+                    ++skippedExactDuplicateControllers;
+                    if (auditFalloutControllerTargets)
+                        Log(Debug::Info) << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='"
+                                         << authoredBonename << "' resolution=exact-authored-duplicate canonical='"
+                                         << duplicateOf << "'";
+                    Log(Debug::Verbose) << "FNV/ESM4: skipped exact authored duplicate controller target '"
+                                        << authoredBonename << "' because canonical target '" << duplicateOf
+                                        << "' is present in " << kfname;
+                    continue;
+                }
+            }
+            const std::vector<std::string> explicitAliases
+                = isFonvAnim ? getFonvBoneAliases(authoredBonename) : std::vector<std::string>{};
+            std::string resolutionKind = "missing";
+            NodeMap::const_iterator found = nodeMap.find(bonename);
+            if (found != nodeMap.end())
+            {
+                bonename = found->first;
+                resolutionKind = "exact";
+                ++exactControllers;
+            }
             if (found == nodeMap.end() && isFonvAnim)
             {
-                const std::string originalName = bonename;
-                found = findFonvAnimationBone(nodeMap, originalName, bonename);
+                found = findFonvAnimationBone(nodeMap, authoredBonename, bonename);
                 if (found != nodeMap.end())
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << originalName << "' to '" << bonename
-                                     << "' for " << kfname;
+                {
+                    resolutionKind = "explicit-alias";
+                    ++aliasedControllers;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << authoredBonename << "' to '"
+                                     << bonename << "' for " << kfname;
+                }
+            }
+            const bool requiredSkeletonTarget
+                = !isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename);
+            if (found == nodeMap.end() && !requiredSkeletonTarget)
+                resolutionKind = "deferred-visual";
+            if (auditFalloutControllerTargets)
+            {
+                std::ostringstream aliases;
+                for (std::size_t aliasIndex = 0; aliasIndex < explicitAliases.size(); ++aliasIndex)
+                {
+                    if (aliasIndex != 0)
+                        aliases << ',';
+                    aliases << explicitAliases[aliasIndex];
+                }
+                Log(found != nodeMap.end() ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='" << authoredBonename
+                    << "' resolution=" << resolutionKind << " resolved='"
+                    << (found != nodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
+                    << aliases.str() << ']';
             }
             if (found == nodeMap.end())
             {
-                ++missingControllers;
-                if (isFonvAnim)
-                    Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
-                                        << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                if (isFonvAnim && !requiredSkeletonTarget)
+                {
+                    ++deferredVisualControllers;
+                    Log(Debug::Verbose) << "FNV/ESM4: deferred optional visual controller target '"
+                                        << authoredBonename << "' absent from assembled actor graph " << baseModel
+                                        << " (referenced by " << kfname << ")";
+                }
                 else
-                    Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
-                                        << baseModel << " (referenced by " << kfname << ")";
+                {
+                    ++missingRequiredControllers;
+                    if (isFonvAnim)
+                        Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
+                                            << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                    else
+                        Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
+                                            << baseModel << " (referenced by " << kfname << ")";
+                }
                 continue;
             }
             const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
@@ -4678,11 +4869,15 @@ namespace MWRender
                 }
                 continue;
             }
-            ++matchedControllers;
-
             osg::Node* node = found->second;
 
-            size_t blendMask = detectBlendMask(node, it->second->getName());
+            // FO3/FNV author the held-weapon transform as a root-level "Weapon" KF target. The scene-node match
+            // can resolve through a synthetic attachment helper, so the authored controller-map key is the stable
+            // retail contract here. Keep that track in the right-arm aim overlay; otherwise arms-only weaponpose
+            // playback silently drops the weapon transform while locomotion continues to drive the lower body.
+            const size_t blendMask = isFonvActorAnim && authoredBonename == "weapon"
+                ? BoneGroup_RightArm
+                : detectBlendMask(node, it->second->getName());
 
             // clone the controller, because each Animation needs its own ControllerSource
             osg::ref_ptr<SceneUtil::KeyframeController> cloned
@@ -4746,7 +4941,31 @@ namespace MWRender
             }
             cloned->setSource(mAnimationTimePtr[blendMask]);
 
-            animsrc->mControllerMap[blendMask].insert(std::make_pair(bonename, cloned));
+            const bool didInsert
+                = animsrc->mControllerMap[blendMask].insert(std::make_pair(bonename, cloned)).second;
+            if (!didInsert)
+            {
+                ++controllerCollisions;
+                const auto author = resolvedControllerAuthors.find(std::make_pair(blendMask, bonename));
+                Log(isFonvAnim ? Debug::Error : Debug::Warning)
+                    << "Animation controller target collision in " << kfname << ": authored target '"
+                    << authoredBonename << "' and earlier target '"
+                    << (author != resolvedControllerAuthors.end() ? author->second : std::string("<unknown>"))
+                    << "' both resolved to '" << bonename << "' in blend mask " << blendMask
+                    << "; ignoring the later controller";
+                continue;
+            }
+            resolvedControllerAuthors.emplace(std::make_pair(blendMask, bonename), authoredBonename);
+            ++matchedControllers;
+        }
+        if (isFonvAnim && (missingRequiredControllers != 0 || controllerCollisions != 0))
+        {
+            Log(Debug::Error) << "FNV/ESM4 rejected partial animation source " << kfname << " for " << baseModel
+                              << ": exact=" << exactControllers << " explicitAliases=" << aliasedControllers
+                              << " missingRequired=" << missingRequiredControllers << " deferredVisual="
+                              << deferredVisualControllers << " collisions=" << controllerCollisions
+                              << ". Fallout controller targets must bind by exact authored name or exact explicit alias.";
+            return nullptr;
         }
         if (isFonvAnim)
         {
@@ -4784,14 +5003,17 @@ namespace MWRender
 
             Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
-                             << missingControllers << ", skippedSyntheticAttachmentHelpers "
-                             << skippedSyntheticAttachmentHelperControllers;
+                             << missingRequiredControllers << ", skippedSyntheticAttachmentHelpers "
+                             << skippedSyntheticAttachmentHelperControllers << ", collisions "
+                             << controllerCollisions << ", exact " << exactControllers << ", explicitAliases "
+                             << aliasedControllers << ", deferredVisual " << deferredVisualControllers
+                             << ", skippedExactDuplicates " << skippedExactDuplicateControllers;
             if (auditFalloutActorControllers)
                 Log(Debug::Verbose) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
                                  << " basisApplied=" << falloutActorBasisApplied
                                  << " basisMissed=" << falloutActorBasisMissed
                                  << " matched=" << matchedControllers
-                                 << " missing=" << missingControllers;
+                                 << " missing=" << missingRequiredControllers;
             std::ostringstream groups;
             unsigned int groupCount = 0;
             for (const std::string& group : animsrc->getTextKeys().getGroups())
@@ -4902,6 +5124,9 @@ namespace MWRender
 
     void Animation::clearAnimSources()
     {
+        // Property-bearing KF callbacks retain the pre-animation StateSet so it can be
+        // restored. Detach them before releasing their time/source ownership.
+        detachActiveControllers();
         mStates.clear();
 
         for (size_t i = 0; i < sNumBlendMasks; i++)
@@ -4919,6 +5144,148 @@ namespace MWRender
     bool Animation::hasAnimation(std::string_view anim) const
     {
         return mSupportedAnimations.find(anim) != mSupportedAnimations.end();
+    }
+
+    std::string Animation::getAnimationSourceName(std::string_view anim) const
+    {
+        // Match play(): the last inserted source containing the requested group wins.
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend();
+             ++source)
+        {
+            if ((*source)->getTextKeys().hasGroupStart(anim))
+                return (*source)->mSourceName;
+        }
+        return {};
+    }
+
+    std::string Animation::getAnimationGroupFromSource(
+        std::string_view sourceName, std::string_view groupPrefix) const
+    {
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend();
+             ++source)
+        {
+            if (!Misc::StringUtils::ciEqual((*source)->mSourceName, sourceName))
+                continue;
+            for (const std::string& group : (*source)->getTextKeys().getGroups())
+            {
+                if (groupPrefix.empty() || Misc::StringUtils::ciStartsWith(group, groupPrefix))
+                    return group;
+            }
+        }
+        return {};
+    }
+
+    bool Animation::prepareFalloutHitReaction()
+    {
+        const bool isStrictFonvNpc = isStrictFonvNpcAnimationContext(mPtr);
+        std::string baseModel;
+        if (isStrictFonvNpc)
+            baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        const std::string selectedSource = getAnimationSourceName(FonvNpcHitReactionSemanticGroup);
+        const std::string exactSource(FonvNpcHitReactionSource);
+        const bool exactSourceExists
+            = isStrictFonvNpc && mResourceSystem != nullptr && mResourceSystem->getVFS()->exists(exactSource);
+        const FonvNpcHitReactionResolution resolution
+            = resolveFonvNpcHitReaction(isStrictFonvNpc, baseModel, selectedSource, exactSourceExists);
+
+        if (resolution == FonvNpcHitReactionResolution::NotApplicable)
+            return true;
+
+        if (resolution == FonvNpcHitReactionResolution::IncompatibleSkeleton)
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction rejected incompatible skeleton: " << baseModel;
+            return false;
+        }
+
+        if (resolution == FonvNpcHitReactionResolution::MissingSource)
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction exact source is unavailable: " << exactSource;
+            return false;
+        }
+
+        if (resolution == FonvNpcHitReactionResolution::BindExact)
+        {
+            const std::shared_ptr<AnimSource> source
+                = addSingleAnimSource(exactSource, baseModel, false, {}, FonvNpcHitReactionSemanticGroup);
+            if (source == nullptr)
+            {
+                Log(Debug::Error) << "FNV NPC hit reaction exact source failed controller binding: " << exactSource
+                                  << " skeleton=" << baseModel;
+                return false;
+            }
+        }
+
+        const std::string finalSource = getAnimationSourceName(FonvNpcHitReactionSemanticGroup);
+        const unsigned int controllerMask = getAnimationGroupControllerMask(FonvNpcHitReactionSemanticGroup);
+        if (!isPreparedFonvNpcHitReaction(finalSource, controllerMask))
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction failed final source validation: expected=" << exactSource
+                              << " selected=" << finalSource << " controllerMask=" << controllerMask;
+            return false;
+        }
+        return true;
+    }
+
+    bool Animation::prepareFalloutWeaponAnimation(
+        std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction)
+    {
+        const std::vector<FonvWeaponActionSource> manifest
+            = getFonvWeaponActionManifest(animationType, reloadAnimation);
+        if (manifest.empty())
+        {
+            Log(Debug::Error) << "FNV animation has no exact action manifest: animationType="
+                              << static_cast<unsigned int>(animationType)
+                              << " reloadAnimation=" << static_cast<unsigned int>(reloadAnimation);
+            return false;
+        }
+
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        bool requiredSourcesAvailable = true;
+        for (const FonvWeaponActionSource& action : manifest)
+        {
+            if (getAnimationSourceName(action.mSemanticGroup) == action.mPath)
+                continue;
+
+            const std::shared_ptr<AnimSource> source
+                = addSingleAnimSource(action.mPath, baseModel, false, {}, action.mSemanticGroup);
+            if (source == nullptr && action.mRequired)
+            {
+                requiredSourcesAvailable = false;
+                Log(Debug::Error) << "FNV animation required exact action source is unavailable: animationType="
+                                  << static_cast<unsigned int>(animationType)
+                                  << " group=" << action.mSemanticGroup << " path=" << action.mPath;
+            }
+        }
+        return requiredSourcesAvailable;
+    }
+
+    std::vector<std::string> Animation::getAnimationGroups() const
+    {
+        std::vector<std::string> result;
+        result.reserve(mSupportedAnimations.size());
+        for (std::string_view group : mSupportedAnimations)
+            result.emplace_back(group);
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
+    unsigned int Animation::getAnimationGroupControllerMask(std::string_view group) const
+    {
+        // Match play(): the last inserted source containing the requested group wins.
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend(); ++source)
+        {
+            if (!(*source)->getTextKeys().hasGroupStart(group))
+                continue;
+
+            unsigned int mask = 0;
+            for (std::size_t boneGroup = 0; boneGroup < sNumBlendMasks; ++boneGroup)
+            {
+                if (!(*source)->mControllerMap[boneGroup].empty())
+                    mask |= 1u << boneGroup;
+            }
+            return mask;
+        }
+        return 0;
     }
 
     bool Animation::isLoopingAnimation(std::string_view group) const
@@ -5083,7 +5450,7 @@ namespace MWRender
                 {
                     if (isFalloutSeededIdleGroup(groupname))
                     {
-                        const float idleSeedSeconds = getFalloutIdleSeedSeconds();
+                        const float idleSeedSeconds = getFalloutIdleSeedSeconds(groupname);
                         if (idleSeedSeconds >= 0.f)
                         {
                             const float seededIdleTime
@@ -5521,6 +5888,26 @@ namespace MWRender
         });
     }
 
+    void Animation::detachActiveControllers()
+    {
+        // State overrides are stacked in callback attachment order; unwind them LIFO
+        // so an aliased target cannot restore another external controller's snapshot.
+        for (auto active = mActiveControllers.rbegin(); active != mActiveControllers.rend(); ++active)
+        {
+            const auto& [node, callback] = *active;
+            if (node == nullptr || callback == nullptr)
+                continue;
+            if (auto* controller = dynamic_cast<NifOsg::KeyframeController*>(callback.get());
+                controller != nullptr && controller->hasPropertyChannels())
+            {
+                controller->restorePropertyState();
+            }
+            node->removeUpdateCallback(callback);
+            callback->setNestedCallback(nullptr);
+        }
+        mActiveControllers.clear();
+    }
+
     void Animation::resetActiveGroups()
     {
 //## VR_PATCH BEGIN
@@ -5535,20 +5922,13 @@ namespace MWRender
         size_t falloutAddedControllers = 0;
         size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
+        bool activeFalloutProcedureIdle = false;
         const int requestedBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
         if (mBethesdaBoneLodLevel < 0 || !shouldDeferBethesdaBoneLodChange())
             mBethesdaBoneLodLevel = requestedBoneLodLevel;
-        // remove all previous external controllers from the scene graph
-        for (auto it = mActiveControllers.begin(); it != mActiveControllers.end(); ++it)
-        {
-            osg::Node* node = it->first;
-            node->removeUpdateCallback(it->second);
-
-            // Should be no longer needed with OSG 3.4
-            it->second->setNestedCallback(nullptr);
-        }
-
-        mActiveControllers.clear();
+        // Remove all previous external controllers from the scene graph and restore
+        // any StateSet that an external KF property track temporarily replaced.
+        detachActiveControllers();
 
         mAccumCtrl = nullptr;
         if (mObjectRoot)
@@ -5576,6 +5956,7 @@ namespace MWRender
             if (active != mStates.end())
             {
                 std::shared_ptr<AnimSource> animsrc = active->second.mSource;
+                activeFalloutProcedureIdle = activeFalloutProcedureIdle || animsrc->mFalloutProcedureIdle;
                 const AnimBlendStateData stateData
                     = { .mGroupname = active->second.mGroupname, .mStartKey = active->second.mStartKey };
 
@@ -5594,7 +5975,14 @@ namespace MWRender
                     const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
 
                     osg::Callback* callback = it->second->getAsCallback();
-                    if (useSmoothAnims)
+                    auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
+                    const bool propertyController
+                        = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
+                    const bool transformController
+                        = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
+                    // A compound Fallout KF controller owns its transform and render-property channels atomically.
+                    // Feeding it into a transform-only blender would discard material/UV animation.
+                    if (useSmoothAnims && !propertyController)
                     {
                         if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
                         {
@@ -5611,7 +5999,8 @@ namespace MWRender
                     // Some bones need to be still and do nothing in VR
                     // I'm SURE we'll TOTALLY make a cleaner solution for this before the end of 2090
                     node->setDataVariance(osg::Object::DYNAMIC);
-                    const bool addSceneGraphCallback = (!falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
+                    const bool addSceneGraphCallback
+                        = (propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
                         && (!isPlayer || !vrOverride(active->first, it->first));
                     if (addSceneGraphCallback)
 //## VR_PATCH END
@@ -5622,7 +6011,7 @@ namespace MWRender
                             ++falloutAddedControllers;
                     }
 
-                    if (blendMask == 0 && node == mAccumRoot)
+                    if (transformController && blendMask == 0 && node == mAccumRoot)
                     {
                         mAccumCtrl = it->second;
 
@@ -5636,6 +6025,13 @@ namespace MWRender
                             mResetAccumRootCallback->setAccumulate(mAccumulate);
                         }
                         mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
+                        const bool restoreFalloutBindRotation = falloutNpc
+                            && Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                            && !animsrc->mFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+                        auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+                        mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                                ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                                : std::nullopt);
                         // Keep the reset last in the callback chain so it sees the sampled controller value.
                         mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
                         mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
@@ -5656,6 +6052,12 @@ namespace MWRender
                 mResetAccumRootCallback->setAccumulate(mAccumulate);
             }
             mResetAccumRootCallback->setResetAllTranslation(true);
+            const bool restoreFalloutBindRotation = Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                && !activeFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+            auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+            mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                    ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                    : std::nullopt);
             mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
             mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
         }
@@ -5821,6 +6223,9 @@ namespace MWRender
         const AnimSource::ControllerMap& ctrls = (*animsrc)->mControllerMap[0];
         for (AnimSource::ControllerMap::const_iterator it = ctrls.begin(); it != ctrls.end(); ++it)
         {
+            const auto* controller = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+            if (controller != nullptr && !controller->hasTransformChannels())
+                continue;
             if (Misc::StringUtils::ciEqual(it->first, mAccumRoot->getName()))
             {
                 velocity = calcAnimVelocity(keys, it->second, mAccumulate, groupname);
@@ -5842,6 +6247,9 @@ namespace MWRender
                 const AnimSource::ControllerMap& ctrls2 = (*animiter)->mControllerMap[0];
                 for (AnimSource::ControllerMap::const_iterator it = ctrls2.begin(); it != ctrls2.end(); ++it)
                 {
+                    const auto* controller = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+                    if (controller != nullptr && !controller->hasTransformChannels())
+                        continue;
                     if (Misc::StringUtils::ciEqual(it->first, mAccumRoot->getName()))
                     {
                         velocity = calcAnimVelocity(keys2, it->second, mAccumulate, groupname);
@@ -6010,9 +6418,13 @@ namespace MWRender
             std::string maxNativeWorldMatrixDeltaBone;
             const std::string refIdText = mPtr.getCellRef().getRefId().serializeText();
             const bool actorBasisAudit = std::getenv("OPENMW_FNV_ACTOR_BASIS_AUDIT") != nullptr;
-            const bool matrixAudit = actorBasisAudit || (std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
-                                         || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr)
-                && (refIdText.find("4104c7f") != std::string::npos || refIdText == "player");
+            const bool matrixAuditRequested = std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
+                || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr;
+            bool matrixAuditTarget
+                = refIdText.find("4104c7f") != std::string::npos || refIdText == "player";
+            if (const char* requestedRef = std::getenv("OPENMW_FNV_MATRIX_AUDIT_TARGET_REF"))
+                matrixAuditTarget = Misc::StringUtils::ciEqual(refIdText, requestedRef);
+            const bool matrixAudit = actorBasisAudit || (matrixAuditRequested && matrixAuditTarget);
             unsigned int matrixAuditLines = 0;
             constexpr unsigned int matrixAuditLineLimit = 96;
             for (size_t blendMask = 0; blendMask < sNumBlendMasks; ++blendMask)
@@ -6036,6 +6448,11 @@ namespace MWRender
                 for (AnimSource::ControllerMap::const_iterator it = animsrc->mControllerMap[blendMask].begin();
                      it != animsrc->mControllerMap[blendMask].end(); ++it)
                 {
+                    const auto* nifController = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+                    // Property-bearing compound controllers stay on the native callback path even when the legacy
+                    // manual Fallout transform path is selected, so their StateSet is composed exactly once.
+                    if (nifController != nullptr && nifController->hasPropertyChannels())
+                        continue;
                     auto nodeIt = getNodeMap().find(it->first);
                     if (nodeIt == getNodeMap().end())
                         continue;
@@ -6442,8 +6859,7 @@ namespace MWRender
                     applyFalloutRootUpCorrection(root, correction);
                 };
 
-                std::string resolvedRoot;
-                Animation::NodeMap::const_iterator rootIt = findNodeMapBone(getNodeMap(), "bip01", resolvedRoot);
+                Animation::NodeMap::const_iterator rootIt = getNodeMap().find("bip01");
                 if (rootIt != getNodeMap().end())
                     correctRoot(rootIt->second.get());
                 if (mSkeleton != nullptr)
@@ -6717,6 +7133,8 @@ namespace MWRender
             }
         }
 
+        applyFalloutDeathPoseFallback();
+
         if (esm4Npc && mObjectRoot != nullptr
             && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
         {
@@ -6739,6 +7157,67 @@ namespace MWRender
             auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
+    }
+
+    void Animation::applyFalloutDeathPoseFallback()
+    {
+        if (mFalloutCorpseTransform == nullptr || !isFalloutDeathFallbackContext(mPtr)
+            || !mPtr.getClass().isActor())
+            return;
+
+        const bool dead = mPtr.getClass().getCreatureStats(mPtr).isDead();
+        if (!dead)
+        {
+            if (mFalloutCorpsePoseApplied)
+            {
+                mFalloutCorpseTransform->setMatrix(osg::Matrixf::identity());
+                mFalloutCorpseTransform->dirtyBound();
+                mFalloutCorpsePoseApplied = false;
+                Log(Debug::Info) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                 << " state=resurrected pose=identity";
+            }
+            return;
+        }
+
+        static constexpr std::array<std::string_view, 5> sDeathGroups{
+            "death1", "death2", "death3", "death4", "death5"
+        };
+        if (std::any_of(sDeathGroups.begin(), sDeathGroups.end(),
+                [&](std::string_view group) { return hasAnimation(group); }))
+            return;
+        if (mFalloutCorpsePoseApplied || mFalloutCorpseTransform->getNumChildren() == 0)
+            return;
+
+        osg::ComputeBoundsVisitor boundsVisitor;
+        mFalloutCorpseTransform->getChild(0)->accept(boundsVisitor);
+        const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+        if (!bounds.valid())
+        {
+            Log(Debug::Warning) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                << " state=failed reason=invalid-bounds";
+            return;
+        }
+
+        const osg::Vec3f pivot = bounds.center();
+        const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+        const float direction = !refId.empty() && (static_cast<unsigned char>(refId.back()) & 1u) ? -1.f : 1.f;
+        osg::Matrixf pose = osg::Matrixf::translate(-pivot)
+            * osg::Matrixf::rotate(direction * osg::PI_2, osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Matrixf::translate(pivot);
+
+        float transformedMinZ = std::numeric_limits<float>::max();
+        for (unsigned int corner = 0; corner < 8; ++corner)
+            transformedMinZ = std::min(transformedMinZ, (bounds.corner(corner) * pose).z());
+        const float groundShift = bounds.zMin() - transformedMinZ;
+        pose = pose * osg::Matrixf::translate(0.f, 0.f, groundShift);
+
+        mFalloutCorpseTransform->setMatrix(pose);
+        mFalloutCorpseTransform->dirtyBound();
+        mFalloutCorpsePoseApplied = true;
+        Log(Debug::Info) << "FNV combat death: actor=" << mPtr.getCellRef().getRefId()
+                         << " dead=1 visual=procedural-grounded-side-pose status=pass angle="
+                         << direction * 90.f << " groundShift=" << groundShift
+                         << " boundsMinZ=" << bounds.zMin() << " boundsMaxZ=" << bounds.zMax();
     }
 
     void Animation::setLoopingEnabled(std::string_view groupname, bool enabled)
@@ -6840,6 +7319,7 @@ namespace MWRender
         osg::ref_ptr<osg::StateSet> previousStateset;
         if (mObjectRoot)
         {
+            detachActiveControllers();
             if (mLightListCallback)
                 mObjectRoot->removeCullCallback(mLightListCallback);
             if (mTransparencyUpdater)
@@ -6849,10 +7329,11 @@ namespace MWRender
         }
         mObjectRoot = nullptr;
         mSkeleton = nullptr;
+        mFalloutCorpseTransform = nullptr;
+        mFalloutCorpsePoseApplied = false;
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        mActiveControllers.clear();
         mAccumRoot = nullptr;
         mAccumCtrl = nullptr;
 
@@ -6966,6 +7447,16 @@ namespace MWRender
             }
         }
 
+        if (isFalloutDeathFallbackContext(mPtr))
+        {
+            mInsert->removeChild(mObjectRoot);
+            mFalloutCorpseTransform = new osg::MatrixTransform;
+            mFalloutCorpseTransform->setName("FNV Actor Corpse Pose");
+            mFalloutCorpseTransform->addChild(mObjectRoot);
+            mObjectRoot = mFalloutCorpseTransform;
+            mInsert->addChild(mObjectRoot);
+        }
+
         // osgAnimation formats with skeletons should have their nodemap be bone instances
         // FIXME: better way to detect osgAnimation here instead of relying on extension?
         mRequiresBoneMap = mSkeleton != nullptr && !Misc::StringUtils::ciEndsWith(model, ".nif");
@@ -7017,6 +7508,47 @@ namespace MWRender
             else if (mObjectRoot)
                 mGlowUpdater = SceneUtil::addEnchantedGlow(mObjectRoot, mResourceSystem, color, glowDuration);
         }
+    }
+
+    void Animation::setFalloutVatsWireframe(std::string_view targetNode, bool enabled)
+    {
+        if (mFalloutVatsWireframeNode)
+        {
+            mFalloutVatsWireframeNode->setStateSet(mFalloutVatsOriginalStateSet);
+            mFalloutVatsWireframeNode = nullptr;
+            mFalloutVatsOriginalStateSet = nullptr;
+        }
+        if (!enabled)
+            return;
+
+        osg::Node* node = const_cast<osg::Node*>(getNode(targetNode));
+        if (node == nullptr)
+            node = mObjectRoot.get();
+        if (node == nullptr)
+            return;
+
+        mFalloutVatsWireframeNode = node;
+        mFalloutVatsOriginalStateSet = node->getStateSet();
+        osg::ref_ptr<osg::StateSet> stateSet = mFalloutVatsOriginalStateSet
+            ? new osg::StateSet(*mFalloutVatsOriginalStateSet, osg::CopyOp::SHALLOW_COPY)
+            : new osg::StateSet;
+
+        osg::ref_ptr<osg::PolygonMode> wireframe = new osg::PolygonMode;
+        wireframe->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
+        stateSet->setAttributeAndModes(
+            wireframe, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        stateSet->setAttributeAndModes(new osg::LineWidth(3.f),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        const osg::Vec4f vatsGreen(0.05f, 1.f, 0.2f, 1.f);
+        material->setColorMode(osg::Material::OFF);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setEmission(osg::Material::FRONT_AND_BACK, vatsGreen * 0.65f);
+        stateSet->setAttributeAndModes(
+            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        node->setStateSet(stateSet);
     }
 
     void Animation::addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& esmLight)
@@ -7179,8 +7711,15 @@ namespace MWRender
 
     const osg::Node* Animation::getNode(std::string_view name) const
     {
-        NodeMap::const_iterator found = getNodeMap().find(name);
-        if (found == getNodeMap().end())
+        const NodeMap& nodeMap = getNodeMap();
+        NodeMap::const_iterator found = nodeMap.find(name);
+        if (found == nodeMap.end() && isFalloutActor(mPtr))
+        {
+            std::string resolvedName;
+            found = findFonvAnimationBone(
+                nodeMap, Misc::StringUtils::lowerCase(std::string(name)), resolvedName);
+        }
+        if (found == nodeMap.end())
             return nullptr;
         else
             return found->second;
@@ -7329,15 +7868,7 @@ namespace MWRender
         // Detach them while both the scene nodes and controller sources are still alive.  Leaving an upper-body
         // overlay callback on the skeleton until member destruction can make OSG tear the callback chain down after
         // its AnimationTime source has already gone away (observed as a ucrtbase FAST_FAIL_INVALID_ARG on shutdown).
-        for (const auto& [node, callback] : mActiveControllers)
-        {
-            if (node != nullptr && callback != nullptr)
-            {
-                node->removeUpdateCallback(callback);
-                callback->setNestedCallback(nullptr);
-            }
-        }
-        mActiveControllers.clear();
+        detachActiveControllers();
 
         if (mGlowLight != nullptr)
             mInsert->removeChild(mGlowLight);

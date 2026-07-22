@@ -1,19 +1,126 @@
 #include "tradeitemmodel.hpp"
 
+#include <limits>
+
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
+
+namespace
+{
+    bool isFlatFalloutItemType(unsigned int type)
+    {
+        return type == ESM4::Ammunition::sRecordId || type == ESM4::Armor::sRecordId
+            || type == ESM4::MiscItem::sRecordId || type == ESM4::Weapon::sRecordId
+            || type == ESM4::Potion::sRecordId || type == ESM4::Book::sRecordId
+            || type == ESM4::Clothing::sRecordId || type == ESM4::Ingredient::sRecordId
+            || type == ESM4::ItemMod::sRecordId || type == ESM4::Key::sRecordId
+            || type == ESM4::Light::sRecordId;
+    }
+}
 
 namespace MWGui
 {
 
-    TradeItemModel::TradeItemModel(std::unique_ptr<ItemModel> sourceModel, const MWWorld::Ptr& merchant)
+    bool isFlatFalloutMerchant(const MWWorld::ConstPtr& merchant)
+    {
+        if (merchant.isEmpty() || merchant.getType() != ESM4::Npc::sRecordId)
+            return false;
+        const MWWorld::LiveCellRef<ESM4::Npc>* reference = merchant.get<ESM4::Npc>();
+        return reference != nullptr && reference->mBase != nullptr && reference->mBase->mIsFONV;
+    }
+
+    bool isItemAcceptedForBarter(
+        const MWWorld::ConstPtr& item, const MWWorld::ConstPtr& merchant, int merchantServices)
+    {
+        if (item.isEmpty())
+            return false;
+        if (isFlatFalloutMerchant(merchant))
+            return isFlatFalloutItemType(item.getType());
+        return item.getClass().canSell(item, merchantServices);
+    }
+
+    ESM::RefId findFlatFalloutCurrency(const MWWorld::ESMStore& store)
+    {
+        for (const ESM4::MiscItem& item : store.get<ESM4::MiscItem>())
+        {
+            if (Misc::StringUtils::ciEqual(item.mEditorId, "Caps001"))
+                return ESM::RefId(item.mId);
+        }
+        return {};
+    }
+
+    int countBarterCurrency(const std::vector<MWWorld::Ptr>& sources, const ESM::RefId& currency)
+    {
+        if (currency.empty())
+            return 0;
+
+        int total = 0;
+        for (const MWWorld::Ptr& source : sources)
+        {
+            const int count = source.getClass().getContainerStore(source).count(currency);
+            if (count >= std::numeric_limits<int>::max() - total)
+                return std::numeric_limits<int>::max();
+            total += count;
+        }
+        return total;
+    }
+
+    bool transferBarterCurrency(const std::vector<MWWorld::Ptr>& from, const std::vector<MWWorld::Ptr>& to,
+        const ESM::RefId& currency, int amount)
+    {
+        if (amount < 0 || currency.empty() || from.empty() || to.empty())
+            return false;
+        if (amount == 0)
+            return true;
+        if (countBarterCurrency(from, currency) < amount)
+            return false;
+
+        MWWorld::ContainerStore& target = to.front().getClass().getContainerStore(to.front());
+        target.add(currency, amount, false);
+
+        int remaining = amount;
+        for (const MWWorld::Ptr& source : from)
+        {
+            MWWorld::ContainerStore& store = source.getClass().getContainerStore(source);
+            remaining -= store.remove(currency, remaining);
+            if (remaining == 0)
+                return true;
+        }
+
+        // The count preflight and removal use the same stores, so this is only an integrity guard.
+        target.remove(currency, amount);
+        return false;
+    }
+
+    TradeItemModel::TradeItemModel(
+        std::unique_ptr<ItemModel> sourceModel, const MWWorld::Ptr& merchant, const ESM::RefId& currency)
         : mMerchant(merchant)
+        , mCurrency(currency.empty() ? MWWorld::ContainerStore::sGoldId : currency)
     {
         mSourceModel = std::move(sourceModel);
+    }
+
+    void TradeItemModel::setMerchant(const MWWorld::Ptr& merchant, const ESM::RefId& currency)
+    {
+        mMerchant = merchant;
+        mCurrency = currency.empty() ? MWWorld::ContainerStore::sGoldId : currency;
     }
 
     bool TradeItemModel::allowedToUseItems() const
@@ -181,13 +288,13 @@ namespace MWGui
             if (!mMerchant.isEmpty())
             {
                 MWWorld::Ptr base = item.mBase;
-                if (base.getCellRef().getRefId() == MWWorld::ContainerStore::sGoldId)
+                if (base.getCellRef().getRefId() == mCurrency)
                     continue;
 
                 if (!base.getClass().showsInInventory(base))
-                    return;
+                    continue;
 
-                if (!base.getClass().canSell(base, services))
+                if (!isItemAcceptedForBarter(base, mMerchant, services))
                     continue;
 
                 // Bound items may not be bought

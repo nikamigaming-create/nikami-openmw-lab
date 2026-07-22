@@ -3,6 +3,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <sstream>
+#include <stdexcept>
+#include <utility>
 
 #include <SDL_clipboard.h>
 
@@ -12,6 +15,8 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadclas.hpp>
+#include <components/esm3/loadnpc.hpp>
+#include <components/esm4/fonvsavegame.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -40,12 +45,18 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvsavepreflight.hpp"
 #include "../mwworld/globals.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/scene.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/drawstate.hpp"
 #include "../mwmechanics/npcstats.hpp"
+
+#include "../mwrender/camera.hpp"
+#include "../mwrender/renderingmanager.hpp"
 
 #include "../mwscript/globalscripts.hpp"
 
@@ -75,6 +86,8 @@ namespace
 
 void MWState::StateManager::cleanup(bool force)
 {
+    mNativeFalloutSaveLoaded = false;
+
     if (mState != State_NoGame || force)
     {
         MWBase::Environment::get().getSoundManager()->clear();
@@ -481,6 +494,264 @@ struct SaveVersionTooNewError : SaveFormatVersionError
 
 void MWState::StateManager::loadGame(const Character* character, const std::filesystem::path& filepath)
 {
+    // A normal retail .fos is not an ESM3 save. Resolve every input before cleanup: the legacy catch path and cleanup
+    // both mutate the session, while a failed native preflight must leave it untouched.
+    if (MWWorld::isFalloutNewVegasSavePath(filepath))
+    {
+        Log(Debug::Info) << "Preflighting native FNV save file " << filepath.filename();
+        ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(filepath);
+        const MWBase::World& world = *MWBase::Environment::get().getWorld();
+        if (const char* trace = std::getenv("OPENMW_FNV_VATS_TRACE"); trace != nullptr && *trace != '\0')
+        {
+            for (std::size_t index = 0; index < save.mMasters.size(); ++index)
+                Log(Debug::Info) << "FNV VATS retail master: index=" << index
+                                 << " file=" << save.mMasters[index].mFileName.mValue;
+            const std::span<const std::string> currentContent = world.getContentFiles();
+            for (std::size_t index = 0; index < currentContent.size(); ++index)
+                Log(Debug::Info) << "FNV VATS OpenMW content: index=" << index
+                                 << " file=" << currentContent[index];
+        }
+        MWWorld::FalloutSavePreflightResolution preflight = MWWorld::resolveFalloutSavePreflightContext(
+            std::move(save), world.getStore(), world.getContentFiles());
+        if (!preflight)
+            throw std::runtime_error("native FNV save preflight failed: " + preflight.mError);
+
+        const MWWorld::FalloutSavePreflightContext& context = *preflight.mContext;
+        MWWorld::requireFalloutSaveVisualApplicationReady(context);
+
+        if (const char* trace = std::getenv("OPENMW_FNV_VATS_TRACE"); trace != nullptr && *trace != '\0'
+            && context.mSave.mPlayerActorValueData)
+        {
+            constexpr std::size_t actionPointsActorValue = 12;
+            const ESM4::FONVSavePlayerActorValueData& values = *context.mSave.mPlayerActorValueData;
+            Log(Debug::Info) << "FNV VATS retail state: actorValue=" << actionPointsActorValue
+                             << " values244=" << values.mActorValues244[actionPointsActorValue].mValue
+                             << " values244Offset=" << values.mActorValues244[actionPointsActorValue].mRange.mOffset
+                             << " values378=" << values.mActorValues378[actionPointsActorValue].mValue
+                             << " values378Offset=" << values.mActorValues378[actionPointsActorValue].mRange.mOffset
+                             << " values4B0=" << values.mActorValues4B0[actionPointsActorValue].mValue
+                             << " values4B0Offset=" << values.mActorValues4B0[actionPointsActorValue].mRange.mOffset
+                             << " exact=1";
+        }
+
+        const ESM::RefId playerId = ESM::RefId::stringRefId("Player");
+        const ESM::NPC* playerCarrier = world.getStore().get<ESM::NPC>().searchStatic(playerId);
+        if (playerCarrier == nullptr)
+            throw std::runtime_error("native FNV visual application has no validated Player compatibility carrier");
+        ESM::NPC savedPlayer = *playerCarrier;
+        MWWorld::applyFalloutSavePlayerHeader(savedPlayer, context.mPlan.mPlayer);
+        Log(Debug::Info) << "Native FNV save Player inventory: stacks="
+                         << context.mPlan.mPlayer.mInventoryItems.size() << " worn="
+                         << context.mPlan.mPlayer.mWornVisualItems.size();
+        for (const MWWorld::FalloutInventoryItem& item : context.mPlan.mPlayer.mInventoryItems)
+        {
+            const ESM::RefId record(item.mRecord);
+            Log(Debug::Verbose) << "Native FNV save Player inventory item: form=" << record
+                                << " count=" << item.mCount << " type=" << world.getStore().find(record);
+        }
+
+        ESM::Position savedPosition;
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            savedPosition.pos[index] = context.mPlan.mTransform.mPosition[index];
+            savedPosition.rot[index] = context.mPlan.mTransform.mRotationRadians[index];
+        }
+        const ESM::RefId savedCell(context.mPlacement.mCellRecord);
+        const ESM::RefId savedWeather(context.mWeather.mCurrent.mWeather);
+        if (world.getWeather(savedWeather) == nullptr)
+        {
+            throw std::runtime_error(
+                "native FNV visual application current WTHR was not imported by WeatherManager");
+        }
+        const float savedFirstPersonFov
+            = MWWorld::convertFalloutReferenceFovToOpenMwVertical(context.mPlan.mCamera.mFirstPersonModelFov);
+        const float savedWorldFov
+            = MWWorld::convertFalloutReferenceFovToOpenMwVertical(context.mPlan.mCamera.mWorldFov);
+
+        std::ostringstream uncovered;
+        for (const std::string& domain : context.mPlan.mUncoveredState)
+        {
+            if (uncovered.tellp() > 0)
+                uncovered << ", ";
+            uncovered << domain;
+        }
+        Log(Debug::Warning) << "Loading native FNV visual slice through the normal .fos path; full gameplay state "
+                            << "remains uncovered: " << uncovered.str();
+
+        cleanup();
+
+        MWBase::World& mutableWorld = *MWBase::Environment::get().getWorld();
+        mutableWorld.getStore().overrideRecord(savedPlayer);
+        mCharacterManager.setCurrentCharacter(character);
+        mState = State_Running;
+        if (character)
+            Settings::saves().mCharacter.set(Files::pathToUnicodeString(character->getPath().filename()));
+        mLastSavegame = filepath;
+
+        MWBase::Environment::get().getWindowManager()->setNewGame(false);
+        mutableWorld.saveLoaded();
+        if (context.mPlan.mQuestProgress)
+        {
+            std::string error;
+            if (!mutableWorld.getESM4QuestRuntime().loadSavedProgress(*context.mPlan.mQuestProgress, &error))
+                throw std::runtime_error("native FNV quest-progress application failed after preflight: " + error);
+        }
+        mutableWorld.setupPlayer();
+
+        MWWorld::Ptr player = mutableWorld.getPlayerPtr();
+        // setupPlayer replaces the Player base record but intentionally retains the live reference data.  Native
+        // Fallout saves replace the authored compatibility-carrier inventory, so retaining that custom data would
+        // leave the pre-load inventory store (and its two placeholder entries) alive.  Rebuild it from savedPlayer
+        // before rendering or opening any inventory UI.
+        player.getRefData().setCustomData(nullptr);
+        MWWorld::InventoryStore& savedInventory = player.getClass().getInventoryStore(player);
+        savedInventory.unequipAll();
+        for (const MWWorld::FalloutSavePlayerHeaderState::ConditionedStack& stack
+            : context.mPlan.mPlayer.mConditionedStacks)
+        {
+            const ESM::RefId record(stack.mRecord);
+            MWWorld::ContainerStoreIterator found = savedInventory.end();
+            for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+            {
+                if (item->getCellRef().getRefId() == record && item->getCellRef().getCharge() == -1
+                    && item->getCellRef().getCount(false) >= stack.mCount)
+                {
+                    found = item;
+                    break;
+                }
+            }
+            if (found == savedInventory.end())
+                throw std::runtime_error("native FNV conditioned item is absent from rebuilt Player inventory");
+
+            if (found->getCellRef().getCount(false) > stack.mCount)
+                savedInventory.unstack(*found, stack.mCount);
+            const int maximumHealth = found->getClass().getItemMaxHealth(*found);
+            const int health = static_cast<int>(std::lround(stack.mHealth));
+            if (maximumHealth <= 0 || health < 0 || health > maximumHealth)
+                throw std::runtime_error("native FNV conditioned item escaped preflight health validation");
+            found->getCellRef().setCharge(health);
+            Log(Debug::Info) << "Native FNV save Player restored ExtraHealth stack: form=" << record
+                             << " count=" << stack.mCount << " health=" << health
+                             << " sourceOffset=" << stack.mSourceOffset;
+        }
+        for (const MWWorld::FalloutSavePlayerHeaderState::AmmoSelection& selection
+            : context.mPlan.mPlayer.mAmmoSelections)
+        {
+            const ESM::RefId weapon(selection.mWeapon);
+            const ESM::RefId ammo(selection.mAmmo);
+            savedInventory.setFalloutAmmoSelection(weapon, ammo);
+            Log(Debug::Info) << "Native FNV save Player restored selected ammo: weapon=" << weapon
+                             << " ammo=" << ammo << " savedCount=" << selection.mSavedCount
+                             << " sourceOffset=" << selection.mSourceOffset;
+        }
+        std::size_t runtimeStacks = 0;
+        std::size_t visibleStacks = 0;
+        for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+        {
+            ++runtimeStacks;
+            if (item->getClass().showsInInventory(*item))
+                ++visibleStacks;
+        }
+        Log(Debug::Info) << "Native FNV save Player runtime inventory rebuilt: stacks=" << runtimeStacks
+                         << " visible=" << visibleStacks;
+        for (const MWWorld::FalloutSavePlayerHeaderState::WornVisualItem& worn
+            : context.mPlan.mPlayer.mWornVisualItems)
+        {
+            const ESM::RefId record(worn.mRecord);
+            MWWorld::ContainerStoreIterator found = savedInventory.end();
+            for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+            {
+                if (item->getCellRef().getRefId() == record
+                    && (!worn.mHealth
+                        || item->getClass().getItemHealth(*item) == static_cast<int>(std::lround(*worn.mHealth))))
+                {
+                    found = item;
+                    break;
+                }
+            }
+            if (found == savedInventory.end())
+                throw std::runtime_error("native FNV ExtraWorn item is absent from rebuilt Player inventory");
+
+            const std::vector<int>& slots = found->getClass().getEquipmentSlots(*found).first;
+            if (slots.empty())
+                throw std::runtime_error("native FNV ExtraWorn item has no compatible runtime equipment slot");
+            savedInventory.equip(slots.front(), found);
+            Log(Debug::Info) << "Native FNV save Player equipped ExtraWorn: form=" << record
+                             << " slot=" << slots.front() << " name=" << found->getClass().getName(*found);
+        }
+        player.getClass().getCreatureStats(player).setDrawState(context.mPlan.mPlayer.mWeaponDrawn
+                ? MWMechanics::DrawState::Weapon
+                : MWMechanics::DrawState::Nothing);
+        Log(Debug::Info) << "Native FNV save Player restored weapon stance: drawn="
+                         << context.mPlan.mPlayer.mWeaponDrawn;
+        for (const MWWorld::FalloutSavePlayerHeaderState::HotkeyItem& hotkey
+            : context.mPlan.mPlayer.mHotkeyItems)
+        {
+            const ESM::RefId item(hotkey.mRecord);
+            if (!MWBase::Environment::get().getWindowManager()->setFalloutSaveQuickKey(hotkey.mIndex, item))
+                throw std::runtime_error("native FNV Player hotkey escaped preflight inventory validation");
+            Log(Debug::Info) << "Native FNV save Player restored hotkey: index=" << static_cast<int>(hotkey.mIndex)
+                             << " form=" << item << " sourceOffset=" << hotkey.mSourceOffset;
+        }
+        player.getRefData().setPosition(savedPosition);
+        player.getCellRef().setPosition(savedPosition);
+        std::vector<ESM::FormId> wornVisualItems;
+        wornVisualItems.reserve(context.mPlan.mPlayer.mWornVisualItems.size());
+        for (std::size_t ordinal = 0; ordinal < context.mPlan.mPlayer.mWornVisualItems.size(); ++ordinal)
+        {
+            const MWWorld::FalloutSavePlayerHeaderState::WornVisualItem& item
+                = context.mPlan.mPlayer.mWornVisualItems[ordinal];
+            wornVisualItems.push_back(item.mRecord);
+            Log(Debug::Info) << "Native FNV save ExtraWorn visual: ordinal=" << ordinal + 1
+                             << " form=" << ESM::RefId(item.mRecord)
+                             << " sourceOffset=" << item.mSourceOffset;
+        }
+        mutableWorld.getRenderingManager()->setFalloutSaveWornVisualItems(std::move(wornVisualItems));
+        mutableWorld.getRenderingManager()->setFirstPersonFieldOfView(savedFirstPersonFov);
+        mutableWorld.renderPlayer();
+        MWBase::Environment::get().getWindowManager()->updatePlayer();
+        MWBase::Environment::get().getMechanicsManager()->playerLoaded();
+        mutableWorld.toggleVanityMode(false);
+
+        mutableWorld.getRenderingManager()->setFieldOfView(savedWorldFov);
+        mutableWorld.setGlobalFloat(MWWorld::Globals::sGameHour, context.mPlan.mScene.mGameHour);
+        if (!mutableWorld.forceWeather(savedWeather))
+            throw std::runtime_error("native FNV visual application lost its preflighted current WTHR");
+
+        // Preserve the authored Z and then update the persistent player render node and physics actor explicitly.
+        mutableWorld.changeToCell(savedCell, savedPosition, false, false);
+        player = mutableWorld.moveObject(mutableWorld.getPlayerPtr(), savedPosition.asVec3());
+        mutableWorld.rotateObject(player, savedPosition.asRotationVec3());
+
+        // Camera tracking uses inverse player Euler angles. Apply the save-owned view only after the final cell,
+        // render-node and physics transforms exist, so no transitional/default camera state can win a frame.
+        MWRender::Camera* camera = mutableWorld.getCamera();
+        if (camera == nullptr)
+            throw std::runtime_error("native FNV visual application has no player camera");
+        camera->attachTo(player);
+        camera->setMode(context.mPlan.mCamera.mFirstPerson ? MWRender::Camera::Mode::FirstPerson
+                                                          : MWRender::Camera::Mode::ThirdPerson,
+            true);
+        if (context.mPlan.mCamera.mFirstPerson)
+            camera->setPreferredCameraDistance(0.f);
+        camera->processViewChange();
+        camera->instantTransition();
+        camera->setPitch(-savedPosition.rot[0], true);
+        camera->setYaw(-savedPosition.rot[2], true);
+        camera->setRoll(-savedPosition.rot[1]);
+        camera->update(0.f, false);
+        camera->updateCamera();
+        mutableWorld.updateProjectilesCasters();
+        MWBase::Environment::get().getWorldScene()->markCellAsUnchanged();
+        MWBase::Environment::get().getLuaManager()->gameLoaded();
+        mNativeFalloutSaveLoaded = true;
+        Log(Debug::Info) << "Native FNV save owns camera mode=" << static_cast<int>(camera->getMode())
+                         << " pitch=" << camera->getPitch() << " yaw=" << camera->getYaw()
+                         << " roll=" << camera->getRoll() << " worldFov=" << savedWorldFov
+                         << " firstPersonModelFov=" << savedFirstPersonFov;
+        return;
+    }
+
     try
     {
         cleanup();
@@ -566,6 +837,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 case ESM::REC_ACTC:
                 case ESM::REC_PROJ:
                 case ESM::REC_MPRJ:
+                case ESM::REC_FPRJ:
                 case ESM::REC_ENAB:
                 case ESM::REC_LEVC:
                 case ESM::REC_LEVI:
@@ -574,6 +846,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 case ESM::REC_CONT:
                 case ESM::REC_RAND:
                 case ESM::REC_FQST:
+                case ESM::REC_FPLR:
                     MWBase::Environment::get().getWorld()->readRecord(reader, n.toInt());
                     break;
 

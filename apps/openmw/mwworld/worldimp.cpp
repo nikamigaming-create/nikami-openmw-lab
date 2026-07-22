@@ -31,8 +31,10 @@
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -769,12 +771,19 @@ namespace MWWorld
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
 
+        // Native FNV GMSTs must win before legacy defaults are inserted. The helper also installs only the narrow
+        // compatibility carriers still absent from the authored data and is a no-op for non-FNV content.
+        mStore.prepareFalloutNewVegasCompatibilityRecords();
         ensureNeededRecords();
         fillGlobalVariables();
 
         mStore.setUp();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         mStore.validateRecords(mReaders);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
         mStore.movePlayerRecord();
 
         mSwimHeightScale = mStore.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat();
@@ -838,6 +847,10 @@ namespace MWWorld
 
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -1121,13 +1134,18 @@ namespace MWWorld
 
         fillGlobalVariables();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
     }
 
     int World::countSavedGameRecords() const
     {
         return mWorldModel.countSavedGameRecords() + mStore.countSavedGameRecords()
             + mGlobalVariables.countSavedGameRecords() + mProjectileManager->countSavedGameRecords()
-            + mESM4QuestRuntime.countSavedGameRecords() + 1 // player record
+            + mESM4QuestRuntime.countSavedGameRecords() + mFalloutPlayerRuntimeState.countSavedGameRecords()
+            + 1 // player record
             + 1 // weather record
             + 1 // actorId counter
             + 1 // levitation/teleport enabled state
@@ -1160,6 +1178,7 @@ namespace MWWorld
         mPlayer->write(writer, progress);
         mGlobalVariables.write(writer, progress);
         mESM4QuestRuntime.write(writer);
+        mFalloutPlayerRuntimeState.write(writer);
         mWeatherManager->write(writer, progress);
         mProjectileManager->write(writer, progress);
 
@@ -1192,6 +1211,9 @@ namespace MWWorld
             break;
             case ESM::REC_FQST:
                 mESM4QuestRuntime.readRecord(reader);
+                break;
+            case ESM::REC_FPLR:
+                mFalloutPlayerRuntimeState.readRecord(reader);
                 break;
             case ESM::REC_PLAY:
                 if (reader.getFormatVersion() <= ESM::MaxPlayerBeforeCellDataFormatVersion && !mIdsRebuilt)
@@ -1605,6 +1627,15 @@ namespace MWWorld
 
     void World::advanceTime(double hours, bool incremental)
     {
+        if (incremental && std::getenv("OPENMW_FNV_PROOF_FREEZE_TIME") != nullptr)
+        {
+            static int proofFreezeLogs = 0;
+            if (proofFreezeLogs++ < 8)
+                Log(Debug::Info) << "FNV/ESM4 proof: froze incremental game time advance hours=" << hours
+                                 << " currentHour=" << mTimeManager->getTimeStamp().getHour();
+            return;
+        }
+
         if (!incremental)
         {
             // When we fast-forward time, we should recharge magic items
@@ -1766,6 +1797,21 @@ namespace MWWorld
             }
         }
         return osg::Matrixf::translate(actor.getRefData().getPosition().asVec3());
+    }
+
+    std::optional<osg::Matrixf> World::getActorNodeTransform(
+        const MWWorld::ConstPtr& actor, std::string_view nodeName) const
+    {
+        const MWRender::Animation* animation = mRendering->getAnimation(actor);
+        if (animation == nullptr)
+            return std::nullopt;
+        const osg::Node* node = animation->getNode(nodeName);
+        if (node == nullptr)
+            return std::nullopt;
+        const osg::NodePathList paths = node->getParentalNodePaths();
+        if (paths.empty())
+            return std::nullopt;
+        return osg::computeLocalToWorld(paths.front());
     }
 
     void World::deleteObject(const Ptr& ptr)
@@ -2574,6 +2620,7 @@ namespace MWWorld
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
         res.mHitObject = rayRes.mHitObject;
+        res.mHitNodePath = std::move(rayRes.mHitNodePath);
         if (res.mHitObject.isEmpty() && rayRes.mHitRefnum.isSet())
             res.mHitObject = MWBase::Environment::get().getWorldModel()->getPtr(rayRes.mHitRefnum);
         return res.mHit;
@@ -2664,6 +2711,11 @@ namespace MWWorld
     void World::changeWeather(const ESM::RefId& region, const ESM::RefId& id)
     {
         mWeatherManager->changeWeather(region, id);
+    }
+
+    bool World::forceWeather(const ESM::RefId& id)
+    {
+        return mWeatherManager->forceWeather(id);
     }
 
     void World::modRegion(const ESM::RefId& regionid, const std::vector<uint8_t>& chances)
@@ -3152,6 +3204,12 @@ namespace MWWorld
         return mRendering->getAnimation(ptr);
     }
 
+    MWRender::Animation* World::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        return mRendering->getFalloutWeaponAnimation(ptr, firstPerson);
+    }
+
     void World::screenshot(osg::Image* image, int w, int h)
     {
         mRendering->screenshot(image, w, h);
@@ -3371,8 +3429,9 @@ namespace MWWorld
             if (ptr.mRef->isDeleted())
                 return true;
 
-            // vanilla Morrowind does not allow to sell items from containers with zero capacity
-            if (ptr.getClass().getCapacity(ptr) <= 0.f)
+            // Vanilla Morrowind does not allow selling from zero-capacity TES3 containers. Fallout containers do not
+            // use TES3 capacity semantics, and retail vendor chests commonly have a zero weight/capacity field.
+            if (ptr.getType() == ESM::Container::sRecordId && ptr.getClass().getCapacity(ptr) <= 0.f)
                 return true;
 
             if (ptr.getCellRef().getOwner() == mOwner.getCellRef().getRefId())
@@ -3388,6 +3447,7 @@ namespace MWWorld
         {
             GetContainersOwnedByVisitor visitor(owner, out);
             cellstore->forEachType<ESM::Container>(visitor);
+            cellstore->forEachType<ESM4::Container>(visitor);
         }
     }
 
@@ -3920,6 +3980,34 @@ namespace MWWorld
         }
 
         mProjectileManager->launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength);
+    }
+
+    bool World::launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+        const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
+    std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->countPendingFalloutVatsProjectiles(actor)
+            : 0;
+    }
+
+    unsigned int World::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->detonateFalloutPlacedExplosives(actor)
+            : 0;
+    }
+
+    bool World::playFalloutImageSpaceModifier(ESM::FormId modifier, float strength)
+    {
+        return mWeatherManager != nullptr
+            && mWeatherManager->playFalloutImageSpaceModifier(modifier, strength);
     }
 
     void World::launchMagicBolt(
@@ -4569,9 +4657,16 @@ namespace MWWorld
     }
 
     void World::spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight)
+        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM::RefId& lightId)
     {
-        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX, useAmbientLight);
+        const ESM4::Light* light = lightId.empty()
+            ? nullptr
+            : mStore.get<ESM4::Light>().search(lightId);
+        if (!lightId.empty() && light == nullptr)
+            Log(Debug::Error) << "Effect references missing ESM4 light: " << lightId;
+        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX,
+            useAmbientLight, light, isCellExterior());
     }
 
     struct ResetActorsVisitor

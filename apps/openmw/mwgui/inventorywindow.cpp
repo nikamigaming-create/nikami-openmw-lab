@@ -39,6 +39,7 @@
 #include "countdialog.hpp"
 #include "draganddrop.hpp"
 #include "hud.hpp"
+#include "inventoryitemtype.hpp"
 #include "inventoryitemmodel.hpp"
 #include "itemtransfer.hpp"
 #include "itemview.hpp"
@@ -58,7 +59,7 @@ namespace
 
     bool isRightHandWeapon(const MWWorld::Ptr& item)
     {
-        if (item.getClass().getType() != ESM::Weapon::sRecordId)
+        if (!MWGui::isInventoryWeaponType(item.getClass().getType()))
             return false;
         std::vector<int> equipmentSlots = item.getClass().getEquipmentSlots(item).first;
         return (!equipmentSlots.empty() && equipmentSlots.front() == MWWorld::InventoryStore::Slot_CarriedRight);
@@ -435,8 +436,9 @@ namespace MWGui
             }
 
             // check if merchant accepts item
-            int services = MWBase::Environment::get().getWindowManager()->getTradeWindow()->getMerchantServices();
-            if (!object.getClass().canSell(object, services))
+            TradeWindow* tradeWindow = MWBase::Environment::get().getWindowManager()->getTradeWindow();
+            int services = tradeWindow->getMerchantServices();
+            if (!isItemAcceptedForBarter(object, tradeWindow->mPtr, services))
             {
                 MWBase::Environment::get().getWindowManager()->playSound(sound);
                 MWBase::Environment::get().getWindowManager()->messageBox("#{sBarterDialog4}");
@@ -447,7 +449,7 @@ namespace MWGui
         // If we unequip weapon during attack, it can lead to unexpected behaviour
         if (MWBase::Environment::get().getMechanicsManager()->isAttackingOrSpell(mPtr))
         {
-            bool isWeapon = item.mBase.getType() == ESM::Weapon::sRecordId;
+            const bool isWeapon = isInventoryWeaponType(item.mBase.getType());
             MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
 
             if (isWeapon && invStore.isEquipped(item.mBase))
@@ -828,7 +830,7 @@ namespace MWGui
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
         auto type = ptr.getType();
-        bool isWeaponOrArmor = type == ESM::Weapon::sRecordId || type == ESM::Armor::sRecordId;
+        const bool isWeaponOrArmor = isInventoryWeaponOrArmorType(type);
         bool isBroken = ptr.getClass().hasItemHealth(ptr) && ptr.getCellRef().getCharge() == 0;
         const bool isFromDragAndDrop = mDragAndDrop->mIsOnDragAndDrop && mDragAndDrop->mItem.mBase == ptr;
         const auto [canEquipResult, canEquipMsg] = ptr.getClass().canBeEquipped(ptr, mPtr);
@@ -987,6 +989,15 @@ namespace MWGui
     void InventoryWindow::setTrading(bool trading)
     {
         mTrading = trading;
+        if (mTradeModel == nullptr)
+            return;
+
+        TradeWindow* tradeWindow = MWBase::Environment::get().getWindowManager()->getTradeWindow();
+        if (trading && tradeWindow != nullptr && tradeWindow->mFlatFalloutTrade && !tradeWindow->mPtr.isEmpty())
+            mTradeModel->setMerchant(tradeWindow->mPtr, tradeWindow->mCurrency);
+        else
+            mTradeModel->setMerchant(MWWorld::Ptr());
+        mItemView->update();
     }
 
     void InventoryWindow::dirtyPreview()
@@ -1123,8 +1134,7 @@ namespace MWGui
 
             lastId = item.getCellRef().getRefId();
 
-            if (item.getClass().getType() == ESM::Weapon::sRecordId && isRightHandWeapon(item)
-                && item.getClass().canBeEquipped(item, player).first)
+            if (isRightHandWeapon(item) && item.getClass().canBeEquipped(item, player).first)
             {
                 found = true;
                 break;

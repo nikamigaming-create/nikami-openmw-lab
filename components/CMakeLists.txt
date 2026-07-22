@@ -204,6 +204,7 @@ add_component_dir (esm4
     common
     dialogue
     effect
+    fonvsavegame
     grid
     grouptype
     inventory
@@ -213,12 +214,14 @@ add_component_dir (esm4
     loadacti
     loadalch
     loadaloc
+    loadamef
     loadammo
     loadanio
     loadappa
     loadarma
     loadarmo
     loadaspc
+    loadavif
     loadbook
     loadbptd
     loadcell
@@ -232,6 +235,8 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+    loadexpl
+    loadfact
     loadflor
     loadflst
     loadfurn
@@ -254,6 +259,7 @@ add_component_dir (esm4
     loadlvlc
     loadlvli
     loadlvln
+    loadmgef
     loadmato
     loadmisc
     loadmset
@@ -265,11 +271,15 @@ add_component_dir (esm4
     loadnpc
     loadotft
     loadpack
+    loadperk
     loadpgrd
     loadpgre
     loadpwat
+    loadproj
     loadqust
     loadrace
+    loadrcct
+    loadrcpe
     loadrefr
     loadregn
     loadroad
@@ -281,6 +291,7 @@ add_component_dir (esm4
     loadslgm
     loadsndr
     loadsoun
+    loadspel
     loadstat
     loadtact
     loadterm
@@ -560,6 +571,10 @@ if(BUILD_OPENMW_VR)
         tracking
         typeconversion
     )
+else()
+    add_component_dir(vr
+        flat
+    )
 endif()
 
 add_component_dir(testing
@@ -780,6 +795,8 @@ if(BUILD_OPENMW_VR)
         target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
         target_link_libraries(components EGL)
     endif()
+else()
+    target_link_libraries(components openmw_openxr_headers)
 endif()
 
 if (USE_SYSTEM_TINYXML)

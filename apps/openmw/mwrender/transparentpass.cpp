@@ -120,6 +120,11 @@ namespace MWRender
             osgUtil::RenderLeaf* rl = *rit;
             const osg::StateSet* ss = rl->_parent->getStateSet();
 
+            // World-space VR GUI is already composited with its own alpha and must never populate the opaque
+            // post-process depth texture. Doing so lets an otherwise transparent HUD/menu quad erase the world.
+            if (rl->_drawable->getName() == "VRGUILayer")
+                continue;
+
             if (rl->_drawable->getNodeMask() == Mask_ParticleSystem || rl->_drawable->getNodeMask() == Mask_Effect)
                 continue;
 

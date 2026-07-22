@@ -1,20 +1,32 @@
 #include "../nif/node.hpp"
 
 #include <components/nif/node.hpp>
+#include <components/nif/niffile.hpp>
+#include <components/nif/controller.hpp>
 #include <components/nif/property.hpp>
+#include <components/nif/texture.hpp>
+#include <components/nifosg/controller.hpp>
+#include <components/nifosg/falloutkf.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
+#include <components/sceneutil/keyframe.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/serialize.hpp>
 #include <components/vfs/manager.hpp>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <osg/BlendFunc>
+#include <osg/Depth>
+#include <osg/NodeVisitor>
 #include <osgDB/Registry>
+#include <osg/Switch>
 
 #include <array>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -68,6 +80,188 @@ namespace
     {
     };
 
+    struct DrawableCountVisitor : osg::NodeVisitor
+    {
+        DrawableCountVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override { traverse(node); }
+        void apply(osg::Drawable&) override { ++mCount; }
+
+        unsigned int mCount = 0;
+    };
+
+    struct PrimitiveSetCountVisitor : osg::NodeVisitor
+    {
+        PrimitiveSetCountVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override { traverse(node); }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            if (const auto* geometry = dynamic_cast<const osg::Geometry*>(&drawable))
+                mCount += geometry->getNumPrimitiveSets();
+            else if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+            {
+                if (const osg::ref_ptr<osg::Geometry> source = rig->getSourceGeometry())
+                    mCount += source->getNumPrimitiveSets();
+            }
+        }
+
+        unsigned int mCount = 0;
+    };
+
+    struct FalloutMaterialOnlyGeometry
+    {
+        explicit FalloutMaterialOnlyGeometry(std::string_view name)
+        {
+            init(mGeometry);
+            mGeometry.mName = name;
+            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(nullptr);
+            mGeometry.mAlphaProperty = Nif::NiAlphaPropertyPtr(nullptr);
+
+            mData.recType = Nif::RC_NiTriShapeData;
+            mData.mVertices = { osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f),
+                osg::Vec3f(0.f, 1.f, 0.f) };
+            mData.mTriangles = { 0, 1, 2 };
+            mGeometry.mData = Nif::NiGeometryDataPtr(&mData);
+
+            init(static_cast<Nif::NiObjectNET&>(mMaterial));
+            mMaterial.recType = Nif::RC_NiMaterialProperty;
+            mGeometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&mMaterial));
+
+            init(static_cast<Nif::NiObjectNET&>(mAlpha));
+            mAlpha.recType = Nif::RC_NiAlphaProperty;
+        }
+
+        void addAlpha(uint16_t flags, uint8_t threshold = 0)
+        {
+            mAlpha.mFlags = flags;
+            mAlpha.mThreshold = threshold;
+            mGeometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&mAlpha));
+        }
+
+        Nif::NiTriShape mGeometry;
+        Nif::NiTriShapeData mData;
+        Nif::NiMaterialProperty mMaterial;
+        Nif::NiAlphaProperty mAlpha;
+    };
+
+    struct FalloutDismemberGeometry
+    {
+        FalloutDismemberGeometry()
+        {
+            init(mGeometry);
+            mGeometry.mName = "Object03:0";
+            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(nullptr);
+            mGeometry.mAlphaProperty = Nif::NiAlphaPropertyPtr(nullptr);
+
+            mData.recType = Nif::RC_NiTriShapeData;
+            mData.mVertices = { osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f),
+                osg::Vec3f(0.f, 1.f, 0.f) };
+            mGeometry.mData = Nif::NiGeometryDataPtr(&mData);
+
+            init(static_cast<Nif::NiSkinInstance&>(mSkin));
+            mSkin.recType = Nif::RC_BSDismemberSkinInstance;
+            mSkin.mData = Nif::NiSkinDataPtr(&mSkinData);
+            mSkin.mPartitions = Nif::NiSkinPartitionPtr(&mPartitions);
+            mGeometry.mSkin = Nif::NiSkinInstancePtr(&mSkin);
+
+            init(mSkinData.mTransform);
+            constexpr std::array<std::uint16_t, 4> bodyPartTypes{ 0, 7000, 107, 205 };
+            for (std::uint16_t type : bodyPartTypes)
+            {
+                Nif::NiSkinPartition::Partition partition{};
+                partition.mTrueTriangles = { 0, 1, 2 };
+                mPartitions.mPartitions.push_back(std::move(partition));
+                mSkin.mParts.push_back({ type == 0 || type == 7000 ? std::uint16_t{ 257 } : std::uint16_t{ 256 },
+                    type });
+            }
+        }
+
+        Nif::NiTriShape mGeometry;
+        Nif::NiTriShapeData mData;
+        Nif::BSDismemberSkinInstance mSkin;
+        Nif::NiSkinData mSkinData;
+        Nif::NiSkinPartition mPartitions;
+    };
+
+    struct FalloutPPLightingGeometry : FalloutMaterialOnlyGeometry
+    {
+        explicit FalloutPPLightingGeometry(uint32_t shaderFlags1)
+            : FalloutMaterialOnlyGeometry("Siding:0")
+        {
+            mData.mUVList.push_back(
+                { osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
+            init(static_cast<Nif::NiObjectNET&>(mShader));
+            mShader.recType = Nif::RC_BSShaderPPLightingProperty;
+            mShader.mType = static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default);
+            mShader.mShaderFlags1 = shaderFlags1;
+            mShader.mController = nullptr;
+            mShader.mTextureSet = Nif::BSShaderTextureSetPtr(&mTextureSet);
+            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(&mShader);
+            mTextureSet.mTextures = { "textures/test/diffuse.dds", "textures/test/normal.dds" };
+        }
+
+        Nif::BSShaderPPLightingProperty mShader;
+        Nif::BSShaderTextureSet mTextureSet;
+    };
+
+    struct FindNamedNodeStateSetVisitor : osg::NodeVisitor
+    {
+        explicit FindNamedNodeStateSetVisitor(std::string_view name)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mName(name)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (mStateSet == nullptr && node.getName() == mName && node.getStateSet() != nullptr)
+                mStateSet = node.getStateSet();
+            traverse(node);
+        }
+
+        std::string mName;
+        const osg::StateSet* mStateSet = nullptr;
+    };
+
+    unsigned int loadFalloutGeometryAndCountDrawables(FalloutMaterialOnlyGeometry& fixture,
+        VFS::Path::NormalizedView path, Resource::ImageManager& imageManager,
+        Resource::BgsmFileManager& materialManager)
+    {
+        Nif::NIFFile file(path);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &imageManager, &materialManager);
+        EXPECT_NE(result, nullptr);
+        if (result == nullptr)
+            return 0;
+
+        DrawableCountVisitor visitor;
+        result->accept(visitor);
+        return visitor.mCount;
+    }
+
+    osg::ref_ptr<osg::Node> loadFalloutPPLightingGeometry(FalloutPPLightingGeometry& fixture,
+        Resource::ImageManager& imageManager, Resource::BgsmFileManager& materialManager)
+    {
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+        return Loader::load(file, &imageManager, &materialManager);
+    }
+
     TEST_F(NifOsgLoaderTest, shouldLoadFileWithDefaultNode)
     {
         Nif::NiAVObject node;
@@ -110,6 +304,243 @@ osg::Group {
   }
 }
 )");
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldEnableAuthoredInitialSwitchChildAfterLoadingChildren)
+    {
+        Nif::NiSwitchNode switchRecord;
+        init(static_cast<Nif::NiAVObject&>(switchRecord));
+        switchRecord.recType = Nif::RC_NiSwitchNode;
+        switchRecord.mName = "screen selector";
+        switchRecord.mInitialIndex = 1;
+
+        Nif::NiNode firstChild;
+        init(static_cast<Nif::NiAVObject&>(firstChild));
+        firstChild.mName = "static";
+        firstChild.mParents.push_back(&switchRecord);
+
+        Nif::NiNode secondChild;
+        init(static_cast<Nif::NiAVObject&>(secondChild));
+        secondChild.mName = "face";
+        secondChild.mParents.push_back(&switchRecord);
+
+        switchRecord.mChildren
+            = { Nif::NiAVObjectPtr(&firstChild), Nif::NiAVObjectPtr(&secondChild) };
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&switchRecord);
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+
+        ASSERT_NE(result, nullptr);
+        ASSERT_TRUE(result->asGroup());
+        ASSERT_EQ(result->asGroup()->getNumChildren(), 1u);
+        osg::Group* switchTransform = result->asGroup()->getChild(0)->asGroup();
+        ASSERT_NE(switchTransform, nullptr);
+        ASSERT_EQ(switchTransform->getNumChildren(), 1u);
+        osg::Switch* loadedSwitch = dynamic_cast<osg::Switch*>(switchTransform->getChild(0));
+        ASSERT_NE(loadedSwitch, nullptr);
+        ASSERT_EQ(loadedSwitch->getNumChildren(), 2u);
+        EXPECT_FALSE(loadedSwitch->getValue(0));
+        EXPECT_TRUE(loadedSwitch->getValue(1));
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldSkipMaterialOnlyRootHelperGeometryInFalloutActorAddon)
+    {
+        FalloutMaterialOnlyGeometry fixture("Screen01Root:0");
+
+        EXPECT_EQ(loadFalloutGeometryAndCountDrawables(fixture,
+                      VFS::Path::NormalizedView("meshes/creatures/test/actor-addon.nif"), mImageManager,
+                      mMaterialManager),
+            0u);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldKeepRenderableOrNonActorGeometryThatResemblesFalloutRootHelper)
+    {
+        FalloutMaterialOnlyGeometry renderable("Screen01Root:0");
+        renderable.mData.mUVList.push_back(
+            { osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
+        EXPECT_EQ(loadFalloutGeometryAndCountDrawables(renderable,
+                      VFS::Path::NormalizedView("meshes/creatures/test/actor-addon.nif"), mImageManager,
+                      mMaterialManager),
+            1u);
+
+        FalloutMaterialOnlyGeometry worldGeometry("Screen01Root:0");
+        EXPECT_EQ(loadFalloutGeometryAndCountDrawables(worldGeometry,
+                      VFS::Path::NormalizedView("meshes/architecture/test/world.nif"), mImageManager,
+                      mMaterialManager),
+            1u);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldHideOnlyConditionalFalloutDismemberCapPartitionsForIntactActors)
+    {
+        FalloutDismemberGeometry fixture;
+        Nif::NIFFile file(VFS::Path::NormalizedView("meshes/armor/test/generic-object-name.nif"));
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        PrimitiveSetCountVisitor visitor;
+        result->accept(visitor);
+        EXPECT_EQ(visitor.mCount, 2u);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldProtectAuthoredNonstandardNiAlphaBlendFromAncestorOverride)
+    {
+        FalloutMaterialOnlyGeometry overlay("Screenreflection01:0");
+        overlay.addAlpha(0x1001); // blending enabled, ONE / ONE
+
+        Nif::NIFFile file(VFS::Path::NormalizedView("meshes/creatures/test/actor-addon.nif"));
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&overlay.mGeometry);
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Screenreflection01:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        EXPECT_NE(visitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::PROTECTED, 0u);
+        const auto* blend = dynamic_cast<const osg::BlendFunc*>(
+            visitor.mStateSet->getAttribute(osg::StateAttribute::BLENDFUNC));
+        ASSERT_NE(blend, nullptr);
+        EXPECT_EQ(blend->getSource(), osg::BlendFunc::ONE);
+        EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldIgnorePackedDiffuseAlphaForUnflaggedFalloutPpLighting)
+    {
+        FalloutPPLightingGeometry fixture(0);
+        osg::ref_ptr<osg::Node> result
+            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Siding:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        EXPECT_NE(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldPreserveAuthoredFalloutPpLightingAlphaContracts)
+    {
+        FalloutPPLightingGeometry alphaTexture(Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
+        osg::ref_ptr<osg::Node> alphaTextureResult
+            = loadFalloutPPLightingGeometry(alphaTexture, mImageManager, mMaterialManager);
+        ASSERT_NE(alphaTextureResult, nullptr);
+        FindNamedNodeStateSetVisitor alphaTextureVisitor("Siding:0");
+        alphaTextureResult->accept(alphaTextureVisitor);
+        ASSERT_NE(alphaTextureVisitor.mStateSet, nullptr);
+        EXPECT_EQ(alphaTextureVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+
+        FalloutPPLightingGeometry niAlpha(0);
+        niAlpha.addAlpha(0x12ed); // standard blend plus alpha test
+        osg::ref_ptr<osg::Node> niAlphaResult
+            = loadFalloutPPLightingGeometry(niAlpha, mImageManager, mMaterialManager);
+        ASSERT_NE(niAlphaResult, nullptr);
+        FindNamedNodeStateSetVisitor niAlphaVisitor("Siding:0");
+        niAlphaResult->accept(niAlphaVisitor);
+        ASSERT_NE(niAlphaVisitor.mStateSet, nullptr);
+        EXPECT_EQ(niAlphaVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldRouteStaticFalloutDirectionalSlsByMaterialContract)
+    {
+        FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        fixture.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_DepthWrite;
+        fixture.addAlpha(0x12ec, 70); // alpha test GREATER, no blending
+        osg::ref_ptr<osg::Node> result
+            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Siding:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        const osg::Uniform* slsMode = visitor.mStateSet->getUniform("falloutSlsMode");
+        ASSERT_NE(slsMode, nullptr);
+        int value = 0;
+        ASSERT_TRUE(slsMode->get(value));
+        EXPECT_EQ(value, 2);
+        EXPECT_EQ(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldNotRouteNearMissesThroughStaticFalloutDirectionalSls)
+    {
+        auto getSlsMode = [this](FalloutPPLightingGeometry& fixture) {
+            osg::ref_ptr<osg::Node> result
+                = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+            EXPECT_NE(result, nullptr);
+            if (result == nullptr)
+                return -1;
+            FindNamedNodeStateSetVisitor visitor("Siding:0");
+            result->accept(visitor);
+            EXPECT_NE(visitor.mStateSet, nullptr);
+            if (visitor.mStateSet == nullptr)
+                return -1;
+            const osg::Uniform* uniform = visitor.mStateSet->getUniform("falloutSlsMode");
+            if (uniform == nullptr)
+                return 0;
+            int value = 0;
+            EXPECT_TRUE(uniform->get(value));
+            return value;
+        };
+        auto addSignAlpha = [](FalloutPPLightingGeometry& fixture) { fixture.addAlpha(0x12ec, 70); };
+
+        FalloutPPLightingGeometry specular(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures
+            | Nif::BSShaderFlags1::BSSFlag1_Specular);
+        addSignAlpha(specular);
+        EXPECT_EQ(getSlsMode(specular), 0);
+
+        FalloutPPLightingGeometry noRemap(0);
+        addSignAlpha(noRemap);
+        EXPECT_EQ(getSlsMode(noRemap), 0);
+
+        FalloutPPLightingGeometry noAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        EXPECT_EQ(getSlsMode(noAlpha), 0);
+
+        FalloutPPLightingGeometry blendedAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        blendedAlpha.addAlpha(0x12ed, 70);
+        EXPECT_EQ(getSlsMode(blendedAlpha), 0);
+
+        FalloutPPLightingGeometry vertexColors(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        addSignAlpha(vertexColors);
+        vertexColors.mData.mColors = { osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+            osg::Vec4f(1.f, 1.f, 1.f, 1.f) };
+        EXPECT_EQ(getSlsMode(vertexColors), 0);
+
+        FalloutPPLightingGeometry pointLit(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        addSignAlpha(pointLit);
+        pointLit.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_FalloutSlsPointLightMask;
+        EXPECT_EQ(getSlsMode(pointLit), 0);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldApplyBsPpLightingDepthFlags)
+    {
+        Nif::NiAVObject node;
+        init(node);
+        Nif::BSShaderPPLightingProperty property;
+        property.recType = Nif::RC_BSShaderPPLightingProperty;
+        property.mTextureSet = nullptr;
+        property.mController = nullptr;
+        property.mShaderFlags1 = Nif::BSShaderFlags1::BSSFlag1_DepthTest;
+        property.mShaderFlags2 = 0;
+        node.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&property));
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&node);
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+
+        ASSERT_NE(result, nullptr);
+        ASSERT_TRUE(result->asGroup());
+        ASSERT_EQ(result->asGroup()->getNumChildren(), 1u);
+        const osg::StateSet* stateSet = result->asGroup()->getChild(0)->getStateSet();
+        ASSERT_NE(stateSet, nullptr);
+        const auto* depth = dynamic_cast<const osg::Depth*>(stateSet->getAttribute(osg::StateAttribute::DEPTH));
+        ASSERT_NE(depth, nullptr);
+        EXPECT_EQ(depth->getFunction(), osg::Depth::LEQUAL);
+        EXPECT_FALSE(depth->getWriteMask());
     }
 
     std::string formatOsgNodeForBSShaderProperty(std::string_view shaderPrefix)
@@ -160,6 +591,9 @@ osg::Group {
       StateSet TRUE {
         osg::StateSet {
           UniqueID 9
+          ModeList 1 {
+            GL_DEPTH_TEST OFF
+          }
         }
       }
     }
@@ -247,7 +681,7 @@ osg::Group {
         static constexpr std::array sParams = {
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default), "bs/default" },
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_NoLighting), "bs/nolighting" },
-            ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin), "bs/default" },
+            ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin), "bs/skin" },
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Tile), "bs/default" },
             ShaderPrefixParams{ std::numeric_limits<unsigned int>::max(), "bs/default" },
         };
@@ -301,4 +735,152 @@ osg::Group {
 
     INSTANTIATE_TEST_SUITE_P(
         Params, NifOsgLoaderBSLightingShaderPrefixTest, ValuesIn(NifOsgLoaderBSLightingShaderPrefixTest::sParams));
+
+    TEST(NifOsgFalloutKfTest, shouldKeepDogLandAndSwimGroupsDisjointUnderLastSourceWins)
+    {
+        // VFS recursive discovery is lexical, and Animation::play searches sources in reverse insertion order.
+        static constexpr std::array<std::string_view, 14> dogSources = {
+            "meshes/creatures/dog/h2hbackward.kf",
+            "meshes/creatures/dog/locomotion/h2hfastforward.kf",
+            "meshes/creatures/dog/locomotion/h2hforward.kf",
+            "meshes/creatures/dog/locomotion/mtfastforward.kf",
+            "meshes/creatures/dog/locomotion/mtforward.kf",
+            "meshes/creatures/dog/mtbackrward.kf",
+            "meshes/creatures/dog/mtidle.kf",
+            "meshes/creatures/dog/mtturnleft.kf",
+            "meshes/creatures/dog/mtturnright.kf",
+            "meshes/creatures/dog/swimfastforward.kf",
+            "meshes/creatures/dog/swimforward.kf",
+            "meshes/creatures/dog/swimidle.kf",
+            "meshes/creatures/dog/swimturnleft.kf",
+            "meshes/creatures/dog/swimturnright.kf",
+        };
+
+        std::map<std::string_view, std::string_view, std::less<>> winningSource;
+        for (std::string_view source : dogSources)
+        {
+            for (std::string_view group : getFalloutKfLoopGroups(source))
+                winningSource[group] = source;
+        }
+
+        EXPECT_EQ(winningSource.at("walkforward"), "meshes/creatures/dog/locomotion/mtforward.kf");
+        EXPECT_EQ(winningSource.at("runforward"), "meshes/creatures/dog/locomotion/mtfastforward.kf");
+        EXPECT_EQ(winningSource.at("walkback"), "meshes/creatures/dog/mtbackrward.kf");
+        EXPECT_EQ(winningSource.at("turnleft"), "meshes/creatures/dog/mtturnleft.kf");
+        EXPECT_EQ(winningSource.at("turnright"), "meshes/creatures/dog/mtturnright.kf");
+        EXPECT_EQ(winningSource.at("swimwalkforward"), "meshes/creatures/dog/swimforward.kf");
+        EXPECT_EQ(winningSource.at("swimrunforward"), "meshes/creatures/dog/swimfastforward.kf");
+        EXPECT_EQ(winningSource.at("idleswim"), "meshes/creatures/dog/swimidle.kf");
+        EXPECT_EQ(winningSource.at("swimturnleft"), "meshes/creatures/dog/swimturnleft.kf");
+        EXPECT_EQ(winningSource.at("swimturnright"), "meshes/creatures/dog/swimturnright.kf");
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldUseCompleteRetailDogSequenceDurationsForLoops)
+    {
+        const auto findKeyTime = [](const SceneUtil::TextKeyMap& keys, std::string_view text) {
+            const auto found = std::find_if(keys.begin(), keys.end(),
+                [&](const auto& value) { return value.second == text; });
+            return found == keys.end() ? -1.f : found->first;
+        };
+
+        SceneUtil::TextKeyMap walk;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/locomotion/mtforward.kf", 0.f, 2.66666675f, walk));
+        EXPECT_TRUE(walk.hasGroupStart("walkforward"));
+        EXPECT_FALSE(walk.hasGroupStart("runforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(walk, "walkforward: loop stop"), 2.66666675f);
+
+        SceneUtil::TextKeyMap run;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/locomotion/mtfastforward.kf", 0.f, 1.5f, run));
+        EXPECT_TRUE(run.hasGroupStart("runforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(run, "runforward: loop stop"), 1.5f);
+
+        SceneUtil::TextKeyMap swim;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/swimforward.kf", 0.f, 2.f, swim));
+        EXPECT_TRUE(swim.hasGroupStart("swimwalkforward"));
+        EXPECT_FALSE(swim.hasGroupStart("walkforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(swim, "swimwalkforward: loop stop"), 2.f);
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldKeepSelectedDogHitReactionFromStealingIdle)
+    {
+        static constexpr std::string_view idleSource = "meshes/creatures/dog/mtidle.kf";
+        static constexpr std::string_view hitSource
+            = "meshes/creatures/dog/idleanims/mtspecialidle_hithead.kf";
+
+        std::map<std::string_view, std::string_view, std::less<>> winningSource;
+        for (std::string_view group : getFalloutKfLoopGroups(idleSource))
+            winningSource[group] = idleSource;
+
+        SceneUtil::TextKeyMap hitKeys;
+        hitKeys.emplace(0.f, "start");
+        hitKeys.emplace(0.167f, "enum: idle");
+        hitKeys.emplace(0.8f, "end");
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(hitSource, 0.f, 0.8f, hitKeys));
+        EXPECT_TRUE(hitKeys.hasGroupStart("idle"));
+        EXPECT_TRUE(hitKeys.hasGroupStart("idle2"));
+        hitKeys.emplace(0.f, "hit1: start");
+        hitKeys.emplace(0.8f, "hit1: stop");
+
+        EXPECT_TRUE(isolateFalloutCreatureHitReactionTextKeys(hitKeys, "hit1"));
+        EXPECT_TRUE(hitKeys.hasGroupStart("hit1"));
+        EXPECT_FALSE(hitKeys.hasGroupStart("idle"));
+        EXPECT_FALSE(hitKeys.hasGroupStart("idle2"));
+        EXPECT_NE(std::find_if(hitKeys.begin(), hitKeys.end(),
+                      [](const auto& value) { return value.second == "enum: idle"; }),
+            hitKeys.end());
+
+        // The selected hit source is added last. Only its explicit hit alias may win reverse lookup.
+        for (const std::string& group : hitKeys.getGroups())
+            winningSource[group] = hitSource;
+        EXPECT_EQ(winningSource.at("idle"), idleSource);
+        EXPECT_EQ(winningSource.at("hit1"), hitSource);
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldLoadBethesdaRotationalAccumulationTransform)
+    {
+        Nif::NiTransformInterpolator interpolator;
+        interpolator.recType = Nif::RC_BSRotAccumTransfInterpolator;
+        interpolator.mDefaultValue.mTranslation = osg::Vec3f(1.f, 2.f, 3.f);
+        interpolator.mDefaultValue.mRotation = osg::Quat();
+        interpolator.mDefaultValue.mScale = 1.f;
+        interpolator.mData = Nif::NiKeyframeDataPtr(nullptr);
+
+        Nif::NiControllerSequence sequence;
+        sequence.recType = Nif::RC_NiControllerSequence;
+        sequence.mName = "Forward";
+        sequence.mStartTime = 0.f;
+        sequence.mStopTime = 1.f;
+        sequence.mFrequency = 1.f;
+        sequence.mPhase = 0.f;
+        sequence.mTextKeys = Nif::ExtraPtr(nullptr);
+        sequence.mManager = Nif::NiControllerManagerPtr(nullptr);
+        sequence.mStringPalette = Nif::NiStringPalettePtr(nullptr);
+        Nif::ControlledBlock block;
+        block.mTargetName = "Bip01 Wheel";
+        block.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+        block.mController = Nif::NiTimeControllerPtr(nullptr);
+        block.mBlendInterpolator = Nif::NiBlendInterpolatorPtr(nullptr);
+        block.mStringPalette = Nif::NiStringPalettePtr(nullptr);
+        sequence.mControlledBlocks.push_back(block);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&sequence);
+        SceneUtil::KeyframeHolder keyframes;
+        Loader::loadKf(Nif::FileView(file), keyframes);
+
+        const auto found = keyframes.mKeyframeControllers.find("Bip01 Wheel");
+        ASSERT_NE(found, keyframes.mKeyframeControllers.end());
+        const auto* sequenceController = dynamic_cast<const NifOsg::KeyframeController*>(found->second.get());
+        ASSERT_NE(sequenceController, nullptr);
+        EXPECT_TRUE(sequenceController->hasTransformChannels());
+
+        Nif::NiKeyframeController nifController;
+        nifController.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+        nifController.mData = Nif::NiKeyframeDataPtr(nullptr);
+        NifOsg::KeyframeController nodeController(&nifController);
+        EXPECT_TRUE(nodeController.hasTransformChannels());
+    }
 }

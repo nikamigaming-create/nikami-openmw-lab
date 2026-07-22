@@ -27,7 +27,9 @@
 #include "loadweap.hpp"
 
 #include <array>
+#include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #include "reader.hpp"
 //#include "writer.hpp"
@@ -37,10 +39,79 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     if (dnam.size() < 16)
         return false;
 
+    const auto readFloat = [&](std::size_t offset) {
+        float value = 0.f;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+    const auto readUint32 = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+    const auto readInt32 = [&](std::size_t offset) {
+        std::int32_t value = 0;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+
     data.animationType = dnam[0];
+    data.animationMultiplier = readFloat(4);
+    data.reach = readFloat(8);
+    data.weaponFlags1 = dnam[12];
     data.handGrip = dnam[13];
     data.ammoUse = dnam[14];
     data.reloadAnim = dnam[15];
+
+    if (dnam.size() < 68)
+        return true;
+
+    data.minSpread = readFloat(16);
+    data.spread = readFloat(20);
+    data.sightFov = readFloat(28);
+    data.projectile = ESM::FormId::fromUint32(readUint32(36));
+    data.baseVatsChance = dnam[40];
+    data.attackAnim = dnam[41];
+    data.numProjectiles = dnam[42];
+    data.embedWeaponActorValue = dnam[43];
+    data.minRange = readFloat(44);
+    data.maxRange = readFloat(48);
+    data.onHit = readUint32(52);
+    data.flags2 = readUint32(56);
+    data.animAttackMult = readFloat(60);
+    data.fireRate = readFloat(64);
+    data.hasBallistics = true;
+
+    if (dnam.size() >= 72)
+        data.overrideActionPoints = readFloat(68);
+    if (dnam.size() >= 88)
+        data.damageToWeaponMult = readFloat(84);
+    if (dnam.size() >= 92)
+        data.animShotsPerSec = readFloat(88);
+    if (dnam.size() >= 108)
+        data.skillActorValue = readInt32(104);
+    if (dnam.size() >= 120)
+        data.limbDamageMult = readFloat(116);
+    if (dnam.size() >= 132)
+        data.semiAutoFireDelayMin = readFloat(128);
+    if (dnam.size() >= 136)
+        data.semiAutoFireDelayMax = readFloat(132);
+    return true;
+}
+
+bool ESM4::loadFalloutWeaponCrdt(std::span<const std::uint8_t> crdt, Weapon::CriticalData& data)
+{
+    constexpr std::size_t serializedSize = 16;
+    if (crdt.size() != serializedSize)
+        return false;
+
+    std::uint32_t effect = 0;
+    std::memcpy(&data.damage, crdt.data(), sizeof(data.damage));
+    std::memcpy(&data.chanceMultiplier, crdt.data() + 4, sizeof(data.chanceMultiplier));
+    data.flags = crdt[8];
+    std::memcpy(&effect, crdt.data() + 12, sizeof(effect));
+    data.effect = ESM::FormId::fromUint32(effect);
+    data.present = true;
     return true;
 }
 
@@ -97,6 +168,9 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
+            case ESM::fourCC("MOD4"):
+                reader.getZString(mFirstPersonModel);
+                break;
             case ESM::fourCC("ICON"):
                 reader.getZString(mIcon);
                 break;
@@ -139,13 +213,24 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("DNAM"):
                 if (isFalloutWeapon && subHdr.dataSize >= 16)
                 {
-                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP animation fields documented by xNVSE:
-                    // type, three padding bytes, animation multiplier, reach, flags, hand grip, ammo use, reload.
-                    std::array<std::uint8_t, 16> dnam{};
+                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP fields documented by xNVSE. Preserve the
+                    // whole serialized record so the firing path receives range/projectile/cadence bytes too.
+                    std::vector<std::uint8_t> dnam(subHdr.dataSize);
                     reader.get(dnam.data(), dnam.size());
                     loadFalloutWeaponDnam(dnam, mData);
-                    if (subHdr.dataSize > 16)
-                        reader.skipSubRecordData(subHdr.dataSize - 16);
+                    if (mData.hasBallistics)
+                        reader.adjustFormId(mData.projectile);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("CRDT"):
+                if (isFalloutWeapon && subHdr.dataSize == 16)
+                {
+                    std::array<std::uint8_t, 16> crdt{};
+                    reader.get(crdt.data(), crdt.size());
+                    loadFalloutWeaponCrdt(crdt, mCriticalData);
+                    reader.adjustFormId(mCriticalData.effect);
                 }
                 else
                     reader.skipSubRecordData();
@@ -174,7 +259,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("CNAM"):
-            case ESM::fourCC("CRDT"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
             case ESM::fourCC("KSIZ"):
@@ -188,7 +272,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
             case ESM::fourCC("NAM6"): // FO3
-            case ESM::fourCC("MOD4"): // First person model data
             case ESM::fourCC("MO4T"):
             case ESM::fourCC("MO4S"):
             case ESM::fourCC("MO4C"):

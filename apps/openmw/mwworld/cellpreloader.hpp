@@ -45,6 +45,13 @@ namespace MWWorld
     class CellPreloader
     {
     public:
+        enum class PreloadState
+        {
+            NotRequested,
+            Pending,
+            Complete
+        };
+
         CellPreloader(Resource::ResourceSystem* resourceSystem, Resource::BulletShapeManager* bulletShapeManager,
             Terrain::World* terrain, MWRender::LandManager* landManager);
         ~CellPreloader();
@@ -75,6 +82,8 @@ namespace MWWorld
         std::size_t getMaxCacheSize() const { return mMaxCacheSize; }
 
         std::size_t getCacheSize() const { return mPreloadCells.size(); }
+
+        PreloadState getPreloadState(const MWWorld::CellStore& cell) const;
 
         void setWorkQueue(osg::ref_ptr<SceneUtil::WorkQueue> workQueue);
 

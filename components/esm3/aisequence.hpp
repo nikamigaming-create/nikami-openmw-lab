@@ -48,6 +48,8 @@ namespace ESM
         struct AiWanderDuration
         {
             float mRemainingDuration;
+            // Reuses the reserved word in STAR. Zero keeps legacy wander arrival behaviour.
+            std::uint32_t mDestinationTolerance = 0;
         };
 
         struct AiTravelData
@@ -68,6 +70,10 @@ namespace ESM
 
             bool mStoredInitialActorPosition;
             Vector3 mInitialActorPosition;
+
+            // An engine-private save placeholder for a record-driven FNV sandbox package. The mechanics loader
+            // omits this WAND and lets the owning FNV actor rebuild its PACK/IDLM/IDLE/ANIO pipeline.
+            bool mReevaluateFnvSandbox = false;
 
             /// \todo add more AiWander state
 

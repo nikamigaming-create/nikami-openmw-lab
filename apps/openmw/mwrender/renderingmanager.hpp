@@ -7,9 +7,11 @@
 #include "vismask.hpp"
 
 #include <components/settings/settings.hpp>
+#include <components/esm/formid.hpp>
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Light>
+#include <osg/Matrixf>
 #include <osg/ref_ptr>
 
 #include <osgUtil/IncrementalCompileOperation>
@@ -19,10 +21,12 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace osg
 {
     class Group;
+    class MatrixTransform;
     class PositionAttitudeTransform;
 }
 
@@ -51,6 +55,7 @@ namespace ESM
 
 namespace ESM4
 {
+    struct Light;
     struct Npc;
 }
 
@@ -104,6 +109,7 @@ namespace MWRender
     class FogManager;
     class SkyManager;
     class Animation;
+    class ESM4NpcAnimation;
     class NpcAnimation;
     class Pathgrid;
     class Camera;
@@ -129,6 +135,7 @@ namespace MWRender
         osg::Vec3f mHitPointLocal;
         MWWorld::Ptr mHitObject;
         osg::Node* mHitNode;
+        std::vector<std::string> mHitNodePath;
         /// Cast a ray between two points
         ESM::RefNum mHitRefnum;
         float mRatio;
@@ -173,6 +180,7 @@ namespace MWRender
         const osg::Vec4f& getSunLightPosition() const { return mSunLight->getPosition(); }
         void setSunDirection(const osg::Vec3f& direction);
         void setSunPosition(const osg::Vec3f& position);
+        void setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition);
         void setSunColour(const osg::Vec4f& diffuse, const osg::Vec4f& specular, float sunVis);
         void setNight(bool isNight) { mNight = isNight; }
 
@@ -180,6 +188,7 @@ namespace MWRender
         void configureFog(const MWWorld::Cell& cell);
         void configureFog(
             float fogDepth, float underwaterFog, float dlFactor, float dlOffset, const osg::Vec4f& colour);
+        void configureFog(float fogNear, float fogFar, float underwaterFog, const osg::Vec4f& colour);
 
         void addCell(const MWWorld::CellStore* store);
         void removeCell(const MWWorld::CellStore* store);
@@ -220,7 +229,8 @@ namespace MWRender
         SkyManager* getSkyManager();
 
         void spawnEffect(VFS::Path::NormalizedView model, std::string_view texture, const osg::Vec3f& worldPosition,
-            float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true);
+            float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM4::Light* light = nullptr, bool isExterior = false);
 
         /// Clear all savegame-specific data
         void clear();
@@ -234,6 +244,7 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+        Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
 
         PostProcessor* getPostProcessor();
 
@@ -263,8 +274,22 @@ namespace MWRender
 
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);
+        /// Temporarily override the complete projection contract. This is used when a source engine's
+        /// clip-space matrix is the oracle and recomputing it through another API would change float words.
+        void overrideProjectionMatrix(
+            const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip);
+        void resetProjectionMatrixOverride();
         void setFieldOfView(float val);
+        /// Set the field of view used when the next first-person player animation is constructed.
+        void setFirstPersonFieldOfView(float val) { mFirstPersonFieldOfView = val; }
+        /// Carry only preflighted native-save ExtraWorn identities into the visual player proxy.
+        void setFalloutSaveWornVisualItems(std::vector<ESM::FormId> items)
+        {
+            mFalloutSaveWornVisualItems = std::move(items);
+        }
         float getFieldOfView() const;
+        bool isFieldOfViewOverridden() const { return mFieldOfViewOverridden; }
+        bool isProjectionMatrixOverridden() const { return mProjectionMatrixOverridden; }
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
 
@@ -371,9 +396,16 @@ namespace MWRender
         osg::ref_ptr<PostProcessor> mPostProcessor;
         std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
         osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
+        osg::ref_ptr<ESM4NpcAnimation> mFalloutPlayerFirstPersonAnimation;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
+        std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
+        std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
+        bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;
+        bool mFalloutPlayerFirstPersonAlignmentLogged = false;
         osg::Vec3f mFalloutPlayerVisualPreviousPosition;
         bool mFalloutPlayerVisualPreviousPositionValid = false;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
@@ -392,6 +424,8 @@ namespace MWRender
         float mViewDistance;
         bool mFieldOfViewOverridden;
         float mFieldOfViewOverride;
+        bool mProjectionMatrixOverridden;
+        osg::Matrixf mProjectionMatrixOverride;
         float mFieldOfView;
         float mFirstPersonFieldOfView;
         bool mUpdateProjectionMatrix = false;

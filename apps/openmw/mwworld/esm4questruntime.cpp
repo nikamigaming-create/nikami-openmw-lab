@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -24,6 +25,8 @@
 
 namespace
 {
+    constexpr std::size_t CompiledStageRecursionLimit = 32;
+
     std::vector<std::string_view> tokenize(std::string_view line)
     {
         if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
@@ -60,6 +63,26 @@ namespace
         const auto parsed = std::from_chars(begin, end, result);
         return parsed.ec == std::errc{} && parsed.ptr == end;
     }
+
+    std::string_view trim(std::string_view value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+        return value;
+    }
+
+    bool isControlKeyword(std::string_view line, std::string_view keyword, bool allowOpeningParenthesis = false)
+    {
+        if (line.size() < keyword.size()
+            || !Misc::StringUtils::ciEqual(line.substr(0, keyword.size()), keyword))
+            return false;
+        if (line.size() == keyword.size())
+            return true;
+        const char next = line[keyword.size()];
+        return std::isspace(static_cast<unsigned char>(next)) || (allowOpeningParenthesis && next == '(');
+    }
 }
 
 namespace MWWorld
@@ -92,7 +115,73 @@ namespace MWWorld
         mStates.clear();
         mActiveQuest.reset();
         mUnsupportedStageCommands.clear();
+        mUnsupportedCompiledOpcodes.clear();
         mUnsupportedConditionFunctions.clear();
+    }
+
+    bool ESM4QuestRuntime::loadSavedProgress(const ESM4SavedQuestProgress& progress, std::string* error)
+    {
+        const auto fail = [error](std::string message) {
+            if (error != nullptr)
+                *error = std::move(message);
+            return false;
+        };
+        if (mStore == nullptr)
+            return fail("quest runtime is not initialized");
+
+        QuestStateMap states = mStates;
+        std::optional<ESM::FormId> activeQuest;
+        for (const ESM4SavedQuestProgress::Stage& saved : progress.mStages)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+                return fail("saved quest stage references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            const auto stage = state->second.mStageDone.find(saved.mStage);
+            if (stage == state->second.mStageDone.end())
+                return fail("saved quest stage index is absent from loaded QUST " + quest->mEditorId);
+
+            stage->second = true;
+            state->second.mCurrentStage = std::max(state->second.mCurrentStage, saved.mStage);
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+        }
+
+        for (const ESM4SavedQuestProgress::Objective& saved : progress.mObjectives)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+            {
+                return fail(
+                    "saved quest objective references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            }
+            const auto objective = state->second.mObjectiveStatus.find(saved.mObjective);
+            if (objective == state->second.mObjectiveStatus.end())
+                return fail("saved quest objective index is absent from loaded QUST " + quest->mEditorId);
+
+            objective->second |= ESM4QuestState::Objective_Displayed;
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+        }
+
+        if (progress.mActiveQuest)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*progress.mActiveQuest));
+            const auto state = states.find(*progress.mActiveQuest);
+            if (quest == nullptr || state == states.end())
+            {
+                return fail(
+                    "saved active quest references a missing QUST " + ESM::RefId(*progress.mActiveQuest).serializeText());
+            }
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+            activeQuest = *progress.mActiveQuest;
+        }
+
+        mStates = std::move(states);
+        mActiveQuest = activeQuest;
+        Log(Debug::Info) << "FNV/ESM4 save: imported quest progress stages=" << progress.mStages.size()
+                         << " objectives=" << progress.mObjectives.size() << " active="
+                         << (mActiveQuest ? ESM::RefId(*mActiveQuest).serializeText() : std::string("<none>"));
+        return true;
     }
 
     const ESM4::Quest* ESM4QuestRuntime::resolveQuest(std::string_view id) const
@@ -133,6 +222,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::startQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && startQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::startQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -143,6 +238,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::stopQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && stopQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::stopQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -153,6 +254,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::completeQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && completeQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::completeQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -178,6 +285,416 @@ namespace MWWorld
         return quest != nullptr && setStage(quest->mId, stage);
     }
 
+    bool ESM4QuestRuntime::prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const
+    {
+        prepared = {};
+        if (script.compiledData.empty())
+        {
+            prepared.mUseSourceFallback = true;
+            return true;
+        }
+
+        std::vector<ESM4::ScriptBytecodeInstruction> instructions;
+        if (!ESM4::decodeFalloutScriptBytecode(script.compiledData, instructions).succeeded())
+            return false;
+
+        for (const ESM4::ScriptBytecodeInstruction& instruction : instructions)
+        {
+            if (instruction.callingReferenceIndex
+                && (*instruction.callingReferenceIndex == 0
+                    || *instruction.callingReferenceIndex > script.references.size()))
+                return false;
+
+            if (instruction.opcode != 0x1036 && instruction.opcode != 0x1037
+                && instruction.opcode != 0x1039 && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2
+                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
+            {
+                prepared.mUseSourceFallback = true;
+                prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                continue;
+            }
+            if (instruction.callingReferenceIndex)
+                return false;
+
+            std::vector<ESM4::ScriptBytecodeArgument> arguments;
+            if (!ESM4::decodeFalloutScriptArguments(instruction.arguments, script.references, arguments).succeeded())
+                return false;
+
+            if (instruction.opcode == 0x11a2 || instruction.opcode == 0x11a3)
+            {
+                if (arguments.size() != 3)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* objective = std::get_if<std::int32_t>(&arguments[1]);
+                const std::int32_t* displayed = std::get_if<std::int32_t>(&arguments[2]);
+                if (questId == nullptr || objective == nullptr || displayed == nullptr || mStore == nullptr)
+                    return false;
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                const ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+                if (state == nullptr || !state->mObjectiveStatus.contains(*objective))
+                    return false;
+                const CompiledQuestCommandType type = instruction.opcode == 0x11a2
+                    ? CompiledQuestCommandType::SetObjectiveCompleted
+                    : CompiledQuestCommandType::SetObjectiveDisplayed;
+                prepared.mCommands.push_back({ type, *questId, *objective, *displayed != 0 });
+            }
+            else if (instruction.opcode == 0x1039) // SetStage Quest Stage
+            {
+                if (arguments.size() != 2)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* stage = std::get_if<std::int32_t>(&arguments[1]);
+                if (questId == nullptr || stage == nullptr || *stage < 0 || *stage > 255 || mStore == nullptr)
+                    return false;
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                if (quest == nullptr || findState(*quest) == nullptr
+                    || std::none_of(quest->mStages.begin(), quest->mStages.end(), [stage](const ESM4::QuestStage& value) {
+                           return value.mIndex == *stage;
+                       }))
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::SetStage, *questId, 0, false,
+                    static_cast<std::uint8_t>(*stage) });
+            }
+            else
+            {
+                if (arguments.size() != 1)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                if (questId == nullptr || mStore == nullptr)
+                    return false;
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                if (quest == nullptr || findState(*quest) == nullptr)
+                    return false;
+                CompiledQuestCommandType type = CompiledQuestCommandType::ForceActiveQuest;
+                switch (instruction.opcode)
+                {
+                    case 0x1036:
+                        type = CompiledQuestCommandType::StartQuest;
+                        break;
+                    case 0x1037:
+                        type = CompiledQuestCommandType::StopQuest;
+                        break;
+                    case 0x1071:
+                        type = CompiledQuestCommandType::CompleteQuest;
+                        break;
+                    case 0x11dd:
+                        break;
+                    default:
+                        throw std::logic_error("unhandled preflighted Fallout quest opcode");
+                }
+                prepared.mCommands.push_back({ type, *questId, 0, false });
+            }
+        }
+
+        // Never mix native prefix execution with an unsupported command. The already existing
+        // source path is retained only as a whole-script compatibility fallback.
+        if (prepared.mUseSourceFallback)
+            prepared.mCommands.clear();
+        return true;
+    }
+
+    bool ESM4QuestRuntime::stageContainsCompiledSetStage(const ESM4::QuestStage& stage) const
+    {
+        for (const ESM4::QuestStageEntry& entry : stage.mEntries)
+        {
+            if (entry.mScript.compiledData.empty())
+                continue;
+            std::vector<ESM4::ScriptBytecodeInstruction> instructions;
+            if (!ESM4::decodeFalloutScriptBytecode(entry.mScript.compiledData, instructions).succeeded())
+                continue;
+            if (std::any_of(instructions.begin(), instructions.end(),
+                    [](const ESM4::ScriptBytecodeInstruction& instruction) { return instruction.opcode == 0x1039; }))
+                return true;
+        }
+        return false;
+    }
+
+    bool ESM4QuestRuntime::areCompiledStageConditionsPure(
+        const std::vector<ESM4::TargetCondition>& conditions) const
+    {
+        for (const ESM4::TargetCondition& condition : conditions)
+        {
+            if (condition.runOn != 0)
+                return false;
+            switch (condition.functionIndex)
+            {
+                case ESM4::FUN_GetQuestRunning:
+                case ESM4::FUN_GetStage:
+                case ESM4::FUN_GetStageDone:
+                case ESM4::FUN_GetGlobalValue:
+                case ESM4::FUN_GetQuestCompleted:
+                case ESM4::FUN_GetQuestVariable:
+                case ESM4::FUN_GetObjectiveCompleted:
+                case ESM4::FUN_GetObjectiveDisplayed:
+                    break;
+                default:
+                    return false;
+            }
+            switch (condition.condition & 0xe0)
+            {
+                case ESM4::CTF_EqualTo:
+                case ESM4::CTF_NotEqualTo:
+                case ESM4::CTF_GreaterThan:
+                case ESM4::CTF_GrThOrEqTo:
+                case ESM4::CTF_LessThan:
+                case ESM4::CTF_LeThOrEqTo:
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool ESM4QuestRuntime::preflightPureCompiledStage(
+        ESM::FormId id, std::uint8_t stageIndex, std::vector<CompiledStageKey>& stack) const
+    {
+        if (mStore == nullptr)
+            return false;
+        const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(id));
+        const auto stateIt = mStates.find(id);
+        if (quest == nullptr || stateIt == mStates.end())
+            return false;
+        const auto stage = std::find_if(quest->mStages.begin(), quest->mStages.end(),
+            [stageIndex](const ESM4::QuestStage& value) { return value.mIndex == stageIndex; });
+        if (stage == quest->mStages.end())
+            return false;
+
+        const bool repeatedStages = (stateIt->second.mFlags & ESM4QuestState::Flag_AllowRepeatedStages) != 0;
+        const auto done = stateIt->second.mStageDone.find(stage->mIndex);
+        if (done != stateIt->second.mStageDone.end() && done->second && !repeatedStages)
+            return true;
+
+        const CompiledStageKey key{ id, stageIndex };
+        if (stack.size() >= CompiledStageRecursionLimit
+            || std::find(stack.begin(), stack.end(), key) != stack.end())
+            return false;
+
+        stack.push_back(key);
+        bool valid = true;
+        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        {
+            if (!areCompiledStageConditionsPure(entry.mConditions))
+            {
+                valid = false;
+                break;
+            }
+            CompiledStageScript prepared;
+            if (!prepareStageScript(entry.mScript, prepared) || prepared.mUseSourceFallback)
+            {
+                valid = false;
+                break;
+            }
+            for (const CompiledQuestCommand& command : prepared.mCommands)
+            {
+                if (command.mType == CompiledQuestCommandType::SetStage
+                    && !preflightPureCompiledStage(command.mQuest, command.mStage, stack))
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid)
+                break;
+        }
+        stack.pop_back();
+        return valid;
+    }
+
+    bool ESM4QuestRuntime::executePureCompiledCommand(
+        const CompiledQuestCommand& command, CompiledStageWorkingState& working)
+    {
+        if (command.mType == CompiledQuestCommandType::SetStage)
+            return executePureCompiledStage(command.mQuest, command.mStage, working);
+
+        const auto found = working.mStates.find(command.mQuest);
+        if (found == working.mStates.end())
+            return false;
+        ESM4QuestState& state = found->second;
+        switch (command.mType)
+        {
+            case CompiledQuestCommandType::StartQuest:
+                state.mFlags |= ESM4QuestState::Flag_Running;
+                return true;
+            case CompiledQuestCommandType::StopQuest:
+                state.mFlags &= ~ESM4QuestState::Flag_Running;
+                return true;
+            case CompiledQuestCommandType::CompleteQuest:
+                state.mFlags |= ESM4QuestState::Flag_Completed;
+                state.mFlags &= ~(ESM4QuestState::Flag_Running | ESM4QuestState::Flag_Failed);
+                return true;
+            case CompiledQuestCommandType::SetStage:
+                return false;
+            case CompiledQuestCommandType::SetObjectiveCompleted:
+            {
+                const auto objective = state.mObjectiveStatus.find(command.mObjective);
+                if (objective == state.mObjectiveStatus.end())
+                    return false;
+                if (command.mValue)
+                    objective->second |= ESM4QuestState::Objective_Completed;
+                else
+                    objective->second &= ~ESM4QuestState::Objective_Completed;
+                return true;
+            }
+            case CompiledQuestCommandType::SetObjectiveDisplayed:
+            {
+                const auto objective = state.mObjectiveStatus.find(command.mObjective);
+                if (objective == state.mObjectiveStatus.end())
+                    return false;
+                if (command.mValue)
+                {
+                    objective->second |= ESM4QuestState::Objective_Displayed;
+                    state.mFlags |= ESM4QuestState::Flag_ShownInPipBoy;
+                }
+                else
+                    objective->second &= ~ESM4QuestState::Objective_Displayed;
+                return true;
+            }
+            case CompiledQuestCommandType::ForceActiveQuest:
+                state.mFlags |= ESM4QuestState::Flag_ShownInPipBoy;
+                working.mActiveQuest = command.mQuest;
+                return true;
+        }
+        return false;
+    }
+
+    bool ESM4QuestRuntime::executePureCompiledStage(
+        ESM::FormId id, std::uint8_t stageIndex, CompiledStageWorkingState& working)
+    {
+        if (mStore == nullptr)
+            return false;
+        const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(id));
+        const auto stateIt = working.mStates.find(id);
+        if (quest == nullptr || stateIt == working.mStates.end())
+            return false;
+        const auto stage = std::find_if(quest->mStages.begin(), quest->mStages.end(),
+            [stageIndex](const ESM4::QuestStage& value) { return value.mIndex == stageIndex; });
+        if (stage == quest->mStages.end())
+            return false;
+
+        ESM4QuestState& state = stateIt->second;
+        const bool repeatedStages = (state.mFlags & ESM4QuestState::Flag_AllowRepeatedStages) != 0;
+        const auto done = state.mStageDone.find(stage->mIndex);
+        if (done != state.mStageDone.end() && done->second && !repeatedStages)
+            return true;
+
+        const CompiledStageKey key{ id, stageIndex };
+        if (working.mStack.size() >= CompiledStageRecursionLimit
+            || std::find(working.mStack.begin(), working.mStack.end(), key) != working.mStack.end())
+            return false;
+
+        working.mStack.push_back(key);
+        const bool wasRunning = (state.mFlags & ESM4QuestState::Flag_Running) != 0;
+        state.mFlags |= ESM4QuestState::Flag_Running;
+        state.mCurrentStage = stageIndex;
+        state.mStageDone[stage->mIndex] = true;
+
+        bool success = true;
+        bool executedEntry = false;
+        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        {
+            if (!evaluateConditions(entry.mConditions, working.mStates, false))
+                continue;
+            CompiledStageScript prepared;
+            if (!prepareStageScript(entry.mScript, prepared) || prepared.mUseSourceFallback)
+            {
+                success = false;
+                break;
+            }
+            executedEntry = true;
+            for (const CompiledQuestCommand& command : prepared.mCommands)
+            {
+                if (!executePureCompiledCommand(command, working))
+                {
+                    success = false;
+                    break;
+                }
+            }
+            if (!success)
+                break;
+            if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
+            {
+                state.mFlags |= ESM4QuestState::Flag_Completed;
+                state.mFlags &= ~ESM4QuestState::Flag_Running;
+            }
+            if ((entry.mFlags & ESM4::QuestStageEntry::Flag_FailQuest) != 0)
+            {
+                state.mFlags |= ESM4QuestState::Flag_Failed;
+                state.mFlags &= ~ESM4QuestState::Flag_Running;
+            }
+        }
+
+        if (success)
+        {
+            const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
+            std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
+            notification += title;
+            for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+            {
+                if (!entry.mLogEntry.empty() && evaluateConditions(entry.mConditions, working.mStates, false))
+                {
+                    notification += "\n";
+                    notification += entry.mLogEntry;
+                    break;
+                }
+            }
+            working.mEffects.push_back({ id, stageIndex, wasRunning, executedEntry, std::move(notification) });
+        }
+        working.mStack.pop_back();
+        return success;
+    }
+
+    bool ESM4QuestRuntime::executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stageIndex)
+    {
+        std::vector<CompiledStageKey> preflightStack;
+        if (!preflightPureCompiledStage(id, stageIndex, preflightStack))
+            return false;
+
+        CompiledStageWorkingState working{ mStates, mActiveQuest };
+        if (!executePureCompiledStage(id, stageIndex, working))
+            return false;
+
+        mStates.swap(working.mStates);
+        mActiveQuest.swap(working.mActiveQuest);
+        flushCompiledStageEffects(working.mEffects);
+        return true;
+    }
+
+    void ESM4QuestRuntime::flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects)
+    {
+        MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();
+        for (const PendingStageEffect& effect : effects)
+        {
+            const ESM4::Quest* quest
+                = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(effect.mQuest)) : nullptr;
+            const ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+            if (quest == nullptr || state == nullptr)
+                continue;
+            const auto done = state->mStageDone.find(effect.mStage);
+            Log(Debug::Info) << "FNV/ESM4 behavior: SetStage quest=" << quest->mEditorId
+                             << " form=" << ESM::RefId(quest->mId).serializeText()
+                             << " stage=" << static_cast<unsigned int>(effect.mStage)
+                             << " flags=" << static_cast<unsigned int>(state->mFlags)
+                             << " done=" << (done != state->mStageDone.end() && done->second)
+                             << " entryExecuted=" << effect.mEntryExecuted;
+            if (windowManager == nullptr)
+                continue;
+            try
+            {
+                windowManager->scheduleMessageBox(effect.mNotification, MWGui::ShowInDialogueMode_Never);
+                Log(Debug::Info) << "FNV/ESM4 behavior: queued quest notification quest=" << quest->mEditorId
+                                 << " stage=" << static_cast<unsigned int>(effect.mStage)
+                                 << " mode=" << (effect.mWasRunning ? "updated" : "added");
+            }
+            catch (...)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 behavior: quest notification failed after committed SetStage quest="
+                                    << quest->mEditorId
+                                    << " stage=" << static_cast<unsigned int>(effect.mStage);
+            }
+        }
+    }
+
     bool ESM4QuestRuntime::setStage(ESM::FormId id, std::uint8_t stageIndex)
     {
         if (mStore == nullptr)
@@ -195,19 +712,80 @@ namespace MWWorld
         const bool repeatedStages = (state->mFlags & ESM4QuestState::Flag_AllowRepeatedStages) != 0;
         if (state->mStageDone[stage->mIndex] && !repeatedStages)
             return true;
+        if (stageContainsCompiledSetStage(*stage))
+            return executeCompiledStageTransaction(id, stageIndex);
+
+        struct PreparedEntry
+        {
+            const ESM4::QuestStageEntry* mEntry = nullptr;
+            CompiledStageScript mScript;
+        };
+        std::vector<PreparedEntry> preparedEntries;
+        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        {
+            if (!evaluateConditions(entry.mConditions))
+                continue;
+            CompiledStageScript prepared;
+            if (!prepareStageScript(entry.mScript, prepared))
+            {
+                Log(Debug::Warning) << "FNV/ESM4 behavior: malformed SCDA failed closed quest=" << quest->mEditorId
+                                    << " stage=" << static_cast<unsigned int>(stageIndex);
+                return false;
+            }
+            preparedEntries.push_back({ &entry, std::move(prepared) });
+        }
 
         const bool wasRunning = (state->mFlags & ESM4QuestState::Flag_Running) != 0;
         state->mFlags |= ESM4QuestState::Flag_Running;
         state->mCurrentStage = stageIndex;
         state->mStageDone[stage->mIndex] = true;
 
-        bool executedEntry = false;
-        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        const bool executedEntry = !preparedEntries.empty();
+        for (const PreparedEntry& preparedEntry : preparedEntries)
         {
-            if (!evaluateConditions(entry.mConditions))
-                continue;
-            executedEntry = true;
-            executeStageSource(entry.mScript.scriptSource);
+            const ESM4::QuestStageEntry& entry = *preparedEntry.mEntry;
+            for (const std::uint16_t opcode : preparedEntry.mScript.mUnsupportedOpcodes)
+            {
+                mUnsupportedCompiledOpcodes.push_back(opcode);
+                Log(Debug::Warning) << "FNV/ESM4 behavior: unsupported SCDA opcode="
+                                    << static_cast<unsigned int>(opcode)
+                                    << " using temporary whole-SCTX fallback quest=" << quest->mEditorId
+                                    << " stage=" << static_cast<unsigned int>(stageIndex);
+            }
+            if (preparedEntry.mScript.mUseSourceFallback)
+                executeStageSource(entry.mScript.scriptSource);
+            else
+            {
+                for (const CompiledQuestCommand& command : preparedEntry.mScript.mCommands)
+                {
+                    bool executed = false;
+                    switch (command.mType)
+                    {
+                        case CompiledQuestCommandType::StartQuest:
+                            executed = startQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::StopQuest:
+                            executed = stopQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::CompleteQuest:
+                            executed = completeQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::SetStage:
+                            throw std::logic_error("compiled SetStage escaped its transaction");
+                        case CompiledQuestCommandType::SetObjectiveCompleted:
+                            executed = setObjectiveCompleted(command.mQuest, command.mObjective, command.mValue);
+                            break;
+                        case CompiledQuestCommandType::SetObjectiveDisplayed:
+                            executed = setObjectiveDisplayed(command.mQuest, command.mObjective, command.mValue);
+                            break;
+                        case CompiledQuestCommandType::ForceActiveQuest:
+                            executed = forceActiveQuest(command.mQuest);
+                            break;
+                    }
+                    if (!executed)
+                        throw std::logic_error("preflighted Fallout quest command became invalid during execution");
+                }
+            }
             if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
             {
                 state->mFlags |= ESM4QuestState::Flag_Completed;
@@ -226,7 +804,7 @@ namespace MWWorld
                          << " flags=" << static_cast<unsigned int>(state->mFlags)
                          << " done=" << state->mStageDone[stage->mIndex] << " entryExecuted=" << executedEntry;
 
-        if (MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager())
+        if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
         {
             const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
             std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
@@ -250,13 +828,22 @@ namespace MWWorld
 
     std::optional<float> ESM4QuestRuntime::evaluateConditionValue(const ESM4::TargetCondition& condition)
     {
+        return evaluateConditionValue(condition, mStates, true);
+    }
+
+    std::optional<float> ESM4QuestRuntime::evaluateConditionValue(
+        const ESM4::TargetCondition& condition, const QuestStateMap& states, bool recordUnsupported)
+    {
         if (mStore == nullptr)
             return std::nullopt;
 
         const ESM::FormId parameter = ESM::FormId::fromUint32(condition.param1);
-        const auto findQuestState = [this, parameter]() -> const ESM4QuestState* {
+        const auto findQuestState = [this, &states, parameter]() -> const ESM4QuestState* {
             const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(parameter));
-            return quest != nullptr ? findState(*quest) : nullptr;
+            if (quest == nullptr)
+                return nullptr;
+            const auto found = states.find(quest->mId);
+            return found != states.end() ? &found->second : nullptr;
         };
 
         switch (condition.functionIndex)
@@ -295,15 +882,15 @@ namespace MWWorld
                 return 0.f;
             case ESM4::FUN_GetQuestVariable:
                 if (const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(parameter)))
-                    if (const ESM4QuestState* state = findState(*quest))
+                    if (const auto state = states.find(quest->mId); state != states.end())
                         if (const ESM4::Script* script
                             = mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript)))
                             for (const ESM4::ScriptLocalVariableData& variable : script->mScript.localVarData)
                                 if (variable.index == condition.param2)
                                 {
-                                    const auto found = state->mVariables.find(
+                                    const auto found = state->second.mVariables.find(
                                         Misc::StringUtils::lowerCase(variable.variableName));
-                                    return found != state->mVariables.end() ? found->second : 0.f;
+                                    return found != state->second.mVariables.end() ? found->second : 0.f;
                                 }
                 return 0.f;
             case ESM4::FUN_GetObjectiveCompleted:
@@ -327,9 +914,10 @@ namespace MWWorld
                 }
                 return 0.f;
             default:
-                if (std::find(mUnsupportedConditionFunctions.begin(), mUnsupportedConditionFunctions.end(),
-                        condition.functionIndex)
-                    == mUnsupportedConditionFunctions.end())
+                if (recordUnsupported
+                    && std::find(mUnsupportedConditionFunctions.begin(), mUnsupportedConditionFunctions.end(),
+                           condition.functionIndex)
+                        == mUnsupportedConditionFunctions.end())
                     mUnsupportedConditionFunctions.push_back(condition.functionIndex);
                 return std::nullopt;
         }
@@ -337,10 +925,16 @@ namespace MWWorld
 
     bool ESM4QuestRuntime::evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions)
     {
+        return evaluateConditions(conditions, mStates, true);
+    }
+
+    bool ESM4QuestRuntime::evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions,
+        const QuestStateMap& states, bool recordUnsupported)
+    {
         for (std::size_t i = 0; i < conditions.size(); ++i)
         {
-            const auto evaluate = [this](const ESM4::TargetCondition& condition) {
-                const std::optional<float> actual = evaluateConditionValue(condition);
+            const auto evaluate = [this, &states, recordUnsupported](const ESM4::TargetCondition& condition) {
+                const std::optional<float> actual = evaluateConditionValue(condition, states, recordUnsupported);
                 if (!actual)
                     return false;
 
@@ -350,7 +944,8 @@ namespace MWWorld
                     ESM4::TargetCondition globalCondition;
                     globalCondition.functionIndex = ESM4::FUN_GetGlobalValue;
                     globalCondition.param1 = std::bit_cast<std::uint32_t>(condition.comparison);
-                    const std::optional<float> globalValue = evaluateConditionValue(globalCondition);
+                    const std::optional<float> globalValue
+                        = evaluateConditionValue(globalCondition, states, recordUnsupported);
                     if (!globalValue)
                         return false;
                     expected = *globalValue;
@@ -522,6 +1117,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::setObjectiveDisplayed(std::string_view id, std::int32_t objective, bool displayed)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && setObjectiveDisplayed(quest->mId, objective, displayed);
+    }
+
+    bool ESM4QuestRuntime::setObjectiveDisplayed(ESM::FormId id, std::int32_t objective, bool displayed)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr || !state->mObjectiveStatus.contains(objective))
             return false;
@@ -538,6 +1139,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::setObjectiveCompleted(std::string_view id, std::int32_t objective, bool completed)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && setObjectiveCompleted(quest->mId, objective, completed);
+    }
+
+    bool ESM4QuestRuntime::setObjectiveCompleted(ESM::FormId id, std::int32_t objective, bool completed)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr || !state->mObjectiveStatus.contains(objective))
             return false;
@@ -551,6 +1158,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::forceActiveQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && forceActiveQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::forceActiveQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -572,6 +1185,81 @@ namespace MWWorld
         Log(Debug::Info) << "FNV/ESM4 behavior: SetQuestVariable quest=" << quest->mEditorId
                          << " variable=" << variable << " value=" << value;
         return true;
+    }
+
+    std::optional<bool> ESM4QuestRuntime::evaluateResultCondition(std::string_view expression) const
+    {
+        expression = trim(expression);
+        while (expression.size() >= 2 && expression.front() == '(' && expression.back() == ')')
+            expression = trim(expression.substr(1, expression.size() - 2));
+
+        const std::vector<std::string_view> tokens = tokenize(expression);
+        if (tokens.empty())
+            return std::nullopt;
+
+        const auto compare = [&tokens](float actual, std::size_t operatorIndex) -> std::optional<bool> {
+            if (tokens.size() == operatorIndex)
+                return actual != 0.f;
+            if (tokens.size() != operatorIndex + 2)
+                return std::nullopt;
+
+            float expected = 0.f;
+            if (!parseFloat(tokens[operatorIndex + 1], expected))
+                return std::nullopt;
+            const std::string_view op = tokens[operatorIndex];
+            if (op == "==")
+                return actual == expected;
+            if (op == "!=")
+                return actual != expected;
+            if (op == ">")
+                return actual > expected;
+            if (op == ">=")
+                return actual >= expected;
+            if (op == "<")
+                return actual < expected;
+            if (op == "<=")
+                return actual <= expected;
+            return std::nullopt;
+        };
+        const auto questState = [this](std::string_view id) -> const ESM4QuestState* {
+            const ESM4::Quest* quest = resolveQuest(id);
+            return quest != nullptr ? findState(*quest) : nullptr;
+        };
+
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetQuestRunning") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare((state->mFlags & ESM4QuestState::Flag_Running) != 0 ? 1.f : 0.f, 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetQuestCompleted") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare((state->mFlags & ESM4QuestState::Flag_Completed) != 0 ? 1.f : 0.f, 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetStage") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare(static_cast<float>(state->mCurrentStage), 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetStageDone") && tokens.size() >= 3)
+        {
+            std::int32_t stage = 0;
+            const ESM4QuestState* state = questState(tokens[1]);
+            if (state == nullptr || !parseInt(tokens[2], stage))
+                return std::nullopt;
+            const auto found = state->mStageDone.find(static_cast<std::int16_t>(stage));
+            return compare(found != state->mStageDone.end() && found->second ? 1.f : 0.f, 3);
+        }
+
+        const std::size_t separator = tokens[0].find('.');
+        if (separator == std::string_view::npos || separator == 0 || separator + 1 == tokens[0].size())
+            return std::nullopt;
+        const std::optional<float> value
+            = getQuestVariable(tokens[0].substr(0, separator), tokens[0].substr(separator + 1));
+        return value ? compare(*value, 1) : std::nullopt;
     }
 
     void ESM4QuestRuntime::executeStageSource(std::string_view source)
@@ -638,7 +1326,100 @@ namespace MWWorld
 
     void ESM4QuestRuntime::executeResultSource(std::string_view source)
     {
-        executeStageSource(source);
+        struct ConditionalFrame
+        {
+            bool mParentActive = true;
+            bool mBranchTaken = false;
+            bool mCurrentBranchActive = false;
+            bool mIndeterminate = false;
+            bool mSawElse = false;
+        };
+
+        std::vector<ConditionalFrame> conditionals;
+        std::istringstream stream{ std::string(source) };
+        for (std::string storage; std::getline(stream, storage);)
+        {
+            std::string_view line = trim(storage);
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+                line = trim(line.substr(0, comment));
+            if (line.empty())
+                continue;
+
+            if (isControlKeyword(line, "if", true))
+            {
+                ConditionalFrame frame;
+                frame.mParentActive = conditionals.empty() || conditionals.back().mCurrentBranchActive;
+                if (frame.mParentActive)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(2)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                conditionals.push_back(frame);
+                continue;
+            }
+            if (isControlKeyword(line, "elseif", true))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mCurrentBranchActive = false;
+                if (frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(6)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                continue;
+            }
+            if (isControlKeyword(line, "else"))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mSawElse = true;
+                frame.mCurrentBranchActive
+                    = frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate;
+                frame.mBranchTaken |= frame.mCurrentBranchActive;
+                continue;
+            }
+            if (isControlKeyword(line, "endif"))
+            {
+                if (conditionals.empty())
+                    mUnsupportedStageCommands.emplace_back(line);
+                else
+                    conditionals.pop_back();
+                continue;
+            }
+
+            if (conditionals.empty() || conditionals.back().mCurrentBranchActive)
+                executeStageSource(line);
+        }
+
+        if (!conditionals.empty())
+            mUnsupportedStageCommands.emplace_back("unterminated result-script conditional");
     }
 
     const ESM4QuestState* ESM4QuestRuntime::search(std::string_view id) const

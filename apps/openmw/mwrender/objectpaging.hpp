@@ -15,6 +15,8 @@ namespace Resource
 namespace MWRender
 {
 
+    bool isObjectPagingChunkInsideActiveGrid(const osg::Vec2f& center, const osg::Vec4i& activeGrid);
+
     typedef std::tuple<osg::Vec2f, float, bool> ChunkId; // Center, Size, ActiveGrid
 
     class ObjectPaging : public Resource::GenericResourceManager<ChunkId>, public Terrain::QuadTreeWorld::ChunkManager

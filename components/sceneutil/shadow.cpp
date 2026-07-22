@@ -15,6 +15,11 @@ namespace SceneUtil
 
     ShadowManager* ShadowManager::sInstance = nullptr;
 
+    bool ShadowManager::exists()
+    {
+        return sInstance != nullptr;
+    }
+
     const ShadowManager& ShadowManager::instance()
     {
         if (sInstance)

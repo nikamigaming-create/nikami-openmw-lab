@@ -9,6 +9,7 @@
 #include "vrutil.hpp"
 
 #include <components/debug/debuglog.hpp>
+#include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
 #include <components/vr/session.hpp>
@@ -336,7 +337,7 @@ namespace MWVR
     {
         std::shared_ptr<VR::Space> source;
         std::string sourceName;
-        if (VR::getVR())
+        if (VR::getLeftControllerActive() || VR::getRightControllerActive())
         {
             bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
             const bool retailSurfaceModal = MWVR::FNVXRLiveFrameSurface::instance().modalInputActive();
@@ -384,7 +385,7 @@ namespace MWVR
                 sourceName = "LeftHandAim";
             }
         }
-        if (!source)
+        else
         {
             source = mXRInput->getSpace(OpenXRInput::DefaultReferenceSpaceView);
             sourceName = "DefaultReferenceSpaceView";
@@ -403,7 +404,9 @@ namespace MWVR
         }
         ++mPointerSourceLogFrames;
 
-        if (!mVRPointer && (!disableControls || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()))
+        // Menus disable world controls, but their 3D panels still require the VR
+        // pointer. Construct it as soon as the final scene and shadow state exist.
+        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists())
         {
             osg::ref_ptr<osgViewer::Viewer> viewer;
             mOSGViewer.lock(viewer);
@@ -415,13 +418,51 @@ namespace MWVR
 
         if (mVRPointer)
         {
-            const bool pointerEnabled = sourceName != "DefaultReferenceSpaceView";
-            mVRPointer->setEnabled(pointerEnabled);
+            mPointerActive = source && sourceName != "DefaultReferenceSpaceView";
             mVRPointer->setSource(source);
-            mVRPointer->setDebugSpaces(
-                mXRInput->getSpace(OpenXRInput::LeftHandAim), mXRInput->getSpace(OpenXRInput::RightHandAim));
             mVRPointer->update();
         }
+        else
+            mPointerActive = false;
+    }
+
+    void VRInputManager::updateDirectPointerClick()
+    {
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
+        if (!mPointerActive || retailSurface.visible())
+        {
+            mDirectPointerClickDown = false;
+            return;
+        }
+
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const bool pressed = actionPressed(actionSet, {
+            "/user/hand/right/input/trigger/value",
+            "/user/hand/right/input/trigger/click",
+            "/user/hand/left/input/trigger/value",
+            "/user/hand/left/input/trigger/click",
+        });
+
+        if (pressed && !mDirectPointerClickDown)
+        {
+            if (mDirectPointerClickLogCount < 24)
+            {
+                ++mDirectPointerClickLogCount;
+                const MWRender::RayResult& ray = mVRPointer->getPointerRay();
+                Log(Debug::Info) << "OpenMW VR pointer trigger edge guiFocus="
+                                 << MWVR::VRGUIManager::instance().hasFocus()
+                                 << " guiMode="
+                                 << MWBase::Environment::get().getWindowManager()->isGuiMode()
+                                 << " source=" << mLastPointerSourceName
+                                 << " rayHit=" << ray.mHit
+                                 << " rayDistance=" << mVRPointer->distanceToPointerTarget()
+                                 << " rayNode="
+                                 << (ray.mHitNode ? ray.mHitNode->getName() : std::string("<none>"));
+            }
+            pointerActivate(true);
+        }
+
+        mDirectPointerClickDown = pressed;
     }
 
     void VRInputManager::updateRetailSurfaceDirectClick(bool retailSurfaceReady)
@@ -922,6 +963,7 @@ namespace MWVR
         updateVRPointer(disableControls);
         if (MWVR::FNVXRLiveFrameSurface::instance().visible())
             MWVR::FNVXRLiveFrameSurface::instance().updateAimPointer();
+        updateDirectPointerClick();
         updateRetailSurfaceDirectClick(retailSurfaceReady);
         updateRetailSurfaceXInput(retailSurfaceReady);
 

@@ -17,6 +17,7 @@
 #include "contentloader.hpp"
 #include "esm4questruntime.hpp"
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "globals.hpp"
 #include "groundcoverstore.hpp"
 #include "localscripts.hpp"
@@ -96,6 +97,7 @@ namespace MWWorld
         LocalScripts mLocalScripts;
         MWWorld::Globals mGlobalVariables;
         MWWorld::ESM4QuestRuntime mESM4QuestRuntime;
+        MWWorld::FalloutPlayerRuntimeState mFalloutPlayerRuntimeState;
         Misc::Rng::Generator mPrng;
         WorldModel mWorldModel;
         std::vector<int> mESMVersions; // the versions of esm files
@@ -257,6 +259,16 @@ namespace MWWorld
 
         const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
 
+        MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() override
+        {
+            return mFalloutPlayerRuntimeState;
+        }
+
+        const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
+        {
+            return mFalloutPlayerRuntimeState;
+        }
+
         const std::vector<int>& getESMVersions() const override;
 
         LocalScripts& getLocalScripts() override;
@@ -333,6 +345,8 @@ namespace MWWorld
         void changeWeather(const ESM::RefId& region, const unsigned int id) override;
 
         void changeWeather(const ESM::RefId& region, const ESM::RefId& id) override;
+
+        bool forceWeather(const ESM::RefId& id) override;
 
         const std::vector<MWWorld::Weather>& getAllWeather() const override;
 
@@ -468,6 +482,8 @@ namespace MWWorld
         bool isOnGround(const MWWorld::Ptr& ptr) const override;
 
         osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const override;
+        std::optional<osg::Matrixf> getActorNodeTransform(
+            const MWWorld::ConstPtr& actor, std::string_view nodeName) const override;
 
         void togglePOV(bool force = false) override;
 
@@ -536,6 +552,8 @@ namespace MWWorld
         /// \todo Probably shouldn't be here
         MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) override;
         const MWRender::Animation* getAnimation(const MWWorld::ConstPtr& ptr) const override;
+        MWRender::Animation* getFalloutWeaponAnimation(
+            const MWWorld::Ptr& ptr, bool firstPerson) override;
         void reattachPlayerCamera() override;
 
         /// \todo this does not belong here
@@ -585,6 +603,12 @@ namespace MWWorld
             ESM::RefNum item) override;
         void launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
             const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength) override;
+        bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact) override;
+        std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) override;
+        unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
+        bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;
         void updateProjectilesCasters() override;
 
         void applyLoopingParticles(const MWWorld::Ptr& ptr) const override;
@@ -627,7 +651,7 @@ namespace MWWorld
 
         void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true,
-            bool useAmbientLight = true) override;
+            bool useAmbientLight = true, const ESM::RefId& lightId = {}) override;
 
         /// @see MWWorld::WeatherManager::isInStorm
         bool isInStorm() const override;

@@ -821,6 +821,11 @@ namespace ESM4
     //        (see https://www.uesp.net/wiki/Tes4Mod:Formid#ModIndex_Zero)
     void Reader::adjustFormId(FormId& id) const
     {
+        // A raw 0 is the ESM4 null FormID, not form 0 in the current plugin.
+        // Preserve it so optional references (for example CLMT/RDWT globals)
+        // remain distinguishable from authored references after load-order adjustment.
+        if (id.isZeroOrUnset())
+            return;
         if (id.hasContentFile() && id.mContentFile < static_cast<int>(mCtx.parentFileIndices.size()))
             id.mContentFile = mCtx.parentFileIndices[id.mContentFile];
         else

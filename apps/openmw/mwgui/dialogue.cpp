@@ -457,15 +457,21 @@ namespace MWGui
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
 
-        const std::string& sPersuasion = gmst.find("sPersuasion")->mValue.getString();
-        const std::string& sCompanionShare = gmst.find("sCompanionShare")->mValue.getString();
-        const std::string& sBarter = gmst.find("sBarter")->mValue.getString();
-        const std::string& sSpells = gmst.find("sSpells")->mValue.getString();
-        const std::string& sTravel = gmst.find("sTravel")->mValue.getString();
-        const std::string& sSpellMakingMenuTitle = gmst.find("sSpellMakingMenuTitle")->mValue.getString();
-        const std::string& sEnchanting = gmst.find("sEnchanting")->mValue.getString();
-        const std::string& sServiceTrainingTitle = gmst.find("sServiceTrainingTitle")->mValue.getString();
-        const std::string& sRepair = gmst.find("sRepair")->mValue.getString();
+        // Service labels are game-specific. Fallout does not define every Morrowind service GMST, so resolving
+        // the entire Morrowind set eagerly can throw before an ordinary authored topic is dispatched.
+        const auto getServiceLabel = [&](std::string_view id) {
+            const ESM::GameSetting* setting = gmst.search(id);
+            return setting != nullptr ? setting->mValue.getString() : std::string();
+        };
+        const std::string sPersuasion = getServiceLabel("sPersuasion");
+        const std::string sCompanionShare = getServiceLabel("sCompanionShare");
+        const std::string sBarter = getServiceLabel("sBarter");
+        const std::string sSpells = getServiceLabel("sSpells");
+        const std::string sTravel = getServiceLabel("sTravel");
+        const std::string sSpellMakingMenuTitle = getServiceLabel("sSpellMakingMenuTitle");
+        const std::string sEnchanting = getServiceLabel("sEnchanting");
+        const std::string sServiceTrainingTitle = getServiceLabel("sServiceTrainingTitle");
+        const std::string sRepair = getServiceLabel("sRepair");
 
         if (topic != sPersuasion && topic != sCompanionShare && topic != sBarter && topic != sSpells && topic != sTravel
             && topic != sSpellMakingMenuTitle && topic != sEnchanting && topic != sServiceTrainingTitle

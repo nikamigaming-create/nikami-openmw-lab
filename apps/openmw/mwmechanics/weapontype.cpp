@@ -6,12 +6,51 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/inventorystore.hpp"
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/loadweap.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <set>
 
 namespace MWMechanics
 {
+    namespace
+    {
+        constexpr int sFalloutWeaponTypeFirst = 0x100;
+        constexpr int sFalloutWeaponTypeCount = 14;
+    }
+
+    bool isFalloutWeaponType(int weaponType)
+    {
+        return weaponType >= sFalloutWeaponTypeFirst
+            && weaponType < sFalloutWeaponTypeFirst + sFalloutWeaponTypeCount;
+    }
+
+    std::optional<int> getFalloutWeaponType(std::uint8_t animationType)
+    {
+        if (animationType >= sFalloutWeaponTypeCount)
+            return std::nullopt;
+        return sFalloutWeaponTypeFirst + static_cast<int>(animationType);
+    }
+
+    std::optional<std::uint8_t> getFalloutWeaponAnimationType(int weaponType)
+    {
+        if (!isFalloutWeaponType(weaponType))
+            return std::nullopt;
+        return static_cast<std::uint8_t>(weaponType - sFalloutWeaponTypeFirst);
+    }
+
+    bool shouldUseFalloutWeaponState(int requestedWeaponType, int currentWeaponType)
+    {
+        return isFalloutWeaponType(requestedWeaponType) || isFalloutWeaponType(currentWeaponType);
+    }
+
+    bool shouldTransitionFalloutWeaponState(
+        int requestedWeaponType, int currentWeaponType, bool weaponChanged)
+    {
+        return requestedWeaponType != currentWeaponType || weaponChanged;
+    }
+
     template <enum ESM::Weapon::Type>
     struct Weapon
     {
@@ -364,6 +403,20 @@ namespace MWMechanics
                     const MWWorld::LiveCellRef<ESM::Weapon>* ref = weapon->get<ESM::Weapon>();
                     *weaptype = ref->mBase->mData.mType;
                 }
+                else if (type == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* ref = weapon->get<ESM4::Weapon>()->mBase;
+                    const std::optional<int> falloutType = getFalloutWeaponType(ref->mData.animationType);
+                    if (falloutType)
+                        *weaptype = *falloutType;
+                    else
+                    {
+                        *weaptype = ESM::Weapon::None;
+                        Log(Debug::Warning) << "FNV weapon has invalid DNAM animation type "
+                                            << static_cast<unsigned int>(ref->mData.animationType) << ": "
+                                            << ref->mEditorId;
+                    }
+                }
                 else if (type == ESM::Lockpick::sRecordId || type == ESM::Probe::sRecordId)
                     *weaptype = ESM::Weapon::PickProbe;
             }
@@ -376,6 +429,66 @@ namespace MWMechanics
 
     const ESM::WeaponType* getWeaponType(const int weaponType)
     {
+        if (isFalloutWeaponType(weaponType))
+        {
+            static const ESM::WeaponType oneHandMelee{ /* short group */ "",
+                /* long group  */ "attack1",
+                /*  sound ID   */ "",
+                /* attach bone */ "Weapon",
+                /* sheath bone */ "",
+                /* usage skill */ ESM::Skill::ShortBlade,
+                /* weapon class*/ ESM::WeaponType::Melee,
+                /*  ammo type  */ ESM::Weapon::None,
+                /*    flags    */ ESM::WeaponType::HasHealth };
+            static const ESM::WeaponType twoHandMelee{ /* short group */ "",
+                /* long group  */ "attack1",
+                /*  sound ID   */ "",
+                /* attach bone */ "Weapon",
+                /* sheath bone */ "",
+                /* usage skill */ ESM::Skill::BluntWeapon,
+                /* weapon class*/ ESM::WeaponType::Melee,
+                /*  ammo type  */ ESM::Weapon::None,
+                /*    flags    */ ESM::WeaponType::TwoHanded | ESM::WeaponType::HasHealth };
+            static const ESM::WeaponType oneHandRanged{ /* short group */ "",
+                /* long group  */ "attack1",
+                /*  sound ID   */ "",
+                /* attach bone */ "Weapon",
+                /* sheath bone */ "",
+                /* usage skill */ ESM::Skill::Marksman,
+                /* weapon class*/ ESM::WeaponType::Ranged,
+                /*  ammo type  */ ESM::Weapon::None,
+                /*    flags    */ ESM::WeaponType::HasHealth };
+            static const ESM::WeaponType twoHandRanged{ /* short group */ "",
+                /* long group  */ "attack1",
+                /*  sound ID   */ "",
+                /* attach bone */ "Weapon",
+                /* sheath bone */ "",
+                /* usage skill */ ESM::Skill::Marksman,
+                /* weapon class*/ ESM::WeaponType::Ranged,
+                /*  ammo type  */ ESM::Weapon::None,
+                /*    flags    */ ESM::WeaponType::TwoHanded | ESM::WeaponType::HasHealth };
+            static const ESM::WeaponType thrown{ /* short group */ "",
+                /* long group  */ "attack1",
+                /*  sound ID   */ "",
+                /* attach bone */ "Weapon",
+                /* sheath bone */ "",
+                /* usage skill */ ESM::Skill::Marksman,
+                /* weapon class*/ ESM::WeaponType::Thrown,
+                /*  ammo type  */ ESM::Weapon::None,
+                /*    flags    */ ESM::WeaponType::HasHealth };
+
+            const int animationType = weaponType - sFalloutWeaponTypeFirst;
+            if (animationType <= 1)
+                return &oneHandMelee;
+            if (animationType == 2)
+                return &twoHandMelee;
+            if (animationType <= 4)
+                return &oneHandRanged;
+            if (animationType <= 9)
+                return &twoHandRanged;
+            return &thrown;
+        }
+
         switch (static_cast<ESM::Weapon::Type>(weaponType))
         {
             case ESM::Weapon::PickProbe:

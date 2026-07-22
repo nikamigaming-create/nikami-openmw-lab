@@ -30,6 +30,7 @@ set(SHADER_FILES
     lib/material/alpha.glsl
     compatibility/3dgui_vertex.glsl
     compatibility/3dgui_fragment.glsl
+    compatibility/fnvxrliveframe_fragment.glsl
     compatibility/ripples_blobber.frag
     compatibility/ripples_simulate.frag
     compatibility/fog.glsl
@@ -61,6 +62,8 @@ set(SHADER_FILES
     compatibility/fullscreen_tri.frag
     compatibility/bs/default.vert
     compatibility/bs/default.frag
+    compatibility/bs/skin.vert
+    compatibility/bs/skin.frag
     compatibility/bs/nolighting.vert
     compatibility/bs/nolighting.frag
     compatibility/luminance/resolve.frag

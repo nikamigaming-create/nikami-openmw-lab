@@ -33,6 +33,8 @@ namespace MWWorld
 
 namespace MWMechanics
 {
+    struct FalloutProjectileImpactContract;
+    struct FalloutVatsQueuedAction;
     class Actor;
     class CharacterController;
     class CreatureStats;
@@ -112,6 +114,13 @@ namespace MWMechanics
         bool isSneaking(const MWWorld::Ptr& ptr) const;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
+        bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const;
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+            const FalloutProjectileImpactContract& impact) const;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) const;
 
         bool playAnimationGroup(const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number,
             bool scripted = false) const;
@@ -178,8 +187,13 @@ namespace MWMechanics
         float mTimerUpdateHello = 0;
         float mSneakTimer = 0; // Times update of sneak icon
         float mSneakSkillTimer = 0; // Times sneak skill progress from "avoid notice"
+        int mDialogueFacingActorId = -1;
 
         void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
+
+        MWWorld::Ptr getDialogueActorForFacing(const MWWorld::Ptr& player) const;
+        void updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn,
+            bool updatePausedHeadTracking = false);
 
         void adjustMagicEffects(const MWWorld::Ptr& creature, float duration) const;
 

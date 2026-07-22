@@ -27,8 +27,10 @@
 #ifndef ESM4_NOTE_H
 #define ESM4_NOTE_H
 
+#include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
@@ -40,18 +42,32 @@ namespace ESM4
 
     struct Note
     {
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mFullName;
+        std::array<std::uint8_t, 12> mObjectBounds{};
         std::string mModel;
         std::string mIcon;
 
-        float mBoundRadius;
+        float mBoundRadius = 0.f;
 
-        ESM::FormId mPickUpSound;
-        ESM::FormId mDropSound;
+        // Fallout: New Vegas authors one raw DATA byte. The exact official
+        // shapes are retained separately instead of assigning semantics to
+        // unproved values: DATA=1 uses text TNAM, DATA=2 uses image XNAM,
+        // and DATA=3 uses a dialogue-topic TNAM with an optional speaker
+        // SNAM. DATA=0 has no content subrecord in the frozen corpus.
+        std::uint8_t mData = 0;
+        std::string mText;
+        std::string mImage;
+        ESM::FormId mVoiceTopic{};
+        ESM::FormId mVoiceSpeaker{};
+        std::vector<ESM::FormId> mQuests;
+
+        // Fields retained for the pre-existing cross-game loader.
+        ESM::FormId mPickUpSound{};
+        ESM::FormId mDropSound{};
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

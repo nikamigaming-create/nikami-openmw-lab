@@ -24,6 +24,11 @@
 namespace MWMechanics
 {
 
+    bool shouldRestoreSavedAiWander(const ESM::AiSequence::AiWander& wander)
+    {
+        return !wander.mReevaluateFnvSandbox;
+    }
+
     void AiSequence::copy(const AiSequence& sequence)
     {
         for (const auto& package : sequence.mPackages)
@@ -542,8 +547,10 @@ namespace MWMechanics
             {
                 case ESM::AiSequence::Ai_Wander:
                 {
-                    package = std::make_unique<AiWander>(
-                        &static_cast<const ESM::AiSequence::AiWander&>(*container.mPackage));
+                    const ESM::AiSequence::AiWander& source
+                        = static_cast<const ESM::AiSequence::AiWander&>(*container.mPackage);
+                    if (shouldRestoreSavedAiWander(source))
+                        package = std::make_unique<AiWander>(&source);
                     break;
                 }
                 case ESM::AiSequence::Ai_Travel:

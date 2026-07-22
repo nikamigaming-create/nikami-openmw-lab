@@ -1,6 +1,7 @@
 #include "mechanicsmanagerimp.hpp"
 
 #include <cassert>
+#include <vector>
 
 #include <osg/Stats>
 
@@ -18,7 +19,9 @@
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
@@ -31,6 +34,9 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4creature.hpp"
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwsound/constants.hpp"
 
 #include "actor.hpp"
@@ -40,11 +46,67 @@
 #include "aipursue.hpp"
 #include "autocalcspell.hpp"
 #include "combat.hpp"
+#include "falloutcombat.hpp"
 #include "npcstats.hpp"
+#include "ownership.hpp"
 #include "spellutil.hpp"
 
 namespace
 {
+
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || store->getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return false;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            return npc != nullptr && npc->mIsFONV;
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            return creature != nullptr && creature->mIsFONV;
+        }
+        return false;
+    }
+
+    std::vector<ESM4::ActorFaction> getFalloutActorFactions(const MWWorld::Ptr& ptr)
+    {
+        // The gameplay player may also satisfy the ESM4 NPC type check, so resolve its runtime proxy before the
+        // generic NPC branch. The proxy preserves the winning Player NPC/template faction list.
+        if (ptr == MWMechanics::getPlayer())
+        {
+            const std::optional<MWWorld::FalloutPlayerState>& state
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getBaseState();
+            if (state)
+                return state->mFactions;
+        }
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* factions = MWClass::ESM4Npc::getFactionsRecord(ptr);
+            return factions != nullptr ? factions->mFactions : std::vector<ESM4::ActorFaction>{};
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* factions = MWClass::ESM4Creature::getFactionsRecord(ptr);
+            if (factions != nullptr && !factions->mFactions.empty())
+                return factions->mFactions;
+            if (factions != nullptr && factions->mFaction.faction != 0)
+                return { factions->mFaction }; // Compatibility for programmatically constructed records.
+            return {};
+        }
+        return {};
+    }
+
+    MWMechanics::ObjectOwnership getObjectOwnership(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::Cell* cell = ptr.isInCell() ? ptr.getCell()->getCell() : nullptr;
+        return MWMechanics::resolveObjectOwnership(
+            ptr.getCellRef(), cell, *MWBase::Environment::get().getESMStore());
+    }
 
     float getFightDispositionBias(float disposition)
     {
@@ -91,16 +153,23 @@ namespace
     {
         const MWWorld::CellRef& cellref = target.getCellRef();
 
-        const ESM::RefId& owner = cellref.getOwner();
+        const MWMechanics::ObjectOwnership ownership = getObjectOwnership(target);
+
+        const ESM::RefId& owner = ownership.mOwner;
         bool isOwned = !owner.empty() && owner != ESM::RefId::stringRefId("Player");
 
-        const ESM::RefId& faction = cellref.getFaction();
+        const ESM::RefId& faction = ownership.mFaction;
         bool isFactionOwned = false;
-        if (!faction.empty() && ptr.getClass().isNpc())
+        if (!faction.empty() && isFalloutNewVegasActor(ptr))
+        {
+            const std::vector<ESM4::ActorFaction> factions = getFalloutActorFactions(ptr);
+            isFactionOwned = !MWMechanics::isFactionOwnershipAllowed(ownership, factions);
+        }
+        else if (!faction.empty() && ptr.getClass().isNpc())
         {
             const std::map<ESM::RefId, int>& factions = ptr.getClass().getNpcStats(ptr).getFactionRanks();
             auto found = factions.find(faction);
-            if (found == factions.end() || found->second < cellref.getFactionRank())
+            if (found == factions.end() || found->second < ownership.mFactionRank)
                 isFactionOwned = true;
         }
 
@@ -111,8 +180,8 @@ namespace
             isFactionOwned = false;
         }
 
-        if (!cellref.getOwner().empty())
-            victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true, false);
+        if (!owner.empty())
+            victim = MWBase::Environment::get().getWorld()->searchPtr(owner, true, false);
 
         return isOwned || isFactionOwned;
     }
@@ -761,6 +830,27 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, action, targetHit);
+    }
+
+    bool MechanicsManager::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutProjectileImpact(actor, target, segmentStart, hitPosition, impact);
+    }
+
+    bool MechanicsManager::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && mActors.executeFalloutExplosion(actor, position, impact);
+    }
+
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {
@@ -913,7 +1003,11 @@ namespace MWMechanics
         if (target.getClass().isActivator() && !target.getClass().getScript(target).startsWith("Bed"))
             return true;
 
-        if (target.getClass().isNpc())
+        // ESM4 NPC/CREA classes intentionally do not expose Morrowind NpcStats through Class::isNpc(). They are
+        // still actors for interaction purposes. Letting a live Fallout actor fall through to isOwned() asks its
+        // ActorCharacter CellRef for a Morrowind faction rank, throws "Not applicable", and repeats that exception
+        // every tooltip frame (notably throughout V.A.T.S.).
+        if (target.getClass().isNpc() || isFalloutNewVegasActor(target))
         {
             if (target.getClass().getCreatureStats(target).isDead())
                 return true;
@@ -953,7 +1047,8 @@ namespace MWMechanics
         if (isAllowedToUse(ptr, bed, victim))
             return false;
 
-        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, bed.getCellRef().getFaction()))
+        const ObjectOwnership ownership = getObjectOwnership(bed);
+        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, ownership.mFaction))
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage64}");
             return true;
@@ -971,7 +1066,7 @@ namespace MWMechanics
             // unlocked. Likewise, it's illegal to unlock something that has a trap but isn't otherwise locked.
             const auto& cellref = item.getCellRef();
             if (cellref.getLockLevel() || cellref.isLocked() || !cellref.getTrap().empty())
-                commitCrime(ptr, victim, OT_Trespassing, item.getCellRef().getFaction());
+                commitCrime(ptr, victim, OT_Trespassing, getObjectOwnership(item).mFaction);
         }
     }
 
@@ -1096,10 +1191,12 @@ namespace MWMechanics
         MWWorld::Ptr victim;
 
         bool isAllowed = true;
+        const MWWorld::Ptr* ownerObject = &item;
         const MWWorld::CellRef* ownerCellRef = &item.getCellRef();
         if (!container.isEmpty())
         {
             // Inherit the owner of the container
+            ownerObject = &container;
             ownerCellRef = &container.getCellRef();
             isAllowed = isAllowedToUse(ptr, container, victim);
         }
@@ -1113,6 +1210,7 @@ namespace MWMechanics
 
         Owner owner;
         owner.second = false;
+        ObjectOwnership ownership;
         if (!container.isEmpty() && container.getClass().isActor())
         {
             // "container" is an actor inventory, so just take actor's ID
@@ -1120,10 +1218,11 @@ namespace MWMechanics
         }
         else
         {
-            owner.first = ownerCellRef->getOwner();
+            ownership = getObjectOwnership(*ownerObject);
+            owner.first = ownership.mOwner;
             if (owner.first.empty())
             {
-                owner.first = ownerCellRef->getFaction();
+                owner.first = ownership.mFaction;
                 owner.second = true;
             }
         }
@@ -1141,7 +1240,7 @@ namespace MWMechanics
             int value = count;
             if (!isGold)
                 value *= item.getClass().getValue(item);
-            commitCrime(ptr, victim, OT_Theft, ownerCellRef->getFaction(), value);
+            commitCrime(ptr, victim, OT_Theft, ownership.mFaction, value);
         }
     }
 
@@ -1889,21 +1988,39 @@ namespace MWMechanics
                     > 0))
             return false;
 
-        // Creation Engine aggression 0 means Unaggressive. It is categorical,
-        // not Morrowind's 0..100 Fight score, so disposition/distance biases
-        // must never promote it into spontaneous combat.
+        // Creation Engine aggression is categorical, not Morrowind's 0..100 Fight score. FNV category 1 means
+        // "attack enemies", so feeding it through the proximity bias makes every nearby neutral dialogue actor
+        // hostile. Resolve the already-authored directional faction reaction and keep every Morrowind bias out of
+        // this path.
         const bool isEsm4Actor
             = ptr.getType() == ESM4::Npc::sRecordId || ptr.getType() == ESM4::Creature::sRecordId;
-        const int authoredFight
-            = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight).getModified();
-        if (isEsm4Actor && authoredFight <= 0)
+        const Stat<int> fightStat = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight);
+        const int modifiedFight = fightStat.getModified();
+        if (isFalloutNewVegasActor(ptr))
+        {
+            // FNV AIDT aggression is the authored categorical value. Generic Fight modifiers must not promote an
+            // Enemy-only actor into Very Aggressive; Calm is handled explicitly above.
+            const int authoredAggression = fightStat.getBase();
+            if (authoredAggression < 0 || authoredAggression > 3)
+                return false;
+
+            const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(ptr);
+            const std::vector<ESM4::ActorFaction> targetFactions = getFalloutActorFactions(target);
+            const MWWorld::Store<ESM4::Faction>& factionStore
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+            const std::optional<ESM4::Faction::GroupCombatReaction> reaction = resolveFalloutFactionReaction(
+                actorFactions, targetFactions,
+                [&](ESM::FormId faction) { return factionStore.search(ESM::RefId(faction)); });
+            return shouldFalloutActorInitiateCombat(static_cast<std::uint8_t>(authoredAggression), reaction);
+        }
+        if (isEsm4Actor && modifiedFight <= 0)
             return false;
 
         int disposition = 50;
         if (ptr.getClass().isNpc())
             disposition = getDerivedDisposition(ptr);
 
-        int fight = authoredFight
+        int fight = modifiedFight
             + static_cast<int>(
                 getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition)));
 

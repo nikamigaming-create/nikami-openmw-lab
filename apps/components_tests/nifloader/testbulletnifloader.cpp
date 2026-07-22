@@ -324,6 +324,7 @@ namespace
         Nif::NiStringExtraData mNiStringExtraData;
         Nif::NiStringExtraData mNiStringExtraData2;
         Nif::NiIntegerExtraData mNiIntegerExtraData;
+        Nif::BSBound mBSBound;
         Nif::NiTimeController mController;
         btTransform mTransform{ btMatrix3x3(btQuaternion(btVector3(1, 0, 0), 0.5f)), btVector3(1, 2, 3) };
         btTransform mTransformScale2{ btMatrix3x3(btQuaternion(btVector3(1, 0, 0), 0.5f)), btVector3(2, 4, 6) };
@@ -344,7 +345,10 @@ namespace
             init(mNiSkinInstance);
             init(mNiStringExtraData);
             init(mNiStringExtraData2);
+            init(static_cast<Nif::Extra&>(mBSBound));
             init(mController);
+
+            mBSBound.recType = Nif::RC_BSBound;
 
             mNiTriShapeData.recType = Nif::RC_NiTriShapeData;
             mNiTriShapeData.mVertices = { osg::Vec3f(0, 0, 0), osg::Vec3f(1, 0, 0), osg::Vec3f(1, 1, 0) };
@@ -475,6 +479,62 @@ namespace
         expected.mCollisionBox.mCenter = osg::Vec3f(-1, -2, -3);
 
         EXPECT_EQ(*result, expected);
+    }
+
+    TEST_F(TestBulletNifLoader, for_root_bsbound_should_return_shape_with_bounding_box_data)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&mNode);
+        file.mHash = mHash;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+
+        const auto result = mLoader.load(file);
+
+        Resource::BulletShape expected;
+        expected.mCollisionBox.mExtents = mBSBound.mExtents;
+        expected.mCollisionBox.mCenter = mBSBound.mCenter;
+
+        EXPECT_EQ(*result, expected);
+    }
+
+    TEST_F(TestBulletNifLoader, legacy_nif_should_ignore_bsbound)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_MW;
+        file.mRoots.push_back(&mNode);
+
+        const auto result = mLoader.load(file);
+
+        EXPECT_EQ(result->mCollisionBox.mExtents, osg::Vec3f());
+        EXPECT_EQ(result->mCollisionBox.mCenter, osg::Vec3f());
+    }
+
+    TEST_F(TestBulletNifLoader, named_bounding_box_should_take_precedence_over_bsbound)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+        mNode.mName = "Bounding Box";
+        mNode.mBounds.mType = Nif::BoundingVolume::Type::BOX_BV;
+        mNode.mBounds.mBox.mExtents = osg::Vec3f(1.f, 2.f, 3.f);
+        mNode.mBounds.mBox.mCenter = osg::Vec3f(-1.f, -2.f, -3.f);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&mNode);
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+
+        const auto result = mLoader.load(file);
+
+        EXPECT_EQ(result->mCollisionBox.mExtents, mNode.mBounds.mBox.mExtents);
+        EXPECT_EQ(result->mCollisionBox.mCenter, mNode.mBounds.mBox.mCenter);
     }
 
     TEST_F(TestBulletNifLoader, for_root_with_bounds_and_child_bounding_box_should_use_bounding_box)

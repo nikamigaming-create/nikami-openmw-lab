@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <string_view>
 
 #include <components/debug/debuglog.hpp>
@@ -19,6 +20,7 @@
 
 #include <components/nif/data.hpp>
 #include <components/sceneutil/morphgeometry.hpp>
+#include <components/sceneutil/texturetype.hpp>
 
 #include "matrixtransform.hpp"
 
@@ -26,6 +28,11 @@ namespace NifOsg
 {
     namespace
     {
+        bool isTransformInterpolatorRecordType(Nif::RecordType type)
+        {
+            return type == Nif::RC_NiTransformInterpolator || type == Nif::RC_BSRotAccumTransfInterpolator;
+        }
+
         bool isReasonableFloat(float value, float maxAbs)
         {
             return std::isfinite(value) && std::abs(value) <= maxAbs;
@@ -318,6 +325,11 @@ namespace NifOsg
 
     KeyframeController::KeyframeController() {}
 
+    KeyframeController::~KeyframeController()
+    {
+        restorePropertyState();
+    }
+
     KeyframeController::KeyframeController(const KeyframeController& copy, const osg::CopyOp& copyop)
         : osg::Object(copy, copyop)
         , SceneUtil::KeyframeController(copy)
@@ -339,6 +351,8 @@ namespace NifOsg
         , mFalloutBindRotation(copy.mFalloutBindRotation)
         , mFalloutBindScale(copy.mFalloutBindScale)
         , mBSplineTransform(copy.mBSplineTransform)
+        , mMaterialChannels(copy.mMaterialChannels)
+        , mTextureTransforms(copy.mTextureTransforms)
     {
     }
 
@@ -346,7 +360,7 @@ namespace NifOsg
     {
         if (!keyctrl->mInterpolator.empty())
         {
-            if (keyctrl->mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+            if (isTransformInterpolatorRecordType(keyctrl->mInterpolator->recType))
             {
                 const Nif::NiTransformInterpolator* interp
                     = static_cast<const Nif::NiTransformInterpolator*>(keyctrl->mInterpolator.getPtr());
@@ -445,7 +459,7 @@ namespace NifOsg
         if (interp == nullptr)
             return false;
 
-        if (interp->recType == Nif::RC_NiTransformInterpolator)
+        if (isTransformInterpolatorRecordType(interp->recType))
         {
             const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(interp);
             setDefaultTransformChannels(transform->mDefaultValue);
@@ -576,9 +590,9 @@ namespace NifOsg
             && handle != std::numeric_limits<uint32_t>::max();
     }
 
-    float sampleBSplineComponent(
-        const KeyframeController::BSplineTransform& data, uint32_t handle, unsigned int stride, unsigned int component,
-        float time, float defaultValue, float offset, float halfRange)
+    template <class BSplineData>
+    float sampleBSplineComponent(const BSplineData& data, uint32_t handle, unsigned int stride,
+        unsigned int component, float time, float defaultValue, float offset, float halfRange)
     {
         constexpr unsigned int degree = 3;
         if (!isValidBSplineHandle(handle) || data.mNumControlPoints <= degree
@@ -699,49 +713,54 @@ namespace NifOsg
 
     void KeyframeController::operator()(NifOsg::MatrixTransform* node, osg::NodeVisitor* nv)
     {
-        auto [translation, rotation, scale] = getCurrentTransformation(nv);
-
-        if (shouldAuditFalloutActorBasis() && mUseFalloutActorRotationBasis)
+        if (hasTransformChannels())
         {
-            static unsigned int sFalloutActorBasisAuditLines = 0;
-            if (sFalloutActorBasisAuditLines < 256)
+            auto [translation, rotation, scale] = getCurrentTransformation(nv);
+
+            if (shouldAuditFalloutActorBasis() && mUseFalloutActorRotationBasis)
             {
-                const KfTransform rawKeyframe = getCurrentTransformationWithoutFalloutActorBasis(nv);
-                float rotationDeltaDegrees = 0.f;
-                if (rotation && rawKeyframe.mRotation)
-                    rotationDeltaDegrees = quatAngleDeltaDegrees(*rotation, *rawKeyframe.mRotation);
-                float translationDelta = 0.f;
-                if (translation && rawKeyframe.mTranslation)
-                    translationDelta = (*translation - *rawKeyframe.mTranslation).length();
+                static unsigned int sFalloutActorBasisAuditLines = 0;
+                if (sFalloutActorBasisAuditLines < 256)
+                {
+                    const KfTransform rawKeyframe = getCurrentTransformationWithoutFalloutActorBasis(nv);
+                    float rotationDeltaDegrees = 0.f;
+                    if (rotation && rawKeyframe.mRotation)
+                        rotationDeltaDegrees = quatAngleDeltaDegrees(*rotation, *rawKeyframe.mRotation);
+                    float translationDelta = 0.f;
+                    if (translation && rawKeyframe.mTranslation)
+                        translationDelta = (*translation - *rawKeyframe.mTranslation).length();
 
-                Log(Debug::Info) << "FNV/ESM4 ACTOR BASIS CALLBACK AUDIT bone=" << mFalloutLowerBone
-                                 << " appliedHasRotation=" << static_cast<bool>(rotation)
-                                 << " rawHasRotation=" << static_cast<bool>(rawKeyframe.mRotation)
-                                 << " rotationDeltaDegrees=" << rotationDeltaDegrees
-                                 << " appliedHasTranslation=" << static_cast<bool>(translation)
-                                 << " rawHasTranslation=" << static_cast<bool>(rawKeyframe.mTranslation)
-                                 << " translationDelta=" << translationDelta
-                                 << " compositionMode=" << getFalloutActorRotationCompositionMode()
-                                 << " pinnedBindRotation=" << mPinFalloutActorBindRotation;
-                ++sFalloutActorBasisAuditLines;
+                    Log(Debug::Info) << "FNV/ESM4 ACTOR BASIS CALLBACK AUDIT bone=" << mFalloutLowerBone
+                                     << " appliedHasRotation=" << static_cast<bool>(rotation)
+                                     << " rawHasRotation=" << static_cast<bool>(rawKeyframe.mRotation)
+                                     << " rotationDeltaDegrees=" << rotationDeltaDegrees
+                                     << " appliedHasTranslation=" << static_cast<bool>(translation)
+                                     << " rawHasTranslation=" << static_cast<bool>(rawKeyframe.mTranslation)
+                                     << " translationDelta=" << translationDelta
+                                     << " compositionMode=" << getFalloutActorRotationCompositionMode()
+                                     << " pinnedBindRotation=" << mPinFalloutActorBindRotation;
+                    ++sFalloutActorBasisAuditLines;
+                }
             }
+
+            if (rotation)
+            {
+                node->setRotation(*rotation);
+            }
+            else
+            {
+                // This is necessary to prevent first person animations glitching out due to RotationController
+                node->setRotation(node->mRotationScale);
+            }
+
+            if (translation)
+                node->setTranslation(*translation);
+
+            if (scale)
+                node->setScale(*scale);
         }
 
-        if (rotation)
-        {
-            node->setRotation(*rotation);
-        }
-        else
-        {
-            // This is necessary to prevent first person animations glitching out due to RotationController
-            node->setRotation(node->mRotationScale);
-        }
-
-        if (translation)
-            node->setTranslation(*translation);
-
-        if (scale)
-            node->setScale(*scale);
+        applyPropertyChannels(node, nv);
 
         traverse(node, nv);
     }
@@ -987,20 +1006,152 @@ namespace NifOsg
         }
     }
 
-    TextureTransformController::TextureTransformController(
-        const Nif::NiTextureTransformController* ctrl, unsigned int textureUnit)
-        : mTextureUnit(textureUnit)
-        , mTransformMember(ctrl->mTransformMember)
+    namespace
     {
-        if (!ctrl->mInterpolator.empty() && ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
-            mData = static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr());
-        else if (!ctrl->mInterpolator.empty() && ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+        Nif::NiTextureTransform makeIdentityTextureTransform()
         {
-            const auto* interpolator = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
-            mData = FloatInterpolator(Nif::FloatKeyMapPtr(), interpolator->mValue);
+            Nif::NiTextureTransform transform;
+            transform.mOffset = osg::Vec2f(0.f, 0.f);
+            transform.mScale = osg::Vec2f(1.f, 1.f);
+            transform.mRotation = 0.f;
+            transform.mTransformMethod = Nif::NiTextureTransform::Method::Max;
+            transform.mOrigin = osg::Vec2f(0.5f, 0.5f);
+            return transform;
         }
-        else if (!ctrl->mData.empty())
-            mData = FloatInterpolator(ctrl->mData->mKeyList, 0.f);
+
+        bool isValidTextureTransformDefault(float value)
+        {
+            // Gamebryo uses -FLT_MAX for an interpolator channel whose value is supplied by keys.
+            return std::isfinite(value) && value > std::numeric_limits<float>::lowest();
+        }
+
+        osg::Matrixf makeTextureTransformMatrixImpl(const Nif::NiTextureTransform& transform)
+        {
+            // NIF offsets use the opposite sign to the OpenGL texture matrix convention used by the
+            // compatibility shaders. Keep the authored transform-method order from NiTextureTransform.
+            const osg::Matrixf origin
+                = osg::Matrixf::translate(-transform.mOrigin.x(), -transform.mOrigin.y(), 0.f);
+            const osg::Matrixf back
+                = osg::Matrixf::translate(transform.mOrigin.x(), transform.mOrigin.y(), 0.f);
+            const osg::Matrixf offset
+                = osg::Matrixf::translate(-transform.mOffset.x(), -transform.mOffset.y(), 0.f);
+            const osg::Matrixf scale = osg::Matrixf::scale(transform.mScale.x(), transform.mScale.y(), 1.f);
+            const osg::Matrixf rotation = osg::Matrixf::rotate(transform.mRotation, osg::Z_AXIS);
+
+            switch (transform.mTransformMethod)
+            {
+                case Nif::NiTextureTransform::Method::MayaLegacy:
+                    return origin * rotation * back * offset * scale;
+                case Nif::NiTextureTransform::Method::Maya:
+                {
+                    const osg::Matrixf fromMaya
+                        = osg::Matrixf::scale(1.f, -1.f, 1.f) * osg::Matrixf::translate(0.f, 1.f, 0.f);
+                    return origin * rotation * back * fromMaya * offset * scale;
+                }
+                case Nif::NiTextureTransform::Method::Max:
+                default:
+                    return origin * scale * rotation * offset * back;
+            }
+        }
+
+        std::string textureTransformDefaultKey(unsigned int textureUnit, std::string_view component)
+        {
+            return "nifTextureTransform." + std::to_string(textureUnit) + "." + std::string(component);
+        }
+
+        bool getTextureTransformDefaults(
+            const osg::StateSet& stateset, unsigned int textureUnit, Nif::NiTextureTransform& transform)
+        {
+            bool found = stateset.getUserValue(
+                textureTransformDefaultKey(textureUnit, "offsetU"), transform.mOffset.x());
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "offsetV"), transform.mOffset.y())
+                && found;
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "scaleU"), transform.mScale.x())
+                && found;
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "scaleV"), transform.mScale.y())
+                && found;
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "rotation"), transform.mRotation)
+                && found;
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "originU"), transform.mOrigin.x())
+                && found;
+            found = stateset.getUserValue(
+                        textureTransformDefaultKey(textureUnit, "originV"), transform.mOrigin.y())
+                && found;
+            unsigned int method = static_cast<unsigned int>(transform.mTransformMethod);
+            found = stateset.getUserValue(textureTransformDefaultKey(textureUnit, "method"), method) && found;
+            transform.mTransformMethod = static_cast<Nif::NiTextureTransform::Method>(method);
+            return found;
+        }
+    }
+
+    osg::Matrixf makeTextureTransformMatrix(const Nif::NiTextureTransform& transform)
+    {
+        return makeTextureTransformMatrixImpl(transform);
+    }
+
+    void setTextureTransformDefaults(
+        osg::StateSet* stateset, unsigned int textureUnit, const Nif::NiTextureTransform& transform)
+    {
+        if (stateset == nullptr)
+            return;
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "offsetU"), transform.mOffset.x());
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "offsetV"), transform.mOffset.y());
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "scaleU"), transform.mScale.x());
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "scaleV"), transform.mScale.y());
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "rotation"), transform.mRotation);
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "originU"), transform.mOrigin.x());
+        stateset->setUserValue(textureTransformDefaultKey(textureUnit, "originV"), transform.mOrigin.y());
+        stateset->setUserValue(
+            textureTransformDefaultKey(textureUnit, "method"), static_cast<unsigned int>(transform.mTransformMethod));
+    }
+
+    TextureTransformController::TextureTransformController()
+        : mDefaultTransform(makeIdentityTextureTransform())
+    {
+    }
+
+    TextureTransformController::TextureTransformController(
+        const std::vector<const Nif::NiTextureTransformController*>& controllers, unsigned int textureUnit,
+        const Nif::NiTextureTransform* defaultTransform)
+        : mDefaultTransform(defaultTransform != nullptr ? *defaultTransform : makeIdentityTextureTransform())
+        , mTextureUnit(textureUnit)
+    {
+        for (const Nif::NiTextureTransformController* ctrl : controllers)
+        {
+            if (ctrl == nullptr || ctrl->mTransformMember >= mChannels.size())
+                continue;
+
+            Channel channel;
+            channel.mFunction = std::make_shared<ControllerFunction>(ctrl);
+
+            if (!ctrl->mInterpolator.empty() && ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+                channel.mData = FloatInterpolator(interpolator);
+                if (channel.mData.empty() && isValidTextureTransformDefault(interpolator->mDefaultValue))
+                    channel.mConstant = interpolator->mDefaultValue;
+            }
+            else if (!ctrl->mInterpolator.empty()
+                && ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+                if (isValidTextureTransformDefault(interpolator->mValue))
+                    channel.mConstant = interpolator->mValue;
+            }
+            else if (!ctrl->mData.empty())
+                channel.mData = FloatInterpolator(ctrl->mData->mKeyList);
+
+            channel.mEnabled = !channel.mData.empty() || channel.mConstant.has_value();
+            if (channel.mEnabled)
+                mChannels[ctrl->mTransformMember] = std::move(channel);
+        }
     }
 
     TextureTransformController::TextureTransformController(
@@ -1008,59 +1159,450 @@ namespace NifOsg
         : osg::Object(copy, copyop)
         , StateSetUpdater(copy, copyop)
         , Controller(copy)
-        , mData(copy.mData)
+        , mDefaultTransform(copy.mDefaultTransform)
+        , mChannels(copy.mChannels)
         , mTextureUnit(copy.mTextureUnit)
-        , mTransformMember(copy.mTransformMember)
     {
     }
 
     void TextureTransformController::setDefaults(osg::StateSet* stateset)
     {
-        if (!stateset->getTextureAttribute(mTextureUnit, osg::StateAttribute::TEXMAT))
-            stateset->setTextureAttributeAndModes(mTextureUnit, new osg::TexMat, osg::StateAttribute::ON);
+        setTextureTransformDefaults(stateset, mTextureUnit, mDefaultTransform);
+        osg::ref_ptr<osg::TexMat> texMat = new osg::TexMat;
+        texMat->setMatrix(makeTextureTransformMatrix(mDefaultTransform));
+        stateset->setTextureAttributeAndModes(mTextureUnit, texMat, osg::StateAttribute::ON);
     }
 
     void TextureTransformController::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
     {
-        if (!hasInput())
-            return;
-
         osg::TexMat* texMat
             = static_cast<osg::TexMat*>(stateset->getTextureAttribute(mTextureUnit, osg::StateAttribute::TEXMAT));
         if (!texMat)
             return;
 
-        osg::Matrixf mat = texMat->getMatrix();
-        const float value = mData.empty() ? getInputValue(nv) : mData.interpKey(getInputValue(nv));
-
-        switch (mTransformMember)
+        Nif::NiTextureTransform transform = mDefaultTransform;
+        if (hasInput())
         {
-            case 0: // U translation
-                mat(3, 0) = -value;
-                break;
-            case 1: // V translation
-                mat(3, 1) = -value;
-                break;
-            case 2: // Rotation around UV center
+            const float sourceValue = getSource()->getValue(nv);
+            for (std::size_t member = 0; member < mChannels.size(); ++member)
             {
-                const osg::Vec3f trans = mat.getTrans();
-                mat = osg::Matrixf::translate(osg::Vec3f(0.5f, 0.5f, 0.f));
-                mat.preMultRotate(osg::Quat(value, osg::Z_AXIS));
-                mat.preMultTranslate(osg::Vec3f(-0.5f, -0.5f, 0.f));
-                mat.setTrans(trans);
-                break;
+                const Channel& channel = mChannels[member];
+                if (!channel.mEnabled)
+                    continue;
+
+                float value = channel.mConstant.value_or(0.f);
+                if (!channel.mData.empty())
+                {
+                    const float time
+                        = channel.mFunction != nullptr ? channel.mFunction->calculate(sourceValue) : sourceValue;
+                    value = channel.mData.interpKey(time);
+                }
+
+                switch (member)
+                {
+                    case 0: // U translation
+                        transform.mOffset.x() = value;
+                        break;
+                    case 1: // V translation
+                        transform.mOffset.y() = value;
+                        break;
+                    case 2: // Rotation around the authored UV origin
+                        transform.mRotation = value;
+                        break;
+                    case 3: // U scale
+                        transform.mScale.x() = value;
+                        break;
+                    case 4: // V scale
+                        transform.mScale.y() = value;
+                        break;
+                    default:
+                        break;
+                }
             }
-            case 3: // U scale
-                mat(0, 0) = value;
+        }
+
+        texMat->setMatrix(makeTextureTransformMatrix(transform));
+    }
+
+    bool KeyframeController::initScalarChannel(
+        ScalarChannel& channel, const Nif::NiInterpolator* interpolator)
+    {
+        if (interpolator == nullptr)
+            return false;
+
+        channel = ScalarChannel();
+        if (interpolator->recType == Nif::RC_NiFloatInterpolator)
+        {
+            const auto* value = static_cast<const Nif::NiFloatInterpolator*>(interpolator);
+            channel.mData = FloatInterpolator(value);
+            if (channel.mData.empty() && isValidTextureTransformDefault(value->mDefaultValue))
+                channel.mConstant = value->mDefaultValue;
+        }
+        else if (interpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+        {
+            const auto* value = static_cast<const Nif::NiBlendFloatInterpolator*>(interpolator);
+            if (isValidTextureTransformDefault(value->mValue))
+                channel.mConstant = value->mValue;
+        }
+        else if (interpolator->recType == Nif::RC_NiBSplineCompFloatInterpolator)
+        {
+            const auto* compact = static_cast<const Nif::NiBSplineCompFloatInterpolator*>(interpolator);
+            const auto* value = static_cast<const Nif::NiBSplineFloatInterpolator*>(compact);
+            if (isValidTextureTransformDefault(value->mValue))
+                channel.mConstant = value->mValue;
+
+            if (!value->mSplineData.empty() && !value->mBasisData.empty() && isValidBSplineHandle(value->mHandle))
+            {
+                BSplineChannel spline;
+                spline.mStartTime = value->mStartTime;
+                spline.mStopTime = value->mStopTime;
+                spline.mFloatControlPoints = value->mSplineData->mFloatControlPoints;
+                spline.mCompactControlPoints = value->mSplineData->mCompactControlPoints;
+                spline.mNumControlPoints = value->mBasisData->mNumControlPoints;
+                spline.mHandle = value->mHandle;
+                spline.mCompressed = true;
+                spline.mOffset = compact->mOffset;
+                spline.mHalfRange = compact->mHalfRange;
+                channel.mBSpline = std::move(spline);
+            }
+        }
+        else
+            return false;
+
+        channel.mEnabled = !channel.mData.empty() || channel.mConstant.has_value() || channel.mBSpline.has_value();
+        return channel.mEnabled;
+    }
+
+    bool KeyframeController::initVectorChannel(
+        VectorChannel& channel, const Nif::NiInterpolator* interpolator)
+    {
+        if (interpolator == nullptr)
+            return false;
+
+        channel = VectorChannel();
+        if (interpolator->recType == Nif::RC_NiPoint3Interpolator)
+        {
+            const auto* value = static_cast<const Nif::NiPoint3Interpolator*>(interpolator);
+            channel.mData = Vec3Interpolator(value);
+            if (channel.mData.empty() && isReasonableVec3(value->mDefaultValue, 1000000.f))
+                channel.mConstant = value->mDefaultValue;
+        }
+        else if (interpolator->recType == Nif::RC_NiBlendPoint3Interpolator)
+        {
+            const auto* value = static_cast<const Nif::NiBlendPoint3Interpolator*>(interpolator);
+            if (isReasonableVec3(value->mValue, 1000000.f))
+                channel.mConstant = value->mValue;
+        }
+        else if (interpolator->recType == Nif::RC_NiBSplineCompPoint3Interpolator)
+        {
+            const auto* compact = static_cast<const Nif::NiBSplineCompPoint3Interpolator*>(interpolator);
+            const auto* value = static_cast<const Nif::NiBSplinePoint3Interpolator*>(compact);
+            if (isReasonableVec3(value->mValue, 1000000.f))
+                channel.mConstant = value->mValue;
+
+            if (!value->mSplineData.empty() && !value->mBasisData.empty() && isValidBSplineHandle(value->mHandle))
+            {
+                BSplineChannel spline;
+                spline.mStartTime = value->mStartTime;
+                spline.mStopTime = value->mStopTime;
+                spline.mFloatControlPoints = value->mSplineData->mFloatControlPoints;
+                spline.mCompactControlPoints = value->mSplineData->mCompactControlPoints;
+                spline.mNumControlPoints = value->mBasisData->mNumControlPoints;
+                spline.mHandle = value->mHandle;
+                spline.mCompressed = true;
+                spline.mOffset = compact->mOffset;
+                spline.mHalfRange = compact->mHalfRange;
+                channel.mBSpline = std::move(spline);
+            }
+        }
+        else
+            return false;
+
+        channel.mEnabled = !channel.mData.empty() || channel.mConstant.has_value() || channel.mBSpline.has_value();
+        return channel.mEnabled;
+    }
+
+    float KeyframeController::sampleScalarChannel(const ScalarChannel& channel, float time)
+    {
+        const float defaultValue = channel.mConstant.value_or(0.f);
+        if (channel.mBSpline)
+        {
+            const BSplineChannel& spline = *channel.mBSpline;
+            return sampleBSplineComponent(spline, spline.mHandle, 1, 0, time, defaultValue, spline.mOffset,
+                spline.mHalfRange);
+        }
+        if (!channel.mData.empty())
+            return channel.mData.interpKey(time);
+        return defaultValue;
+    }
+
+    osg::Vec3f KeyframeController::sampleVectorChannel(const VectorChannel& channel, float time)
+    {
+        const osg::Vec3f defaultValue = channel.mConstant.value_or(osg::Vec3f());
+        if (channel.mBSpline)
+        {
+            const BSplineChannel& spline = *channel.mBSpline;
+            return osg::Vec3f(
+                sampleBSplineComponent(spline, spline.mHandle, 3, 0, time, defaultValue.x(), spline.mOffset,
+                    spline.mHalfRange),
+                sampleBSplineComponent(spline, spline.mHandle, 3, 1, time, defaultValue.y(), spline.mOffset,
+                    spline.mHalfRange),
+                sampleBSplineComponent(spline, spline.mHandle, 3, 2, time, defaultValue.z(), spline.mOffset,
+                    spline.mHalfRange));
+        }
+        if (!channel.mData.empty())
+            return channel.mData.interpKey(time);
+        return defaultValue;
+    }
+
+    bool KeyframeController::addMaterialColorChannel(
+        Nif::NiMaterialColorController::TargetColor target, const Nif::NiInterpolator* interpolator)
+    {
+        const std::size_t index = static_cast<std::size_t>(target);
+        if (index >= mMaterialChannels.size())
+            return false;
+        VectorChannel channel;
+        if (!initVectorChannel(channel, interpolator))
+            return false;
+        mMaterialChannels[index] = std::move(channel);
+        return true;
+    }
+
+    bool KeyframeController::addTextureTransformChannel(bool shaderMap, unsigned int textureSlot,
+        unsigned int transformMember, const Nif::NiInterpolator* interpolator)
+    {
+        if (transformMember >= 5)
+            return false;
+
+        ScalarChannel channel;
+        if (!initScalarChannel(channel, interpolator))
+            return false;
+
+        auto group = std::find_if(mTextureTransforms.begin(), mTextureTransforms.end(),
+            [shaderMap, textureSlot](const TextureTransformGroup& value) {
+                return value.mShaderMap == shaderMap && value.mTextureSlot == textureSlot;
+            });
+        if (group == mTextureTransforms.end())
+        {
+            TextureTransformGroup value;
+            value.mShaderMap = shaderMap;
+            value.mTextureSlot = textureSlot;
+            mTextureTransforms.push_back(std::move(value));
+            group = std::prev(mTextureTransforms.end());
+        }
+        group->mChannels[transformMember] = std::move(channel);
+        return true;
+    }
+
+    unsigned int KeyframeController::resolveTextureUnit(
+        const osg::StateSet& stateset, bool shaderMap, unsigned int textureSlot)
+    {
+        if (shaderMap)
+            return textureSlot;
+
+        const char* expectedName = nullptr;
+        switch (textureSlot)
+        {
+            case Nif::NiTexturingProperty::BaseTexture:
+                expectedName = "diffuseMap";
                 break;
-            case 4: // V scale
-                mat(1, 1) = value;
+            case Nif::NiTexturingProperty::DarkTexture:
+                expectedName = "darkMap";
+                break;
+            case Nif::NiTexturingProperty::DetailTexture:
+                expectedName = "detailMap";
+                break;
+            case Nif::NiTexturingProperty::GlossTexture:
+                expectedName = "glossMap";
+                break;
+            case Nif::NiTexturingProperty::GlowTexture:
+                expectedName = "emissiveMap";
+                break;
+            case Nif::NiTexturingProperty::BumpTexture:
+                expectedName = "bumpMap";
+                break;
+            case Nif::NiTexturingProperty::DecalTexture:
+                expectedName = "decalMap";
                 break;
             default:
                 break;
         }
 
-        texMat->setMatrix(mat);
+        if (expectedName != nullptr)
+        {
+            const std::size_t unitCount = stateset.getTextureAttributeList().size();
+            for (std::size_t unit = 0; unit < unitCount; ++unit)
+            {
+                const auto* type = dynamic_cast<const SceneUtil::TextureType*>(
+                    stateset.getTextureAttribute(static_cast<unsigned int>(unit), SceneUtil::TextureType::AttributeType));
+                if (type != nullptr && type->getName() == expectedName)
+                    return static_cast<unsigned int>(unit);
+            }
+        }
+        return textureSlot;
+    }
+
+    bool KeyframeController::hasPropertyChannels() const
+    {
+        return !mTextureTransforms.empty()
+            || std::any_of(mMaterialChannels.begin(), mMaterialChannels.end(),
+                [](const VectorChannel& channel) { return channel.mEnabled; });
+    }
+
+    bool KeyframeController::hasTransformChannels() const
+    {
+        return mBSplineTransform.has_value() || !mRotations.empty() || !mXRotations.empty() || !mYRotations.empty()
+            || !mZRotations.empty() || !mTranslations.empty() || !mScales.empty() || mHasDefaultTranslation
+            || mHasDefaultRotation || mHasDefaultScale;
+    }
+
+    void KeyframeController::applyPropertyChannels(NifOsg::MatrixTransform* node, osg::NodeVisitor* nv)
+    {
+        if (node != nullptr && hasPropertyChannels() && hasInput())
+            applyPropertyChannelsAtTime(node, getInputValue(nv));
+    }
+
+    void KeyframeController::restorePropertyState()
+    {
+        if (mPropertyTarget != nullptr)
+            mPropertyTarget->setStateSet(mPropertyHadBaseStateSet ? mPropertyBaseStateSet.get() : nullptr);
+        mPropertyTarget = nullptr;
+        mPropertyBaseStateSet = nullptr;
+        mPropertyHadBaseStateSet = false;
+    }
+
+    void KeyframeController::applyPropertyChannelsAtTime(NifOsg::MatrixTransform* node, float time)
+    {
+        if (mPropertyTarget.get() != node)
+        {
+            restorePropertyState();
+            mPropertyTarget = node;
+            mPropertyHadBaseStateSet = node->getStateSet() != nullptr;
+            mPropertyBaseStateSet = node->getStateSet();
+        }
+
+        osg::ref_ptr<osg::StateSet> emptyStateSet;
+        const osg::StateSet* baseStateSet = node->getStateSet();
+        if (baseStateSet == nullptr)
+        {
+            emptyStateSet = new osg::StateSet;
+            baseStateSet = emptyStateSet;
+        }
+
+        // The embedded CompositeStateSetUpdater runs earlier in the callback chain.  Compose from its current output
+        // every frame, then install one fresh StateSet, so the external KF neither races nor retains stale embedded
+        // material/texture state.
+        osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet(*baseStateSet, osg::CopyOp::SHALLOW_COPY);
+
+        if (std::any_of(mMaterialChannels.begin(), mMaterialChannels.end(),
+                [](const VectorChannel& channel) { return channel.mEnabled; }))
+        {
+            const osg::StateSet::RefAttributePair* baseMaterialPair
+                = baseStateSet->getAttributePair(osg::StateAttribute::MATERIAL);
+            const osg::Material* baseMaterial = baseMaterialPair != nullptr
+                ? dynamic_cast<const osg::Material*>(baseMaterialPair->first.get())
+                : nullptr;
+            osg::ref_ptr<osg::Material> material = baseMaterial != nullptr
+                ? static_cast<osg::Material*>(baseMaterial->clone(osg::CopyOp::DEEP_COPY_ALL))
+                : new osg::Material;
+            using TargetColor = Nif::NiMaterialColorController::TargetColor;
+            for (std::size_t index = 0; index < mMaterialChannels.size(); ++index)
+            {
+                const VectorChannel& channel = mMaterialChannels[index];
+                if (!channel.mEnabled)
+                    continue;
+                const osg::Vec3f value = sampleVectorChannel(channel, time);
+                const TargetColor target = static_cast<TargetColor>(index);
+                switch (target)
+                {
+                    case TargetColor::Diffuse:
+                    {
+                        osg::Vec4f color = material->getDiffuse(osg::Material::FRONT_AND_BACK);
+                        color.set(value.x(), value.y(), value.z(), color.a());
+                        material->setDiffuse(osg::Material::FRONT_AND_BACK, color);
+                        break;
+                    }
+                    case TargetColor::Specular:
+                    {
+                        osg::Vec4f color = material->getSpecular(osg::Material::FRONT_AND_BACK);
+                        color.set(value.x(), value.y(), value.z(), color.a());
+                        material->setSpecular(osg::Material::FRONT_AND_BACK, color);
+                        break;
+                    }
+                    case TargetColor::Emissive:
+                    {
+                        osg::Vec4f color = material->getEmission(osg::Material::FRONT_AND_BACK);
+                        color.set(value.x(), value.y(), value.z(), color.a());
+                        material->setEmission(osg::Material::FRONT_AND_BACK, color);
+                        break;
+                    }
+                    case TargetColor::Ambient:
+                    default:
+                    {
+                        osg::Vec4f color = material->getAmbient(osg::Material::FRONT_AND_BACK);
+                        color.set(value.x(), value.y(), value.z(), color.a());
+                        material->setAmbient(osg::Material::FRONT_AND_BACK, color);
+                        break;
+                    }
+                }
+            }
+            if (baseMaterialPair != nullptr)
+                stateset->setAttribute(material, baseMaterialPair->second);
+            else
+                stateset->setAttributeAndModes(material, osg::StateAttribute::ON);
+        }
+
+        for (const TextureTransformGroup& group : mTextureTransforms)
+        {
+            const unsigned int textureUnit
+                = resolveTextureUnit(*baseStateSet, group.mShaderMap, group.mTextureSlot);
+            const osg::StateSet::RefAttributePair* baseTexMatPair
+                = baseStateSet->getTextureAttributePair(textureUnit, osg::StateAttribute::TEXMAT);
+            const osg::TexMat* baseTexMat = baseTexMatPair != nullptr
+                ? dynamic_cast<const osg::TexMat*>(baseTexMatPair->first.get())
+                : nullptr;
+            osg::ref_ptr<osg::TexMat> texMat = baseTexMat != nullptr
+                ? static_cast<osg::TexMat*>(baseTexMat->clone(osg::CopyOp::DEEP_COPY_ALL))
+                : new osg::TexMat;
+
+            Nif::NiTextureTransform transform = makeIdentityTextureTransform();
+            getTextureTransformDefaults(*baseStateSet, textureUnit, transform);
+            for (std::size_t member = 0; member < group.mChannels.size(); ++member)
+            {
+                const ScalarChannel& channel = group.mChannels[member];
+                if (!channel.mEnabled)
+                    continue;
+                const float value = sampleScalarChannel(channel, time);
+                switch (member)
+                {
+                    case 0:
+                        transform.mOffset.x() = value;
+                        break;
+                    case 1:
+                        transform.mOffset.y() = value;
+                        break;
+                    case 2:
+                        transform.mRotation = value;
+                        break;
+                    case 3:
+                        transform.mScale.x() = value;
+                        break;
+                    case 4:
+                        transform.mScale.y() = value;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            texMat->setMatrix(makeTextureTransformMatrix(transform));
+            if (baseTexMatPair != nullptr)
+                stateset->setTextureAttribute(textureUnit, texMat, baseTexMatPair->second);
+            else
+                stateset->setTextureAttributeAndModes(textureUnit, texMat, osg::StateAttribute::ON);
+        }
+
+        node->setStateSet(stateset);
     }
 
     VisController::VisController(const Nif::NiVisController* ctrl, unsigned int mask)

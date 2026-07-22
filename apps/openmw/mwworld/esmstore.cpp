@@ -1,11 +1,15 @@
 #include "esmstore.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 
 #include <components/debug/debuglog.hpp>
 
@@ -16,6 +20,7 @@
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
 #include <components/esm4/records.hpp>
@@ -23,6 +28,7 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/lua/configuration.hpp>
 #include <components/misc/algorithm.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include "../mwmechanics/spelllist.hpp"
 
@@ -141,6 +147,124 @@ namespace
         throw std::runtime_error("List of NPC races is empty!");
     }
 
+    struct ValidatedFalloutPlayer
+    {
+        MWWorld::FalloutPlayerState mState;
+        MWWorld::FalloutNativePlayerRecords mNativeRecords;
+    };
+
+    std::optional<ValidatedFalloutPlayer> resolveValidatedFalloutPlayer(std::size_t masterCandidateCount,
+        const std::optional<std::int32_t>& masterCandidateIndex, const MWWorld::Store<ESM4::Npc>& npcs,
+        const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races)
+    {
+        if (masterCandidateCount == 0)
+            return std::nullopt;
+        if (masterCandidateCount != 1)
+            throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+        if (!masterCandidateIndex)
+            throw std::runtime_error("FalloutNV.esm master candidate has no valid normalized namespace");
+
+        const std::int32_t master = *masterCandidateIndex;
+        MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+        if (!player)
+            throw std::runtime_error(player.mError);
+
+        MWWorld::FalloutNativePlayerRecordsResolution native
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *player.mState);
+        if (!native)
+            throw std::runtime_error(native.mError);
+
+        return ValidatedFalloutPlayer{ std::move(*player.mState), *native.mRecords };
+    }
+
+    struct FalloutPlayerCompatibilityCarriers
+    {
+        ESM::Class mClass;
+        ESM::Race mRace;
+        ESM::NPC mPlayer;
+    };
+
+    FalloutPlayerCompatibilityCarriers makeFalloutPlayerCompatibilityCarriers(
+        const MWWorld::FalloutPlayerState& playerState, const ESM4::Class& nativeClass,
+        const ESM4::Race& nativeRace)
+    {
+        // These records are structural carriers for the existing ESM3 Player machinery. The validated native FNV
+        // records remain authoritative; no Morrowind gameplay labels, assets, sounds, or formulas are projected.
+        FalloutPlayerCompatibilityCarriers result;
+
+        result.mClass.mId = ESM::RefId::formIdRefId(playerState.mClass);
+        result.mClass.blank();
+        result.mClass.mName = nativeClass.mFullName;
+        result.mClass.mDescription = nativeClass.mDesc;
+
+        result.mRace.mId = ESM::RefId::formIdRefId(playerState.mRace);
+        result.mRace.blank();
+        result.mRace.mName = nativeRace.mFullName;
+        result.mRace.mDescription = nativeRace.mDesc;
+        result.mRace.mData.mMaleHeight = nativeRace.mHeightMale;
+        result.mRace.mData.mFemaleHeight = nativeRace.mHeightFemale;
+        result.mRace.mData.mMaleWeight = nativeRace.mWeightMale;
+        result.mRace.mData.mFemaleWeight = nativeRace.mWeightFemale;
+
+        result.mPlayer.mId = ESM::RefId::stringRefId("Player");
+        result.mPlayer.blank();
+        result.mPlayer.mRace = result.mRace.mId;
+        result.mPlayer.mClass = result.mClass.mId;
+        MWWorld::seedFalloutPlayerProxy(result.mPlayer, playerState);
+
+        return result;
+    }
+
+    std::optional<ESM::Variant> bridgeFalloutGameSettingValue(const ESM4::GameSetting::Data& value)
+    {
+        return std::visit(
+            [](const auto& item) -> std::optional<ESM::Variant> {
+                using T = std::decay_t<decltype(item)>;
+                if constexpr (std::is_same_v<T, std::monostate>)
+                    return std::nullopt;
+                else if constexpr (std::is_same_v<T, bool>)
+                    return ESM::Variant(static_cast<std::int32_t>(item));
+                else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, std::int32_t>
+                    || std::is_same_v<T, std::string>)
+                    return ESM::Variant(item);
+                else
+                {
+                    if (item > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                        return std::nullopt;
+                    return ESM::Variant(static_cast<std::int32_t>(item));
+                }
+            },
+            value);
+    }
+
+    std::vector<std::pair<std::string_view, ESM::Variant>> falloutCompatibilityGameSettings()
+    {
+        return {
+            { "fSwimHeightScale", ESM::Variant(0.9f) },
+            { "fStromWindSpeed", ESM::Variant(0.7f) },
+            { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+            { "fUnarmoredBase1", ESM::Variant(0.1f) },
+            { "fUnarmoredBase2", ESM::Variant(0.065f) },
+            { "fMessageTimePerChar", ESM::Variant(0.1f) },
+            { "sDefaultCellname", ESM::Variant(std::string("Wasteland")) },
+        };
+    }
+
+    std::vector<std::pair<std::string_view, ESM::Variant>> falloutCompatibilityGlobals()
+    {
+        // The exact save transaction replaces gamehour before the first rendered frame. The rest initialize the
+        // legacy DateTimeManager until native saved globals are decoded and applied.
+        return {
+            { "gamehour", ESM::Variant(0.f) },
+            { "dayspassed", ESM::Variant(std::int32_t{ 0 }) },
+            { "timescale", ESM::Variant(30.f) },
+            { "day", ESM::Variant(std::int32_t{ 1 }) },
+            { "month", ESM::Variant(std::int32_t{ 0 }) },
+            { "year", ESM::Variant(std::int32_t{ 2281 }) },
+        };
+    }
+
     bool containsAsciiNoCase(std::string_view value, std::string_view needle)
     {
         auto it = std::search(value.begin(), value.end(), needle.begin(), needle.end(), [](char left, char right) {
@@ -190,7 +314,7 @@ namespace
         MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
         MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons,
         MWWorld::Store<ESM::Potion>& potions, MWWorld::Store<ESM::Miscellaneous>& miscItems,
-        std::string_view playerSkeleton)
+        const MWWorld::FalloutPlayerState* falloutPlayerState, std::string_view playerSkeleton)
     {
         const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
         const ESM::RefId raceId = ESM::RefId::stringRefId("FNV_Wastelander");
@@ -310,9 +434,11 @@ namespace
             player.mNpdt.mFatigue = 220;
             player.mNpdt.mDisposition = 50;
             player.mNpdt.mGold = 0;
+            if (falloutPlayerState != nullptr)
+                MWWorld::seedFalloutPlayerProxy(player, *falloutPlayerState);
             npcs.insertStatic(player);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load model="
-                             << player.mModel;
+            Log(Debug::Info) << "FNV/ESM4: inserted ESM3 Player compatibility shell for normal save/load model="
+                             << player.mModel << " nativeState=" << static_cast<bool>(falloutPlayerState);
         }
 
         const auto ensureWeapon
@@ -715,6 +841,16 @@ namespace MWWorld
             if (shouldSkipStarfieldViewerRecord(reader, recordType))
                 return false;
 
+            // AMEF, AVIF, EXPL, FACT, MGEF, PERK, RCCT, RCPE, SPEL, and NOTE are not cross-game schemas. These typed loaders
+            // implement only the frozen Fallout: New Vegas contracts.
+            if ((recordType == ESM4::REC_AMEF || recordType == ESM4::REC_AVIF || recordType == ESM4::REC_EXPL
+                    || recordType == ESM4::REC_FACT
+                    || recordType == ESM4::REC_MGEF
+                    || recordType == ESM4::REC_PERK || recordType == ESM4::REC_RCCT
+                    || recordType == ESM4::REC_RCPE || recordType == ESM4::REC_SPEL || recordType == ESM4::REC_NOTE)
+                && store.mESM4Game != ESM4Game::FalloutNewVegas)
+                return false;
+
             const bool result = recordType == ESM4::REC_PKIN
                 ? readStarfieldPackIn(reader, store)
                 : std::apply(
@@ -809,6 +945,7 @@ namespace MWWorld
             case ESM::REC_ARMA4:
             case ESM::REC_ARMO4:
             case ESM::REC_BOOK4:
+            case ESM::REC_CLOT4:
             case ESM::REC_CONT4:
             case ESM::REC_CREA4:
             case ESM::REC_DOOR4:
@@ -816,6 +953,7 @@ namespace MWWorld
             case ESM::REC_FURN4:
             case ESM::REC_IMOD4:
             case ESM::REC_INGR4:
+            case ESM::REC_KEYM4:
             case ESM::REC_LIGH4:
             case ESM::REC_LVLI4:
             case ESM::REC_LVLC4:
@@ -823,6 +961,7 @@ namespace MWWorld
             case ESM::REC_MISC4:
             case ESM::REC_MSTT4:
             case ESM::REC_NPC_4:
+            case ESM::REC_PROJ4:
             case ESM::REC_SCOL4:
             case ESM::REC_SNDR4:
             case ESM::REC_SOUN4:
@@ -921,14 +1060,35 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+        // Any further native content load invalidates a previously published resolution. Publication resumes only
+        // after validate() proves the complete typed identity against the resulting winning stores.
+        mFalloutPlayerState.reset();
+
+        const bool isFalloutNewVegasMasterCandidate
+            = Misc::StringUtils::ciEqual(reader.getFileName().filename().string(), "FalloutNV.esm");
+        if (isFalloutNewVegasMasterCandidate)
+        {
+            ++mFalloutNewVegasMasterCandidateCount;
+            mFalloutNewVegasMasterCandidateIndex.reset();
+
+            if (mFalloutNewVegasMasterCandidateCount != 1)
+                throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+            if (reader.getModIndex() > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                throw std::runtime_error("FalloutNV.esm master index cannot be represented by a normalized FormID");
+
+            mFalloutNewVegasMasterCandidateIndex = static_cast<std::int32_t>(reader.getModIndex());
+        }
+
         const ESM4Game detectedGame = detectESM4Game(reader.getFileName());
         if (detectedGame != ESM4Game::Unknown && detectedGame != mESM4Game)
         {
             if (mESM4Game == ESM4Game::Unknown)
             {
                 mESM4Game = detectedGame;
+                mESM4GameMasterIndex = reader.getModIndex();
                 Log(Debug::Info) << "World viewer: session game=" << gameName(mESM4Game)
-                                 << " master=" << reader.getFileName().filename().string();
+                                 << " master=" << reader.getFileName().filename().string()
+                                 << " loadOrderIndex=" << *mESM4GameMasterIndex;
             }
             else
             {
@@ -1009,7 +1169,17 @@ namespace MWWorld
                 ++logged;
             }
         };
-        ESM4::ReaderUtils::readAll(reader, visitorRec, visitorGroup);
+        try
+        {
+            ESM4::ReaderUtils::readAll(reader, visitorRec, visitorGroup);
+        }
+        catch (...)
+        {
+            // A matching filename whose records did not load completely cannot establish normalized provenance.
+            if (isFalloutNewVegasMasterCandidate)
+                mFalloutNewVegasMasterCandidateIndex.reset();
+            throw;
+        }
         Log(Debug::Info) << "World viewer: ESM4 record counters"
                          << " seenWorlds=" << seenWorlds << "/" << handledWorlds << " seenCells=" << seenCells << "/"
                          << handledCells << " seenRefs=" << seenRefs << "/" << handledRefs
@@ -1030,8 +1200,11 @@ namespace MWWorld
                          << " scripts=" << get<ESM4::Script>().getSize()
                          << " globals=" << get<ESM4::GlobalVariable>().getSize()
                          << " formLists=" << get<ESM4::FormIdList>().getSize()
+                         << " animatedObjects=" << get<ESM4::AnimObject>().getSize()
                          << " statics=" << get<ESM4::Static>().getSize()
                          << " textureSets=" << get<ESM4::TextureSet>().getSize()
+                         << " magicEffects=" << get<ESM4::MagicEffect>().getSize()
+                         << " spells=" << get<ESM4::Spell>().getSize()
                          << " packIns=" << mStoreImp->mStarfieldPackIns.size();
     }
 
@@ -1051,6 +1224,74 @@ namespace MWWorld
                 return local->second.mStorageCell;
         }
         return std::nullopt;
+    }
+
+    FalloutNativePlayerRecordsResolution ESMStore::getFalloutNativePlayerRecords() const
+    {
+        if (!mFalloutPlayerState)
+            return { std::nullopt, "native FNV Player state has not been fully validated" };
+        return resolveFalloutNativePlayerRecords(
+            get<ESM4::Npc>(), get<ESM4::Class>(), get<ESM4::Race>(), *mFalloutPlayerState);
+    }
+
+    bool ESMStore::prepareFalloutNewVegasCompatibilityRecords()
+    {
+        const std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
+            mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
+            get<ESM4::Class>(), get<ESM4::Race>());
+        if (!player)
+            return false;
+
+        auto& gameSettings = getWritable<ESM::GameSetting>();
+        std::size_t bridged = 0;
+        std::size_t skipped = 0;
+        for (const ESM4::GameSetting& source : get<ESM4::GameSetting>())
+        {
+            if (source.mEditorId.empty())
+                continue;
+
+            const std::optional<ESM::Variant> value = bridgeFalloutGameSettingValue(source.mData);
+            if (!value)
+            {
+                ++skipped;
+                continue;
+            }
+
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(source.mEditorId);
+            record.mValue = *value;
+            record.mRecordFlags = source.mFlags;
+            gameSettings.insertStatic(record);
+            ++bridged;
+        }
+
+        for (const auto& [id, value] : falloutCompatibilityGameSettings())
+        {
+            if (gameSettings.search(id) != nullptr)
+                continue;
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(id);
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            gameSettings.insertStatic(record);
+        }
+
+        auto& globals = getWritable<ESM::Global>();
+        for (const auto& [id, value] : falloutCompatibilityGlobals())
+        {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (globals.search(refId) != nullptr)
+                continue;
+            ESM::Global record;
+            record.mId = refId;
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            globals.insertStatic(record);
+        }
+
+        Log(Debug::Info) << "FNV compatibility: bridged " << bridged << " native GMST records; skipped " << skipped
+                         << " values outside the ESM3 carrier domain";
+        return true;
     }
 
     void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
@@ -1091,14 +1332,31 @@ namespace MWWorld
     {
         if (mIsSetUpDone)
             throw std::logic_error("ESMStore::setUp() is called twice");
+
+        // The basename is provenance only. Select the FNV-only compatibility path after the exact Player NPC_,
+        // engine-reserved runtime reference, CLAS, and RACE records all validate in one namespace.
+        const bool isOfficialFalloutNewVegas = prepareFalloutNewVegasCompatibilityRecords();
         mIsSetUpDone = true;
 
-        for (const auto& [_, store] : mStoreImp->mRecNameToStore)
+        for (const auto& [recordType, store] : mStoreImp->mRecNameToStore)
+        {
+            if (isOfficialFalloutNewVegas && recordType == ESM::REC_GMST)
+                continue;
             store->setUp();
+        }
 
-        getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
-        getWritable<ESM::MagicEffect>().setUp();
-        getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
+        if (isOfficialFalloutNewVegas)
+        {
+            getWritable<ESM::Skill>().setUpNeutral();
+            getWritable<ESM::MagicEffect>().setUpNeutral();
+            getWritable<ESM::Attribute>().setUpNeutral();
+        }
+        else
+        {
+            getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
+            getWritable<ESM::MagicEffect>().setUp();
+            getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
+        }
         getWritable<ESM4::Land>().updateLandPositions(get<ESM4::Cell>());
         getWritable<ESM4::Reference>().preprocessReferences(get<ESM4::Cell>());
         getWritable<ESM4::ActorCharacter>().preprocessReferences(get<ESM4::Cell>());
@@ -1173,18 +1431,39 @@ namespace MWWorld
 
     void ESMStore::validate()
     {
+        // Publish native Player state transactionally. A prior successful resolution never survives a failed
+        // revalidation, and compatibility carriers are built only from the exact winning typed records.
+        mFalloutPlayerState.reset();
+        std::optional<FalloutPlayerState> validatedFalloutPlayerState;
+        std::optional<FalloutPlayerCompatibilityCarriers> falloutPlayerCarriers;
+        std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
+            mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
+            get<ESM4::Class>(), get<ESM4::Race>());
+        if (player)
+        {
+            falloutPlayerCarriers.emplace(makeFalloutPlayerCompatibilityCarriers(
+                player->mState, *player->mNativeRecords.mClass, *player->mNativeRecords.mRace));
+            validatedFalloutPlayerState = std::move(player->mState);
+        }
+
         auto& npcs = getWritable<ESM::NPC>();
-        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+        if (!player && shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+        {
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(mHasStarfieldContent,
-                    getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+                nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+        }
         rebuildIdsIndex();
         mStoreImp->mStaticIds = mStoreImp->mIds;
-        std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
-            getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mStatic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
+        }
 
         for (const ESM::NPC& npc : npcsToReplace)
         {
@@ -1212,6 +1491,29 @@ namespace MWWorld
             enchantments.eraseStatic(enchantment.mId);
             enchantments.insertStatic(enchantment);
         }
+
+        if (falloutPlayerCarriers)
+        {
+            getWritable<ESM::Class>().insertStatic(falloutPlayerCarriers->mClass);
+            getWritable<ESM::Race>().insertStatic(falloutPlayerCarriers->mRace);
+            npcs.insertStatic(falloutPlayerCarriers->mPlayer);
+
+            // setUp() captured the static snapshot before validation materialized Player. Refresh it so the normal
+            // movePlayerRecord()/clearDynamic() path owns the carrier without any FNV-only lookup special case.
+            rebuildIdsIndex();
+            mStoreImp->mStaticIds = mStoreImp->mIds;
+        }
+
+        if (validatedFalloutPlayerState)
+        {
+            Log(Debug::Info) << "FNV/ESM4: validated native Player base="
+                             << validatedFalloutPlayerState->mBaseRecord
+                             << " reference=" << validatedFalloutPlayerState->mReferenceRecord
+                             << " stats=" << validatedFalloutPlayerState->mStatsRecord
+                             << " ai=" << validatedFalloutPlayerState->mAIDataRecord
+                             << " health=" << validatedFalloutPlayerState->mHealth;
+        }
+        mFalloutPlayerState = std::move(validatedFalloutPlayerState);
     }
 
     void ESMStore::movePlayerRecord()
@@ -1224,18 +1526,25 @@ namespace MWWorld
     void ESMStore::validateDynamic()
     {
         auto& npcs = getWritable<ESM::NPC>();
-        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+        if (!mFalloutPlayerState
+            && shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+        {
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(mHasStarfieldContent,
-                    getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+                nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+        }
         rebuildIdsIndex();
         auto& scripts = getWritable<ESM::Script>();
 
-        std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
-            getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mDynamic);
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mDynamic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mDynamic);
+        }
 
         for (const ESM::NPC& npc : npcsToReplace)
             npcs.insert(npc);

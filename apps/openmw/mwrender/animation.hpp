@@ -17,6 +17,9 @@
 #include <components/sceneutil/util.hpp>
 #include <components/vfs/pathutil.hpp>
 
+#include <osg/Node>
+#include <osg/StateSet>
+
 #include <map>
 #include <span>
 #include <string>
@@ -47,6 +50,8 @@ namespace SceneUtil
 
 namespace MWRender
 {
+    enum class FonvWeaponAction : std::uint8_t;
+
 
     class ResetAccumRootCallback;
     class RotateController;
@@ -201,7 +206,11 @@ namespace MWRender
         osg::ref_ptr<osg::Group> mObjectRoot;
         SceneUtil::Skeleton* mSkeleton;
 
+        osg::ref_ptr<osg::MatrixTransform> mFalloutCorpseTransform;
+        bool mFalloutCorpsePoseApplied = false;
+
         virtual void applyPostManualFalloutActorPose() {}
+        void applyFalloutDeathPoseFallback();
 
         // The node expected to accumulate movement during movement animations.
         osg::ref_ptr<osg::Node> mAccumRoot;
@@ -249,6 +258,8 @@ namespace MWRender
 
         osg::ref_ptr<SceneUtil::LightSource> mGlowLight;
         osg::ref_ptr<SceneUtil::GlowUpdater> mGlowUpdater;
+        osg::ref_ptr<osg::Node> mFalloutVatsWireframeNode;
+        osg::ref_ptr<osg::StateSet> mFalloutVatsOriginalStateSet;
         osg::ref_ptr<TransparencyUpdater> mTransparencyUpdater;
         osg::ref_ptr<SceneUtil::LightSource> mExtraLightSource;
 
@@ -271,6 +282,7 @@ namespace MWRender
          * in the AnimationState to the corresponding nodes.
          */
         void resetActiveGroups();
+        void detachActiveControllers();
 
         int getBethesdaBoneLodLevel() const;
         bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
@@ -315,10 +327,13 @@ namespace MWRender
          * animation.
          * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
+         * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
+         * @param falloutSemanticGroup Optional semantic alias synthesized for a selected Fallout creature source.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
-        std::shared_ptr<AnimSource> addSingleAnimSource(
-            const std::string& model, const std::string& baseModel, bool falloutProcedureIdle = false);
+        std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
+            bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
+            std::string_view falloutSemanticGroup = {});
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
@@ -389,9 +404,44 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
+        /// Apply the VATS diagnostic wireframe to an authored target node, restoring its prior state on disable.
+        void setFalloutVatsWireframe(std::string_view targetNode, bool enabled);
+
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 
         bool hasAnimation(std::string_view anim) const;
+
+        /// Return the source selected by play() for this group. An empty string means the group has no source.
+        /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
+        std::string getAnimationSourceName(std::string_view anim) const;
+
+        /// Return the first group from a specific source whose name begins with the requested prefix.
+        /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+
+        /// Attach or clear a Fallout ANIO model for the duration of an authored idle group.
+        virtual bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) { return false; }
+
+        /// Bind the exact action sources selected by a Fallout weapon's DNAM fields.
+        /// Sources are added on demand so weapon-family changes and inventory-backed players cannot retain a stale
+        /// action manifest. Returns false when any required authored source is unavailable.
+        virtual bool prepareFalloutWeaponAnimation(
+            std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action);
+
+        /// Bind the audited retail New Vegas humanoid hit reaction on demand.
+        /// Non-New-Vegas actors are not affected. A New Vegas NPC fails closed unless the exact shared skeleton and
+        /// fully bound source are selected.
+        bool prepareFalloutHitReaction();
+
+        /// Return every animation group currently bound to this assembled object.
+        /// The result is copied and sorted so proof/telemetry callers can build a
+        /// deterministic pose inventory without depending on animation-source order.
+        std::vector<std::string> getAnimationGroups() const;
+
+        /// Return the bone-group controller coverage of the same highest-priority source that play() would select.
+        /// This lets diagnostics distinguish complete actions from overlays/metadata without naming either one.
+        unsigned int getAnimationGroupControllerMask(std::string_view group) const;
 
         bool isLoopingAnimation(std::string_view group) const;
 

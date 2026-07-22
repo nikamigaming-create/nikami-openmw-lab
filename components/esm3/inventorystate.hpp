@@ -24,6 +24,9 @@ namespace ESM
 
         std::map<ESM::RefId, std::vector<std::pair<float, float>>> mPermanentMagicEffectMagnitudes;
 
+        // Per-WEAP selected AMMO imported from Fallout ExtraAmmo. Empty for TES3 inventories.
+        std::map<ESM::RefId, ESM::RefId> mFalloutAmmoSelections;
+
         std::optional<uint32_t> mSelectedEnchantItem; // For inventories only
 
         virtual ~InventoryState() = default;

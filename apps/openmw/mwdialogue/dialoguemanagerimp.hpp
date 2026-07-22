@@ -18,6 +18,8 @@
 
 #include "../mwscript/compilercontext.hpp"
 
+#include "esm4dialogueutils.hpp"
+
 namespace ESM
 {
     struct Dialogue;
@@ -64,11 +66,11 @@ namespace MWDialogue
 
         bool mEsm4Dialogue = false;
         ESM::FormId mLastEsm4Topic{};
-        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
-        std::vector<ESM::FormId> mEsm4ChoiceTopics;
+        Esm4DialoguePicker mEsm4Picker;
         std::set<ESM::FormId> mEsm4SaidInfos;
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
+        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4ResultReferenceIds;
 
         int mOriginalDisposition;
         int mCurrentDisposition;
@@ -85,12 +87,16 @@ namespace MWDialogue
         void executeScript(const std::string& script, const MWWorld::Ptr& actor);
 
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
-        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false);
+        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
+            const ESM4::DialogInfo* retainedInfo = nullptr);
         const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
+        const ESM4::DialogInfo* resolveEsm4Selection(const Esm4DialogueSelection& selection) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
         std::string resolveEsm4Voice(
             const ESM4::DialogInfo& info, const ESM4::DialogResponse& response, std::size_t responseIndex);
+        ESM::FormId resolveEsm4ResultReferenceId(std::string_view editorId);
+        void executeEsm4ResultSource(std::string_view source);
         void updateEsm4Topics();
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);
@@ -105,6 +111,7 @@ namespace MWDialogue
         bool isInChoice() const override;
 
         bool startDialogue(const MWWorld::Ptr& actor, ResponseCallback* callback) override;
+        const MWWorld::Ptr& getActor() const override { return mActor; }
 
         std::list<std::string> getAvailableTopics() override;
         int getTopicFlag(const ESM::RefId& topicId) const override;

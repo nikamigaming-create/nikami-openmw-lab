@@ -40,6 +40,7 @@ namespace ESM4
         REC_ACTI = fourCC("ACTI"), // Activator
         REC_ADDN = fourCC("ADDN"), // Addon Node
         REC_ALCH = fourCC("ALCH"), // Potion
+        REC_AMEF = fourCC("AMEF"), // Ammo Effect
         REC_AMMO = fourCC("AMMO"), // Ammo
         REC_ANIO = fourCC("ANIO"), // Animated Object
         REC_APPA = fourCC("APPA"), // Apparatus (probably unused)
@@ -131,6 +132,8 @@ namespace ESM4
         REC_PROJ = fourCC("PROJ"), // Projectile
         REC_QUST = fourCC("QUST"), // Quest
         REC_RACE = fourCC("RACE"), // Race / Creature type
+        REC_RCCT = fourCC("RCCT"), // Recipe Category
+        REC_RCPE = fourCC("RCPE"), // Recipe
         REC_REFR = fourCC("REFR"), // Object Reference
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship

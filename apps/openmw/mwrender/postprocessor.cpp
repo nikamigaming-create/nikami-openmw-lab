@@ -287,8 +287,8 @@ namespace MWRender
         mRendering.getSkyManager()->setSunglare(true);
     }
 
-    void PostProcessor::setFalloutImageSpace(
-        const osg::Vec4f& cinematic, const osg::Vec4f& tint, const osg::Vec4f& fade)
+    void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+        const osg::Vec4f& tint, const osg::Vec4f& fade, float blurRadius)
     {
         if (!mFalloutImageSpaceTechnique)
         {
@@ -299,9 +299,51 @@ namespace MWRender
             enable();
         }
 
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutImageSpaceLogs = 0;
+            if (falloutImageSpaceLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post technique status valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdr=" << (mFalloutImageSpaceTechnique->getHDR() ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
+
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutBlurRadius", std::max(0.f, blurRadius));
+    }
+
+    void PostProcessor::clearFalloutImageSpace()
+    {
+        // Do not create or enable the internal technique merely to clear state.
+        if (!mFalloutImageSpaceTechnique)
+            return;
+
+        // This reset must also take effect while post-processing is temporarily
+        // disabled, otherwise re-enabling it can resurrect the last exterior
+        // grade. The generic setUniform helper intentionally ignores updates
+        // while disabled, so write these identity values directly.
+        const auto setIdentityUniform = [&](const std::string& name, const auto& value) {
+            const auto it = mFalloutImageSpaceTechnique->findUniform(name);
+            if (it != mFalloutImageSpaceTechnique->getUniformMap().end() && !(*it)->mStatic)
+                (*it)->setValue(value);
+        };
+
+        setIdentityUniform("uFalloutHdr", osg::Vec4f(1.f, 0.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutCinematic", osg::Vec4f(1.f, 0.f, 1.f, 1.f));
+        setIdentityUniform("uFalloutTint", osg::Vec4f(1.f, 1.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutFade", osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        setIdentityUniform("uFalloutBlurRadius", 0.f);
     }
 
     void PostProcessor::traverse(osg::NodeVisitor& nv)
@@ -861,6 +903,23 @@ namespace MWRender
         }
 
         dirtyTechniques();
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr && mFalloutImageSpaceTechnique)
+        {
+            static int falloutImageSpaceChainLogs = 0;
+            if (falloutImageSpaceChainLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post chain rebuilt valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdrEnabled=" << (mHDR ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
     }
 
     void PostProcessor::saveChain()

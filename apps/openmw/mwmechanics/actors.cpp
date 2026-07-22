@@ -15,7 +15,6 @@
 #include <components/misc/rng.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/settings/values.hpp>
-#include <components/vr/vr.hpp>
 
 #include <components/esm3/loadcrea.hpp>
 #include <components/esm3/loadgmst.hpp>
@@ -40,13 +39,13 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwmechanics/aibreathe.hpp"
 
 #include "../mwrender/vismask.hpp"
 
 #include "../mwsound/constants.hpp"
-
-#include "../mwvr/vrinputmanager.hpp"
 
 #include "actor.hpp"
 #include "actorutil.hpp"
@@ -57,6 +56,7 @@
 #include "attacktype.hpp"
 #include "character.hpp"
 #include "creaturestats.hpp"
+#include "dialoguefacing.hpp"
 #include "greetingstate.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
@@ -69,12 +69,6 @@ namespace
     {
         const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
         return value != nullptr && *value != '\0' && value[0] != '0';
-    }
-
-    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr)
-    {
-        return VR::getVR() && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
-            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
     }
 
     bool isConscious(const MWWorld::Ptr& ptr)
@@ -1381,9 +1375,6 @@ namespace MWMechanics
             const MWWorld::Ptr& ptr = cached.mPtr;
             if (ptr == player)
                 continue; // Don't interfere with player controls.
-            if (shouldHoldFalloutActorDisplacement(ptr))
-                continue;
-
             const float maxSpeed = cached.mMaxSpeed;
             if (maxSpeed == 0.0)
                 continue; // Can't move, so there is no sense to predict collisions.
@@ -1518,9 +1509,102 @@ namespace MWMechanics
         }
     }
 
+    MWWorld::Ptr Actors::getDialogueActorForFacing(const MWWorld::Ptr& player) const
+    {
+        MWBase::WindowManager* const windowManager = MWBase::Environment::get().getWindowManager();
+        MWBase::DialogueManager* const dialogueManager = MWBase::Environment::get().getDialogueManager();
+        const bool dialogueModeActive
+            = windowManager != nullptr && windowManager->getMode() == MWGui::GM_Dialogue;
+
+        MWWorld::Ptr actor;
+        if (dialogueManager != nullptr)
+            actor = dialogueManager->getActor();
+
+        const bool actorAvailable = !actor.isEmpty() && actor.isInCell() && actor.getCellRef().getCount() > 0
+            && !actor.mRef->isDeleted();
+        const bool actorInPlayerCell
+            = actorAvailable && player.isInCell() && actor.getCell() == player.getCell();
+        if (!makeDialogueFacingPolicy(dialogueModeActive, actorAvailable, actorInPlayerCell, false).mTrackHead)
+            return {};
+
+        const auto registered = std::ranges::find_if(mActors,
+            [&](const Actor& candidate) { return !candidate.isInvalid() && candidate.getPtr() == actor; });
+        if (registered == mActors.end()
+            || registered->getPtr().getClass().getCreatureStats(registered->getPtr()).isDead())
+            return {};
+
+        return registered->getPtr();
+    }
+
+    void Actors::updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor,
+        bool allowBodyTurn, bool updatePausedHeadTracking)
+    {
+        int activeActorId = -1;
+        if (!dialogueActor.isEmpty())
+            activeActorId = dialogueActor.getClass().getCreatureStats(dialogueActor).getActorId();
+
+        for (Actor& actor : mActors)
+        {
+            if (actor.isInvalid() || actor.getPtr() == player)
+                continue;
+
+            const MWWorld::Ptr& ptr = actor.getPtr();
+            const int actorId = ptr.getClass().getCreatureStats(ptr).getActorId();
+            CharacterController& controller = actor.getCharacterController();
+            const bool isDialogueActor = activeActorId >= 0 && actorId == activeActorId;
+
+            if (!isDialogueActor)
+            {
+                if (shouldClearDialogueFacing(actorId, activeActorId, mDialogueFacingActorId))
+                    controller.setHeadTrackTarget({});
+                continue;
+            }
+
+            const bool furnitureConstrained = ptr.getType() == ESM::REC_NPC_4
+                && MWClass::ESM4Npc::getFurnitureState(ptr) != MWClass::FalloutFurnitureState::None;
+            const DialogueFacingPolicy policy
+                = makeDialogueFacingPolicy(true, true, true, furnitureConstrained);
+            if (policy.mTrackHead)
+                controller.setHeadTrackTarget(player);
+
+            if (policy.mStopMovement)
+            {
+                Movement& movement = ptr.getClass().getMovementSettings(ptr);
+                movement.mPosition[0] = 0.f;
+                movement.mPosition[1] = 0.f;
+                movement.mPosition[2] = 0.f;
+                movement.mRotation[0] = 0.f;
+                movement.mRotation[1] = 0.f;
+                movement.mRotation[2] = 0.f;
+            }
+
+            if (allowBodyTurn && policy.mTurnBody)
+            {
+                const osg::Vec3f direction
+                    = player.getRefData().getPosition().asVec3() - ptr.getRefData().getPosition().asVec3();
+                if (direction.x() != 0.f || direction.y() != 0.f)
+                    zTurn(ptr, std::atan2(direction.x(), direction.y()), osg::DegreesToRadians(5.f));
+            }
+
+            // Dialogue pauses the ordinary CharacterController update, so a
+            // target assigned above would otherwise never reach the skeleton.
+            if (updatePausedHeadTracking && policy.mTrackHead)
+                controller.updateDialogueHeadTracking(0.2f);
+        }
+
+        mDialogueFacingActorId = activeActorId;
+    }
+
     void Actors::update(float duration, bool paused)
     {
-        if (!paused)
+        const MWWorld::Ptr player = getPlayer();
+        const MWWorld::Ptr dialogueActor = getDialogueActorForFacing(player);
+        if (paused)
+        {
+            updateDialogueFacing(player, dialogueActor, true, true);
+            return;
+        }
+
         {
             const float updateEquippedLightInterval = 1.0f;
 
@@ -1540,7 +1624,6 @@ namespace MWMechanics
             MWBase::World* const world = MWBase::Environment::get().getWorld();
             const bool showTorches = world->useTorches();
 
-            const MWWorld::Ptr player = getPlayer();
             const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
 
             /// \todo move update logic to Actor class where appropriate
@@ -1673,6 +1756,9 @@ namespace MWMechanics
 
             if (Settings::game().mNPCsAvoidCollisions)
                 predictAndAvoidCollisions(duration);
+
+            // Dialogue is authoritative over AI, Lua controls, and collision avoidance for the active speaker.
+            updateDialogueFacing(player, dialogueActor, true);
 
             mTimerUpdateHeadTrack += duration;
             mTimerUpdateEquippedLight += duration;
@@ -2058,6 +2144,33 @@ namespace MWMechanics
             iter->second->getCharacterController().forceStateUpdate();
     }
 
+    bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutVatsRangedHit(
+                target, targetPoint, action, targetHit);
+    }
+
+    bool Actors::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutProjectileImpact(
+                target, segmentStart, hitPosition, impact);
+    }
+
+    bool Actors::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutExplosion(position, impact);
+    }
+
     bool Actors::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted) const
     {
@@ -2157,6 +2270,9 @@ namespace MWMechanics
     std::vector<MWWorld::Ptr> Actors::getActorsSidingWith(const MWWorld::Ptr& actorPtr, bool excludeInfighting) const
     {
         std::vector<MWWorld::Ptr> list;
+        if (actorPtr.isEmpty())
+            return list;
+
         list.push_back(actorPtr);
         for (const Actor& actor : mActors)
         {
@@ -2357,6 +2473,7 @@ namespace MWMechanics
         mIndex.clear();
         mActors.clear();
         mDeathCount.clear();
+        mDialogueFacingActorId = -1;
     }
 
     void Actors::updateMagicEffects(const MWWorld::Ptr& ptr) const

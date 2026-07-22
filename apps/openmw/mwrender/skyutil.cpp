@@ -194,19 +194,28 @@ namespace MWRender
     {
     public:
         osg::Vec4f mColor;
+        float mFalloutRgbMultiplier = 1.f;
+        bool mUseFalloutSunShader = false;
 
         SunUpdater()
             : mColor(1.f, 1.f, 1.f, 1.f)
         {
         }
 
-        void setDefaults(osg::StateSet* stateset) override { stateset->setAttributeAndModes(createUnlitMaterial()); }
+        void setDefaults(osg::StateSet* stateset) override
+        {
+            stateset->setAttributeAndModes(createUnlitMaterial());
+            stateset->addUniform(new osg::Uniform("useFalloutSunShader", false));
+            stateset->addUniform(new osg::Uniform("falloutSunRgbMultiplier", 1.f));
+        }
 
         void apply(osg::StateSet* stateset, osg::NodeVisitor*) override
         {
             osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
             mat->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(0, 0, 0, mColor.a()));
             mat->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(mColor.r(), mColor.g(), mColor.b(), 1));
+            stateset->getUniform("useFalloutSunShader")->set(mUseFalloutSunShader);
+            stateset->getUniform("falloutSunRgbMultiplier")->set(mFalloutRgbMultiplier);
         }
     };
 
@@ -404,6 +413,7 @@ namespace MWRender
     {
         float mTransparency{ 1.f };
         float mShadowBlend{ 1.f };
+        bool mUseFalloutMoonShader{ false };
         osg::Vec4f mAtmosphereColor{ 1.f, 1.f, 1.f, 1.f };
         osg::Vec4f mMoonColor{ 1.f, 1.f, 1.f, 1.f };
 
@@ -421,6 +431,7 @@ namespace MWRender
             stateset->addUniform(new osg::Uniform("atmosphereFade", osg::Vec4f{}));
             stateset->addUniform(new osg::Uniform("diffuseMap", 0));
             stateset->addUniform(new osg::Uniform("maskMap", 1));
+            stateset->addUniform(new osg::Uniform("useFalloutMoonShader", false));
             stateset->setAttributeAndModes(
                 new osg::BlendFunc(osg::BlendFunc::ONE, osg::BlendFunc::ONE_MINUS_SRC_ALPHA), osg::StateAttribute::ON);
             stateset->setAttributeAndModes(createUnlitMaterial(), osg::StateAttribute::ON);
@@ -433,6 +444,8 @@ namespace MWRender
             if (auto* uAtmosphereFade = stateset->getUniform("atmosphereFade"))
                 uAtmosphereFade->set(
                     osg::Vec4f(mAtmosphereColor.x(), mAtmosphereColor.y(), mAtmosphereColor.z(), mTransparency));
+            if (auto* uFalloutMoon = stateset->getUniform("useFalloutMoonShader"))
+                uFalloutMoon->set(mUseFalloutMoonShader);
         }
 
         void setTextures(VFS::Path::NormalizedView phaseTex, VFS::Path::NormalizedView circleTex)
@@ -567,15 +580,32 @@ namespace MWRender
         mColor.a() = fade;
     }
 
+    void AtmosphereNightUpdater::setFalloutStarColors(const osg::Vec4f& starsColor,
+        const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyUpperColor)
+    {
+        mFalloutStarsColor = starsColor;
+        mFalloutSkyLowerColor = skyLowerColor;
+        mFalloutSkyUpperColor = skyUpperColor;
+        mUseFalloutStarShader = true;
+    }
+
     void AtmosphereNightUpdater::setDefaults(osg::StateSet* stateset)
     {
         stateset->addUniform(new osg::Uniform("opacity", 0.f));
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Atmosphere_Night)));
+        stateset->addUniform(new osg::Uniform("useFalloutStarShader", false));
+        stateset->addUniform(new osg::Uniform("falloutStarsColor", osg::Vec4f(0.f, 0.f, 0.f, 0.f)));
+        stateset->addUniform(new osg::Uniform("falloutStarsSkyLowerColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+        stateset->addUniform(new osg::Uniform("falloutStarsSkyUpperColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
     }
 
     void AtmosphereNightUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/)
     {
         stateset->getUniform("opacity")->set(mColor.a());
+        stateset->getUniform("useFalloutStarShader")->set(mUseFalloutStarShader);
+        stateset->getUniform("falloutStarsColor")->set(mFalloutStarsColor);
+        stateset->getUniform("falloutStarsSkyLowerColor")->set(mFalloutSkyLowerColor);
+        stateset->getUniform("falloutStarsSkyUpperColor")->set(mFalloutSkyUpperColor);
     }
 
     CloudUpdater::CloudUpdater()
@@ -591,6 +621,13 @@ namespace MWRender
     void CloudUpdater::setEmissionColor(const osg::Vec4f& emissionColor)
     {
         mEmissionColor = emissionColor;
+    }
+
+    void CloudUpdater::setFalloutSkyColors(
+        const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyUpperColor)
+    {
+        mFalloutSkyLowerColor = skyLowerColor;
+        mFalloutSkyUpperColor = skyUpperColor;
     }
 
     void CloudUpdater::setOpacity(float opacity)
@@ -612,6 +649,8 @@ namespace MWRender
 
     void CloudUpdater::setDefaults(osg::StateSet* stateset)
     {
+        constexpr osg::StateAttribute::OverrideValue sRetailLeafState
+            = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
         stateset->setAttribute(
             createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
@@ -629,7 +668,34 @@ namespace MWRender
         osg::ref_ptr<osg::TexMat> texmat = new osg::TexMat;
         stateset->setTextureAttributeAndModes(0, texmat);
 
-        stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setTextureAttributeAndModes(0, mTexture, sRetailLeafState);
+        stateset->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"),
+            sRetailLeafState);
+
+        if (mFalloutCloudShader)
+        {
+            // Retail SKYTEX.pso always receives two cloud samplers. Outside a weather transition both stages point
+            // at the same texture and Params.x is zero; preserving that contract also avoids depending on a stale
+            // sampler value left by a preceding sky draw.
+            osg::ref_ptr<osg::TexMat> blendTexmat = new osg::TexMat;
+            stateset->setTextureAttributeAndModes(1, blendTexmat, sRetailLeafState);
+            stateset->setTextureAttributeAndModes(1, mTexture, sRetailLeafState);
+            stateset->setTextureAttributeAndModes(1, new SceneUtil::TextureType("falloutCloudBlendMap"),
+                sRetailLeafState);
+            stateset->addUniform(new osg::Uniform("diffuseMap", 0), sRetailLeafState);
+            stateset->addUniform(new osg::Uniform("falloutCloudBlendMap", 1), sRetailLeafState);
+            stateset->addUniform(new osg::Uniform("falloutCloudBlendFactor", 0.f));
+            stateset->addUniform(new osg::Uniform("falloutCloudColor", osg::Vec4f(1.f, 1.f, 1.f, 1.f)));
+            stateset->addUniform(
+                new osg::Uniform("falloutCloudSkyLowerColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+            stateset->addUniform(
+                new osg::Uniform("falloutCloudSkyUpperColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+
+            // Main-view retail telemetry reports COLORWRITEENABLE=RGB for all four cloud draws.
+            stateset->setAttributeAndModes(new osg::ColorMask(true, true, true, false),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        }
 
         stateset->addUniform(new osg::Uniform("opacity", 1.f));
         stateset->addUniform(new osg::Uniform("useFalloutCloudShader", mFalloutCloudShader));
@@ -638,13 +704,44 @@ namespace MWRender
 
     void CloudUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
     {
-        stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        constexpr osg::StateAttribute::OverrideValue sRetailLeafState
+            = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
+        stateset->setTextureAttributeAndModes(0, mTexture, sRetailLeafState);
+        if (mFalloutCloudShader)
+            stateset->setTextureAttributeAndModes(1, mTexture, sRetailLeafState);
 
         osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
         mat->setEmission(osg::Material::FRONT_AND_BACK, mEmissionColor);
 
         osg::TexMat* texMat = static_cast<osg::TexMat*>(stateset->getTextureAttribute(0, osg::StateAttribute::TEXMAT));
         texMat->setMatrix(mTexMat);
+        if (mFalloutCloudShader)
+        {
+            osg::TexMat* blendTexMat
+                = static_cast<osg::TexMat*>(stateset->getTextureAttribute(1, osg::StateAttribute::TEXMAT));
+            blendTexMat->setMatrix(mTexMat);
+            stateset->getUniform("falloutCloudBlendFactor")->set(0.f);
+            stateset->getUniform("falloutCloudColor")->set(mEmissionColor);
+            stateset->getUniform("falloutCloudSkyLowerColor")->set(mFalloutSkyLowerColor);
+            stateset->getUniform("falloutCloudSkyUpperColor")->set(mFalloutSkyUpperColor);
+
+            if (!mLoggedFalloutBinding && mTexture && mTexture->getImage())
+            {
+                int diffuseUnit = -1;
+                int blendUnit = -1;
+                stateset->getUniform("diffuseMap")->get(diffuseUnit);
+                stateset->getUniform("falloutCloudBlendMap")->get(blendUnit);
+                Log(Debug::Info) << "FNV/ESM4: active cloud sampler contract image="
+                                 << mTexture->getImage()->getFileName() << " size=" << mTexture->getImage()->s()
+                                 << 'x' << mTexture->getImage()->t() << " diffuseUnit=" << diffuseUnit
+                                 << " blendUnit=" << blendUnit << " unit0Object="
+                                 << (stateset->getTextureAttribute(0, osg::StateAttribute::TEXTURE) == mTexture)
+                                 << " unit1Object="
+                                 << (stateset->getTextureAttribute(1, osg::StateAttribute::TEXTURE) == mTexture)
+                                 << " callbacks=weather-exclusive";
+                mLoggedFalloutBinding = true;
+            }
+        }
 
         stateset->getUniform("opacity")->set(mOpacity);
         stateset->getUniform("useFalloutCloudShader")->set(mFalloutCloudShader);
@@ -810,6 +907,21 @@ namespace MWRender
         , mUpdater(new SunUpdater)
         , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
+        if (mFalloutSkyContent)
+        {
+            // Retail's Sun.dds support quad is 1500x1500. Grow only the base
+            // disc geometry so the occlusion query and glare children retain
+            // their independently authored sizes.
+            if (auto* vertices = dynamic_cast<osg::Vec3Array*>(mGeom->getVertexArray()))
+            {
+                constexpr float falloutSunSupportScale = 1500.f / 450.f;
+                for (osg::Vec3f& vertex : *vertices)
+                    vertex *= falloutSunSupportScale;
+                vertices->dirty();
+                mGeom->dirtyBound();
+            }
+        }
+
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
@@ -819,7 +931,9 @@ namespace MWRender
                 "textures/sky/soulcairnsun01.dds" },
             "textures/tx_sun_05.dds");
         if (mFalloutSkyContent)
+        {
             Log(Debug::Info) << "FNV/ESM4: enabled native Bethesda sun billboard using texture " << image.value();
+        }
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -830,6 +944,20 @@ namespace MWRender
         sunStateSet->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
         sunStateSet->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
         setAlphaBlendedSkyBillboard(*sunStateSet);
+        if (mFalloutSkyContent)
+        {
+            sunStateSet->setAttributeAndModes(new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setAttributeAndModes(
+                new osg::ColorMask(true, true, true, false), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setRenderBinDetails(
+                RenderBin_Sky - 1, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+        }
+        // Keep the validated compatibility sun path until the native Fallout
+        // pass has its own isolated render-target gate. Enabling the native
+        // additive path here changes the entire HDR target, not just the sun.
+        mUpdater->mUseFalloutSunShader = false;
 
         osg::ref_ptr<osg::Group> queryNode = new osg::Group;
         // Need to render after the world geometry so we can correctly test for occlusions
@@ -868,6 +996,11 @@ namespace MWRender
         mUpdater->mColor.b() = color.b();
     }
 
+    void Sun::setFalloutRgbMultiplier(float multiplier)
+    {
+        mUpdater->mFalloutRgbMultiplier = multiplier;
+    }
+
     void Sun::adjustTransparency(const float ratio)
     {
         mUpdater->mColor.a() = ratio;
@@ -880,7 +1013,7 @@ namespace MWRender
     void Sun::setDirection(const osg::Vec3f& direction)
     {
         osg::Vec3f normalizedDirection = direction / direction.length();
-        mTransform->setPosition(normalizedDirection * mDistance);
+        mTransform->setPosition(mFalloutSkyContent ? direction : normalizedDirection * mDistance);
 
         osg::Quat quat;
         quat.makeRotate(osg::Vec3f(0.0f, 0.0f, 1.0f), normalizedDirection);
@@ -1055,6 +1188,9 @@ namespace MWRender
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
         , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
+        mUpdater->mUseFalloutMoonShader = mFalloutSkyContent;
+        if (mFalloutSkyContent && mType == Type_Masser)
+            mTransform->setScale(osg::Vec3f(332.03125f, 332.03125f, 332.03125f));
         if (mType == Type_Secunda && hasSingleFalloutMoonContent(sceneManager))
         {
             setAvailable(false);
@@ -1074,7 +1210,7 @@ namespace MWRender
 
     void Moon::adjustTransparency(const float ratio)
     {
-        if (!mAvailable)
+        if (!mAvailable || mFalloutSkyContent)
             return;
         mUpdater->mTransparency *= ratio;
     }
@@ -1087,16 +1223,31 @@ namespace MWRender
         float radsX = ((state.mRotationFromHorizon) * static_cast<float>(osg::PI)) / 180.0f;
         float radsZ = ((state.mRotationFromNorth) * static_cast<float>(osg::PI)) / 180.0f;
 
-        osg::Quat rotX(radsX, osg::Vec3f(1.0f, 0.0f, 0.0f));
         osg::Quat rotZ(radsZ, osg::Vec3f(0.0f, 0.0f, 1.0f));
+        if (mFalloutSkyContent)
+        {
+            // Retail root Rx(A)*Rz(-35), followed by the authored moon geometry's
+            // Rx(-90) child transform. OSG's quaternion product convention makes
+            // this reversed expression preserve the exact image axes and center.
+            const osg::Quat rootX(radsX, osg::Vec3f(1.0f, 0.0f, 0.0f));
+            const osg::Quat rootZ(-radsZ, osg::Vec3f(0.0f, 0.0f, 1.0f));
+            const osg::Quat geomX(-static_cast<float>(osg::PI) / 2.0f, osg::Vec3f(1.0f, 0.0f, 0.0f));
+            const osg::Quat attitude = geomX * rootZ * rootX;
+            const osg::Vec3f direction = attitude * osg::Vec3f(0.0f, 0.0f, 1.0f);
+            mTransform->setPosition(direction * mDistance);
+            mTransform->setAttitude(attitude);
+        }
+        else
+        {
+            osg::Quat rotX(radsX, osg::Vec3f(1.0f, 0.0f, 0.0f));
+            osg::Vec3f direction = rotX * rotZ * osg::Vec3f(0.0f, 1.0f, 0.0f);
+            mTransform->setPosition(direction * mDistance);
 
-        osg::Vec3f direction = rotX * rotZ * osg::Vec3f(0.0f, 1.0f, 0.0f);
-        mTransform->setPosition(direction * mDistance);
-
-        // The moon quad is initially oriented facing down, so we need to offset its X-axis
-        // rotation to rotate it to face the camera when sitting at the horizon.
-        osg::Quat attX((-static_cast<float>(osg::PI) / 2.0f) + radsX, osg::Vec3f(1.0f, 0.0f, 0.0f));
-        mTransform->setAttitude(attX * rotZ);
+            // The moon quad is initially oriented facing down, so we need to offset its X-axis
+            // rotation to rotate it to face the camera when sitting at the horizon.
+            osg::Quat attX((-static_cast<float>(osg::PI) / 2.0f) + radsX, osg::Vec3f(1.0f, 0.0f, 0.0f));
+            mTransform->setAttitude(attX * rotZ);
+        }
 
         setPhase(state.mPhase);
         mUpdater->mTransparency = state.mMoonAlpha;
@@ -1187,7 +1338,10 @@ namespace MWRender
         const std::string moonName = mType == Moon::Type_Secunda ? "secunda_" : "masser_";
         const std::string fallbackTextureName = "textures/tx_" + moonName + suffix + ".dds";
         const std::string nativePhaseTextureName = "textures/sky/" + moonName + suffix + ".dds";
-        const VFS::Path::Normalized texturePath = mType == Moon::Type_Secunda
+        const VFS::Path::Normalized texturePath = mFalloutSkyContent && mType == Moon::Type_Masser
+                && mPhase == MoonState::Phase::New
+            ? chooseExistingTexture(mVFS, { "textures/sky/alpha.dds" }, fallbackTextureName)
+            : mType == Moon::Type_Secunda
             ? chooseExistingTexture(mVFS,
                 { nativePhaseTextureName, "textures/sky/skymoonfull.dds", "textures/sky/skysecunda.dds",
                     "textures/sky/secunda_full.dds" },
@@ -1208,9 +1362,11 @@ namespace MWRender
         }
         else
         {
-            const VFS::Path::Normalized masser = chooseExistingTexture(
-                mVFS, { "textures/sky/masser_full.dds", "textures/sky/skymasser.dds" },
-                "textures/tx_mooncircle_full_m.dds");
+            const VFS::Path::Normalized masser = mFalloutSkyContent
+                ? chooseExistingTexture(mVFS, { "textures/sky/moonshadow.dds" },
+                    "textures/tx_mooncircle_full_m.dds")
+                : chooseExistingTexture(mVFS, { "textures/sky/masser_full.dds", "textures/sky/skymasser.dds" },
+                    "textures/tx_mooncircle_full_m.dds");
             mUpdater->setTextures(texturePath, masser);
         }
     }

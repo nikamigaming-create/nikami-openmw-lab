@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 #include <string_view>
 
 #include <osg/Group>
@@ -345,6 +346,13 @@ namespace MWRender
             cellnode = found->second;
 
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> insert(new SceneUtil::PositionAttitudeTransform);
+        {
+            std::ostringstream name;
+            name << "Object ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                 << " base=" << ptr.getCellRef().getRefId().toDebugString() << " type=\"" << ptr.getTypeDescription()
+                 << "\"";
+            insert->setName(name.str());
+        }
         cellnode->addChild(insert);
 
         insert->getOrCreateUserDataContainer()->addUserObject(new PtrHolder(ptr));

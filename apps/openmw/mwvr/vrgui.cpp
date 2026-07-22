@@ -27,6 +27,7 @@
 #include <components/myguiplatform/scalinglayer.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
+#include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/visitor.hpp>
@@ -844,6 +845,10 @@ namespace MWVR
         stateset->setMode(GL_BLEND, osg::StateAttribute::ON);
         stateset->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
         stateset->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+        osg::ref_ptr<SceneUtil::AutoDepth> depth
+            = new SceneUtil::AutoDepth(osg::Depth::LEQUAL, 0.0, 1.0, false);
+        stateset->setAttributeAndModes(
+            depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
         // assign large value to effectively turn off fog
         // shaders don't respect glDisable(GL_FOG)
         osg::ref_ptr<osg::Fog> fog(new osg::Fog);

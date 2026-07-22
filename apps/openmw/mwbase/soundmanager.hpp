@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -129,6 +130,12 @@ namespace MWBase
         virtual void say(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView filename) = 0;
         ///< Make an actor say some text.
         /// \param filename name of a sound file in the VFS
+
+        virtual void saySequence(
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames)
+            = 0;
+        ///< Replace the actor's speech with an authored sequence of voice files.
+        /// Each file begins only after the previous file finishes.
 
         virtual void say(VFS::Path::NormalizedView filename) = 0;
         ///< Say some text, without an actor ref

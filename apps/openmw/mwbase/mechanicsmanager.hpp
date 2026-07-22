@@ -27,6 +27,8 @@ namespace ESM
 namespace MWMechanics
 {
     enum class GreetingState;
+    struct FalloutProjectileImpactContract;
+    struct FalloutVatsQueuedAction;
 }
 
 namespace MWWorld
@@ -167,6 +169,22 @@ namespace MWBase
         ///< Perform a persuasion action on NPC
 
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
+
+        virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
+        {
+            return false;
+        }
+        virtual bool executeFalloutProjectileImpact(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const osg::Vec3f&, const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
+        virtual bool executeFalloutExplosion(const MWWorld::Ptr&, const osg::Vec3f&,
+            const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
         ///< Forces an object to refresh its animation state.
 
         virtual bool playAnimationGroup(

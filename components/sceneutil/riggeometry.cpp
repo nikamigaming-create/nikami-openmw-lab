@@ -1,8 +1,11 @@
 #include "riggeometry.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <unordered_map>
@@ -97,11 +100,8 @@ namespace SceneUtil
         }
 
         std::string_view getFalloutSkinningMode(
-            std::string_view name, std::string_view rootBone, bool inventoryPaperDoll)
+            std::string_view name, std::string_view rootBone, bool /* inventoryPaperDoll */)
         {
-            if (inventoryPaperDoll)
-                return "source";
-
             if (isFalloutHandRig(name, rootBone))
             {
                 if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_HAND_SKINNING_MODE", "OPENMW_FNV_VR_HAND_SKINNING_MODE"))
@@ -665,6 +665,7 @@ namespace SceneUtil
         }
 
         unsigned int traversalNumber = nv->getTraversalNumber();
+        mLastCullTraversalNumber.store(traversalNumber, std::memory_order_release);
         if (mLastFrameNumber == traversalNumber || (mLastFrameNumber != 0 && !mSkeleton->getActive()))
         {
             osg::Geometry& geom = *getGeometry(mLastFrameNumber);
@@ -787,6 +788,52 @@ namespace SceneUtil
             }
             ++bone;
             ++boneInfo;
+        }
+
+        if (falloutRig)
+        {
+            const char* auditFrameText = std::getenv("OPENMW_FNV_RETAIL_SKIN_PALETTE_AUDIT_FRAME");
+            const unsigned int auditFrame
+                = auditFrameText == nullptr ? std::numeric_limits<unsigned int>::max()
+                                            : static_cast<unsigned int>(std::strtoul(auditFrameText, nullptr, 10));
+            if (traversalNumber == auditFrame && Misc::StringUtils::ciEqual(getName(), "HeadOld"))
+            {
+                const auto matrixBits = [](const osg::Matrixf& matrix) {
+                    std::ostringstream stream;
+                    stream << '[' << std::uppercase << std::hex << std::setfill('0');
+                    for (unsigned int row = 0; row < 4; ++row)
+                    {
+                        for (unsigned int column = 0; column < 4; ++column)
+                        {
+                            if (row != 0 || column != 0)
+                                stream << ',';
+                            stream << "0x" << std::setw(8)
+                                   << std::bit_cast<std::uint32_t>(matrix(row, column));
+                        }
+                    }
+                    stream << ']';
+                    return stream.str();
+                };
+
+                Log(Debug::Info) << "FNV/ESM4 retail skin palette audit: frame=" << traversalNumber
+                                 << " rig=" << getName() << " mode=" << falloutSkinningMode
+                                 << " bones=" << boneMatrices.size()
+                                 << " skinTransformBits=" << matrixBits(mData->mTransform)
+                                 << " skinToSkeletonBits="
+                                 << (mSkinToSkelMatrix == nullptr ? std::string("none")
+                                                                  : matrixBits(*mSkinToSkelMatrix));
+                for (std::size_t i = 0; i < boneMatrices.size(); ++i)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 retail skin palette bone: frame=" << traversalNumber
+                                     << " rig=" << getName() << " index=" << i
+                                     << " name=\"" << mData->mBones[i].mName << "\""
+                                     << " paletteBits=" << matrixBits(boneMatrices[i])
+                                     << " invBindBits=" << matrixBits(mData->mBones[i].mInvBindMatrix)
+                                     << " skeletonBits="
+                                     << (mNodes[i] == nullptr ? std::string("missing")
+                                                              : matrixBits(mNodes[i]->mMatrixInSkeletonSpace));
+                }
+            }
         }
 
         if (falloutRig && !boneMatrices.empty())

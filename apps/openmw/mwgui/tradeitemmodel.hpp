@@ -3,17 +3,33 @@
 
 #include "itemmodel.hpp"
 
+namespace MWWorld
+{
+    class ESMStore;
+}
+
 namespace MWGui
 {
 
     class ItemModel;
+
+    bool isFlatFalloutMerchant(const MWWorld::ConstPtr& merchant);
+    bool isItemAcceptedForBarter(
+        const MWWorld::ConstPtr& item, const MWWorld::ConstPtr& merchant, int merchantServices);
+    ESM::RefId findFlatFalloutCurrency(const MWWorld::ESMStore& store);
+    int countBarterCurrency(const std::vector<MWWorld::Ptr>& sources, const ESM::RefId& currency);
+    bool transferBarterCurrency(const std::vector<MWWorld::Ptr>& from, const std::vector<MWWorld::Ptr>& to,
+        const ESM::RefId& currency, int amount);
 
     /// @brief An item model that allows 'borrowing' items from another item model. Used for previewing barter offers.
     /// Also filters items that the merchant does not sell.
     class TradeItemModel : public ProxyItemModel
     {
     public:
-        TradeItemModel(std::unique_ptr<ItemModel> sourceModel, const MWWorld::Ptr& merchant);
+        TradeItemModel(std::unique_ptr<ItemModel> sourceModel, const MWWorld::Ptr& merchant,
+            const ESM::RefId& currency = {});
+
+        void setMerchant(const MWWorld::Ptr& merchant, const ESM::RefId& currency = {});
 
         bool allowedToUseItems() const override;
 
@@ -55,6 +71,7 @@ namespace MWGui
         std::vector<ItemStack> mBorrowedFromUs;
 
         MWWorld::Ptr mMerchant;
+        ESM::RefId mCurrency;
     };
 
 }

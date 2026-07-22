@@ -4,11 +4,15 @@ include_directories(SYSTEM ${GMOCK_INCLUDE_DIRS})
 file(GLOB UNITTEST_SRC_FILES
     main.cpp
 
+    ../openmw/fnvsidecaripc.cpp
+    openmw/testfnvsidecaripc.cpp
+
     esm/testfixedstring.cpp
     esm/testrefid.cpp
     esm/variant.cpp
 
     lua/testasync.cpp
+    lua/testactivationhandlers.cpp
     lua/testconfiguration.cpp
     lua/testinputactions.cpp
     lua/testl10n.cpp
@@ -69,11 +73,30 @@ file(GLOB UNITTEST_SRC_FILES
     toutf8/toutf8.cpp
 
     esm4/includes.cpp
+    esm4/fonvsavegame.cpp
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
+    esm4/testscdadecoder.cpp
+    esm4/testloadachr.cpp
+    esm4/testloadcreature.cpp
+    esm4/testloadarmor.cpp
+    esm4/testloadclimate.cpp
+    esm4/testloadamef.cpp
+    esm4/testloadmgef.cpp
+    esm4/testloadspel.cpp
     esm4/testloadweap.cpp
+    esm4/testloadproj.cpp
+    esm4/testloadexpl.cpp
     esm4/testloadweather.cpp
     esm4/testloadimagespace.cpp
+    esm4/testloadlvli.cpp
+    esm4/testloadperk.cpp
+    esm4/testloadrcct.cpp
+    esm4/testloadrcpe.cpp
+    esm4/testloadnote.cpp
+    esm4/testloadterm.cpp
+    esm4/testloadregion.cpp
+    esm4/testloadrace.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -86,6 +109,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     nifosg/testnifloader.cpp
     nifosg/testcontroller.cpp
+    nifosg/testparticle.cpp
 
     esmterrain/testgridsampling.cpp
 
@@ -94,7 +118,9 @@ file(GLOB UNITTEST_SRC_FILES
 
     vfs/testpathutil.cpp
 
+    sceneutil/lightcommon.cpp
     sceneutil/osgacontroller.cpp
+    sceneutil/visitor.cpp
 
     bsa/testbsafile.cpp
     bsa/testcompressedbsafile.cpp

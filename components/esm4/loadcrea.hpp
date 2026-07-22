@@ -27,6 +27,7 @@
 #ifndef ESM4_CREA_H
 #define ESM4_CREA_H
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -44,6 +45,21 @@ namespace ESM4
 
     struct Creature
     {
+        // FO3/FNV actor template flags share the NPC_ bit assignments.
+        enum TemplateFlags : std::uint16_t
+        {
+            Template_UseTraits = 0x0001,
+            Template_UseStats = 0x0002,
+            Template_UseFactions = 0x0004,
+            Template_UseActorEffects = 0x0008,
+            Template_UseAIData = 0x0010,
+            Template_UseAIPackages = 0x0020,
+            Template_UseModel = 0x0040,
+            Template_UseBaseData = 0x0080,
+            Template_UseInventory = 0x0100,
+            Template_UseScript = 0x0200,
+        };
+
         enum ACBS_TES4
         {
             TES4_Essential = 0x000002,
@@ -104,7 +120,29 @@ namespace ESM4
             std::uint16_t damage;
             AttributeValues attribs;
         };
+
+        // Fallout 3/New Vegas CREA DATA. Unlike the TES4 payload above, the
+        // actor attributes are SPECIAL values and health/damage are signed.
+        struct FNVData
+        {
+            std::uint8_t type;
+            std::uint8_t combatSkill;
+            std::uint8_t magicSkill;
+            std::uint8_t stealthSkill;
+            std::int16_t health;
+            std::uint16_t unused;
+            std::int16_t damage;
+            std::uint8_t strength;
+            std::uint8_t perception;
+            std::uint8_t endurance;
+            std::uint8_t charisma;
+            std::uint8_t intelligence;
+            std::uint8_t agility;
+            std::uint8_t luck;
+        };
 #pragma pack(pop)
+
+        static_assert(sizeof(FNVData) == 17);
 
         ESM::FormId mId; // from the header
         std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
@@ -117,11 +155,17 @@ namespace ESM4
         std::vector<ESM::FormId> mSpell;
         ESM::FormId mScriptId;
 
+        bool mIsFONV = false;
         AIData mAIData = {};
+        AIDataFO3 mFNVAIData = {};
+        bool mHasFNVAIData = false;
         std::vector<ESM::FormId> mAIPackages;
         ActorBaseConfig mBaseConfig = {};
         ActorFaction mFaction = {};
+        std::vector<ActorFaction> mFactions;
         Data mData = {};
+        FNVData mFNVData = {};
+        bool mHasFNVData = false;
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;
         ESM::FormId mSound;
@@ -147,6 +191,52 @@ namespace ESM4
         // void blank();
         static constexpr ESM::RecNameInts sRecordId = ESM::RecNameInts::REC_CREA4;
     };
+
+    struct CreatureVisualTemplate
+    {
+        const Creature* mModel = nullptr;
+        const Creature* mNif = nullptr;
+        const Creature* mKf = nullptr;
+        const Creature* mBodyParts = nullptr;
+    };
+
+    struct CreatureTemplateCategories
+    {
+        const Creature* mTraits = nullptr;
+        const Creature* mStats = nullptr;
+        const Creature* mFactions = nullptr;
+        const Creature* mActorEffects = nullptr;
+        const Creature* mAIData = nullptr;
+        const Creature* mAIPackages = nullptr;
+        const Creature* mModel = nullptr;
+        const Creature* mBaseData = nullptr;
+        const Creature* mInventory = nullptr;
+        const Creature* mScript = nullptr;
+    };
+
+    struct CreatureTemplateChainEntry
+    {
+        const Creature* mRecord = nullptr;
+        // TPLT requested by the preceding record. Unset on the root entry.
+        ESM::FormId mSourceTemplate;
+        // A LVLC bridge can legitimately select a CREA whose FormID differs
+        // from the requested TPLT FormID.
+        bool mThroughLevelledList = false;
+    };
+
+    using CreatureTemplateChain = std::vector<CreatureTemplateChainEntry>;
+
+    inline constexpr std::size_t sMaxCreatureTemplateDepth = 16;
+
+    // Records must be ordered from the placed/base creature toward its TPLT
+    // ancestors. A delegated category whose provider is absent, cyclic, or
+    // beyond the runtime bound resolves to null instead of using wrong local
+    // data. Template flags are dormant on a record without TPLT.
+    CreatureTemplateCategories resolveCreatureTemplateCategories(const CreatureTemplateChain& records);
+
+    // Records must be ordered from the placed/base creature toward its TPLT ancestors.
+    // Each visual field is selected independently because partial CREA overrides are valid.
+    CreatureVisualTemplate resolveCreatureVisualTemplate(const std::vector<const Creature*>& records);
 }
 
 #endif // ESM4_CREA_H

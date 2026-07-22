@@ -13,6 +13,7 @@
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
@@ -20,6 +21,7 @@
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadterm.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -47,8 +49,11 @@
 
 #include "esm4base.hpp"
 #include "esm4activator.hpp"
+#include "esm4container.hpp"
 #include "esm4creature.hpp"
 #include "esm4npc.hpp"
+#include "esm4talkingactivator.hpp"
+#include "esm4terminal.hpp"
 #include "light4.hpp"
 
 namespace MWClass
@@ -78,17 +83,19 @@ namespace MWClass
         BodyPart::registerSelf();
 
         ESM4Activator::registerSelf();
+        // ESM4Named inventory and equipment policy is instantiated by these registrations.
         ESM4Named<ESM4::Ammunition>::registerSelf();
         ESM4Named<ESM4::Armor>::registerSelf();
         ESM4Named<ESM4::Book>::registerSelf();
         ESM4Named<ESM4::Clothing>::registerSelf();
         ESM4Creature::registerSelf();
-        ESM4Named<ESM4::Container>::registerSelf();
+        ESM4Container::registerSelf();
         ESM4Door::registerSelf();
         ESM4Named<ESM4::Flora>::registerSelf();
         ESM4Named<ESM4::Furniture>::registerSelf();
         ESM4Named<ESM4::Ingredient>::registerSelf();
         ESM4Named<ESM4::ItemMod>::registerSelf();
+        ESM4Named<ESM4::Key>::registerSelf();
         ESM4Light::registerSelf();
         ESM4Named<ESM4::MiscItem>::registerSelf();
         ESM4Named<ESM4::MovableStatic>::registerSelf();
@@ -96,7 +103,8 @@ namespace MWClass
         ESM4Named<ESM4::Potion>::registerSelf();
         ESM4Static::registerSelf();
         ESM4Named<ESM4::StaticCollection>::registerSelf();
-        ESM4Named<ESM4::Terminal>::registerSelf();
+        ESM4Terminal::registerSelf();
+        ESM4TalkingActivator::registerSelf();
         ESM4Tree::registerSelf();
         ESM4Named<ESM4::Weapon>::registerSelf();
     }

@@ -255,9 +255,12 @@ namespace MWMechanics
 
         if (isRangedCombat)
         {
-            // rotate actor taking into account target movement direction and projectile speed
-            osg::Vec3f vAimDir = AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
-                (weapon ? weapon->mData.mType : 0), storage.mStrength);
+            // The current FNV delivery path preserves authored hitscan as an immediate ray. Do not apply
+            // Morrowind projectile lead to those actors; fireFalloutWeapon owns the exact target ray and spread.
+            osg::Vec3f vAimDir = isFalloutNewVegasActor(actor)
+                ? MWBase::Environment::get().getWorld()->aimToTarget(actor, target, true)
+                : AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
+                    (weapon ? weapon->mData.mType : 0), storage.mStrength);
 
             storage.mMovement.mRotation[0] = getXAngleToDir(vAimDir);
             storage.mMovement.mRotation[2] = getZAngleToDir(vAimDir);
@@ -555,7 +558,14 @@ namespace MWMechanics
         }
 
         bool targetUsesRanged = false;
-        float rangeAttackOfTarget = ActionWeapon(targetWeapon).getCombatRange(targetUsesRanged);
+        float rangeAttackOfTarget = 0.f;
+        if (isFalloutNewVegasActor(target))
+        {
+            const std::optional<float> falloutRange = getFalloutCombatRange(target, targetUsesRanged);
+            rangeAttackOfTarget = falloutRange.value_or(0.f);
+        }
+        else
+            rangeAttackOfTarget = ActionWeapon(targetWeapon).getCombatRange(targetUsesRanged);
 
         if (mMovement.mPosition[0])
         {

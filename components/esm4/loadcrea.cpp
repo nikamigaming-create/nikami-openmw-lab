@@ -26,7 +26,10 @@
 */
 #include "loadcrea.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -35,10 +38,39 @@
 #include "reader.hpp"
 //#include "writer.hpp"
 
+namespace
+{
+    std::string lowerFilename(std::filesystem::path path)
+    {
+        std::string value = path.filename().string();
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    bool hasMasterNamed(const ESM4::Reader& reader, std::string_view expected)
+    {
+        for (const ESM::MasterData& master : reader.getGameFiles())
+        {
+            std::string name = master.name;
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (name == expected)
+                return true;
+        }
+        return false;
+    }
+}
+
 void ESM4::Creature::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+
+    const std::uint32_t esmVer = reader.esmVersion();
+    const bool isFO3 = esmVer == ESM::VER_094
+        && (lowerFilename(reader.getFileName()) == "fallout3.esm" || hasMasterNamed(reader, "fallout3.esm"));
+    mIsFONV = isFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
 
     while (reader.getSubRecordHeader())
     {
@@ -69,9 +101,14 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                 reader.getFormId(mAIPackages.emplace_back());
                 break;
             case ESM::fourCC("SNAM"):
-                reader.get(mFaction);
-                reader.adjustFormId(mFaction.faction);
+            {
+                ActorFaction faction{};
+                reader.get(faction);
+                reader.adjustFormId(faction.faction);
+                mFaction = faction;
+                mFactions.push_back(faction);
                 break;
+            }
             case ESM::fourCC("INAM"):
                 reader.getFormId(mDeathItem);
                 break;
@@ -79,10 +116,17 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                 reader.getFormId(mScriptId);
                 break;
             case ESM::fourCC("AIDT"):
-                if (subHdr.dataSize == 20) // FO3
-                    reader.skipSubRecordData();
-                else
-                    reader.get(mAIData); // 12 bytes
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVAIData))
+                        throw std::runtime_error("ESM4::CREA::load - Fallout AIDT size mismatch");
+
+                    reader.get(mFNVAIData);
+                    mHasFNVAIData = true;
+                    break;
+                }
+
+                reader.get(mAIData); // 12 bytes
                 break;
             case ESM::fourCC("ACBS"):
                 // if (esmVer == ESM::VER_094 || esmVer == ESM::VER_170 || mIsFONV)
@@ -92,10 +136,17 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                     reader.get(&mBaseConfig, 16); // TES4
                 break;
             case ESM::fourCC("DATA"):
-                if (subHdr.dataSize == 17) // FO3
-                    reader.skipSubRecordData();
-                else
-                    reader.get(mData);
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVData))
+                        throw std::runtime_error("ESM4::CREA::load - Fallout DATA size mismatch");
+
+                    reader.get(mFNVData);
+                    mHasFNVData = true;
+                    break;
+                }
+
+                reader.get(mData);
                 break;
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mCombatStyle);
@@ -196,6 +247,96 @@ void ESM4::Creature::load(ESM4::Reader& reader)
             }
         }
     }
+}
+
+ESM4::CreatureVisualTemplate ESM4::resolveCreatureVisualTemplate(
+    const std::vector<const ESM4::Creature*>& records)
+{
+    CreatureVisualTemplate result;
+    for (std::size_t index = 0; index < records.size(); ++index)
+    {
+        const Creature* record = records[index];
+        if (record == nullptr)
+            continue;
+
+        const bool hasTemplate = index + 1 < records.size() && !record->mBaseTemplate.isZeroOrUnset();
+        const bool delegatesModel
+            = hasTemplate && (record->mBaseConfig.fo3.templateFlags & Creature::Template_UseModel) != 0;
+        if (delegatesModel)
+            continue;
+
+        // Empty fields do not claim the category. This is deliberately independent:
+        // a concrete record can own MODL while inheriting NIFZ or PNAM farther up TPLT.
+        if (result.mModel == nullptr && !record->mModel.empty())
+            result.mModel = record;
+        if (result.mNif == nullptr && !record->mNif.empty())
+            result.mNif = record;
+        if (result.mKf == nullptr && !record->mKf.empty())
+            result.mKf = record;
+        if (result.mBodyParts == nullptr && !record->mBodyParts.empty())
+            result.mBodyParts = record;
+    }
+    return result;
+}
+
+namespace
+{
+    const ESM4::Creature* resolveCreatureTemplateCategory(
+        const ESM4::CreatureTemplateChain& records, ESM4::Creature::TemplateFlags flag)
+    {
+        if (records.empty() || records.front().mRecord == nullptr)
+            return nullptr;
+
+        // Category flags on non-Fallout roots retain their legacy meaning and
+        // are not interpreted by this Fallout resolver.
+        if (!records.front().mRecord->mIsFONV)
+            return records.front().mRecord;
+
+        const std::size_t count = std::min(records.size(), ESM4::sMaxCreatureTemplateDepth);
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const ESM4::Creature* record = records[index].mRecord;
+            if (record == nullptr || !record->mIsFONV || record->mId.isZeroOrUnset())
+                return nullptr;
+            for (std::size_t previous = 0; previous < index; ++previous)
+            {
+                const ESM4::Creature* previousRecord = records[previous].mRecord;
+                if (previousRecord != nullptr && previousRecord->mId == record->mId)
+                    return nullptr;
+            }
+
+            const bool delegates = (record->mBaseConfig.fo3.templateFlags & flag) != 0;
+            if (!delegates || record->mBaseTemplate.isZeroOrUnset())
+                return record;
+
+            if (index + 1 >= count)
+                return nullptr;
+
+            const ESM4::CreatureTemplateChainEntry& next = records[index + 1];
+            if (next.mRecord == nullptr || next.mSourceTemplate != record->mBaseTemplate)
+                return nullptr;
+            if (!next.mThroughLevelledList && next.mRecord->mId != record->mBaseTemplate)
+                return nullptr;
+        }
+        return nullptr;
+    }
+}
+
+ESM4::CreatureTemplateCategories ESM4::resolveCreatureTemplateCategories(
+    const ESM4::CreatureTemplateChain& records)
+{
+    CreatureTemplateCategories result;
+    result.mTraits = resolveCreatureTemplateCategory(records, Creature::Template_UseTraits);
+    result.mStats = resolveCreatureTemplateCategory(records, Creature::Template_UseStats);
+    result.mFactions = resolveCreatureTemplateCategory(records, Creature::Template_UseFactions);
+    result.mActorEffects = resolveCreatureTemplateCategory(records, Creature::Template_UseActorEffects);
+    result.mAIData = resolveCreatureTemplateCategory(records, Creature::Template_UseAIData);
+    result.mAIPackages = resolveCreatureTemplateCategory(records, Creature::Template_UseAIPackages);
+    result.mModel = resolveCreatureTemplateCategory(records, Creature::Template_UseModel);
+    result.mBaseData = resolveCreatureTemplateCategory(records, Creature::Template_UseBaseData);
+    result.mInventory = resolveCreatureTemplateCategory(records, Creature::Template_UseInventory);
+    result.mScript = resolveCreatureTemplateCategory(records, Creature::Template_UseScript);
+    return result;
 }
 
 // void ESM4::Creature::save(ESM4::Writer& writer) const

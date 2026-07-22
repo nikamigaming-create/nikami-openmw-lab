@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -53,6 +54,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/failedaction.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/localscripts.hpp"
 #include "../mwworld/ptr.hpp"
@@ -1104,6 +1106,13 @@ namespace MWClass
 
     float Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world != nullptr && ptr == world->getPlayerPtr())
+        {
+            if (const std::optional<float> capacity = world->getFalloutPlayerRuntimeState().getCarryCapacity())
+                return *capacity;
+        }
+
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         static const float fEncumbranceStrMult = MWBase::Environment::get()
                                                      .getESMStore()

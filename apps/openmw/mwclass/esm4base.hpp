@@ -2,9 +2,11 @@
 #define GAME_MWCLASS_ESM4BASE_H
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <components/esm4/inventory.hpp>
@@ -30,11 +32,13 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/actionequip.hpp"
 #include "../mwworld/actiondoor.hpp"
 #include "../mwworld/actionteleport.hpp"
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/registeredclass.hpp"
 
 #include "classmodel.hpp"
@@ -149,6 +153,24 @@ namespace MWClass
         struct ItemWeight
         {
             static float get(const Record&) { return 0.f; }
+        };
+
+        template <class Record>
+        struct ItemHealth
+        {
+            static int get(const Record&) { return 0; }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Armor>
+        {
+            static int get(const ESM4::Armor& record) { return static_cast<int>(record.mData.health); }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Weapon>
+        {
+            static int get(const ESM4::Weapon& record) { return static_cast<int>(record.mData.health); }
         };
 
 #define OPENMW_ESM4_VALUE_WEIGHT_TRAIT(Type, ValueExpr, WeightExpr)                                                   \
@@ -298,6 +320,16 @@ namespace MWClass
             return ESM4Impl::ItemWeight<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::ItemHealth<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return getItemMaxHealth(ptr) > 0;
+        }
+
         const ESM::RefId& getUpSoundId(const MWWorld::ConstPtr& ptr) const override
         {
             static const ESM::RefId sEmpty;
@@ -366,7 +398,72 @@ namespace MWClass
             return ESM4Impl::InventoryIcon<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        bool showsInInventory(const MWWorld::ConstPtr& ptr) const override
+        {
+            const std::string_view name = getName(ptr);
+            if (Misc::StringUtils::ciEqual(name, "Pip-Boy 3000")
+                || Misc::StringUtils::ciEqual(name, "Pip-Boy Glove"))
+                return false;
+
+            if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            {
+                const ESM4::Armor& armor = *ptr.get<ESM4::Armor>()->mBase;
+                return (armor.mGeneralFlags & ESM4::Armor::FO3_NonPlayable) == 0
+                    && (armor.mArmorFlags & ESM4::Armor::FO3_PipBoy) == 0
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoy")
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoyGlove");
+            }
+            else
+                return ESM4Base<Record>::showsInInventory(ptr);
+        }
+
+        std::pair<std::vector<int>, bool> getEquipmentSlots(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon>)
+                return { { MWWorld::InventoryStore::Slot_CarriedRight }, false };
+            else if constexpr (std::is_same_v<Record, ESM4::Ammunition>)
+                return { { MWWorld::InventoryStore::Slot_Ammunition }, true };
+            else if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            {
+                const std::uint32_t flags = ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
+                constexpr std::uint32_t head = ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair
+                    | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat | ESM4::Armor::FO3_EyeGlasses
+                    | ESM4::Armor::FO3_NoseRing | ESM4::Armor::FO3_Earrings | ESM4::Armor::FO3_Mask
+                    | ESM4::Armor::FO3_MouthObject;
+                if ((flags & ESM4::Armor::FO3_UpperBody) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Robe }, false };
+                if ((flags & head) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Helmet }, false };
+                if ((flags & (ESM4::Armor::FO3_Necklace | ESM4::Armor::FO3_Choker)) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Amulet }, false };
+                if ((flags & ESM4::Armor::FO3_LeftHand) != 0)
+                    return { { MWWorld::InventoryStore::Slot_LeftGauntlet }, false };
+                if ((flags & ESM4::Armor::FO3_RightHand) != 0)
+                    return { { MWWorld::InventoryStore::Slot_RightGauntlet }, false };
+                return { { MWWorld::InventoryStore::Slot_Cuirass }, false };
+            }
+            else
+                return {};
+        }
+
+        std::unique_ptr<MWWorld::Action> use(const MWWorld::Ptr& ptr, bool force = false) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Ammunition>
+                || std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Clothing>)
+            {
+                return std::make_unique<MWWorld::ActionEquip>(ptr, force);
+            }
+            else
+                return ESM4Base<Record>::use(ptr, force);
+        }
+
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+
+        std::unique_ptr<MWWorld::Action> activate(
+            const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
+        {
+            return this->defaultItemActivate(ptr, actor);
+        }
     };
 
     class ESM4Door final : public MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>
@@ -415,18 +512,24 @@ namespace MWClass
 
         std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
         {
-            (void)actor;
-
             const MWWorld::LiveCellRef<ESM4::Door>* ref = ptr.get<ESM4::Door>();
             const ESM::RefId openSound(ref->mBase->mOpenSound);
             const ESM::RefId closeSound(ref->mBase->mCloseSound);
 
             if (ptr.getCellRef().isLocked())
             {
-                std::unique_ptr<MWWorld::Action> action
-                    = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
-                action->setSound(ESM::RefId::stringRefId("LockedDoor"));
-                return action;
+                const ESM::RefId keyId = ptr.getCellRef().getKey();
+                const bool hasKey = !actor.isEmpty() && !keyId.empty()
+                    && !actor.getClass().getContainerStore(actor).search(keyId).isEmpty();
+                if (hasKey)
+                    ptr.getCellRef().unlock();
+                else
+                {
+                    std::unique_ptr<MWWorld::Action> action
+                        = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
+                    action->setSound(ESM::RefId::stringRefId("LockedDoor"));
+                    return action;
+                }
             }
 
             if (ptr.getCellRef().getTeleport())

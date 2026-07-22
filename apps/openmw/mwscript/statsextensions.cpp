@@ -4,6 +4,8 @@
 
 #include <components/esm3/loadcrea.hpp>
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include "../mwworld/esmstore.hpp"
 
@@ -1225,10 +1227,23 @@ namespace MWScript
                     MWBase::Environment::get().getWorld()->disable(ptr);
                     // The actor's base record may have changed after this specific reference was created.
                     // So we need to update to the current version
-                    if (ptr.getClass().isNpc())
-                        updateBaseRecord<ESM::NPC>(ptr);
-                    else
-                        updateBaseRecord<ESM::Creature>(ptr);
+                    switch (ptr.getType())
+                    {
+                        case ESM::REC_NPC_:
+                            updateBaseRecord<ESM::NPC>(ptr);
+                            break;
+                        case ESM::REC_CREA:
+                            updateBaseRecord<ESM::Creature>(ptr);
+                            break;
+                        case ESM::REC_NPC_4:
+                            updateBaseRecord<ESM4::Npc>(ptr);
+                            break;
+                        case ESM::REC_CREA4:
+                            updateBaseRecord<ESM4::Creature>(ptr);
+                            break;
+                        default:
+                            throw std::runtime_error("unsupported actor record type in resurrect");
+                    }
                     if (wasOpen && !windowManager->containsMode(MWGui::GM_Container))
                     {
                         // Reopen the loot GUI if it was closed because we resurrected the actor we were looting

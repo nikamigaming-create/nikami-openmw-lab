@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWWORLD_ESMSTORE_H
 #define OPENMW_MWWORLD_ESMSTORE_H
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -17,6 +18,7 @@
 #include <components/esm4/loadimad.hpp>
 #include <components/misc/tuplemeta.hpp>
 
+#include "fnvplayerstate.hpp"
 #include "store.hpp"
 
 namespace Loading
@@ -80,8 +82,11 @@ namespace ESM4
 {
     class Reader;
     struct Activator;
+    struct ActorValueInformation;
     struct ActorCharacter;
     struct ActorCreature;
+    struct AnimObject;
+    struct AmmoEffect;
     struct Ammunition;
     struct AIPackage;
     struct Armor;
@@ -99,9 +104,12 @@ namespace ESM4
     struct DialogInfo;
     struct Door;
     struct Eyes;
+    struct Explosion;
+    struct Faction;
     struct Flora;
     struct FormIdList;
     struct Furniture;
+    struct GameSetting;
     struct GlobalVariable;
     struct Hair;
     struct HeadPart;
@@ -109,6 +117,7 @@ namespace ESM4
     struct IdleMarker;
     struct Ingredient;
     struct ItemMod;
+    struct Key;
     struct Land;
     struct LandTexture;
     struct LevelledCreature;
@@ -116,16 +125,24 @@ namespace ESM4
     struct LevelledNpc;
     struct Light;
     struct MiscItem;
+    struct MagicEffect;
     struct MovableStatic;
     struct Npc;
+    struct Note;
     struct Outfit;
+    struct Perk;
     struct Potion;
+    struct Projectile;
     struct Quest;
     struct Race;
+    struct Recipe;
+    struct RecipeCategory;
+    struct Region;
     struct Reference;
     struct Script;
     struct Sound;
     struct SoundReference;
+    struct Spell;
     struct Static;
     struct StaticCollection;
     struct Terminal;
@@ -183,14 +200,22 @@ namespace MWWorld
             Store<ESM4::Container>, Store<ESM4::Creature>, Store<ESM4::Dialogue>, Store<ESM4::DialogInfo>,
             Store<ESM4::Door>, Store<ESM4::Eyes>, Store<ESM4::FormIdList>, Store<ESM4::Furniture>, Store<ESM4::Flora>,
             Store<ESM4::GlobalVariable>, Store<ESM4::Hair>, Store<ESM4::HeadPart>, Store<ESM4::IdleAnimation>,
-            Store<ESM4::IdleMarker>, Store<ESM4::Ingredient>, Store<ESM4::ItemMod>, Store<ESM4::Land>,
+            Store<ESM4::IdleMarker>, Store<ESM4::Ingredient>, Store<ESM4::ItemMod>, Store<ESM4::Key>,
+            Store<ESM4::Land>,
             Store<ESM4::LandTexture>, Store<ESM4::LevelledCreature>, Store<ESM4::LevelledItem>,
             Store<ESM4::LevelledNpc>, Store<ESM4::Light>, Store<ESM4::MiscItem>, Store<ESM4::MovableStatic>,
             Store<ESM4::Npc>, Store<ESM4::Outfit>, Store<ESM4::Potion>, Store<ESM4::Quest>, Store<ESM4::Race>,
-            Store<ESM4::Reference>, Store<ESM4::Script>, Store<ESM4::Sound>, Store<ESM4::SoundReference>,
+            Store<ESM4::Region>, Store<ESM4::Reference>, Store<ESM4::Script>, Store<ESM4::Sound>, Store<ESM4::SoundReference>,
             Store<ESM4::Static>, Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>,
             Store<ESM4::TalkingActivator>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::ImageSpace>,
-            Store<ESM4::ImageSpaceModifier>, Store<ESM4::World>>;
+            Store<ESM4::ImageSpaceModifier>, Store<ESM4::World>,
+
+            // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
+            // New stores must be appended so an incremental build can never reinterpret an existing slot.
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
+            Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
+            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>>;
 
     private:
         template <typename T>
@@ -234,6 +259,10 @@ namespace MWWorld
         bool mIsSetUpDone = false;
         bool mHasStarfieldContent = false;
         ESM4Game mESM4Game = ESM4Game::Unknown;
+        std::optional<std::uint32_t> mESM4GameMasterIndex;
+        std::size_t mFalloutNewVegasMasterCandidateCount = 0;
+        std::optional<std::int32_t> mFalloutNewVegasMasterCandidateIndex;
+        std::optional<FalloutPlayerState> mFalloutPlayerState;
 
     public:
         void addOMWScripts(std::filesystem::path filePath) { mLuaContent.push_back(std::move(filePath)); }
@@ -267,6 +296,32 @@ namespace MWWorld
         void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
 
         ESM4Game getESM4Game() const { return mESM4Game; }
+
+        /// Number of content files whose case-insensitive basename is exactly FalloutNV.esm.
+        /// A matching filename establishes only provenance; typed Player validation selects FNV setup.
+        std::size_t getFalloutNewVegasMasterCandidateCount() const
+        {
+            return mFalloutNewVegasMasterCandidateCount;
+        }
+
+        /// Normalized namespace of the sole fully-read FalloutNV.esm candidate, if unambiguous and in range.
+        std::optional<std::int32_t> getFalloutNewVegasMasterCandidateIndex() const
+        {
+            return mFalloutNewVegasMasterCandidateIndex;
+        }
+
+        /// Fully validated, pointer-free native Player state, or nullptr until validation succeeds.
+        const FalloutPlayerState* getFalloutPlayerState() const
+        {
+            return mFalloutPlayerState ? &*mFalloutPlayerState : nullptr;
+        }
+
+        /// Re-resolve exact typed records from the current stores; no raw pointer is retained by ESMStore.
+        FalloutNativePlayerRecordsResolution getFalloutNativePlayerRecords() const;
+
+        /// Bridge validated official FNV GMSTs and the narrow OpenMW compatibility globals/settings before generic
+        /// fallback insertion. Returns false without mutation when no FalloutNV.esm provenance candidate exists.
+        bool prepareFalloutNewVegasCompatibilityRecords();
 
         /// Return the authored storage cell behind a Starfield BGSPackIn base form.
         /// Pack-ins are expanded lazily by CellStore so only the active exterior grid pays their assembly cost.
@@ -319,7 +374,7 @@ namespace MWWorld
         {
             Store<T>& store = getWritable<T>();
             if (store.search(x.mId) != nullptr)
-                throw std::runtime_error("Try to override existing record " + x.mId.toDebugString());
+                throw std::runtime_error("Try to override existing record " + x.mId.toString());
 
             T* ptr = store.insertStatic(x);
             if constexpr (std::is_convertible_v<Store<T>*, DynamicStore*>)

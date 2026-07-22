@@ -63,7 +63,10 @@ namespace MWVR
             auto wm = MWBase::Environment::get().getWindowManager();
             auto world = MWBase::Environment::get().getWorld();
 
-            if (wm->isGuiMode() && wm->isConsoleMode())
+            // VR GUI panels are placed in physical space and may be farther away
+            // than the current game's normal activation distance. All GUI modes,
+            // not just the console, need the long pointer ray.
+            if (wm->isGuiMode())
                 return world->getTargetObject(result, pose.position.asMWUnits(), pose.orientation,
                     world->getMaxActivationDistance() * 50, true, ignoreMask);
             else

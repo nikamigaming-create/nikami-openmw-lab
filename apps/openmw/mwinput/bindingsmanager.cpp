@@ -282,6 +282,7 @@ namespace MWInput
         defaultKeyBindings[A_Jump] = SDL_SCANCODE_E;
         defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
         defaultKeyBindings[A_Rest] = SDL_SCANCODE_T;
+        defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
         defaultKeyBindings[A_GameMenu] = SDL_SCANCODE_ESCAPE;
         defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_TAB;
         defaultKeyBindings[A_QuickKey1] = SDL_SCANCODE_1;

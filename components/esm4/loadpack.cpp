@@ -196,18 +196,9 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("CTDA"):
             {
-                if (subHdr.dataSize != sizeof(CTDA))
-                {
-                    reader.skipSubRecordData(); // FIXME: FO3
-                    break;
-                }
-
-                CTDA condition;
-                reader.get(condition);
-                // FIXME: how to "unadjust" if not FormId?
-                // adjustFormId(condition.param1);
-                // adjustFormId(condition.param2);
-                mConditions.push_back(condition);
+                TargetCondition condition;
+                if (loadTargetCondition(reader, condition))
+                    mConditions.push_back(condition);
 
                 break;
             }

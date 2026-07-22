@@ -19,6 +19,7 @@ namespace ESM
 {
     namespace AiSequence
     {
+        struct AiWander;
         struct AiSequence;
     }
 }
@@ -27,6 +28,10 @@ namespace MWMechanics
 {
     class AiPackage;
     class CharacterController;
+
+    /// Tagged WANDs are save placeholders for a record-driven FNV sandbox and must be rebuilt by the actor class.
+    /// Every ordinary WAND follows the existing runtime restore path unchanged.
+    bool shouldRestoreSavedAiWander(const ESM::AiSequence::AiWander& wander);
 
     using AiPackages = std::vector<std::shared_ptr<AiPackage>>;
 

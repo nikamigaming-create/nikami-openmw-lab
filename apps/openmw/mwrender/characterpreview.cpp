@@ -33,6 +33,7 @@
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/resource/resourcesystem.hpp>
@@ -54,6 +55,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "../mwclass/esm4npc.hpp"
@@ -61,6 +63,7 @@
 #include "animation.hpp"
 #include "esm4npcanimation.hpp"
 #include "npcanimation.hpp"
+#include "playervisualpolicy.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
@@ -106,6 +109,21 @@ namespace MWRender
             return nullptr;
         }
 
+        const ESM4::Weapon* findFalloutInventoryWeaponByEditorId(const std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Weapon& weapon : store->get<ESM4::Weapon>())
+            {
+                if (Misc::StringUtils::ciEqual(weapon.mEditorId, editorId))
+                    return &weapon;
+            }
+
+            return nullptr;
+        }
+
         bool isFalloutContentLoaded()
         {
             const MWBase::World* world = MWBase::Environment::get().getWorld();
@@ -129,26 +147,87 @@ namespace MWRender
             return isFalloutContentLoaded();
         }
 
-        void applyFalloutInventoryPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr)
+        void applyFalloutInventoryPlayerProxyConfiguredEquipment(const MWWorld::Ptr& visualPtr)
         {
-            const char* outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
-            const std::string_view outfitEditorId
-                = outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv) : "OutfitRepublican02";
-            const ESM4::Armor* armor = findFalloutInventoryArmorByEditorId(outfitEditorId);
-            if (armor == nullptr)
-            {
-                Log(Debug::Warning) << "FNV/ESM4 proof: inventory player proxy outfit "
-                                    << outfitEditorId << " not found";
+            const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
+                std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
+                std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_ESM4_PLAYER_WEAPON"), std::getenv("OPENMW_FNV_PLAYER_WEAPON"),
+                std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty() && policy.mWeapon.empty())
                 return;
-            }
 
             visualPtr.getRefData().setCustomData(nullptr);
-            const bool added = MWClass::ESM4Npc::addEquippedArmor(visualPtr, armor);
-            Log(Debug::Info) << "FNV/ESM4 proof: inventory player proxy outfit "
-                             << armor->mEditorId << " model="
-                             << MWClass::ESM4Npc::chooseEquipmentModel(
-                                    armor, MWClass::ESM4Npc::isFemale(visualPtr))
-                             << " added=" << added;
+            const auto addArmor = [&](std::string_view editorId, std::string_view role) {
+                if (editorId.empty())
+                    return;
+                const ESM4::Armor* armor = findFalloutInventoryArmorByEditorId(editorId);
+                if (armor == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 player visual: inventory proxy " << role << " "
+                                        << editorId << " not found";
+                    return;
+                }
+
+                const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                Log(Debug::Info) << "ESM4 player visual: inventory proxy " << role << " "
+                                 << armor->mEditorId << " model="
+                                 << MWClass::ESM4Npc::chooseEquipmentModel(
+                                        armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                                 << " added=" << added;
+            };
+
+            addArmor(policy.mOutfit, "outfit");
+            addArmor(policy.mHeadgear, "headgear");
+            if (!policy.mWeapon.empty())
+            {
+                const ESM4::Weapon* weapon = findFalloutInventoryWeaponByEditorId(policy.mWeapon);
+                if (weapon == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 player visual: inventory proxy weapon "
+                                        << policy.mWeapon << " not found";
+                }
+                else
+                {
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "ESM4 player visual: inventory proxy weapon " << weapon->mEditorId
+                                     << " model=" << weapon->mModel << " changed=" << changed << " drawn=1";
+                }
+            }
+        }
+
+        void applyFalloutInventoryPlayerEquippedItems(
+            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& sourcePlayer)
+        {
+            if (sourcePlayer.isEmpty() || !sourcePlayer.getClass().hasInventoryStore(sourcePlayer))
+                return;
+
+            MWWorld::InventoryStore& inventory = sourcePlayer.getClass().getInventoryStore(sourcePlayer);
+            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            {
+                MWWorld::ContainerStoreIterator item = inventory.getSlot(slot);
+                if (item == inventory.end())
+                    continue;
+
+                if (item->getType() == ESM4::Armor::sRecordId)
+                {
+                    const ESM4::Armor* armor = item->get<ESM4::Armor>()->mBase;
+                    const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=ARMO form="
+                                     << item->getCellRef().getRefId() << " editor=" << armor->mEditorId
+                                     << " added=" << added;
+                }
+                else if (item->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* weapon = item->get<ESM4::Weapon>()->mBase;
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=WEAP form="
+                                     << item->getCellRef().getRefId() << " editor=" << weapon->mEditorId
+                                     << " changed=" << changed;
+                }
+            }
         }
 
         std::string trimFalloutPreviewText(const char* value)
@@ -954,7 +1033,8 @@ namespace MWRender
                 mFalloutPreviewRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
                 MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
                 visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
-                applyFalloutInventoryPlayerProxyProofOutfit(visualPtr);
+                applyFalloutInventoryPlayerProxyConfiguredEquipment(visualPtr);
+                applyFalloutInventoryPlayerEquippedItems(visualPtr, mCharacter);
 
                 Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
                                  << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)

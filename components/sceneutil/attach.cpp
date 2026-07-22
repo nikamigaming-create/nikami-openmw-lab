@@ -1,6 +1,5 @@
 #include "attach.hpp"
 
-#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -240,8 +239,10 @@ namespace SceneUtil
 
                 trans = new osg::PositionAttitudeTransform;
                 trans->setPosition(boneOffset->getMatrix().getTrans());
-                if (std::getenv("OPENMW_FNV_APPLY_BONEOFFSET_ROTATION") != nullptr)
-                    trans->setAttitude(boneOffset->getMatrix().getRotate());
+                // BoneOffset is authored attachment data.  Treating its rotation as an opt-in diagnostic leaves
+                // otherwise correctly resolved parts translated onto the right bone but rotated in actor space.
+                trans->setAttitude(boneOffset->getMatrix().getRotate());
+                trans->setScale(boneOffset->getMatrix().getScale());
 
                 // Now that we used it, get rid of the redundant node.
                 if (boneOffset->getNumChildren() == 0 && boneOffset->getNumParents() == 1)

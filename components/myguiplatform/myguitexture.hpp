@@ -5,6 +5,8 @@
 
 #include <osg/ref_ptr>
 
+#include <string_view>
+
 namespace osg
 {
     class Image;
@@ -20,10 +22,15 @@ namespace Resource
 namespace MyGUIPlatform
 {
 
+    /// Create a procedural image for an absent MyGUI resource. Callers must first verify that the requested VFS path
+    /// does not exist; existing or malformed assets must remain on the regular image loader path.
+    osg::ref_ptr<osg::Image> createMissingTextureFallback(std::string_view name);
+
     class OSGTexture final : public MyGUI::ITexture
     {
         std::string mName;
         Resource::ImageManager* mImageManager;
+        bool mUseMissingTextureFallback;
 
         osg::ref_ptr<osg::Image> mLockedImage;
 //## VR_PATCH BEGIN
@@ -40,7 +47,8 @@ namespace MyGUIPlatform
         int mHeight;
 
     public:
-        OSGTexture(const std::string& name, Resource::ImageManager* imageManager);
+        OSGTexture(
+            const std::string& name, Resource::ImageManager* imageManager, bool useMissingTextureFallback = false);
 //## VR_PATCH BEGIN
 // Texture2D -> Texture
         OSGTexture(osg::Texture* texture, osg::StateSet* injectState = nullptr);

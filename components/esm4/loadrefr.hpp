@@ -67,11 +67,11 @@ namespace ESM4
 
     struct RadioStationData
     {
-        float rangeRadius;
+        float rangeRadius = 0.f;
         // 0 radius, 1 everywhere, 2 worldspace and linked int, 3 linked int, 4 current cell only
-        std::uint32_t broadcastRange;
-        float staticPercentage;
-        ESM::FormId posReference; // only used if broadcastRange == 0
+        std::uint32_t broadcastRange = 0;
+        float staticPercentage = 0.f;
+        ESM::FormId posReference{}; // only used if broadcastRange == 0
     };
 
     struct Reference
@@ -113,6 +113,13 @@ namespace ESM4
         ESM::FormId mKey;
 
         ESM::FormId mTargetRef;
+
+        // Fallout patrol routes are linked REFR chains. XLKR points at the next marker, XPRD stores the
+        // marker's authored wait time, and an empty XPPA marks a patrol-idle/script point.
+        ESM::FormId mLinkedReference;
+        float mPatrolIdleTime = 0.f;
+        bool mHasPatrolIdleTime = false;
+        bool mIsPatrolIdleScriptMarker = false;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

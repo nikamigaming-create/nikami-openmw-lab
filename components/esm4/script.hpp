@@ -29,8 +29,12 @@
 #ifndef ESM4_SCRIPT_H
 #define ESM4_SCRIPT_H
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <components/esm/defs.hpp>
@@ -385,6 +389,68 @@ namespace ESM4
         // SCRO per reference, so use references for execution and diagnostics.
         ESM::FormId globReference{};
     };
+
+    enum class ScriptBytecodeDecodeError
+    {
+        None,
+        TruncatedInstructionHeader,
+        TruncatedReferenceInstructionHeader,
+        ArgumentPayloadOverrun,
+    };
+
+    struct ScriptBytecodeInstruction
+    {
+        std::size_t offset = 0;
+        std::uint16_t opcode = 0;
+        std::optional<std::uint16_t> callingReferenceIndex;
+        std::span<const std::uint8_t> arguments;
+
+        [[nodiscard]] bool isReferenceFunction() const { return callingReferenceIndex.has_value(); }
+    };
+
+    struct ScriptBytecodeDecodeResult
+    {
+        ScriptBytecodeDecodeError error = ScriptBytecodeDecodeError::None;
+        std::size_t bytesConsumed = 0;
+        std::size_t instructionCount = 0;
+
+        [[nodiscard]] bool succeeded() const { return error == ScriptBytecodeDecodeError::None; }
+    };
+
+    // Decode FO3/FNV SCDA line framing without interpreting command semantics. Every framed
+    // opcode, including unsupported opcodes, is returned. The argument spans remain valid only
+    // while bytecode remains alive and unmodified. On malformed input instructions is empty.
+    [[nodiscard]] ScriptBytecodeDecodeResult decodeFalloutScriptBytecode(
+        std::span<const std::uint8_t> bytecode, std::vector<ScriptBytecodeInstruction>& instructions);
+
+    using ScriptBytecodeArgument = std::variant<ESM::FormId, std::int32_t>;
+
+    enum class ScriptBytecodeArgumentDecodeError
+    {
+        None,
+        TruncatedArgumentCount,
+        ArgumentCountMismatch,
+        UnknownArgumentToken,
+        TruncatedReference,
+        InvalidReferenceIndex,
+        TruncatedInteger,
+        TrailingArgumentData,
+    };
+
+    struct ScriptBytecodeArgumentDecodeResult
+    {
+        ScriptBytecodeArgumentDecodeError error = ScriptBytecodeArgumentDecodeError::None;
+        std::size_t bytesConsumed = 0;
+        std::size_t argumentCount = 0;
+
+        [[nodiscard]] bool succeeded() const { return error == ScriptBytecodeArgumentDecodeError::None; }
+    };
+
+    // Decode the bounded FO3/FNV default-command argument grammar used by native commands.
+    // SCRO references are encoded as 'r' followed by a one-based uint16 index; integer constants
+    // are encoded as 'n' followed by a little-endian int32. On any mismatch arguments is empty.
+    [[nodiscard]] ScriptBytecodeArgumentDecodeResult decodeFalloutScriptArguments(std::span<const std::uint8_t> payload,
+        std::span<const ESM::FormId> references, std::vector<ScriptBytecodeArgument>& arguments);
 
     // Load the current SCHR/SCDA/SCTX/SLSD/SCVR/SCRV/SCRO subrecord. Returns false
     // when the current subrecord does not belong to an embedded or standalone script.

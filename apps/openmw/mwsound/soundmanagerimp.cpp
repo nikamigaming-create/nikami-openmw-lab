@@ -357,22 +357,24 @@ namespace MWSound
         advanceMusic(filename, fade);
     }
 
-    void SoundManager::say(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename)
+    bool SoundManager::startSay(
+        const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename, bool replace)
     {
         if (!mOutput->isInitialized())
-            return;
+            return false;
 
         DecoderPtr decoder = loadVoice(filename);
         if (!decoder)
-            return;
+            return false;
 
         MWBase::World* world = MWBase::Environment::get().getWorld();
         const osg::Vec3f pos = world->getActorHeadTransform(ptr).getTrans();
 
-        stopSay(ptr);
+        if (replace)
+            stopSay(ptr);
         StreamPtr sound = playVoice(std::move(decoder), pos, (ptr == MWMechanics::getPlayer()));
         if (!sound)
-            return;
+            return false;
 
         std::shared_ptr<const ESM4::LipAnimation> lip;
         std::string lipName(filename.value());
@@ -399,6 +401,42 @@ namespace MWSound
         }
 
         mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound), std::move(lip) });
+        return true;
+    }
+
+    void SoundManager::say(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename)
+    {
+        startSay(ptr, filename, true);
+    }
+
+    void SoundManager::saySequence(
+        const MWWorld::ConstPtr& ptr, std::span<const VFS::Path::Normalized> filenames)
+    {
+        stopSay(ptr);
+        if (!mOutput->isInitialized() || filenames.empty())
+            return;
+
+        ActorSaySequence& sequence = mSaySequences[ptr.mRef];
+        sequence.mCell = ptr.mCell;
+        sequence.mVoices.replace(filenames);
+        startNextSaySequence(ptr);
+    }
+
+    bool SoundManager::startNextSaySequence(const MWWorld::ConstPtr& ptr)
+    {
+        const auto found = mSaySequences.find(ptr.mRef);
+        if (found == mSaySequences.end())
+            return false;
+
+        while (const VFS::Path::Normalized* voice = found->second.mVoices.beginNext())
+        {
+            if (startSay(ptr, *voice, false))
+                return true;
+            found->second.mVoices.finishCurrent();
+        }
+
+        mSaySequences.erase(found);
+        return false;
     }
 
     float SoundManager::getSaySoundLoudness(const MWWorld::ConstPtr& ptr) const
@@ -450,6 +488,9 @@ namespace MWSound
 
     bool SoundManager::sayDone(const MWWorld::ConstPtr& ptr) const
     {
+        if (mSaySequences.find(ptr.mRef) != mSaySequences.end())
+            return false;
+
         SaySoundMap::const_iterator snditer = mActiveSaySounds.find(ptr.mRef);
         if (snditer != mActiveSaySounds.end())
         {
@@ -483,6 +524,8 @@ namespace MWSound
 
     void SoundManager::stopSay(const MWWorld::ConstPtr& ptr)
     {
+        mSaySequences.erase(ptr.mRef);
+
         SaySoundMap::iterator snditer = mSaySoundsQueue.find(ptr.mRef);
         if (snditer != mSaySoundsQueue.end())
         {
@@ -781,6 +824,7 @@ namespace MWSound
         sayiter = mActiveSaySounds.find(ptr.mRef);
         if (sayiter != mActiveSaySounds.end())
             mOutput->finishStream(sayiter->second.mStream.get());
+        mSaySequences.erase(ptr.mRef);
     }
 
     void SoundManager::stopSound(const MWWorld::CellStore* cell)
@@ -804,6 +848,15 @@ namespace MWSound
         {
             if (ref != nullptr && ref != MWMechanics::getPlayer().mRef && sound.mCell == cell)
                 mOutput->finishStream(sound.mStream.get());
+        }
+
+        for (auto sequence = mSaySequences.begin(); sequence != mSaySequences.end();)
+        {
+            if (sequence->first != nullptr && sequence->first != MWMechanics::getPlayer().mRef
+                && sequence->second.mCell == cell)
+                sequence = mSaySequences.erase(sequence);
+            else
+                ++sequence;
         }
     }
 
@@ -1018,6 +1071,8 @@ namespace MWSound
 
     void SoundManager::updateSounds(float duration)
     {
+        std::vector<MWWorld::ConstPtr> completedSaySequences;
+
         // We update active say sounds map for specific actors here
         // because for vanilla compatibility we can't do it immediately.
         SaySoundMap::iterator queuesayiter = mSaySoundsQueue.begin();
@@ -1119,6 +1174,11 @@ namespace MWSound
             if (!sound->updateFade(duration) || !mOutput->isStreamPlaying(sound))
             {
                 mOutput->finishStream(sound);
+                if (const auto sequence = mSaySequences.find(sayiter->first); sequence != mSaySequences.end())
+                {
+                    sequence->second.mVoices.finishCurrent();
+                    completedSaySequences.emplace_back(sayiter->first, sequence->second.mCell);
+                }
                 sayiter = mActiveSaySounds.erase(sayiter);
             }
             else
@@ -1154,6 +1214,9 @@ namespace MWSound
                     = playSound(ESM::RefId::stringRefId("Underwater"), 1.0f, 1.0f, Type::Sfx, PlayMode::LoopNoEnv);
         }
         mOutput->finishUpdate();
+
+        for (const MWWorld::ConstPtr& actor : completedSaySequences)
+            startNextSaySequence(actor);
     }
 
     void SoundManager::updateMusic(float duration)
@@ -1264,6 +1327,9 @@ namespace MWSound
             it->second.mCell = updated.mCell;
 
         if (const auto it = mActiveSaySounds.find(old.mRef); it != mActiveSaySounds.end())
+            it->second.mCell = updated.mCell;
+
+        if (const auto it = mSaySequences.find(old.mRef); it != mSaySequences.end())
             it->second.mCell = updated.mCell;
     }
 
@@ -1379,6 +1445,7 @@ namespace MWSound
         for (SaySoundMap::value_type& snd : mActiveSaySounds)
             mOutput->finishStream(snd.second.mStream.get());
         mActiveSaySounds.clear();
+        mSaySequences.clear();
 
         for (StreamPtr& sound : mActiveTracks)
             mOutput->finishStream(sound.get());

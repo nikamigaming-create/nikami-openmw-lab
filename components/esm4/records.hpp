@@ -5,12 +5,14 @@
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadaloc.hpp>
+#include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadanio.hpp>
 #include <components/esm4/loadappa.hpp>
 #include <components/esm4/loadarma.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadaspc.hpp>
+#include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>
@@ -24,6 +26,8 @@
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadexpl.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadfurn.hpp>
@@ -46,6 +50,7 @@
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmset.hpp>
@@ -57,11 +62,15 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadpgrd.hpp>
 #include <components/esm4/loadpgre.hpp>
 #include <components/esm4/loadpwat.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadrcct.hpp>
+#include <components/esm4/loadrcpe.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadregn.hpp>
 #include <components/esm4/loadroad.hpp>
@@ -73,6 +82,7 @@
 #include <components/esm4/loadslgm.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadterm.hpp>

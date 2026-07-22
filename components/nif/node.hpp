@@ -116,6 +116,12 @@ namespace Nif
 
         NiAVObjectList mChildren;
         NiAVObjectList mEffects;
+        // NiNode::read historically clears the sole non-Bip01 root transform.
+        // Retain the parsed value for consumers that must reconstruct the
+        // original Bethesda actor-part scene graph without changing the
+        // legacy transform-discard behaviour for ordinary meshes.
+        NiTransform mDiscardedRootTransform = NiTransform::getIdentity();
+        bool mHasDiscardedRootTransform{ false };
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;

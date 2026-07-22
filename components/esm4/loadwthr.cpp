@@ -68,7 +68,7 @@ namespace
         return 0;
     }
 
-    void readCloudColors(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
+    std::size_t readCloudColors(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
         std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>,
             ESM4::Weather::sCloudLayerCount>& output)
     {
@@ -76,7 +76,7 @@ namespace
         const std::size_t samples = getWeatherSampleCount(
             values.size(), ESM4::Weather::sCloudLayerCount, 32, reader.formVersion() >= 111);
         if (samples == 0)
-            return;
+            return 0;
 
         const std::size_t layers = values.size() / samples;
         for (std::size_t layer = 0; layer < std::min(layers, output.size()); ++layer)
@@ -84,6 +84,7 @@ namespace
             const std::size_t copiedSamples = std::min(samples, output[layer].size());
             std::copy_n(values.begin() + layer * samples, copiedSamples, output[layer].begin());
         }
+        return samples;
     }
 
     void readCloudAlphas(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, ESM4::Weather& weather)
@@ -103,7 +104,7 @@ namespace
         weather.mHasCloudAlphas = true;
     }
 
-    void readWeatherColors(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
+    std::size_t readWeatherColors(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
         std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>,
             ESM4::Weather::sColorTypeCount>& output)
     {
@@ -111,7 +112,7 @@ namespace
         const std::size_t samples = getWeatherSampleCount(
             values.size(), ESM4::Weather::sColorTypeCount, 32, reader.formVersion() >= 111);
         if (samples == 0)
-            return;
+            return 0;
 
         const std::size_t colorTypes = values.size() / samples;
         for (std::size_t type = 0; type < std::min(colorTypes, output.size()); ++type)
@@ -119,22 +120,24 @@ namespace
             const std::size_t copiedSamples = std::min(samples, output[type].size());
             std::copy_n(values.begin() + type * samples, copiedSamples, output[type].begin());
         }
+        return samples;
     }
 
-    void readFogDistances(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
+    bool readFogDistances(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
         std::array<float, 6>& output)
     {
         const std::vector<float> values = readPodArray<float>(reader, header);
         if (values.size() < output.size())
-            return;
+            return false;
         std::copy_n(values.begin(), output.size(), output.begin());
+        return true;
     }
 
-    void readWeatherData(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, ESM4::Weather::Data& output)
+    bool readWeatherData(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, ESM4::Weather::Data& output)
     {
         const std::vector<std::uint8_t> values = readPodArray<std::uint8_t>(reader, header);
         if (values.size() < 15)
-            return;
+            return false;
 
         output.windSpeed = values[0];
         output.lowerCloudSpeed = values[1];
@@ -149,6 +152,7 @@ namespace
         output.lightningFrequency = values[10];
         output.classification = values[11];
         output.lightningColor = { values[12], values[13], values[14], 0 };
+        return true;
     }
 }
 
@@ -211,23 +215,40 @@ void ESM4::Weather::load(Reader& reader)
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
+            case ESM::fourCC("LNAM"):
+                if (subHdr.dataSize == sizeof(mMaxCloudLayers))
+                {
+                    reader.get(mMaxCloudLayers);
+                    mHasMaxCloudLayers = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("ONAM"):
-                readFixedOrSkip(reader, subHdr, mCloudSpeeds);
+                if (subHdr.dataSize == sizeof(mCloudSpeeds))
+                {
+                    reader.get(mCloudSpeeds);
+                    mHasCloudSpeeds = true;
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("PNAM"):
-                readCloudColors(reader, subHdr, mCloudColors);
+                mCloudColorSampleCount = readCloudColors(reader, subHdr, mCloudColors);
+                mHasCloudColors = mCloudColorSampleCount != 0;
                 break;
             case ESM::fourCC("NAM0"):
-                readWeatherColors(reader, subHdr, mColors);
+                mColorSampleCount = readWeatherColors(reader, subHdr, mColors);
+                mHasColors = mColorSampleCount != 0;
                 break;
             case ESM::fourCC("NAM4"):
                 readFixedOrSkip(reader, subHdr, mUnknownCloudLayerValues);
                 break;
             case ESM::fourCC("FNAM"):
-                readFogDistances(reader, subHdr, mFogDistance);
+                mHasFogDistance = readFogDistances(reader, subHdr, mFogDistance);
                 break;
             case ESM::fourCC("DATA"):
-                readWeatherData(reader, subHdr, mData);
+                mHasData = readWeatherData(reader, subHdr, mData);
                 break;
             case ESM::fourCC("SNAM"):
             {
@@ -242,7 +263,6 @@ void ESM4::Weather::load(Reader& reader)
                 mSounds.push_back(sound);
                 break;
             }
-            case ESM::fourCC("LNAM"):
             case ESM::fourCC("INAM"):
             case ESM::fourCC("HNAM"): // Oblivion HDR lighting parameters; not consumed by the renderer yet.
             case ESM::fourCC("MNAM"): // TES5+ precipitation type.

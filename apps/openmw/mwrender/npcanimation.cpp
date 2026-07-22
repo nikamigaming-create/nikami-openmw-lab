@@ -405,9 +405,9 @@ namespace MWRender
         float mFov;
     };
 
-    void NpcAnimation::setRenderBin()
+    namespace
     {
-        if (mViewMode == VM_FirstPerson)
+        void configureFirstPersonRenderBin(osg::Group& root)
         {
             [[maybe_unused]] static const bool prototypeAdded = [&] {
                 osg::ref_ptr<osgUtil::RenderBin> depthClearBin(new osgUtil::RenderBin);
@@ -415,9 +415,22 @@ namespace MWRender
                 osgUtil::RenderBin::addRenderBinPrototype("DepthClear", depthClearBin);
                 return true;
             }();
-            mObjectRoot->getOrCreateStateSet()->setRenderBinDetails(
+            root.getOrCreateStateSet()->setRenderBinDetails(
                 RenderBin_FirstPerson, "DepthClear", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
         }
+    }
+
+    void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView)
+    {
+        configureFirstPersonRenderBin(root);
+        root.setNodeMask(Mask_FirstPerson);
+        root.addCullCallback(new OverrideFieldOfViewCallback(fieldOfView));
+    }
+
+    void NpcAnimation::setRenderBin()
+    {
+        if (mViewMode == VM_FirstPerson)
+            configureFirstPersonRenderBin(*mObjectRoot);
         else if (osg::StateSet* stateset = mObjectRoot->getStateSet())
             stateset->setRenderBinToInherit();
     }

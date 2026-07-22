@@ -7,7 +7,7 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadweap.hpp>
-#include <components/vfs/pathutil.hpp>
+#include <components/misc/rng.hpp>
 
 #include <osg/Vec3f>
 
@@ -22,6 +22,11 @@
 
 #include "actor.hpp"
 #include "esm4base.hpp"
+
+namespace MWBase
+{
+    class World;
+}
 
 namespace MWClass
 {
@@ -84,8 +89,7 @@ namespace MWClass
         {
             if (ESM4Impl::worldViewerDisableEsm4Actors())
                 return;
-            (void)rotation;
-            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
+            Actor::insertObject(ptr, model.empty() ? std::string(getModel(ptr)) : model, rotation, physics);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }
@@ -99,6 +103,9 @@ namespace MWClass
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
         MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
+        void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+            const MWWorld::Ptr& attacker, bool successful,
+            MWMechanics::DamageSourceType sourceType) const override;
         float getCapacity(const MWWorld::Ptr& ptr) const override;
         float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
         float getWalkSpeed(const MWWorld::Ptr& ptr) const override;
@@ -119,6 +126,9 @@ namespace MWClass
         static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getStatsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
+        /// Materialize the resolved Traits death-item list once for a dead FNV NPC.
+        static bool materializeFnvDeathItem(const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel,
+            MWBase::World* world = nullptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
         static bool isFemale(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);
@@ -132,6 +142,7 @@ namespace MWClass
         static void setFurniturePlacement(const MWWorld::Ptr& ptr, const FalloutFurniturePlacement& placement);
         static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
+        static bool setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
 

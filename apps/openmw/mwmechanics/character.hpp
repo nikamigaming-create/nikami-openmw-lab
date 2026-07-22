@@ -1,13 +1,22 @@
 #ifndef GAME_MWMECHANICS_CHARACTER_HPP
 #define GAME_MWMECHANICS_CHARACTER_HPP
 
+#include <cstdint>
 #include <deque>
+#include <optional>
 
 #include <components/esm3/loadweap.hpp>
 
 #include "../mwworld/ptr.hpp"
 
 #include "../mwrender/animation.hpp"
+
+#include "falloutcombat.hpp"
+
+namespace ESM4
+{
+    struct Weapon;
+}
 
 namespace MWWorld
 {
@@ -17,6 +26,7 @@ namespace MWWorld
 namespace MWRender
 {
     class Animation;
+    enum class FonvWeaponAction : std::uint8_t;
 }
 
 namespace MWMechanics
@@ -129,7 +139,12 @@ namespace MWMechanics
     {
         MWWorld::Ptr mPtr;
         MWWorld::Ptr mWeapon;
+        const ESM4::Weapon* mFalloutWeapon = nullptr;
+        FalloutTriggerState mFalloutTriggerState;
+        FalloutAttackDelivery mFalloutAttackDelivery;
         MWRender::Animation* mAnimation;
+        MWRender::Animation* mFalloutWeaponAnimation = nullptr;
+        bool mFalloutWeaponListenerAttached = false;
 
         struct AnimationQueueEntry
         {
@@ -216,11 +231,18 @@ namespace MWMechanics
         void refreshMovementAnims(CharacterState movement, bool force = false);
         void refreshIdleAnims(CharacterState idle, bool force = false);
 
-        bool updateWeaponState();
+        bool updateWeaponState(float duration);
+        bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
+            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration);
+        bool fireFalloutWeapon(const MWWorld::Ptr& vatsTarget = MWWorld::Ptr(),
+            const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt,
+            const FalloutVatsQueuedAction* vatsAction = nullptr, bool vatsTargetHit = true);
+        bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;
 
         std::string chooseRandomAttackAnimation() const;
         static bool isRandomAttackAnimation(std::string_view group);
+        bool isLegacyRandomAttackAnimation(std::string_view group) const;
 
         bool isMovementAnimationControlled() const;
 
@@ -244,8 +266,19 @@ namespace MWMechanics
         std::string fallbackShortWeaponGroup(
             const std::string& baseGroupName, MWRender::Animation::BlendMask* blendMask = nullptr) const;
 
-        std::string_view getWeaponAnimation(int weaponType) const;
+        std::string_view getWeaponAnimation(int weaponType);
         std::string_view getWeaponShortGroup(int weaponType) const;
+        MWRender::Animation* getFalloutWeaponAnimation(bool firstPerson = false);
+        void attachFalloutWeaponTextKeys();
+        void detachFalloutWeaponTextKeys();
+        void disableFalloutWeaponGroup(std::string_view group);
+        void setFalloutWeaponGroup(std::string_view group, bool relativeDuration);
+        void showFalloutWeapons(bool show);
+        void setFalloutWeaponAiming(float pitchFactor, bool accurate);
+        std::string_view getFalloutWeaponActionGroup(int weaponType, MWRender::FonvWeaponAction action);
+        bool playFalloutWeaponAction(
+            int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon);
+        bool restoreFalloutPrimaryWeaponGroup(int weaponType);
 
         bool getAttackingOrSpell() const;
         void setAttackingOrSpell(bool attackingOrSpell) const;
@@ -288,6 +321,9 @@ namespace MWMechanics
         bool playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted = false);
         bool playGroupLua(std::string_view groupname, float speed, std::string_view startKey, std::string_view stopKey,
             uint32_t loops, bool forceLoop);
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+        bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup);
         void enableLuaAnimations(bool enable);
         void skipAnim();
         bool isAnimPlaying(std::string_view groupName) const;
@@ -327,6 +363,17 @@ namespace MWMechanics
         bool readyToPrepareAttack() const;
         bool readyToStartAttack() const;
 
+        /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
+        /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
+        bool executeFalloutVatsRangedHit(
+            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
+            const FalloutVatsQueuedAction& action, bool targetHit);
+
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& target, const osg::Vec3f& segmentStart,
+            const osg::Vec3f& hitPosition, const FalloutProjectileImpactContract& impact);
+        bool executeFalloutExplosion(
+            const osg::Vec3f& position, const FalloutProjectileImpactContract& impact);
+
         float calculateWindUp() const;
 
         float getAttackStrength() const;
@@ -336,6 +383,9 @@ namespace MWMechanics
 
         /// Make this character turn its head towards \a target. To turn off head tracking, pass an empty Ptr.
         void setHeadTrackTarget(const MWWorld::ConstPtr& target);
+
+        /// Apply the current target while gameplay simulation is paused by dialogue.
+        void updateDialogueHeadTracking(float duration);
 
         void playSwishSound() const;
 

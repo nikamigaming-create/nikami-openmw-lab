@@ -20,11 +20,13 @@
 #include <components/esm3/loaddoor.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm3/readerscache.hpp>
+#include <components/esm4/common.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -45,10 +47,17 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 
+#include "falloutlodselection.hpp"
 #include "vismask.hpp"
 
 namespace MWRender
 {
+
+    bool isObjectPagingChunkInsideActiveGrid(const osg::Vec2f& center, const osg::Vec4i& activeGrid)
+    {
+        return center.x() > activeGrid.x() && center.y() > activeGrid.y() && center.x() < activeGrid.z()
+            && center.y() < activeGrid.w();
+    }
 
     namespace
     {
@@ -67,6 +76,7 @@ namespace MWRender
                 case ESM::REC_ACTI4:
                 case ESM::REC_CONT4:
                 case ESM::REC_FURN4:
+                case ESM::REC_TACT4:
                     return !far;
 
                 default:
@@ -103,6 +113,8 @@ namespace MWRender
                     return getEsm4Model(store.get<ESM4::Tree>().searchStatic(id));
                 case ESM::REC_ACTI4:
                     return getEsm4Model(store.get<ESM4::Activator>().searchStatic(id));
+                case ESM::REC_TACT4:
+                    return getEsm4Model(store.get<ESM4::TalkingActivator>().searchStatic(id));
                 case ESM::REC_CONT4:
                     return getEsm4Model(store.get<ESM4::Container>().searchStatic(id));
                 case ESM::REC_FURN4:
@@ -540,6 +552,7 @@ namespace MWRender
         {
             ESM::RefId mRefId;
             ESM::RefNum mRefNum;
+            std::uint32_t mRecordFlags;
             osg::Vec3f mPosition;
             osg::Vec3f mRotation;
             float mScale;
@@ -550,6 +563,7 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mRefID,
                 .mRefNum = value.mRefNum,
+                .mRecordFlags = 0,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -561,6 +575,7 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mBaseObj,
                 .mRefNum = value.mId,
+                .mRecordFlags = value.mFlags,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -650,7 +665,7 @@ namespace MWRender
                         continue;
                     for (const ESM4::Reference* ref4 : store.get<ESM4::Reference>().getByCell(cell->mId))
                     {
-                        if (ref4->mFlags & ESM4::Rec_Disabled)
+                        if (!isEsm4ReferenceEnabledForPaging(ref4->mFlags))
                             continue;
                         int type = store.findStatic(ref4->mBaseObj);
                         if (!typeFilter(type, size >= 2))
@@ -750,6 +765,20 @@ namespace MWRender
                     continue;
             }
 
+            int esmVersion = 0;
+            bool falloutNewVegas = false;
+            if (!activeGrid)
+            {
+                esmVersion = world.getESMVersions()[refNum.mContentFile];
+                falloutNewVegas = isFalloutNewVegasVersion(esmVersion);
+                if (falloutNewVegas
+                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, false)
+                        == FalloutDistantReferenceSelection::Skip)
+                {
+                    continue;
+                }
+            }
+
             const float dSqr = (viewPoint - ref.mPosition).length2();
             if (!activeGrid)
             {
@@ -782,17 +811,28 @@ namespace MWRender
 
             if (!activeGrid)
             {
-                std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
-                LODNameCacheKey key{ model, lod };
-                LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
-                if (found != mLODNameCache.end() && found->first == key)
-                    model = found->second;
-                else
-                    model = mLODNameCache
-                                .emplace_hint(found, std::move(key),
-                                    Misc::ResourceHelpers::getLODMeshName(world.getESMVersions()[refNum.mContentFile],
-                                        model, *mSceneManager->getVFS(), lod))
-                                ->second;
+                const VFS::Path::Normalized baseModel = model;
+
+                {
+                    std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
+                    LODNameCacheKey key{ model, lod };
+                    LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
+                    if (found != mLODNameCache.end() && found->first == key)
+                        model = found->second;
+                    else
+                        model = mLODNameCache
+                                    .emplace_hint(found, std::move(key),
+                                        Misc::ResourceHelpers::getLODMeshName(
+                                            esmVersion, model, *mSceneManager->getVFS(), lod))
+                                    ->second;
+                }
+
+                if (falloutNewVegas
+                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, model != baseModel)
+                        == FalloutDistantReferenceSelection::FullModel)
+                {
+                    model = baseModel;
+                }
             }
 
             osg::ref_ptr<const osg::Node> cnode = mSceneManager->getTemplate(model, false);
@@ -1134,8 +1174,7 @@ namespace MWRender
                 if (!std::get<2>(chunkId))
                     return;
                 const osg::Vec2f& center = std::get<0>(chunkId);
-                const bool activeGrid = (center.x() > mActiveGrid.x() || center.y() > mActiveGrid.y()
-                    || center.x() < mActiveGrid.z() || center.y() < mActiveGrid.w());
+                const bool activeGrid = isObjectPagingChunkInsideActiveGrid(center, mActiveGrid);
                 if (!activeGrid)
                     return;
 

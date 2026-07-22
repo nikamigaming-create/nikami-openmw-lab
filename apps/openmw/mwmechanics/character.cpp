@@ -21,24 +21,48 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadexpl.hpp>
+#include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadsndr.hpp>
+#include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadweap.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
+#include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/conversion.hpp>
+#include <components/resource/resourcesystem.hpp>
 
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/camera.hpp"
+#include "../mwrender/fallouthitreaction.hpp"
+#include "../mwrender/falloutweaponanimation.hpp"
+
+#include "../mwsound/falloutsoundpath.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
@@ -47,17 +71,26 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4creature.hpp"
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
 #include "../mwworld/spellcaststate.hpp"
 
+#include "../mwphysics/collisiontype.hpp"
+#include "../mwphysics/raycasting.hpp"
+
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
 #include "creaturestats.hpp"
+#include "damagesourcetype.hpp"
+#include "falloutcombat.hpp"
+#include "falloutweaponsound.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
 #include "security.hpp"
@@ -109,6 +142,507 @@ namespace
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
     }
 
+    struct FalloutMeleeActorValues
+    {
+        float mSkill = 0.f;
+        float mStrength = 0.f;
+        std::optional<float> mCreatureDamage;
+    };
+
+    std::optional<FalloutMeleeActorValues> getFalloutMeleeActorValues(
+        const MWWorld::Ptr& ptr, bool unarmedFamily)
+    {
+        constexpr std::uint32_t strengthActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin;
+        const std::uint32_t skillActorValue = MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin
+            + static_cast<std::uint32_t>(unarmedFamily ? MWWorld::FalloutSkill::Unarmed
+                                                      : MWWorld::FalloutSkill::MeleeWeapons);
+
+        if (ptr == MWMechanics::getPlayer())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> skill
+                = runtime.getCurrentActorValue(skillActorValue);
+            const std::optional<MWWorld::FalloutRuntimeActorValue> strength
+                = runtime.getCurrentActorValue(strengthActorValue);
+            if (skill && strength)
+                return FalloutMeleeActorValues{ skill->mValue, strength->mValue, std::nullopt };
+        }
+
+        if (ptr.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(ptr);
+            if (stats == nullptr || !stats->mHasFNVSkills || !stats->mHasFNVData)
+                return std::nullopt;
+            const float skill = static_cast<float>(unarmedFamily ? stats->mFNVSkills.values.unarmed
+                                                                  : stats->mFNVSkills.values.meleeWeapons);
+            return FalloutMeleeActorValues{
+                skill, static_cast<float>(stats->mFNVData.strength), std::nullopt };
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(ptr);
+            if (stats == nullptr || !stats->mIsFONV || !stats->mHasFNVData || stats->mFNVData.damage <= 0)
+                return std::nullopt;
+            return FalloutMeleeActorValues{ static_cast<float>(stats->mFNVData.combatSkill),
+                static_cast<float>(stats->mFNVData.strength), static_cast<float>(stats->mFNVData.damage) };
+        }
+        return std::nullopt;
+    }
+
+    std::optional<float> getFalloutGameSetting(std::string_view id)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return std::nullopt;
+        const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+        if (setting == nullptr || setting->mValue.getType() != ESM::VT_Float)
+            return std::nullopt;
+        const float value = setting->mValue.getFloat();
+        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+    }
+
+    std::optional<float> getFalloutGameSettingOrEngineDefault(std::string_view id, float engineDefault)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || !std::isfinite(engineDefault))
+            return std::nullopt;
+        const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+        if (setting == nullptr)
+            return engineDefault;
+        if (setting->mValue.getType() != ESM::VT_Float)
+            return std::nullopt;
+        const float value = setting->mValue.getFloat();
+        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+    }
+
+    std::optional<MWMechanics::FalloutExplosionKnockdownTuning> getFalloutExplosionKnockdownTuning()
+    {
+        // FalloutNV.esm overrides only fKnockdownCurrentHealthThreshold (50). The other retail values live in
+        // FalloutNV.exe's GMST defaults; a winning plugin record still replaces each default independently.
+        const std::optional<float> damageMultiplier
+            = getFalloutGameSettingOrEngineDefault("fKnockdownDamageMult", 0.3f);
+        const std::optional<float> damageBase
+            = getFalloutGameSettingOrEngineDefault("fKnockdownDamageBase", 0.f);
+        const std::optional<float> agilityMultiplier
+            = getFalloutGameSettingOrEngineDefault("fKnockdownAgilMult", 1.f);
+        const std::optional<float> agilityBase
+            = getFalloutGameSettingOrEngineDefault("fKnockdownAgilBase", 0.f);
+        const std::optional<float> maximumChance
+            = getFalloutGameSettingOrEngineDefault("fKnockdownChance", 0.25f);
+        const std::optional<float> currentHealthThreshold
+            = getFalloutGameSettingOrEngineDefault("fKnockdownCurrentHealthThreshold", 50.f);
+        const std::optional<float> baseHealthThreshold
+            = getFalloutGameSettingOrEngineDefault("fKnockdownBaseHealthThreshold", 75.f);
+        if (!damageMultiplier || !damageBase || !agilityMultiplier || !agilityBase || !maximumChance
+            || !currentHealthThreshold || !baseHealthThreshold)
+            return std::nullopt;
+        return MWMechanics::FalloutExplosionKnockdownTuning{ *damageMultiplier, *damageBase,
+            *agilityMultiplier, *agilityBase, *maximumChance, *currentHealthThreshold,
+            *baseHealthThreshold };
+    }
+
+    std::optional<float> getFalloutActorAgility(const MWWorld::Ptr& actor)
+    {
+        constexpr std::uint32_t agilityActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin
+            + static_cast<std::uint32_t>(MWWorld::FalloutSpecial::Agility);
+        if (actor == MWMechanics::getPlayer())
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return std::nullopt;
+            const std::optional<MWWorld::FalloutRuntimeActorValue> agility
+                = world->getFalloutPlayerRuntimeState().getCurrentActorValue(agilityActorValue);
+            return agility ? std::optional<float>(agility->mValue) : std::nullopt;
+        }
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+            if (stats != nullptr && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.agility);
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(actor);
+            if (stats != nullptr && stats->mIsFONV && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.agility);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<MWMechanics::FalloutBodyPartContract> resolveFalloutRayBodyPart(
+        const MWWorld::Ptr& target, const osg::Vec3f& hitPosition, std::span<const std::string> renderedNodePath)
+    {
+        const ESM4::BodyPartData* bodyPartData = MWMechanics::getFalloutActorBodyPartData(target);
+        if (bodyPartData == nullptr)
+            return std::nullopt;
+        if (const auto exact = MWMechanics::resolveFalloutBodyPartFromNodePath(*bodyPartData, renderedNodePath))
+            return exact;
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        MWRender::Animation* animation = world != nullptr ? world->getAnimation(target) : nullptr;
+        if (animation == nullptr)
+            return std::nullopt;
+
+        std::optional<MWMechanics::FalloutBodyPartContract> nearest;
+        float nearestDistanceSquared = std::numeric_limits<float>::max();
+        for (std::size_t index = 0; index < bodyPartData->mBodyParts.size() && index <= 14; ++index)
+        {
+            const ESM4::BodyPartData::BodyPart& bodyPart = bodyPartData->mBodyParts[index];
+            const auto contract = MWMechanics::buildFalloutBodyPartContract(
+                bodyPart, static_cast<std::uint8_t>(index));
+            if (!contract)
+                continue;
+
+            const std::array<std::string_view, 4> candidateNodes{
+                bodyPart.mVATSTarget, bodyPart.mNodeName, bodyPart.mIKStartNode, bodyPart.mGoreEffectsTarget };
+            for (std::string_view nodeName : candidateNodes)
+            {
+                if (nodeName.empty())
+                    continue;
+                const osg::Node* node = animation->getNode(nodeName);
+                if (node == nullptr)
+                    continue;
+                const osg::NodePathList paths = node->getParentalNodePaths();
+                if (paths.empty())
+                    continue;
+                const float distanceSquared
+                    = (osg::computeLocalToWorld(paths.front()).getTrans() - hitPosition).length2();
+                if (distanceSquared < nearestDistanceSquared)
+                {
+                    nearestDistanceSquared = distanceSquared;
+                    nearest = contract;
+                }
+            }
+        }
+        return nearest;
+    }
+
+    std::optional<float> getFalloutMeleeLimbDamageMultiplier(const ESM4::Weapon* weapon)
+    {
+        if (weapon != nullptr)
+            return std::isfinite(weapon->mData.limbDamageMult) && weapon->mData.limbDamageMult >= 0.f
+                ? std::optional<float>(weapon->mData.limbDamageMult)
+                : std::nullopt;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return std::nullopt;
+        const auto& weapons = store->get<ESM4::Weapon>();
+        const auto fists = std::find_if(weapons.begin(), weapons.end(), [](const ESM4::Weapon& candidate) {
+            return Misc::StringUtils::ciEqual(candidate.mEditorId, "Fists");
+        });
+        if (fists == weapons.end() || !std::isfinite(fists->mData.limbDamageMult)
+            || fists->mData.limbDamageMult < 0.f)
+            return std::nullopt;
+        return fists->mData.limbDamageMult;
+    }
+
+    std::optional<MWMechanics::FalloutMeleeTuning> getFalloutMeleeTuning()
+    {
+        const std::optional<float> damageSkillBase = getFalloutGameSetting("fDamageSkillBase");
+        const std::optional<float> damageSkillMult = getFalloutGameSetting("fDamageSkillMult");
+        const std::optional<float> unarmedDamageBase = getFalloutGameSetting("fAVDUnarmedDamageBase");
+        const std::optional<float> unarmedDamageMult = getFalloutGameSetting("fAVDUnarmedDamageMult");
+        const std::optional<float> meleeStrengthMult = getFalloutGameSetting("fAVDMeleeDamageStrengthMult");
+        const std::optional<float> meleeStrengthOffset = getFalloutGameSetting("fAVDMeleeDamageStrengthOffset");
+        const std::optional<float> combatDistance = getFalloutGameSetting("fCombatDistance");
+        const std::optional<float> unarmedReach = getFalloutGameSetting("fHandToHandReach");
+        if (!damageSkillBase || !damageSkillMult || !unarmedDamageBase || !unarmedDamageMult
+            || !meleeStrengthMult || !meleeStrengthOffset || !combatDistance || !unarmedReach)
+            return std::nullopt;
+        return MWMechanics::FalloutMeleeTuning{ *damageSkillBase, *damageSkillMult, *unarmedDamageBase,
+            *unarmedDamageMult, *meleeStrengthMult, *meleeStrengthOffset, *combatDistance, *unarmedReach };
+    }
+
+    std::optional<float> getFalloutRangedSkill(const MWWorld::Ptr& actor, std::int32_t actorValue)
+    {
+        constexpr std::uint32_t first = MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin;
+        constexpr std::uint32_t last = MWWorld::FalloutPlayerRuntimeState::SkillActorValueEnd;
+        if (actorValue < static_cast<std::int32_t>(first) || actorValue > static_cast<std::int32_t>(last))
+            return std::nullopt;
+
+        if (actor == MWMechanics::getPlayer())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> value
+                = runtime.getCurrentActorValue(static_cast<std::uint32_t>(actorValue));
+            return value ? std::optional<float>(value->mValue) : std::nullopt;
+        }
+
+        if (actor.getType() != ESM::REC_NPC_4)
+            return std::nullopt;
+        const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+        if (stats == nullptr || !stats->mHasFNVSkills)
+            return std::nullopt;
+
+        const ESM4::Npc::FNVSkillValues& values = stats->mFNVSkills.values;
+        const std::array<std::uint8_t, MWWorld::FalloutPlayerState::SkillCount> skills = { values.barter,
+            values.bigGuns, values.energyWeapons, values.explosives, values.lockpick, values.medicine,
+            values.meleeWeapons, values.repair, values.science, values.smallGuns, values.sneak, values.speech,
+            values.survivalOrThrowing, values.unarmed };
+        return static_cast<float>(skills[static_cast<std::uint32_t>(actorValue) - first]);
+    }
+
+    std::optional<MWMechanics::FalloutRangedDamageTuning> getFalloutRangedDamageTuning()
+    {
+        const std::optional<float> skillBase = getFalloutGameSetting("fDamageSkillBase");
+        const std::optional<float> skillMultiplier = getFalloutGameSetting("fDamageSkillMult");
+        if (!skillBase || !skillMultiplier)
+            return std::nullopt;
+
+        // New Vegas keeps these values in executable runtime state. The base master does not serialize
+        // fDamageWeaponMult, and SetConditionDamagePenalty changes the latter two values at runtime.
+        const float weaponDamageMultiplier = getFalloutGameSetting("fDamageWeaponMult").value_or(1.f);
+        constexpr float conditionThreshold = 0.75f;
+        constexpr float conditionPenaltyRate = 0.67f;
+        return MWMechanics::FalloutRangedDamageTuning{ weaponDamageMultiplier, *skillBase, *skillMultiplier,
+            conditionThreshold, conditionPenaltyRate };
+    }
+
+    std::optional<float> getFalloutActorLuck(const MWWorld::Ptr& actor)
+    {
+        constexpr std::uint32_t luckActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin
+            + static_cast<std::uint32_t>(MWWorld::FalloutSpecial::Luck);
+        if (actor == MWMechanics::getPlayer())
+        {
+            const std::optional<MWWorld::FalloutRuntimeActorValue> luck
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getCurrentActorValue(
+                    luckActorValue);
+            return luck ? std::optional<float>(luck->mValue) : std::nullopt;
+        }
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+            if (stats != nullptr && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.luck);
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(actor);
+            if (stats != nullptr && stats->mIsFONV && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.luck);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<float> getFalloutBaseCriticalChance(const MWWorld::Ptr& actor)
+    {
+        const std::optional<float> luck = getFalloutActorLuck(actor);
+        const std::optional<float> base = getFalloutGameSetting("fAVDCritLuckBase");
+        if (!luck || !base)
+            return std::nullopt;
+
+        // New Vegas retains this engine default but does not serialize it in FalloutNV.esm. Honor a winning mod
+        // record if one is present, otherwise use the retail executable's 1.0 multiplier.
+        const float luckMultiplier = getFalloutGameSetting("fAVDCritLuckMult").value_or(1.f);
+        const float chance = *base + luckMultiplier * *luck;
+        return std::isfinite(chance) && chance >= 0.f ? std::optional<float>(chance) : std::nullopt;
+    }
+
+    struct FalloutArmorProtection
+    {
+        float mDamageResistance = 0.f;
+        float mDamageThreshold = 0.f;
+    };
+
+    std::optional<float> getFalloutItemCondition(const MWWorld::ConstPtr& item)
+    {
+        const int maximum = item.getClass().getItemMaxHealth(item);
+        if (maximum <= 0)
+            return 1.f;
+        const int current = item.getClass().getItemHealth(item);
+        const float exact = static_cast<float>(current) + item.getCellRef().getChargeIntRemainder();
+        if (!std::isfinite(exact) || exact < 0.f || exact > static_cast<float>(maximum))
+            return std::nullopt;
+        return exact / static_cast<float>(maximum);
+    }
+
+    MWWorld::Ptr getFalloutEquippedWeaponInstance(
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& controllerWeapon, const ESM4::Weapon& weapon)
+    {
+        const ESM::RefId weaponId = ESM::RefId::formIdRefId(weapon.mId);
+        if (actor.getClass().hasInventoryStore(actor))
+        {
+            MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+            const MWWorld::ContainerStoreIterator equipped
+                = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            if (equipped != inventory.end() && equipped->getType() == ESM4::Weapon::sRecordId
+                && equipped->getCellRef().getRefId() == weaponId)
+                return *equipped;
+        }
+
+        if (!controllerWeapon.isEmpty() && controllerWeapon.getType() == ESM4::Weapon::sRecordId
+            && controllerWeapon.getCellRef().getRefId() == weaponId)
+            return controllerWeapon;
+
+        MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+        const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::Ptr& item) {
+            return item.getType() == ESM4::Weapon::sRecordId && item.getCellRef().getRefId() == weaponId;
+        });
+        return found == inventory.end() ? MWWorld::Ptr{} : *found;
+    }
+
+    bool applyFalloutWeaponConditionLoss(const MWWorld::Ptr& weapon, float conditionLoss)
+    {
+        const int maximum = weapon.getClass().getItemMaxHealth(weapon);
+        if (!std::isfinite(conditionLoss) || conditionLoss < 0.f)
+            return false;
+        if (maximum <= 0)
+            return true;
+
+        const int current = weapon.getClass().getItemHealth(weapon);
+        const float remainder = weapon.getCellRef().getChargeIntRemainder();
+        const float exact = static_cast<float>(current) + remainder;
+        if (!std::isfinite(exact) || exact < 0.f || exact > static_cast<float>(maximum))
+            return false;
+
+        if (weapon.getCellRef().getCharge() == -1)
+            weapon.getCellRef().setCharge(maximum);
+        if (conditionLoss >= exact)
+        {
+            weapon.getCellRef().setCharge(0);
+            weapon.getCellRef().setChargeIntRemainder(0.f);
+        }
+        else
+            weapon.getCellRef().applyChargeRemainderToBeSubtracted(conditionLoss);
+        return true;
+    }
+
+    std::optional<FalloutArmorProtection> getFalloutArmorProtection(const MWWorld::Ptr& actor)
+    {
+        FalloutArmorProtection result;
+        const auto addArmor = [&](const ESM4::Armor* armor, float condition) -> bool {
+            if (armor == nullptr || !armor->mHasFalloutData)
+                return true;
+            // SetArmorConditionPenalty exposes this vanilla engine constant; 1.0 yields 50% protection at zero
+            // condition and full protection from 50% condition upward.
+            const std::optional<float> conditionMultiplier
+                = MWMechanics::resolveFalloutArmorConditionMultiplier(condition, 1.f);
+            if (!conditionMultiplier || !std::isfinite(armor->mFalloutData.damageThreshold))
+                return false;
+            const float damageResistance
+                = static_cast<float>(armor->mFalloutData.damageResistanceHundredths) / 100.f;
+            result.mDamageResistance += damageResistance * *conditionMultiplier;
+            result.mDamageThreshold += armor->mFalloutData.damageThreshold * *conditionMultiplier;
+            return std::isfinite(result.mDamageResistance) && std::isfinite(result.mDamageThreshold);
+        };
+
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const std::vector<const ESM4::Armor*>& equipped = MWClass::ESM4Npc::getEquippedArmor(actor);
+            for (const ESM4::Armor* armor : equipped)
+            {
+                float condition = 1.f;
+                const MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+                const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::ConstPtr& item) {
+                    return armor != nullptr && item.getType() == ESM4::Armor::sRecordId
+                        && item.getCellRef().getRefId() == ESM::RefId::formIdRefId(armor->mId);
+                });
+                if (found != inventory.end())
+                {
+                    const std::optional<float> itemCondition = getFalloutItemCondition(*found);
+                    if (!itemCondition)
+                        return std::nullopt;
+                    condition = *itemCondition;
+                }
+                if (!addArmor(armor, condition))
+                    return std::nullopt;
+            }
+            return result;
+        }
+
+        if (actor != MWMechanics::getPlayer())
+            return result;
+
+        const MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+        std::vector<MWWorld::ConstPtr> counted;
+        for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+        {
+            const MWWorld::ConstContainerStoreIterator equipped = inventory.getSlot(slot);
+            if (equipped == inventory.end() || equipped->getType() != ESM4::Armor::sRecordId
+                || std::find(counted.begin(), counted.end(), *equipped) != counted.end())
+                continue;
+            counted.push_back(*equipped);
+            const std::optional<float> condition = getFalloutItemCondition(*equipped);
+            if (!condition || !addArmor(equipped->get<ESM4::Armor>()->mBase, *condition))
+                return std::nullopt;
+        }
+        return result;
+    }
+
+    std::optional<MWMechanics::FalloutDamageMitigation> resolveFalloutActorImpactDamage(
+        const MWWorld::Ptr& actor, float incomingDamage, std::span<const ESM4::AmmoEffect* const> ammoEffects,
+        MWMechanics::FalloutDamageMitigationFailure& failure,
+        MWMechanics::FalloutAmmoEffectFailure& ammoEffectFailure)
+    {
+        ammoEffectFailure = MWMechanics::FalloutAmmoEffectFailure::None;
+        const std::optional<FalloutArmorProtection> protection = getFalloutArmorProtection(actor);
+        const std::optional<float> minimumDamageMultiplier = getFalloutGameSetting("fMinDamMultiplier");
+        const std::optional<float> maximumDamageResistance = getFalloutGameSetting("fMaxArmorRating");
+        if (!protection || !minimumDamageMultiplier || !maximumDamageResistance)
+            return std::nullopt;
+
+        const std::optional<float> damageResistance = MWMechanics::applyFalloutAmmoEffects(
+            protection->mDamageResistance, ESM4::AmmoEffect::Type::DamageResistance, ammoEffects,
+            ammoEffectFailure);
+        if (!damageResistance)
+            return std::nullopt;
+        const std::optional<float> damageThreshold = MWMechanics::applyFalloutAmmoEffects(
+            protection->mDamageThreshold, ESM4::AmmoEffect::Type::DamageThreshold, ammoEffects,
+            ammoEffectFailure);
+        if (!damageThreshold)
+            return std::nullopt;
+        return MWMechanics::resolveFalloutDamageMitigation(incomingDamage, *damageResistance,
+            *damageThreshold, *minimumDamageMultiplier, *maximumDamageResistance, failure);
+    }
+
+    bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+        static_assert(MWRender::FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
+        const std::vector<const ESM4::Armor*>& armor = MWClass::ESM4Npc::getEquippedArmor(ptr);
+        return std::any_of(armor.begin(), armor.end(), [](const ESM4::Armor* item) {
+            return item != nullptr && MWRender::hasFonvPowerArmorGeneralFlag(item->mGeneralFlags);
+        });
+    }
+
+    std::optional<int> getFalloutActiveWeaponType(const MWWorld::Ptr& ptr)
+    {
+        const bool creature = ptr.getType() == ESM4::Creature::sRecordId;
+        const bool npc = ptr.getType() == ESM::REC_NPC_4;
+        if (!creature && !npc)
+            return std::nullopt;
+        if (creature)
+        {
+            const ESM4::Creature* record = ptr.get<ESM4::Creature>()->mBase;
+            if (record == nullptr || !record->mIsFONV)
+                return std::nullopt;
+        }
+        else
+        {
+            const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+            if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
+                return std::nullopt;
+        }
+
+        const MWMechanics::DrawState drawState = ptr.getClass().getCreatureStats(ptr).getDrawState();
+        if (drawState == MWMechanics::DrawState::Spell)
+            return ESM::Weapon::Spell;
+        if (drawState != MWMechanics::DrawState::Weapon)
+            return ESM::Weapon::None;
+
+        if (creature)
+            return MWMechanics::getFalloutWeaponType(0).value();
+
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
+        if (weapon == nullptr)
+            return MWMechanics::getFalloutWeaponType(0).value();
+        return MWMechanics::getFalloutWeaponType(weapon->mData.animationType).value_or(ESM::Weapon::None);
+    }
+
     std::string_view getFalloutFlyingMovementFallback(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
     {
         if (ptr.getType() != ESM4::Creature::sRecordId || !ptr.getClass().canFly(ptr)
@@ -137,12 +671,6 @@ namespace
         }
 
         return {};
-    }
-
-    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr, bool isPlayer)
-    {
-        return VR::getVR() && !isPlayer && isFalloutActor(ptr)
-            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
     }
 
     std::string_view getBestAttack(const ESM::Weapon* weapon)
@@ -406,6 +934,32 @@ namespace
 
 namespace MWMechanics
 {
+    namespace
+    {
+        void playAuthoredFalloutWeaponSound(
+            const MWWorld::Ptr& actor, const ESM4::Weapon* weapon, FalloutWeaponSoundEvent event)
+        {
+            if (weapon == nullptr)
+                return;
+
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            MWBase::SoundManager* soundManager = MWBase::Environment::get().getSoundManager();
+            if (store == nullptr || soundManager == nullptr)
+                return;
+
+            const std::optional<ESM::FormId> authoredSound
+                = selectAuthoredFalloutWeaponSound(*weapon, event, actor == getPlayer(), false);
+            if (!authoredSound)
+                return;
+
+            const ESM::RefId soundId = ESM::RefId::formIdRefId(*authoredSound);
+            if (store->get<ESM4::Sound>().search(soundId) == nullptr
+                && store->get<ESM4::SoundReference>().search(soundId) == nullptr)
+                return;
+
+            soundManager->playSound3D(actor, soundId, 1.f, 1.f);
+        }
+    }
 
     std::string CharacterController::chooseRandomGroup(const std::string& prefix, int* num) const
     {
@@ -459,6 +1013,7 @@ namespace MWMechanics
     {
         clearStateAnimation(mCurrentWeapon);
         mUpperBodyState = UpperBodyState::None;
+        mFalloutAttackDelivery = {};
     }
 
     void CharacterController::resetCurrentDeathState()
@@ -488,10 +1043,22 @@ namespace MWMechanics
             resetCurrentIdleState();
         }
 
-        if (!mPtr.getClass().isNpc() && mUpperBodyState > UpperBodyState::WeaponEquipped)
+        if (mUpperBodyState > UpperBodyState::WeaponEquipped)
         {
-            recovery = false;
-            stats.setHitRecovery(false);
+            bool isFonvCreature = false;
+            if (mPtr.getType() == ESM4::Creature::sRecordId)
+            {
+                const auto* live = mPtr.get<ESM4::Creature>();
+                isFonvCreature = live != nullptr && live->mBase != nullptr && live->mBase->mIsFONV;
+            }
+            const bool hasBoundHitReaction = mAnimation != nullptr
+                && mAnimation->hasAnimation(MWRender::FonvCreatureHitReactionSemanticGroup);
+            if (MWRender::shouldClearHitRecoveryDuringActiveAction(
+                    charClass.isNpc(), isFonvCreature, hasBoundHitReaction))
+            {
+                recovery = false;
+                stats.setHitRecovery(false);
+            }
         }
 
         if (mHitState != CharState_None)
@@ -529,6 +1096,11 @@ namespace MWMechanics
         }
         else if (recovery)
         {
+            if (!mAnimation->prepareFalloutHitReaction())
+            {
+                stats.setHitRecovery(false);
+                return;
+            }
             mHitState = isSwimming ? CharState_SwimHit : CharState_Hit;
             priority = Priority_Hit;
         }
@@ -657,8 +1229,11 @@ namespace MWMechanics
         }
     }
 
-    std::string_view CharacterController::getWeaponAnimation(int weaponType) const
+    std::string_view CharacterController::getWeaponAnimation(int weaponType)
     {
+        if (isFalloutWeaponType(weaponType))
+            return getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+
         std::string_view weaponGroup = getWeaponType(weaponType)->mLongGroup;
         if (isRealWeapon(weaponType) && !mAnimation->hasAnimation(weaponGroup))
         {
@@ -679,6 +1254,251 @@ namespace MWMechanics
         return weaponGroup;
     }
 
+    MWRender::Animation* CharacterController::getFalloutWeaponAnimation(bool firstPerson)
+    {
+        MWRender::Animation* candidate
+            = MWBase::Environment::get().getWorld()->getFalloutWeaponAnimation(mPtr, firstPerson);
+        if (firstPerson)
+            return candidate;
+
+        if (candidate == nullptr)
+            candidate = mAnimation;
+        if (candidate != mFalloutWeaponAnimation)
+        {
+            detachFalloutWeaponTextKeys();
+            mFalloutWeaponAnimation = candidate;
+        }
+        return mFalloutWeaponAnimation;
+    }
+
+    void CharacterController::attachFalloutWeaponTextKeys()
+    {
+        MWRender::Animation* animation = getFalloutWeaponAnimation();
+        if (animation != nullptr && animation != mAnimation && !mFalloutWeaponListenerAttached)
+        {
+            animation->setTextKeyListener(this);
+            mFalloutWeaponListenerAttached = true;
+        }
+    }
+
+    void CharacterController::detachFalloutWeaponTextKeys()
+    {
+        if (mFalloutWeaponListenerAttached && mFalloutWeaponAnimation != nullptr
+            && mFalloutWeaponAnimation != mAnimation)
+        {
+            mFalloutWeaponAnimation->setTextKeyListener(nullptr);
+        }
+        mFalloutWeaponListenerAttached = false;
+    }
+
+    void CharacterController::disableFalloutWeaponGroup(std::string_view group)
+    {
+        if (group.empty())
+            return;
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr)
+            actionAnimation->disable(group);
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+            firstPerson->disable(group);
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+            mAnimation->disable(group);
+    }
+
+    void CharacterController::setFalloutWeaponGroup(std::string_view group, bool relativeDuration)
+    {
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr)
+            actionAnimation->setWeaponGroup(std::string(group), relativeDuration);
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+            firstPerson->setWeaponGroup(std::string(group), relativeDuration);
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+            mAnimation->setWeaponGroup(std::string(group), relativeDuration);
+    }
+
+    void CharacterController::showFalloutWeapons(bool show)
+    {
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr)
+            actionAnimation->showWeapons(show);
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+            firstPerson->showWeapons(show);
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+            mAnimation->showWeapons(show);
+    }
+
+    void CharacterController::setFalloutWeaponAiming(float pitchFactor, bool accurate)
+    {
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr)
+        {
+            actionAnimation->setPitchFactor(pitchFactor);
+            actionAnimation->setAccurateAiming(accurate);
+        }
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+        {
+            firstPerson->setPitchFactor(pitchFactor);
+            firstPerson->setAccurateAiming(accurate);
+        }
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+        {
+            mAnimation->setPitchFactor(pitchFactor);
+            mAnimation->setAccurateAiming(accurate);
+        }
+    }
+
+    std::string_view CharacterController::getFalloutWeaponActionGroup(
+        int weaponType, MWRender::FonvWeaponAction action)
+    {
+        const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+        if (!animationType)
+        {
+            Log(Debug::Error) << "FNV mechanics rejected non-Fallout weapon type " << weaponType
+                              << " for semantic action " << static_cast<unsigned int>(action);
+            return {};
+        }
+
+        std::uint8_t reloadAnimation = 0;
+        if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+            reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
+        else if (mPtr.getType() == ESM::REC_NPC_4)
+        {
+            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+                reloadAnimation = weapon->mData.reloadAnim;
+        }
+        const std::optional<MWRender::FonvWeaponActionSource> source
+            = MWRender::getFonvWeaponActionSource(*animationType, reloadAnimation, action);
+        if (!source)
+        {
+            Log(Debug::Error) << "FNV mechanics has no exact DNAM action mapping: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action);
+            return {};
+        }
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation == nullptr
+            || !actionAnimation->prepareFalloutWeaponAnimation(*animationType, reloadAnimation, action))
+            return {};
+        if (!actionAnimation->hasAnimation(source->mSemanticGroup))
+        {
+            Log(Debug::Error) << "FNV mechanics required action group is not loaded: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                              << " group=" << source->mSemanticGroup << " path=" << source->mPath;
+            return {};
+        }
+        const std::string selectedSource = actionAnimation->getAnimationSourceName(source->mSemanticGroup);
+        const bool powerArmor = usesFonvPowerArmorAnimationFamily(mPtr);
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        const MWRender::FonvAnimationFamilyResolution resolution = MWRender::resolveFonvAnimationFamily(
+            { source->mPath }, powerArmor, [vfs](std::string_view path) {
+                return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
+            });
+        if (!MWRender::matchesFonvWeaponActionSource(
+                *source, source->mSemanticGroup, selectedSource, resolution.mPath))
+        {
+            Log(Debug::Error) << "FNV mechanics rejected stale or foreign action source: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                               << " group=" << source->mSemanticGroup << " expectedPath=" << source->mPath
+                               << " selectedPath=" << selectedSource << " resolvedPath=" << resolution.mPath
+                               << " selection=" << MWRender::getFonvAnimationFamilySelectionName(resolution.mSelection)
+                               << " powerArmor=" << powerArmor;
+            return {};
+        }
+        return source->mSemanticGroup;
+    }
+
+    bool CharacterController::playFalloutWeaponAction(
+        int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon)
+    {
+        const std::string_view group = getFalloutWeaponActionGroup(weaponType, action);
+        if (group.empty())
+            return false;
+
+        const std::string previousGroup = mCurrentWeapon;
+        if (!previousGroup.empty() && previousGroup != group)
+            disableFalloutWeaponGroup(previousGroup);
+        mCurrentWeapon = group;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        setFalloutWeaponGroup(mCurrentWeapon, relativeDuration);
+
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        attachFalloutWeaponTextKeys();
+        if (actionAnimation == mAnimation)
+        {
+            playBlendedAnimation(
+                mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start", "stop", 0.f, 0);
+        }
+        else
+        {
+            actionAnimation->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start",
+                "stop", 0.f, 0);
+        }
+        const bool playing = actionAnimation != nullptr && actionAnimation->isPlaying(mCurrentWeapon);
+
+        bool firstPersonPrepared = true;
+        bool firstPersonPlaying = true;
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+        {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+            std::uint8_t reloadAnimation = 0;
+            if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+                reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
+            else if (mPtr.getType() == ESM::REC_NPC_4)
+            {
+                if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+                    reloadAnimation = weapon->mData.reloadAnim;
+            }
+            firstPersonPrepared = animationType
+                && firstPerson->prepareFalloutWeaponAnimation(*animationType, reloadAnimation, action)
+                && firstPerson->hasAnimation(mCurrentWeapon);
+            if (firstPersonPrepared)
+            {
+                firstPerson->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start",
+                    "stop", 0.f, 0);
+                firstPersonPlaying = firstPerson->isPlaying(mCurrentWeapon);
+            }
+            else
+                firstPersonPlaying = false;
+        }
+        if (!playing)
+            detachFalloutWeaponTextKeys();
+        const char* telemetry = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        if (telemetry != nullptr && std::string_view(telemetry) != "0")
+        {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+            Log(playing ? Debug::Info : Debug::Error)
+                << "FNV mechanics exact weapon action: actor=" << mPtr.toString()
+                << " animationType="
+                << (animationType ? std::to_string(static_cast<unsigned int>(*animationType)) : "invalid")
+                << " action=" << static_cast<unsigned int>(action) << " group=" << mCurrentWeapon
+                << " driver=" << (actionAnimation == mAnimation ? "actor" : "fallout-player-proxy")
+                << " firstPersonPrepared=" << firstPersonPrepared
+                << " firstPersonPlaying=" << firstPersonPlaying
+                << " exact=1 status=" << (playing ? "pass" : "fail");
+        }
+        return playing;
+    }
+
+    bool CharacterController::restoreFalloutPrimaryWeaponGroup(int weaponType)
+    {
+        const std::string_view primary
+            = getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+        if (primary.empty())
+        {
+            mCurrentWeapon.clear();
+            setFalloutWeaponGroup({}, false);
+            detachFalloutWeaponTextKeys();
+            return false;
+        }
+
+        mCurrentWeapon = primary;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        setFalloutWeaponGroup(mCurrentWeapon, relativeDuration);
+        detachFalloutWeaponTextKeys();
+        return true;
+    }
+
     std::string_view CharacterController::getWeaponShortGroup(int weaponType) const
     {
         if (weaponType == ESM::Weapon::HandToHand && !mPtr.getClass().isBipedal(mPtr))
@@ -689,6 +1509,9 @@ namespace MWMechanics
     std::string CharacterController::fallbackShortWeaponGroup(
         const std::string& baseGroupName, MWRender::Animation::BlendMask* blendMask) const
     {
+        if (isFalloutWeaponType(mWeaponType))
+            return baseGroupName;
+
         if (!isRealWeapon(mWeaponType))
         {
             if (blendMask != nullptr)
@@ -887,7 +1710,13 @@ namespace MWMechanics
             return;
         }
 
-        if (!force && idle == mIdleState && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureIdleRefresh
+            = MWClass::needsFalloutFurnitureIdleRefresh(falloutFurnitureState, mCurrentIdle);
+        if (!force && !falloutFurnitureIdleRefresh && idle == mIdleState
+            && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
             return;
 
         mIdleState = idle;
@@ -901,9 +1730,6 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
-        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
-            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
-            : MWClass::FalloutFurnitureState::None;
         const bool falloutFurnitureSeated = falloutFurnitureState == MWClass::FalloutFurnitureState::Seated;
         const bool falloutFurnitureActive = falloutFurnitureState != MWClass::FalloutFurnitureState::None;
 
@@ -990,7 +1816,9 @@ namespace MWMechanics
         {
             const bool hideEquippedWeaponForProof
                 = std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr;
-            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive
+            const DrawState drawState = mPtr.getClass().getCreatureStats(mPtr).getDrawState();
+            const bool weaponDrawn = drawState == DrawState::Weapon;
+            if (mAnimation->hasAnimation("weaponpose") && weaponDrawn && !falloutFurnitureActive
                 && !hideEquippedWeaponForProof)
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
@@ -1008,12 +1836,14 @@ namespace MWMechanics
                 playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
                     0.f, std::numeric_limits<uint32_t>::max(), true);
             }
-            else if ((falloutFurnitureActive || hideEquippedWeaponForProof)
+            else if ((!weaponDrawn || falloutFurnitureActive || hideEquippedWeaponForProof)
                 && mAnimation->isPlaying("weaponpose"))
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing standing weapon pose for "
                                  << mPtr.getCellRef().getRefId() << " reason="
-                                 << (falloutFurnitureActive ? "furniture-seated" : "proof-weapon-hidden");
+                                 << (!weaponDrawn ? "weapon-holstered"
+                                                 : (falloutFurnitureActive ? "furniture-seated"
+                                                                           : "proof-weapon-hidden"));
                 mAnimation->disable("weaponpose");
             }
 
@@ -1025,11 +1855,28 @@ namespace MWMechanics
                     if (mAnimation->hasAnimation(overlayGroup))
                     {
                         MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
-                        overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                        int overlayMask = MWRender::BlendMask_RightArm;
+                        const bool fullBodyOverlay
+                            = std::getenv("OPENMW_FNV_FORCED_OVERLAY_FULL_BODY") != nullptr;
+                        if (fullBodyOverlay && (!falloutFurnitureSeated || mCurrentIdle != "chairsit"))
+                        {
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: deferring forced full-body overlay group '"
+                                             << overlayGroup << "' until seated chairsit for "
+                                             << mPtr.getCellRef().getRefId();
+                            return;
+                        }
+                        if (fullBodyOverlay)
+                        {
+                            overlayPriority = Priority_Weapon;
+                            overlayMask = MWRender::BlendMask_All;
+                        }
+                        else
+                            overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced "
+                                         << (fullBodyOverlay ? "full-body" : "right-arm") << " overlay group '"
                                          << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
-                        playBlendedAnimation(overlayGroup, overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f,
-                            "start", "stop", 0.f, numLoops, true);
+                        playBlendedAnimation(overlayGroup, overlayPriority, overlayMask, false, 1.0f, "start", "stop",
+                            0.f, numLoops, true);
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 diag: forced overlay group missing for "
@@ -1170,13 +2017,57 @@ namespace MWMechanics
              * handle knockout and death which moves the character down. */
             mAnimation->setAccumulation(osg::Vec3f(1.0f, 1.0f, 0.0f));
 
-            if (cls.hasInventoryStore(mPtr))
+            if (const std::optional<int> falloutWeaponType = getFalloutActiveWeaponType(mPtr))
             {
-                getActiveWeapon(mPtr, &mWeaponType);
+                mFalloutWeapon
+                    = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
+                mWeaponType = *falloutWeaponType;
                 if (mWeaponType != ESM::Weapon::None)
                 {
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType))
+                {
+                    if (mCurrentWeapon.empty())
+                    {
+                        mAnimation->showWeapons(false);
+                        mWeaponType = ESM::Weapon::None;
+                        mUpperBodyState = UpperBodyState::None;
+                        mAnimation->setWeaponGroup({}, false);
+                    }
+                    else
+                    {
+                        mAnimation->showWeapons(true);
+                        const bool useRelativeDuration
+                            = getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+                        mAnimation->setWeaponGroup(mCurrentWeapon, useRelativeDuration);
+                    }
+                }
+            }
+            else if (cls.hasInventoryStore(mPtr))
+            {
+                MWWorld::InventoryStore& inventory = cls.getInventoryStore(mPtr);
+                MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &mWeaponType);
+                if (weapon != inventory.end())
+                {
+                    mWeapon = *weapon;
+                    if (mWeapon.getType() == ESM4::Weapon::sRecordId)
+                        mFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
+                }
+                if (mWeaponType != ESM::Weapon::None)
+                {
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType) && mCurrentWeapon.empty())
+                {
+                    mAnimation->showWeapons(false);
+                    mWeaponType = ESM::Weapon::None;
+                    mUpperBodyState = UpperBodyState::None;
+                    mAnimation->setWeaponGroup({}, false);
                 }
 
                 if (mWeaponType != ESM::Weapon::None && mWeaponType != ESM::Weapon::Spell
@@ -1242,6 +2133,9 @@ namespace MWMechanics
 
     void CharacterController::detachAnimation()
     {
+        mFalloutAttackDelivery = {};
+        detachFalloutWeaponTextKeys();
+        mFalloutWeaponAnimation = nullptr;
         if (mAnimation)
         {
             persistAnimationState();
@@ -1257,12 +2151,40 @@ namespace MWMechanics
             return;
         std::string_view evt = key->second;
 
+        const bool semanticWeaponAction = mUpperBodyState == UpperBodyState::Equipping
+            || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
+        // While the visible Fallout player proxy owns an action, it is the authoritative text-key source.
+        // Ignore simultaneous locomotion/idle keys from either the proxy or the hidden compatibility rig so sounds
+        // and delivery events are not duplicated.
+        if (mFalloutWeaponListenerAttached && mFalloutWeaponAnimation != mAnimation && semanticWeaponAction
+            && groupname != mCurrentWeapon)
+            return;
+
         MWBase::Environment::get().getLuaManager()->animationTextKey(mPtr, key->second);
 
         if (evt.substr(0, 7) == "sound: ")
         {
             MWBase::SoundManager* sndMgr = MWBase::Environment::get().getSoundManager();
-            sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId(evt.substr(7)), 1.0f, 1.0f);
+            const std::string_view soundKey = evt.substr(7);
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (isFalloutActor(mPtr) && store != nullptr
+                && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas
+                && MWSound::isFalloutSoundAssetPath(soundKey))
+            {
+                const Resource::ResourceSystem* resources = MWBase::Environment::get().getResourceSystem();
+                const VFS::Manager* vfs = resources != nullptr ? resources->getVFS() : nullptr;
+                if (vfs != nullptr)
+                {
+                    const std::optional<VFS::Path::Normalized> resolved
+                        = MWSound::resolveFalloutSoundPath(soundKey, *vfs);
+                    if (resolved)
+                        sndMgr->playSound3D(mPtr, resolved->value(), 1.0f, 1.0f);
+                }
+                // A path-like FNV key is authoritative. Never reinterpret a missing asset as an editor ID or
+                // fall back to a sound from another game.
+                return;
+            }
+            sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId(soundKey), 1.0f, 1.0f);
             return;
         }
 
@@ -1309,6 +2231,26 @@ namespace MWMechanics
             return;
         }
 
+        const ESM::FormId equippedFalloutWeapon
+            = mFalloutWeapon != nullptr ? mFalloutWeapon->mId : ESM::FormId{};
+        if (mUpperBodyState == UpperBodyState::AttackEnd)
+        {
+            if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
+                    mFalloutAttackDelivery, equippedFalloutWeapon, groupname, evt))
+            {
+                const bool delivered = isFalloutMeleeAnimationType(delivery->mAnimationType)
+                    ? strikeFalloutMelee(delivery->mAnimationType)
+                    : fireFalloutWeapon();
+                Log(delivered ? Debug::Info : Debug::Error)
+                    << "FNV combat authored attack delivery: actor=" << mPtr.toString()
+                    << " weapon=" << ESM::RefId::formIdRefId(delivery->mWeapon)
+                    << " animationType=" << static_cast<unsigned int>(delivery->mAnimationType)
+                    << " group=" << delivery->mAnimationGroup << " key=" << evt
+                    << " status=" << (delivered ? "pass" : "fail");
+                return;
+            }
+        }
+
         if (evt.substr(0, groupname.size()) != groupname || evt.substr(groupname.size(), 2) != ": ")
         {
             // Not ours, skip it
@@ -1321,14 +2263,14 @@ namespace MWMechanics
             if (groupname == "shield")
                 mAnimation->showCarriedLeft(true);
             else if (mUpperBodyState == UpperBodyState::Equipping)
-                mAnimation->showWeapons(true);
+                showFalloutWeapons(true);
         }
         else if (action == "unequip detach")
         {
             if (groupname == "shield")
                 mAnimation->showCarriedLeft(false);
             else if (mUpperBodyState == UpperBodyState::Unequipping)
-                mAnimation->showWeapons(false);
+                showFalloutWeapons(false);
         }
         else if (action == "chop hit" || action == "slash hit" || action == "thrust hit" || action == "hit")
         {
@@ -1360,7 +2302,7 @@ namespace MWMechanics
                 mReadyToHit = false;
             }
         }
-        else if (isRandomAttackAnimation(groupname) && action == "start")
+        else if (isLegacyRandomAttackAnimation(groupname) && action == "start")
         {
             std::multimap<float, std::string>::const_iterator hitKey = key;
 
@@ -1483,7 +2425,7 @@ namespace MWMechanics
     float CharacterController::calculateWindUp() const
     {
         if (!mAnimation || mCurrentWeapon.empty() || mWeaponType == ESM::Weapon::PickProbe
-            || isRandomAttackAnimation(mCurrentWeapon))
+            || isLegacyRandomAttackAnimation(mCurrentWeapon))
             return -1.f;
 
         float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -1523,7 +2465,1481 @@ namespace MWMechanics
         mReadyToHit = true;
     }
 
-    bool CharacterController::updateWeaponState()
+    bool CharacterController::updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
+        const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration)
+    {
+        bool forceStateUpdate = false;
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        const auto failVisualClosed = [&]() {
+            mFalloutAttackDelivery = {};
+            showFalloutWeapons(false);
+            mUpperBodyState = UpperBodyState::None;
+            mWeaponType = ESM::Weapon::None;
+            mFalloutWeapon = nullptr;
+            mFalloutTriggerState = {};
+            mCurrentWeapon.clear();
+            setFalloutWeaponGroup({}, false);
+            detachFalloutWeaponTextKeys();
+        };
+        const auto settleUsableWithoutAction = [&](std::string_view reason) {
+            mFalloutAttackDelivery = {};
+            if (!mCurrentWeapon.empty())
+                disableFalloutWeaponGroup(mCurrentWeapon);
+            mCurrentWeapon.clear();
+            setFalloutWeaponGroup({}, false);
+            showFalloutWeapons(mFalloutWeapon != nullptr);
+            detachFalloutWeaponTextKeys();
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            Log(Debug::Warning) << "FNV mechanics retained usable weapon without exact visual action: actor="
+                                << mPtr.toString() << " weaponType=" << mWeaponType << " reason=" << reason
+                                << " gameplayAvailable=1";
+        };
+        const auto updateAiming = [&]() {
+            const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
+            const bool ranged = isFalloutWeaponType(mWeaponType)
+                && (getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged
+                    || getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Thrown);
+            setFalloutWeaponAiming(actionPlaying && ranged ? 1.f : 0.f, actionPlaying && ranged);
+        };
+        const auto getAttackDeliveryEvent = [&]() {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            if (!animationType)
+                return FalloutAttackDeliveryEvent::None;
+
+            bool authoredHitscan = true;
+            if (mFalloutWeapon != nullptr && !isFalloutMeleeAnimationType(*animationType)
+                && !isFalloutThrownWeapon(*mFalloutWeapon))
+            {
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                const ESM4::Projectile* projectile = store != nullptr
+                    ? store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile)
+                    : nullptr;
+                if (projectile != nullptr)
+                    authoredHitscan = (projectile->mData.flags & ESM4::Projectile::Hitscan) != 0;
+            }
+            const bool automatic = mFalloutWeapon != nullptr && mFalloutWeapon->mData.isAutomatic();
+            return getFalloutAttackDeliveryEvent(*animationType, authoredHitscan, automatic);
+        };
+        const auto deliverGameplayAttack = [&]() {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            if (!animationType)
+                return false;
+            return isFalloutMeleeAnimationType(*animationType)
+                ? strikeFalloutMelee(*animationType)
+                : fireFalloutWeapon();
+        };
+
+        const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
+            || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
+        float complete = 0.f;
+        const bool actionStateExists
+            = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
+            && actionAnimation->getInfo(mCurrentWeapon, &complete);
+        const MWRender::FonvWeaponActionProgress actionProgress
+            = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
+
+        const bool vatsSuppressesPlayerTrigger = mPtr == getPlayer()
+            && MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().isVatsActive();
+        if (vatsSuppressesPlayerTrigger && getAttackingOrSpell())
+            setAttackingOrSpell(false);
+        const bool triggerDown = !vatsSuppressesPlayerTrigger && getAttackingOrSpell();
+        const bool hitAllowsAttack = mHitState == CharState_None || mHitState == CharState_Block;
+        const bool stateAllowsAttack = mUpperBodyState == UpperBodyState::WeaponEquipped
+            || (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutWeapon != nullptr
+                && mFalloutWeapon->mData.isAutomatic());
+        FalloutFireCadence cadence;
+        bool cadenceValid = true;
+        FalloutFireCadenceFailure cadenceFailure = FalloutFireCadenceFailure::None;
+        if (mFalloutWeapon != nullptr)
+        {
+            const std::optional<FalloutFireCadence> authoredCadence
+                = buildFalloutFireCadence(*mFalloutWeapon, cadenceFailure);
+            cadenceValid = authoredCadence.has_value();
+            if (authoredCadence)
+                cadence = *authoredCadence;
+        }
+        const bool triggerPressed = triggerDown && !mFalloutTriggerState.mWasDown;
+        const bool triggerAttack = advanceFalloutTrigger(mFalloutTriggerState, triggerDown,
+            cadenceValid && stateAllowsAttack && hitAllowsAttack, cadence, duration);
+        if (!cadenceValid && triggerPressed && stateAllowsAttack && hitAllowsAttack)
+            Log(Debug::Error) << "FNV mechanics rejected automatic cadence: actor=" << mPtr.toString()
+                              << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                              << " reason=" << getFalloutFireCadenceFailureName(cadenceFailure);
+
+        if (semanticActionPlaying && actionProgress == MWRender::FonvWeaponActionProgress::Running)
+        {
+            if (triggerAttack && getAttackDeliveryEvent() == FalloutAttackDeliveryEvent::None)
+            {
+                const bool gameplayAction = deliverGameplayAttack();
+                if (!gameplayAction)
+                    Log(Debug::Error) << "FNV mechanics gameplay automatic attack failed: actor=" << mPtr.toString()
+                                      << " weaponType=" << mWeaponType;
+            }
+            updateAiming();
+            return false;
+        }
+
+        if (semanticActionPlaying)
+        {
+            if (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutAttackDelivery.isPending())
+            {
+                Log(Debug::Error) << "FNV combat authored attack key was not observed: actor=" << mPtr.toString()
+                                  << " weapon=" << ESM::RefId::formIdRefId(mFalloutAttackDelivery.mWeapon)
+                                  << " animationType="
+                                  << static_cast<unsigned int>(mFalloutAttackDelivery.mAnimationType)
+                                  << " group=" << mFalloutAttackDelivery.mAnimationGroup;
+                mFalloutAttackDelivery = {};
+            }
+            if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
+            {
+                Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
+                                  << " group=" << mCurrentWeapon;
+                if (mUpperBodyState == UpperBodyState::Unequipping)
+                    failVisualClosed();
+                else
+                    settleUsableWithoutAction("action-interrupted");
+                updateAiming();
+                return true;
+            }
+            disableFalloutWeaponGroup(mCurrentWeapon);
+            detachFalloutWeaponTextKeys();
+            switch (mUpperBodyState)
+            {
+                case UpperBodyState::Equipping:
+                    showFalloutWeapons(true);
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                        settleUsableWithoutAction("missing-primary-after-equip");
+                    break;
+                case UpperBodyState::Unequipping:
+                    failVisualClosed();
+                    break;
+                case UpperBodyState::AttackEnd:
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                        settleUsableWithoutAction("missing-primary-after-attack");
+                    break;
+                default:
+                    break;
+            }
+            forceStateUpdate = true;
+        }
+
+        bool currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        const bool requestedIsFalloutWeapon = isFalloutWeaponType(requestedWeaponType);
+
+        // Controllers created by an older build can still hold a legacy attack state. Normalize it before making an
+        // exact transition; never let a Fallout attack group fall through to Morrowind's random-melee state machine.
+        if (currentIsFalloutWeapon && mUpperBodyState != UpperBodyState::WeaponEquipped)
+        {
+            if (!mCurrentWeapon.empty())
+                disableFalloutWeaponGroup(mCurrentWeapon);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                settleUsableWithoutAction("state-normalization");
+            forceStateUpdate = true;
+        }
+
+        if (currentIsFalloutWeapon
+            && shouldTransitionFalloutWeaponState(requestedWeaponType, mWeaponType, weaponChanged))
+        {
+            setAttackingOrSpell(false);
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Unequip);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Unequip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Unequipping;
+            else
+            {
+                // Missing exact data fails the visual action closed; it never selects another family or attack group.
+                failVisualClosed();
+            }
+            updateAiming();
+            return true;
+        }
+
+        currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        if (!currentIsFalloutWeapon && requestedIsFalloutWeapon)
+        {
+            if (!mCurrentWeapon.empty())
+                disableFalloutWeaponGroup(mCurrentWeapon);
+            mWeaponType = requestedWeaponType;
+            mFalloutWeapon = requestedWeapon;
+            mFalloutTriggerState.mCooldown = 0.f;
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Equip);
+            showFalloutWeapons(false);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Equipping;
+            else
+                settleUsableWithoutAction("missing-equip-action");
+            updateAiming();
+            return true;
+        }
+
+        if (!currentIsFalloutWeapon)
+        {
+            updateAiming();
+            return forceStateUpdate;
+        }
+
+        if (triggerAttack && mUpperBodyState == UpperBodyState::WeaponEquipped && hitAllowsAttack)
+        {
+            mFalloutAttackDelivery = {};
+            mAttackStrength = -1.f;
+            mReadyToHit = false;
+            mAttackSuccess = false;
+            mAttackVictim = MWWorld::Ptr();
+            mAttackHitPos = osg::Vec3f();
+            MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            const FalloutAttackDeliveryEvent deliveryEvent = getAttackDeliveryEvent();
+            bool deliveryQueued = false;
+            if (animationType && deliveryEvent != FalloutAttackDeliveryEvent::None)
+            {
+                if (const std::optional<MWRender::FonvWeaponActionSource> source
+                    = MWRender::getFonvWeaponActionSource(
+                        *animationType, 0, MWRender::FonvWeaponAction::PrimaryAttack))
+                {
+                    deliveryQueued = queueFalloutAttackDelivery(mFalloutAttackDelivery, deliveryEvent,
+                        mFalloutWeapon != nullptr ? mFalloutWeapon->mId : ESM::FormId{}, *animationType,
+                        source->mSemanticGroup);
+                }
+            }
+            // Arm the state before Animation::play so a modded clip with a delivery key at its start time is still
+            // authoritative. playFalloutWeaponAction will immediately dispatch keys at or before that start time.
+            if (deliveryQueued)
+                mUpperBodyState = UpperBodyState::AttackEnd;
+            const bool visualAction
+                = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon);
+            bool gameplayAction = false;
+            if (shouldDeliverFalloutAttackImmediately(deliveryEvent, visualAction))
+            {
+                mFalloutAttackDelivery = {};
+                gameplayAction = deliverGameplayAttack();
+                if (deliveryEvent != FalloutAttackDeliveryEvent::None && !visualAction)
+                {
+                    Log(gameplayAction ? Debug::Warning : Debug::Error)
+                        << "FNV combat used immediate delivery fallback: actor=" << mPtr.toString()
+                        << " weaponType=" << mWeaponType << " reason=missing-primary-attack-action"
+                        << " status=" << (gameplayAction ? "pass" : "fail");
+                }
+            }
+            else if (visualAction && deliveryQueued)
+                gameplayAction = true;
+            else
+                mFalloutAttackDelivery = {};
+            if (visualAction)
+                mUpperBodyState = UpperBodyState::AttackEnd;
+            else
+            {
+                settleUsableWithoutAction("missing-primary-attack-action");
+                setAttackingOrSpell(false);
+            }
+            if (!gameplayAction)
+                Log(Debug::Error) << "FNV mechanics gameplay attack failed: actor=" << mPtr.toString()
+                                  << " weaponType=" << mWeaponType << " visualAction=" << visualAction;
+
+            if (mIdleState != CharState_IdleSneak && mIdleState != CharState_IdleSwim)
+                resetCurrentIdleState();
+        }
+
+        updateAiming();
+        return forceStateUpdate;
+    }
+
+    bool CharacterController::fireFalloutWeapon(const MWWorld::Ptr& vatsTarget,
+        const std::optional<osg::Vec3f>& vatsAimPoint, const FalloutVatsQueuedAction* vatsAction,
+        bool vatsTargetHit)
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV combat shot rejected: actor=" << mPtr.toString()
+                              << " weapon="
+                              << (mFalloutWeapon != nullptr ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                                            : std::string("none"))
+                              << " reason=" << reason;
+            return false;
+        };
+
+        if (mFalloutWeapon == nullptr)
+            return fail("missing-weapon");
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (world == nullptr || store == nullptr)
+            return fail("missing-world-store");
+
+        if (!mFalloutWeapon->mScriptId.isZeroOrUnset())
+        {
+            const ESM4::Script* script
+                = store->get<ESM4::Script>().search(ESM::RefId(mFalloutWeapon->mScriptId));
+            if (script != nullptr
+                && resolveFalloutWeaponOnFireAction(script->mScript.scriptSource)
+                    == FalloutWeaponOnFireAction::DetonatePlacedExplosives)
+            {
+                if (vatsAction != nullptr || !vatsTarget.isEmpty() || vatsAimPoint)
+                    return fail("scripted-on-fire-action-in-vats");
+                const unsigned int detonated
+                    = world->detonateFalloutPlacedExplosives(getPlayer());
+                playAuthoredFalloutWeaponSound(
+                    mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
+                Log(Debug::Info) << "FNV weapon OnFire script executed: actor=" << mPtr.toString()
+                                 << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                                 << " script=" << ESM::RefId(mFalloutWeapon->mScriptId)
+                                 << " command=player.DetonatePlacedExplosives"
+                                 << " charges=" << detonated << " status=pass";
+                return true;
+            }
+        }
+
+        MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
+        const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);
+        std::optional<ESM::FormId> consumable;
+        const ESM4::Ammunition* ammunition = nullptr;
+        if (consumesWeapon)
+        {
+            if (inventory.count(ESM::RefId::formIdRefId(mFalloutWeapon->mId)) < 1)
+            {
+                playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+                return fail("missing-equipped-throwable");
+            }
+            consumable = mFalloutWeapon->mId;
+        }
+        else
+        {
+            std::vector<ESM::FormId> ammoCandidates;
+            if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
+                ammoCandidates.push_back(mFalloutWeapon->mAmmo);
+            else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
+                ammoCandidates = list->mObjects;
+            else
+                return fail("invalid-ammo-reference");
+
+            if (const auto* inventoryStore = dynamic_cast<const MWWorld::InventoryStore*>(&inventory))
+            {
+                const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+                if (const std::optional<ESM::RefId> selected = inventoryStore->getFalloutAmmoSelection(weaponId))
+                {
+                    const auto found = std::find_if(ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                        return ESM::RefId::formIdRefId(id) == *selected;
+                    });
+                    if (found != ammoCandidates.end())
+                        std::rotate(ammoCandidates.begin(), found, std::next(found));
+                }
+            }
+
+            consumable = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
+                [&](ESM::FormId candidate) {
+                    return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
+                },
+                [&](ESM::FormId candidate) {
+                    return inventory.count(ESM::RefId::formIdRefId(candidate));
+                });
+            if (!consumable)
+            {
+                playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+                return fail("insufficient-authored-ammo");
+            }
+            ammunition = store->get<ESM4::Ammunition>().search(*consumable);
+            if (ammunition == nullptr)
+                return fail("selected-ammo-record-disappeared");
+        }
+        if (!consumable)
+            return fail("missing-consumable");
+
+        const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
+        if (projectile == nullptr)
+            return fail("missing-projectile-record");
+        const bool projectileHasExplosion
+            = (projectile->mData.flags & ESM4::Projectile::Explosion) != 0;
+        if (projectileHasExplosion
+            && (projectile->mData.explosion.isZeroOrUnset()
+                || store->get<ESM4::Explosion>().search(projectile->mData.explosion) == nullptr))
+            return fail("missing-projectile-explosion-record");
+
+        FalloutShotFailure contractFailure = FalloutShotFailure::None;
+        const std::optional<FalloutShotContract> contract
+            = buildFalloutRayShotContract(*mFalloutWeapon, *projectile, *consumable, contractFailure);
+        if (!contract)
+            return fail(getFalloutShotFailureName(contractFailure));
+        if (!contract->mAuthoredHitscan
+            && (projectile->mModel.empty() || !std::isfinite(projectile->mData.speed)
+                || projectile->mData.speed <= 0.f || !std::isfinite(projectile->mData.gravity)
+                || projectile->mData.gravity < 0.f))
+            return fail("invalid-authored-projectile-motion");
+
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        if (ammunition != nullptr)
+        {
+            ammoEffects.reserve(ammunition->mAmmoEffects.size());
+            for (ESM::FormId effectId : ammunition->mAmmoEffects)
+            {
+                const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+                if (effect == nullptr)
+                    return fail("missing-authored-ammo-effect");
+                ammoEffects.push_back(effect);
+            }
+        }
+
+        const std::optional<float> skill = getFalloutRangedSkill(mPtr, mFalloutWeapon->mData.skillActorValue);
+        if (!skill)
+            return fail("missing-ranged-skill");
+        const MWWorld::Ptr equippedWeapon = getFalloutEquippedWeaponInstance(mPtr, mWeapon, *mFalloutWeapon);
+        if (equippedWeapon.isEmpty())
+            return fail("missing-equipped-weapon-instance");
+        const std::optional<float> weaponCondition
+            = getFalloutItemCondition(equippedWeapon);
+        if (!weaponCondition)
+            return fail("missing-equipped-weapon-condition");
+        if (*weaponCondition <= 0.f)
+        {
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+            return fail("broken-equipped-weapon");
+        }
+        const std::optional<FalloutRangedDamageTuning> damageTuning = getFalloutRangedDamageTuning();
+        if (!damageTuning)
+            return fail("missing-ranged-damage-tuning");
+        FalloutRangedDamageFailure damageFailure = FalloutRangedDamageFailure::None;
+        const std::optional<FalloutRangedDamage> rangedDamage = buildFalloutRangedDamage(
+            contract->mDamage, *skill, *weaponCondition, *damageTuning, damageFailure);
+        if (!rangedDamage)
+            return fail(getFalloutRangedDamageFailureName(damageFailure));
+        const float explosionDamageMultiplier = rangedDamage->mWeaponDamageMultiplier
+            * rangedDamage->mSkillMultiplier * rangedDamage->mConditionMultiplier;
+        if (!std::isfinite(explosionDamageMultiplier) || explosionDamageMultiplier < 0.f)
+            return fail("invalid-explosion-damage-multiplier");
+
+        if (vatsTarget.isEmpty() != (vatsAction == nullptr))
+            return fail("incomplete-vats-contract");
+        const bool vatsAttack = vatsAction != nullptr;
+        std::optional<FalloutWeaponDegradation> degradation;
+        if (!consumesWeapon)
+        {
+            const std::optional<float> damageToWeapon = getFalloutGameSetting("fDamageToWeaponValue");
+            const std::optional<float> vatsDamageToWeapon = vatsAttack
+                ? getFalloutGameSetting("fVATSDamageToWeaponMult")
+                : std::optional<float>(1.f);
+            if (!damageToWeapon || !vatsDamageToWeapon)
+                return fail("missing-weapon-degradation-tuning");
+            FalloutWeaponDegradationFailure degradationFailure = FalloutWeaponDegradationFailure::None;
+            degradation = buildFalloutWeaponDegradation(*mFalloutWeapon, ammoEffects, *damageToWeapon,
+                vatsAttack, *vatsDamageToWeapon, degradationFailure);
+            if (!degradation)
+                return fail(getFalloutWeaponDegradationFailureName(degradationFailure));
+        }
+        const std::optional<float> actorCriticalChance = getFalloutBaseCriticalChance(mPtr);
+        if (!actorCriticalChance)
+            return fail("missing-base-critical-chance");
+        float vatsCriticalChanceBonus = 0.f;
+        if (vatsAttack)
+        {
+            const std::optional<float> setting = getFalloutGameSetting("fVATSCriticalChanceBonus");
+            if (!setting)
+                return fail("missing-vats-critical-chance-bonus");
+            vatsCriticalChanceBonus = *setting;
+        }
+        FalloutCriticalFailure criticalFailure = FalloutCriticalFailure::None;
+        const std::optional<FalloutCriticalContract> critical = buildFalloutCriticalContract(
+            *mFalloutWeapon, *actorCriticalChance, vatsAttack, vatsCriticalChanceBonus, criticalFailure);
+        if (!critical)
+            return fail(getFalloutCriticalFailureName(criticalFailure));
+
+        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+        std::vector<MWWorld::Ptr> targetActors;
+        if (!vatsTarget.isEmpty())
+            targetActors.push_back(vatsTarget);
+        else if (mPtr != getPlayer())
+            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
+
+        osg::Vec3f direction;
+        std::optional<osg::Vec3f> fixedAimPoint;
+        if (vatsAimPoint)
+        {
+            fixedAimPoint = *vatsAimPoint;
+            direction = *vatsAimPoint - origin;
+        }
+        else if (mPtr == getPlayer() && world->getCamera() != nullptr)
+            direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+        else if (!targetActors.empty())
+        {
+            fixedAimPoint = world->getActorHeadTransform(targetActors.front()).getTrans();
+            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        }
+        else
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
+                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
+            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
+        }
+        if (!contract->mAuthoredHitscan && fixedAimPoint && projectile->mData.gravity > 0.f)
+        {
+            const float gravityAcceleration = Constants::GravityConst * Constants::UnitsPerMeter * 0.1f
+                * projectile->mData.gravity;
+            FalloutBallisticAimFailure ballisticFailure = FalloutBallisticAimFailure::None;
+            const std::optional<osg::Vec3f> ballistic = buildFalloutBallisticAimDirection(
+                *fixedAimPoint - origin, projectile->mData.speed, gravityAcceleration, ballisticFailure);
+            if (!ballistic)
+                return fail(getFalloutBallisticAimFailureName(ballisticFailure));
+            direction = *ballistic;
+            Log(Debug::Info) << "FNV ballistic aim: actor=" << mPtr.toString()
+                             << " origin=" << origin << " target=" << *fixedAimPoint
+                             << " displacement=" << (*fixedAimPoint - origin)
+                             << " speed=" << projectile->mData.speed
+                             << " gravityAcceleration=" << gravityAcceleration
+                             << " direction=" << direction;
+        }
+        else if (direction.normalize() == 0.f)
+            return fail("zero-shot-direction");
+
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+
+        const float weaponLimbDamageMultiplier
+            = vatsAction != nullptr ? vatsAction->mLimbDamageMultiplier : mFalloutWeapon->mData.limbDamageMult;
+        const std::optional<float> playerLimbDamageMultiplier
+            = getFalloutGameSetting("fCombatPlayerLimbDamageMult");
+        if (!std::isfinite(weaponLimbDamageMultiplier) || weaponLimbDamageMultiplier < 0.f
+            || !playerLimbDamageMultiplier || *playerLimbDamageMultiplier < 0.f)
+            return fail("invalid-limb-damage-tuning");
+
+        FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
+        float medianShotSpread = 0.f;
+        if (!vatsAimPoint)
+        {
+            const std::optional<float> adjustedSpread = applyFalloutAmmoEffects(
+                contract->mMinSpread, ESM4::AmmoEffect::Type::Spread, ammoEffects, ammoEffectFailure);
+            if (!adjustedSpread)
+                return fail(getFalloutAmmoEffectFailureName(ammoEffectFailure));
+            if (*adjustedSpread < 0.f || *adjustedSpread >= 45.f)
+                return fail("ammo-adjusted-spread-out-of-range");
+            medianShotSpread = *adjustedSpread;
+        }
+
+        std::vector<osg::Vec3f> rayDirections;
+        rayDirections.reserve(contract->mProjectileCount);
+        Misc::Rng::Generator& prng = world->getPrng();
+        const bool vatsCritical = vatsAttack && rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f
+            && doesFalloutCriticalHit(critical->mChancePercent, Misc::Rng::rollProbability(prng));
+        for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)
+        {
+            // FNV authors Min Spread as the median deviation, with a maximum of twice the value. Sampling radius
+            // uniformly (rather than uniformly by disk area) preserves that median contract.
+            const float radius = Misc::Rng::rollProbability(prng);
+            const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
+            const osg::Vec2f polarSample(radius * std::cos(angle), radius * std::sin(angle));
+            const std::optional<osg::Vec3f> rayDirection
+                = buildFalloutRayDirection(direction, medianShotSpread, polarSample);
+            if (!rayDirection)
+                return fail("invalid-ray-direction");
+            rayDirections.push_back(*rayDirection);
+        }
+
+        const ESM::RefId consumableRefId = ESM::RefId::formIdRefId(contract->mAmmo);
+        const int consumableBefore = inventory.count(consumableRefId);
+        int removed = 0;
+        if (contract->mConsumesWeapon && !mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId
+            && mWeapon.getCellRef().getRefId() == consumableRefId && mWeapon.getContainerStore() == &inventory)
+            removed = inventory.remove(mWeapon, contract->mAmmoUse);
+        else
+            removed = inventory.remove(consumableRefId, contract->mAmmoUse);
+        const int consumableAfter = inventory.count(consumableRefId);
+        if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
+            return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
+
+        // Fallout equips consumable thrown weapons as a one-item stack. Removing that item clears the carried-right
+        // slot even when another compatible stack remains in the inventory. Retail immediately advances to the next
+        // item in that stack, so keep the weapon family equipped without refunding or recreating the consumed item.
+        if (contract->mConsumesWeapon && consumableAfter > 0)
+        {
+            auto* inventoryStore = dynamic_cast<MWWorld::InventoryStore*>(&inventory);
+            MWWorld::ContainerStoreIterator replacement
+                = inventoryStore != nullptr ? inventoryStore->end() : inventory.end();
+            if (inventoryStore != nullptr)
+            {
+                for (MWWorld::ContainerStoreIterator candidate = inventoryStore->begin();
+                     candidate != inventoryStore->end(); ++candidate)
+                {
+                    if (candidate->getCellRef().getCount() > 0
+                        && candidate->getCellRef().getRefId() == consumableRefId)
+                    {
+                        replacement = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (inventoryStore != nullptr && replacement != inventoryStore->end())
+            {
+                inventoryStore->equip(MWWorld::InventoryStore::Slot_CarriedRight, replacement);
+                const MWWorld::ContainerStoreIterator equipped
+                    = inventoryStore->getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (equipped != inventoryStore->end()
+                    && equipped->getCellRef().getRefId() == consumableRefId
+                    && equipped->getCellRef().getCount() > 0)
+                {
+                    mWeapon = *equipped;
+                    Log(Debug::Info) << "FNV throwable stack handoff: actor=" << mPtr.toString()
+                                     << " weapon=" << consumableRefId << " remaining=" << consumableAfter
+                                     << " equippedCount=" << equipped->getCellRef().getCount() << " status=pass";
+                }
+                else
+                    Log(Debug::Error) << "FNV throwable stack handoff failed after equip: actor=" << mPtr.toString()
+                                      << " weapon=" << consumableRefId << " remaining=" << consumableAfter;
+            }
+            else
+                Log(Debug::Error) << "FNV throwable stack handoff could not find remaining item: actor="
+                                  << mPtr.toString() << " weapon=" << consumableRefId
+                                  << " remaining=" << consumableAfter;
+        }
+
+        float weaponConditionAfter = *weaponCondition;
+        float conditionLoss = 0.f;
+        const bool suppressWeaponWear = mPtr == getPlayer() && world->getGodModeState();
+        if (degradation && !suppressWeaponWear)
+        {
+            conditionLoss = degradation->mConditionLoss;
+            if (!applyFalloutWeaponConditionLoss(equippedWeapon, conditionLoss))
+                return fail("weapon-condition-transaction-failed");
+            const std::optional<float> after = getFalloutItemCondition(equippedWeapon);
+            if (!after)
+                return fail("invalid-weapon-condition-after-shot");
+            weaponConditionAfter = *after;
+        }
+        playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
+        if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
+            MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
+
+        struct ActorImpact
+        {
+            struct LimbImpact
+            {
+                std::int8_t mActorValue = -1;
+                std::uint8_t mHealthPercent = 0;
+                std::string mBodyPartName;
+                float mRawDamage = 0.f;
+                float mWeaponMultiplier = 1.f;
+                float mTargetMultiplier = 1.f;
+            };
+
+            MWWorld::Ptr mActor;
+            float mIncomingDamage = 0.f;
+            float mHealthDamage = 0.f;
+            float mDamageResistance = 0.f;
+            float mDamageThreshold = 0.f;
+            bool mThresholdLimited = false;
+            unsigned int mCriticalProjectiles = 0;
+            std::vector<LimbImpact> mLimbImpacts;
+        };
+        std::vector<ActorImpact> actorImpacts;
+        const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
+        unsigned int rayHits = 0;
+        unsigned int actorRayHits = 0;
+        const float damagePerProjectile
+            = rangedDamage->mDamage / static_cast<float>(contract->mProjectileCount);
+        bool vatsCriticalConsumed = false;
+        unsigned int criticalProjectiles = 0;
+        unsigned int movingProjectiles = 0;
+        std::vector<osg::Vec3f> impactExplosionPositions;
+        for (const osg::Vec3f& rayDirection : rayDirections)
+        {
+            bool criticalHit = false;
+            if (rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f)
+            {
+                if (vatsAttack)
+                {
+                    criticalHit = !vatsCriticalConsumed && vatsCritical;
+                    vatsCriticalConsumed = true;
+                }
+                else
+                {
+                    criticalHit = doesFalloutCriticalHit(
+                        critical->mChancePercent, Misc::Rng::rollProbability(prng));
+                }
+            }
+            if (criticalHit)
+                ++criticalProjectiles;
+            const float rawHitDamage = critical->damageForProjectile(damagePerProjectile, criticalHit);
+
+            if (!contract->mAuthoredHitscan)
+            {
+                FalloutProjectileImpactContract impact;
+                impact.mWeapon = mFalloutWeapon->mId;
+                if (projectileHasExplosion)
+                    impact.mExplosion = projectile->mData.explosion;
+                impact.mRawDamage = rawHitDamage;
+                impact.mLimbDamageMultiplier = weaponLimbDamageMultiplier;
+                impact.mExplosionDamageMultiplier = explosionDamageMultiplier;
+                impact.mProjectileSkill = *skill;
+                impact.mCritical = criticalHit;
+                impact.mAmmoEffects.reserve(ammoEffects.size());
+                for (const ESM4::AmmoEffect* effect : ammoEffects)
+                    impact.mAmmoEffects.push_back(effect->mId);
+                if (vatsAction != nullptr)
+                {
+                    impact.mVatsAction = *vatsAction;
+                    impact.mVatsTargetHit = vatsTargetHit;
+                }
+                if (!world->launchFalloutProjectile(
+                        mPtr, contract->mProjectile, origin, rayDirection, impact))
+                    return fail("moving-projectile-launch-failed");
+                ++movingProjectiles;
+                continue;
+            }
+
+            const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
+            MWPhysics::RayCastingResult result;
+            if (vatsAttack && vatsTargetHit)
+            {
+                // A queued V.A.T.S. roll is the authoritative hit result. Target acquisition already chose the
+                // authored actor/body-part contract; resolving the rolled hit directly prevents incidental scenery
+                // collision from turning a displayed successful roll into an unreported zero-damage shot.
+                result.mHit = true;
+                result.mHitPos = vatsAimPoint.value_or(destination);
+                result.mHitNormal = -rayDirection;
+                result.mHitObject = vatsTarget;
+            }
+            else
+            {
+                // Ordinary Fallout gunfire is physical even when an AI package supplied an intended combat
+                // target. Passing that target list to PhysicsSystem would whitelist it and make every other actor
+                // non-solid to the shot, so a bystander between an NPC and its target could not intercept a pellet.
+                // V.A.T.S. successful rolls take the explicit authoritative branch above; all other rays must stop
+                // at the first world or actor contact.
+                result = rayCasting->castRay(origin, destination, { mPtr }, {},
+                    MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+            }
+            if (!result.mHit)
+                continue;
+            ++rayHits;
+            if (projectileHasExplosion
+                && (projectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0)
+                impactExplosionPositions.push_back(result.mHitPos);
+            if (result.mHitObject.isEmpty() || !result.mHitObject.getClass().isActor())
+                continue;
+            if (vatsAttack && result.mHitObject == vatsTarget && !vatsTargetHit)
+                continue;
+            ++actorRayHits;
+
+            std::optional<FalloutBodyPartContract> bodyPart;
+            if (vatsAttack && result.mHitObject == vatsTarget)
+            {
+                bodyPart = FalloutBodyPartContract{ vatsAction->mBodyPart, vatsAction->mBodyPartName,
+                    vatsAction->mTargetNode, vatsAction->mTargetNode, {}, {}, vatsAction->mActorValue,
+                    vatsAction->mHealthPercent, vatsAction->mHealthDamageMultiplier };
+            }
+            else
+            {
+                MWPhysics::RayCastingResult renderedHit;
+                std::span<const std::string> renderedNodePath;
+                if (world->castRenderingRay(renderedHit, origin, destination, false, false, renderingRayIgnore)
+                    && renderedHit.mHitObject == result.mHitObject)
+                    renderedNodePath = renderedHit.mHitNodePath;
+                bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
+            }
+
+            float incomingDamage = rawHitDamage;
+            if (bodyPart)
+                incomingDamage *= bodyPart->mHealthDamageMultiplier;
+            const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+                incomingDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoEffectFailure);
+            if (!ammoAdjustedDamage)
+                return fail(getFalloutAmmoEffectFailureName(ammoEffectFailure));
+            incomingDamage = *ammoAdjustedDamage;
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            ammoEffectFailure = FalloutAmmoEffectFailure::None;
+            const std::optional<FalloutDamageMitigation> mitigation
+                = resolveFalloutActorImpactDamage(
+                    result.mHitObject, incomingDamage, ammoEffects, mitigationFailure, ammoEffectFailure);
+            if (!mitigation)
+                return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoEffectFailure));
+
+            auto found = std::find_if(actorImpacts.begin(), actorImpacts.end(), [&](const ActorImpact& impact) {
+                return impact.mActor == result.mHitObject;
+            });
+            if (found == actorImpacts.end())
+            {
+                actorImpacts.emplace_back();
+                found = std::prev(actorImpacts.end());
+                found->mActor = result.mHitObject;
+                found->mIncomingDamage = mitigation->mIncomingDamage;
+                found->mHealthDamage = mitigation->mHealthDamage;
+                found->mDamageResistance = mitigation->mDamageResistance;
+                found->mDamageThreshold = mitigation->mDamageThreshold;
+                found->mThresholdLimited = mitigation->mThresholdLimited;
+                found->mCriticalProjectiles = criticalHit ? 1u : 0u;
+            }
+            else
+            {
+                found->mIncomingDamage += mitigation->mIncomingDamage;
+                found->mHealthDamage += mitigation->mHealthDamage;
+                found->mThresholdLimited = found->mThresholdLimited || mitigation->mThresholdLimited;
+                found->mCriticalProjectiles += criticalHit ? 1u : 0u;
+            }
+            if (bodyPart && bodyPart->mHealthPercent != 0)
+            {
+                const float targetMultiplier
+                    = result.mHitObject == getPlayer() ? *playerLimbDamageMultiplier : 1.f;
+                auto limb = std::find_if(found->mLimbImpacts.begin(), found->mLimbImpacts.end(),
+                    [&](const ActorImpact::LimbImpact& impact) {
+                        return impact.mActorValue == bodyPart->mActorValue;
+                    });
+                if (limb == found->mLimbImpacts.end())
+                {
+                    found->mLimbImpacts.push_back(ActorImpact::LimbImpact{ bodyPart->mActorValue,
+                        bodyPart->mHealthPercent, std::string(bodyPart->mName), rawHitDamage,
+                        weaponLimbDamageMultiplier, targetMultiplier });
+                }
+                else
+                    limb->mRawDamage += rawHitDamage;
+            }
+        }
+
+        for (ActorImpact& impact : actorImpacts)
+        {
+            impact.mActor.getClass().onHit(impact.mActor, { { "health", impact.mHealthDamage } },
+                ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
+            CreatureStats& targetStats = impact.mActor.getClass().getCreatureStats(impact.mActor);
+            for (const ActorImpact::LimbImpact& limb : impact.mLimbImpacts)
+            {
+                const float damageTakenBefore = targetStats.getFalloutLimbDamage(limb.mActorValue);
+                const auto resolved = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
+                    limb.mHealthPercent, damageTakenBefore, limb.mRawDamage, limb.mWeaponMultiplier,
+                    limb.mTargetMultiplier);
+                if (!resolved || !targetStats.setFalloutLimbDamage(limb.mActorValue, resolved->mDamageTakenAfter))
+                {
+                    Log(Debug::Error) << "FNV combat limb impact rejected: target=" << impact.mActor.toString()
+                                      << " bodyPart=" << limb.mBodyPartName
+                                      << " actorValue=" << static_cast<int>(limb.mActorValue);
+                    continue;
+                }
+                if (resolved->mNewlyCrippled && !targetStats.isDead())
+                    targetStats.setHitRecovery(true);
+                Log(Debug::Info) << "FNV combat limb impact: target=" << impact.mActor.toString()
+                                 << " bodyPart=" << limb.mBodyPartName
+                                 << " actorValue=" << static_cast<int>(limb.mActorValue)
+                                 << " healthPercent=" << static_cast<unsigned int>(limb.mHealthPercent)
+                                 << " rawDamage=" << limb.mRawDamage
+                                 << " weaponMultiplier=" << limb.mWeaponMultiplier
+                                 << " targetMultiplier=" << limb.mTargetMultiplier
+                                 << " conditionBefore=" << resolved->mConditionBefore
+                                 << " conditionAfter=" << resolved->mConditionAfter
+                                 << " newlyCrippled=" << resolved->mNewlyCrippled;
+            }
+            Log(Debug::Info) << "FNV combat actor impact: target=" << impact.mActor.toString()
+                             << " incomingDamage=" << impact.mIncomingDamage
+                             << " damageResistance=" << impact.mDamageResistance
+                             << " damageThreshold=" << impact.mDamageThreshold
+                             << " healthDamage=" << impact.mHealthDamage
+                             << " thresholdLimited=" << impact.mThresholdLimited
+                             << " criticalProjectiles=" << impact.mCriticalProjectiles
+                             << " limbChannels=" << impact.mLimbImpacts.size();
+        }
+
+        if (!impactExplosionPositions.empty())
+        {
+            FalloutProjectileImpactContract explosionImpact;
+            explosionImpact.mWeapon = mFalloutWeapon->mId;
+            explosionImpact.mExplosion = projectile->mData.explosion;
+            explosionImpact.mExplosionDamageMultiplier = explosionDamageMultiplier;
+            explosionImpact.mProjectileSkill = *skill;
+            explosionImpact.mAmmoEffects.reserve(ammoEffects.size());
+            for (const ESM4::AmmoEffect* effect : ammoEffects)
+                explosionImpact.mAmmoEffects.push_back(effect->mId);
+            for (const osg::Vec3f& explosionPosition : impactExplosionPositions)
+            {
+                if (!executeFalloutExplosion(explosionPosition, explosionImpact))
+                    Log(Debug::Error) << "FNV hitscan explosion failed after impact: actor=" << mPtr.toString()
+                                      << " projectile=" << ESM::RefId::formIdRefId(projectile->mId)
+                                      << " explosion=" << ESM::RefId::formIdRefId(projectile->mData.explosion);
+            }
+        }
+
+        const bool weaponBroken = degradation && !suppressWeaponWear && weaponConditionAfter <= 0.f;
+        if (weaponBroken)
+        {
+            if (auto* inventoryStore = dynamic_cast<MWWorld::InventoryStore*>(&inventory);
+                inventoryStore != nullptr && inventoryStore->isEquipped(equippedWeapon))
+                inventoryStore->unequipItem(equippedWeapon);
+            if (mPtr.getType() == ESM::REC_NPC_4)
+                MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
+        }
+
+        Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                         << " consumable=" << consumableRefId << " consumableKind="
+                         << (contract->mConsumesWeapon ? "weapon" : "ammo")
+                         << " consumableBefore=" << consumableBefore << " consumableAfter=" << consumableAfter
+                         << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
+                         << " projectileRange=" << contract->mProjectileRange
+                         << " authoredDamage=" << rangedDamage->mAuthoredDamage << " skill=" << rangedDamage->mSkill
+                         << " skillMultiplier=" << rangedDamage->mSkillMultiplier
+                         << " weaponCondition=" << rangedDamage->mCondition
+                         << " weaponConditionAfter=" << weaponConditionAfter
+                         << " conditionMultiplier=" << rangedDamage->mConditionMultiplier
+                         << " conditionLoss=" << conditionLoss
+                         << " conditionLossSuppressed=" << suppressWeaponWear
+                         << " damageToWeaponBase=" << (degradation ? degradation->mBaseLoss : 0.f)
+                         << " damageToWeaponAmmoAdjusted="
+                         << (degradation ? degradation->mAmmoAdjustedLoss : 0.f)
+                         << " damageToWeaponOverride="
+                         << (degradation ? degradation->mUsesWeaponOverride : false)
+                         << " weaponBroken=" << weaponBroken
+                         << " weaponDamageMultiplier=" << rangedDamage->mWeaponDamageMultiplier
+                         << " triggerDamage=" << rangedDamage->mDamage
+                         << " criticalChance=" << critical->mChancePercent
+                         << " criticalDamage=" << critical->mDamage
+                         << " criticalProjectiles=" << criticalProjectiles
+                         << " criticalEffect=" << ESM::RefId::formIdRefId(critical->mEffect)
+                         << " criticalEffectOnDeath=" << critical->mEffectOnDeath
+                         << " criticalEffectApplied=0"
+                         << " limbDamageMultiplier=" << weaponLimbDamageMultiplier
+                         << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
+                         << " damagePerProjectile=" << damagePerProjectile
+                         << " authoredMinSpread=" << contract->mMinSpread
+                         << " legacyUnusedSpread=" << contract->mLegacySpread
+                         << " ammoAdjustedMedianSpread=" << medianShotSpread
+                         << " maximumPelletDeviation=" << (2.f * medianShotSpread)
+                         << " ammoEffects=" << ammoEffects.size()
+                         << " authoredHitscan=" << contract->mAuthoredHitscan
+                         << " movingProjectiles=" << movingProjectiles << " rayHits=" << rayHits
+                         << " impactExplosions=" << impactExplosionPositions.size()
+                         << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
+                         << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
+                         << " vatsHealthDamageMultiplier="
+                         << (vatsAction != nullptr ? vatsAction->mHealthDamageMultiplier : 1.f)
+                         << " status=pass";
+        return true;
+    }
+
+    bool CharacterController::executeFalloutVatsRangedHit(
+        const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
+        const FalloutVatsQueuedAction& action, bool targetHit)
+    {
+        if (target.isEmpty() || !target.getClass().isActor() || action.mBodyPart > 14
+            || action.mActorValue < 25 || action.mActorValue > 31
+            || !std::isfinite(action.mHealthDamageMultiplier) || action.mHealthDamageMultiplier <= 0.f
+            || !std::isfinite(action.mLimbDamageMultiplier) || action.mLimbDamageMultiplier < 0.f)
+            return false;
+
+        // V.A.T.S. resolves its queued hit contract authoritatively in this method. Never let a real-time KF key
+        // left over from an interrupted attack deliver a second shot during the cinematic.
+        mFalloutAttackDelivery = {};
+
+        MWRender::Animation::AnimPriority priority(Priority_Weapon);
+        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const bool visualAction
+            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
+        if (visualAction)
+            mUpperBodyState = UpperBodyState::AttackEnd;
+        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+
+        osg::Vec3f aimPoint = targetPoint;
+        if (!targetHit)
+        {
+            const osg::Vec3f origin
+                = MWBase::Environment::get().getWorld()->getActorHeadTransform(mPtr).getTrans();
+            osg::Vec3f forward = targetPoint - origin;
+            const float distance = forward.normalize();
+            if (distance == 0.f)
+                return false;
+            const osg::Vec3f reference
+                = std::abs(forward.z()) < 0.9f ? osg::Vec3f(0.f, 0.f, 1.f) : osg::Vec3f(1.f, 0.f, 0.f);
+            osg::Vec3f perpendicular = forward ^ reference;
+            if (perpendicular.normalize() == 0.f)
+                return false;
+            aimPoint += perpendicular * std::max(96.f, distance * 0.2f);
+        }
+        const bool fired = fireFalloutWeapon(target, aimPoint, &action, targetHit);
+        Log(fired ? Debug::Info : Debug::Error)
+            << "FNV VATS weapon action: actor=" << mPtr.toString()
+            << " target=" << target.toString() << " visualAction=" << visualAction
+            << " targetHit=" << targetHit << " fired=" << fired;
+        return fired;
+    }
+
+    bool CharacterController::executeFalloutProjectileImpact(const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        if (target.isEmpty() || !target.getClass().isActor() || !std::isfinite(impact.mRawDamage)
+            || impact.mRawDamage < 0.f || !std::isfinite(impact.mLimbDamageMultiplier)
+            || impact.mLimbDamageMultiplier < 0.f)
+            return false;
+
+        const bool queuedVatsTarget = impact.mVatsAction
+            && target.getCellRef().getRefNum() == impact.mVatsAction->mTarget;
+        if (queuedVatsTarget && !impact.mVatsTargetHit)
+            return true;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (store == nullptr || world == nullptr)
+            return false;
+
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        ammoEffects.reserve(impact.mAmmoEffects.size());
+        for (ESM::FormId effectId : impact.mAmmoEffects)
+        {
+            const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+            if (effect == nullptr)
+                return false;
+            ammoEffects.push_back(effect);
+        }
+
+        std::optional<FalloutBodyPartContract> bodyPart;
+        if (queuedVatsTarget)
+        {
+            const FalloutVatsQueuedAction& action = *impact.mVatsAction;
+            bodyPart = FalloutBodyPartContract{ action.mBodyPart, action.mBodyPartName, action.mTargetNode,
+                action.mTargetNode, {}, {}, action.mActorValue, action.mHealthPercent,
+                action.mHealthDamageMultiplier };
+        }
+        else
+        {
+            osg::Vec3f renderEnd = hitPosition;
+            osg::Vec3f direction = hitPosition - segmentStart;
+            if (direction.normalize() != 0.f)
+                renderEnd += direction * 4.f;
+            const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
+            MWPhysics::RayCastingResult renderedHit;
+            std::span<const std::string> renderedNodePath;
+            if (world->castRenderingRay(
+                    renderedHit, segmentStart, renderEnd, false, false, renderingRayIgnore)
+                && renderedHit.mHitObject == target)
+                renderedNodePath = renderedHit.mHitNodePath;
+            bodyPart = resolveFalloutRayBodyPart(target, hitPosition, renderedNodePath);
+        }
+
+        float incomingDamage = impact.mRawDamage;
+        if (bodyPart)
+            incomingDamage *= bodyPart->mHealthDamageMultiplier;
+        FalloutAmmoEffectFailure ammoFailure = FalloutAmmoEffectFailure::None;
+        const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+            incomingDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoFailure);
+        if (!ammoAdjustedDamage)
+            return false;
+        FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+        const std::optional<FalloutDamageMitigation> mitigation
+            = resolveFalloutActorImpactDamage(target, *ammoAdjustedDamage, ammoEffects, mitigationFailure, ammoFailure);
+        if (!mitigation)
+            return false;
+
+        CreatureStats& targetStats = target.getClass().getCreatureStats(target);
+        std::optional<FalloutLimbImpact> limbImpact;
+        if (bodyPart && bodyPart->mHealthPercent != 0)
+        {
+            const std::optional<float> playerLimbMultiplier
+                = getFalloutGameSetting("fCombatPlayerLimbDamageMult");
+            if (!playerLimbMultiplier || *playerLimbMultiplier < 0.f)
+                return false;
+            limbImpact = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
+                bodyPart->mHealthPercent, targetStats.getFalloutLimbDamage(bodyPart->mActorValue),
+                impact.mRawDamage, impact.mLimbDamageMultiplier,
+                target == getPlayer() ? *playerLimbMultiplier : 1.f);
+            if (!limbImpact)
+                return false;
+        }
+
+        target.getClass().onHit(target, { { "health", mitigation->mHealthDamage } },
+            ESM::RefId::formIdRefId(impact.mWeapon), mPtr, true, DamageSourceType::Ranged);
+        if (limbImpact)
+        {
+            if (!targetStats.setFalloutLimbDamage(bodyPart->mActorValue, limbImpact->mDamageTakenAfter))
+                return false;
+            if (limbImpact->mNewlyCrippled && !targetStats.isDead())
+                targetStats.setHitRecovery(true);
+        }
+
+        Log(Debug::Info) << "FNV moving projectile impact: actor=" << mPtr.toString()
+                         << " target=" << target.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(impact.mWeapon)
+                         << " bodyPart=" << (bodyPart ? std::string(bodyPart->mName) : std::string("unresolved"))
+                         << " rawDamage=" << impact.mRawDamage
+                         << " healthDamage=" << mitigation->mHealthDamage
+                         << " limbDamage=" << (limbImpact ? limbImpact->mDamageApplied : 0.f)
+                         << " newlyCrippled=" << (limbImpact && limbImpact->mNewlyCrippled)
+                         << " critical=" << impact.mCritical;
+        return true;
+    }
+
+    bool CharacterController::executeFalloutExplosion(
+        const osg::Vec3f& position, const FalloutProjectileImpactContract& impact)
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV explosion rejected: actor=" << mPtr.toString()
+                              << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                              << " reason=" << reason;
+            return false;
+        };
+
+        if (impact.mExplosion.isZeroOrUnset())
+            return fail("missing-explosion");
+        if (!std::isfinite(impact.mExplosionDamageMultiplier)
+            || impact.mExplosionDamageMultiplier < 0.f)
+            return fail("invalid-damage-multiplier");
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+        MWBase::SoundManager* sound = MWBase::Environment::get().getSoundManager();
+        if (store == nullptr || world == nullptr || mechanics == nullptr || sound == nullptr)
+            return fail("missing-runtime-service");
+
+        const ESM4::Explosion* explosion = store->get<ESM4::Explosion>().search(impact.mExplosion);
+        if (explosion == nullptr || !explosion->mData.present)
+            return fail("unresolved-explosion-record");
+        if (!std::isfinite(explosion->mData.damage) || explosion->mData.damage < 0.f
+            || !std::isfinite(explosion->mData.radius) || explosion->mData.radius <= 0.f
+            || !std::isfinite(explosion->mData.force) || explosion->mData.force < 0.f
+            || !std::isfinite(explosion->mData.imageSpaceRadius) || explosion->mData.imageSpaceRadius < 0.f)
+            return fail("invalid-explosion-data");
+        if (!explosion->mData.light.isZeroOrUnset()
+            && store->get<ESM4::Light>().search(explosion->mData.light) == nullptr)
+            return fail("missing-authored-light");
+
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        ammoEffects.reserve(impact.mAmmoEffects.size());
+        for (ESM::FormId effectId : impact.mAmmoEffects)
+        {
+            const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+            if (effect == nullptr)
+                return fail("missing-authored-ammo-effect");
+            ammoEffects.push_back(effect);
+        }
+
+        if (!explosion->mModel.empty())
+        {
+            world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
+                                   VFS::Path::Normalized(explosion->mModel)),
+                "", position, 1.f, false, false,
+                ESM::RefId(explosion->mData.light));
+        }
+        if (explosion->mData.soundLevel != ESM4::Explosion::Silent)
+        {
+            if (!explosion->mData.sound1.isZeroOrUnset())
+                sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound1), 1.f, 1.f);
+            if (!explosion->mData.sound2.isZeroOrUnset())
+                sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound2), 1.f, 1.f);
+        }
+
+        float playerImageSpaceDistance = -1.f;
+        bool imageSpaceStarted = false;
+        if (!explosion->mImageSpaceModifier.isZeroOrUnset() && explosion->mData.imageSpaceRadius > 0.f)
+        {
+            const MWWorld::ConstPtr player = MWMechanics::getPlayer();
+            playerImageSpaceDistance = (world->getActorHeadTransform(player).getTrans() - position).length();
+            if (playerImageSpaceDistance <= explosion->mData.imageSpaceRadius)
+                imageSpaceStarted = world->playFalloutImageSpaceModifier(explosion->mImageSpaceModifier, 1.f);
+        }
+
+        std::vector<MWWorld::Ptr> actors;
+        mechanics->getActorsInRange(position, explosion->mData.radius, actors);
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+
+        const bool alwaysKnockDown
+            = (explosion->mData.flags & ESM4::Explosion::KnockDownAlways) != 0;
+        const bool formulaKnockDown = !alwaysKnockDown
+            && (explosion->mData.flags & ESM4::Explosion::KnockDownByFormula) != 0;
+        std::optional<FalloutExplosionKnockdownTuning> knockdownTuning;
+        if (formulaKnockDown)
+        {
+            knockdownTuning = getFalloutExplosionKnockdownTuning();
+            if (!knockdownTuning)
+                return fail("missing-knockdown-tuning");
+        }
+
+        unsigned int blockedByLineOfSight = 0;
+        unsigned int damagedActors = 0;
+        unsigned int knockedDownActors = 0;
+        for (const MWWorld::Ptr& target : actors)
+        {
+            if (target.isEmpty() || !target.getClass().isActor())
+                continue;
+            CreatureStats& targetStats = target.getClass().getCreatureStats(target);
+            if (targetStats.isDead())
+                continue;
+
+            const osg::Vec3f targetOrigin = target.getRefData().getPosition().asVec3();
+            const float distance = (targetOrigin - position).length();
+            FalloutExplosionDamageFailure explosionFailure = FalloutExplosionDamageFailure::None;
+            const std::optional<FalloutExplosionDamage> radialDamage
+                = resolveFalloutExplosionDamage(explosion->mData.damage,
+                    impact.mExplosionDamageMultiplier, explosion->mData.radius, distance,
+                    explosionFailure);
+            if (!radialDamage)
+                return fail(getFalloutExplosionDamageFailureName(explosionFailure));
+            if (radialDamage->mDamage <= 0.f)
+                continue;
+
+            if ((explosion->mData.flags & ESM4::Explosion::IgnoreLineOfSight) == 0)
+            {
+                osg::Vec3f targetPoint = targetOrigin;
+                targetPoint.z() += world->getHalfExtents(target, true).z();
+                osg::Vec3f toTarget = targetPoint - position;
+                const float targetDistance = toTarget.normalize();
+                if (targetDistance > 2.f)
+                {
+                    const osg::Vec3f lineStart = position + toTarget * 2.f;
+                    const int mask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                        | MWPhysics::CollisionType_Door;
+                    if (rayCasting->castRay(lineStart, targetPoint, mask).mHit)
+                    {
+                        ++blockedByLineOfSight;
+                        continue;
+                    }
+                }
+            }
+
+            FalloutAmmoEffectFailure ammoFailure = FalloutAmmoEffectFailure::None;
+            const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+                radialDamage->mDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoFailure);
+            if (!ammoAdjustedDamage)
+                return fail(getFalloutAmmoEffectFailureName(ammoFailure));
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            const std::optional<FalloutDamageMitigation> mitigation
+                = resolveFalloutActorImpactDamage(
+                    target, *ammoAdjustedDamage, ammoEffects, mitigationFailure, ammoFailure);
+            if (!mitigation)
+                return fail(ammoFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoFailure));
+
+            std::optional<FalloutExplosionKnockdown> knockdown;
+            if (formulaKnockDown)
+            {
+                const std::optional<float> agility = getFalloutActorAgility(target);
+                if (!agility)
+                    return fail("missing-target-agility");
+                FalloutExplosionKnockdownFailure knockdownFailure
+                    = FalloutExplosionKnockdownFailure::None;
+                knockdown = buildFalloutExplosionKnockdown(mitigation->mHealthDamage,
+                    targetStats.getHealth().getCurrent(), targetStats.getHealth().getModified(), *agility,
+                    *knockdownTuning, knockdownFailure);
+                if (!knockdown)
+                    return fail(getFalloutExplosionKnockdownFailureName(knockdownFailure));
+            }
+
+            target.getClass().onHit(target, { { "health", mitigation->mHealthDamage } },
+                ESM::RefId::formIdRefId(impact.mWeapon), mPtr, true, DamageSourceType::Ranged);
+            ++damagedActors;
+
+            bool knockedDown = false;
+            int knockdownRoll = -1;
+            if (!targetStats.isDead() && alwaysKnockDown)
+            {
+                targetStats.setKnockedDown(true);
+                knockedDown = true;
+            }
+            else if (!targetStats.isDead() && knockdown)
+            {
+                if (knockdown->mMode == FalloutExplosionKnockdownMode::Chance)
+                    knockdownRoll = Misc::Rng::rollDice(1000, world->getPrng());
+                knockedDown = knockdown->mMode == FalloutExplosionKnockdownMode::Forced
+                    || (knockdownRoll >= 0
+                        && doesFalloutExplosionKnockDown(
+                            *knockdown, static_cast<unsigned int>(knockdownRoll)));
+                if (knockedDown)
+                    targetStats.setKnockedDown(true);
+            }
+            if (knockedDown)
+                ++knockedDownActors;
+
+            Log(Debug::Info) << "FNV explosion actor impact: source=" << mPtr.toString()
+                             << " target=" << target.toString()
+                             << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                             << " distance=" << radialDamage->mDistance
+                             << " radius=" << radialDamage->mRadius
+                             << " falloff=" << radialDamage->mFalloff
+                             << " radialDamage=" << radialDamage->mDamage
+                             << " ammoAdjustedDamage=" << *ammoAdjustedDamage
+                             << " healthDamage=" << mitigation->mHealthDamage
+                             << " knockdownMode="
+                             << (knockdown ? static_cast<int>(knockdown->mMode)
+                                           : (alwaysKnockDown
+                                                   ? static_cast<int>(FalloutExplosionKnockdownMode::Forced)
+                                                   : static_cast<int>(FalloutExplosionKnockdownMode::None)))
+                             << " knockdownChance=" << (knockdown ? knockdown->mChance : 0.f)
+                             << " knockdownRoll=" << knockdownRoll
+                             << " knockedDown=" << knockedDown;
+        }
+
+        Log(Debug::Info) << "FNV explosion detonated: source=" << mPtr.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(impact.mWeapon)
+                         << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                         << " model=" << explosion->mModel
+                         << " authoredDamage=" << explosion->mData.damage
+                         << " damageMultiplier=" << impact.mExplosionDamageMultiplier
+                         << " radius=" << explosion->mData.radius
+                         << " force=" << explosion->mData.force
+                         << " light=" << ESM::RefId::formIdRefId(explosion->mData.light)
+                         << " imageSpaceModifier=" << ESM::RefId::formIdRefId(explosion->mImageSpaceModifier)
+                         << " imageSpaceRadius=" << explosion->mData.imageSpaceRadius
+                         << " playerImageSpaceDistance=" << playerImageSpaceDistance
+                         << " imageSpaceStarted=" << imageSpaceStarted
+                         << " flags=" << explosion->mData.flags
+                         << " actorsInRadius=" << actors.size()
+                         << " blockedByLineOfSight=" << blockedByLineOfSight
+                         << " damagedActors=" << damagedActors
+                         << " knockedDownActors=" << knockedDownActors
+                         << " sound1=" << ESM::RefId::formIdRefId(explosion->mData.sound1)
+                         << " sound2=" << ESM::RefId::formIdRefId(explosion->mData.sound2)
+                         << " status=pass";
+        return true;
+    }
+
+    bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV combat melee rejected: actor=" << mPtr.toString()
+                              << " weapon="
+                              << (mFalloutWeapon != nullptr
+                                      ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                      : std::string("unarmed"))
+                              << " animationType=" << static_cast<unsigned int>(animationType)
+                              << " reason=" << reason << " exact=1";
+            return false;
+        };
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return fail("missing-world");
+        const bool unarmedFamily = animationType == 0;
+        const std::optional<FalloutMeleeActorValues> values
+            = getFalloutMeleeActorValues(mPtr, unarmedFamily);
+        if (!values)
+            return fail("missing-native-actor-values");
+        const std::optional<FalloutMeleeTuning> tuning = getFalloutMeleeTuning();
+        if (!tuning)
+            return fail("missing-native-game-settings");
+
+        FalloutMeleeFailure contractFailure = FalloutMeleeFailure::None;
+        const std::optional<FalloutMeleeContract> contract = values->mCreatureDamage
+            ? buildFalloutCreatureMeleeContract(
+                *values->mCreatureDamage, values->mSkill, values->mStrength, *tuning, contractFailure)
+            : buildFalloutMeleeContract(
+                mFalloutWeapon, animationType, values->mSkill, values->mStrength, *tuning, contractFailure);
+        if (!contract)
+            return fail(getFalloutMeleeFailureName(contractFailure));
+        const std::optional<float> limbDamageMultiplier = getFalloutMeleeLimbDamageMultiplier(mFalloutWeapon);
+        const std::optional<float> playerLimbDamageMultiplier
+            = getFalloutGameSetting("fCombatPlayerLimbDamageMult");
+        if (!limbDamageMultiplier || !playerLimbDamageMultiplier || *playerLimbDamageMultiplier < 0.f)
+            return fail("missing-limb-damage-tuning");
+
+        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+        std::vector<MWWorld::Ptr> targetActors;
+        if (mPtr != getPlayer())
+            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
+
+        osg::Vec3f direction;
+        if (mPtr == getPlayer() && world->getCamera() != nullptr)
+            direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+        else if (!targetActors.empty())
+            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        else
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
+                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
+            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
+        }
+        if (direction.normalize() == 0.f)
+            return fail("zero-strike-direction");
+
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+        const osg::Vec3f destination = origin + direction * contract->mReach;
+        const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+        const bool actorHit
+            = result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor();
+        float healthDamage = 0.f;
+        FalloutDamageMitigation mitigation;
+        std::optional<FalloutBodyPartContract> bodyPart;
+        std::optional<FalloutLimbImpact> limbImpact;
+        if (actorHit)
+        {
+            const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
+            MWPhysics::RayCastingResult renderedHit;
+            std::span<const std::string> renderedNodePath;
+            if (world->castRenderingRay(renderedHit, origin, destination, false, false, renderingRayIgnore)
+                && renderedHit.mHitObject == result.mHitObject)
+                renderedNodePath = renderedHit.mHitNodePath;
+            bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
+
+            float incomingDamage = contract->mDamage;
+            if (bodyPart)
+                incomingDamage *= bodyPart->mHealthDamageMultiplier;
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
+            const std::optional<FalloutDamageMitigation> resolved
+                = resolveFalloutActorImpactDamage(
+                    result.mHitObject, incomingDamage, {}, mitigationFailure, ammoEffectFailure);
+            if (!resolved)
+                return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoEffectFailure));
+            mitigation = *resolved;
+            healthDamage = mitigation.mHealthDamage;
+            const ESM::RefId weapon = mFalloutWeapon != nullptr
+                ? ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                : ESM::RefId{};
+            CreatureStats& targetStats = result.mHitObject.getClass().getCreatureStats(result.mHitObject);
+            if (bodyPart && bodyPart->mHealthPercent != 0)
+            {
+                limbImpact = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
+                    bodyPart->mHealthPercent, targetStats.getFalloutLimbDamage(bodyPart->mActorValue),
+                    contract->mDamage, *limbDamageMultiplier,
+                    result.mHitObject == getPlayer() ? *playerLimbDamageMultiplier : 1.f);
+                if (!limbImpact)
+                    return fail("invalid-limb-impact");
+            }
+            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", healthDamage } }, weapon, mPtr,
+                true, DamageSourceType::Melee);
+            if (limbImpact)
+            {
+                if (!targetStats.setFalloutLimbDamage(bodyPart->mActorValue, limbImpact->mDamageTakenAfter))
+                    return fail("limb-damage-transaction-failed");
+                if (limbImpact->mNewlyCrippled && !targetStats.isDead())
+                    targetStats.setHitRecovery(true);
+            }
+        }
+
+        Log(Debug::Info) << "FNV combat melee: actor=" << mPtr.toString()
+                         << " weapon="
+                         << (mFalloutWeapon != nullptr
+                                 ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                 : std::string("unarmed"))
+                         << " animationType=" << static_cast<unsigned int>(animationType)
+                         << " unarmedFamily=" << contract->mUnarmedFamily
+                         << " bareHanded=" << contract->mBareHanded << " skill=" << values->mSkill
+                         << " strength=" << values->mStrength
+                         << " creatureAuthoredDamage=" << values->mCreatureDamage.value_or(0.f)
+                         << " reach=" << contract->mReach
+                         << " damage=" << contract->mDamage << " healthDamage=" << healthDamage
+                         << " bodyPart=" << (bodyPart ? std::string(bodyPart->mName) : std::string("unresolved"))
+                         << " bodyPartHealthMultiplier="
+                         << (bodyPart ? bodyPart->mHealthDamageMultiplier : 1.f)
+                         << " limbDamageMultiplier=" << *limbDamageMultiplier
+                         << " limbDamage=" << (limbImpact ? limbImpact->mDamageApplied : 0.f)
+                         << " limbConditionBefore=" << (limbImpact ? limbImpact->mConditionBefore : 0.f)
+                         << " limbConditionAfter=" << (limbImpact ? limbImpact->mConditionAfter : 0.f)
+                         << " newlyCrippled=" << (limbImpact && limbImpact->mNewlyCrippled)
+                         << " damageResistance=" << mitigation.mDamageResistance
+                         << " damageThreshold=" << mitigation.mDamageThreshold
+                         << " thresholdLimited=" << mitigation.mThresholdLimited << " rayHit=" << result.mHit
+                         << " actorHit=" << actorHit
+                         << " target=" << (actorHit ? result.mHitObject.toString() : std::string("none"))
+                         << " exact=1 status=pass";
+        return true;
+    }
+
+    bool CharacterController::updateWeaponState(float duration)
     {
         // If the current animation is scripted, we can't do anything here.
         if (isScriptedAnimPlaying())
@@ -1545,9 +3961,18 @@ namespace MWMechanics
 
         const ESM::RefId* downSoundId = nullptr;
         bool weaponChanged = false;
+        const ESM4::Weapon* requestedFalloutWeapon = nullptr;
         bool ammunition = true;
         float weapSpeed = 1.f;
-        if (cls.hasInventoryStore(mPtr))
+        const std::optional<int> falloutWeaponType = getFalloutActiveWeaponType(mPtr);
+        if (falloutWeaponType)
+        {
+            weaptype = *falloutWeaponType;
+            requestedFalloutWeapon
+                = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
+            weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
+        }
+        else if (cls.hasInventoryStore(mPtr))
         {
             MWWorld::InventoryStore& inv = cls.getInventoryStore(mPtr);
             MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &weaptype);
@@ -1570,6 +3995,9 @@ namespace MWMechanics
                 mWeapon = newWeapon;
                 weaponChanged = true;
             }
+
+            if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+                requestedFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
 
             if (stats.getDrawState() == DrawState::Weapon && !mWeapon.isEmpty()
                 && mWeapon.getType() == ESM::Weapon::sRecordId)
@@ -1614,6 +4042,16 @@ namespace MWMechanics
             // For non-bipeds, movement takes priority
             priorityWeapon = Priority_Weapon;
             priorityWeapon[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        }
+
+        if (shouldUseFalloutWeaponState(weaptype, mWeaponType))
+        {
+            if (!MWRender::canAdvanceFonvWeaponState(isKnockedOut(), isKnockedDown(), isRecovery()))
+            {
+                mFalloutAttackDelivery = {};
+                return false;
+            }
+            return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon, duration);
         }
 
         bool forcestateupdate = false;
@@ -1786,7 +4224,7 @@ namespace MWMechanics
 
                 // Randomize attacks for non-bipedal creatures
                 if (!cls.isBipedal(mPtr)
-                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isRandomAttackAnimation(mCurrentWeapon)))
+                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isLegacyRandomAttackAnimation(mCurrentWeapon)))
                 {
                     mCurrentWeapon = chooseRandomAttackAnimation();
                 }
@@ -1883,7 +4321,7 @@ namespace MWMechanics
 
                             std::string startKey;
                             std::string stopKey;
-                            if (isRandomAttackAnimation(mCurrentWeapon))
+                            if (isLegacyRandomAttackAnimation(mCurrentWeapon))
                             {
                                 startKey = "start";
                                 stopKey = "stop";
@@ -1936,7 +4374,7 @@ namespace MWMechanics
                         = MWBase::Environment::get().getLuaManager()->getActorControls(mPtr);
                     const bool aiInactive
                         = actorControls->mDisableAI || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
-                    if (mWeaponType != ESM::Weapon::PickProbe && !isRandomAttackAnimation(mCurrentWeapon))
+                    if (mWeaponType != ESM::Weapon::PickProbe && !isLegacyRandomAttackAnimation(mCurrentWeapon))
                     {
                         if (weapclass == ESM::WeaponType::Ranged || weapclass == ESM::WeaponType::Thrown)
                             mAttackType = "shoot";
@@ -1995,7 +4433,7 @@ namespace MWMechanics
         // Random attack and pick/probe animations never have wind up and are played to their end.
         // Other animations must be released when the attack state is unset.
         if (mUpperBodyState == UpperBodyState::AttackWindUp
-            && (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon)
+            && (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon)
                 || !getAttackingOrSpell()))
         {
             mUpperBodyState = UpperBodyState::AttackRelease;
@@ -2026,7 +4464,7 @@ namespace MWMechanics
                 prepareHit();
             }
 
-            if (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon))
+            if (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon))
                 mUpperBodyState = UpperBodyState::AttackEnd;
         }
 
@@ -2124,7 +4562,7 @@ namespace MWMechanics
 
             // A smooth transition can be provided if a pre-wind-up section is defined. Random attack animations never
             // have one.
-            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isRandomAttackAnimation(mCurrentWeapon))
+            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isLegacyRandomAttackAnimation(mCurrentWeapon))
             {
                 float currentTime = mAnimation->getCurrentTime(mCurrentWeapon);
                 float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -2268,14 +4706,6 @@ namespace MWMechanics
                 movementSettings.mPosition[1] = fallbackMovement.y();
                 movementSettings.mSpeedFactor = std::min(fallbackMovement.length(), 1.f);
             }
-            const bool holdFalloutActorDisplacement = shouldHoldFalloutActorDisplacement(mPtr, isPlayer);
-            if (holdFalloutActorDisplacement)
-            {
-                movementSettings.mPosition[0] = 0.f;
-                movementSettings.mPosition[1] = 0.f;
-                movementSettings.mPosition[2] = 0.f;
-            }
-
             // Force Jump Logic
 
             bool isMoving
@@ -2291,8 +4721,6 @@ namespace MWMechanics
             }
 
             osg::Vec3f rot = cls.getRotationVector(mPtr);
-            if (holdFalloutActorDisplacement)
-                rot = osg::Vec3f();
             //if ((rot.x() != 0 || rot.y() != 0 || rot.z() != 0) && isPlayer)
             //    Log(Debug::Verbose) << "breakpoint";
             osg::Vec3f vec(movementSettings.asVec3());
@@ -2665,7 +5093,7 @@ namespace MWMechanics
 
             if (!mSkipAnim)
             {
-                refreshCurrentAnims(idlestate, movestate, jumpstate, updateWeaponState());
+                refreshCurrentAnims(idlestate, movestate, jumpstate, updateWeaponState(duration));
                 updateIdleStormState(inwater);
             }
 
@@ -2815,12 +5243,6 @@ namespace MWMechanics
 
             movement.x() *= scale;
             movement.y() *= scale;
-            if (shouldHoldFalloutActorDisplacement(mPtr, isPlayer))
-            {
-                movement.x() = 0.f;
-                movement.y() = 0.f;
-            }
-
             if (VR::getVR() && isPlayer)
             {
                 static_cast<MWVR::VRAnimation*>(mAnimation)->modifyMovement(movement);
@@ -2994,6 +5416,17 @@ namespace MWMechanics
             playAnimQueue(mode == 2);
 
         return true;
+    }
+
+    std::string CharacterController::getAnimationGroupFromSource(
+        std::string_view sourceName, std::string_view groupPrefix) const
+    {
+        return mAnimation != nullptr ? mAnimation->getAnimationGroupFromSource(sourceName, groupPrefix) : std::string();
+    }
+
+    bool CharacterController::setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup)
+    {
+        return mAnimation != nullptr && mAnimation->setFalloutAnimatedObject(model, activeGroup);
     }
 
     bool CharacterController::playGroupLua(std::string_view groupname, float speed, std::string_view startKey,
@@ -3248,6 +5681,11 @@ namespace MWMechanics
             || group == "attack3" || group == "swimattack3");
     }
 
+    bool CharacterController::isLegacyRandomAttackAnimation(std::string_view group) const
+    {
+        return !isFalloutWeaponType(mWeaponType) && isRandomAttackAnimation(group);
+    }
+
     bool CharacterController::isAttackPreparing() const
     {
         return mUpperBodyState == UpperBodyState::AttackWindUp;
@@ -3373,6 +5811,11 @@ namespace MWMechanics
         mHeadTrackTarget = target;
     }
 
+    void CharacterController::updateDialogueHeadTracking(float duration)
+    {
+        updateHeadTracking(duration);
+    }
+
     void CharacterController::playSwishSound() const
     {
         static ESM::RefId weaponSwish = ESM::RefId::stringRefId("Weapon Swish");
@@ -3431,6 +5874,13 @@ namespace MWMechanics
 
     void CharacterController::updateHeadTracking(float duration)
     {
+        if (isFalloutActor(mPtr) && std::getenv("OPENMW_FNV_PROOF_DISABLE_HEAD_TRACKING") != nullptr)
+        {
+            mAnimation->setHeadPitch(0.f);
+            mAnimation->setHeadYaw(0.f);
+            return;
+        }
+
         const osg::Node* head = mAnimation->getNode("Bip01 Head");
         if (!head)
             return;

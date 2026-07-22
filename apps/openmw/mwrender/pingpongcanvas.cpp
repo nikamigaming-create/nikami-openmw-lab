@@ -1,6 +1,7 @@
 #include "pingpongcanvas.hpp"
 
 #include <cassert>
+#include <cstdlib>
 
 #include <components/shader/shadermanager.hpp>
 #include <components/stereo/multiview.hpp>
@@ -102,6 +103,21 @@ namespace MWRender
                 continue;
 
             filtered.push_back(i);
+        }
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutCanvasLogs = 0;
+            if (falloutCanvasLogs++ < 24)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: post canvas draw frame="
+                                 << state.getFrameStamp()->getFrameNumber()
+                                 << " postprocessing=" << (mPostprocessing ? 1 : 0)
+                                 << " passes=" << mPasses.size()
+                                 << " filtered=" << filtered.size()
+                                 << " mask=" << mMask
+                                 << " fallback=" << ((filtered.empty() || !mPostprocessing) ? 1 : 0);
+            }
         }
 
 //## VR_PATCH BEGIN

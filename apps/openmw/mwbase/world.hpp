@@ -4,11 +4,15 @@
 #include "rotationflags.hpp"
 
 #include <deque>
+#include <optional>
 #include <set>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include <osg/Matrixf>
+
+#include <components/esm/formid.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -23,7 +27,6 @@ namespace osg
 {
     class Vec3f;
     class Vec4f;
-    class Matrixf;
     class Quat;
     class Image;
     class Stats;
@@ -83,6 +86,11 @@ namespace MWPhysics
     class RayCastingInterface;
 }
 
+namespace MWMechanics
+{
+    struct FalloutProjectileImpactContract;
+}
+
 namespace MWRender
 {
     class Animation;
@@ -110,6 +118,7 @@ namespace MWWorld
     class TimeStamp;
     class ESMStore;
     class ESM4QuestRuntime;
+    class FalloutPlayerRuntimeState;
     class RefData;
     class Cell;
     class DateTimeManager;
@@ -173,6 +182,9 @@ namespace MWBase
 
         virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
         virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
+
+        virtual MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() = 0;
+        virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
@@ -241,6 +253,11 @@ namespace MWBase
         virtual void changeWeather(const ESM::RefId& region, const unsigned int id) = 0;
 
         virtual void changeWeather(const ESM::RefId& region, const ESM::RefId& id) = 0;
+
+        /// Select an already loaded authored weather immediately. Native Bethesda
+        /// weather records remain inside WeatherManager so their complete cloud,
+        /// fog, celestial, and image-space state is calculated by that pipeline.
+        virtual bool forceWeather(const ESM::RefId& id) = 0;
 
         virtual const std::vector<MWWorld::Weather>& getAllWeather() const = 0;
 
@@ -387,6 +404,11 @@ namespace MWBase
         virtual bool isOnGround(const MWWorld::Ptr& ptr) const = 0;
 
         virtual osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const = 0;
+        virtual std::optional<osg::Matrixf> getActorNodeTransform(
+            const MWWorld::ConstPtr&, std::string_view) const
+        {
+            return std::nullopt;
+        }
 
         virtual MWRender::Camera* getCamera() = 0;
         virtual void togglePOV(bool force = false) = 0;
@@ -456,6 +478,11 @@ namespace MWBase
         /// \todo Probably shouldn't be here
         virtual MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) = 0;
         virtual const MWRender::Animation* getAnimation(const MWWorld::ConstPtr& ptr) const = 0;
+        /// Return the authored Fallout weapon-action rig for an actor.  Native Fallout players use a visible
+        /// ESM4 proxy while the ordinary player animation remains a hidden compatibility/camera rig.
+        /// `firstPerson` returns the separate Camera1st rig when one exists; non-player actors have no such rig.
+        virtual MWRender::Animation* getFalloutWeaponAnimation(
+            const MWWorld::Ptr& ptr, bool firstPerson) = 0;
         virtual void reattachPlayerCamera() = 0;
 
         /// \todo this does not belong here
@@ -503,6 +530,13 @@ namespace MWBase
         virtual void launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
             const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength)
             = 0;
+        virtual bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact)
+            = 0;
+        virtual std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) = 0;
+        virtual unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) = 0;
+        virtual bool playFalloutImageSpaceModifier(ESM::FormId, float) { return false; }
         virtual void updateProjectilesCasters() = 0;
 
         virtual void applyLoopingParticles(const MWWorld::Ptr& ptr) const = 0;
@@ -551,7 +585,8 @@ namespace MWBase
         virtual void spawnRandomCreature(const ESM::RefId& creatureList) = 0;
 
         virtual void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true)
+            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM::RefId& lightId = {})
             = 0;
 
         /// @see MWWorld::WeatherManager::isInStorm

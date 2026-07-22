@@ -37,6 +37,7 @@
 #include <components/esm4/loadmstt.hpp>
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -228,6 +229,9 @@ namespace MWLua
 
                         case ESM::REC_ACTI4:
                             cell.mStore->template forEachType<ESM4::Activator>(visitor);
+                            break;
+                        case ESM::REC_TACT4:
+                            cell.mStore->template forEachType<ESM4::TalkingActivator>(visitor);
                             break;
                         case ESM::REC_AMMO4:
                             cell.mStore->template forEachType<ESM4::Ammunition>(visitor);

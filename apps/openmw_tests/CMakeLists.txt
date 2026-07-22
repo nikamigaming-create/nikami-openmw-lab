@@ -8,14 +8,57 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwworld/teststore.cpp
     mwworld/testesm4questruntime.cpp
+    mwworld/testesm4actorvaluestore.cpp
+    mwworld/testesm4factionstore.cpp
+    mwworld/testesm4perkstore.cpp
+    mwworld/testesm4recipestore.cpp
+    mwworld/testesm4notestore.cpp
+    mwworld/testfnvcraftingruntime.cpp
+    mwworld/testfnvlockpickruntime.cpp
+    mwworld/testactionfnvcrafting.cpp
+    mwworld/testfnvradioprogram.cpp
+    mwworld/testfnvterminalruntime.cpp
+    mwworld/testfnvplayerstate.cpp
+    mwworld/testfnvplayerruntimestate.cpp
+    mwworld/testfnvweather.cpp
+    mwworld/testfnvsavepreflight.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
+    mwworld/testcellvisitors.cpp
+    mwworld/testactorfacing.cpp
+    mwworld/testcontainerstoreesm4.cpp
     mwworld/testweather.cpp
 
     mwdialogue/testkeywordsearch.cpp
+    mwdialogue/testesm4dialogueutils.cpp
+    mwdialogue/testesm4resultscript.cpp
 
     mwgui/tooltips.cpp
+    mwgui/testfalloutquestlistpolicy.cpp
+    mwgui/testinventorylistpolicy.cpp
+    mwgui/testinventoryitemtype.cpp
+
+    mwclass/testesm4container.cpp
+    mwclass/testesm4talkingactivator.cpp
+    mwclass/testlight4.cpp
+    mwclass/testfnvaipackage.cpp
+    mwclass/testfnvfurniturelifecycle.cpp
+    mwclass/testfnvsandbox.cpp
+
+    mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfalloutlodselection.cpp
+    mwrender/testfonvpackageanimation.cpp
+    mwrender/testobjectpaging.cpp
+    mwrender/testplayervisualpolicy.cpp
+
+    mwmechanics/testfalloutcombat.cpp
+    mwmechanics/testfalloutweaponsound.cpp
+    mwmechanics/testdialoguefacing.cpp
+    mwmechanics/testownership.cpp
+
+    mwsound/testsaysequence.cpp
+    mwsound/testfalloutsoundpath.cpp
 
     mwscript/testscripts.cpp
 )

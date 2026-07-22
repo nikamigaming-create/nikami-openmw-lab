@@ -1,6 +1,9 @@
 #ifndef MWGUI_STATS_WINDOW_H
 #define MWGUI_STATS_WINDOW_H
 
+#include <array>
+#include <optional>
+
 #include "statswatcher.hpp"
 #include "windowpinnablebase.hpp"
 #include <components/esm/attr.hpp>
@@ -68,6 +71,7 @@ namespace MWGui
         void setFactions(const FactionList& factions);
         void setExpelled(const std::set<ESM::RefId>& expelled);
         void setBirthSign(const ESM::RefId& signId);
+        bool refreshFalloutActorValues();
 
         void onWindowResize(MyGUI::Window* window) override;
         void onMouseWheel(MyGUI::Widget* sender, int rel);
@@ -87,6 +91,7 @@ namespace MWGui
         int mReputation, mBounty;
         std::vector<MyGUI::Widget*> mSkillWidgets; //< Skills and other information
         std::set<ESM::RefId> mExpelled;
+        std::optional<std::array<float, 21>> mFalloutActorValues;
 
         bool mChanged;
         const int mMinFullWidth;

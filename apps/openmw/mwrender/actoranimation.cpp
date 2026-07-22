@@ -287,6 +287,13 @@ namespace MWRender
         if (!mObjectRoot)
             return nullptr;
 
+        // The animation node map and PNAM/Prn attachments must resolve names identically.  Fallout exporters vary
+        // separators, root decorations and numeric padding between NIF/KF files; Animation::getNode applies the
+        // unique-best generic matcher after an exact lookup.
+        if (const osg::Node* mapped = getNode(boneName))
+            if (const osg::Group* group = mapped->asGroup())
+                return const_cast<osg::Group*>(group);
+
         SceneUtil::FindByNameVisitor findVisitor(boneName);
         mObjectRoot->accept(findVisitor);
 

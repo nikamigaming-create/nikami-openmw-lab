@@ -226,6 +226,8 @@ namespace MWBase
 
         /// activate selected quick key
         virtual void activateQuickKey(int index) = 0;
+        /// assign a zero-based Fallout hotkey slot to an inventory item
+        virtual bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) = 0;
         /// update activated quick key state (if action executing was delayed for some reason)
         virtual void updateActivatedQuickKey() = 0;
 
@@ -241,6 +243,8 @@ namespace MWBase
         virtual void showCrosshair(bool show) = 0;
         virtual bool setHudVisibility(bool show) = 0;
         virtual bool isHudVisible() const = 0;
+        /// Suppress only the legacy ESM3 HUD surface without changing menus, tooltips, or message boxes.
+        virtual void setLegacyHudSuppressed(bool suppress) = 0;
 //## VR_PATCH BEGIN
         virtual MWGui::DragAndDrop& getDragAndDrop(void) = 0;
         virtual bool isPlayingVideo(void) const = 0;

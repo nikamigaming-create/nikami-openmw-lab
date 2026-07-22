@@ -20,6 +20,7 @@ namespace MWState
         CharacterManager mCharacterManager;
         double mTimePlayed;
         std::filesystem::path mLastSavegame;
+        bool mNativeFalloutSaveLoaded = false;
 
     private:
         void cleanup(bool force = false);
@@ -45,6 +46,10 @@ namespace MWState
         void requestLoad(const std::filesystem::path& filepath) override { mLoadRequest = filepath; }
 
         State getState() const override;
+
+        /// True only while the running session was created from a normal retail Fallout .fos transaction.
+        /// The engine uses this to keep diagnostic/proof camera paths from replacing save-authored camera state.
+        bool isNativeFalloutSaveLoaded() const { return mNativeFalloutSaveLoaded; }
 
         void newGame(bool bypass = false) override;
         ///< Start a new game.

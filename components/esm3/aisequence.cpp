@@ -19,8 +19,7 @@ namespace ESM
     template <Misc::SameAsWithoutCvref<AiSequence::AiWanderDuration> T>
     void decompose(T&& v, const auto& f)
     {
-        std::uint32_t unused = 0;
-        f(v.mRemainingDuration, unused);
+        f(v.mRemainingDuration, v.mDestinationTolerance);
     }
 
     template <Misc::SameAsWithoutCvref<AiSequence::AiTravelData> T>
@@ -42,6 +41,8 @@ namespace ESM
             esm.getNamedComposite("DATA", mData);
             esm.getNamedComposite("STAR", mDurationData); // was mStartTime
             mStoredInitialActorPosition = esm.getHNOT("POS_", mInitialActorPosition.mValues);
+            mReevaluateFnvSandbox = false;
+            esm.getHNOT(mReevaluateFnvSandbox, "FSBX");
         }
 
         void AiWander::save(ESMWriter& esm) const
@@ -50,6 +51,8 @@ namespace ESM
             esm.writeNamedComposite("STAR", mDurationData); // was mStartTime
             if (mStoredInitialActorPosition)
                 esm.writeHNT("POS_", mInitialActorPosition.mValues);
+            if (mReevaluateFnvSandbox)
+                esm.writeHNT("FSBX", mReevaluateFnvSandbox);
         }
 
         void AiTravel::load(ESMReader& esm)

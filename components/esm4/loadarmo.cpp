@@ -192,6 +192,12 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 else
                     reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("BIPL"): // FO3/FNV FLST of armor add-ons
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mBipedModelList);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("MODB"):
                 if (subHdr.dataSize == sizeof(mBoundRadius))
                     reader.get(mBoundRadius);
@@ -200,6 +206,15 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("DESC"):
                 reader.getLocalizedString(mText);
+                break;
+            case ESM::fourCC("DNAM"):
+                if (subHdr.dataSize == sizeof(mFalloutData))
+                {
+                    reader.get(mFalloutData);
+                    mHasFalloutData = true;
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("YNAM"):
                 if (subHdr.dataSize == sizeof(ESM::FormId32))
@@ -227,7 +242,6 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
             case ESM::fourCC("TNAM"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("ETYP"):
@@ -236,7 +250,6 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("EITM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("REPL"): // FO3
-            case ESM::fourCC("BIPL"): // FO3
             case ESM::fourCC("MODD"): // FO3
             case ESM::fourCC("MOSD"): // FO3
             case ESM::fourCC("MODS"): // FO3

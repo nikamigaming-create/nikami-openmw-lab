@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <set>
 #include <type_traits>
 
 #include <components/debug/debuglog.hpp>
@@ -61,6 +62,7 @@
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -68,6 +70,7 @@
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadterm.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/readerutils.hpp>
@@ -85,6 +88,9 @@
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/recharge.hpp"
 #include "../mwmechanics/spellutil.hpp"
+
+#include "../mwclass/esm4creature.hpp"
+#include "../mwclass/fnvactorstate.hpp"
 
 #include "class.hpp"
 #include "containerstore.hpp"
@@ -126,6 +132,21 @@ namespace
     struct RecordToState<ESM::Container>
     {
         using StateType = ESM::ContainerState;
+    };
+    template <>
+    struct RecordToState<ESM4::Container>
+    {
+        using StateType = ESM::ContainerState;
+    };
+    template <>
+    struct RecordToState<ESM4::Creature>
+    {
+        using StateType = ESM::CreatureState;
+    };
+    template <>
+    struct RecordToState<ESM4::Npc>
+    {
+        using StateType = ESM::CreatureState;
     };
     template <>
     struct RecordToState<ESM::CreatureLevList>
@@ -177,7 +198,16 @@ namespace
         // references
         for (const MWWorld::LiveCellRef<T>& liveCellRef : collection.mList)
         {
-            if (ESM::isESM4Rec(T::sRecordId))
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
+            {
+                // CreatureState is an FNV compatibility contract. Other ESM4 games keep the historical omission
+                // until they have a format matching their own actor-value/inventory semantics.
+                if (liveCellRef.mBase == nullptr || !liveCellRef.mBase->mIsFONV)
+                    continue;
+            }
+            if constexpr (ESM::isESM4Rec(T::sRecordId) && !std::is_same_v<T, ESM4::Container>
+                && !std::is_same_v<T, ESM4::Creature> && !std::is_same_v<T, ESM4::Npc>
+                && !std::is_same_v<T, ESM4::Door>)
             {
                 // TODO: Implement loading/saving of REFR4 and ACHR4 with ESM3 reader/writer.
                 continue;
@@ -245,7 +275,8 @@ namespace
 
     template <typename T>
     void readReferenceCollection(ESM::ESMReader& reader, MWWorld::CellRefList<T>& collection, const ESM::CellRef& cref,
-        const MWWorld::ESMStore& esmStore, MWWorld::CellStore* cellstore)
+        const MWWorld::ESMStore& esmStore, MWWorld::CellStore* cellstore,
+        std::set<ESM::RefNum>* acceptedFnvStateRefs = nullptr)
     {
         using StateType = typename RecordToState<T>::StateType;
         StateType state;
@@ -263,6 +294,50 @@ namespace
 
         if (!record)
             return;
+
+        if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
+        {
+            std::string error;
+            constexpr std::string_view actorKind
+                = std::is_same_v<T, ESM4::Creature> ? std::string_view("CREA") : std::string_view("NPC_");
+            if (!MWClass::validateFnvActorState(record->mIsFONV, actorKind, state, esmStore, error))
+            {
+                Log(Debug::Warning) << "Dropping invalid FNV actor state for " << state.mRef.mRefID << ": "
+                                    << error;
+                return;
+            }
+            if (acceptedFnvStateRefs != nullptr && acceptedFnvStateRefs->contains(state.mRef.mRefNum))
+            {
+                // The payload has already been fully parsed and semantically validated. First valid state wins;
+                // never allocate/register inventory references for duplicate OBJE records.
+                Log(Debug::Warning) << "Dropping duplicate FNV actor state for placement " << state.mRef.mRefNum;
+                return;
+            }
+        }
+        else if constexpr (std::is_same_v<T, ESM4::Door>)
+        {
+            std::string error;
+            if (!MWClass::validateFnvPlacedObjectState(state, "door", error))
+            {
+                Log(Debug::Warning) << "Dropping invalid FNV door state for " << state.mRef.mRefID << ": "
+                                    << error;
+                return;
+            }
+            if (acceptedFnvStateRefs != nullptr && acceptedFnvStateRefs->contains(state.mRef.mRefNum))
+            {
+                Log(Debug::Warning) << "Dropping duplicate FNV door state for placement " << state.mRef.mRefNum;
+                return;
+            }
+        }
+
+        const auto markFnvStateAccepted = [&]() {
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>
+                || std::is_same_v<T, ESM4::Door>)
+            {
+                if (acceptedFnvStateRefs != nullptr)
+                    acceptedFnvStateRefs->insert(state.mRef.mRefNum);
+            }
+        };
 
         if (state.mVersion <= ESM::MaxOldRestockingFormatVersion)
             fixRestocking(record, state);
@@ -299,17 +374,19 @@ namespace
                     const ESM::Position& oldpos = iter->mRef.getPosition();
                     const ESM::Position& newpos = iter->mData.getPosition();
                     const MWWorld::Ptr ptr(&*iter, cellstore);
+                    MWBase::World* world = MWBase::Environment::tryGetWorld();
                     if ((oldscale != iter->mRef.getScale() || oldpos.asVec3() != newpos.asVec3()
                             || oldpos.rot[0] != newpos.rot[0] || oldpos.rot[1] != newpos.rot[1]
                             || oldpos.rot[2] != newpos.rot[2])
-                        && !ptr.getClass().isActor())
-                        MWBase::Environment::get().getWorld()->moveObject(ptr, newpos.asVec3());
-                    if (!iter->mData.isEnabled())
+                        && !ptr.getClass().isActor() && world != nullptr)
+                        world->moveObject(ptr, newpos.asVec3());
+                    if (!iter->mData.isEnabled() && world != nullptr)
                     {
                         iter->mData.enable();
-                        MWBase::Environment::get().getWorld()->disable(ptr);
+                        world->disable(ptr);
                     }
                     MWBase::Environment::get().getWorldModel()->registerPtr(ptr);
+                    markFnvStateAccepted();
                     return;
                 }
 
@@ -334,6 +411,7 @@ namespace
 
         MWWorld::LiveCellRefBase* base = &collection.mList.back();
         MWBase::Environment::get().getWorldModel()->registerPtr(MWWorld::Ptr(base, cellstore));
+        markFnvStateAccepted();
     }
 
     // this function allows us to link a CellRefList<T> to the associated recNameInt, and apply a function
@@ -629,11 +707,42 @@ namespace MWWorld
         list.push_back(std::move(liveCellRef));
     }
 
+    bool isValidFnvTalkingActivatorReference(const ESM4::Reference& ref)
+    {
+        const auto finitePosition = [](const ESM::Position& position) {
+            for (const float value : position.pos)
+                if (!std::isfinite(value))
+                    return false;
+            for (const float value : position.rot)
+                if (!std::isfinite(value))
+                    return false;
+            return true;
+        };
+
+        return !ref.mId.isZeroOrUnset() && !ref.mBaseObj.isZeroOrUnset() && std::isfinite(ref.mScale)
+            && ref.mScale > 0.f && finitePosition(ref.mPos) && std::isfinite(ref.mRadio.rangeRadius)
+            && ref.mRadio.broadcastRange <= 4 && std::isfinite(ref.mRadio.staticPercentage);
+    }
+
     template <typename X>
     void CellRefList<X>::load(const ESM4::Reference& ref, const MWWorld::ESMStore& esmStore)
     {
         if constexpr (ESM::isESM4Rec(X::sRecordId) && !isESM4ActorRec(X::sRecordId))
+        {
+            if constexpr (std::is_same_v<X, ESM4::TalkingActivator>)
+            {
+                if (!isValidFnvTalkingActivatorReference(ref))
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 TACT: dropping malformed placed reference "
+                                        << ESM::RefId(ref.mId) << " base=" << ESM::RefId(ref.mBaseObj)
+                                        << " scale=" << ref.mScale << " radioRange=" << ref.mRadio.rangeRadius
+                                        << " broadcastRange=" << ref.mRadio.broadcastRange
+                                        << " static=" << ref.mRadio.staticPercentage;
+                    return;
+                }
+            }
             loadImpl<X>(ref, esmStore, mList);
+        }
     }
     template <typename X>
     void CellRefList<X>::load(const ESM4::ActorCharacter& ref, const MWWorld::ESMStore& esmStore)
@@ -1138,6 +1247,16 @@ namespace MWWorld
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
         if (foundType == 0)
         {
+            // IDLM references are authored, invisible AI interaction points. They stay in the
+            // ESM4 reference store for sandbox-package discovery and deliberately have no live
+            // render/physics object in the cell's reference lists.
+            if (store.get<ESM4::IdleMarker>().search(ref.mBaseObj) != nullptr)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained invisible idle marker reference "
+                                    << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
+                                    << " in parent cell " << ref.mParent;
+                return;
+            }
             Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
                                 << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
                                 << " in parent cell " << ref.mParent;
@@ -1337,11 +1456,12 @@ namespace MWWorld
     void CellStore::readReferences(ESM::ESMReader& reader, GetCellStoreCallback* callback)
     {
         mHasState = true;
+        std::set<ESM::RefNum> acceptedFnvStateRefs;
 
         while (reader.isNextSub("OBJE"))
         {
-            unsigned int unused;
-            reader.getHT(unused);
+            unsigned int savedType;
+            reader.getHT(savedType);
 
             // load the RefID first so we know what type of object it is
             ESM::CellRef cref;
@@ -1360,15 +1480,32 @@ namespace MWWorld
                 continue;
             }
 
+            if ((type == ESM::REC_CREA4 || type == ESM::REC_NPC_4 || type == ESM::REC_DOOR4)
+                && savedType != static_cast<unsigned int>(type))
+            {
+                Log(Debug::Warning) << "Dropping reference to " << cref.mRefID << " (OBJE type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(savedType)).toStringView()
+                                    << " does not match base record type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(type)).toStringView() << ")";
+                // Reject the wrong state variant before constructing/loading RecordToState<T>.
+                while (reader.hasMoreSubs() && !reader.peekNextSub("OBJE") && !reader.peekNextSub("MVRF"))
+                {
+                    reader.getSubName();
+                    reader.skipHSub();
+                }
+                continue;
+            }
+
             if (type != 0)
             {
                 bool foundCorrespondingStore = false;
                 Misc::tupleForEach(
-                    this->mCellStoreImp->mRefLists, [&reader, this, &cref, &foundCorrespondingStore, type](auto&& x) {
+                    this->mCellStoreImp->mRefLists,
+                    [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvStateRefs, type](auto&& x) {
                         recNameSwitcher(x, static_cast<ESM::RecNameInts>(type),
-                            [&reader, this, &cref, &foundCorrespondingStore](auto& store) {
+                            [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvStateRefs](auto& store) {
                                 foundCorrespondingStore = true;
-                                readReferenceCollection(reader, store, cref, mStore, this);
+                                readReferenceCollection(reader, store, cref, mStore, this, &acceptedFnvStateRefs);
                             });
                     });
 
@@ -1665,4 +1802,5 @@ namespace MWWorld
 
         return Ptr();
     }
+
 }

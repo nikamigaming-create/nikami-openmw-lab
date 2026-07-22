@@ -60,6 +60,7 @@ namespace MWGui
         , mFrame(nullptr)
         , mControllerBorder(nullptr)
         , mText(nullptr)
+        , mName(nullptr)
     {
     }
 
@@ -83,6 +84,9 @@ namespace MWGui
         assignWidget(mText, "Text");
         if (mText)
             mText->setNeedMouseFocus(false);
+        assignWidget(mName, "Name");
+        if (mName)
+            mName->setNeedMouseFocus(false);
         if (Settings::gui().mControllerMenus)
         {
             assignWidget(mControllerBorder, "ControllerBorder");
@@ -148,9 +152,18 @@ namespace MWGui
         std::string invIcon = Misc::ResourceHelpers::correctIconPath(icon, vfs);
         if (!vfs->exists(invIcon))
         {
-            Log(Debug::Error) << "Failed to open image: '" << invIcon
-                              << "' not found, falling back to 'default-icon.tga'";
-            invIcon = Misc::ResourceHelpers::correctIconPath("default icon.tga", vfs);
+            // TES3 inventory icons live below icons/, while Fallout 3/New Vegas record paths point below
+            // interface/icons/ inside the textures/ namespace.  Preserve the TES3 lookup first, then try the
+            // texture namespace before displaying an error marker.
+            const std::string textureIcon = Misc::ResourceHelpers::correctTexturePath(icon, vfs);
+            if (vfs->exists(textureIcon))
+                invIcon = textureIcon;
+            else
+            {
+                Log(Debug::Error) << "Failed to open image: '" << invIcon << "' or '" << textureIcon
+                                  << "' not found, falling back to 'default-icon.tga'";
+                invIcon = Misc::ResourceHelpers::correctIconPath("default icon.tga", vfs);
+            }
         }
         setIcon(invIcon);
     }
@@ -168,6 +181,8 @@ namespace MWGui
                 mItemShadow->setImageTexture({});
             mItem->setImageTexture({});
             mText->setCaption({});
+            if (mName)
+                mName->setCaption({});
             mCurrentIcon.clear();
             mCurrentFrame.clear();
             return;
@@ -218,6 +233,15 @@ namespace MWGui
             setFrame(backgroundTex, MyGUI::IntCoord(0, 0, 44 * scale, 44 * scale));
 
         setIcon(ptr);
+        if (mName)
+        {
+            std::string name(ptr.getClass().getName(ptr));
+            if (name.empty())
+                name = ptr.getCellRef().getRefId().toDebugString();
+            if (state == Equip)
+                name.insert(0, "[E] ");
+            mName->setCaption(name);
+        }
     }
 
     void SpellWidget::setSpellIcon(std::string_view icon)

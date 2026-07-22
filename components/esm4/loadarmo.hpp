@@ -147,7 +147,19 @@ namespace ESM4
             std::uint32_t health; // not in TES5?
             float weight;
         };
+
+        // Fallout 3/New Vegas ARMO DNAM. The resistance value is serialized in hundredths; keeping the raw
+        // integer avoids losing the authored value before the combat formula applies its scale.
+        struct FalloutData
+        {
+            std::int16_t damageResistanceHundredths;
+            std::uint16_t modifiesVoice;
+            float damageThreshold;
+            std::uint32_t flags;
+        };
 #pragma pack(pop)
+
+        static_assert(sizeof(FalloutData) == 12);
 
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
@@ -178,7 +190,10 @@ namespace ESM4
         ESM::FormId mEnchantment;
 
         std::vector<ESM::FormId> mAddOns; // TES5 ARMA
-        Data mData;
+        ESM::FormId mBipedModelList{}; // FO3/FNV BIPL -> FLST of ARMA records
+        Data mData{};
+        FalloutData mFalloutData{};
+        bool mHasFalloutData = false;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

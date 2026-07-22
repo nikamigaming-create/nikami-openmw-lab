@@ -15,6 +15,7 @@ namespace ESM4
 
     struct Weather
     {
+        static constexpr std::size_t sLegacyTimeCount = 4;
         static constexpr std::size_t sTimeCount = 6;
         static constexpr std::size_t sColorTypeCount = 10;
         static constexpr std::size_t sCloudLayerCount = 4;
@@ -80,16 +81,29 @@ namespace ESM4
         std::array<ESM::FormId, sTimeCount> mImageSpaceModifiers;
         std::array<std::string, sCloudLayerCount> mCloudTextures;
         std::string mModel;
+        std::uint32_t mMaxCloudLayers = 0;
         std::array<std::uint8_t, sCloudLayerCount> mCloudSpeeds{};
         std::array<std::array<Color, sTimeCount>, sCloudLayerCount> mCloudColors{};
+        std::size_t mCloudColorSampleCount = 0;
         std::array<std::array<float, sTimeCount>, sCloudLayerCount> mCloudAlphas{};
         bool mHasCloudAlphas = false;
         bool mUsesExtendedCloudSpeeds = false;
         std::array<std::array<Color, sTimeCount>, sColorTypeCount> mColors{};
+        std::size_t mColorSampleCount = 0;
         std::array<float, 32> mUnknownCloudLayerValues{};
         std::array<float, 6> mFogDistance{};
         Data mData;
         std::vector<Sound> mSounds;
+
+        // Preserve whether the authored subrecords decoded successfully. The
+        // corresponding values are zero-initialized, which cannot by itself
+        // distinguish an authored zero from an absent or malformed field.
+        bool mHasMaxCloudLayers = false;
+        bool mHasCloudSpeeds = false;
+        bool mHasCloudColors = false;
+        bool mHasColors = false;
+        bool mHasFogDistance = false;
+        bool mHasData = false;
 
         void load(Reader& reader);
 
