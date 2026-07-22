@@ -10,13 +10,16 @@
 #include <components/esm/refid.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
 
+#include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/fnvsavepreflight.hpp"
 #include "apps/openmw/mwworld/store.hpp"
 
@@ -179,6 +182,32 @@ namespace
         EXPECT_TRUE(MWWorld::isFalloutNewVegasSavePath("Save330.FOS"));
         EXPECT_FALSE(MWWorld::isFalloutNewVegasSavePath("Save330.omwsave"));
         EXPECT_FALSE(MWWorld::isFalloutNewVegasSavePath("Save330.fos.tmp"));
+    }
+
+    TEST(FalloutSavePreflight, MaterializesInventoryAmmoListAsAuthoredDefaultAmmo)
+    {
+        const ESM::FormId ammoList = form(0x1537ea);
+        const ESM::FormId standardAmmo = form(0x4240);
+        const ESM::FormId alternateAmmo = form(0x13e441);
+
+        MWWorld::ESMStore store;
+        ESM4::Ammunition standard;
+        standard.mId = standardAmmo;
+        store.insertStatic(standard);
+        ESM4::Ammunition alternate;
+        alternate.mId = alternateAmmo;
+        store.insertStatic(alternate);
+        ESM4::FormIdList list;
+        list.mId = ammoList;
+        list.mObjects = { standardAmmo, alternateAmmo };
+        store.insertStatic(list);
+
+        MWWorld::FalloutSavePlayerHeaderState player;
+        player.mInventoryItems = { { ammoList, 100 }, { alternateAmmo, 20 } };
+
+        EXPECT_EQ(MWWorld::resolveFalloutSaveInventoryAmmoLists(player, store), 1u);
+        EXPECT_EQ(player.mInventoryItems[0], (MWWorld::FalloutInventoryItem{ standardAmmo, 100 }));
+        EXPECT_EQ(player.mInventoryItems[1], (MWWorld::FalloutInventoryItem{ alternateAmmo, 20 }));
     }
 
     TEST(FalloutSavePreflight, ResolvesExactContextThroughBlockerEvaluationWithoutMutation)
