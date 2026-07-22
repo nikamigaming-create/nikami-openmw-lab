@@ -125,6 +125,7 @@ namespace ESM
         REC_ACTC = esm3Recname("ACTC"),
         REC_MPRJ = esm3Recname("MPRJ"),
         REC_PROJ = esm3Recname("PROJ"),
+        REC_FPRJ = esm3Recname("FPRJ"), // Native Fallout projectile runtime state
         REC_DCOU = esm3Recname("DCOU"),
         REC_MARK = esm3Recname("MARK"),
         REC_ENAB = esm3Recname("ENAB"),
@@ -154,6 +155,7 @@ namespace ESM
         REC_ACTI4 = esm4Recname(ESM4::REC_ACTI), // Activator
         REC_ADDN4 = esm4Recname(ESM4::REC_ADDN), // Addon Node
         REC_ALCH4 = esm4Recname(ESM4::REC_ALCH), // Potion
+        REC_AMEF4 = esm4Recname(ESM4::REC_AMEF), // Ammo Effect
         REC_AMMO4 = esm4Recname(ESM4::REC_AMMO), // Ammo
         REC_ANIO4 = esm4Recname(ESM4::REC_ANIO), // Animated Object
         REC_APPA4 = esm4Recname(ESM4::REC_APPA), // Apparatus (probably unused)

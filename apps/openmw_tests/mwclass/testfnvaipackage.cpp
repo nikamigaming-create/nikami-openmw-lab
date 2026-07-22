@@ -3,6 +3,7 @@
 #include <components/esm4/script.hpp>
 
 #include "apps/openmw/mwclass/esm4creature.hpp"
+#include "apps/openmw/mwclass/fnvaipackage.hpp"
 
 namespace
 {
@@ -31,5 +32,33 @@ namespace
             ESM4::CTF_EqualTo, 0.f, 0.f));
         EXPECT_FALSE(MWClass::fnvCreaturePackageConditionComparisonPasses(
             ESM4::CTF_EqualTo, 1.f, 0.f));
+    }
+
+    TEST(FnvAiPackageTest, CreaturePatrolYieldsWhileTurningOrGreeting)
+    {
+        EXPECT_TRUE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, true, false));
+        EXPECT_TRUE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, false, true));
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, false, false));
+
+        // Match generic AiTravel: forced jump/sneak movement remains authoritative over greeting turns.
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(true, false, true, true));
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, true, true, true));
+    }
+
+    TEST(FnvAiPackageTest, SupportsOnlyNpcProceduresImplementedByRuntimeBridge)
+    {
+        for (const int type : { 3, 4, 5, 6, 8, 11, 12 })
+            EXPECT_TRUE(MWClass::fnvNpcAiPackageProcedureSupported(type)) << type;
+
+        for (const int type : { 0, 1, 2, 7, 9, 10, 13 })
+            EXPECT_FALSE(MWClass::fnvNpcAiPackageProcedureSupported(type)) << type;
+    }
+
+    TEST(FnvAiPackageTest, PackageTargetsUseRuntimeLocomotionUnlessPrePlacementIsExplicit)
+    {
+        EXPECT_FALSE(MWClass::fnvPackagePrePlacementEnabled(true, false, false));
+        EXPECT_FALSE(MWClass::fnvPackagePrePlacementEnabled(false, false, false));
+        EXPECT_TRUE(MWClass::fnvPackagePrePlacementEnabled(true, true, false));
+        EXPECT_TRUE(MWClass::fnvPackagePrePlacementEnabled(false, false, true));
     }
 }

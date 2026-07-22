@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <osg/Vec4f>
 #include <osg/Vec3f>
@@ -180,6 +181,7 @@ namespace MWWorld
         std::optional<FalloutWeatherColorSamples> mFalloutSunDiscColors;
         std::optional<FalloutWeatherColorSamples> mFalloutStarColors;
         std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
+        std::optional<std::array<float, 6>> mFalloutFogDistance;
         std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
         std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
         std::optional<std::array<FalloutWeatherColorSamples, 4>> mFalloutCloudColors;
@@ -404,6 +406,9 @@ namespace MWWorld
 
         bool readRecord(ESM::ESMReader& reader, uint32_t type);
 
+        /// Start an authored Fallout IMAD instance. Each call owns an independent timer.
+        bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength);
+
         void clear();
 
     private:
@@ -432,6 +437,13 @@ namespace MWWorld
         std::size_t mFalloutWeatherStart;
         bool mFalloutWeatherInitialized;
         ESM::RefId mFalloutWeatherSource;
+        struct FalloutImageSpaceModifierInstance
+        {
+            ESM::FormId mModifier;
+            float mElapsed = 0.f;
+            float mStrength = 1.f;
+        };
+        std::vector<FalloutImageSpaceModifierInstance> mFalloutImageSpaceModifierInstances;
         MoonModel mMasser;
         MoonModel mSecunda;
 

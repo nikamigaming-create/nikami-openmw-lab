@@ -2144,6 +2144,33 @@ namespace MWMechanics
             iter->second->getCharacterController().forceStateUpdate();
     }
 
+    bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutVatsRangedHit(
+                target, targetPoint, action, targetHit);
+    }
+
+    bool Actors::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutProjectileImpact(
+                target, segmentStart, hitPosition, impact);
+    }
+
+    bool Actors::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutExplosion(position, impact);
+    }
+
     bool Actors::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted) const
     {
@@ -2243,6 +2270,9 @@ namespace MWMechanics
     std::vector<MWWorld::Ptr> Actors::getActorsSidingWith(const MWWorld::Ptr& actorPtr, bool excludeInfighting) const
     {
         std::vector<MWWorld::Ptr> list;
+        if (actorPtr.isEmpty())
+            return list;
+
         list.push_back(actorPtr);
         for (const Actor& actor : mActors)
         {

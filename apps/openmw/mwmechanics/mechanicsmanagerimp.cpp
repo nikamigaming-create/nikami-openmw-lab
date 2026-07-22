@@ -830,6 +830,27 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, action, targetHit);
+    }
+
+    bool MechanicsManager::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutProjectileImpact(actor, target, segmentStart, hitPosition, impact);
+    }
+
+    bool MechanicsManager::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && mActors.executeFalloutExplosion(actor, position, impact);
+    }
+
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {
@@ -982,7 +1003,11 @@ namespace MWMechanics
         if (target.getClass().isActivator() && !target.getClass().getScript(target).startsWith("Bed"))
             return true;
 
-        if (target.getClass().isNpc())
+        // ESM4 NPC/CREA classes intentionally do not expose Morrowind NpcStats through Class::isNpc(). They are
+        // still actors for interaction purposes. Letting a live Fallout actor fall through to isOwned() asks its
+        // ActorCharacter CellRef for a Morrowind faction rank, throws "Not applicable", and repeats that exception
+        // every tooltip frame (notably throughout V.A.T.S.).
+        if (target.getClass().isNpc() || isFalloutNewVegasActor(target))
         {
             if (target.getClass().getCreatureStats(target).isDead())
                 return true;

@@ -34,6 +34,7 @@ namespace MWClass
         ESM::FormId mId;
         std::string mEditorId;
         std::string mModel;
+        // ESM-relative mesh path; the renderer adds the VFS "meshes/" prefix exactly once.
         std::string mAnimatedObjectModel;
     };
 

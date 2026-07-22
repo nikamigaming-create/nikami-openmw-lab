@@ -5,9 +5,26 @@
 #include <cctype>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include <components/esm/formid.hpp>
 
 namespace MWRender
 {
+    inline constexpr float getFalloutFlatPlayerVisualYawOffset()
+    {
+        // FO3/FNV NPC meshes already share the gameplay-forward basis. Only TES4 NPC rigs need a quarter-turn.
+        return 0.f;
+    }
+
+    inline std::vector<ESM::FormId> canonicalizeFalloutWornVisualSignature(
+        std::vector<ESM::FormId> signature)
+    {
+        std::sort(signature.begin(), signature.end());
+        signature.erase(std::unique(signature.begin(), signature.end()), signature.end());
+        return signature;
+    }
+
     struct ESM4PlayerVisualEquipmentPolicy
     {
         std::string_view mOutfit;
@@ -74,10 +91,14 @@ namespace MWRender
             && lowered.find("glove") != std::string::npos;
     }
 
-    inline bool useFalloutFirstPersonUnarmedProfile(bool saveWornWeapon, bool proxyEquippedWeapon)
+    inline std::string_view selectFalloutWeaponViewModel(
+        std::string_view worldModel, std::string_view firstPersonModel, bool firstPerson)
     {
-        return !saveWornWeapon && !proxyEquippedWeapon;
+        if (firstPerson && !firstPersonModel.empty())
+            return firstPersonModel;
+        return worldModel;
     }
+
 }
 
 #endif

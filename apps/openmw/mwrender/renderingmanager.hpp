@@ -55,6 +55,7 @@ namespace ESM
 
 namespace ESM4
 {
+    struct Light;
     struct Npc;
 }
 
@@ -134,6 +135,7 @@ namespace MWRender
         osg::Vec3f mHitPointLocal;
         MWWorld::Ptr mHitObject;
         osg::Node* mHitNode;
+        std::vector<std::string> mHitNodePath;
         /// Cast a ray between two points
         ESM::RefNum mHitRefnum;
         float mRatio;
@@ -186,6 +188,7 @@ namespace MWRender
         void configureFog(const MWWorld::Cell& cell);
         void configureFog(
             float fogDepth, float underwaterFog, float dlFactor, float dlOffset, const osg::Vec4f& colour);
+        void configureFog(float fogNear, float fogFar, float underwaterFog, const osg::Vec4f& colour);
 
         void addCell(const MWWorld::CellStore* store);
         void removeCell(const MWWorld::CellStore* store);
@@ -226,7 +229,8 @@ namespace MWRender
         SkyManager* getSkyManager();
 
         void spawnEffect(VFS::Path::NormalizedView model, std::string_view texture, const osg::Vec3f& worldPosition,
-            float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true);
+            float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM4::Light* light = nullptr, bool isExterior = false);
 
         /// Clear all savegame-specific data
         void clear();
@@ -240,6 +244,7 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+        Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
 
         PostProcessor* getPostProcessor();
 
@@ -283,6 +288,8 @@ namespace MWRender
             mFalloutSaveWornVisualItems = std::move(items);
         }
         float getFieldOfView() const;
+        bool isFieldOfViewOverridden() const { return mFieldOfViewOverridden; }
+        bool isProjectionMatrixOverridden() const { return mProjectionMatrixOverridden; }
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
 
@@ -393,6 +400,8 @@ namespace MWRender
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
         std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
+        std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
+        bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;

@@ -25,7 +25,7 @@ add_openmw_dir (mwrender
     bulletdebugdraw globalmap characterpreview camera localmap water terrainstorage ripplesimulation
     renderbin actoranimation landmanager navmesh actorspaths recastmesh fogmanager objectpaging groundcover
     postprocessor pingpongcull luminancecalculator pingpongcanvas transparentpass precipitationocclusion ripples
-    actorutil distortion animationpriority bonegroup blendmask animblendcontroller
+    falloutlodselection actorutil distortion animationpriority bonegroup blendmask animblendcontroller
     )
 
 add_openmw_dir (mwinput
@@ -42,7 +42,7 @@ add_openmw_dir (mwgui
     itemselection spellbuyingwindow loadingscreen levelupdialog waitdialog spellcreationdialog
     enchantingdialog trainingwindow travelwindow exposedwindow cursor spellicons
     merchantrepair repair soulgemdialog companionwindow bookpage journalviewmodel journalbooks
-    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview
+    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview falloutquestlistpolicy
     tradeitemmodel companionitemmodel pickpocketitemmodel controllers savegamedialog
     recharge mode videowidget backgroundimage itemwidget screenfader debugwindow spellmodel spellview
     draganddrop timeadvancer jailscreen itemchargeview keyboardnavigation textcolours statswatcher
@@ -74,7 +74,7 @@ add_openmw_dir (mwlua
     )
 
 add_openmw_dir (mwsound
-    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer sounddecoder soundoutput
+    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer falloutsoundpath sounddecoder soundoutput
     loudness movieaudiofactory alext efx efxpresets regionsoundselector saysequence watersoundupdater
     )
 
@@ -109,7 +109,7 @@ add_openmw_dir (mwmechanics
     drawstate spells activespells npcstats aipackage aisequence aipursue alchemy aiwander aitravel aifollow aiavoiddoor aibreathe
     aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellcasting spellresistance
     disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction summoning
-    character dialoguefacing falloutcombat actors objects aistate weaponpriority spellpriority weapontype spellutil
+    character dialoguefacing falloutcombat falloutweaponsound actors objects aistate weaponpriority spellpriority weapontype spellutil
     spelleffects
     )
 

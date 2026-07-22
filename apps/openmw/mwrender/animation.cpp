@@ -23,8 +23,10 @@
 #include <osg/FrameStamp>
 #include <osg/Geode>
 #include <osg/LightModel>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
+#include <osg/PolygonMode>
 #include <osg/Switch>
 
 #include <osgParticle/ParticleProcessor>
@@ -59,6 +61,7 @@
 
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/nifosg/falloutkf.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -86,6 +89,7 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "actorutil.hpp"
@@ -258,6 +262,17 @@ namespace
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
         return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV && !ref->mBase->mIsFO3;
+    }
+
+    bool isFalloutDeathFallbackContext(const MWWorld::Ptr& ptr)
+    {
+        if (isFalloutNpcAnimationContext(ptr))
+            return true;
+        if (ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -4434,42 +4449,14 @@ namespace MWRender
         if (stem.find("wave") != std::string::npos || stem.find("gesture") != std::string::npos
             || stem == "specialidle_mtponder" || stem == "specialidle_salutes")
             return "wave";
-        if (stem == "swimidle")
-            return "swimidle";
         if (stem.find("flyaway") != std::string::npos)
             return "flyforward";
         if (stem.find("specialidle") != std::string::npos)
             return "idle2";
+        if (const std::string_view movement = NifOsg::getFalloutKfMovementGroup(kfname); !movement.empty())
+            return std::string(movement);
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
-            return "turnleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
-            return "turnright";
-        if (stem == "mtforward")
-            return "walkforward";
-        if (stem == "mtbackward")
-            return "walkback";
-        if (stem == "mtleft")
-            return "walkleft";
-        if (stem == "mtright")
-            return "walkright";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastforward") || Misc::StringUtils::ciEndsWith(stem, "runforward"))
-            return "runforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastbackward") || Misc::StringUtils::ciEndsWith(stem, "runbackward"))
-            return "runback";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastleft") || Misc::StringUtils::ciEndsWith(stem, "runleft"))
-            return "runleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastright") || Misc::StringUtils::ciEndsWith(stem, "runright"))
-            return "runright";
-        if (Misc::StringUtils::ciEndsWith(stem, "forward") || Misc::StringUtils::ciEndsWith(stem, "walkforward"))
-            return "walkforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "backward") || Misc::StringUtils::ciEndsWith(stem, "walkbackward"))
-            return "walkback";
-        if (Misc::StringUtils::ciEndsWith(stem, "left") || Misc::StringUtils::ciEndsWith(stem, "walkleft"))
-            return "walkleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
-            return "walkright";
         return {};
     }
 
@@ -4567,10 +4554,11 @@ namespace MWRender
     bool isSyntheticFalloutLoopingGroup(std::string_view group)
     {
         return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
-            || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
+            || group == "idleswim" || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
             || group == "talk" || group == "flyforward"
             || group.starts_with("walk") || group.starts_with("run")
-            || group.starts_with("turn") || group.starts_with("sneak");
+            || group.starts_with("turn") || group.starts_with("sneak") || group.starts_with("swimwalk")
+            || group.starts_with("swimrun") || group.starts_with("swimturn");
     }
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
@@ -4677,6 +4665,19 @@ namespace MWRender
             animsrc->mKeyframes = keyframes;
             Log(Debug::Verbose) << "FNV/ESM4 diag: aliased selected creature KF " << kfname
                                 << " to semantic group '" << group << "'";
+        }
+        if (animsrc->mKeyframes && isFonvCreatureAnim
+            && falloutSemanticGroup == FonvCreatureHitReactionSemanticGroup)
+        {
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutCreatureHitReactionTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected creature hit KF " << kfname
+                                    << " from generic idle groups";
+            }
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
         {
@@ -7132,6 +7133,8 @@ namespace MWRender
             }
         }
 
+        applyFalloutDeathPoseFallback();
+
         if (esm4Npc && mObjectRoot != nullptr
             && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
         {
@@ -7154,6 +7157,67 @@ namespace MWRender
             auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
+    }
+
+    void Animation::applyFalloutDeathPoseFallback()
+    {
+        if (mFalloutCorpseTransform == nullptr || !isFalloutDeathFallbackContext(mPtr)
+            || !mPtr.getClass().isActor())
+            return;
+
+        const bool dead = mPtr.getClass().getCreatureStats(mPtr).isDead();
+        if (!dead)
+        {
+            if (mFalloutCorpsePoseApplied)
+            {
+                mFalloutCorpseTransform->setMatrix(osg::Matrixf::identity());
+                mFalloutCorpseTransform->dirtyBound();
+                mFalloutCorpsePoseApplied = false;
+                Log(Debug::Info) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                 << " state=resurrected pose=identity";
+            }
+            return;
+        }
+
+        static constexpr std::array<std::string_view, 5> sDeathGroups{
+            "death1", "death2", "death3", "death4", "death5"
+        };
+        if (std::any_of(sDeathGroups.begin(), sDeathGroups.end(),
+                [&](std::string_view group) { return hasAnimation(group); }))
+            return;
+        if (mFalloutCorpsePoseApplied || mFalloutCorpseTransform->getNumChildren() == 0)
+            return;
+
+        osg::ComputeBoundsVisitor boundsVisitor;
+        mFalloutCorpseTransform->getChild(0)->accept(boundsVisitor);
+        const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+        if (!bounds.valid())
+        {
+            Log(Debug::Warning) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                << " state=failed reason=invalid-bounds";
+            return;
+        }
+
+        const osg::Vec3f pivot = bounds.center();
+        const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+        const float direction = !refId.empty() && (static_cast<unsigned char>(refId.back()) & 1u) ? -1.f : 1.f;
+        osg::Matrixf pose = osg::Matrixf::translate(-pivot)
+            * osg::Matrixf::rotate(direction * osg::PI_2, osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Matrixf::translate(pivot);
+
+        float transformedMinZ = std::numeric_limits<float>::max();
+        for (unsigned int corner = 0; corner < 8; ++corner)
+            transformedMinZ = std::min(transformedMinZ, (bounds.corner(corner) * pose).z());
+        const float groundShift = bounds.zMin() - transformedMinZ;
+        pose = pose * osg::Matrixf::translate(0.f, 0.f, groundShift);
+
+        mFalloutCorpseTransform->setMatrix(pose);
+        mFalloutCorpseTransform->dirtyBound();
+        mFalloutCorpsePoseApplied = true;
+        Log(Debug::Info) << "FNV combat death: actor=" << mPtr.getCellRef().getRefId()
+                         << " dead=1 visual=procedural-grounded-side-pose status=pass angle="
+                         << direction * 90.f << " groundShift=" << groundShift
+                         << " boundsMinZ=" << bounds.zMin() << " boundsMaxZ=" << bounds.zMax();
     }
 
     void Animation::setLoopingEnabled(std::string_view groupname, bool enabled)
@@ -7265,6 +7329,8 @@ namespace MWRender
         }
         mObjectRoot = nullptr;
         mSkeleton = nullptr;
+        mFalloutCorpseTransform = nullptr;
+        mFalloutCorpsePoseApplied = false;
 
         mNodeMap.clear();
         mNodeMapCreated = false;
@@ -7381,6 +7447,16 @@ namespace MWRender
             }
         }
 
+        if (isFalloutDeathFallbackContext(mPtr))
+        {
+            mInsert->removeChild(mObjectRoot);
+            mFalloutCorpseTransform = new osg::MatrixTransform;
+            mFalloutCorpseTransform->setName("FNV Actor Corpse Pose");
+            mFalloutCorpseTransform->addChild(mObjectRoot);
+            mObjectRoot = mFalloutCorpseTransform;
+            mInsert->addChild(mObjectRoot);
+        }
+
         // osgAnimation formats with skeletons should have their nodemap be bone instances
         // FIXME: better way to detect osgAnimation here instead of relying on extension?
         mRequiresBoneMap = mSkeleton != nullptr && !Misc::StringUtils::ciEndsWith(model, ".nif");
@@ -7432,6 +7508,47 @@ namespace MWRender
             else if (mObjectRoot)
                 mGlowUpdater = SceneUtil::addEnchantedGlow(mObjectRoot, mResourceSystem, color, glowDuration);
         }
+    }
+
+    void Animation::setFalloutVatsWireframe(std::string_view targetNode, bool enabled)
+    {
+        if (mFalloutVatsWireframeNode)
+        {
+            mFalloutVatsWireframeNode->setStateSet(mFalloutVatsOriginalStateSet);
+            mFalloutVatsWireframeNode = nullptr;
+            mFalloutVatsOriginalStateSet = nullptr;
+        }
+        if (!enabled)
+            return;
+
+        osg::Node* node = const_cast<osg::Node*>(getNode(targetNode));
+        if (node == nullptr)
+            node = mObjectRoot.get();
+        if (node == nullptr)
+            return;
+
+        mFalloutVatsWireframeNode = node;
+        mFalloutVatsOriginalStateSet = node->getStateSet();
+        osg::ref_ptr<osg::StateSet> stateSet = mFalloutVatsOriginalStateSet
+            ? new osg::StateSet(*mFalloutVatsOriginalStateSet, osg::CopyOp::SHALLOW_COPY)
+            : new osg::StateSet;
+
+        osg::ref_ptr<osg::PolygonMode> wireframe = new osg::PolygonMode;
+        wireframe->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
+        stateSet->setAttributeAndModes(
+            wireframe, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        stateSet->setAttributeAndModes(new osg::LineWidth(3.f),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        const osg::Vec4f vatsGreen(0.05f, 1.f, 0.2f, 1.f);
+        material->setColorMode(osg::Material::OFF);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setEmission(osg::Material::FRONT_AND_BACK, vatsGreen * 0.65f);
+        stateSet->setAttributeAndModes(
+            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        node->setStateSet(stateSet);
     }
 
     void Animation::addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& esmLight)

@@ -1,4 +1,5 @@
 #include "esm4npc.hpp"
+#include "esm4container.hpp"
 #include "fnvaipackage.hpp"
 #include "fnvfurniturelifecycle.hpp"
 #include "fnvsandbox.hpp"
@@ -48,13 +49,13 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwworld/actionopen.hpp"
+#include "../mwworld/actiontalk.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/worldmodel.hpp"
-#include "../mwworld/actiontalk.hpp"
-#include "../mwworld/failedaction.hpp"
 
 #include "esm4base.hpp"
 #include "fnvactorstate.hpp"
@@ -130,7 +131,7 @@ namespace MWClass
         return nullptr;
     }
 
-    class ESM4NpcContainerStore final : public MWWorld::ContainerStore
+    class ESM4NpcContainerStore final : public ESM4ActorContainerStore
     {
     public:
         template <class Record>
@@ -183,6 +184,7 @@ namespace MWClass
         MWMechanics::Movement mMovement;
         std::unique_ptr<ESM4NpcContainerStore> mContainerStore;
         bool mContainerItemsRegistered = false;
+        bool mDeathItemsGenerated = false;
 
         // TODO: Use InventoryStore instead (currently doesn't support ESM4 objects)
         std::vector<const ESM4::Armor*> mEquippedArmor;
@@ -220,6 +222,7 @@ namespace MWClass
         , mMovement(other.mMovement)
         , mContainerStore(other.mContainerStore ? other.mContainerStore->cloneForNpc()
                                                 : std::make_unique<ESM4NpcContainerStore>())
+        , mDeathItemsGenerated(other.mDeathItemsGenerated)
         , mEquippedArmor(other.mEquippedArmor)
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
@@ -388,6 +391,8 @@ namespace MWClass
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
                 continue;
+            if (!fnvNpcAiPackageProcedureSupported(package->mData.type))
+                continue;
             if (!fnvPackageConditionsPass(*package))
                 continue;
             if (fnvPackageCoversHour(*package, hour))
@@ -502,6 +507,15 @@ namespace MWClass
                     reconcileLifecycle(mPhase);
                     if (!mTravel.execute(actor, characterController, state, duration))
                         return false;
+                    if (!hasReachedFalloutFurnitureEntry(
+                            actor.getRefData().getPosition().asVec3(), mPlacement.mEntryPosition))
+                    {
+                        // AiTravel's normal actor-sized finish tolerance is appropriate for ordinary travel,
+                        // but it can complete several dozen units before an exact furniture marker. Keep
+                        // walking toward the marker before aligning to the authored enter-animation anchor.
+                        actor.getClass().getMovementSettings(actor).mPosition[1] = 1.f;
+                        return false;
+                    }
                     stopMovement();
                     place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
                     mPhase = FalloutFurniturePackagePhase::Entering;
@@ -1531,6 +1545,9 @@ namespace MWClass
             = getFalloutSandboxSaveFallback(npcState.mCreatureStats.mAiSequence);
         data->mCreatureStats.readState(npcState.mCreatureStats);
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered every retained saved stack.
+        // The complete saved inventory already includes the synchronous first-death roll. Never reroll it when a
+        // dead NPC is restored or struck again.
+        data->mDeathItemsGenerated = data->mCreatureStats.isDead();
         data->mFnvAiSequenceInitialised = !sandboxFallback.has_value();
         data->mFnvSandboxPackageNeedsReevaluation = sandboxFallback.has_value();
         data->mFnvSandboxSaveFallback = sandboxFallback;
@@ -1795,6 +1812,57 @@ namespace MWClass
         return store;
     }
 
+    bool ESM4Npc::materializeFnvDeathItem(
+        const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world)
+    {
+        const ESM4::Npc* base = ptr.get<ESM4::Npc>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (!data.mCreatureStats.isDead() || data.mDeathItemsGenerated)
+            return false;
+
+        data.mDeathItemsGenerated = true;
+        const ESM4::Npc* traits = data.mTraits;
+        if (traits == nullptr || traits->mDeathItem.isZeroOrUnset())
+            return true;
+
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        MWWorld::ContainerStore& destination = ptr.getClass().getContainerStore(ptr);
+        const ESM::RefId deathItem(traits->mDeathItem);
+        std::string_view failure;
+        if (!materializeFnvDeathItemList(
+                destination, esmStore, deathItem, playerLevel, prng, world, failure))
+        {
+            Log(Debug::Warning) << "Unable to materialize FNV NPC_ death item " << deathItem << " for "
+                                << ESM::RefId(base->mId) << " reason=" << failure;
+            return false;
+        }
+        return true;
+    }
+
+    void ESM4Npc::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+        const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const
+    {
+        const bool wasDead = getCreatureStats(ptr).isDead();
+        Actor::onHit(ptr, damages, object, attacker, successful, sourceType);
+        if (wasDead || !getCreatureStats(ptr).isDead())
+            return;
+
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world == nullptr)
+        {
+            Log(Debug::Warning) << "Unable to materialize first-death FNV NPC_ loot without a runtime World";
+            return;
+        }
+        int playerLevel = ESM4Impl::sDefaultLevel;
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        if (!player.isEmpty() && player.getClass().isActor())
+            playerLevel = player.getClass().getCreatureStats(player).getLevel();
+        materializeFnvDeathItem(ptr, world->getPrng(), std::max(playerLevel, 1), world);
+    }
+
     float ESM4Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
@@ -1862,7 +1930,7 @@ namespace MWClass
     {
         (void)actor;
         if (getCreatureStats(ptr).isDead())
-            return std::make_unique<MWWorld::FailedAction>();
+            return std::make_unique<MWWorld::ActionOpen>(ptr);
         return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 

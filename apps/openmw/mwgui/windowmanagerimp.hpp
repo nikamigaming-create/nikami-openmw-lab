@@ -102,6 +102,8 @@ namespace MWVR
 
 namespace MWGui
 {
+    struct FalloutDialogueCameraState;
+
     class HUD;
     class MapWindow;
     class MainMenu;
@@ -248,6 +250,7 @@ namespace MWGui
 
         /// activate selected quick key
         void activateQuickKey(int index) override;
+        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) override;
         /// update activated quick key state (if action executing was delayed for some reason)
         void updateActivatedQuickKey() override;
 
@@ -531,6 +534,7 @@ namespace MWGui
         std::map<GuiMode, GuiModeState> mGuiModeStates;
         // The currently active stack of GUI modes (top mode is the one we are in).
         std::vector<GuiMode> mGuiModes;
+        std::unique_ptr<FalloutDialogueCameraState> mFalloutDialogueCamera;
         // The active window for controller mode for each GUI mode.
         std::map<GuiMode, int> mActiveControllerWindows;
         // Current tooltip visibility state (can be disabled by mouse movement)
@@ -628,6 +632,9 @@ namespace MWGui
         void handleScheduledMessageBoxes();
 
         void pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg, bool force);
+        void beginFalloutDialogueCamera(const MWWorld::Ptr& target);
+        void updateFalloutDialogueCamera();
+        void endFalloutDialogueCamera();
 
         void setCullMask(uint32_t mask) override;
         uint32_t getCullMask() override;

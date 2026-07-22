@@ -50,6 +50,7 @@ namespace MWGui
         MyGUI::ImageBox* mFrame;
         MyGUI::ImageBox* mControllerBorder;
         MyGUI::TextBox* mText;
+        MyGUI::TextBox* mName;
 
         std::string mCurrentIcon;
         std::string mCurrentFrame;

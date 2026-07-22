@@ -217,6 +217,11 @@ namespace MWRender
         EXPECT_EQ(getFonvWeaponAnimationKf(3, "equip"), "meshes/characters/_male/1hpequip.kf");
         EXPECT_EQ(getFonvWeaponAnimationPrefix(5), "2hr");
         EXPECT_EQ(getFonvWeaponAnimationKf(5, "equip"), "meshes/characters/_male/2hrequip.kf");
+        EXPECT_EQ(getFonvFirstPersonWeaponAnimationKf(getFonvWeaponAnimationKf(5, "equip")),
+            "meshes/characters/_1stperson/2hrequip.kf");
+        EXPECT_EQ(getFonvFirstPersonWeaponAnimationKf("2hrattack3.kf"),
+            "meshes/characters/_1stperson/2hrattack3.kf");
+        EXPECT_TRUE(getFonvFirstPersonWeaponAnimationKf({}).empty());
 
         const std::optional<unsigned int> defaultGrip = getFonvWeaponHandGripIndex(0xff);
         const std::optional<unsigned int> firstGrip = getFonvWeaponHandGripIndex(0xe6);

@@ -34,6 +34,7 @@
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -1798,6 +1799,21 @@ namespace MWWorld
         return osg::Matrixf::translate(actor.getRefData().getPosition().asVec3());
     }
 
+    std::optional<osg::Matrixf> World::getActorNodeTransform(
+        const MWWorld::ConstPtr& actor, std::string_view nodeName) const
+    {
+        const MWRender::Animation* animation = mRendering->getAnimation(actor);
+        if (animation == nullptr)
+            return std::nullopt;
+        const osg::Node* node = animation->getNode(nodeName);
+        if (node == nullptr)
+            return std::nullopt;
+        const osg::NodePathList paths = node->getParentalNodePaths();
+        if (paths.empty())
+            return std::nullopt;
+        return osg::computeLocalToWorld(paths.front());
+    }
+
     void World::deleteObject(const Ptr& ptr)
     {
         if (!ptr.mRef->isDeleted() && ptr.getContainerStore() == nullptr)
@@ -2604,6 +2620,7 @@ namespace MWWorld
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
         res.mHitObject = rayRes.mHitObject;
+        res.mHitNodePath = std::move(rayRes.mHitNodePath);
         if (res.mHitObject.isEmpty() && rayRes.mHitRefnum.isSet())
             res.mHitObject = MWBase::Environment::get().getWorldModel()->getPtr(rayRes.mHitRefnum);
         return res.mHit;
@@ -3185,6 +3202,12 @@ namespace MWWorld
     const MWRender::Animation* World::getAnimation(const MWWorld::ConstPtr& ptr) const
     {
         return mRendering->getAnimation(ptr);
+    }
+
+    MWRender::Animation* World::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        return mRendering->getFalloutWeaponAnimation(ptr, firstPerson);
     }
 
     void World::screenshot(osg::Image* image, int w, int h)
@@ -3959,6 +3982,34 @@ namespace MWWorld
         mProjectileManager->launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength);
     }
 
+    bool World::launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+        const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
+    std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->countPendingFalloutVatsProjectiles(actor)
+            : 0;
+    }
+
+    unsigned int World::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->detonateFalloutPlacedExplosives(actor)
+            : 0;
+    }
+
+    bool World::playFalloutImageSpaceModifier(ESM::FormId modifier, float strength)
+    {
+        return mWeatherManager != nullptr
+            && mWeatherManager->playFalloutImageSpaceModifier(modifier, strength);
+    }
+
     void World::launchMagicBolt(
         const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
     {
@@ -4606,9 +4657,16 @@ namespace MWWorld
     }
 
     void World::spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight)
+        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM::RefId& lightId)
     {
-        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX, useAmbientLight);
+        const ESM4::Light* light = lightId.empty()
+            ? nullptr
+            : mStore.get<ESM4::Light>().search(lightId);
+        if (!lightId.empty() && light == nullptr)
+            Log(Debug::Error) << "Effect references missing ESM4 light: " << lightId;
+        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX,
+            useAmbientLight, light, isCellExterior());
     }
 
     struct ResetActorsVisitor

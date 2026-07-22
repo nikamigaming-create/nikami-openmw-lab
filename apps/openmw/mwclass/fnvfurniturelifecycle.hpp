@@ -63,6 +63,13 @@ namespace MWClass
         return state != FalloutFurnitureState::None && placementValid && sameFurniture;
     }
 
+    inline bool hasReachedFalloutFurnitureEntry(const osg::Vec3f& currentPosition,
+        const osg::Vec3f& entryPosition, float positionTolerance = 8.f)
+    {
+        const osg::Vec3f positionDelta = currentPosition - entryPosition;
+        return positionDelta.length2() <= positionTolerance * positionTolerance;
+    }
+
     inline bool needsFalloutFurnitureAnchorRecovery(const FalloutFurnitureLifecycleAction& action,
         const osg::Vec3f& currentPosition, float currentYaw, const osg::Vec3f& anchorPosition, float anchorYaw,
         float positionTolerance = 0.01f, float yawTolerance = 0.001f)

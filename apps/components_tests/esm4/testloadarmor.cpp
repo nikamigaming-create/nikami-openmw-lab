@@ -120,4 +120,41 @@ namespace
         EXPECT_EQ(addon.mBodyTemplate.bodyPart, 0u);
         EXPECT_EQ(addon.mBodyTemplate.flags, 0u);
     }
+
+    TEST(Esm4ArmorTest, shouldDecodeFnvDamageResistanceAndThreshold)
+    {
+        ESM4::Armor::FalloutData dnam{};
+        dnam.damageResistanceHundredths = 1250;
+        dnam.modifiesVoice = 1;
+        dnam.damageThreshold = 20.f;
+        dnam.flags = 0x12345678;
+
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("TestCombatArmor"));
+        appendSubRecord(payload, "DNAM", dnam);
+        auto reader = makeFnvReader("ARMO", std::move(payload));
+
+        ESM4::Armor armor;
+        armor.load(*reader);
+
+        EXPECT_TRUE(armor.mHasFalloutData);
+        EXPECT_EQ(armor.mFalloutData.damageResistanceHundredths, 1250);
+        EXPECT_EQ(armor.mFalloutData.modifiesVoice, 1);
+        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 20.f);
+        EXPECT_EQ(armor.mFalloutData.flags, 0x12345678u);
+    }
+
+    TEST(Esm4ArmorTest, shouldNotInterpretNonFnvDnamLayoutsAsCombatArmor)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("TestAudioTemplate"));
+        appendSubRecord(payload, "DNAM", std::uint32_t{ 0x12345678 });
+        auto reader = makeFnvReader("ARMO", std::move(payload));
+
+        ESM4::Armor armor;
+        armor.load(*reader);
+
+        EXPECT_FALSE(armor.mHasFalloutData);
+        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 0.f);
+    }
 }

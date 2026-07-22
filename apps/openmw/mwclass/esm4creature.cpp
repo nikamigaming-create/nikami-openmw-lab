@@ -17,10 +17,12 @@
 #include <components/esm/attr.hpp>
 #include <components/esm/defs.hpp>
 #include <components/esm3/creaturestate.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadfurn.hpp>
@@ -45,8 +47,10 @@
 #include "../mwmechanics/character.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/drawstate.hpp"
+#include "../mwmechanics/greetingstate.hpp"
 #include "../mwmechanics/movement.hpp"
 
+#include "../mwworld/actionopen.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -56,12 +60,13 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "esm4base.hpp"
+#include "esm4container.hpp"
 #include "fnvactorstate.hpp"
 #include "fnvaipackage.hpp"
 
 namespace MWClass
 {
-    class ESM4CreatureContainerStore final : public MWWorld::ContainerStore
+    class ESM4CreatureContainerStore final : public ESM4ActorContainerStore
     {
         using PlannedItems = std::map<ESM::RefId, int>;
 
@@ -577,6 +582,7 @@ namespace MWClass
         std::unique_ptr<MWWorld::ContainerStore> mContainerStore
             = std::make_unique<ESM4CreatureContainerStore>();
         bool mContainerItemsRegistered = false;
+        bool mDeathItemsGenerated = false;
         bool mFnvAiSequenceInitialised = false;
 
         ESM4CreatureCustomData() = default;
@@ -586,6 +592,7 @@ namespace MWClass
             , mMovement(other.mMovement)
             , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
                                                     : std::make_unique<ESM4CreatureContainerStore>())
+            , mDeathItemsGenerated(other.mDeathItemsGenerated)
             , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
         {
         }
@@ -813,13 +820,15 @@ namespace MWClass
         return true;
     }
 
-    static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
-    {
-        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-        if (store == nullptr)
-            return nullptr;
+    static std::optional<std::vector<FnvCreaturePatrolPoint>> resolveFnvCreaturePatrolRoute(
+        const MWWorld::ESMStore& store, const ESM4::AIPackage& package, ESM::FormId placedActor,
+        const ESM::RefId& currentCell);
 
-        const auto& packageStore = store->get<ESM4::AIPackage>();
+    const ESM4::AIPackage* selectFnvCreaturePackage(const MWWorld::ESMStore& store,
+        const std::vector<ESM::FormId>& packageIds, float hour, ESM::FormId placedActor,
+        const ESM::RefId& currentCell)
+    {
+        const auto& packageStore = store.get<ESM4::AIPackage>();
         const ESM4::AIPackage* fallback = nullptr;
         for (ESM::FormId packageId : packageIds)
         {
@@ -843,6 +852,14 @@ namespace MWClass
             }
             if (!fnvPackageConditionsPass(*package))
                 continue;
+            if (package->mData.type == 13
+                && !resolveFnvCreaturePatrolRoute(store, *package, placedActor, currentCell))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped unresolved native creature patrol package "
+                                    << package->mEditorId << " placedActor=" << placedActor
+                                    << " currentCell=" << currentCell;
+                continue;
+            }
             if (fnvPackageCoversHour(*package, hour))
                 return package;
             if (fallback == nullptr && !fnvPackageHasExplicitTime(*package))
@@ -925,12 +942,45 @@ namespace MWClass
         return std::nullopt;
     }
 
+    static std::optional<std::vector<FnvCreaturePatrolPoint>> resolveFnvCreaturePatrolRoute(
+        const MWWorld::ESMStore& store, const ESM4::AIPackage& package, ESM::FormId placedActor,
+        const ESM::RefId& currentCell)
+    {
+        // Generic Fallout patrol PACKs often leave their target empty and put the first XLKR marker on the placed
+        // ACRE/ACHR instead. An explicit PACK target remains authoritative when both are present.
+        const ESM4::Reference* firstMarker = resolveFnvPackageReference(store, package);
+        if (firstMarker == nullptr)
+        {
+            ESM::FormId linkedMarker;
+            if (const ESM4::ActorCreature* acre = store.get<ESM4::ActorCreature>().searchStatic(placedActor))
+                linkedMarker = acre->mLinkedReference;
+            else if (const ESM4::ActorCharacter* achr
+                = store.get<ESM4::ActorCharacter>().searchStatic(placedActor))
+            {
+                linkedMarker = achr->mLinkedReference;
+            }
+
+            if (!linkedMarker.isZeroOrUnset())
+                firstMarker = store.get<ESM4::Reference>().search(linkedMarker);
+        }
+
+        const std::optional<std::vector<FnvCreaturePatrolPoint>> route = firstMarker != nullptr
+            ? collectFnvCreaturePatrolRoute(store, firstMarker->mId)
+            : std::nullopt;
+        const std::optional<ESM::RefId> currentWorldspace = getFnvPatrolWorldspace(store, currentCell);
+        if (!route || route->empty() || !currentWorldspace || route->front().mWorldspace != *currentWorldspace)
+            return std::nullopt;
+        return route;
+    }
+
     class FnvCreaturePatrolPackage final : public MWMechanics::TypedAiPackage<FnvCreaturePatrolPackage>
     {
     public:
-        FnvCreaturePatrolPackage(std::vector<FnvCreaturePatrolPoint> points, std::string packageName)
+        FnvCreaturePatrolPackage(std::vector<FnvCreaturePatrolPoint> points, std::string packageName,
+            FnvCreatureRouteEndBehavior endBehavior)
             : mPoints(std::move(points))
             , mPackageName(std::move(packageName))
+            , mEndBehavior(endBehavior)
         {
         }
 
@@ -938,6 +988,7 @@ namespace MWClass
         FnvCreaturePatrolPackage(const FnvCreaturePatrolPackage& other)
             : mPoints(other.mPoints)
             , mPackageName(other.mPackageName)
+            , mEndBehavior(other.mEndBehavior)
         {
         }
 
@@ -961,15 +1012,43 @@ namespace MWClass
             if (mPointIndex >= mPoints.size())
                 return true;
 
+            MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+            MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+            if (mechanics != nullptr
+                && fnvCreaturePatrolYieldsToPlayerTurn(
+                    stats.getMovementFlag(MWMechanics::CreatureStats::Flag_ForceJump),
+                    stats.getMovementFlag(MWMechanics::CreatureStats::Flag_ForceSneak),
+                    mechanics->isTurningToPlayer(actor),
+                    mechanics->getGreetingState(actor) == MWMechanics::GreetingState::InProgress))
+            {
+                return false;
+            }
+
             MWBase::World* world = MWBase::Environment::get().getWorld();
             if (world == nullptr)
                 return false;
 
-            MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
             stats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
             stats.setDrawState(MWMechanics::DrawState::Nothing);
 
             const FnvCreaturePatrolPoint& point = mPoints[mPointIndex];
+            // A completed editor-location package remains installed as a stable leash. This avoids completing and
+            // cloning a one-point repeating package every frame, while still returning the actor after displacement.
+            constexpr float sEditorLocationTolerance = 64.f;
+            if (mHolding)
+            {
+                const osg::Vec3f delta = point.mPosition - actor.getRefData().getPosition().asVec3();
+                if (delta.length2() <= sEditorLocationTolerance * sEditorLocationTolerance)
+                {
+                    stopMovement(actor);
+                    applyHeading(actor, point, world);
+                    return false;
+                }
+
+                mHolding = false;
+                reset();
+            }
+
             if (mWaiting)
             {
                 stopMovement(actor);
@@ -981,8 +1060,11 @@ namespace MWClass
             }
 
             constexpr float sPatrolArrivalTolerance = 8.f;
+            const float arrivalTolerance = mEndBehavior == FnvCreatureRouteEndBehavior::Hold
+                ? sEditorLocationTolerance
+                : sPatrolArrivalTolerance;
             if (!pathTo(actor, point.mPosition, duration, characterController.getSupportedMovementDirections(),
-                    sPatrolArrivalTolerance))
+                    arrivalTolerance))
             {
                 return false;
             }
@@ -1033,15 +1115,20 @@ namespace MWClass
             reset();
             mWaiting = false;
             mWaitElapsed = 0.f;
-            ++mPointIndex;
-            return mPointIndex >= mPoints.size();
+            const FnvCreatureRouteAdvance next
+                = fnvAdvanceCreatureRoute(mPointIndex, mPoints.size(), mEndBehavior);
+            mPointIndex = next.mPointIndex;
+            mHolding = next.mHolding;
+            return mPoints.empty();
         }
 
         std::vector<FnvCreaturePatrolPoint> mPoints;
         std::string mPackageName;
+        FnvCreatureRouteEndBehavior mEndBehavior;
         std::size_t mPointIndex = 0;
         float mWaitElapsed = 0.f;
         bool mWaiting = false;
+        bool mHolding = false;
     };
 
     static const char* getFnvPackageTypeName(int type)
@@ -1099,12 +1186,6 @@ namespace MWClass
         if (creature.mAIPackages.empty() || ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr)
             return;
 
-        bool usedHourOverride = false;
-        const float hour = getFnvPackageHour(usedHourOverride);
-        const ESM4::AIPackage* package = selectFnvPackage(creature.mAIPackages, hour);
-        if (package == nullptr)
-            return;
-
         MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
         if (!sequence.isEmpty())
             return;
@@ -1114,6 +1195,14 @@ namespace MWClass
             return;
 
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        const ESM::FormId placedId = ptr.getCellRef().getRefNum();
+        bool usedHourOverride = false;
+        const float hour = getFnvPackageHour(usedHourOverride);
+        const ESM4::AIPackage* package
+            = selectFnvCreaturePackage(*store, creature.mAIPackages, hour, placedId, currentCellId);
+        if (package == nullptr)
+            return;
+
         if (package->mData.type == 1 || package->mData.type == 7)
         {
             MWBase::World* world = MWBase::Environment::get().getWorld();
@@ -1142,26 +1231,21 @@ namespace MWClass
 
         if (package->mData.type == 13)
         {
-            const ESM4::Reference* firstMarker = resolveFnvPackageReference(*store, *package);
-            const std::optional<std::vector<FnvCreaturePatrolPoint>> route = firstMarker != nullptr
-                ? collectFnvCreaturePatrolRoute(*store, firstMarker->mId)
-                : std::nullopt;
-            const std::optional<ESM::RefId> currentWorldspace
-                = getFnvPatrolWorldspace(*store, currentCellId);
-            if (!route || route->empty() || !currentWorldspace
-                || route->front().mWorldspace != *currentWorldspace)
+            const std::optional<std::vector<FnvCreaturePatrolPoint>> route
+                = resolveFnvCreaturePatrolRoute(*store, *package, placedId, currentCellId);
+            if (!route)
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI patrol package "
-                                    << package->mEditorId << " startResolved=" << static_cast<bool>(firstMarker)
-                                    << " routeResolved=" << static_cast<bool>(route)
-                                    << " currentCell=" << currentCellId << " for " << creature.mEditorId;
+                                    << package->mEditorId << " currentCell=" << currentCellId
+                                    << " for " << creature.mEditorId;
                 return;
             }
 
             const std::size_t routeSize = route->size();
             const ESM::FormId firstPoint = route->front().mReference;
             const ESM::FormId lastPoint = route->back().mReference;
-            FnvCreaturePatrolPackage patrol(*route, package->mEditorId);
+            FnvCreaturePatrolPackage patrol(
+                *route, package->mEditorId, FnvCreatureRouteEndBehavior::Loop);
             sequence.stack(patrol, ptr, true);
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI patrol from FNV package "
                                 << package->mEditorId << " hour=" << hour << " override=" << usedHourOverride
@@ -1192,7 +1276,8 @@ namespace MWClass
                 std::vector<FnvCreaturePatrolPoint> route;
                 route.push_back(FnvCreaturePatrolPoint{ ptr.getCellRef().getRefNum(), currentCellId,
                     *currentWorldspace, editorPosition.asVec3(), editorPosition.rot[2], 0.f, true, false });
-                FnvCreaturePatrolPackage editorTravel(std::move(route), package->mEditorId);
+                FnvCreaturePatrolPackage editorTravel(
+                    std::move(route), package->mEditorId, FnvCreatureRouteEndBehavior::Hold);
                 sequence.stack(editorTravel, ptr, true);
                 Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI editor-location travel from FNV "
                                        "package "
@@ -1347,8 +1432,7 @@ namespace MWClass
             responsibility = aiRecord->mAIData.responsibility;
         }
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
-        stats.setAiSetting(MWMechanics::AiSetting::Fight,
-            std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr ? 0 : aggression);
+        stats.setAiSetting(MWMechanics::AiSetting::Fight, aggression);
         stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - confidence);
         stats.setAiSetting(MWMechanics::AiSetting::Alarm, responsibility);
 
@@ -1786,6 +1870,28 @@ namespace MWClass
         return getCustomData(ptr).mTemplates.mFactions;
     }
 
+    const ESM4::Creature* ESM4Creature::getStatsRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mTemplates.mStats;
+    }
+
+    const ESM4::BodyPartData* ESM4Creature::getBodyPartData(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return nullptr;
+
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::CreatureVisualTemplate visual
+            = ESM4::resolveCreatureVisualTemplate(getLegacyCreatureTemplateRecords(*base));
+        if (visual.mBodyParts == nullptr || visual.mBodyParts->mBodyParts.size() != 1)
+            return nullptr;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        return store != nullptr
+            ? store->get<ESM4::BodyPartData>().search(visual.mBodyParts->mBodyParts.front())
+            : nullptr;
+    }
+
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
@@ -1831,6 +1937,14 @@ namespace MWClass
         return ESM4Impl::getToolTipInfo(getName(ptr), count);
     }
 
+    std::unique_ptr<MWWorld::Action> ESM4Creature::activate(
+        const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
+    {
+        if (getCreatureStats(ptr).isDead())
+            return std::make_unique<MWWorld::ActionOpen>(ptr);
+        return Actor::activate(ptr, actor);
+    }
+
     MWMechanics::CreatureStats& ESM4Creature::getCreatureStats(const MWWorld::Ptr& ptr) const
     {
         ESM4CreatureCustomData& data = getCustomData(ptr);
@@ -1859,6 +1973,60 @@ namespace MWClass
         return store;
     }
 
+    bool ESM4Creature::materializeFnvDeathItem(
+        const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world)
+    {
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        if (!data.mCreatureStats.isDead() || data.mDeathItemsGenerated)
+            return false;
+
+        // The transition owns the roll. Even an empty result or malformed authored list must not be rolled again by
+        // later hits or corpse activation.
+        data.mDeathItemsGenerated = true;
+        const ESM4::Creature* traits = data.mTemplates.mTraits;
+        if (traits == nullptr || traits->mDeathItem.isZeroOrUnset())
+            return true;
+
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        MWWorld::ContainerStore& destination = ptr.getClass().getContainerStore(ptr);
+        const ESM::RefId deathItem(traits->mDeathItem);
+        std::string_view failure;
+        if (!materializeFnvDeathItemList(
+                destination, esmStore, deathItem, playerLevel, prng, world, failure))
+        {
+            Log(Debug::Warning) << "Unable to materialize FNV CREA death item " << deathItem << " for "
+                                << ESM::RefId(base->mId) << " reason=" << failure;
+            return false;
+        }
+        return true;
+    }
+
+    void ESM4Creature::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages,
+        ESM::RefId object, const MWWorld::Ptr& attacker, bool successful,
+        const MWMechanics::DamageSourceType sourceType) const
+    {
+        const bool wasDead = getCreatureStats(ptr).isDead();
+        Actor::onHit(ptr, damages, object, attacker, successful, sourceType);
+        if (wasDead || !getCreatureStats(ptr).isDead())
+            return;
+
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world == nullptr)
+        {
+            Log(Debug::Warning) << "Unable to materialize first-death FNV CREA loot without a runtime World";
+            return;
+        }
+        int playerLevel = ESM4Impl::sDefaultLevel;
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        if (!player.isEmpty() && player.getClass().isActor())
+            playerLevel = player.getClass().getCreatureStats(player).getLevel();
+        materializeFnvDeathItem(ptr, world->getPrng(), std::max(playerLevel, 1), world);
+    }
+
     void ESM4Creature::readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const
     {
         if (!state.mHasCustomState)
@@ -1879,7 +2047,14 @@ namespace MWClass
         data->mContainerStore->readState(creatureState.mInventory);
         data->mCreatureStats.readState(creatureState.mCreatureStats);
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered each retained saved item.
-        data->mFnvAiSequenceInitialised = true;
+        // A saved dead actor already contains the synchronous first-death result in its complete inventory. Treat it
+        // as consumed so loading or striking the corpse cannot roll the authored LVLI a second time.
+        data->mDeathItemsGenerated = data->mCreatureStats.isDead();
+        // Native saves commonly omit transient packages such as patrol and sandbox from an otherwise complete
+        // creature state.  An empty saved sequence therefore means "rebuild from the winning PACK/XLKR data", not
+        // "this actor intentionally has no AI".  Preserve non-empty serialized sequences exactly, while allowing
+        // getCreatureStats() to reconstruct authored packages for the empty case on first access.
+        data->mFnvAiSequenceInitialised = !data->mCreatureStats.getAiSequence().isEmpty();
         ptr.getRefData().setCustomData(std::move(data));
     }
 

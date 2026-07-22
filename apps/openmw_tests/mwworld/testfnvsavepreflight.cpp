@@ -80,6 +80,10 @@ namespace
         processInventory.mProcessLevel.mValue = 0;
         result.mPlayerProcessInventoryData = std::move(processInventory);
 
+        ESM4::FONVSavePlayerMobileObjectProcessState processState;
+        processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        result.mPlayerMobileObjectProcessState = std::move(processState);
+
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
         camera.mFirstPersonMode.mValue = 0;
         camera.mFirstPersonModelFov.mValue = 55.f;

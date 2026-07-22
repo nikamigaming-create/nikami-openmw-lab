@@ -1,6 +1,9 @@
 #ifndef GAME_MWWORLD_INVENTORYSTORE_H
 #define GAME_MWWORLD_INVENTORYSTORE_H
 
+#include <map>
+#include <optional>
+
 #include "containerstore.hpp"
 
 namespace ESM
@@ -73,6 +76,9 @@ namespace MWWorld
         // selected magic item (for using enchantments of type "Cast once" or "Cast when used")
         ContainerStoreIterator mSelectedEnchantItem;
 
+        // Fallout weapons can select one AMMO from an authored FLST. TES3 inventories leave this empty.
+        std::map<ESM::RefId, ESM::RefId> mFalloutAmmoSelections;
+
         void copySlots(const InventoryStore& store);
 
         void initSlots(TSlots& slots);
@@ -127,6 +133,12 @@ namespace MWWorld
         ContainerStoreIterator getSelectedEnchantItem();
         ///< @return selected magic item (for using enchantments of type "Cast once" or "Cast when used")
         /// \note if no item selected, return end() iterator
+
+        void setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo);
+        std::optional<ESM::RefId> getFalloutAmmoSelection(const ESM::RefId& weapon) const;
+
+        void writeState(ESM::InventoryState& state) const override;
+        void readState(const ESM::InventoryState& state) override;
 
         ContainerStoreIterator getSlot(int slot);
         ConstContainerStoreIterator getSlot(int slot) const;

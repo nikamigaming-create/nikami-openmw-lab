@@ -1,7 +1,9 @@
 #include "creaturestats.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <type_traits>
+#include <utility>
 
 #include <components/esm3/creaturestats.hpp>
 #include <components/esm3/esmreader.hpp>
@@ -17,6 +19,94 @@
 
 namespace MWMechanics
 {
+    namespace
+    {
+        bool isValidFalloutActiveEffect(const ESM::FalloutActiveEffect& effect)
+        {
+            if (effect.mSpell.empty() || effect.mBaseEffect.empty() || !std::isfinite(effect.mMagnitude)
+                || !std::isfinite(effect.mDuration) || !std::isfinite(effect.mTimeLeft) || effect.mDuration <= 0.f
+                || effect.mTimeLeft <= 0.f || effect.mTimeLeft > effect.mDuration)
+                return false;
+            switch (effect.mKind)
+            {
+                case ESM::FalloutActiveEffectKind::HealthDamage:
+                    return effect.mMagnitude > 0.f && effect.mActorValue == 16;
+                case ESM::FalloutActiveEffectKind::ActorValueModifier:
+                    return effect.mMagnitude != 0.f && effect.mActorValue >= 0;
+                case ESM::FalloutActiveEffectKind::Paralysis:
+                    return effect.mMagnitude > 0.f;
+            }
+            return false;
+        }
+    }
+
+    bool addFalloutActiveEffect(
+        std::vector<ESM::FalloutActiveEffect>& effects, ESM::FalloutActiveEffect effect)
+    {
+        if (!isValidFalloutActiveEffect(effect))
+            return false;
+        effects.push_back(std::move(effect));
+        return true;
+    }
+
+    FalloutActiveEffectsAdvance advanceFalloutActiveEffects(
+        std::vector<ESM::FalloutActiveEffect>& effects, float duration)
+    {
+        FalloutActiveEffectsAdvance result;
+        if (!std::isfinite(duration) || duration < 0.f)
+        {
+            result.mRejected = effects.size();
+            return result;
+        }
+
+        for (auto effect = effects.begin(); effect != effects.end();)
+        {
+            if (!isValidFalloutActiveEffect(*effect))
+            {
+                effect = effects.erase(effect);
+                ++result.mRejected;
+                continue;
+            }
+
+            const float elapsed = std::min(duration, effect->mTimeLeft);
+            if (effect->mKind == ESM::FalloutActiveEffectKind::HealthDamage)
+                result.mHealthDamage += effect->mMagnitude * elapsed;
+            effect->mTimeLeft = std::max(0.f, effect->mTimeLeft - duration);
+            if (effect->mTimeLeft <= 0.f)
+            {
+                effect = effects.erase(effect);
+                ++result.mExpired;
+            }
+            else
+                ++effect;
+        }
+        if (!std::isfinite(result.mHealthDamage))
+        {
+            result.mHealthDamage = 0.f;
+            ++result.mRejected;
+        }
+        return result;
+    }
+
+    float getFalloutActorValueModifier(
+        const std::vector<ESM::FalloutActiveEffect>& effects, std::int32_t actorValue)
+    {
+        float result = 0.f;
+        for (const ESM::FalloutActiveEffect& effect : effects)
+            if (effect.mKind == ESM::FalloutActiveEffectKind::ActorValueModifier
+                && effect.mActorValue == actorValue && effect.mTimeLeft > 0.f && std::isfinite(effect.mMagnitude))
+                result += effect.mMagnitude;
+        return std::isfinite(result) ? result : 0.f;
+    }
+
+    bool hasFalloutParalysis(const std::vector<ESM::FalloutActiveEffect>& effects)
+    {
+        return std::any_of(effects.begin(), effects.end(), [](const auto& effect) {
+            return effect.mKind == ESM::FalloutActiveEffectKind::Paralysis && effect.mMagnitude > 0.f
+                && effect.mTimeLeft > 0.f;
+        });
+    }
+
     int CreatureStats::sActorId = 0;
 
     CreatureStats::CreatureStats()
@@ -105,6 +195,44 @@ namespace MWMechanics
             throw std::runtime_error("dynamic stat index is out of range");
         }
         return mDynamic[index];
+    }
+
+    float CreatureStats::getFalloutLimbDamage(std::int8_t actorValue) const
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size()))
+            return 0.f;
+        return mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)];
+    }
+
+    bool CreatureStats::setFalloutLimbDamage(std::int8_t actorValue, float damage)
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size())
+            || !std::isfinite(damage) || damage < 0.f)
+            return false;
+        mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)] = damage;
+        return true;
+    }
+
+    bool CreatureStats::addFalloutActiveEffect(ESM::FalloutActiveEffect effect)
+    {
+        return MWMechanics::addFalloutActiveEffect(mFalloutActiveEffects, std::move(effect));
+    }
+
+    FalloutActiveEffectsAdvance CreatureStats::advanceFalloutActiveEffects(float duration)
+    {
+        return MWMechanics::advanceFalloutActiveEffects(mFalloutActiveEffects, duration);
+    }
+
+    float CreatureStats::getFalloutActorValueModifier(std::int32_t actorValue) const
+    {
+        return MWMechanics::getFalloutActorValueModifier(mFalloutActiveEffects, actorValue);
+    }
+
+    bool CreatureStats::isFalloutParalyzed() const
+    {
+        return hasFalloutParalysis(mFalloutActiveEffects);
     }
 
     Spells& CreatureStats::getSpells()
@@ -212,7 +340,8 @@ namespace MWMechanics
         if (world->getGodModeState() && this == &player.getClass().getCreatureStats(player))
             return false;
 
-        return mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
+        return isFalloutParalyzed()
+            || mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
     }
 
     bool CreatureStats::isDead() const
@@ -557,6 +686,8 @@ namespace MWMechanics
             mAiSettings[i].writeState(state.mAiSettings[i]);
 
         state.mMissingACDT = false;
+        state.mFalloutLimbDamage = mFalloutLimbDamage;
+        state.mFalloutActiveEffects = mFalloutActiveEffects;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -611,6 +742,8 @@ namespace MWMechanics
                 mAiSettings[i].readState(state.mAiSettings[i]);
         if (state.mRecalcDynamicStats)
             recalculateMagicka();
+        mFalloutLimbDamage = state.mFalloutLimbDamage;
+        mFalloutActiveEffects = state.mFalloutActiveEffects;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)

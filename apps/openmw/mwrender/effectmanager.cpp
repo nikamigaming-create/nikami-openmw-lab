@@ -6,6 +6,8 @@
 #include <components/resource/scenemanager.hpp>
 
 #include <components/sceneutil/controller.hpp>
+#include <components/sceneutil/lightcommon.hpp>
+#include <components/sceneutil/lightutil.hpp>
 
 #include "animation.hpp"
 #include "util.hpp"
@@ -28,7 +30,8 @@ namespace MWRender
     }
 
     void EffectManager::addEffect(VFS::Path::NormalizedView model, std::string_view textureOverride,
-        const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight)
+        const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM4::Light* light, bool isExterior)
     {
         osg::ref_ptr<osg::Node> node = mResourceSystem->getSceneManager()->getInstance(model);
 
@@ -45,6 +48,8 @@ namespace MWRender
         trans->setPosition(worldPosition);
         trans->setScale(osg::Vec3f(scale, scale, scale));
         trans->addChild(node);
+        if (light != nullptr)
+            SceneUtil::addLight(trans, SceneUtil::LightCommon(*light), Mask_Lighting, isExterior);
 
         effect.mTransform = trans;
 

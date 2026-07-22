@@ -1,9 +1,11 @@
 #include "windowmanagerimp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <thread>
@@ -68,6 +70,10 @@
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwphysics/raycasting.hpp"
+
+#include "../mwrender/camera.hpp"
+#include "../mwrender/renderingmanager.hpp"
 #include "../mwrender/vismask.hpp"
 
 #include "../mwworld/cellstore.hpp"
@@ -141,6 +147,19 @@
 
 namespace MWGui
 {
+    struct FalloutDialogueCameraState
+    {
+        MWRender::Camera::Mode mMode = MWRender::Camera::Mode::FirstPerson;
+        float mPitch = 0.f;
+        float mYaw = 0.f;
+        float mRoll = 0.f;
+        float mFieldOfView = 0.f;
+        bool mFieldOfViewWasOverridden = false;
+        bool mChangedFieldOfView = false;
+        MWWorld::Ptr mTarget;
+        osg::Vec3f mCameraPosition;
+    };
+
     namespace
     {
         Settings::SettingValue<bool>* findHiddenSetting(GuiWindow window)
@@ -1303,6 +1322,7 @@ namespace MWGui
     void WindowManager::update(float frameDuration)
     {
         handleScheduledMessageBoxes();
+        updateFalloutDialogueCamera();
 
         bool gameRunning
             = MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame;
@@ -1692,6 +1712,181 @@ namespace MWGui
         mCursorManager->cursorChanged(name);
     }
 
+    void WindowManager::beginFalloutDialogueCamera(const MWWorld::Ptr& target)
+    {
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr || VR::getVR() || target.isEmpty() || !target.getClass().isActor()
+            || world->getStore().getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return;
+
+        MWWorld::Ptr player = world->getPlayerPtr();
+        MWRender::Camera* const camera = world->getCamera();
+        MWRender::RenderingManager* const rendering = world->getRenderingManager();
+        if (camera == nullptr || rendering == nullptr || player.isEmpty() || !player.isInCell() || !target.isInCell()
+            || player.getCell() != target.getCell() || camera->getMode() == MWRender::Camera::Mode::VR)
+            return;
+
+        // A second dialogue target may replace the first without returning to gameplay in between. Restore the
+        // original player camera before deriving the next target's view so offsets cannot accumulate.
+        endFalloutDialogueCamera();
+
+        auto actorFocus = [&](const MWWorld::Ptr& actor) {
+            osg::Vec3f focus = world->getActorHeadTransform(actor).getTrans();
+            const osg::Vec3f actorPosition = actor.getRefData().getPosition().asVec3();
+            if ((focus - actorPosition).length2() <= 16.f * 16.f)
+            {
+                const osg::Vec3f halfExtents = world->getHalfExtents(actor, true);
+                focus.z() += std::max(64.f, halfExtents.z() * 2.f * 0.85f);
+            }
+            return focus;
+        };
+
+        const osg::Vec3f focus = actorFocus(target);
+        const osg::Vec3f playerFocus = actorFocus(player);
+        if (!std::isfinite(focus.x()) || !std::isfinite(focus.y()) || !std::isfinite(focus.z()))
+            return;
+
+        osg::Vec3f outward = playerFocus - focus;
+        const float horizontal = std::hypot(outward.x(), outward.y());
+        if (horizontal < 1.f)
+            return;
+        // Keep the close-up near eye level even when the player stands on steep terrain above or below the actor.
+        outward.z() = std::clamp(outward.z(), -horizontal * 0.35f, horizontal * 0.35f);
+        outward.normalize();
+
+        constexpr float desiredDistance = 72.f;
+        constexpr float surfaceClearance = 24.f;
+        osg::Vec3f cameraPosition = focus + outward * desiredDistance;
+        bool rayClamped = false;
+        float obstructionDistance = desiredDistance;
+        MWPhysics::RayCastingResult hit{};
+        const std::array<MWWorld::Ptr, 1> ignored{ target };
+        if (world->castRenderingRay(hit, focus, cameraPosition, true, true, ignored))
+        {
+            obstructionDistance = (hit.mHitPos - focus).length();
+            const float clampedDistance = obstructionDistance - surfaceClearance;
+            // A wall this close leaves no valid near-plane-safe face camera. Keep the player's normal view instead
+            // of crossing geometry or photographing the inside of the actor's head.
+            if (clampedDistance < 32.f)
+                return;
+            cameraPosition = focus + outward * clampedDistance;
+            rayClamped = true;
+        }
+
+        auto previous = std::make_unique<FalloutDialogueCameraState>();
+        previous->mMode = camera->getMode();
+        previous->mPitch = camera->getPitch();
+        previous->mYaw = camera->getYaw();
+        previous->mRoll = camera->getRoll();
+        previous->mFieldOfView = rendering->getFieldOfView();
+        previous->mFieldOfViewWasOverridden = rendering->isFieldOfViewOverridden();
+        previous->mTarget = target;
+        previous->mCameraPosition = cameraPosition;
+
+        camera->setMode(MWRender::Camera::Mode::Static, true);
+        camera->setStaticPosition(cameraPosition);
+        const osg::Vec3f aimDelta = focus - cameraPosition;
+        const float aimHorizontal = std::hypot(aimDelta.x(), aimDelta.y());
+        camera->setPitch(std::atan2(aimDelta.z(), aimHorizontal), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+        camera->setRoll(0.f);
+
+        // The save-derived first-person projection is also the closest available retail dialogue zoom contract.
+        // Explicit projection-oracle captures retain ownership of their matrix and are never overridden here.
+        if (!rendering->isProjectionMatrixOverridden())
+        {
+            const float firstPersonFov = Settings::camera().mFirstPersonFieldOfView;
+            constexpr float nativeSaveDialogueFov = 42.653862f;
+            const float dialogueFov = std::clamp(firstPersonFov, 38.f, nativeSaveDialogueFov);
+            rendering->overrideFieldOfView(dialogueFov);
+            previous->mChangedFieldOfView = true;
+        }
+
+        mFalloutDialogueCamera = std::move(previous);
+        Log(Debug::Info) << "FNV dialogue camera: target=" << target.toString() << " focus=(" << focus.x() << ","
+                         << focus.y() << "," << focus.z() << ") camera=(" << cameraPosition.x() << ","
+                         << cameraPosition.y() << "," << cameraPosition.z() << ") distance="
+                         << (cameraPosition - focus).length() << " rayClamped=" << (rayClamped ? 1 : 0)
+                         << " obstructionDistance=" << obstructionDistance
+                         << " fov=" << rendering->getFieldOfView();
+    }
+
+    void WindowManager::updateFalloutDialogueCamera()
+    {
+        if (!mFalloutDialogueCamera)
+            return;
+
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        const MWWorld::Ptr& target = mFalloutDialogueCamera->mTarget;
+        if (world == nullptr || VR::getVR() || !containsMode(GM_Dialogue) || target.isEmpty() || !target.isInCell()
+            || target.getCellRef().getCount() <= 0 || target.mRef->isDeleted())
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        MWRender::Camera* const camera = world->getCamera();
+        if (camera == nullptr || camera->getMode() != MWRender::Camera::Mode::Static)
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        osg::Vec3f focus = world->getActorHeadTransform(target).getTrans();
+        const osg::Vec3f actorPosition = target.getRefData().getPosition().asVec3();
+        if ((focus - actorPosition).length2() <= 16.f * 16.f)
+        {
+            const osg::Vec3f halfExtents = world->getHalfExtents(target, true);
+            focus.z() += std::max(64.f, halfExtents.z() * 2.f * 0.85f);
+        }
+        if (!std::isfinite(focus.x()) || !std::isfinite(focus.y()) || !std::isfinite(focus.z()))
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        camera->setStaticPosition(mFalloutDialogueCamera->mCameraPosition);
+        const osg::Vec3f aimDelta = focus - mFalloutDialogueCamera->mCameraPosition;
+        const float horizontal = std::hypot(aimDelta.x(), aimDelta.y());
+        if (horizontal < 1.f)
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+        camera->setPitch(std::atan2(aimDelta.z(), horizontal), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+    }
+
+    void WindowManager::endFalloutDialogueCamera()
+    {
+        if (!mFalloutDialogueCamera)
+            return;
+
+        std::unique_ptr<FalloutDialogueCameraState> previous = std::move(mFalloutDialogueCamera);
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return;
+
+        if (MWRender::Camera* const camera = world->getCamera())
+        {
+            camera->setMode(previous->mMode, true);
+            camera->setPitch(previous->mPitch, true);
+            camera->setYaw(previous->mYaw, true);
+            camera->setRoll(previous->mRoll);
+        }
+        if (previous->mChangedFieldOfView)
+        {
+            if (MWRender::RenderingManager* const rendering = world->getRenderingManager())
+            {
+                if (previous->mFieldOfViewWasOverridden)
+                    rendering->overrideFieldOfView(previous->mFieldOfView);
+                else
+                    rendering->resetFieldOfView();
+            }
+        }
+        Log(Debug::Info) << "FNV dialogue camera: restored player view";
+    }
+
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
@@ -1748,6 +1943,9 @@ namespace MWGui
         updateVisible();
         MWBase::Environment::get().getLuaManager()->uiModeChanged(arg);
 
+        if (mode == GM_Dialogue)
+            beginFalloutDialogueCamera(arg);
+
         if (Settings::gui().mControllerMenus)
         {
             if (mode == GM_Container)
@@ -1800,6 +1998,7 @@ namespace MWGui
 //## VR_PATCH END
     void WindowManager::popGuiMode(bool forceExit)
     {
+        bool removedDialogue = false;
         if (mDragAndDrop && mDragAndDrop->mIsOnDragAndDrop)
         {
             mDragAndDrop->finish();
@@ -1820,6 +2019,7 @@ namespace MWGui
                 mGuiModes.pop_back();
                 mGuiModeStates[mode].update(false);
                 MWBase::Environment::get().getLuaManager()->uiModeChanged(MWWorld::Ptr());
+                removedDialogue = mode == GM_Dialogue;
             }
         }
 
@@ -1831,6 +2031,9 @@ namespace MWGui
         }
 
         updateVisible();
+
+        if (removedDialogue && !containsMode(GM_Dialogue))
+            endFalloutDialogueCamera();
 
         // To make sure that console window get focus again
         if (mConsole && mConsole->isVisible())
@@ -1853,17 +2056,23 @@ namespace MWGui
             return;
         }
 
+        bool removedDialogue = false;
         std::vector<GuiMode>::iterator it = mGuiModes.begin();
         while (it != mGuiModes.end())
         {
             if (*it == mode)
+            {
+                removedDialogue = removedDialogue || mode == GM_Dialogue;
                 it = mGuiModes.erase(it);
+            }
             else
                 ++it;
         }
 
         updateVisible();
         MWBase::Environment::get().getLuaManager()->uiModeChanged(MWWorld::Ptr());
+        if (removedDialogue && !containsMode(GM_Dialogue))
+            endFalloutDialogueCamera();
     }
 
     void WindowManager::goToJail(int days)
@@ -1926,7 +2135,7 @@ namespace MWGui
         if (player->getDrawState() == MWMechanics::DrawState::Spell)
             player->setDrawState(MWMechanics::DrawState::Nothing);
 
-        mSpellWindow->setTitle("#{Interface:None}");
+        mSpellWindow->setTitle(isFalloutContentLoaded() ? "DATA / QUESTS" : "#{Interface:None}");
     }
 
     void WindowManager::unsetSelectedWeapon()
@@ -2142,6 +2351,11 @@ namespace MWGui
     void WindowManager::activateQuickKey(int index)
     {
         mQuickKeysMenu->activateQuickKey(index);
+    }
+
+    bool WindowManager::setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item)
+    {
+        return mQuickKeysMenu->setFalloutSaveQuickKey(index, item);
     }
 
     bool WindowManager::setHudVisibility(bool show)

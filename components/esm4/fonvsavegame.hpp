@@ -28,8 +28,14 @@ namespace ESM4
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
+    inline constexpr std::uint8_t sFONVExtraHotkeyType = 0x4a;
+    inline constexpr std::uint8_t sFONVExtraAmmoType = 0x6e;
+    inline constexpr std::uint8_t sFONVExtraPackageStartLocationType = 0x18;
+    inline constexpr std::uint8_t sFONVExtraFollowerArrayType = 0x1d;
     inline constexpr std::uint8_t sFONVExtraFactionChangesType = 0x5e;
+    inline constexpr std::uint8_t sFONVExtraActorCauseType = 0x60;
     inline constexpr std::uint8_t sFONVExtraEncounterZoneType = 0x74;
+    inline constexpr std::uint8_t sFONVExtraSayToTopicInfoType = 0x75;
 
     struct FONVSaveRange
     {
@@ -201,24 +207,36 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // Only the engine-authored ExtraFactionChanges and ExtraEncounterZone layouts are decoded by this slice.
+    // ChangedREFR extra-data layouts used by retail player saves. Fields retain the xEdit names where the runtime
+    // semantics are not established; every typed payload remains independently range-addressable through mRaw.
     struct FONVSavePlayerActorExtraData
     {
         FONVSaveField<std::uint8_t> mType;
+        std::optional<FONVSaveResolvedReferenceId> mPackageStartCellOrWorldspace;
+        std::optional<std::array<FONVSaveField<float>, 3>> mPackageStartPosition;
+        std::optional<FONVSaveField<std::uint32_t>> mPackageStartUnknown;
+        std::optional<FONVSaveField<std::uint32_t>> mFollowerCount;
+        std::vector<FONVSaveResolvedReferenceId> mFollowers;
         std::optional<FONVSaveField<std::uint32_t>> mFactionChangeCount;
         std::vector<FONVSavePlayerFactionChange> mFactionChanges;
+        std::optional<FONVSaveField<std::uint32_t>> mActorCause;
         std::optional<FONVSaveResolvedReferenceId> mEncounterZone;
+        std::optional<FONVSaveResolvedReferenceId> mSayToTopic;
+        std::optional<FONVSaveResolvedReferenceId> mSayToTopicInfo;
+        std::optional<FONVSaveField<std::uint8_t>> mSayToUnknown;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
     };
 
-    // The type byte is authoritative. Payloads are populated only for ExtraCount and ExtraHealth; ExtraWorn has
-    // no payload bytes and is represented solely by its type.
+    // The type byte is authoritative. ExtraWorn has no payload bytes and is represented solely by its type.
     struct FONVSavePlayerInventoryExtraData
     {
         FONVSaveField<std::uint8_t> mType;
         std::optional<FONVSaveField<std::int16_t>> mCount;
         std::optional<FONVSaveField<float>> mHealth;
+        std::optional<FONVSaveField<std::uint8_t>> mHotkey;
+        std::optional<FONVSaveResolvedReferenceId> mAmmo;
+        std::optional<FONVSaveField<std::int32_t>> mAmmoCount;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
     };
@@ -241,11 +259,13 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // ChangedMobileObject process level, ChangedREFR actor extras, then ChangedInventory. Array counts retain their
-    // raw U6to30 encodings; the raw continuation is handed to the following MobileObject process-state parser.
+    // ChangedMobileObject process level, optional CHANGE_REFR_SCALE, ChangedREFR actor extras, then
+    // ChangedInventory. Array counts retain their raw U6to30 encodings; the raw continuation is handed to the
+    // following MobileObject process-state parser.
     struct FONVSavePlayerProcessInventoryData
     {
         FONVSaveField<std::int8_t> mProcessLevel;
+        std::optional<FONVSaveField<float>> mReferenceScale;
         FONVSaveField<std::uint32_t> mActorExtraDataCount;
         std::vector<FONVSavePlayerActorExtraData> mActorExtraData;
         FONVSaveField<std::uint32_t> mInventoryEntryCount;
@@ -347,7 +367,9 @@ namespace ESM4
 
     struct FONVSavePlayerMiddleHighProcessState
     {
-        std::array<FONVSaveField<std::uint8_t>, 3> mUnk134_135_168;
+        FONVSaveField<std::uint8_t> mUnk134;
+        FONVSaveField<std::uint8_t> mWeaponOut; // MiddleHighProcess::isWeaponOut at runtime offset 0x135.
+        FONVSaveField<std::uint8_t> mUnk168;
         std::array<FONVSaveField<std::uint32_t>, 3> mUnk170_174_108;
         FONVSaveField<std::uint8_t> mUnk1DA;
         FONVSavePlayerProcessVector3 mCoords0E4;

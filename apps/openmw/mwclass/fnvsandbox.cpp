@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string_view>
 
 #include <components/esm4/common.hpp>
 #include <components/esm4/loadanio.hpp>
@@ -32,6 +33,15 @@ namespace
         VFS::Path::normalizeFilenameInPlace(model);
         if (!model.empty() && model.rfind("meshes/", 0) != 0)
             model = "meshes/" + model;
+        return model;
+    }
+
+    std::string normalizeMeshRecordModel(std::string model)
+    {
+        VFS::Path::normalizeFilenameInPlace(model);
+        static constexpr std::string_view sMeshPrefix = "meshes/";
+        if (model.rfind(sMeshPrefix, 0) == 0)
+            model.erase(0, sMeshPrefix.size());
         return model;
     }
 
@@ -73,8 +83,11 @@ namespace
                 if (animatedObject != nullptr && !animatedObject->mIdleAnim.isZeroOrUnset()
                     && !animatedObject->mModel.empty())
                 {
+                    // insertAttachedPart consumes an ESM-relative model and applies the VFS "meshes/" prefix.
+                    // Keeping the already-corrected IDLE source convention here produced
+                    // "meshes/meshes/animobjects/..." and loaded marker_error instead of the authored chore prop.
                     animatedObjects.try_emplace(
-                        animatedObject->mIdleAnim, normalizeMeshModel(animatedObject->mModel));
+                        animatedObject->mIdleAnim, normalizeMeshRecordModel(animatedObject->mModel));
                 }
             }
 

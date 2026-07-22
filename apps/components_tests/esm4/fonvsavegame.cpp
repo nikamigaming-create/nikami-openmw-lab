@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <span>
 #include <stdexcept>
@@ -236,34 +237,59 @@ namespace
         return result;
     }
 
-    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 82;
+    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 97;
 
-    std::vector<std::uint8_t> makePlayerProcessInventoryData()
+    std::vector<std::uint8_t> makePlayerProcessInventoryData(std::optional<float> referenceScale = std::nullopt,
+        std::optional<std::uint32_t> actorExtraDataCount = std::nullopt,
+        std::span<const std::uint8_t> actorExtraData = {})
     {
         std::vector<std::uint8_t> result;
         appendU8(result, 0);
         appendDelimiter(result);
 
-        appendPackedCount(result, 2);
-        appendU8(result, ESM4::sFONVExtraFactionChangesType);
-        appendDelimiter(result);
-        appendPackedCount(result, 1);
-        appendDelimitedReferenceId(result, 0x400111);
-        appendU8(result, 1);
-        appendDelimiter(result);
-        appendU8(result, ESM4::sFONVExtraEncounterZoneType);
-        appendDelimiter(result);
-        appendDelimitedReferenceId(result, 0x400222);
+        if (referenceScale.has_value())
+        {
+            appendF32(result, *referenceScale);
+            appendDelimiter(result);
+        }
+
+        if (actorExtraDataCount.has_value())
+        {
+            appendPackedCount(result, *actorExtraDataCount);
+            result.insert(result.end(), actorExtraData.begin(), actorExtraData.end());
+        }
+        else
+        {
+            appendPackedCount(result, 2);
+            appendU8(result, ESM4::sFONVExtraFactionChangesType);
+            appendDelimiter(result);
+            appendPackedCount(result, 1);
+            appendDelimitedReferenceId(result, 0x400111);
+            appendU8(result, 1);
+            appendDelimiter(result);
+            appendU8(result, ESM4::sFONVExtraEncounterZoneType);
+            appendDelimiter(result);
+            appendDelimitedReferenceId(result, 0x400222);
+        }
 
         appendPackedCount(result, 3);
         appendDelimitedReferenceId(result, 0x400333);
         appendU32(result, 5);
         appendDelimiter(result);
         appendPackedCount(result, 1);
-        appendPackedCount(result, 1);
+        appendPackedCount(result, 3);
         appendU8(result, ESM4::sFONVExtraHealthType);
         appendDelimiter(result);
         appendF32(result, 75.f);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraHotkeyType);
+        appendDelimiter(result);
+        appendU8(result, 6);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraAmmoType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400444);
+        appendU32(result, 9);
         appendDelimiter(result);
 
         appendDelimitedReferenceId(result, 0x400334);
@@ -288,8 +314,57 @@ namespace
         appendF32(result, 25.f);
         appendDelimiter(result);
 
-        if (result.size() != sSyntheticPlayerProcessInventoryDataBytes)
+        if (!referenceScale.has_value() && !actorExtraDataCount.has_value()
+            && result.size() != sSyntheticPlayerProcessInventoryDataBytes)
             throw std::logic_error("synthetic player process/inventory data has the wrong size");
+        return result;
+    }
+
+    std::vector<std::uint8_t> makeSave213PlayerActorExtraData()
+    {
+        std::vector<std::uint8_t> result;
+
+        appendU8(result, ESM4::sFONVExtraPackageStartLocationType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400111);
+        appendF32(result, -16259.322f);
+        appendF32(result, -5998.828f);
+        appendF32(result, 6393.356f);
+        appendDelimiter(result);
+        appendU32(result, 0x12345678u);
+        appendDelimiter(result);
+
+        appendU8(result, ESM4::sFONVExtraFollowerArrayType);
+        appendDelimiter(result);
+        appendPackedCount(result, 2);
+        appendDelimitedReferenceId(result, 0x400112);
+        appendDelimitedReferenceId(result, 0x800113);
+
+        appendU8(result, ESM4::sFONVExtraFactionChangesType);
+        appendDelimiter(result);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400114);
+        appendU8(result, std::bit_cast<std::uint8_t>(std::int8_t{ -2 }));
+        appendDelimiter(result);
+
+        appendU8(result, ESM4::sFONVExtraActorCauseType);
+        appendDelimiter(result);
+        appendU32(result, 0xaabbccddu);
+        appendDelimiter(result);
+
+        appendU8(result, ESM4::sFONVExtraEncounterZoneType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400115);
+
+        appendU8(result, ESM4::sFONVExtraSayToTopicInfoType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400116);
+        appendDelimitedReferenceId(result, 0x800117);
+        appendU8(result, 0x42);
+        appendDelimiter(result);
+
+        if (result.size() != 71)
+            throw std::logic_error("synthetic Save 213 player actor extra-data has the wrong size");
         return result;
     }
 
@@ -901,7 +976,10 @@ namespace
         std::size_t playerCharacterListsStateBytes = ESM4::sFONVPlayerCharacterListsStateBytes,
         std::size_t playerCharacterMagicTargetStateBytes
             = ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
-        std::size_t playerCharacterFinalStateBytes = ESM4::sFONVPlayerCharacterFinalStateBytes)
+        std::size_t playerCharacterFinalStateBytes = ESM4::sFONVPlayerCharacterFinalStateBytes,
+        std::optional<float> playerReferenceScale = std::nullopt,
+        std::optional<std::uint32_t> playerActorExtraDataCount = std::nullopt,
+        std::span<const std::uint8_t> playerActorExtraData = {})
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -978,14 +1056,19 @@ namespace
             throw std::logic_error("synthetic player actor-value byte count is too large");
         changedPayload1.insert(changedPayload1.end(), playerActorValues.begin(),
             playerActorValues.begin() + static_cast<std::ptrdiff_t>(playerActorValueBytes));
-        const std::vector<std::uint8_t> playerProcessInventory = makePlayerProcessInventoryData();
-        if (playerProcessInventoryBytes > playerProcessInventory.size())
+        const std::vector<std::uint8_t> playerProcessInventory
+            = makePlayerProcessInventoryData(playerReferenceScale, playerActorExtraDataCount, playerActorExtraData);
+        const std::size_t actualPlayerProcessInventoryBytes
+            = playerReferenceScale.has_value() || playerActorExtraDataCount.has_value()
+            ? playerProcessInventory.size()
+            : playerProcessInventoryBytes;
+        if (actualPlayerProcessInventoryBytes > playerProcessInventory.size())
             throw std::logic_error("synthetic player process/inventory byte count is too large");
         changedPayload1.insert(changedPayload1.end(), playerProcessInventory.begin(),
-            playerProcessInventory.begin() + static_cast<std::ptrdiff_t>(playerProcessInventoryBytes));
+            playerProcessInventory.begin() + static_cast<std::ptrdiff_t>(actualPlayerProcessInventoryBytes));
         const std::vector<std::uint8_t> playerMobileObjectProcessState = makePlayerMobileObjectProcessState();
         const std::size_t actualPlayerMobileObjectProcessStateBytes
-            = playerProcessInventoryBytes == sSyntheticPlayerProcessInventoryDataBytes
+            = actualPlayerProcessInventoryBytes == playerProcessInventory.size()
             ? playerMobileObjectProcessStateBytes
             : 0;
         if (actualPlayerMobileObjectProcessStateBytes > playerMobileObjectProcessState.size())
@@ -1060,8 +1143,10 @@ namespace
             appendU8(changedPayload1, 0xaa);
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
+        const std::uint32_t playerChangeFlags
+            = 0xb0000022u | (playerReferenceScale.has_value() ? 0x00000010u : 0u);
         const ChangedFormOffsets changed1 = appendChangedForm(
-            changedForms, { 0, 0, 1 }, 0xb0000022, 1, 27, 2, changedPayload1);
+            changedForms, { 0, 0, 1 }, playerChangeFlags, 1, 27, 2, changedPayload1);
         const ChangedFormOffsets changed2 = appendChangedForm(
             changedForms, { 0x40, 0x12, 0x34 }, 0x90abcdef, 2, 26, 2, changedPayload2);
         const ChangedFormOffsets changed3 = appendChangedForm(
@@ -1127,7 +1212,7 @@ namespace
         result.mPlayerProcessInventoryBegin
             = result.mChangedFormPayloads[0] + 28 + playerActorValueBytes;
         result.mPlayerMobileObjectProcessStateBegin
-            = result.mPlayerProcessInventoryBegin + playerProcessInventoryBytes;
+            = result.mPlayerProcessInventoryBegin + actualPlayerProcessInventoryBytes;
         result.mPlayerChangedCharacterStateBegin
             = result.mPlayerMobileObjectProcessStateBegin + actualPlayerMobileObjectProcessStateBytes;
         result.mPlayerCharacterAnimationStateBegin
@@ -1147,6 +1232,19 @@ namespace
             result.mBytes.end(), refIdAndVisitedWorldspace.begin(), refIdAndVisitedWorldspace.end());
         result.mBytes.insert(result.mBytes.end(), unknownTableAndTail.begin(), unknownTableAndTail.end());
         return result;
+    }
+
+    SaveBytes makeSaveWithPlayerProcessInventory(std::optional<float> referenceScale,
+        std::optional<std::uint32_t> actorExtraDataCount = std::nullopt,
+        std::span<const std::uint8_t> actorExtraData = {})
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        return makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
+            sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
+            sSyntheticPlayerCharacterAnimationStateBytes, ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+            ESM4::sFONVPlayerCharacterListsStateBytes, ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
+            ESM4::sFONVPlayerCharacterFinalStateBytes, referenceScale, actorExtraDataCount, actorExtraData);
     }
 
     TEST(FONVSaveGame, ParsesNewVegasPrefixAndPreservesRawProvenance)
@@ -1347,6 +1445,7 @@ namespace
                                             source.mPlayerProcessInventoryBegin
                                             + sSyntheticPlayerProcessInventoryDataBytes)));
         EXPECT_EQ(processInventory.mProcessLevel.mValue, 0);
+        EXPECT_FALSE(processInventory.mReferenceScale.has_value());
         ASSERT_EQ(processInventory.mActorExtraData.size(), 2u);
         EXPECT_EQ(processInventory.mActorExtraData[0].mType.mValue, ESM4::sFONVExtraFactionChangesType);
         ASSERT_EQ(processInventory.mActorExtraData[0].mFactionChanges.size(), 1u);
@@ -1360,12 +1459,22 @@ namespace
         EXPECT_EQ(processInventory.mInventoryEntries[0].mType.mResolvedFormId, 0x00000333u);
         EXPECT_EQ(processInventory.mInventoryEntries[0].mDelta.mValue, 5);
         ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData.size(), 1u);
-        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData[0].mExtraData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData[0].mExtraData.size(), 3u);
         const auto& health = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[0];
         EXPECT_EQ(health.mType.mValue, ESM4::sFONVExtraHealthType);
         ASSERT_TRUE(health.mHealth.has_value());
         EXPECT_FLOAT_EQ(health.mHealth->mValue, 75.f);
         EXPECT_EQ(health.mHealth->mRaw, (std::vector<std::uint8_t>{ 0, 0, 0x96, 0x42 }));
+        const auto& hotkey = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[1];
+        EXPECT_EQ(hotkey.mType.mValue, ESM4::sFONVExtraHotkeyType);
+        ASSERT_TRUE(hotkey.mHotkey.has_value());
+        EXPECT_EQ(hotkey.mHotkey->mValue, 6u);
+        const auto& ammo = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[2];
+        EXPECT_EQ(ammo.mType.mValue, ESM4::sFONVExtraAmmoType);
+        ASSERT_TRUE(ammo.mAmmo.has_value());
+        EXPECT_EQ(ammo.mAmmo->mResolvedFormId, 0x00000444u);
+        ASSERT_TRUE(ammo.mAmmoCount.has_value());
+        EXPECT_EQ(ammo.mAmmoCount->mValue, 9);
         ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData.size(), 1u);
         ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData[0].mExtraData.size(), 1u);
         const auto& worn = processInventory.mInventoryEntries[1].mExtendData[0].mExtraData[0];
@@ -1907,6 +2016,125 @@ namespace
         source.mBytes[source.mChangedFormReferenceIds[1] + 1] = 0;
         source.mBytes[source.mChangedFormReferenceIds[1] + 2] = 1;
         source.mBytes[source.mChangedFormRawTypes[1]] = 0x41;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, ParsesFlaggedCanonicalPlayerReferenceScale)
+    {
+        const SaveBytes source = makeSaveWithPlayerProcessInventory(1.25f);
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+
+        EXPECT_NE(save.requirePlayerReferenceChangeForm().mChangeFlags.mValue & 0x00000010u, 0u);
+        ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
+        const auto& processInventory = *save.mPlayerProcessInventoryData;
+        ASSERT_TRUE(processInventory.mReferenceScale.has_value());
+        EXPECT_FLOAT_EQ(processInventory.mReferenceScale->mValue, 1.25f);
+        EXPECT_EQ(processInventory.mReferenceScale->mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin + 2, sizeof(float) }));
+        EXPECT_EQ(processInventory.mReferenceScale->mRaw,
+            (std::vector<std::uint8_t>{ 0, 0, 0xa0, 0x3f }));
+        EXPECT_EQ(processInventory.mActorExtraDataCount.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin + 7, 1 }));
+        ASSERT_EQ(processInventory.mActorExtraData.size(), 2u);
+        EXPECT_EQ(processInventory.mInventoryEntries.size(), 3u);
+        EXPECT_EQ(processInventory.mRange.mSize, sSyntheticPlayerProcessInventoryDataBytes + 5u);
+    }
+
+    TEST(FONVSaveGame, RejectsInvalidFlaggedCanonicalPlayerReferenceScale)
+    {
+        for (const std::uint32_t invalidBits :
+            { 0u, 0x80000000u, 0x7f800000u, 0xff800000u, 0x7fc00000u })
+        {
+            SaveBytes source = makeSaveWithPlayerProcessInventory(1.f);
+            overwriteU32(source.mBytes, source.mPlayerProcessInventoryBegin + 2, invalidBits);
+            EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError)
+                << "accepted invalid player reference-scale bits 0x" << std::hex << invalidBits;
+        }
+    }
+
+    TEST(FONVSaveGame, ParsesAllSave213CanonicalPlayerActorExtraDataLayouts)
+    {
+        const std::vector<std::uint8_t> actorExtraData = makeSave213PlayerActorExtraData();
+        const SaveBytes source = makeSaveWithPlayerProcessInventory(1.f, 6u, actorExtraData);
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+
+        ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
+        const auto& processInventory = *save.mPlayerProcessInventoryData;
+        ASSERT_TRUE(processInventory.mReferenceScale.has_value());
+        EXPECT_FLOAT_EQ(processInventory.mReferenceScale->mValue, 1.f);
+        EXPECT_EQ(processInventory.mActorExtraDataCount.mValue, 6u);
+        ASSERT_EQ(processInventory.mActorExtraData.size(), 6u);
+        EXPECT_EQ(processInventory.mRange.mSize, 157u);
+        EXPECT_EQ(processInventory.mInventoryEntries.size(), 3u);
+
+        const std::size_t actorExtrasBegin = source.mPlayerProcessInventoryBegin + 9;
+        const auto& packageStart = processInventory.mActorExtraData[0];
+        EXPECT_EQ(packageStart.mType.mValue, ESM4::sFONVExtraPackageStartLocationType);
+        EXPECT_EQ(packageStart.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin, 24 }));
+        EXPECT_EQ(packageStart.mRaw,
+            std::vector<std::uint8_t>(actorExtraData.begin(), actorExtraData.begin() + 24));
+        ASSERT_TRUE(packageStart.mPackageStartCellOrWorldspace.has_value());
+        EXPECT_EQ(packageStart.mPackageStartCellOrWorldspace->mResolvedFormId, 0x00000111u);
+        ASSERT_TRUE(packageStart.mPackageStartPosition.has_value());
+        EXPECT_FLOAT_EQ((*packageStart.mPackageStartPosition)[0].mValue, -16259.322f);
+        EXPECT_FLOAT_EQ((*packageStart.mPackageStartPosition)[1].mValue, -5998.828f);
+        EXPECT_FLOAT_EQ((*packageStart.mPackageStartPosition)[2].mValue, 6393.356f);
+        EXPECT_EQ((*packageStart.mPackageStartPosition)[0].mRange,
+            (ESM4::FONVSaveRange{ actorExtrasBegin + 6, sizeof(float) }));
+        EXPECT_EQ((*packageStart.mPackageStartPosition)[1].mRange,
+            (ESM4::FONVSaveRange{ actorExtrasBegin + 10, sizeof(float) }));
+        EXPECT_EQ((*packageStart.mPackageStartPosition)[2].mRange,
+            (ESM4::FONVSaveRange{ actorExtrasBegin + 14, sizeof(float) }));
+        ASSERT_TRUE(packageStart.mPackageStartUnknown.has_value());
+        EXPECT_EQ(packageStart.mPackageStartUnknown->mValue, 0x12345678u);
+
+        const auto& followers = processInventory.mActorExtraData[1];
+        EXPECT_EQ(followers.mType.mValue, ESM4::sFONVExtraFollowerArrayType);
+        EXPECT_EQ(followers.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin + 24, 12 }));
+        ASSERT_TRUE(followers.mFollowerCount.has_value());
+        EXPECT_EQ(followers.mFollowerCount->mValue, 2u);
+        ASSERT_EQ(followers.mFollowers.size(), 2u);
+        EXPECT_EQ(followers.mFollowers[0].mResolvedFormId, 0x00000112u);
+        EXPECT_EQ(followers.mFollowers[1].mResolvedFormId, 0xff000113u);
+
+        const auto& factions = processInventory.mActorExtraData[2];
+        EXPECT_EQ(factions.mType.mValue, ESM4::sFONVExtraFactionChangesType);
+        EXPECT_EQ(factions.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin + 36, 10 }));
+        ASSERT_TRUE(factions.mFactionChangeCount.has_value());
+        EXPECT_EQ(factions.mFactionChangeCount->mValue, 1u);
+        ASSERT_EQ(factions.mFactionChanges.size(), 1u);
+        EXPECT_EQ(factions.mFactionChanges[0].mFaction.mResolvedFormId, 0x00000114u);
+        EXPECT_EQ(factions.mFactionChanges[0].mRank.mValue, -2);
+
+        const auto& actorCause = processInventory.mActorExtraData[3];
+        EXPECT_EQ(actorCause.mType.mValue, ESM4::sFONVExtraActorCauseType);
+        EXPECT_EQ(actorCause.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin + 46, 7 }));
+        ASSERT_TRUE(actorCause.mActorCause.has_value());
+        EXPECT_EQ(actorCause.mActorCause->mValue, 0xaabbccddu);
+
+        const auto& encounterZone = processInventory.mActorExtraData[4];
+        EXPECT_EQ(encounterZone.mType.mValue, ESM4::sFONVExtraEncounterZoneType);
+        EXPECT_EQ(encounterZone.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin + 53, 6 }));
+        ASSERT_TRUE(encounterZone.mEncounterZone.has_value());
+        EXPECT_EQ(encounterZone.mEncounterZone->mResolvedFormId, 0x00000115u);
+
+        const auto& sayTo = processInventory.mActorExtraData[5];
+        EXPECT_EQ(sayTo.mType.mValue, ESM4::sFONVExtraSayToTopicInfoType);
+        EXPECT_EQ(sayTo.mRange, (ESM4::FONVSaveRange{ actorExtrasBegin + 59, 12 }));
+        ASSERT_TRUE(sayTo.mSayToTopic.has_value());
+        EXPECT_EQ(sayTo.mSayToTopic->mResolvedFormId, 0x00000116u);
+        ASSERT_TRUE(sayTo.mSayToTopicInfo.has_value());
+        EXPECT_EQ(sayTo.mSayToTopicInfo->mResolvedFormId, 0xff000117u);
+        ASSERT_TRUE(sayTo.mSayToUnknown.has_value());
+        EXPECT_EQ(sayTo.mSayToUnknown->mValue, 0x42u);
+    }
+
+    TEST(FONVSaveGame, RejectsNonFiniteSave213PackageStartPosition)
+    {
+        const std::vector<std::uint8_t> actorExtraData = makeSave213PlayerActorExtraData();
+        SaveBytes source = makeSaveWithPlayerProcessInventory(1.f, 6u, actorExtraData);
+        const std::size_t actorExtrasBegin = source.mPlayerProcessInventoryBegin + 9;
+        overwriteU32(source.mBytes, actorExtrasBegin + 10, 0x7fc00000u);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
@@ -2781,15 +3009,23 @@ namespace
         EXPECT_EQ(expectedInventoryOffset, 499512u);
 
         std::size_t wornCount = 0;
+        std::size_t hotkeyCount = 0;
+        std::size_t ammoSelectionCount = 0;
         for (const auto& entry : processInventory.mInventoryEntries)
         {
             for (const auto& extendData : entry.mExtendData)
             {
                 for (const auto& extra : extendData.mExtraData)
+                {
                     wornCount += extra.mType.mValue == ESM4::sFONVExtraWornType;
+                    hotkeyCount += extra.mType.mValue == ESM4::sFONVExtraHotkeyType;
+                    ammoSelectionCount += extra.mType.mValue == ESM4::sFONVExtraAmmoType;
+                }
             }
         }
         EXPECT_EQ(wornCount, 3u);
+        EXPECT_EQ(hotkeyCount, 0u);
+        EXPECT_EQ(ammoSelectionCount, 0u);
         ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData.size(), 1u);
         ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData.size(), 1u);
         EXPECT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData[0].mType.mValue,
@@ -2886,9 +3122,9 @@ namespace
 
         const auto& middleHigh = processState.mMiddleHighProcess;
         EXPECT_EQ(middleHigh.mRange, (ESM4::FONVSaveRange{ 499637, 421 }));
-        EXPECT_EQ(middleHigh.mUnk134_135_168[0].mValue, 1u);
-        EXPECT_EQ(middleHigh.mUnk134_135_168[1].mValue, 1u);
-        EXPECT_EQ(middleHigh.mUnk134_135_168[2].mValue, 0u);
+        EXPECT_EQ(middleHigh.mUnk134.mValue, 1u);
+        EXPECT_EQ(middleHigh.mWeaponOut.mValue, 1u);
+        EXPECT_EQ(middleHigh.mUnk168.mValue, 0u);
         EXPECT_FLOAT_EQ(middleHigh.mCoords0E4.mComponents[0].mValue, 0.f);
         EXPECT_EQ(std::bit_cast<std::uint32_t>(middleHigh.mCoords0E4.mComponents[2].mValue), 1u);
         EXPECT_EQ(middleHigh.mWrd22A.mValue, 2u);

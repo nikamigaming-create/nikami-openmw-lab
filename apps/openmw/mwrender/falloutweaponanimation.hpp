@@ -257,6 +257,15 @@ namespace MWRender
         return "meshes/characters/_male/" + std::string(prefix) + std::string(suffix) + ".kf";
     }
 
+    inline std::string getFonvFirstPersonWeaponAnimationKf(std::string_view thirdPersonPath)
+    {
+        if (thirdPersonPath.empty())
+            return {};
+        const std::size_t filename = thirdPersonPath.find_last_of("/\\");
+        return "meshes/characters/_1stperson/"
+            + std::string(thirdPersonPath.substr(filename == std::string_view::npos ? 0 : filename + 1));
+    }
+
     inline std::optional<char> getFonvWeaponReloadAnimationLetter(std::uint8_t rawReloadAnimation)
     {
         // TESObjectWEAP::ReloadAnim is non-contiguous alphabetically: A..S, W, X, Y, Z. Values 19..22 must not

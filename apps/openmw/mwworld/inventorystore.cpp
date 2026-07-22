@@ -107,6 +107,7 @@ MWWorld::InventoryStore::InventoryStore(const InventoryStore& store)
     , mUpdatesEnabled(store.mUpdatesEnabled)
     , mFirstAutoEquip(store.mFirstAutoEquip)
     , mSelectedEnchantItem(end())
+    , mFalloutAmmoSelections(store.mFalloutAmmoSelections)
 {
     copySlots(store);
 }
@@ -123,6 +124,7 @@ MWWorld::InventoryStore& MWWorld::InventoryStore::operator=(const InventoryStore
     ContainerStore::operator=(store);
     mSlots.clear();
     copySlots(store);
+    mFalloutAmmoSelections = store.mFalloutAmmoSelections;
     return *this;
 }
 
@@ -563,6 +565,33 @@ MWWorld::ContainerStoreIterator MWWorld::InventoryStore::getSelectedEnchantItem(
     return mSelectedEnchantItem;
 }
 
+void MWWorld::InventoryStore::setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo)
+{
+    if (weapon.empty() || ammo.empty())
+        throw std::invalid_argument("Fallout ammo selection requires non-empty weapon and ammo IDs");
+    mFalloutAmmoSelections[weapon] = ammo;
+}
+
+std::optional<ESM::RefId> MWWorld::InventoryStore::getFalloutAmmoSelection(const ESM::RefId& weapon) const
+{
+    const auto found = mFalloutAmmoSelections.find(weapon);
+    if (found == mFalloutAmmoSelections.end())
+        return std::nullopt;
+    return found->second;
+}
+
+void MWWorld::InventoryStore::writeState(ESM::InventoryState& state) const
+{
+    ContainerStore::writeState(state);
+    state.mFalloutAmmoSelections = mFalloutAmmoSelections;
+}
+
+void MWWorld::InventoryStore::readState(const ESM::InventoryState& state)
+{
+    ContainerStore::readState(state);
+    mFalloutAmmoSelections = state.mFalloutAmmoSelections;
+}
+
 int MWWorld::InventoryStore::remove(const Ptr& item, int count, bool equipReplacement, bool resolve)
 {
     int retCount = ContainerStore::remove(item, count, equipReplacement, resolve);
@@ -719,6 +748,7 @@ void MWWorld::InventoryStore::clear()
 {
     mSlots.clear();
     initSlots(mSlots);
+    mFalloutAmmoSelections.clear();
     ContainerStore::clear();
 }
 

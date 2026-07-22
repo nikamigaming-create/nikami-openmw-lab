@@ -12,6 +12,8 @@
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
 
+#include "esm4questruntime.hpp"
+
 namespace ESM
 {
     struct NPC;
@@ -161,9 +163,33 @@ namespace MWWorld
     // location string is a display label, not a cell identity or permission to move the player.
     struct FalloutSavePlayerHeaderState
     {
+        struct ConditionedStack
+        {
+            ESM::FormId mRecord;
+            std::int32_t mCount = 0;
+            float mHealth = 0.f;
+            std::uint64_t mSourceOffset = 0;
+        };
+
         struct WornVisualItem
         {
             ESM::FormId mRecord;
+            std::optional<float> mHealth;
+            std::uint64_t mSourceOffset = 0;
+        };
+
+        struct HotkeyItem
+        {
+            std::uint8_t mIndex = 0;
+            ESM::FormId mRecord;
+            std::uint64_t mSourceOffset = 0;
+        };
+
+        struct AmmoSelection
+        {
+            ESM::FormId mWeapon;
+            ESM::FormId mAmmo;
+            std::int32_t mSavedCount = 0;
             std::uint64_t mSourceOffset = 0;
         };
 
@@ -181,8 +207,12 @@ namespace MWWorld
         std::string mLocationLabel;
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
+        bool mWeaponDrawn = false;
         std::vector<FalloutInventoryItem> mInventoryItems;
+        std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;
+        std::vector<HotkeyItem> mHotkeyItems;
+        std::vector<AmmoSelection> mAmmoSelections;
     };
 
     struct FalloutSaveLoadPlan
@@ -219,6 +249,7 @@ namespace MWWorld
             std::uint64_t mPayloadOffset = 0;
             std::uint64_t mPayloadBytes = 0;
         } mScene;
+        std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };
 
@@ -256,8 +287,8 @@ namespace MWWorld
         const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform);
 
     // Apply exact name/level fields plus normalized positive inventory totals to the ESM3 compatibility carrier.
-    // ExtraWorn remains a separate visual signal because per-instance condition and equipment semantics are not
-    // represented by ESM::InventoryList.
+    // Per-instance condition and ExtraWorn remain separate runtime signals because ESM::InventoryList cannot carry
+    // either property.
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
 
     // Seed only fields that have an explicit same-unit shared representation, including positive authored inventory

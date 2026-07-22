@@ -40,6 +40,7 @@ namespace ESM4
         REC_ACTI = fourCC("ACTI"), // Activator
         REC_ADDN = fourCC("ADDN"), // Addon Node
         REC_ALCH = fourCC("ALCH"), // Potion
+        REC_AMEF = fourCC("AMEF"), // Ammo Effect
         REC_AMMO = fourCC("AMMO"), // Ammo
         REC_ANIO = fourCC("ANIO"), // Animated Object
         REC_APPA = fourCC("APPA"), // Apparatus (probably unused)

@@ -77,11 +77,16 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
     esm4/testscdadecoder.cpp
+    esm4/testloadachr.cpp
     esm4/testloadcreature.cpp
     esm4/testloadarmor.cpp
     esm4/testloadclimate.cpp
+    esm4/testloadamef.cpp
+    esm4/testloadmgef.cpp
+    esm4/testloadspel.cpp
     esm4/testloadweap.cpp
     esm4/testloadproj.cpp
+    esm4/testloadexpl.cpp
     esm4/testloadweather.cpp
     esm4/testloadimagespace.cpp
     esm4/testloadlvli.cpp
@@ -91,6 +96,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadnote.cpp
     esm4/testloadterm.cpp
     esm4/testloadregion.cpp
+    esm4/testloadrace.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -112,6 +118,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     vfs/testpathutil.cpp
 
+    sceneutil/lightcommon.cpp
     sceneutil/osgacontroller.cpp
     sceneutil/visitor.cpp
 

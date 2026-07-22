@@ -28,6 +28,11 @@ namespace NifOsg
 {
     namespace
     {
+        bool isTransformInterpolatorRecordType(Nif::RecordType type)
+        {
+            return type == Nif::RC_NiTransformInterpolator || type == Nif::RC_BSRotAccumTransfInterpolator;
+        }
+
         bool isReasonableFloat(float value, float maxAbs)
         {
             return std::isfinite(value) && std::abs(value) <= maxAbs;
@@ -355,7 +360,7 @@ namespace NifOsg
     {
         if (!keyctrl->mInterpolator.empty())
         {
-            if (keyctrl->mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+            if (isTransformInterpolatorRecordType(keyctrl->mInterpolator->recType))
             {
                 const Nif::NiTransformInterpolator* interp
                     = static_cast<const Nif::NiTransformInterpolator*>(keyctrl->mInterpolator.getPtr());
@@ -454,7 +459,7 @@ namespace NifOsg
         if (interp == nullptr)
             return false;
 
-        if (interp->recType == Nif::RC_NiTransformInterpolator)
+        if (isTransformInterpolatorRecordType(interp->recType))
         {
             const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(interp);
             setDefaultTransformChannels(transform->mDefaultValue);

@@ -55,6 +55,8 @@ namespace ESM4
         float mScale = 1.0f;
         ESM::FormId mOwner;
         ESM::FormId mGlobal;
+        // Fallout patrol packages commonly take their first marker from the placed actor's XLKR rather than PACK.
+        ESM::FormId mLinkedReference;
 
         EnableParent mEsp;
 

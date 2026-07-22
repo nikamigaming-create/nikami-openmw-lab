@@ -5,10 +5,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <components/esm4/loadcrea.hpp>
-#include <components/vfs/pathutil.hpp>
+#include <components/misc/rng.hpp>
 
 #include <osg/Vec3f>
 
@@ -29,9 +30,20 @@ namespace ESM
     struct CreatureState;
 }
 
+namespace ESM4
+{
+    struct AIPackage;
+    struct BodyPartData;
+}
+
 namespace MWWorld
 {
     class ESMStore;
+}
+
+namespace MWBase
+{
+    class World;
 }
 
 namespace MWClass
@@ -43,8 +55,8 @@ namespace MWClass
     }
 
     // The Goodsprings CheyenneAccompany package and adult bighorner herd packages target an exact ACHR/ACRE.
-    // Calf packages instead use PTDT type 3 (linked reference), which ActorCharacter does not currently retain.
-    // Keep that form out of the supported set so package selection can continue to an authored fallback.
+    // Calf packages instead use PTDT type 3 (linked reference). That package-target form has runtime semantics
+    // distinct from the placed actor's XLKR link, so keep it unsupported and continue to an authored fallback.
     [[nodiscard]] constexpr bool fnvCreatureFollowTargetSupported(
         std::int32_t packageType, std::int32_t targetType, std::uint32_t target) noexcept
     {
@@ -71,6 +83,12 @@ namespace MWClass
             default:
                 return false;
         }
+    }
+
+    [[nodiscard]] constexpr bool fnvCreaturePatrolYieldsToPlayerTurn(
+        bool forceJump, bool forceSneak, bool turningToPlayer, bool greetingInProgress) noexcept
+    {
+        return !forceJump && !forceSneak && (turningToPlayer || greetingInProgress);
     }
 
     [[nodiscard]] constexpr int fnvCreatureWanderDistance(std::int32_t authoredRadius) noexcept
@@ -112,10 +130,43 @@ namespace MWClass
         bool mIsPatrolIdleScriptMarker = false;
     };
 
+    enum class FnvCreatureRouteEndBehavior
+    {
+        Loop,
+        Hold,
+    };
+
+    struct FnvCreatureRouteAdvance
+    {
+        std::size_t mPointIndex = 0;
+        bool mHolding = false;
+    };
+
+    /// Advance a native Fallout route without completing and removing its AI package. Authored patrols loop back to
+    /// their first marker, while editor-location travel keeps the final point active as a return anchor.
+    [[nodiscard]] constexpr FnvCreatureRouteAdvance fnvAdvanceCreatureRoute(std::size_t pointIndex,
+        std::size_t pointCount, FnvCreatureRouteEndBehavior endBehavior) noexcept
+    {
+        if (pointCount == 0)
+            return {};
+        if (pointIndex < pointCount - 1)
+            return { pointIndex + 1, false };
+        if (endBehavior == FnvCreatureRouteEndBehavior::Loop)
+            return { 0, false };
+        return { pointCount - 1, true };
+    }
+
     /// Resolve a Fallout XLKR patrol chain, rejecting missing records, cycles, overlong chains, and transitions
     /// outside the first marker's worldspace (or interior cell).
     [[nodiscard]] std::optional<std::vector<FnvCreaturePatrolPoint>> collectFnvCreaturePatrolRoute(
         const MWWorld::ESMStore& store, ESM::FormId firstMarker, std::size_t maxPoints = 256);
+
+    /// Select the first runnable native package. A Patrol is runnable only when its explicit marker or the placed
+    /// actor's XLKR resolves to a complete route in the actor's current worldspace; otherwise selection continues to
+    /// the next authored package (normally Sandbox).
+    [[nodiscard]] const ESM4::AIPackage* selectFnvCreaturePackage(const MWWorld::ESMStore& store,
+        const std::vector<ESM::FormId>& packageIds, float hour, ESM::FormId placedActor,
+        const ESM::RefId& currentCell);
 
     class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
     {
@@ -153,16 +204,20 @@ namespace MWClass
         {
             if (ESM4Impl::worldViewerDisableEsm4Actors())
                 return;
-            (void)rotation;
-            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
+            Actor::insertObject(ptr, model.empty() ? std::string(getModel(ptr)) : model, rotation, physics);
         }
 
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override;
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override;
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override;
         MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override;
+        std::unique_ptr<MWWorld::Action> activate(
+            const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
+        void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+            const MWWorld::Ptr& attacker, bool successful,
+            MWMechanics::DamageSourceType sourceType) const override;
         MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         float getCapacity(const MWWorld::Ptr& ptr) const override;
         float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
@@ -180,6 +235,15 @@ namespace MWClass
         void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
 
         static const ESM4::Creature* getFactionsRecord(const MWWorld::Ptr& ptr);
+
+        /// Materialize the resolved Traits death-item list once for a dead FNV creature. The explicit RNG/level
+        /// parameters keep the Bethesda LVLI decision deterministic and directly testable.
+        static bool materializeFnvDeathItem(const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel,
+            MWBase::World* world = nullptr);
+        static const ESM4::Creature* getStatsRecord(const MWWorld::Ptr& ptr);
+
+        /// Return the exact winning PNAM body-part data selected through the creature's visual template chain.
+        static const ESM4::BodyPartData* getBodyPartData(const MWWorld::Ptr& ptr);
 
         /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
         static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,

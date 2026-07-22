@@ -40,6 +40,7 @@ namespace MWGui
         void onClose() override;
 
         void activateQuickKey(int index);
+        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item);
         void updateActivatedQuickKey();
 
         void write(ESM::ESMWriter& writer);

@@ -841,10 +841,13 @@ namespace MWWorld
             if (shouldSkipStarfieldViewerRecord(reader, recordType))
                 return false;
 
-            // AVIF, FACT, PERK, RCCT, RCPE, and NOTE are not cross-game schemas. These typed loaders
+            // AMEF, AVIF, EXPL, FACT, MGEF, PERK, RCCT, RCPE, SPEL, and NOTE are not cross-game schemas. These typed loaders
             // implement only the frozen Fallout: New Vegas contracts.
-            if ((recordType == ESM4::REC_AVIF || recordType == ESM4::REC_FACT || recordType == ESM4::REC_PERK
-                    || recordType == ESM4::REC_RCCT || recordType == ESM4::REC_RCPE || recordType == ESM4::REC_NOTE)
+            if ((recordType == ESM4::REC_AMEF || recordType == ESM4::REC_AVIF || recordType == ESM4::REC_EXPL
+                    || recordType == ESM4::REC_FACT
+                    || recordType == ESM4::REC_MGEF
+                    || recordType == ESM4::REC_PERK || recordType == ESM4::REC_RCCT
+                    || recordType == ESM4::REC_RCPE || recordType == ESM4::REC_SPEL || recordType == ESM4::REC_NOTE)
                 && store.mESM4Game != ESM4Game::FalloutNewVegas)
                 return false;
 
@@ -1200,6 +1203,8 @@ namespace MWWorld
                          << " animatedObjects=" << get<ESM4::AnimObject>().getSize()
                          << " statics=" << get<ESM4::Static>().getSize()
                          << " textureSets=" << get<ESM4::TextureSet>().getSize()
+                         << " magicEffects=" << get<ESM4::MagicEffect>().getSize()
+                         << " spells=" << get<ESM4::Spell>().getSize()
                          << " packIns=" << mStoreImp->mStarfieldPackIns.size();
     }
 

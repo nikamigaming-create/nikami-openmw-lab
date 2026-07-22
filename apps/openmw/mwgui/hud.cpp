@@ -1,6 +1,7 @@
 #include "hud.hpp"
 
 #include <cmath>
+#include <sstream>
 
 #include <MyGUI_Button.h>
 #include <MyGUI_ImageBox.h>
@@ -146,6 +147,30 @@ namespace MWGui
             Log(Debug::Info) << "FNV/ESM4 proof: HUD Fallout bars applied HP/AP"
                              << (VR::getVR() ? "/stamina wrist" : "")
                              << " green theme";
+
+            const MyGUI::IntSize size = mMainWidget->getSize();
+            mFalloutVatsOverlay = mMainWidget->createWidget<MyGUI::Widget>(
+                "", MyGUI::IntCoord(0, 0, size.width, size.height), MyGUI::Align::Stretch);
+            const MyGUI::Colour vatsGreen(0.35f, 1.f, 0.28f, 1.f);
+            const auto makeVatsText = [&](const MyGUI::IntCoord& coord, MyGUI::Align align) {
+                MyGUI::TextBox* text = mFalloutVatsOverlay->createWidget<MyGUI::TextBox>(
+                    "SandBrightText", coord, align);
+                text->setTextAlign(MyGUI::Align::Center);
+                text->setTextColour(vatsGreen);
+                text->setNeedMouseFocus(false);
+                return text;
+            };
+            mFalloutVatsTarget = makeVatsText(
+                MyGUI::IntCoord(size.width / 2 - 260, size.height / 2 - 95, 520, 32), MyGUI::Align::Center);
+            mFalloutVatsBodyPart = makeVatsText(
+                MyGUI::IntCoord(size.width / 2 - 180, size.height / 2 - 45, 360, 30), MyGUI::Align::Center);
+            mFalloutVatsChance = makeVatsText(
+                MyGUI::IntCoord(size.width / 2 - 90, size.height / 2 - 5, 180, 38), MyGUI::Align::Center);
+            mFalloutVatsActionPoints = makeVatsText(
+                MyGUI::IntCoord(size.width / 2 - 260, size.height - 150, 520, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+            mFalloutVatsInstructions = makeVatsText(
+                MyGUI::IntCoord(size.width / 2 - 350, size.height - 95, 700, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+            mFalloutVatsOverlay->setVisible(false);
         }
 
         // Drowning bar
@@ -268,6 +293,28 @@ namespace MWGui
         mMainWidget->eventMouseLostFocus += MyGUI::newDelegate(this, &HUD::onWorldMouseLostFocus);
 
         mSpellIcons = std::make_unique<SpellIcons>();
+    }
+
+    void HUD::setFalloutVatsVisible(bool visible, std::string_view targetName,
+        std::string_view bodyPartName, unsigned int hitChance, float actionPointsBefore,
+        float actionPointsAfter, std::size_t queuedAttacks, bool executing)
+    {
+        if (mFalloutVatsOverlay == nullptr)
+            return;
+        mFalloutVatsOverlay->setVisible(visible);
+        if (!visible)
+            return;
+
+        mFalloutVatsTarget->setCaption("<  " + std::string(targetName) + "  >");
+        mFalloutVatsBodyPart->setCaption("[ " + std::string(bodyPartName) + " ]");
+        mFalloutVatsChance->setCaption(std::to_string(hitChance) + "%");
+        std::ostringstream ap;
+        ap << "AP  " << static_cast<int>(actionPointsBefore) << "  >  "
+           << static_cast<int>(actionPointsAfter) << "     QUEUED  " << queuedAttacks;
+        mFalloutVatsActionPoints->setCaption(ap.str());
+        mFalloutVatsInstructions->setCaption(executing
+            ? "EXECUTING ATTACK"
+            : "[LEFT CLICK] QUEUE     [E] ACCEPT     [V] EXIT");
     }
 
     HUD::~HUD()

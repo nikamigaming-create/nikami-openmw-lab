@@ -39,6 +39,8 @@ namespace
         writer.writeHNT("VERS", version);
         writer.writeFormId(form, true, "FORM");
         writer.writeHNT("HLTH", health);
+        if (version >= 2)
+            writer.writeHNT("ACTP", 80.f);
         for (std::size_t i = 0; i < MWWorld::FalloutPlayerState::SpecialCount; ++i)
             writer.writeHNT("SPEC", 5.f);
         for (const std::uint8_t value : base.mSkillValues)
@@ -113,6 +115,85 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     ESM::ESMReader reader;
     reader.open(std::move(stream), "unchanged-fallout-player-runtime");
     EXPECT_FALSE(reader.hasMoreRecs());
+}
+
+TEST(FalloutPlayerRuntimeStateTest, KeepsVatsActivityTransientAcrossStateLifecycle)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.isVatsActive());
+
+    runtime.setVatsActive(true);
+    EXPECT_TRUE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+    EXPECT_EQ(runtime.countSavedGameRecords(), 0);
+
+    runtime.initialize(makeBaseState(0));
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    EXPECT_TRUE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+    EXPECT_EQ(runtime.countSavedGameRecords(), 0);
+
+    runtime.resetCurrent();
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    runtime.clear();
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    runtime.initialize(makeBaseState(0));
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+}
+
+TEST(FalloutPlayerRuntimeStateTest, DerivesCarryCapacityFromCurrentStrength)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.getCarryCapacity());
+
+    runtime.initialize(makeBaseState(0));
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 200.f);
+
+    ASSERT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin, 8.5f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 235.f);
+
+    ASSERT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin,
+                  std::numeric_limits<float>::max()),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FALSE(runtime.getCarryCapacity());
+
+    runtime.resetCurrent();
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 200.f);
+}
+
+TEST(FalloutPlayerRuntimeStateTest, DerivesSpendsAndClampsActionPoints)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.getMaxActionPoints());
+
+    runtime.initialize(makeBaseState(0));
+    ASSERT_TRUE(runtime.getMaxActionPoints());
+    EXPECT_FLOAT_EQ(*runtime.getMaxActionPoints(), 80.f);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        80.f);
+
+    EXPECT_EQ(runtime.modCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, -22.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        58.f);
+    EXPECT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, 999.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        80.f);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanceAcrossChangedLoadOrder)

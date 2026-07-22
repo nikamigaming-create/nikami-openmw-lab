@@ -23,6 +23,31 @@ namespace ESM
     class ESMReader;
     class ESMWriter;
 
+    enum class FalloutActiveEffectKind : std::uint32_t
+    {
+        HealthDamage = 0,
+        ActorValueModifier = 1,
+        Paralysis = 2,
+    };
+
+    /// Save-game representation of a running native Fallout actor effect. Source records remain authoritative for
+    /// presentation and script execution; this snapshot retains only the time-dependent gameplay state needed to
+    /// resume an effect exactly after loading a save.
+    struct FalloutActiveEffect
+    {
+        RefId mSpell;
+        RefId mBaseEffect;
+        FalloutActiveEffectKind mKind = FalloutActiveEffectKind::HealthDamage;
+        std::uint32_t mFlags = 0;
+        std::int32_t mActorValue = -1;
+        float mMagnitude = 0.f;
+        float mDuration = 0.f;
+        float mTimeLeft = 0.f;
+        std::int32_t mCasterActorId = -1;
+
+        friend bool operator==(const FalloutActiveEffect&, const FalloutActiveEffect&) = default;
+    };
+
     // format 0, saved games only
     struct CreatureStats
     {
@@ -88,6 +113,12 @@ namespace ESM
         TimeStamp mTimeOfDeath;
         int32_t mLevel;
         bool mMissingACDT;
+
+        // Accumulated native Fallout limb damage for actor values 25..31. Optional FLMB keeps old saves valid.
+        std::array<float, 7> mFalloutLimbDamage{};
+
+        // Optional repeated FAEF groups keep old saves valid and do not reinterpret ESM3 ActiveSpells.
+        std::vector<FalloutActiveEffect> mFalloutActiveEffects;
 
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;

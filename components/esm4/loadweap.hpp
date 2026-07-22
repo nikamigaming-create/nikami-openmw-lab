@@ -42,8 +42,32 @@ namespace ESM4
 
     struct Weapon
     {
+        struct CriticalData
+        {
+            enum Flags : std::uint8_t
+            {
+                OnDeath = 0x01,
+            };
+
+            std::uint16_t damage = 0;
+            float chanceMultiplier = 0.f;
+            std::uint8_t flags = 0;
+            ESM::FormId effect;
+            bool present = false;
+        };
+
         struct Data
         {
+            enum WeaponFlags1 : std::uint8_t
+            {
+                Automatic = 0x02,
+            };
+
+            enum WeaponFlags2 : std::uint32_t
+            {
+                OverrideDamageToWeapon = 0x80,
+            };
+
             // type
             // 0 = Blade One Hand
             // 1 = Blade Two Hand
@@ -64,6 +88,8 @@ namespace ESM4
             // FO3/FONV WEAP.DNAM animation selectors. These choose the authored animation family and the
             // optional HandGrip overlay; they are not part of the TES4 DATA subrecord above.
             std::uint8_t animationType;
+            float animationMultiplier;
+            std::uint8_t weaponFlags1;
             std::uint8_t handGrip;
             std::uint8_t ammoUse;
             std::uint8_t reloadAnim;
@@ -85,6 +111,13 @@ namespace ESM4
             std::uint32_t flags2;
             float animAttackMult;
             float fireRate;
+            float damageToWeaponMult;
+            float overrideActionPoints;
+            float limbDamageMult;
+            std::int32_t skillActorValue;
+            float animShotsPerSec;
+            float semiAutoFireDelayMin;
+            float semiAutoFireDelayMax;
             bool hasBallistics;
 
             Data()
@@ -98,6 +131,8 @@ namespace ESM4
                 , damage(0)
                 , clipSize(0)
                 , animationType(0xff)
+                , animationMultiplier(0.f)
+                , weaponFlags1(0)
                 , handGrip(0xff)
                 , ammoUse(0)
                 , reloadAnim(0)
@@ -114,9 +149,18 @@ namespace ESM4
                 , flags2(0)
                 , animAttackMult(0.f)
                 , fireRate(0.f)
+                , damageToWeaponMult(0.f)
+                , overrideActionPoints(0.f)
+                , limbDamageMult(1.f)
+                , skillActorValue(-1)
+                , animShotsPerSec(0.f)
+                , semiAutoFireDelayMin(0.f)
+                , semiAutoFireDelayMax(0.f)
                 , hasBallistics(false)
             {
             }
+
+            [[nodiscard]] bool isAutomatic() const noexcept { return (weaponFlags1 & Automatic) != 0; }
         };
 
         struct SoundRef
@@ -131,6 +175,10 @@ namespace ESM4
         std::string mEditorId;
         std::string mFullName;
         std::string mModel;
+        // FO3/FNV WEAP.MOD4 is the camera-space weapon mesh used with the
+        // _1stperson skeleton.  It is distinct from MODL, which remains the
+        // third-person/world actor model.
+        std::string mFirstPersonModel;
         std::string mText;
         std::string mIcon;
         std::string mMiniIcon;
@@ -156,6 +204,7 @@ namespace ESM4
         ESM::FormId mEnchantment;
 
         Data mData;
+        CriticalData mCriticalData;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
@@ -167,6 +216,11 @@ namespace ESM4
     // Parse the stable FO3/FNV WEAP.DNAM prefix. The first 16 bytes contain the animation selectors and the
     // 68-byte prefix contains the complete primary ballistic contract. Later games reuse DNAM incompatibly.
     [[nodiscard]] bool loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data);
+
+    /// Parse the exact 16-byte FO3/FNV WEAP.CRDT critical-hit payload. Later games reuse weapon records
+    /// incompatibly, so callers must gate this helper by game/version before adjusting the returned effect FormID.
+    [[nodiscard]] bool loadFalloutWeaponCrdt(
+        std::span<const std::uint8_t> crdt, Weapon::CriticalData& data);
 }
 
 #endif // ESM4_WEAP_H

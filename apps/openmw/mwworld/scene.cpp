@@ -46,6 +46,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 #include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwrender/landmanager.hpp"
@@ -59,6 +60,7 @@
 
 #include "../mwworld/actionteleport.hpp"
 
+#include "actorfacing.hpp"
 #include "cellpreloader.hpp"
 #include "cellstore.hpp"
 #include "cellvisitors.hpp"
@@ -76,15 +78,15 @@ namespace
     osg::Quat makeActorOsgQuat(const MWWorld::Ptr& ptr)
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
-        float yaw = position.rot[2];
+        bool tes4Npc = false;
         if (ptr.getType() == ESM::REC_NPC_4)
         {
-            // Imported Fallout/TES4 NPC skeletons need a quarter-turn relative to
-            // the TES3 actor convention.  CREA4 rigs do not: securitrons and
-            // bighorners author their visual front on local +Y already.
-            yaw += osg::PI_2;
+            const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
+            tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
         }
-        return osg::Quat(yaw, osg::Vec3(0, 0, -1));
+        // TES4 NPC meshes retain the legacy quarter-turn conversion. FO3/FNV NPCs and CREA4 rigs author their
+        // visual front on the same local +Y axis used by CharacterController and the movement solver.
+        return osg::Quat(MWWorld::getActorModelYaw(position.rot[2], tes4Npc), osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -516,7 +518,8 @@ namespace
         for (ESM::FormId packageId : packageRecord->mAIPackages)
         {
             const ESM4::AIPackage* package = packageStore.search(packageId);
-            if (package != nullptr && fnvPackageConditionsPass(*package) && fnvPackageCoversHour(*package, hour))
+            if (package != nullptr && MWClass::fnvNpcAiPackageProcedureSupported(package->mData.type)
+                && fnvPackageConditionsPass(*package) && fnvPackageCoversHour(*package, hour))
             {
                 selected = package;
                 break;
@@ -563,12 +566,22 @@ namespace
         // let the runtime package/pathing code perform an actual transition.
         // The legacy behavior remains available only to focused compatibility
         // captures that explicitly request it.
-        if (!sameCell && !envEnabled("OPENMW_FNV_ENABLE_CROSS_CELL_PACKAGE_PREPLACEMENT"))
+        const bool sameCellPrePlacement = envEnabled("OPENMW_FNV_ENABLE_SAME_CELL_PACKAGE_PREPLACEMENT");
+        const bool furnitureEntryPrePlacement
+            = furnitureTarget && envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
+        const bool crossCellPrePlacement = envEnabled("OPENMW_FNV_ENABLE_CROSS_CELL_PACKAGE_PREPLACEMENT");
+        if (!MWClass::fnvPackagePrePlacementEnabled(
+                sameCell, sameCellPrePlacement || furnitureEntryPrePlacement, crossCellPrePlacement))
         {
-            Log(Debug::Verbose) << "FNV/ESM4: deferred cross-cell package goal " << selected->mEditorId
+            Log(Debug::Verbose) << "FNV/ESM4: deferred " << (sameCell ? "same-cell" : "cross-cell")
+                                << " package goal " << selected->mEditorId
                                 << " actor=" << traits->mEditorId << " targetCell=" << target->mParent
                                 << " currentCell=" << currentCellId;
-            return FnvPackagePrePlacement::None;
+            // Furniture packages still need their marker-derived entry and
+            // settled transforms, so defer the same-cell decision until that
+            // metadata has been prepared below.
+            if (!sameCell)
+                return FnvPackagePrePlacement::None;
         }
 
         ESM::Position position = ptr.getRefData().getPosition();
@@ -584,7 +597,6 @@ namespace
         {
             const osg::Vec3f proofOffset = transformFnvFurnitureMarkerOffsetForProof(marker.mOffset);
             const osg::Vec3f worldOffset = rotateFnvPackageOffset(proofOffset, target->mPos.rot[2]);
-            const bool entryMarkerPlacement = envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
             if (furnitureTarget)
             {
                 MWClass::FalloutFurniturePlacement placement;
@@ -612,7 +624,7 @@ namespace
                 position.pos[2] = placement.mEntryPosition.z();
                 position.rot[2] = placement.mEntryYaw;
 
-                if (sameCell && !entryMarkerPlacement)
+                if (sameCell && !furnitureEntryPrePlacement && !sameCellPrePlacement)
                 {
                     Log(Debug::Verbose) << "FNV/ESM4 diag: deferred same-cell furniture placement to runtime package "
                                      << selected->mEditorId << " targetRef=" << target->mEditorId
@@ -643,6 +655,9 @@ namespace
                              << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
                              << traits->mEditorId;
         }
+
+        if (sameCell && !sameCellPrePlacement && !furnitureEntryPrePlacement)
+            return FnvPackagePrePlacement::None;
 
         if (!sameCell)
         {

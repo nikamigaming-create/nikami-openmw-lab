@@ -42,16 +42,18 @@ namespace MWWorld
     {
     public:
         static constexpr std::uint32_t HealthActorValue = 16;
+        static constexpr std::uint32_t ActionPointsActorValue = 12;
         static constexpr std::uint32_t SpecialActorValueBegin = 5;
         static constexpr std::uint32_t SpecialActorValueEnd = 11;
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
-        static constexpr std::uint32_t SaveVersion = 1;
+        static constexpr std::uint32_t SaveVersion = 2;
 
     private:
         struct CurrentState
         {
             float mHealth = 0.f;
+            float mActionPoints = 0.f;
             std::array<float, FalloutPlayerState::SpecialCount> mSpecial{};
             std::array<float, FalloutPlayerState::SkillCount> mSkills{};
 
@@ -60,6 +62,9 @@ namespace MWWorld
 
         std::optional<FalloutPlayerState> mBase;
         CurrentState mCurrent;
+        // Transient input/mechanics coordination only. V.A.T.S. owns its queue in ActionManager and this flag keeps
+        // the ordinary held-attack path from firing an additional unqueued shot while targeting or executing.
+        bool mVatsActive = false;
 
         static bool isSupported(std::uint32_t actorValue);
         static std::optional<std::size_t> specialIndex(std::uint32_t actorValue);
@@ -78,6 +83,10 @@ namespace MWWorld
 
         std::optional<FalloutRuntimeActorValue> getBaseActorValue(std::uint32_t actorValue) const;
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
+        [[nodiscard]] std::optional<float> getCarryCapacity() const;
+        [[nodiscard]] std::optional<float> getMaxActionPoints() const;
+        bool isVatsActive() const { return mVatsActive; }
+        void setVatsActive(bool active) { mVatsActive = active; }
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);
         FalloutActorValueMutationResult modCurrentActorValue(std::uint32_t actorValue, float delta);
 
