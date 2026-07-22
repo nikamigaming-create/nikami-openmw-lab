@@ -17,9 +17,12 @@ return {
                 return
             end
             local obj = world.getObjectByFormId(formId)
-            if obj ~= nil and obj:isValid() then
-                obj.enabled = data.enabled
+            if obj == nil or not obj:isValid() then
+                print('[obscript] SetEnabled: no valid object for ' .. tostring(data.editorId)
+                    .. ' (' .. tostring(formId) .. ')')
+                return
             end
+            obj.enabled = data.enabled
         end,
         ObScriptAddItem = function(data)
             local recordId = core.obscript.resolveItemEditorId(data.item)
