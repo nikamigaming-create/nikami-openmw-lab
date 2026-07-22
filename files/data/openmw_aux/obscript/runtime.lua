@@ -234,12 +234,14 @@ function obs.makeLocalScript()
                 if h then fireAll(entry, h) end
             end,
             onActivated = function(actor)
+                -- Opening a container counts as activation, so OnOpen blocks
+                -- are dispatched from here as well.
+                obs._actionRef = actor
                 local h = entry.handlers["onactivate"]
-                if h then
-                    obs._actionRef = actor
-                    fireAll(entry, h)
-                    obs._actionRef = nil
-                end
+                if h then fireAll(entry, h) end
+                h = entry.handlers["onopen"]
+                if h then fireAll(entry, h) end
+                obs._actionRef = nil
             end,
             onSave = function()
                 local locals = {}

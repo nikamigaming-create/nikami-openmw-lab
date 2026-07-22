@@ -1,5 +1,6 @@
 #include "obscriptbindings.hpp"
 
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -8,9 +9,19 @@
 #include <sol/usertype.hpp>
 
 #include <components/esm/refid.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
+#include <components/misc/strings/lower.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -66,6 +77,58 @@ namespace MWLua
         storeBindingsClass[sol::meta_function::pairs] = lua["ipairsForArray"].get<sol::function>();
 
         api["records"] = &MWBase::Environment::get().getESMStore()->get<ESM4::Script>();
+
+        // Case-insensitive editor-id lookup, built lazily on first use.
+        using EditorIdIndex = std::map<std::string, ESM::RefId>;
+        auto resolve = [](const EditorIdIndex& index, std::string_view editorId) -> sol::optional<std::string> {
+            auto it = index.find(Misc::StringUtils::lowerCase(editorId));
+            if (it == index.end())
+                return sol::nullopt;
+            return it->second.serializeText();
+        };
+
+        // Item record types, for ObScript arguments like `player.AddItem <EditorId> <count>`.
+        api["resolveItemEditorId"] = [resolve](std::string_view editorId) {
+            static const EditorIdIndex index = [] {
+                EditorIdIndex res;
+                const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+                auto addAll = [&](const auto& s) {
+                    for (size_t i = 0; i < s.getSize(); ++i)
+                    {
+                        const auto& record = *s.at(i);
+                        if (!record.mEditorId.empty())
+                            res.emplace(Misc::StringUtils::lowerCase(record.mEditorId), ESM::RefId(record.mId));
+                    }
+                };
+                addAll(store.get<ESM4::Ammunition>());
+                addAll(store.get<ESM4::Armor>());
+                addAll(store.get<ESM4::Book>());
+                addAll(store.get<ESM4::Clothing>());
+                addAll(store.get<ESM4::Ingredient>());
+                addAll(store.get<ESM4::MiscItem>());
+                addAll(store.get<ESM4::Potion>());
+                addAll(store.get<ESM4::Weapon>());
+                return res;
+            }();
+            return resolve(index, editorId);
+        };
+
+        // Persistent placed references (e.g. `GSSchoolTerminal01Ref.Disable`).
+        api["resolveRefEditorId"] = [resolve](std::string_view editorId) {
+            static const EditorIdIndex index = [] {
+                EditorIdIndex res;
+                const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+                const MWWorld::Store<ESM4::Reference>& refs = store.get<ESM4::Reference>();
+                for (size_t i = 0; i < refs.getSize(); ++i)
+                {
+                    const ESM4::Reference& ref = *refs.at(i);
+                    if (!ref.mEditorId.empty())
+                        res.emplace(Misc::StringUtils::lowerCase(ref.mEditorId), ESM::RefId(ref.mId));
+                }
+                return res;
+            }();
+            return resolve(index, editorId);
+        };
 
         return LuaUtil::makeReadOnly(api);
     }
