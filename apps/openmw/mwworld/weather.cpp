@@ -2045,7 +2045,7 @@ namespace MWWorld
         }
     }
 
-    inline void WeatherManager::forceWeather(const int weatherID)
+    void WeatherManager::forceWeather(const int weatherID)
     {
         mTransitionFactor = 0.0f;
         mCurrentWeather = weatherID;
