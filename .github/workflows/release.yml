@@ -5,6 +5,9 @@ on:
       tags:
         - openmw-vr-**
 
+permissions:
+  contents: write
+
 jobs:
   Output-Envs:
     name: Read .env file and expose it as output
