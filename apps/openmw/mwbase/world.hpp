@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include <osg/Matrixf>
+
 #include <components/esm/formid.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -25,7 +27,6 @@ namespace osg
 {
     class Vec3f;
     class Vec4f;
-    class Matrixf;
     class Quat;
     class Image;
     class Stats;
