@@ -10834,6 +10834,12 @@ void OMW::Engine::prepareEngine()
         Settings::models().mLoadUnsupportedNifFiles.set(true);
         Log(Debug::Info) << "FNV/ESM4: enabled unsupported NIF/KF compatibility for FalloutNV.esm";
     }
+    if (hasFalloutNvContent(mContentFiles))
+    {
+        // The generic default points at Morrowind's two-layer cloud mesh. FNV WTHR drives four named surfaces on
+        // the retail clouds.nif; leaving the default selected loads the textures but keeps every native layer hidden.
+        Settings::models().mSkyclouds.set(VFS::Path::Normalized("meshes/sky/clouds.nif"));
+    }
     mWorld = std::make_unique<MWWorld::World>(
         mResourceSystem.get(), mActivationDistanceOverride, mCellName, mCfgMgr.getUserDataPath());
     mEnvironment.setWorld(*mWorld);
