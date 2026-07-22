@@ -18,6 +18,10 @@ on:
       build-type:
         default: RelWithDebInfo
         type: string
+      variant:
+        description: Build the vr or flat OpenMW executable
+        default: vr
+        type: string
       package:
         default: false
         type: boolean
@@ -27,7 +31,7 @@ on:
 
 jobs:
   Windows:
-    name: windows-${{ inputs.image }}
+    name: ${{ inputs.variant }}-windows-${{ inputs.image }}
 
     runs-on: windows-${{ inputs.image }}
 
@@ -35,6 +39,13 @@ jobs:
       archive: FAILEDTODOWNLOAD
 
     steps:
+    - name: Validate build variant
+      shell: pwsh
+      run: |
+        if ('${{ inputs.variant }}' -notin @('vr', 'flat')) {
+          throw "Unsupported Windows build variant: ${{ inputs.variant }}"
+        }
+
     - name: Install NSIS
       if: ${{ inputs.package }}
       run: choco install nsis
@@ -108,8 +119,8 @@ jobs:
         -D BUILD_COMPONENTS_TESTS=${{ ! inputs.package }}
         -D BUILD_OPENMW_TESTS=${{ ! inputs.package }}
         -D BUILD_OPENCS_TESTS=${{ ! inputs.package }}
-        -D BUILD_OPENMW=OFF
-        -D BUILD_OPENMW_VR=ON
+        -D BUILD_OPENMW=${{ inputs.variant == 'flat' }}
+        -D BUILD_OPENMW_VR=${{ inputs.variant == 'vr' }}
         -D OPENMW_USE_SYSTEM_SQLITE3=OFF
         -D OPENMW_USE_SYSTEM_YAML_CPP=OFF
         -D OPENMW_LTO_BUILD=ON
@@ -178,7 +189,7 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        job_url=$(gh run --repo ${{ github.repository }} view ${{ github.run_id }} --json jobs --jq '.jobs[] | select(.name == "windows-${{ inputs.msvc }}") | .url')
+        job_url=$(gh run --repo ${{ github.repository }} view ${{ github.run_id }} --json jobs --jq '.jobs[] | select(.name | endswith("${{ inputs.variant }}-windows-${{ inputs.image }}")) | .url')
         printf "Ref ${{ github.ref }}\nJob ${job_url}\nCommit ${{ github.sha }}\n" > install/CI-ID.txt
         cp install/CI-ID.txt pdb/CI-ID.txt
         cp install/CI-ID.txt SymStore/CI-ID.txt
@@ -186,19 +197,19 @@ jobs:
     - name: Store OpenMW archived pdb files
       uses: actions/upload-artifact@v4
       with:
-        name: openmw-windows-${{ inputs.msvc }}-pdb-${{ github.sha }}
+        name: openmw-${{ inputs.variant }}-windows-${{ inputs.msvc }}-pdb-${{ github.sha }}
         path: ${{ github.workspace }}/pdb/*
 
     - name: Store OpenMW build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: openmw-windows-${{ inputs.msvc }}-${{ github.sha }}
+        name: openmw-${{ inputs.variant }}-windows-${{ inputs.msvc }}-${{ github.sha }}
         path: ${{ github.workspace }}/install/*
 
     - name: Store symbol server artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: openmw-windows-${{ inputs.msvc }}-sym-store-${{ github.sha }}
+        name: openmw-${{ inputs.variant }}-windows-${{ inputs.msvc }}-sym-store-${{ github.sha }}
         path: ${{ github.workspace }}/SymStore/*
 
     - name: Upload to symbol server

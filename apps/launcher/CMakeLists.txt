@@ -74,6 +74,10 @@ target_link_libraries(openmw-launcher
 
 target_link_libraries(openmw-launcher Qt::Widgets Qt::Core Qt::Svg)
 
+if(BUILD_OPENMW_VR)
+    target_compile_definitions(openmw-launcher PRIVATE OPENMW_LAUNCHER_VR=1)
+endif()
+
 if (BUILD_WITH_CODE_COVERAGE)
     target_compile_options(openmw-launcher PRIVATE --coverage)
     target_link_libraries(openmw-launcher gcov)
