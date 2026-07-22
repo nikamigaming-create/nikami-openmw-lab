@@ -3481,10 +3481,10 @@ namespace MWVR
                     const osg::Vec3 handMinusAimLocal = aimOrientation.inverse() * handMinusAimWorld;
                     const osg::Quat sourceFromAim = sourceOrientation * aimOrientation.inverse();
                     const osg::Quat handFromAim = orientation * aimOrientation.inverse();
-                    double sourceAngle = 0.0;
+                    osg::Quat::value_type sourceAngle = 0.f;
                     osg::Vec3 sourceAxis;
                     sourceFromAim.getRotate(sourceAngle, sourceAxis);
-                    double handAngle = 0.0;
+                    osg::Quat::value_type handAngle = 0.f;
                     osg::Vec3 handAxis;
                     handFromAim.getRotate(handAngle, handAxis);
                     Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand aim-frame audit hand=" << mDebugName

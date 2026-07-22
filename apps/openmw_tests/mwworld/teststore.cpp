@@ -26,6 +26,7 @@
 #include <components/esm3/readerscache.hpp>
 #include <components/esm3/typetraits.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadclfm.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadgmst.hpp>
 #include <components/esm4/loadnpc.hpp>
