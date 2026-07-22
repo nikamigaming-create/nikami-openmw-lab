@@ -155,6 +155,8 @@ namespace MWVR
         std::array<std::vector<std::uint8_t>, 2> mProjectionUploadPixels;
         std::chrono::steady_clock::time_point mLastStereoFreshTime{};
         std::uint64_t mLastPredictedDisplayTime = 0;
+        std::int32_t mCurrentStereoSequence = 0;
+        std::int32_t mUploadedStereoSequence = 0;
 
 #ifdef _WIN32
         void* mVideoMapping = nullptr;
@@ -176,8 +178,6 @@ namespace MWVR
         std::uint64_t mVrPoseFrame = 0;
         std::uint64_t mOpenMwPlayerFrame = 0;
         std::int32_t mLastStereoSequence = 0;
-        std::int32_t mCurrentStereoSequence = 0;
-        std::int32_t mUploadedStereoSequence = 0;
 #endif
     };
 }
