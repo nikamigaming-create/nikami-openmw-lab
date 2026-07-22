@@ -100,6 +100,28 @@ namespace
 
 namespace MWWorld
 {
+    std::size_t resolveFalloutSaveInventoryAmmoLists(
+        FalloutSavePlayerHeaderState& player, const ESMStore& store)
+    {
+        std::size_t resolved = 0;
+        for (FalloutInventoryItem& item : player.mInventoryItems)
+        {
+            const ESM4::FormIdList* list = store.get<ESM4::FormIdList>().search(item.mRecord);
+            if (list == nullptr || list->mObjects.empty())
+                continue;
+
+            const bool ammoOnly = std::ranges::all_of(list->mObjects, [&](ESM::FormId candidate) {
+                return store.get<ESM4::Ammunition>().search(candidate) != nullptr;
+            });
+            if (!ammoOnly)
+                continue;
+
+            item.mRecord = list->mObjects.front();
+            ++resolved;
+        }
+        return resolved;
+    }
+
     bool isFalloutNewVegasSavePath(const std::filesystem::path& path)
     {
         return Misc::StringUtils::ciEqual(Files::pathToUnicodeString(path.extension()), ".fos");
@@ -113,6 +135,8 @@ namespace MWWorld
             store.get<ESM4::Climate>(), store.get<ESM4::Weather>(), currentContentFiles);
         if (!result)
             return result;
+
+        resolveFalloutSaveInventoryAmmoLists(result.mContext->mPlan.mPlayer, store);
 
         const std::string inventoryError = validateConditionedInventory(result.mContext->mPlan.mPlayer, store);
         if (!inventoryError.empty())

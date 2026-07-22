@@ -63,13 +63,19 @@ separate from saves you care about.
 2. Install Fallout: New Vegas with Steam or GOG and run the original launcher once. A typical Steam data folder is
    `C:\Program Files (x86)\Steam\steamapps\common\Fallout New Vegas\Data`.
 3. Run `openmw-launcher.exe` from the installation folder. On **Data Files**, add the Fallout: New Vegas `Data` folder.
-4. Enable `FalloutNV.esm`. If you own the DLC, enable its plugins after the base game in this order:
-   `DeadMoney.esm`, `HonestHearts.esm`, `OldWorldBlues.esm`, `LonesomeRoad.esm`, `GunRunnersArsenal.esm`, followed by
-   the Courier's Stash pack plugins you own.
+4. Enable `FalloutNV.esm`. For a new game, enable owned DLC after the base game. For a native `.fos` save, the Content
+   List must instead match the save's embedded master table exactly; the preflight error reports the first mismatched
+   index without modifying the session. Master order can vary between saves, especially for `GunRunnersArsenal.esm`
+   and the Courier's Stash packs, so do not assume a generic DLC order when loading an existing save.
 5. Enable the matching `Fallout - *.bsa` archives shown by the launcher, including meshes, textures, sounds, and
    voices. Enable DLC archives only for DLC you own and enabled in step 4.
 6. Save the Content List, select it, and press **Play**. You can launch the same configured Content List later with
    `openmw.exe` for Flat or `openmw_vr.exe` for VR.
+
+The experimental FNV main menu is not yet a reliable launch path. To load an existing save directly, start the engine
+with `--load-savegame "C:\path\to\Save Name.fos"` after saving the matching FNV Content List in the launcher. The engine
+preflights the native save before replacing the current session and stops with a precise error if the master order or
+required compatibility state does not match.
 
 If the launcher does not list `FalloutNV.esm`, verify that the selected directory is the game's `Data` directory,
 not the directory containing it. Do not copy Fallout files into this repository or attach them to bug reports.

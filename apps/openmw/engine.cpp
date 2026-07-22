@@ -10826,6 +10826,20 @@ void OMW::Engine::prepareEngine()
     auto camera = std::make_unique<MWRender::Camera>(mViewer->getCamera());
     // ## VR_PATCH END
     //  Create the world
+    if (hasFalloutNvContent(mContentFiles) && !Settings::models().mLoadUnsupportedNifFiles)
+    {
+        // Retail Fallout assets use Gamebryo 20.2.0.7 NIF/KF files. The generic OpenMW default rejects formats
+        // newer than Morrowind unless this compatibility mode is enabled, which otherwise makes a correctly
+        // configured FNV session fail as soon as the first authored animation is loaded.
+        Settings::models().mLoadUnsupportedNifFiles.set(true);
+        Log(Debug::Info) << "FNV/ESM4: enabled unsupported NIF/KF compatibility for FalloutNV.esm";
+    }
+    if (hasFalloutNvContent(mContentFiles))
+    {
+        // The generic default points at Morrowind's two-layer cloud mesh. FNV WTHR drives four named surfaces on
+        // the retail clouds.nif; leaving the default selected loads the textures but keeps every native layer hidden.
+        Settings::models().mSkyclouds.set(VFS::Path::Normalized("meshes/sky/clouds.nif"));
+    }
     mWorld = std::make_unique<MWWorld::World>(
         mResourceSystem.get(), mActivationDistanceOverride, mCellName, mCfgMgr.getUserDataPath());
     mEnvironment.setWorld(*mWorld);
