@@ -157,6 +157,8 @@ namespace MWWorld
             SetVariable,
             SetAlly,
             SetEnemy,
+            Enable,
+            Disable,
             EvaluatePackage,
             ShowMessage,
             SayTo,

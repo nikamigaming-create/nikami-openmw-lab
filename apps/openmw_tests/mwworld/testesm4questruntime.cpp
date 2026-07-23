@@ -716,8 +716,43 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
             { MWWorld::ESM4QuestReferenceCommand::Enable, gecko2Id },
         }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
-    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(),
-        (std::vector<std::uint16_t>{ 0x1021, 0x1021 }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x104c1c, .mContentFile = 0 };
+    const ESM::FormId victorId{ .mIndex = 0x103dfe, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "VCG01");
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm VCG01 stage 0 VictorREF.Disable frame, byte-for-byte.
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0x22, 0x10, 0x02, 0x00, 0x00, 0x00 };
+    entry.mScript.references = { victorId };
+    quest.mStages.push_back({ .mIndex = 0, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+    ESM4::ActorCreature victor;
+    victor.mId = victorId;
+    victor.mEditorId = "VictorREF";
+    store.overrideRecord(victor);
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            commands.emplace_back(command, target);
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 0));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Disable, victorId },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
