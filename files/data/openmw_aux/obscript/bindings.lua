@@ -6,6 +6,7 @@
 -- @context local
 
 local core = require('openmw.core')
+local animation = require('openmw.animation')
 local nearby = require('openmw.nearby')
 local self = require('openmw.self')
 local types = require('openmw.types')
@@ -217,6 +218,45 @@ obs.bind('GetDistance', function(ref, target)
     local y = sourcePosition.y - targetPosition.y
     local z = sourcePosition.z - targetPosition.z
     return math.sqrt(x * x + y * y + z * z)
+end)
+
+obs.bind('PlayGroup', function(ref, group, mode)
+    local object
+    if mode == nil then
+        object = self.object
+        mode = group
+        group = ref
+    else
+        object = resolveObject(ref)
+    end
+    if object ~= self.object or type(group) ~= 'string' then
+        return 0
+    end
+    pcall(function()
+        animation.clearAnimationQueue(self.object, false)
+        animation.playQueued(self.object, group, { loops = 0 })
+    end)
+    return 0
+end)
+
+obs.bind('SetDestroyed', function(ref, value)
+    if value == nil then
+        value = ref
+        ref = nil
+    end
+    local object = resolveObject(ref)
+    if object == self.object then
+        obs._destroyed = tonumber(value) or 0
+    end
+    return 0
+end)
+
+obs.bind('GetDestroyed', function(ref)
+    local object = resolveObject(ref)
+    if object == self.object then
+        return obs._destroyed or 0
+    end
+    return 0
 end)
 
 return obs
