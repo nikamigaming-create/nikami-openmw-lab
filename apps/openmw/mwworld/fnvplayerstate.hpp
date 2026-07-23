@@ -28,6 +28,7 @@ namespace ESM4
     struct FormIdList;
     struct Npc;
     struct Race;
+    struct Faction;
     struct World;
 }
 
@@ -277,6 +278,21 @@ namespace MWWorld
             bool operator==(const GlobalValue&) const = default;
         };
 
+        struct FactionRelation
+        {
+            ESM::FormId mFaction;
+            std::int32_t mModifier = 0;
+            std::uint32_t mGroupCombatReaction = 0;
+
+            bool operator==(const FactionRelation&) const = default;
+        };
+
+        struct FactionState
+        {
+            ESM::FormId mFaction;
+            std::vector<FactionRelation> mRelations;
+        };
+
         FalloutSavePlayerHeaderState mPlayer;
         struct PlayerTransform
         {
@@ -310,6 +326,7 @@ namespace MWWorld
             std::uint64_t mPayloadBytes = 0;
         } mScene;
         std::vector<GlobalValue> mGlobals;
+        std::vector<FactionState> mFactions;
         std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };
@@ -357,6 +374,9 @@ namespace MWWorld
     // the retail removal sentinel; non-negative ranks add or replace a membership.
     void applyFalloutSavePlayerFactionChanges(
         FalloutPlayerState& player, std::span<const FalloutSavePlayerHeaderState::FactionChange> changes);
+
+    // Replace the authored relation list with the exact current list serialized by CHANGE_FACTION_REACTIONS.
+    void applyFalloutSaveFactionState(ESM4::Faction& faction, const FalloutSaveLoadPlan::FactionState& state);
 
     // Seed only fields that have an explicit same-unit shared representation, including positive authored inventory
     // counts. The ESM3 proxy remains a compatibility carrier: its 0-100 attributes and 27 skills must retain their

@@ -631,6 +631,68 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveFactionChange parseFactionChange(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& entry, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        constexpr std::uint32_t supportedFlags = 0x80000007u;
+        if (entry.mVersion.mValue < 0x15)
+            throw ESM4::FONVSaveError(entry.mVersion.mRange.mOffset, "unsupported FACT change-form version");
+        if (!entry.mResolvedFormId || (*entry.mResolvedFormId & 0x00ffffffu) == 0)
+            throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset, "FACT change-form has no identity");
+        if ((entry.mChangeFlags.mValue & ~supportedFlags) != 0)
+            throw ESM4::FONVSaveError(entry.mChangeFlags.mRange.mOffset, "unsupported FACT change flags");
+
+        const std::size_t begin = static_cast<std::size_t>(entry.mUnparsedPayload.mRange.mOffset);
+        Cursor cursor(data, begin, static_cast<std::size_t>(entry.mUnparsedPayload.mRange.end()));
+        ESM4::FONVSaveFactionChange result;
+        result.mResolvedFormId = *entry.mResolvedFormId;
+        result.mChangeFlags = entry.mChangeFlags.mValue;
+        if ((result.mChangeFlags & 0x00000001u) != 0)
+        {
+            result.mFormFlags = readDelimitedField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "faction form flags");
+        }
+        if ((result.mChangeFlags & 0x00000004u) != 0)
+        {
+            result.mReactionCount = readPackedCount(cursor, data, "faction reaction count");
+            validatePackedCountFits(*result.mReactionCount, cursor, 14, "faction reaction count");
+            result.mReactions.reserve(result.mReactionCount->mValue);
+            for (std::uint32_t i = 0; i < result.mReactionCount->mValue; ++i)
+            {
+                const std::size_t reactionBegin = cursor.position();
+                ESM4::FONVSaveFactionReaction reaction;
+                reaction.mFaction
+                    = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "faction reaction FACT RefID");
+                reaction.mModifier = readDelimitedField<std::int32_t>(cursor, data,
+                    [&](std::string_view label) { return std::bit_cast<std::int32_t>(cursor.readU32(label)); },
+                    "faction reaction modifier");
+                reaction.mReaction = readDelimitedField<std::uint32_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU32(label); },
+                    "faction group-combat reaction");
+                reaction.mRange = range(reactionBegin, cursor.position());
+                reaction.mRaw = copyRange(data, reactionBegin, cursor.position());
+                result.mReactions.push_back(std::move(reaction));
+            }
+        }
+        if ((result.mChangeFlags & 0x00000002u) != 0)
+        {
+            result.mFactionFlags = readDelimitedField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "faction flags");
+        }
+        if ((result.mChangeFlags & 0x80000000u) != 0)
+        {
+            result.mCrimeCount44 = readDelimitedField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "faction crime count 44");
+            result.mCrimeCount48 = readDelimitedField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "faction crime count 48");
+        }
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "FACT change-form payload contains unaccounted bytes");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
     ESM4::FONVSaveGlobalVariablesState parseGlobalVariablesState(std::span<const std::uint8_t> data,
         const ESM4::FONVSaveGlobalDataEntry& entry, const ESM4::FONVSaveFormIdTable& formIds)
     {
@@ -2306,6 +2368,8 @@ namespace ESM4
         {
             if (entry.mChangeType == 9)
                 result.mQuestChanges.push_back(parseQuestChange(data, entry, result.mFormIdTable));
+            else if (entry.mChangeType == 34)
+                result.mFactionChanges.push_back(parseFactionChange(data, entry, result.mFormIdTable));
         }
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
@@ -2391,12 +2455,18 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            const bool parsedQuest = entry.mChangeType == 9
-                && std::ranges::any_of(result.mQuestChanges,
-                    [&](const FONVSaveQuestChange& quest) {
-                        return quest.mRange == entry.mUnparsedPayload.mRange;
-                    });
-            if (parsedQuest)
+            const bool parsedChange
+                = (entry.mChangeType == 9
+                      && std::ranges::any_of(result.mQuestChanges,
+                          [&](const FONVSaveQuestChange& quest) {
+                              return quest.mRange == entry.mUnparsedPayload.mRange;
+                          }))
+                || (entry.mChangeType == 34
+                    && std::ranges::any_of(result.mFactionChanges,
+                        [&](const FONVSaveFactionChange& faction) {
+                            return faction.mRange == entry.mUnparsedPayload.mRange;
+                        }));
+            if (parsedChange)
                 continue;
             if (result.mPlayerCharacterFinalState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerCharacterFinalState->mUnparsedRemainder.mRange);

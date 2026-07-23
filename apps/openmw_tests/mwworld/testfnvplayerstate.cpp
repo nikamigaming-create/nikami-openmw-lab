@@ -20,6 +20,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
@@ -963,6 +964,73 @@ namespace
             ElementsAre(MWWorld::ESM4SavedQuestProgress::Variable{ form(0x43, 1), 7, 42.25f }));
         EXPECT_THAT(resolution.mPlan->mUncoveredState, Not(Contains("quest-variables")));
         EXPECT_THAT(resolution.mPlan->mUncoveredState, Not(Contains("quest-reference-variables")));
+    }
+
+    TEST(FalloutPlayerStateTest, importsAndAppliesExactSavedFactionReactionLists)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        const ESM::FormId playerId = form(7, 1);
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(playerId));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x14, 1));
+        ASSERT_TRUE(player) << player.mError;
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSaveFactionChange changed;
+        changed.mResolvedFormId = 0x00000043u;
+        changed.mReactionCount = ESM4::FONVSaveField<std::uint32_t>{ .mValue = 1 };
+        ESM4::FONVSaveFactionReaction reaction;
+        reaction.mFaction.mResolvedFormId = 0x00000044u;
+        reaction.mModifier.mValue = -25;
+        reaction.mReaction.mValue = 1;
+        changed.mReactions.push_back(std::move(reaction));
+        save.mFactionChanges.push_back(std::move(changed));
+
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = resolveSavePlan(save, &*player.mState, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        ASSERT_EQ(resolution.mPlan->mFactions.size(), 1u);
+        const MWWorld::FalloutSaveLoadPlan::FactionState& saved = resolution.mPlan->mFactions.front();
+        EXPECT_EQ(saved.mFaction, form(0x43, 1));
+        EXPECT_THAT(saved.mRelations,
+            ElementsAre(MWWorld::FalloutSaveLoadPlan::FactionRelation{ form(0x44, 1), -25, 1 }));
+
+        ESM4::Faction faction;
+        faction.mId = saved.mFaction;
+        faction.mRelations.push_back(
+            { form(0x45, 1), 100, ESM4::Faction::GroupCombatReaction::Friend });
+        MWWorld::applyFalloutSaveFactionState(faction, saved);
+        ASSERT_EQ(faction.mRelations.size(), 1u);
+        EXPECT_EQ(faction.mRelations[0].mFaction, form(0x44, 1));
+        EXPECT_EQ(faction.mRelations[0].mModifier, -25);
+        EXPECT_EQ(faction.mRelations[0].mGroupCombatReaction, ESM4::Faction::GroupCombatReaction::Enemy);
+    }
+
+    TEST(FalloutPlayerStateTest, rejectsInvalidSavedFactionCombatReaction)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        const ESM::FormId playerId = form(7, 1);
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(playerId));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x14, 1));
+        ASSERT_TRUE(player) << player.mError;
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSaveFactionChange changed;
+        changed.mResolvedFormId = 0x00000043u;
+        changed.mReactionCount = ESM4::FONVSaveField<std::uint32_t>{ .mValue = 1 };
+        ESM4::FONVSaveFactionReaction reaction;
+        reaction.mFaction.mResolvedFormId = 0x00000044u;
+        reaction.mReaction.mValue = 4;
+        changed.mReactions.push_back(std::move(reaction));
+        save.mFactionChanges.push_back(std::move(changed));
+
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = resolveSavePlan(save, &*player.mState, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("invalid group-combat reaction"));
     }
 
     TEST(FalloutPlayerStateTest, mergesAuthoredInventoryWithSignedSaveDeltasWithoutDuplicatingBaseCounts)

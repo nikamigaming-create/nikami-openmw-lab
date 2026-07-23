@@ -957,6 +957,31 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
+    struct FONVSaveFactionReaction
+    {
+        FONVSaveResolvedReferenceId mFaction;
+        FONVSaveField<std::int32_t> mModifier;
+        FONVSaveField<std::uint32_t> mReaction;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact version-27 FACT change-form payload. Bethesda serializes the complete current reaction list when
+    // CHANGE_FACTION_REACTIONS is set; callers must replace, rather than append to, the authored relation list.
+    struct FONVSaveFactionChange
+    {
+        std::uint32_t mResolvedFormId = 0;
+        std::uint32_t mChangeFlags = 0;
+        std::optional<FONVSaveField<std::uint32_t>> mFormFlags;
+        std::optional<FONVSaveField<std::uint32_t>> mReactionCount;
+        std::vector<FONVSaveFactionReaction> mReactions;
+        std::optional<FONVSaveField<std::uint32_t>> mFactionFlags;
+        std::optional<FONVSaveField<std::uint32_t>> mCrimeCount44;
+        std::optional<FONVSaveField<std::uint32_t>> mCrimeCount48;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
     struct FONVSaveFormIdTable
     {
         FONVSaveField<std::uint32_t> mCount;
@@ -1046,6 +1071,7 @@ namespace ESM4
         std::optional<FONVSavePlayerCharacterFinalState> mPlayerCharacterFinalState;
         std::optional<FONVSaveSkyState> mSky;
         std::vector<FONVSaveQuestChange> mQuestChanges;
+        std::vector<FONVSaveFactionChange> mFactionChanges;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
         // meaning is still deliberately unknown: unrecognized global data, undecoded change-form bytes, and the

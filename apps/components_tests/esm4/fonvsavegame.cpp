@@ -1371,6 +1371,65 @@ namespace
         EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u);
     }
 
+    SaveBytes makeSaveWithFactionChange()
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes result = makeSave(true, 2, 1, masters);
+        std::vector<std::uint8_t> payload;
+        appendU32(payload, 0x00000400u);
+        appendDelimiter(payload);
+        appendPackedCount(payload, 1);
+        appendDelimitedReferenceId(payload, 0x400456);
+        appendU32(payload, std::bit_cast<std::uint32_t>(std::int32_t{ -25 }));
+        appendDelimiter(payload);
+        appendU32(payload, 1);
+        appendDelimiter(payload);
+        appendU32(payload, 0x00000003u);
+        appendDelimiter(payload);
+        appendU32(payload, 12);
+        appendDelimiter(payload);
+        appendU32(payload, 34);
+        appendDelimiter(payload);
+
+        std::vector<std::uint8_t> envelope;
+        appendChangedForm(envelope, { 0x40, 0x01, 0x23 }, 0x80000007u, 34, 27, 2, payload);
+        result.mBytes.insert(result.mBytes.begin() + static_cast<std::ptrdiff_t>(result.mGlobalData2Begin),
+            envelope.begin(), envelope.end());
+        overwriteU32(result.mBytes, result.mGlobalData2OffsetField,
+            static_cast<std::uint32_t>(result.mGlobalData2Begin + envelope.size()));
+        overwriteU32(result.mBytes, result.mRefIdArrayOffsetField,
+            static_cast<std::uint32_t>(result.mRefIdArrayBegin + envelope.size()));
+        overwriteU32(result.mBytes, result.mUnknownTableOffsetField,
+            static_cast<std::uint32_t>(result.mUnknownTableBegin + envelope.size()));
+        overwriteU32(result.mBytes, result.mChangedFormsCountField, 4);
+        return result;
+    }
+
+    TEST(FONVSaveGame, ParsesTypedFactionChangeFormState)
+    {
+        const SaveBytes source = makeSaveWithFactionChange();
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        ASSERT_EQ(save.mFactionChanges.size(), 1u);
+        const ESM4::FONVSaveFactionChange& faction = save.mFactionChanges.front();
+        EXPECT_EQ(faction.mResolvedFormId, 0x00000123u);
+        EXPECT_EQ(faction.mChangeFlags, 0x80000007u);
+        ASSERT_TRUE(faction.mFormFlags);
+        EXPECT_EQ(faction.mFormFlags->mValue, 0x400u);
+        ASSERT_TRUE(faction.mReactionCount);
+        EXPECT_EQ(faction.mReactionCount->mValue, 1u);
+        ASSERT_EQ(faction.mReactions.size(), 1u);
+        EXPECT_EQ(faction.mReactions[0].mFaction.mResolvedFormId, 0x00000456u);
+        EXPECT_EQ(faction.mReactions[0].mModifier.mValue, -25);
+        EXPECT_EQ(faction.mReactions[0].mReaction.mValue, 1u);
+        ASSERT_TRUE(faction.mFactionFlags);
+        EXPECT_EQ(faction.mFactionFlags->mValue, 3u);
+        ASSERT_TRUE(faction.mCrimeCount44);
+        EXPECT_EQ(faction.mCrimeCount44->mValue, 12u);
+        ASSERT_TRUE(faction.mCrimeCount48);
+        EXPECT_EQ(faction.mCrimeCount48->mValue, 34u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u);
+    }
+
     TEST(FONVSaveGame, ParsesNewVegasPrefixAndPreservesRawProvenance)
     {
         constexpr std::array masters = { std::string_view("FalloutNV.esm"), std::string_view("DeadMoney.esm") };
@@ -3750,8 +3809,15 @@ namespace
                 return total + quest.mRange.mSize;
             });
         EXPECT_EQ(decodedQuestBytes, 4776u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6620u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2727301u);
+        ASSERT_EQ(save.mFactionChanges.size(), 4u);
+        const std::uint64_t decodedFactionBytes = std::accumulate(save.mFactionChanges.begin(),
+            save.mFactionChanges.end(), std::uint64_t{ 0 },
+            [](std::uint64_t total, const ESM4::FONVSaveFactionChange& faction) {
+                return total + faction.mRange.mSize;
+            });
+        EXPECT_EQ(decodedFactionBytes, 792u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6616u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2726509u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

@@ -18,6 +18,7 @@
 #include <components/esm3/loadclas.hpp>
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadglob.hpp>
 
 #include <components/l10n/manager.hpp>
@@ -649,6 +650,16 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
 
         MWBase::World& mutableWorld = *MWBase::Environment::get().getWorld();
         mutableWorld.getStore().overrideRecord(savedPlayer);
+        for (const MWWorld::FalloutSaveLoadPlan::FactionState& state : context.mPlan.mFactions)
+        {
+            const ESM4::Faction* source
+                = mutableWorld.getStore().get<ESM4::Faction>().search(ESM::RefId(state.mFaction));
+            if (source == nullptr)
+                throw std::runtime_error("native FNV faction-state application lost its preflighted FACT identity");
+            ESM4::Faction faction = *source;
+            MWWorld::applyFalloutSaveFactionState(faction, state);
+            mutableWorld.getStore().overrideRecord(faction);
+        }
         mCharacterManager.setCurrentCharacter(character);
         mState = State_Running;
         if (character)
@@ -658,6 +669,8 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         MWBase::Environment::get().getWindowManager()->setNewGame(false);
         MWBase::Environment::get().getLuaManager()->prepareGameLoad();
         mutableWorld.saveLoaded();
+        Log(Debug::Info) << "Native FNV save restored faction reaction lists: count="
+                         << context.mPlan.mFactions.size();
         for (const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved : context.mPlan.mGlobals)
         {
             const ESM4::GlobalVariable* global
