@@ -845,6 +845,37 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         player = mutableWorld.moveObject(mutableWorld.getPlayerPtr(), savedPosition.asVec3());
         mutableWorld.rotateObject(player, savedPosition.asRotationVec3());
 
+        std::size_t localReferenceTransforms = 0;
+        std::size_t missingLocalReferences = 0;
+        MWWorld::CellStore& destinationCell = MWBase::Environment::get().getWorldModel()->getCell(savedCell);
+        for (const MWWorld::FalloutSaveLoadPlan::WorldReferenceTransform& transform
+            : context.mPlan.mWorldReferenceTransforms)
+        {
+            if (!MWWorld::targetsFalloutExteriorCell(transform, context.mPlacement))
+                continue;
+
+            MWWorld::Ptr reference = mutableWorld.searchPtr(ESM::RefId(transform.mReference), false);
+            if (reference.isEmpty())
+            {
+                ++missingLocalReferences;
+                Log(Debug::Warning) << "Native FNV save could not instantiate moved local reference: form="
+                                    << transform.mReference.toString() << " sourceOffset=" << transform.mSourceOffset;
+                continue;
+            }
+            ESM::Position position;
+            for (std::size_t i = 0; i < 3; ++i)
+            {
+                position.pos[i] = transform.mPosition[i];
+                position.rot[i] = transform.mRotationRadians[i];
+            }
+            reference = mutableWorld.moveObject(reference, &destinationCell, position.asVec3(), true, true);
+            mutableWorld.rotateObject(reference, position.asRotationVec3(), MWBase::RotationFlag_none);
+            ++localReferenceTransforms;
+        }
+        Log(Debug::Info) << "Native FNV save restored local REFR/ACHR/ACRE transforms: applied="
+                         << localReferenceTransforms << " missing=" << missingLocalReferences << " decodedTotal="
+                         << context.mPlan.mWorldReferenceTransforms.size();
+
         // Camera tracking uses inverse player Euler angles. Apply the save-owned view only after the final cell,
         // render-node and physics transforms exist, so no transitional/default camera state can win a frame.
         MWRender::Camera* camera = mutableWorld.getCamera();

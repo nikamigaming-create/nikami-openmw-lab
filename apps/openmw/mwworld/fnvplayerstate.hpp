@@ -293,6 +293,16 @@ namespace MWWorld
             std::vector<FactionRelation> mRelations;
         };
 
+        struct WorldReferenceTransform
+        {
+            ESM::FormId mReference;
+            std::uint8_t mChangeType = 0;
+            ESM::FormId mCellOrWorldspace;
+            std::array<float, 3> mPosition{};
+            std::array<float, 3> mRotationRadians{};
+            std::uint64_t mSourceOffset = 0;
+        };
+
         FalloutSavePlayerHeaderState mPlayer;
         struct PlayerTransform
         {
@@ -327,6 +337,7 @@ namespace MWWorld
         } mScene;
         std::vector<GlobalValue> mGlobals;
         std::vector<FactionState> mFactions;
+        std::vector<WorldReferenceTransform> mWorldReferenceTransforms;
         std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };
@@ -346,6 +357,9 @@ namespace MWWorld
 
         explicit operator bool() const { return mPlacement.has_value(); }
     };
+
+    bool targetsFalloutExteriorCell(const FalloutSaveLoadPlan::WorldReferenceTransform& transform,
+        const FalloutExteriorPlayerPlacement& placement);
 
     struct FalloutSaveLoadPlanResolution
     {

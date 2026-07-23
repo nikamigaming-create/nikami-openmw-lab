@@ -772,41 +772,41 @@ namespace
         return result;
     }
 
-    ESM4::FONVSavePlayerReferenceMovement parsePlayerReferenceMovement(std::span<const std::uint8_t> data,
-        const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSaveFormIdTable& formIds)
+    ESM4::FONVSaveReferenceMovement parseReferenceMovement(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& reference, const ESM4::FONVSaveFormIdTable& formIds)
     {
         constexpr std::size_t movementBytes = 3 + 6 * sizeof(float) + 1;
-        if (player.mUnparsedPayload.mRange.mSize < movementBytes)
+        if (reference.mUnparsedPayload.mRange.mSize < movementBytes)
             throw ESM4::FONVSaveError(
-                player.mUnparsedPayload.mRange.mOffset, "truncated canonical player reference-movement block");
+                reference.mUnparsedPayload.mRange.mOffset, "truncated reference-movement block");
 
-        const std::size_t begin = static_cast<std::size_t>(player.mUnparsedPayload.mRange.mOffset);
-        const std::size_t end = static_cast<std::size_t>(player.mUnparsedPayload.mRange.end());
+        const std::size_t begin = static_cast<std::size_t>(reference.mUnparsedPayload.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(reference.mUnparsedPayload.mRange.end());
         Cursor cursor(data, begin, end);
-        ESM4::FONVSavePlayerReferenceMovement result;
+        ESM4::FONVSaveReferenceMovement result;
         result.mCellOrWorldspace
-            = decodeResolvedReferenceId(cursor, data, formIds, "player movement CELL/WRLD RefID");
+            = decodeResolvedReferenceId(cursor, data, formIds, "reference movement CELL/WRLD RefID");
         for (ESM4::FONVSaveField<float>& coordinate : result.mPosition)
         {
             coordinate = readField<float>(cursor, data,
-                [&](std::string_view label) { return cursor.readF32(label); }, "player movement position");
+                [&](std::string_view label) { return cursor.readF32(label); }, "reference movement position");
             if (!std::isfinite(coordinate.mValue))
-                throw ESM4::FONVSaveError(coordinate.mRange.mOffset, "non-finite player movement position");
+                throw ESM4::FONVSaveError(coordinate.mRange.mOffset, "non-finite reference movement position");
         }
         for (ESM4::FONVSaveField<float>& angle : result.mRotationRadians)
         {
             angle = readField<float>(cursor, data,
-                [&](std::string_view label) { return cursor.readF32(label); }, "player movement rotation");
+                [&](std::string_view label) { return cursor.readF32(label); }, "reference movement rotation");
             if (!std::isfinite(angle.mValue))
-                throw ESM4::FONVSaveError(angle.mRange.mOffset, "non-finite player movement rotation");
+                throw ESM4::FONVSaveError(angle.mRange.mOffset, "non-finite reference movement rotation");
         }
         result.mTerminator = readField<std::uint8_t>(
-            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "player movement terminator");
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "reference movement terminator");
         if (result.mTerminator.mValue != sDelimiter)
-            throw ESM4::FONVSaveError(result.mTerminator.mRange.mOffset, "bad player movement terminator");
+            throw ESM4::FONVSaveError(result.mTerminator.mRange.mOffset, "bad reference movement terminator");
         result.mRange = range(begin, cursor.position());
         result.mUnparsedRemainder = readRawField(
-            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+            cursor, data, cursor.end() - cursor.position(), "remaining changed reference payload");
         return result;
     }
 
@@ -2371,6 +2371,24 @@ namespace ESM4
             else if (entry.mChangeType == 34)
                 result.mFactionChanges.push_back(parseFactionChange(data, entry, result.mFormIdTable));
         }
+        constexpr std::uint32_t movedOrHavokMoved = 0x00000006u;
+        constexpr std::uint32_t changedCell = 0x00000008u;
+        for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
+        {
+            if (entry.mChangeType > 2 || entry.mResolvedFormId == sFONVPlayerReferenceFormId
+                || (entry.mChangeFlags.mValue & changedCell) != 0
+                || (entry.mChangeFlags.mValue & movedOrHavokMoved) == 0)
+            {
+                continue;
+            }
+            if (!entry.mResolvedFormId)
+            {
+                throw FONVSaveError(
+                    entry.mEncodedReferenceId.mRange.mOffset, "moved REFR/ACHR/ACRE change-form has no identity");
+            }
+            result.mWorldReferenceMovements.push_back(
+                { *entry.mResolvedFormId, entry.mChangeType, parseReferenceMovement(data, entry, result.mFormIdTable) });
+        }
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
         {
@@ -2402,13 +2420,11 @@ namespace ESM4
         }
         if (playerReference != nullptr)
         {
-            constexpr std::uint32_t movedOrHavokMoved = 0x00000006;
-            constexpr std::uint32_t changedCell = 0x00000008;
             if ((playerReference->mChangeFlags.mValue & changedCell) == 0
                 && (playerReference->mChangeFlags.mValue & movedOrHavokMoved) != 0)
             {
                 result.mPlayerReferenceMovement
-                    = parsePlayerReferenceMovement(data, *playerReference, result.mFormIdTable);
+                    = parseReferenceMovement(data, *playerReference, result.mFormIdTable);
                 result.mPlayerActorValueData
                     = parsePlayerActorValueData(data, *playerReference, *result.mPlayerReferenceMovement);
                 result.mPlayerProcessInventoryData = parsePlayerProcessInventoryData(
@@ -2492,7 +2508,16 @@ namespace ESM4
             else if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerReferenceMovement->mUnparsedRemainder.mRange);
             else
-                appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+            {
+                const auto movement = std::ranges::find_if(result.mWorldReferenceMovements,
+                    [&](const FONVSaveWorldReferenceMovement& candidate) {
+                        return candidate.mMovement.mRange.mOffset == entry.mUnparsedPayload.mRange.mOffset;
+                    });
+                appendUnparsedSemanticPayload(result,
+                    movement == result.mWorldReferenceMovements.end()
+                        ? entry.mUnparsedPayload.mRange
+                        : movement->mMovement.mUnparsedRemainder.mRange);
+            }
         }
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable2.mEntries)
             appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
