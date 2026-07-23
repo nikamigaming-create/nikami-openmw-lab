@@ -54,21 +54,19 @@ function obs.locals(scriptName)
     return entry.locals
 end
 
-function obs.on(event, fn)
+function obs.on(event, fn, ...)
     -- registers a block handler for the script currently loading
     local entry = obs._current
     if entry == nil then
         entry = scriptEntry("__anonymous")
     end
     local key = event:lower()
-    local existing = entry.handlers[key]
-    if existing == nil then
-        entry.handlers[key] = fn
-    elseif type(existing) == "table" then
-        existing[#existing + 1] = fn
-    else
-        entry.handlers[key] = { existing, fn }
+    local handlers = entry.handlers[key]
+    if handlers == nil then
+        handlers = {}
+        entry.handlers[key] = handlers
     end
+    handlers[#handlers + 1] = { fn = fn, filters = { ... } }
 end
 
 -- ObScript truthiness: any nonzero number is true
@@ -187,6 +185,12 @@ end
 -- resolve a reference handle (string editor id, or already-resolved object)
 -- engine installs the real resolver; default is identity
 obs.resolveRef = function(x) return x end
+obs.resolveRecordId = function(x)
+    if type(x) == "string" then return x end
+    local ok, value = pcall(function() return x.recordId end)
+    if ok then return value end
+    return nil
+end
 
 -- run one frame: fire every loaded script's GameMode handlers
 function obs.frame()
@@ -194,10 +198,10 @@ function obs.frame()
         local h = entry.handlers["gamemode"]
         if h then
             obs._current = entry
-            if type(h) == "table" then
-                for _, fn in ipairs(h) do fn() end
-            else
-                h()
+            for _, handler in ipairs(h) do
+                if #handler.filters == 0 then
+                    handler.fn()
+                end
             end
         end
     end
@@ -211,10 +215,10 @@ function obs.fire(scriptName, event)
     local h = entry.handlers[event:lower()]
     if not h then return false end
     obs._current = entry
-    if type(h) == "table" then
-        for _, fn in ipairs(h) do fn() end
-    else
-        h()
+    for _, handler in ipairs(h) do
+        if #handler.filters == 0 then
+            handler.fn()
+        end
     end
     obs._current = nil
     return true
@@ -236,12 +240,23 @@ end
 
 -- --------------------------- local-script interface
 
-local function fireAll(entry, h)
+local function fireAll(entry, handlers, eventRef)
     obs._current = entry
-    if type(h) == "table" then
-        for _, fn in ipairs(h) do fn() end
-    else
-        h()
+    for _, handler in ipairs(handlers) do
+        local matches = #handler.filters == 0
+        if not matches and eventRef ~= nil then
+            local expected = obs.resolveRef(handler.filters[1])
+            local actual = obs.resolveRef(eventRef)
+            matches = expected == actual
+            if not matches then
+                local expectedRecord = obs.resolveRecordId(handler.filters[1])
+                local actualRecord = obs.resolveRecordId(eventRef)
+                matches = expectedRecord ~= nil and expectedRecord == actualRecord
+            end
+        end
+        if matches then
+            handler.fn()
+        end
     end
     obs._current = nil
 end
@@ -284,9 +299,9 @@ function obs.makeLocalScript()
                 -- are dispatched from here as well.
                 obs._actionRef = actor
                 local h = entry.handlers["onactivate"]
-                if h then fireAll(entry, h) end
+                if h then fireAll(entry, h, actor) end
                 h = entry.handlers["onopen"]
-                if h then fireAll(entry, h) end
+                if h then fireAll(entry, h, actor) end
                 obs._actionRef = nil
             end,
             onReset = function()
@@ -312,6 +327,20 @@ function obs.makeLocalScript()
                     end
                 end
                 obs._destroyed = data and data.destroyed or nil
+            end,
+        },
+        eventHandlers = {
+            Died = function(data)
+                local h = entry.handlers["ondeath"]
+                -- Unfiltered OnDeath blocks always execute. Filtered blocks
+                -- remain dormant when no authoritative last hitter exists.
+                if h then fireAll(entry, h, data and data.killer) end
+            end,
+            Hit = function(data)
+                local h = entry.handlers["onhit"]
+                if h then fireAll(entry, h, data and data.attacker) end
+                h = entry.handlers["onhitwith"]
+                if h then fireAll(entry, h, data and data.weapon) end
             end,
         },
     }
