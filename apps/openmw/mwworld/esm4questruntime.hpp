@@ -116,6 +116,7 @@ namespace MWWorld
         Enable,
         Disable,
         Unlock,
+        Kill,
         EvaluatePackage,
     };
 
@@ -177,6 +178,7 @@ namespace MWWorld
             Enable,
             Disable,
             Unlock,
+            Kill,
             AddItem,
             RemoveItem,
             EvaluatePackage,

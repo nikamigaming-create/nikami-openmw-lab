@@ -1026,6 +1026,70 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactVms54BunkerDoorUnlockFrame)
         (std::vector<std::string>{ "Unlock FormId:0x15921a" }));
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactHooverDamFinalBattleKillFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x133075, .mContentFile = 0 };
+    const ESM::FormId veteranId{ .mIndex = 0x143b3d, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "vHDBattleController");
+    ESM4::QuestStageEntry entry;
+    // Exact first Kill command frame at FalloutNV.esm vHDBattleController stage 20
+    // SCDA offset 118: VLegateCampFinalFightVet01REF.Kill. Its calling reference is SCRO 4.
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x04, 0x00, 0x8b, 0x10, 0x02, 0x00, 0x00, 0x00 };
+    entry.mScript.references.resize(4);
+    entry.mScript.references[3] = veteranId;
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter veteran;
+    veteran.mId = veteranId;
+    veteran.mEditorId = "VLegateCampFinalFightVet01REF";
+    store.overrideRecord(veteran);
+
+    MWWorld::ESM4QuestRuntime unhandledRuntime;
+    unhandledRuntime.initialize(store);
+    EXPECT_FALSE(unhandledRuntime.setStage(questId, 20));
+    const MWWorld::ESM4QuestState* unchanged = unhandledRuntime.search(questId);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+    EXPECT_FALSE(unchanged->mStageDone.at(20));
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    float liveHealth = 150.f;
+    bool dead = false;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands, &liveHealth, &dead](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            commands.emplace_back(command, target);
+            if (command != MWWorld::ESM4QuestReferenceCommand::Kill)
+                return false;
+            liveHealth = 0.f;
+            dead = true;
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 20));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Kill, veteranId },
+        }));
+    EXPECT_EQ(liveHealth, 0.f);
+    EXPECT_TRUE(dead);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failedEffectRuntime;
+    failedEffectRuntime.setReferenceCommandHandler(
+        [](MWWorld::ESM4QuestReferenceCommand, ESM::FormId) { return false; });
+    failedEffectRuntime.initialize(store);
+    ASSERT_TRUE(failedEffectRuntime.setStage(questId, 20));
+    EXPECT_EQ(failedEffectRuntime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{ "Kill FormId:0x143b3d" }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
 {
     MWWorld::ESMStore store;

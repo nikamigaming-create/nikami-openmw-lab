@@ -789,6 +789,21 @@ namespace MWWorld
                         if (target.getCellRef().isLocked())
                             target.getCellRef().unlock();
                         break;
+                    case ESM4QuestReferenceCommand::Kill:
+                    {
+                        if (!target.getClass().isActor())
+                            return false;
+                        MWMechanics::CreatureStats& stats = target.getClass().getCreatureStats(target);
+                        if (!stats.isDead())
+                        {
+                            auto health = stats.getHealth();
+                            health.setCurrent(0.f);
+                            stats.setHealth(health);
+                        }
+                        if (!stats.isDead())
+                            return false;
+                        break;
+                    }
                     case ESM4QuestReferenceCommand::EvaluatePackage:
                         if (!MWClass::requestFnvAiPackageEvaluation(target))
                             return false;
