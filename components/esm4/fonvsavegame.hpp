@@ -211,6 +211,19 @@ namespace ESM4
         FONVSaveReferenceMovement mMovement;
     };
 
+    // Exact CHANGE_FORM_FLAGS prefix inside the shared version-27 ChangedREFR block for non-player ACHR/ACRE.
+    // Process level is retained because it is the delimited field immediately preceding ChangedREFR; no broader
+    // process semantics are assigned to it here.
+    struct FONVSaveWorldReferenceFlags
+    {
+        std::uint32_t mResolvedFormId = 0;
+        std::uint8_t mChangeType = 0;
+        FONVSaveField<std::int8_t> mProcessLevel;
+        FONVSaveField<std::uint32_t> mFlags;
+        FONVSaveRange mRange;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     // Fixed player-only prefix immediately after the ACHR reference-movement block in changed-form version 27.
     // The three arrays are intentionally kept under xEdit's structural names: their broader runtime semantics are
     // not established. Each value and Unk4AC is followed by a retail 0x7c delimiter.
@@ -1084,6 +1097,7 @@ namespace ESM4
         // Exact initial-data type-4 movement prefixes for authored REFR/ACHR/ACRE records other than Player.
         // The remaining per-record payload stays explicitly opaque.
         std::vector<FONVSaveWorldReferenceMovement> mWorldReferenceMovements;
+        std::vector<FONVSaveWorldReferenceFlags> mWorldReferenceFlags;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
         // meaning is still deliberately unknown: unrecognized global data, undecoded change-form bytes, and the

@@ -1438,11 +1438,15 @@ namespace
         for (const float value : { 10.f, 20.f, 30.f, 0.1f, 0.2f, 0.3f })
             appendF32(payload, value);
         appendDelimiter(payload);
+        payload.push_back(0);
+        appendDelimiter(payload);
+        appendU32(payload, ESM4::Rec_Disabled);
+        appendDelimiter(payload);
         payload.push_back(0xaa);
         payload.push_back(0xbb);
 
         std::vector<std::uint8_t> envelope;
-        appendChangedForm(envelope, { 0x40, 0x01, 0x23 }, 0x00000002u, 1, 27, 2, payload);
+        appendChangedForm(envelope, { 0x40, 0x01, 0x23 }, 0x00000003u, 1, 27, 2, payload);
         result.mBytes.insert(result.mBytes.begin() + static_cast<std::ptrdiff_t>(result.mGlobalData2Begin),
             envelope.begin(), envelope.end());
         overwriteU32(result.mBytes, result.mGlobalData2OffsetField,
@@ -1471,7 +1475,14 @@ namespace
         EXPECT_FLOAT_EQ(change.mMovement.mRotationRadians[1].mValue, 0.2f);
         EXPECT_FLOAT_EQ(change.mMovement.mRotationRadians[2].mValue, 0.3f);
         EXPECT_EQ(change.mMovement.mRange.mSize, 28u);
-        EXPECT_EQ(change.mMovement.mUnparsedRemainder.mRaw, (std::vector<std::uint8_t>{ 0xaa, 0xbb }));
+        ASSERT_EQ(save.mWorldReferenceFlags.size(), 1u);
+        const ESM4::FONVSaveWorldReferenceFlags& flags = save.mWorldReferenceFlags.front();
+        EXPECT_EQ(flags.mResolvedFormId, 0x00000123u);
+        EXPECT_EQ(flags.mChangeType, 1u);
+        EXPECT_EQ(flags.mProcessLevel.mValue, 0);
+        EXPECT_EQ(flags.mFlags.mValue, ESM4::Rec_Disabled);
+        EXPECT_EQ(flags.mRange.mSize, 7u);
+        EXPECT_EQ(flags.mUnparsedRemainder.mRaw, (std::vector<std::uint8_t>{ 0xaa, 0xbb }));
         EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 17u);
     }
 
@@ -3868,6 +3879,12 @@ namespace
                 return total + movement.mMovement.mRange.mSize;
             });
         EXPECT_EQ(decodedWorldMovementBytes, 40936u);
+        ASSERT_EQ(save.mWorldReferenceFlags.size(), 19u);
+        EXPECT_EQ(std::count_if(save.mWorldReferenceFlags.begin(), save.mWorldReferenceFlags.end(),
+                      [&](const ESM4::FONVSaveWorldReferenceFlags& flags) {
+                          return (flags.mResolvedFormId >> 24) >= save.mMasters.size();
+                      }),
+            0);
         EXPECT_EQ(std::count_if(save.mWorldReferenceMovements.begin(), save.mWorldReferenceMovements.end(),
                       [&](const ESM4::FONVSaveWorldReferenceMovement& movement) {
                           return (movement.mResolvedFormId >> 24) >= save.mMasters.size()
@@ -3875,8 +3892,8 @@ namespace
                               || (*movement.mMovement.mCellOrWorldspace.mResolvedFormId >> 24) >= save.mMasters.size();
                       }),
             0);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6616u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2685573u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6617u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2685440u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

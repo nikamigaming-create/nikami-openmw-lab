@@ -1024,6 +1024,16 @@ namespace MWWorld
             transform.mSourceOffset = saved.mMovement.mRange.mOffset;
             plan.mWorldReferenceTransforms.push_back(std::move(transform));
         }
+        plan.mWorldReferenceFlags.reserve(save.mWorldReferenceFlags.size());
+        for (const ESM4::FONVSaveWorldReferenceFlags& saved : save.mWorldReferenceFlags)
+        {
+            const std::optional<ESM::FormId> reference
+                = normalizeSavedFormId(saved.mResolvedFormId, currentPluginIndices);
+            if (!reference)
+                return loadFailure("FNV save changed world-reference flags have unsupported provenance");
+            plan.mWorldReferenceFlags.push_back(
+                { *reference, saved.mChangeType, saved.mFlags.mValue, saved.mFlags.mRange.mOffset });
+        }
 
         if (!save.mSky)
             return loadFailure("FNV save does not expose a proven Sky global-data payload");

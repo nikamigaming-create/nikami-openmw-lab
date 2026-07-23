@@ -303,6 +303,14 @@ namespace MWWorld
             std::uint64_t mSourceOffset = 0;
         };
 
+        struct WorldReferenceFlags
+        {
+            ESM::FormId mReference;
+            std::uint8_t mChangeType = 0;
+            std::uint32_t mFlags = 0;
+            std::uint64_t mSourceOffset = 0;
+        };
+
         FalloutSavePlayerHeaderState mPlayer;
         struct PlayerTransform
         {
@@ -338,6 +346,7 @@ namespace MWWorld
         std::vector<GlobalValue> mGlobals;
         std::vector<FactionState> mFactions;
         std::vector<WorldReferenceTransform> mWorldReferenceTransforms;
+        std::vector<WorldReferenceFlags> mWorldReferenceFlags;
         std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };

@@ -179,6 +179,35 @@ namespace
         return {};
     }
 
+    std::string validateWorldReferenceFlags(
+        const MWWorld::FalloutSaveLoadPlan& plan, const MWWorld::ESMStore& store)
+    {
+        std::set<ESM::FormId> references;
+        for (const MWWorld::FalloutSaveLoadPlan::WorldReferenceFlags& state : plan.mWorldReferenceFlags)
+        {
+            if (!references.insert(state.mReference).second)
+                return "FNV save contains duplicate form-flags state for one ACHR/ACRE";
+            bool found = false;
+            switch (state.mChangeType)
+            {
+                case 1:
+                    found = store.get<ESM4::ActorCharacter>().search(state.mReference) != nullptr;
+                    break;
+                case 2:
+                    found = store.get<ESM4::ActorCreature>().search(state.mReference) != nullptr;
+                    break;
+                default:
+                    return "FNV save form-flags state has an unsupported changed-reference type";
+            }
+            if (!found)
+            {
+                return "FNV save form-flags reference is not a loaded record of its exact ACHR/ACRE type: "
+                    + state.mReference.toString();
+            }
+        }
+        return {};
+    }
+
     std::string validatePlayerActorValuesAndPerks(
         const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
     {
@@ -270,6 +299,9 @@ namespace MWWorld
         const std::string transformError = validateWorldReferenceTransforms(result.mContext->mPlan, store);
         if (!transformError.empty())
             return failure(transformError);
+        const std::string referenceFlagsError = validateWorldReferenceFlags(result.mContext->mPlan, store);
+        if (!referenceFlagsError.empty())
+            return failure(referenceFlagsError);
         const std::string actorValueError
             = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
         if (!actorValueError.empty())
