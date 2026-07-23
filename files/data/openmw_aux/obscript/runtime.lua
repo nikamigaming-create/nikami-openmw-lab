@@ -304,6 +304,18 @@ function obs.makeLocalScript()
                 if h then fireAll(entry, h, actor) end
                 obs._actionRef = nil
             end,
+            onTriggerEnter = function(actor)
+                obs._actionRef = actor
+                local h = entry.handlers["ontriggerenter"]
+                if h then fireAll(entry, h, actor) end
+                obs._actionRef = nil
+            end,
+            onTriggerLeave = function(actor)
+                obs._actionRef = actor
+                local h = entry.handlers["ontriggerleave"]
+                if h then fireAll(entry, h, actor) end
+                obs._actionRef = nil
+            end,
             onReset = function()
                 local h = entry.handlers["onreset"]
                 if h then fireAll(entry, h) end

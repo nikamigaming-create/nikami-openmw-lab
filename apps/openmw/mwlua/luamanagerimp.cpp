@@ -240,6 +240,7 @@ namespace MWLua
         }
 
         mObjectLists.update();
+        mTriggerVolumes.update(mObjectLists, mEngineEvents);
 
         for (const LuaUtil::ScriptsContainerWeakPtr& ptr : mQueuedAutoStartedScripts)
         {
@@ -404,6 +405,7 @@ namespace MWLua
         mInputEvents.clear();
         mMenuInputEvents.clear();
         mObjectLists.clear();
+        mTriggerVolumes.clear();
         mGlobalScripts.removeAllScripts();
         mGlobalScriptsStarted = false;
         mNewGameStarted = false;

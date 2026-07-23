@@ -4850,6 +4850,11 @@ namespace MWWorld
             return mPhysics->getHalfExtents(object);
     }
 
+    osg::Vec3f World::getActorCollisionPosition(const ConstPtr& actor) const
+    {
+        return mPhysics->getCollisionObjectPosition(actor);
+    }
+
     std::filesystem::path World::exportSceneGraph(const Ptr& ptr)
     {
         auto file = mUserDataPath / "openmw.osgt";

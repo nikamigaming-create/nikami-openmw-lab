@@ -24,6 +24,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
     mwworld/testcellvisitors.cpp
+    mwworld/testactorfacing.cpp
+    mwworld/testfnvtriggervolume.cpp
     mwworld/testcontainerstoreesm4.cpp
     mwworld/testweather.cpp
 
