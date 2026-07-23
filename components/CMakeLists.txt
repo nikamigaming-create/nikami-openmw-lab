@@ -125,7 +125,7 @@ add_component_dir (bullethelpers
     )
 
 add_component_dir (vfs
-    manager archive bsaarchive filesystemarchive pathutil registerarchives
+    manager archive bsaarchive filesystemarchive inmemoryarchive pathutil registerarchives
     )
 
 add_component_dir (resource

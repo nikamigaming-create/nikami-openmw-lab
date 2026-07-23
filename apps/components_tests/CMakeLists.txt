@@ -17,6 +17,9 @@ file(GLOB UNITTEST_SRC_FILES
     lua/testinputactions.cpp
     lua/testl10n.cpp
     lua/testlua.cpp
+    lua/testobscriptparser.cpp
+    lua/testobscriptruntime.cpp
+    lua/testobscripttranspiler.cpp
     lua/testscriptscontainer.cpp
     lua/testserialization.cpp
     lua/teststorage.cpp
@@ -116,6 +119,7 @@ file(GLOB UNITTEST_SRC_FILES
     resource/testobjectcache.cpp
     resource/testresourcesystem.cpp
 
+    vfs/testinmemoryarchive.cpp
     vfs/testpathutil.cpp
 
     sceneutil/lightcommon.cpp

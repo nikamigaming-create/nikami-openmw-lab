@@ -7,6 +7,7 @@
 
 #include <osg/Stats>
 
+#include <components/esm/luascripts.hpp>
 #include <components/lua/inputactions.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/scripttracker.hpp>
@@ -25,6 +26,12 @@
 #include "object.hpp"
 #include "objectlists.hpp"
 
+namespace VFS
+{
+    class Manager;
+    class InMemoryArchive;
+}
+
 namespace MWLua
 {
     // \brief LuaManager is the central interface through which the engine invokes lua scripts.
@@ -42,6 +49,9 @@ namespace MWLua
 
         // Called by engine.cpp when the environment is fully initialized.
         void init();
+
+        // Translates ESM4 script records (SCPT) and remembers their per-record attachments.
+        void compileObScripts(VFS::Manager& vfs, VFS::InMemoryArchive& out);
 
         void loadPermanentStorage(const std::filesystem::path& userConfigPath);
         void savePermanentStorage(const std::filesystem::path& userConfigPath) override;
@@ -195,6 +205,7 @@ namespace MWLua
         bool mReloadAllScriptsRequested = false;
         bool mRunningSynchronizedUpdates = false;
         LuaUtil::ScriptsConfiguration mConfiguration;
+        ESM::LuaScriptsCfg mObScriptCfg;
         LuaUtil::LuaState mLua;
         LuaUi::ResourceManager mUiResourceManager;
         std::map<std::string, sol::object> mLocalPackages;

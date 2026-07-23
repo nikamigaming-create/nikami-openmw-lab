@@ -9,6 +9,7 @@ GLOBAL: scripts/omw/settings/global.lua
 # Mechanics
 GLOBAL: scripts/omw/activationhandlers.lua
 GLOBAL: scripts/omw/cellhandlers.lua
+GLOBAL: scripts/omw/obscript.lua
 GLOBAL: scripts/omw/usehandlers.lua
 GLOBAL: scripts/omw/worldeventhandlers.lua
 GLOBAL: scripts/omw/crimes.lua

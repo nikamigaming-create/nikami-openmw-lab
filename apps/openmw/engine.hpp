@@ -9,6 +9,7 @@
 #include <components/files/collections.hpp>
 #include <components/settings/settings.hpp>
 #include <components/translation/translation.hpp>
+#include <components/vfs/inmemoryarchive.hpp>
 
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
@@ -152,6 +153,7 @@ namespace OMW
     {
         SDL_Window* mWindow;
         std::unique_ptr<VFS::Manager> mVFS;
+        VFS::InMemoryArchive* mGeneratedFiles = nullptr;
         std::unique_ptr<Resource::ResourceSystem> mResourceSystem;
         osg::ref_ptr<SceneUtil::WorkQueue> mWorkQueue;
         std::unique_ptr<SceneUtil::UnrefQueue> mUnrefQueue;

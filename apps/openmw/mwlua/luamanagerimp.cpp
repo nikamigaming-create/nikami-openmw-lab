@@ -36,6 +36,7 @@
 #include "../mwworld/worldmodel.hpp"
 
 #include "luabindings.hpp"
+#include "obscriptcompiler.hpp"
 #include "playerscripts.hpp"
 #include "types/types.hpp"
 #include "userdataserializer.hpp"
@@ -100,12 +101,19 @@ namespace MWLua
 
     void LuaManager::initConfiguration()
     {
-        mConfiguration.init(MWBase::Environment::get().getESMStore()->getLuaScriptsCfg());
+        ESM::LuaScriptsCfg cfg = MWBase::Environment::get().getESMStore()->getLuaScriptsCfg();
+        cfg.mScripts.insert(cfg.mScripts.end(), mObScriptCfg.mScripts.begin(), mObScriptCfg.mScripts.end());
+        mConfiguration.init(std::move(cfg));
         Log(Debug::Verbose) << "Lua scripts configuration (" << mConfiguration.size() << " scripts):";
         for (size_t i = 0; i < mConfiguration.size(); ++i)
             Log(Debug::Verbose) << "#" << i << " " << LuaUtil::scriptCfgToString(mConfiguration[i]);
         mMenuScripts.setAutoStartConf(mConfiguration.getMenuConf());
         mGlobalScripts.setAutoStartConf(mConfiguration.getGlobalConf());
+    }
+
+    void LuaManager::compileObScripts(VFS::Manager& vfs, VFS::InMemoryArchive& out)
+    {
+        mObScriptCfg = MWLua::compileObScripts(mLua, vfs, out);
     }
 
     void LuaManager::init()
