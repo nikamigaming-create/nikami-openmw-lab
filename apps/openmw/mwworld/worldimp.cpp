@@ -808,6 +808,13 @@ namespace MWWorld
                 return std::nullopt;
             }
         });
+        mESM4QuestRuntime.setRewardXpHandler([this](int amount) {
+            if (amount <= 0)
+                return false;
+            return mFalloutPlayerRuntimeState.modCurrentActorValue(
+                       FalloutPlayerRuntimeState::ExperienceActorValue, static_cast<float>(amount))
+                == FalloutActorValueMutationResult::Applied;
+        });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();

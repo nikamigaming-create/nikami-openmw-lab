@@ -2122,6 +2122,43 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactRetailQuestLifecycleConditions)
     runCompletedAndStage(5, true);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailQuestCompletionAndXpRewardFrames)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x10e662, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "VMS16b");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Displayed objective" });
+    quest.mObjectives.push_back({ .mIndex = 20, .mDescription = "Hidden objective" });
+    ESM4::QuestStageEntry entry;
+    // Exact FalloutNV.esm VMS16b stage 100 command frames. Other retail commands sit between
+    // these two frames; this focused script proves their native signatures and effects.
+    const std::array<std::uint8_t, 20> retailScda{ 0xad, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72,
+        0x02, 0x00, 0x77, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x64, 0x00, 0x00, 0x00 };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { ESM::FormId{}, questId };
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    int rewardedXp = 0;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setRewardXpHandler([&](int amount) {
+        rewardedXp += amount;
+        return true;
+    });
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setObjectiveDisplayed(questId, 10, true));
+    ASSERT_TRUE(runtime.setStage(questId, 100));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Completed, 0);
+    EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Completed, 0);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_EQ(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_EQ(rewardedXp, 100);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedPostfixConditionBeforeQuestMutation)
 {
     MWWorld::ESMStore store;

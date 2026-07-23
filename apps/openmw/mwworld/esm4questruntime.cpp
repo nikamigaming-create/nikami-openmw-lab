@@ -409,8 +409,9 @@ namespace MWWorld
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
+                && instruction.opcode != 0x1177
                 && instruction.opcode != 0x11a2
-                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
+                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd)
             {
                 prepared.mUseSourceFallback = true;
                 prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
@@ -826,6 +827,24 @@ namespace MWWorld
                 command.mObjective = *count;
                 prepared.mCommands.push_back(std::move(command));
             }
+            else if (instruction.opcode == 0x1177) // [player.]RewardXP amount
+            {
+                if (arguments.size() != 1 || !mRewardXpHandler)
+                    return false;
+                if (instruction.callingReferenceIndex)
+                {
+                    const ESM::FormId owner = script.references[*instruction.callingReferenceIndex - 1];
+                    if (owner.mIndex != 0x7 && owner.mIndex != 0x14)
+                        return false;
+                }
+                const std::int32_t* amount = std::get_if<std::int32_t>(&arguments[0]);
+                if (amount == nullptr || *amount <= 0)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::RewardXp;
+                command.mObjective = *amount;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022) // reference.Enable / Disable
             {
                 if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
@@ -952,6 +971,18 @@ namespace MWWorld
                     ? CompiledQuestCommandType::SetObjectiveCompleted
                     : CompiledQuestCommandType::SetObjectiveDisplayed;
                 prepared.mCommands.push_back({ type, *questId, *objective, *displayed != 0 });
+            }
+            else if (instruction.opcode == 0x11ad) // CompleteAllObjectives Quest
+            {
+                if (instruction.callingReferenceIndex || arguments.size() != 1 || mStore == nullptr)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                const ESM4::Quest* quest = questId == nullptr
+                    ? nullptr
+                    : mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                if (questId == nullptr || quest == nullptr || findState(*quest) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::CompleteAllObjectives, *questId });
             }
             else if (instruction.opcode == 0x1039) // SetStage Quest Stage
             {
@@ -1310,7 +1341,8 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
-            || command.mType == CompiledQuestCommandType::AddItem)
+            || command.mType == CompiledQuestCommandType::AddItem
+            || command.mType == CompiledQuestCommandType::RewardXp)
         {
             working.mExternalEffects.push_back(
                 { command.mType, command.mQuest, command.mTarget, command.mTopic, false, false, command.mObjective });
@@ -1365,6 +1397,10 @@ namespace MWWorld
                     objective->second &= ~ESM4QuestState::Objective_Displayed;
                 return true;
             }
+            case CompiledQuestCommandType::CompleteAllObjectives:
+                for (auto& objective : state.mObjectiveStatus)
+                    objective.second |= ESM4QuestState::Objective_Completed;
+                return true;
             case CompiledQuestCommandType::ForceActiveQuest:
                 state.mFlags |= ESM4QuestState::Flag_ShownInPipBoy;
                 working.mActiveQuest = command.mQuest;
@@ -1396,6 +1432,7 @@ namespace MWWorld
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
+            case CompiledQuestCommandType::RewardXp:
                 return false;
         }
         return false;
@@ -1573,10 +1610,17 @@ namespace MWWorld
                     executed = mAddItemHandler
                         && mAddItemHandler(effect.mTarget, effect.mListener, effect.mCount);
                     break;
+                case CompiledQuestCommandType::RewardXp:
+                    command = "RewardXP ";
+                    executed = mRewardXpHandler && mRewardXpHandler(effect.mCount);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
-            command += ESM::RefId(effect.mTarget).serializeText();
+            if (effect.mType == CompiledQuestCommandType::RewardXp)
+                command += std::to_string(effect.mCount);
+            else
+                command += ESM::RefId(effect.mTarget).serializeText();
             if (effect.mType == CompiledQuestCommandType::AddItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(effect.mCount);
@@ -1719,6 +1763,20 @@ namespace MWWorld
                         case CompiledQuestCommandType::SetObjectiveDisplayed:
                             executed = setObjectiveDisplayed(command.mQuest, command.mObjective, command.mValue);
                             break;
+                        case CompiledQuestCommandType::CompleteAllObjectives:
+                        {
+                            ESM4QuestState* targetState = nullptr;
+                            if (const ESM4::Quest* targetQuest
+                                = mStore->get<ESM4::Quest>().search(ESM::RefId(command.mQuest)))
+                                targetState = findState(*targetQuest);
+                            if (targetState != nullptr)
+                            {
+                                for (auto& objective : targetState->mObjectiveStatus)
+                                    objective.second |= ESM4QuestState::Objective_Completed;
+                                executed = true;
+                            }
+                            break;
+                        }
                         case CompiledQuestCommandType::ForceActiveQuest:
                             executed = forceActiveQuest(command.mQuest);
                             break;
@@ -1778,6 +1836,9 @@ namespace MWWorld
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
                             break;
+                        case CompiledQuestCommandType::RewardXp:
+                            executed = mRewardXpHandler && mRewardXpHandler(command.mObjective);
+                            break;
                     }
                     if (!executed)
                     {
@@ -1788,7 +1849,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetEnemy
                             || command.mType == CompiledQuestCommandType::Enable
                             || command.mType == CompiledQuestCommandType::Disable
-                            || command.mType == CompiledQuestCommandType::AddItem)
+                            || command.mType == CompiledQuestCommandType::AddItem
+                            || command.mType == CompiledQuestCommandType::RewardXp)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -1809,6 +1871,8 @@ namespace MWWorld
                                 failure = "AddItem " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "
                                     + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::RewardXp)
+                                failure = "RewardXP " + std::to_string(command.mObjective);
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);

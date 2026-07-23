@@ -260,6 +260,8 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     ASSERT_EQ(original.setCurrentActorValue(16, 73.5f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(5, 12.25f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(43, 137.75f), MWWorld::FalloutActorValueMutationResult::Applied);
+    ASSERT_EQ(original.modCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue, 100.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.countSavedGameRecords(), 1);
 
     auto stream = std::make_unique<std::stringstream>();
@@ -289,6 +291,8 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     EXPECT_FLOAT_EQ(restored.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(5)->mValue, 12.25f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 137.75f);
+    EXPECT_FLOAT_EQ(
+        restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue)->mValue, 100.f);
     ASSERT_TRUE(restored.getCurrentActorValue(43)->mRawSkillOffset);
     EXPECT_EQ(*restored.getCurrentActorValue(43)->mRawSkillOffset, 0xfe);
     EXPECT_TRUE(restored.isDirty());

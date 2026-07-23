@@ -129,6 +129,7 @@ namespace MWWorld
         using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
         using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
+        using RewardXpHandler = std::function<bool(int)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -150,6 +151,7 @@ namespace MWWorld
         ItemCountHandler mItemCountHandler;
         AddItemHandler mAddItemHandler;
         ActorDeadHandler mActorDeadHandler;
+        RewardXpHandler mRewardXpHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -163,6 +165,7 @@ namespace MWWorld
             SetStage,
             SetObjectiveCompleted,
             SetObjectiveDisplayed,
+            CompleteAllObjectives,
             ForceActiveQuest,
             SetVariable,
             SetVariableFromItemCount,
@@ -174,6 +177,7 @@ namespace MWWorld
             EvaluatePackage,
             ShowMessage,
             SayTo,
+            RewardXp,
         };
 
         enum class CompiledConditionValueType : std::uint8_t
@@ -329,6 +333,7 @@ namespace MWWorld
         void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
         void setAddItemHandler(AddItemHandler handler) { mAddItemHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
+        void setRewardXpHandler(RewardXpHandler handler) { mRewardXpHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.
