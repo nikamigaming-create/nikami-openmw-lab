@@ -865,6 +865,26 @@ namespace MWWorld
                 return std::nullopt;
             }
         });
+        mESM4QuestRuntime.setAddItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
+            if (itemId.isZeroOrUnset() || count <= 0)
+                return false;
+            try
+            {
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
+                    return false;
+                owner.getClass().getContainerStore(owner).add(ESM::RefId(itemId), count, false);
+                Log(Debug::Info) << "FNV/ESM4 quest: AddItem owner=" << ESM::RefId(ownerId).serializeText()
+                                 << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

@@ -806,6 +806,68 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSurvivalTutorialInventoryAssi
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactForlornHopePlayerAddItemRewardStages)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId dogtagQuestId{ .mIndex = 0x1214ac, .mContentFile = 0 };
+    const ESM::FormId dogtagNoteId{ .mIndex = 0x125844, .mContentFile = 0 };
+    const ESM::FormId sextonQuestId{ .mIndex = 0x126d49, .mContentFile = 0 };
+    const ESM::FormId sextonNoteId{ .mIndex = 0x126d48, .mContentFile = 0 };
+
+    const auto addRewardQuest = [&store, playerId](
+                                    ESM::FormId questId, std::string_view editorId, ESM::FormId itemId) {
+        ESM4::Quest quest = makeQuest(questId, editorId);
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm vFreeformForlornHope02/03 stage 10, byte-for-byte:
+        // Player.AddItem <authored note> 1.
+        const std::array<std::uint8_t, 18> retailScda{
+            0x1c, 0x00, 0x01, 0x00, 0x02, 0x10, 0x0a, 0x00, 0x02,
+            0x00, 0x72, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00
+        };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references = { playerId, itemId };
+        quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+    };
+    addRewardQuest(dogtagQuestId, "vFreeformForlornHope02", dogtagNoteId);
+    addRewardQuest(sextonQuestId, "vFreeformForlornHope03", sextonNoteId);
+
+    MWWorld::ESM4QuestRuntime unhandledRuntime;
+    unhandledRuntime.initialize(store);
+    EXPECT_FALSE(unhandledRuntime.setStage(dogtagQuestId, 10));
+    const MWWorld::ESM4QuestState* unchanged = unhandledRuntime.search(dogtagQuestId);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+    EXPECT_FALSE(unchanged->mStageDone.at(10));
+
+    struct Request
+    {
+        ESM::FormId mOwner;
+        ESM::FormId mItem;
+        int mCount = 0;
+
+        bool operator==(const Request&) const = default;
+    };
+    std::vector<Request> requests;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setAddItemHandler([&requests](ESM::FormId owner, ESM::FormId item, int count) {
+        requests.push_back({ owner, item, count });
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(dogtagQuestId, 10));
+    ASSERT_TRUE(runtime.setStage(sextonQuestId, 10));
+    EXPECT_EQ(requests,
+        (std::vector<Request>{
+            { playerId, dogtagNoteId, 1 },
+            { playerId, sextonNoteId, 1 },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
 {
     MWWorld::ESMStore store;

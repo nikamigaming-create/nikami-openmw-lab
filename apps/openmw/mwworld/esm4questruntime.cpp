@@ -395,7 +395,8 @@ namespace MWWorld
                     || *instruction.callingReferenceIndex > script.references.size()))
                 return false;
 
-            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
+            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1002
+                && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
@@ -499,7 +500,28 @@ namespace MWWorld
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022) // reference.Enable / Disable
+            if (instruction.opcode == 0x1002) // reference.AddItem item count
+            {
+                if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mAddItemHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId owner = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* item = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* count = std::get_if<std::int32_t>(&arguments[1]);
+                const bool ownerIsPlayer = owner.mIndex == 0x7 || owner.mIndex == 0x14;
+                const bool ownerExists = ownerIsPlayer || mStore->get<ESM4::Reference>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCharacter>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(owner) != nullptr;
+                if (!ownerExists || item == nullptr || item->isZeroOrUnset() || count == nullptr || *count <= 0)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::AddItem;
+                command.mQuest = owner;
+                command.mTarget = *item;
+                command.mObjective = *count;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022) // reference.Enable / Disable
             {
                 if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
                     || mStore == nullptr)
@@ -798,9 +820,11 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
-            || command.mType == CompiledQuestCommandType::Disable)
+            || command.mType == CompiledQuestCommandType::Disable
+            || command.mType == CompiledQuestCommandType::AddItem)
         {
-            working.mExternalEffects.push_back({ command.mType, command.mQuest, command.mTarget, command.mTopic });
+            working.mExternalEffects.push_back(
+                { command.mType, command.mQuest, command.mTarget, command.mTopic, false, false, command.mObjective });
             return true;
         }
 
@@ -874,6 +898,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetEnemy:
             case CompiledQuestCommandType::Enable:
             case CompiledQuestCommandType::Disable:
+            case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
@@ -1038,10 +1063,18 @@ namespace MWWorld
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::Disable, effect.mTarget);
                     break;
+                case CompiledQuestCommandType::AddItem:
+                    command = "AddItem ";
+                    executed = mAddItemHandler
+                        && mAddItemHandler(effect.mTarget, effect.mListener, effect.mCount);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
             command += ESM::RefId(effect.mTarget).serializeText();
+            if (effect.mType == CompiledQuestCommandType::AddItem)
+                command += " " + ESM::RefId(effect.mListener).serializeText() + " "
+                    + std::to_string(effect.mCount);
             if (executed)
                 Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
             else
@@ -1214,6 +1247,10 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Disable, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::AddItem:
+                            executed = mAddItemHandler
+                                && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
+                            break;
                         case CompiledQuestCommandType::EvaluatePackage:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
@@ -1234,7 +1271,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
                             || command.mType == CompiledQuestCommandType::Enable
-                            || command.mType == CompiledQuestCommandType::Disable)
+                            || command.mType == CompiledQuestCommandType::Disable
+                            || command.mType == CompiledQuestCommandType::AddItem)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -1251,6 +1289,10 @@ namespace MWWorld
                                 failure = "Enable " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::Disable)
                                 failure = "Disable " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::AddItem)
+                                failure = "AddItem " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText() + " "
+                                    + std::to_string(command.mObjective);
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
