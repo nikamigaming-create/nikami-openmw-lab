@@ -3868,7 +3868,7 @@ namespace
                 return total + movement.mMovement.mRange.mSize;
             });
         EXPECT_EQ(decodedWorldMovementBytes, 40936u);
-        EXPECT_EQ(std::ranges::count_if(save.mWorldReferenceMovements,
+        EXPECT_EQ(std::count_if(save.mWorldReferenceMovements.begin(), save.mWorldReferenceMovements.end(),
                       [&](const ESM4::FONVSaveWorldReferenceMovement& movement) {
                           return (movement.mResolvedFormId >> 24) >= save.mMasters.size()
                               || !movement.mMovement.mCellOrWorldspace.mResolvedFormId
