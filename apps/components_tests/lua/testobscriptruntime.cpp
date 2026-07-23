@@ -26,6 +26,8 @@ namespace
 
     constexpr VFS::Path::NormalizedView runtimePath("openmw_aux/obscript/runtime.lua");
     TestingOpenMW::VFSTestFile runtimeFile(readDataFile("openmw_aux/obscript/runtime.lua"));
+    constexpr VFS::Path::NormalizedView bindingsPath("openmw_aux/obscript/bindings.lua");
+    TestingOpenMW::VFSTestFile bindingsFile(readDataFile("openmw_aux/obscript/bindings.lua"));
 
     // The driver simulates what transpiled scripts and the engine host do:
     // register handlers, install bindings, read/write variables, fire events.
@@ -122,16 +124,18 @@ namespace
                 obs.on('OnActivate', function()
                     log[#log + 1] = 'activated:' .. tostring(obs._actionRef)
                 end)
+                obs.on('OnLoad', function() log[#log + 1] = 'loaded' end)
                 local script = obs.makeLocalScript()
                 local h = script.engineHandlers
                 if type(h) ~= 'table' then
                     return 'no engineHandlers'
                 end
+                h.onActive()
                 h.onUpdate(0.25)
                 h.onActivated('someactor')
                 local dtSeen = obs._dt
                 local save = h.onSave()
-                return #log, log[1], log[2], dtSeen, type(save.locals)
+                return #log, log[1], log[2], log[3], dtSeen, type(save.locals)
             end,
 
             makeLocalScriptEmpty = function()
@@ -144,11 +148,167 @@ namespace
         }
         )X");
 
+    constexpr VFS::Path::NormalizedView bindingsDriverPath("obscript/bindingstests.lua");
+    TestingOpenMW::VFSTestFile bindingsDriverFile(R"X(
+        local nearby = require('openmw.nearby')
+        local obs = require('openmw_aux.obscript.bindings')
+
+        return {
+            queries = function()
+                return obs.f('GetDisabled'),
+                    obs.m('PlacedRef', 'GetDisabled'),
+                    obs.m('MissingRef', 'GetDisabled'),
+                    obs.m('PlacedRef', 'GetDead'),
+                    obs.m('player', 'GetDead'),
+                    obs.m('player', 'GetItemCount', 'AmmoItem'),
+                    obs.m('CrateRef', 'GetItemCount', 'AmmoItem'),
+                    obs.m('player', 'GetItemCount', 'MissingItem')
+            end,
+
+            commonQueries = function()
+                obs._actionRef = nearby.players[1]
+                local selfId = obs.f('GetSelf').id
+                local actionRefId = obs.f('GetActionRef').id
+                obs._actionRef = nil
+                return obs.f('GameDaysPassed'),
+                    obs.f('GetCurrentTime'),
+                    selfId,
+                    actionRefId,
+                    obs.m('player', 'GetEquipped', 'AmmoItem'),
+                    obs.m('player', 'GetEquipped', 'MissingItem'),
+                    obs.f('GetDistance', 'PlacedRef'),
+                    obs.m('player', 'GetDistance', 'PlacedRef')
+            end,
+
+            harvestActivation = function(events)
+                local S = obs.locals('BarrelCactusScript')
+                obs.on('OnActivate', function()
+                    if obs.b((S.State == 0) and obs.b(
+                        (obs.v('GetActionRef') == obs.v('player')))) then
+                        obs.m('player', 'AddItem', 'NVFreshBarrelCactusFruit', 1)
+                        S.State = 1
+                    end
+                end)
+                local script = obs.makeLocalScript()
+                script.engineHandlers.onActivated(nearby.players[1])
+                return #events, events[1].name, events[1].data.item,
+                    events[1].data.count, S.State
+            end,
+
+            existingBindings = function(events)
+                obs.m('PlacedRef', 'Enable')
+                obs.m('player', 'AddItem', 'AmmoItem', 2)
+                obs._actionRef = nearby.players[1]
+                local isPlayer = obs.m('player', 'IsActionRef')
+                obs._actionRef = nil
+                return events[1].name, events[1].data.object.id,
+                    events[2].name, events[2].data.item, events[2].data.count,
+                    isPlayer
+            end,
+        }
+        )X");
+
+    constexpr VFS::Path::NormalizedView bindingsFactoryPath("obscript/bindingsfactory.lua");
+    TestingOpenMW::VFSTestFile bindingsFactoryFile(R"X(
+        local sameCell = {}
+        sameCell.isInSameSpace = function(_, obj) return obj.cell == sameCell end
+
+        local function object(id, kind, enabled, dead, itemCount, player, x, y, z)
+            local obj = {
+                id = id,
+                kind = kind,
+                enabled = enabled,
+                dead = dead,
+                itemCount = itemCount or 0,
+                player = player or false,
+                cell = sameCell,
+                position = { x = x or 0, y = y or 0, z = z or 0 },
+            }
+            obj.isValid = function() return true end
+            return obj
+        end
+
+        local own = object('self', 'container', false, false, 1)
+        local placed = object('placed', 'actor', false, true, 3, false, 3, 4, 0)
+        local player = object('player', 'actor', true, false, 12, true, 3, 0, 0)
+        local crate = object('crate', 'container', true, false, 4)
+        local byFormId = {
+            ['form:placed'] = placed,
+            ['form:crate'] = crate,
+        }
+        local events = {}
+
+        local function inventory(obj)
+            return {
+                countOf = function(_, recordId)
+                    if recordId == 'record:ammo' then return obj.itemCount end
+                    return 0
+                end,
+            }
+        end
+
+        local core = {
+            getGameTime = function() return 90000 end,
+            obscript = {
+                resolveRefEditorId = function(editorId)
+                    local refs = { placedref = 'form:placed', crateref = 'form:crate' }
+                    return refs[editorId:lower()]
+                end,
+                resolveItemEditorId = function(editorId)
+                    local items = {
+                        ammoitem = 'record:ammo',
+                        nvfreshbarrelcactusfruit = 'record:cactus',
+                    }
+                    return items[editorId:lower()]
+                end,
+            },
+            sendGlobalEvent = function(name, data)
+                events[#events + 1] = { name = name, data = data }
+            end,
+        }
+        local nearby = {
+            players = { player },
+            getObjectByFormId = function(formId) return byFormId[formId] end,
+        }
+        local types = {
+            Actor = {
+                objectIsInstance = function(obj) return obj.kind == 'actor' end,
+                isDead = function(obj) return obj.dead end,
+                inventory = inventory,
+                getEquipment = function(obj)
+                    if obj.player then
+                        return { [0] = { recordId = 'record:ammo' } }
+                    end
+                    return {}
+                end,
+            },
+            Container = {
+                objectIsInstance = function(obj) return obj.kind == 'container' end,
+                inventory = inventory,
+            },
+            Player = {
+                objectIsInstance = function(obj) return obj.player end,
+            },
+        }
+        return {
+            packages = {
+                ['openmw.core'] = core,
+                ['openmw.nearby'] = nearby,
+                ['openmw.self'] = { object = own },
+                ['openmw.types'] = types,
+            },
+            events = events,
+        }
+        )X");
+
     struct ObScriptRuntimeTest : Test
     {
         std::unique_ptr<VFS::Manager> mVFS = TestingOpenMW::createTestVFS({
             { runtimePath, &runtimeFile },
+            { bindingsPath, &bindingsFile },
             { driverPath, &driverFile },
+            { bindingsDriverPath, &bindingsDriverFile },
+            { bindingsFactoryPath, &bindingsFactoryFile },
         });
 
         LuaUtil::ScriptsConfiguration mCfg;
@@ -242,12 +402,13 @@ namespace
         mLua.protectedCall([&](LuaUtil::LuaView& view) {
             sol::table log = view.sol().create_table();
             auto r = LuaUtil::call(s["makeLocalScript"], log)
-                         .get<std::tuple<int, std::string, std::string, double, std::string>>();
-            EXPECT_EQ(std::get<0>(r), 2); // both handlers fired
-            EXPECT_EQ(std::get<1>(r), "update");
-            EXPECT_EQ(std::get<2>(r), "activated:someactor");
-            EXPECT_DOUBLE_EQ(std::get<3>(r), 0.25); // dt captured for GetSecondsPassed
-            EXPECT_EQ(std::get<4>(r), "table"); // onSave returns serializable locals
+                         .get<std::tuple<int, std::string, std::string, std::string, double, std::string>>();
+            EXPECT_EQ(std::get<0>(r), 3); // OnLoad, GameMode, and OnActivate fired
+            EXPECT_EQ(std::get<1>(r), "loaded");
+            EXPECT_EQ(std::get<2>(r), "update");
+            EXPECT_EQ(std::get<3>(r), "activated:someactor");
+            EXPECT_DOUBLE_EQ(std::get<4>(r), 0.25); // dt captured for GetSecondsPassed
+            EXPECT_EQ(std::get<5>(r), "table"); // onSave returns serializable locals
         });
     }
 
@@ -256,6 +417,105 @@ namespace
         sol::table s = script();
         auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<int>();
         EXPECT_EQ(r, 1);
+    }
+
+    TEST_F(ObScriptRuntimeTest, ObjectQueryBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-bindings-test", extraPackages);
+            const auto values
+                = LuaUtil::call(s["queries"]).get<std::tuple<int, int, int, int, int, int, int, int>>();
+            EXPECT_EQ(std::get<0>(values), 1); // disabled script owner
+            EXPECT_EQ(std::get<1>(values), 1); // disabled placed actor
+            EXPECT_EQ(std::get<2>(values), 0); // missing reference is safe
+            EXPECT_EQ(std::get<3>(values), 1); // dead placed actor
+            EXPECT_EQ(std::get<4>(values), 0); // living player
+            EXPECT_EQ(std::get<5>(values), 12); // actor inventory
+            EXPECT_EQ(std::get<6>(values), 4); // container inventory
+            EXPECT_EQ(std::get<7>(values), 0); // unknown item
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, ResolverPreservesExistingBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["existingBindings"], factory["events"])
+                                    .get<std::tuple<std::string, std::string, std::string, std::string, int, int>>();
+            EXPECT_EQ(std::get<0>(values), "ObScriptSetEnabled");
+            EXPECT_EQ(std::get<1>(values), "placed");
+            EXPECT_EQ(std::get<2>(values), "ObScriptAddItem");
+            EXPECT_EQ(std::get<3>(values), "AmmoItem");
+            EXPECT_EQ(std::get<4>(values), 2);
+            EXPECT_EQ(std::get<5>(values), 1);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, CommonReadOnlyBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["commonQueries"])
+                                    .get<std::tuple<double, double, std::string, std::string, int, int, double, double>>();
+            EXPECT_DOUBLE_EQ(std::get<0>(values), 90000.0 / 86400.0);
+            EXPECT_DOUBLE_EQ(std::get<1>(values), 1.0);
+            EXPECT_EQ(std::get<2>(values), "self");
+            EXPECT_EQ(std::get<3>(values), "player");
+            EXPECT_EQ(std::get<4>(values), 1);
+            EXPECT_EQ(std::get<5>(values), 0);
+            EXPECT_DOUBLE_EQ(std::get<6>(values), 5.0);
+            EXPECT_DOUBLE_EQ(std::get<7>(values), 4.0);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, HarvestActivationAddsRetailIngredient)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-harvest-test", extraPackages);
+            const auto values = LuaUtil::call(s["harvestActivation"], factory["events"])
+                                    .get<std::tuple<int, std::string, std::string, int, int>>();
+            EXPECT_EQ(std::get<0>(values), 1);
+            EXPECT_EQ(std::get<1>(values), "ObScriptAddItem");
+            EXPECT_EQ(std::get<2>(values), "NVFreshBarrelCactusFruit");
+            EXPECT_EQ(std::get<3>(values), 1);
+            EXPECT_EQ(std::get<4>(values), 1);
+        });
     }
 
 }
