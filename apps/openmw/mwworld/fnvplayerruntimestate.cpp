@@ -85,6 +85,7 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks.clear();
+        mReputations.clear();
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -133,6 +134,7 @@ namespace MWWorld
         mDamageModifiers = damage;
         mTemporaryModifiers = temporary;
         mPerks.assign(perks.begin(), perks.end());
+        mReputations.clear();
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -147,6 +149,7 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks.clear();
+        mReputations.clear();
         mVatsActive = false;
     }
 
@@ -162,7 +165,8 @@ namespace MWWorld
             return std::ranges::any_of(values, [](float value) { return value != 0.f; });
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
-            || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty());
+            || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
+            || !mReputations.empty());
     }
 
     std::optional<FalloutRuntimeActorValue> FalloutPlayerRuntimeState::getBaseActorValue(
@@ -253,6 +257,98 @@ namespace MWWorld
         return found->mRankByte;
     }
 
+    std::optional<FalloutReputationValue> FalloutPlayerRuntimeState::getReputation(
+        ESM::FormId reputation) const
+    {
+        if (!mBase || reputation.isZeroOrUnset())
+            return std::nullopt;
+        const auto found = mReputations.find(reputation);
+        return found == mReputations.end() ? FalloutReputationValue{} : found->second;
+    }
+
+    bool FalloutPlayerRuntimeState::addReputationBump(
+        ESM::FormId reputation, bool fame, float maximum, int bump)
+    {
+        static constexpr std::array<float, 5> sBumpPoints{ 1.f, 2.f, 4.f, 7.f, 12.f };
+        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
+            || bump < 1 || bump > static_cast<int>(sBumpPoints.size()))
+            return false;
+
+        FalloutReputationValue value = mReputations[reputation];
+        float& axis = fame ? value.mFame : value.mInfamy;
+        axis = std::clamp(axis + sBumpPoints[static_cast<std::size_t>(bump - 1)], 0.f, maximum);
+        if (value == FalloutReputationValue{})
+            mReputations.erase(reputation);
+        else
+            mReputations[reputation] = value;
+        return true;
+    }
+
+    std::optional<int> FalloutPlayerRuntimeState::getReputationThreshold(
+        ESM::FormId reputation, float maximum, std::uint32_t axis) const
+    {
+        const std::optional<FalloutReputationValue> value = getReputation(reputation);
+        if (!value || !std::isfinite(maximum) || maximum <= 0.f || axis > 2)
+            return std::nullopt;
+        const auto level = [maximum](float points) {
+            if (points >= maximum)
+                return 3;
+            if (points >= maximum * 0.5f)
+                return 2;
+            if (points >= maximum * 0.15f)
+                return 1;
+            return 0;
+        };
+        const int fame = level(value->mFame);
+        const int infamy = level(value->mInfamy);
+        if (fame == 0 && infamy == 0)
+            return 1;
+
+        int category = -1;
+        int threshold = 0;
+        if (infamy == 0)
+        {
+            category = 1;
+            threshold = fame + 3; // Accepted, Liked, Idolized.
+        }
+        else if (fame == 0)
+        {
+            category = 2;
+            threshold = infamy + 3; // Shunned, Hated, Vilified.
+        }
+        else if (fame == infamy)
+        {
+            category = 0;
+            threshold = fame + 2; // Mixed, Unpredictable, Wild Child.
+        }
+        else if (fame == 2 && infamy == 1)
+        {
+            category = 1;
+            threshold = 2; // Smiling Troublemaker.
+        }
+        else if (fame == 3 && infamy == 1)
+        {
+            category = 1;
+            threshold = 3; // Good Natured Rascal.
+        }
+        else if (fame == 1 && infamy == 2)
+        {
+            category = 2;
+            threshold = 2; // Sneering Punk.
+        }
+        else if (fame == 1 && infamy == 3)
+        {
+            category = 2;
+            threshold = 3; // Merciful Thug.
+        }
+        else
+        {
+            category = 0;
+            threshold = 2; // Dark Hero or Soft-Hearted Devil.
+        }
+        return axis == static_cast<std::uint32_t>(category) ? threshold : 0;
+    }
+
     FalloutActorValueMutationResult FalloutPlayerRuntimeState::setCurrentActorValue(
         std::uint32_t actorValue, float value)
     {
@@ -323,6 +419,13 @@ namespace MWWorld
             writer.writeHNT("PRNK", perk.mRankByte);
             writer.writeHNT("PALT", static_cast<std::uint8_t>(perk.mAlternate));
         }
+        writer.writeHNT("RCNT", static_cast<std::uint32_t>(mReputations.size()));
+        for (const auto& [reputation, value] : mReputations)
+        {
+            writer.writeFormId(reputation, true, "RPID");
+            writer.writeHNT("RINF", value.mInfamy);
+            writer.writeHNT("RFAM", value.mFame);
+        }
         writer.endRecord(ESM::REC_FPLR);
     }
 
@@ -377,6 +480,26 @@ namespace MWWorld
                     perks.push_back({ perk, rank, alternate != 0, 0 });
             }
         }
+        std::map<ESM::FormId, FalloutReputationValue> reputations;
+        if (version >= 4)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "RCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId reputation = reader.getFormId(true, "RPID");
+                const bool contentAvailable = reader.applyContentFileMapping(reputation);
+                FalloutReputationValue value;
+                reader.getHNT(value.mInfamy, "RINF");
+                reader.getHNT(value.mFame, "RFAM");
+                if (!std::isfinite(value.mInfamy) || !std::isfinite(value.mFame)
+                    || value.mInfamy < 0.f || value.mFame < 0.f)
+                    invalidSave("invalid reputation value");
+                if (contentAvailable && (reputation.isZeroOrUnset()
+                    || !reputations.emplace(reputation, value).second))
+                    invalidSave("invalid or duplicate reputation identity");
+            }
+        }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
@@ -401,5 +524,6 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks = std::move(perks);
+        mReputations = std::move(reputations);
     }
 }

@@ -21,6 +21,7 @@
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
@@ -1143,6 +1144,118 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactVms16bEasyPeteResetAiFrame)
     ASSERT_TRUE(failedEffectRuntime.setStage(questId, 100));
     EXPECT_EQ(failedEffectRuntime.getUnsupportedStageCommands(),
         (std::vector<std::string>{ "ResetAI FormId:0x104c80" }));
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactVms16bGoodspringsAndPowderGangerReputationFrames)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x104eac, .mContentFile = 0 };
+    const ESM::FormId powderGangers{ .mIndex = 0x1558e6, .mContentFile = 0 };
+    const ESM::FormId goodsprings{ .mIndex = 0x104c22, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS16b");
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm VMS16b stage 100, byte-for-byte AddReputation frames at
+    // SCDA offsets 51 and 70:
+    // AddReputation RepNVPowderGanger 1 5
+    // AddReputation RepNVGoodsprings 0 5
+    const std::array<std::uint8_t, 38> frames{
+        0x39, 0x12, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00, 0x6e,
+        0x01, 0x00, 0x00, 0x00, 0x6e, 0x05, 0x00, 0x00, 0x00,
+        0x39, 0x12, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x04, 0x00, 0x6e,
+        0x00, 0x00, 0x00, 0x00, 0x6e, 0x05, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.compiledData.assign(frames.begin(), frames.end());
+    entry.mScript.references = {
+        ESM::FormId{ .mIndex = 1, .mContentFile = 0 },
+        ESM::FormId{ .mIndex = 2, .mContentFile = 0 },
+        powderGangers,
+        goodsprings,
+    };
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reputation powder;
+    powder.mId = powderGangers;
+    powder.mEditorId = "RepNVPowderGanger";
+    powder.mMaximum = 30.f;
+    store.overrideRecord(powder);
+    ESM4::Reputation town;
+    town.mId = goodsprings;
+    town.mEditorId = "RepNVGoodsprings";
+    town.mMaximum = 15.f;
+    store.overrideRecord(town);
+
+    struct Call
+    {
+        ESM::FormId mReputation;
+        bool mFame = false;
+        int mBump = 0;
+        bool operator==(const Call&) const = default;
+    };
+    std::vector<Call> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setAddReputationHandler([&](ESM::FormId reputation, bool fame, int bump) {
+        calls.push_back({ reputation, fame, bump });
+        return true;
+    });
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage(questId, 100));
+    EXPECT_EQ(calls, (std::vector<Call>{
+                         { powderGangers, true, 5 },
+                         { goodsprings, false, 5 },
+                     }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failed;
+    failed.setAddReputationHandler([](ESM::FormId, bool, int) { return false; });
+    failed.initialize(store);
+    ASSERT_TRUE(failed.setStage(questId, 100));
+    EXPECT_EQ(failed.getUnsupportedStageCommands(),
+        (std::vector<std::string>{
+            "AddReputation FormId:0x1558e6 1 5",
+            "AddReputation FormId:0x104c22 0 5",
+        }));
+}
+
+TEST(ESM4QuestRuntimeTest, NormalizesExactVms20GreatKhansRetailReputationFlag)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x10e908, .mContentFile = 0 };
+    const ESM::FormId greatKhans{ .mIndex = 0x11989b, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS20");
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm VMS20 stage 100, byte-for-byte AddReputation frame at SCDA offset 43:
+    // AddReputation RepNVGreatKhans 2 5
+    //
+    // This is the sole retail frame whose boolean fame argument is 2 rather than 1. The command still treats
+    // that observed nonzero value as fame.
+    entry.mScript.compiledData = {
+        0x39, 0x12, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x05, 0x00, 0x6e,
+        0x02, 0x00, 0x00, 0x00, 0x6e, 0x05, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { questId, questId, questId, questId, greatKhans };
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reputation reputation;
+    reputation.mId = greatKhans;
+    reputation.mEditorId = "RepNVGreatKhans";
+    reputation.mMaximum = 30.f;
+    store.overrideRecord(reputation);
+
+    std::vector<std::tuple<ESM::FormId, bool, int>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setAddReputationHandler([&](ESM::FormId id, bool fame, int bump) {
+        calls.emplace_back(id, fame, bump);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 100));
+    EXPECT_EQ(calls, (std::vector<std::tuple<ESM::FormId, bool, int>>{ { greatKhans, true, 5 } }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)

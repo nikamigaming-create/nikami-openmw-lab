@@ -237,6 +237,7 @@ add_component_dir (esm4
     loadeyes
     loadexpl
     loadfact
+    loadrepu
     loadflor
     loadflst
     loadfurn

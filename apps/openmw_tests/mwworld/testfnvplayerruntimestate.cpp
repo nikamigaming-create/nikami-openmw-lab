@@ -51,6 +51,8 @@ namespace
             writer.writeHNT("SOFF", value);
         if (version >= 3)
             writer.writeHNT("PCNT", std::uint32_t{ 0 });
+        if (version >= 4)
+            writer.writeHNT("RCNT", std::uint32_t{ 0 });
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -100,6 +102,51 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     runtime.resetCurrent();
     EXPECT_FALSE(runtime.isDirty());
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
+}
+
+TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSaveMapping)
+{
+    const ESM::FormId goodsprings{ .mIndex = 0x104c22, .mContentFile = 2 };
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(2));
+
+    ASSERT_TRUE(runtime.addReputationBump(goodsprings, true, 15.f, 5));
+    ASSERT_TRUE(runtime.addReputationBump(goodsprings, false, 15.f, 3));
+    ASSERT_TRUE(runtime.getReputation(goodsprings));
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 12.f);
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mInfamy, 4.f);
+    EXPECT_EQ(runtime.getReputationThreshold(goodsprings, 15.f, 1), 2); // Smiling Troublemaker.
+    EXPECT_EQ(runtime.getReputationThreshold(goodsprings, 15.f, 0), 0);
+    EXPECT_EQ(runtime.getReputationThreshold(goodsprings, 15.f, 2), 0);
+    ASSERT_TRUE(runtime.addReputationBump(goodsprings, true, 15.f, 5));
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 15.f);
+    EXPECT_EQ(runtime.getReputationThreshold(goodsprings, 15.f, 1), 3); // Good Natured Rascal.
+    EXPECT_FALSE(runtime.addReputationBump(goodsprings, true, 15.f, 0));
+    EXPECT_FALSE(runtime.addReputationBump(goodsprings, true, 15.f, 6));
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        runtime.write(writer);
+    }
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-player-reputation-runtime");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
+    reader.getRecHeader();
+
+    MWWorld::FalloutPlayerRuntimeState restored;
+    restored.initialize(makeBaseState(7));
+    restored.readRecord(reader);
+    const ESM::FormId remappedGoodsprings{ .mIndex = goodsprings.mIndex, .mContentFile = 7 };
+    ASSERT_TRUE(restored.getReputation(remappedGoodsprings));
+    EXPECT_FLOAT_EQ(restored.getReputation(remappedGoodsprings)->mFame, 15.f);
+    EXPECT_FLOAT_EQ(restored.getReputation(remappedGoodsprings)->mInfamy, 4.f);
+    EXPECT_EQ(restored.getReputationThreshold(remappedGoodsprings, 15.f, 1), 3);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)

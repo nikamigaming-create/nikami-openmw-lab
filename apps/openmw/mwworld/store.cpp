@@ -1435,6 +1435,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Recipe>;
 template class MWWorld::TypedDynamicStore<ESM4::Quest>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
 template class MWWorld::TypedDynamicStore<ESM4::Region>;
+template class MWWorld::TypedDynamicStore<ESM4::Reputation>;
 template class MWWorld::TypedDynamicStore<ESM4::Script>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;

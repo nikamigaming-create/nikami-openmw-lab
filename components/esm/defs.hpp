@@ -250,6 +250,7 @@ namespace ESM
         REC_RCCT4 = esm4Recname(ESM4::REC_RCCT), // Recipe Category
         REC_RCPE4 = esm4Recname(ESM4::REC_RCPE), // Recipe
         REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
+        REC_REPU4 = esm4Recname(ESM4::REC_REPU), // Reputation (Fallout: New Vegas)
         REC_REGN4 = esm4Recname(ESM4::REC_REGN), // Region (Audio/Weather)
         REC_RELA4 = esm4Recname(ESM4::REC_RELA), // Relationship
         REC_REVB4 = esm4Recname(ESM4::REC_REVB), // Reverb Parameters

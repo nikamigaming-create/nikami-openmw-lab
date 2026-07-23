@@ -16,6 +16,7 @@
 #include <components/esm4/common.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/reader.hpp>
 
 #include "apps/openmw/mwworld/esmstore.hpp"
@@ -225,6 +226,29 @@ namespace
 
         EXPECT_EQ(store.get<ESM4::Faction>().getSize(), 0);
         EXPECT_EQ(store.getESM4Game(), MWWorld::ESM4Game::Skyrim);
+    }
+
+    TEST(Esm4FactionStoreTest, shouldLoadFnvReputationScaleIntoTheTypedStore)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("RepNVGoodsprings"));
+        appendSubRecord(payload, "FULL", zString("Goodsprings"));
+        appendSubRecord(payload, "ICON",
+            zString("interface\\icons\\pipboyimages\\reputations\\reputations_goodsprings.dds"));
+        appendSubRecord(payload, "DATA", pod(15.f));
+        const std::string plugin = makeSingleRecordPlugin("REPU", 0x00104c22, payload);
+        auto reader = makeReader(plugin, "FalloutNV.esm", 1);
+
+        MWWorld::ESMStore store;
+        store.loadESM4(*reader, nullptr);
+        const ESM4::Reputation* reputation = store.get<ESM4::Reputation>().search(
+            ESM::RefId(ESM::FormId::fromUint32(0x01104c22)));
+        ASSERT_NE(reputation, nullptr);
+        EXPECT_EQ(reputation->mEditorId, "RepNVGoodsprings");
+        EXPECT_EQ(reputation->mFullName, "Goodsprings");
+        EXPECT_EQ(reputation->mIcon,
+            "interface\\icons\\pipboyimages\\reputations\\reputations_goodsprings.dds");
+        EXPECT_FLOAT_EQ(reputation->mMaximum, 15.f);
     }
 
     TEST(Esm4FactionStoreTest, shouldRetainEveryFnvCreatureFactionMembershipInAuthoredOrder)

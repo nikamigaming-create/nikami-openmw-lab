@@ -37,6 +37,7 @@
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -838,6 +839,19 @@ namespace MWWorld
                        FalloutPlayerRuntimeState::ExperienceActorValue, static_cast<float>(amount))
                 == FalloutActorValueMutationResult::Applied;
         });
+        mESM4QuestRuntime.setAddReputationHandler(
+            [this](ESM::FormId reputationId, bool fame, int bump) {
+                const ESM4::Reputation* reputation
+                    = mStore.get<ESM4::Reputation>().search(ESM::RefId(reputationId));
+                if (reputation == nullptr
+                    || !mFalloutPlayerRuntimeState.addReputationBump(
+                        reputationId, fame, reputation->mMaximum, bump))
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: AddReputation reputation="
+                                 << ESM::RefId(reputationId).serializeText()
+                                 << " fame=" << fame << " bump=" << bump;
+                return true;
+            });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();

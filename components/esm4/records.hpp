@@ -73,6 +73,7 @@
 #include <components/esm4/loadrcct.hpp>
 #include <components/esm4/loadrcpe.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadregn.hpp>
 #include <components/esm4/loadroad.hpp>
 #include <components/esm4/loadsbsp.hpp>

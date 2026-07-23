@@ -140,6 +140,7 @@ namespace ESM4
     struct RecipeCategory;
     struct Region;
     struct Reference;
+    struct Reputation;
     struct Script;
     struct Sound;
     struct SoundReference;
@@ -216,7 +217,7 @@ namespace MWWorld
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
             Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
-            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Message>>;
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Message>, Store<ESM4::Reputation>>;
 
     private:
         template <typename T>

@@ -23,6 +23,7 @@
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
@@ -413,6 +414,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x1177
+                && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
                 && instruction.opcode != 0x11fa)
@@ -872,6 +874,29 @@ namespace MWWorld
                 CompiledQuestCommand command;
                 command.mType = CompiledQuestCommandType::RewardXp;
                 command.mObjective = *amount;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1239) // AddReputation reputation infamy/fame bump
+            {
+                if (instruction.callingReferenceIndex || arguments.size() != 3 || !mAddReputationHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId* reputation = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* fame = std::get_if<std::int32_t>(&arguments[1]);
+                const std::int32_t* bump = std::get_if<std::int32_t>(&arguments[2]);
+                // The frozen FalloutNV.esm corpus contains 77 AddReputation frames: 11 use 0, 65 use 1,
+                // and VMS20 stage 100 uses 2 for RepNVGreatKhans. Preserve the command's boolean contract
+                // (zero is infamy, the two observed nonzero values are fame) without accepting values that
+                // do not occur in the retail corpus.
+                if (reputation == nullptr || fame == nullptr || bump == nullptr
+                    || *fame < 0 || *fame > 2 || *bump < 1 || *bump > 5
+                    || mStore->get<ESM4::Reputation>().search(ESM::RefId(*reputation)) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::AddReputation;
+                command.mQuest = *reputation;
+                command.mValue = *fame != 0;
+                command.mObjective = *bump;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022
@@ -1395,10 +1420,12 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::Kill
             || command.mType == CompiledQuestCommandType::AddItem
             || command.mType == CompiledQuestCommandType::RemoveItem
-            || command.mType == CompiledQuestCommandType::RewardXp)
+            || command.mType == CompiledQuestCommandType::RewardXp
+            || command.mType == CompiledQuestCommandType::AddReputation)
         {
             working.mExternalEffects.push_back(
-                { command.mType, command.mQuest, command.mTarget, command.mTopic, false, false, command.mObjective });
+                { command.mType, command.mQuest, command.mTarget, command.mTopic,
+                    command.mValue, false, command.mObjective });
             return true;
         }
 
@@ -1490,6 +1517,7 @@ namespace MWWorld
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
+            case CompiledQuestCommandType::AddReputation:
                 return false;
         }
         return false;
@@ -1691,6 +1719,11 @@ namespace MWWorld
                     command = "RewardXP ";
                     executed = mRewardXpHandler && mRewardXpHandler(effect.mCount);
                     break;
+                case CompiledQuestCommandType::AddReputation:
+                    command = "AddReputation ";
+                    executed = mAddReputationHandler
+                        && mAddReputationHandler(effect.mTarget, effect.mValue, effect.mCount);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
@@ -1698,6 +1731,9 @@ namespace MWWorld
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
+            if (effect.mType == CompiledQuestCommandType::AddReputation)
+                command += " " + std::to_string(static_cast<int>(effect.mValue)) + " "
+                    + std::to_string(effect.mCount);
             if (effect.mType == CompiledQuestCommandType::AddItem
                 || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
@@ -1933,6 +1969,10 @@ namespace MWWorld
                         case CompiledQuestCommandType::RewardXp:
                             executed = mRewardXpHandler && mRewardXpHandler(command.mObjective);
                             break;
+                        case CompiledQuestCommandType::AddReputation:
+                            executed = mAddReputationHandler
+                                && mAddReputationHandler(command.mQuest, command.mValue, command.mObjective);
+                            break;
                     }
                     if (!executed)
                     {
@@ -1948,7 +1988,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Kill
                             || command.mType == CompiledQuestCommandType::AddItem
                             || command.mType == CompiledQuestCommandType::RemoveItem
-                            || command.mType == CompiledQuestCommandType::RewardXp)
+                            || command.mType == CompiledQuestCommandType::RewardXp
+                            || command.mType == CompiledQuestCommandType::AddReputation)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -1981,6 +2022,10 @@ namespace MWWorld
                                     + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::RewardXp)
                                 failure = "RewardXP " + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::AddReputation)
+                                failure = "AddReputation " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + std::to_string(static_cast<int>(command.mValue)) + " "
+                                    + std::to_string(command.mObjective);
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);

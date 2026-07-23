@@ -10,6 +10,7 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
@@ -26,6 +27,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/ptr.hpp"
 
@@ -255,6 +257,40 @@ namespace MWDialogue
                 if (world == nullptr)
                     return std::nullopt;
                 actual = world->getFalloutPlayerRuntimeState().hasPerk(parameter) ? 1.f : 0.f;
+                break;
+            }
+            case ESM4::FUN_GetReputation:
+            case ESM4::FUN_GetReputationPct:
+            case ESM4::FUN_GetReputationThreshold:
+            {
+                if (!isPlayer)
+                    return std::nullopt;
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                const ESM4::Reputation* reputation
+                    = world->getStore().get<ESM4::Reputation>().search(ESM::RefId(parameter));
+                if (reputation == nullptr || condition.param2 > 2)
+                    return std::nullopt;
+                if (condition.functionIndex == ESM4::FUN_GetReputationThreshold)
+                {
+                    const std::optional<int> threshold
+                        = world->getFalloutPlayerRuntimeState().getReputationThreshold(
+                            parameter, reputation->mMaximum, condition.param2);
+                    if (!threshold)
+                        return std::nullopt;
+                    actual = static_cast<float>(*threshold);
+                    break;
+                }
+                if (condition.param2 > 1)
+                    return std::nullopt;
+                const std::optional<MWWorld::FalloutReputationValue> value
+                    = world->getFalloutPlayerRuntimeState().getReputation(parameter);
+                if (!value)
+                    return std::nullopt;
+                actual = condition.param2 == 0 ? value->mInfamy : value->mFame;
+                if (condition.functionIndex == ESM4::FUN_GetReputationPct)
+                    actual = std::clamp(actual / reputation->mMaximum, 0.f, 1.f);
                 break;
             }
             case ESM4::FUN_GetEquipped:

@@ -135,6 +135,7 @@ namespace ESM4
         REC_RCCT = fourCC("RCCT"), // Recipe Category
         REC_RCPE = fourCC("RCPE"), // Recipe
         REC_REFR = fourCC("REFR"), // Object Reference
+        REC_REPU = fourCC("REPU"), // Reputation (Fallout: New Vegas)
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship
         REC_REVB = fourCC("REVB"), // Reverb Parameters
