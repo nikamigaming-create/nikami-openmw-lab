@@ -1945,6 +1945,102 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactRetailPostfixAndObjectiveExpression)
     run(true, true);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailGetDeadOrConditionAgainstActorState)
+{
+    const auto run = [](bool marjorieDead, bool mortimerDead) {
+        MWWorld::ESMStore store;
+        const ESM::FormId marjorieId{ .mIndex = 0x10d4f1, .mContentFile = 0 };
+        const ESM::FormId mortimerId{ .mIndex = 0x10d4f2, .mContentFile = 0 };
+        ESM4::ActorCharacter marjorie{};
+        marjorie.mId = marjorieId;
+        marjorie.mEditorId = "VMS18MarjorieREF";
+        store.overrideRecord(marjorie);
+        ESM4::ActorCharacter mortimer{};
+        mortimer.mId = mortimerId;
+        mortimer.mEditorId = "VMS18MortimerREF";
+        store.overrideRecord(mortimer);
+
+        const ESM::FormId questId{ .mIndex = 0x129d14, .mContentFile = 0 };
+        ESM4::Quest quest = makeQuest(questId, "VMQ02");
+        for (const std::int32_t objective : { 40, 41, 50, 53, 55, 60 })
+            quest.mObjectives.push_back({ .mIndex = objective, .mDescription = "VMQ02 objective" });
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm 00129D14 VMQ02 stage 40 conditional block, byte-for-byte:
+        // if Marjorie.GetDead || Mortimer.GetDead, select the failure objectives, else display 40.
+        const std::array<std::uint8_t, 172> retailScda{ 0x16, 0x00, 0x19, 0x00, 0x06, 0x00, 0x15,
+            0x00, 0x20, 0x72, 0x01, 0x00, 0x58, 0x2e, 0x10, 0x00, 0x00, 0x20, 0x72, 0x02, 0x00,
+            0x58, 0x2e, 0x10, 0x00, 0x00, 0x20, 0x7c, 0x7c, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00,
+            0x72, 0x03, 0x00, 0x6e, 0x28, 0x00, 0x00, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00, 0xa3,
+            0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x29, 0x00, 0x00, 0x00, 0x6e,
+            0x00, 0x00, 0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00, 0x6e,
+            0x32, 0x00, 0x00, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03,
+            0x00, 0x72, 0x03, 0x00, 0x6e, 0x35, 0x00, 0x00, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00,
+            0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x37, 0x00, 0x00, 0x00,
+            0x6e, 0x00, 0x00, 0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00,
+            0x6e, 0x3c, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x17, 0x00, 0x02, 0x00,
+            0x01, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x28, 0x00,
+            0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references = { marjorieId, mortimerId, questId };
+        quest.mStages.push_back({ .mIndex = 40, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.setActorDeadHandler([=](ESM::FormId actor) -> std::optional<bool> {
+            if (actor == marjorieId)
+                return marjorieDead;
+            if (actor == mortimerId)
+                return mortimerDead;
+            return std::nullopt;
+        });
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setStage(questId, 40));
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        ASSERT_NE(state, nullptr);
+        const bool eitherDead = marjorieDead || mortimerDead;
+        EXPECT_EQ((state->mObjectiveStatus.at(40) & MWWorld::ESM4QuestState::Objective_Displayed) != 0,
+            !eitherDead);
+        EXPECT_EQ((state->mObjectiveStatus.at(60) & MWWorld::ESM4QuestState::Objective_Displayed) != 0,
+            eitherDead);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+        EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    };
+
+    run(false, false);
+    run(false, true);
+    run(true, false);
+    run(true, true);
+}
+
+TEST(ESM4QuestRuntimeTest, RollsBackGetDeadStageWhenLiveActorReadFails)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId actorId{ .mIndex = 0x1200e1, .mContentFile = 0 };
+    ESM4::ActorCharacter actor{};
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    const ESM::FormId questId{ .mIndex = 0x1200e2, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "GetDeadReadFailureQuest");
+    quest.mObjectives.push_back({ .mIndex = 40, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0x16, 0x00, 0x0d, 0x00, 0x01, 0x00, 0x09, 0x00, 0x20, 0x72,
+        0x01, 0x00, 0x58, 0x2e, 0x10, 0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x02,
+        0x00, 0x6e, 0x28, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00 };
+    entry.mScript.references = { actorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setActorDeadHandler([](ESM::FormId) -> std::optional<bool> { return std::nullopt; });
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_EQ(state->mObjectiveStatus.at(40), 0);
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedPostfixConditionBeforeQuestMutation)
 {
     MWWorld::ESMStore store;

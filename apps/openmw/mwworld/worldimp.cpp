@@ -795,6 +795,19 @@ namespace MWWorld
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
             });
+        mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
+            try
+            {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty() || !target.getClass().isActor())
+                    return std::nullopt;
+                return target.getClass().getCreatureStats(target).isDead();
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();

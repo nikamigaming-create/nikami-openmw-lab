@@ -128,6 +128,7 @@ namespace MWWorld
         using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
         using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
         using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -148,6 +149,7 @@ namespace MWWorld
         SetEnemyHandler mSetEnemyHandler;
         ItemCountHandler mItemCountHandler;
         AddItemHandler mAddItemHandler;
+        ActorDeadHandler mActorDeadHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -181,6 +183,7 @@ namespace MWWorld
             GetStageDone,
             GetObjectiveCompleted,
             GetObjectiveDisplayed,
+            GetDead,
         };
 
         enum class CompiledConditionTokenType : std::uint8_t
@@ -237,6 +240,7 @@ namespace MWWorld
         struct CompiledStageScript
         {
             bool mUseSourceFallback = false;
+            bool mHasLiveCondition = false;
             std::vector<CompiledQuestCommand> mCommands;
             std::vector<std::uint16_t> mUnsupportedOpcodes;
         };
@@ -289,6 +293,7 @@ namespace MWWorld
         bool isStateDirty(ESM::FormId id, const ESM4QuestState& state) const;
         bool prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const;
         bool stageContainsCompiledSetStage(const ESM4::QuestStage& stage) const;
+        bool stageContainsCompiledLiveCondition(const ESM4::QuestStage& stage) const;
         bool areCompiledStageConditionsPure(const std::vector<ESM4::TargetCondition>& conditions) const;
         bool preflightPureCompiledStage(
             ESM::FormId id, std::uint8_t stage, std::vector<CompiledStageKey>& stack) const;
@@ -321,6 +326,7 @@ namespace MWWorld
         void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
         void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
         void setAddItemHandler(AddItemHandler handler) { mAddItemHandler = std::move(handler); }
+        void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.

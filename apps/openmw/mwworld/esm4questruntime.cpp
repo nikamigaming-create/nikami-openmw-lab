@@ -494,40 +494,96 @@ namespace MWWorld
                     CompiledConditionToken token;
                     if (expression[expressionOffset] == 0x72)
                     {
-                        if (expression.size() - expressionOffset < 6 || expression[expressionOffset + 3] != 0x73)
+                        if (expression.size() - expressionOffset < 4)
                         {
-                            decodeResult = ExpressionDecodeResult::Unsupported;
+                            decodeResult = ExpressionDecodeResult::Malformed;
                             break;
                         }
                         const std::uint16_t referenceIndex = readUint16(expression, expressionOffset + 1);
-                        const std::uint16_t variableIndex = readUint16(expression, expressionOffset + 4);
                         if (referenceIndex == 0 || referenceIndex > script.references.size() || mStore == nullptr)
                         {
                             decodeResult = ExpressionDecodeResult::Malformed;
                             break;
                         }
                         token.mQuest = script.references[referenceIndex - 1];
-                        const ESM4::Quest* quest
-                            = mStore->get<ESM4::Quest>().search(ESM::RefId(token.mQuest));
-                        const ESM4::Script* questScript = quest == nullptr
-                            ? nullptr
-                            : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
-                        if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                        if (expression[expressionOffset + 3] == 0x73)
                         {
-                            decodeResult = ExpressionDecodeResult::Malformed;
+                            if (expression.size() - expressionOffset < 6)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            const std::uint16_t variableIndex = readUint16(expression, expressionOffset + 4);
+                            const ESM4::Quest* quest
+                                = mStore->get<ESM4::Quest>().search(ESM::RefId(token.mQuest));
+                            const ESM4::Script* questScript = quest == nullptr
+                                ? nullptr
+                                : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+                            if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            const auto variable = std::ranges::find(questScript->mScript.localVarData, variableIndex,
+                                &ESM4::ScriptLocalVariableData::index);
+                            if (variable == questScript->mScript.localVarData.end()
+                                || variable->variableName.empty())
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            token.mType = CompiledConditionTokenType::Value;
+                            token.mValueType = CompiledConditionValueType::QuestVariable;
+                            token.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                            expressionOffset += 6;
+                        }
+                        else if (expression[expressionOffset + 3] == 0x58)
+                        {
+                            if (expression.size() - expressionOffset < 8)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            const std::uint16_t functionOpcode = readUint16(expression, expressionOffset + 4);
+                            const std::uint16_t functionArgumentSize = readUint16(expression, expressionOffset + 6);
+                            if (functionArgumentSize > expression.size() - expressionOffset - 8)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            if (functionOpcode != 0x102e)
+                            {
+                                decodeResult = ExpressionDecodeResult::Unsupported;
+                                break;
+                            }
+                            if (functionArgumentSize != 0)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            const bool actorExists
+                                = mStore->get<ESM4::ActorCharacter>().search(token.mQuest) != nullptr
+                                || mStore->get<ESM4::ActorCreature>().search(token.mQuest) != nullptr;
+                            if (!actorExists)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            if (!mActorDeadHandler)
+                            {
+                                decodeResult = ExpressionDecodeResult::Unsupported;
+                                break;
+                            }
+                            token.mType = CompiledConditionTokenType::Value;
+                            token.mValueType = CompiledConditionValueType::GetDead;
+                            prepared.mHasLiveCondition = true;
+                            expressionOffset += 8;
+                        }
+                        else
+                        {
+                            decodeResult = ExpressionDecodeResult::Unsupported;
                             break;
                         }
-                        const auto variable = std::ranges::find(questScript->mScript.localVarData, variableIndex,
-                            &ESM4::ScriptLocalVariableData::index);
-                        if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
-                        {
-                            decodeResult = ExpressionDecodeResult::Malformed;
-                            break;
-                        }
-                        token.mType = CompiledConditionTokenType::Value;
-                        token.mValueType = CompiledConditionValueType::QuestVariable;
-                        token.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
-                        expressionOffset += 6;
                         ++stackDepth;
                     }
                     else if (expression[expressionOffset] == 0x58)
@@ -959,6 +1015,18 @@ namespace MWWorld
         return false;
     }
 
+    bool ESM4QuestRuntime::stageContainsCompiledLiveCondition(const ESM4::QuestStage& stage) const
+    {
+        for (const ESM4::QuestStageEntry& entry : stage.mEntries)
+        {
+            CompiledStageScript prepared;
+            if (prepareStageScript(entry.mScript, prepared) && !prepared.mUseSourceFallback
+                && prepared.mHasLiveCondition)
+                return true;
+        }
+        return false;
+    }
+
     bool ESM4QuestRuntime::areCompiledStageConditionsPure(
         const std::vector<ESM4::TargetCondition>& conditions) const
     {
@@ -1065,6 +1133,15 @@ namespace MWWorld
             }
             if (token.mType == CompiledConditionTokenType::Value)
             {
+                if (token.mValueType == CompiledConditionValueType::GetDead)
+                {
+                    const std::optional<bool> dead
+                        = mActorDeadHandler ? mActorDeadHandler(token.mQuest) : std::nullopt;
+                    if (!dead)
+                        return std::nullopt;
+                    stack.push_back(*dead ? 1.f : 0.f);
+                    continue;
+                }
                 const auto found = states.find(token.mQuest);
                 if (found == states.end())
                     return std::nullopt;
@@ -1101,6 +1178,8 @@ namespace MWWorld
                         value = (objective->second & flag) != 0 ? 1.f : 0.f;
                         break;
                     }
+                    case CompiledConditionValueType::GetDead:
+                        return std::nullopt;
                 }
                 stack.push_back(value);
                 continue;
@@ -1546,7 +1625,7 @@ namespace MWWorld
         const bool repeatedStages = (state->mFlags & ESM4QuestState::Flag_AllowRepeatedStages) != 0;
         if (state->mStageDone[stage->mIndex] && !repeatedStages)
             return true;
-        if (stageContainsCompiledSetStage(*stage))
+        if (stageContainsCompiledSetStage(*stage) || stageContainsCompiledLiveCondition(*stage))
             return executeCompiledStageTransaction(id, stageIndex);
 
         struct PreparedEntry
