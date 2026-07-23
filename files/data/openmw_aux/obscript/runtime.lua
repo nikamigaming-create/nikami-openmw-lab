@@ -289,6 +289,10 @@ function obs.makeLocalScript()
                 if h then fireAll(entry, h) end
                 obs._actionRef = nil
             end,
+            onReset = function()
+                local h = entry.handlers["onreset"]
+                if h then fireAll(entry, h) end
+            end,
             onSave = function()
                 local locals = {}
                 for k, v in pairs(entry.locals) do
