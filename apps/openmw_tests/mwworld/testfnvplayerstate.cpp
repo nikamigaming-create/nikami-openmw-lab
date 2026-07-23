@@ -110,6 +110,20 @@ namespace
             result.mMasters.push_back(std::move(master));
         }
 
+        ESM4::FONVSaveGlobalVariablesState globals;
+        globals.mCount.mValue = 2;
+        ESM4::FONVSaveGlobalVariable firstGlobal;
+        firstGlobal.mVariable.mResolvedFormId = 0x00000035u;
+        firstGlobal.mValue.mValue = 2277.f;
+        firstGlobal.mRange = { 500, 9 };
+        globals.mVariables.push_back(std::move(firstGlobal));
+        ESM4::FONVSaveGlobalVariable secondGlobal;
+        secondGlobal.mVariable.mResolvedFormId = 0x01000036u;
+        secondGlobal.mValue.mValue = 0.4f;
+        secondGlobal.mRange = { 509, 9 };
+        globals.mVariables.push_back(std::move(secondGlobal));
+        result.mGlobalVariables = std::move(globals);
+
         ESM4::FONVSaveChangedFormEnvelope playerChange;
         playerChange.mResolvedFormId = ESM4::sFONVPlayerReferenceFormId;
         playerChange.mChangeType = ESM4::sFONVActorReferenceChangeType;
@@ -847,7 +861,13 @@ namespace
         EXPECT_EQ(plan.mScene.mDefaultWeather, form(0x000ffc88, 1));
         EXPECT_FLOAT_EQ(plan.mScene.mGameHour, 14.215002059936523f);
         EXPECT_EQ(plan.mScene.mSkyMode, 3u);
-        EXPECT_THAT(plan.mUncoveredState, Contains("global-variables"));
+        ASSERT_EQ(plan.mGlobals.size(), 2u);
+        EXPECT_EQ(plan.mGlobals[0].mVariable, form(0x35, 1));
+        EXPECT_FLOAT_EQ(plan.mGlobals[0].mValue, 2277.f);
+        EXPECT_EQ(plan.mGlobals[0].mSourceOffset, 500u);
+        EXPECT_EQ(plan.mGlobals[1].mVariable, form(0x36, 2));
+        EXPECT_FLOAT_EQ(plan.mGlobals[1].mValue, 0.4f);
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables-time-weather")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-equipment-ammo")));
         EXPECT_THAT(plan.mUncoveredState,
@@ -1072,6 +1092,18 @@ namespace
         resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven Sky global-data payload"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mGlobalVariables->mVariables[1].mVariable.mResolvedFormId = 0x00000035u;
+        resolution = resolveSavePlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("duplicate global-variable identities"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mGlobalVariables->mVariables[0].mVariable.mResolvedFormId.reset();
+        resolution = resolveSavePlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("global-variable RefID did not resolve"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData.reset();

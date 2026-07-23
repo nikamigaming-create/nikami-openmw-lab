@@ -268,6 +268,15 @@ namespace MWWorld
 
     struct FalloutSaveLoadPlan
     {
+        struct GlobalValue
+        {
+            ESM::FormId mVariable;
+            float mValue = 0.f;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const GlobalValue&) const = default;
+        };
+
         FalloutSavePlayerHeaderState mPlayer;
         struct PlayerTransform
         {
@@ -300,6 +309,7 @@ namespace MWWorld
             std::uint64_t mPayloadOffset = 0;
             std::uint64_t mPayloadBytes = 0;
         } mScene;
+        std::vector<GlobalValue> mGlobals;
         std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };

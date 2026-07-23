@@ -466,6 +466,36 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveGlobalVariablesState parseGlobalVariablesState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveGlobalDataEntry& entry, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = static_cast<std::size_t>(entry.mUnparsedPayload.mRange.mOffset);
+        Cursor cursor(data, begin, static_cast<std::size_t>(entry.mUnparsedPayload.mRange.end()));
+        ESM4::FONVSaveGlobalVariablesState result;
+        result.mCount = readPackedCount(cursor, data, "global-variable count");
+        validatePackedCountFits(result.mCount, cursor, 9, "global-variable count");
+        result.mVariables.reserve(result.mCount.mValue);
+        for (std::uint32_t i = 0; i < result.mCount.mValue; ++i)
+        {
+            const std::size_t variableBegin = cursor.position();
+            ESM4::FONVSaveGlobalVariable variable;
+            variable.mVariable = decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "global-variable RefID");
+            variable.mValue = readDelimitedField<float>(cursor, data,
+                [&](std::string_view label) { return cursor.readF32(label); }, "global-variable value");
+            if (!std::isfinite(variable.mValue.mValue))
+                throw ESM4::FONVSaveError(variable.mValue.mRange.mOffset, "non-finite global-variable value");
+            variable.mRange = range(variableBegin, cursor.position());
+            variable.mRaw = copyRange(data, variableBegin, cursor.position());
+            result.mVariables.push_back(std::move(variable));
+        }
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "global-variable payload contains unaccounted bytes");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
     ESM4::FONVSaveSkyState parseSkyState(std::span<const std::uint8_t> data,
         const ESM4::FONVSaveGlobalDataEntry& entry, const ESM4::FONVSaveFormIdTable& formIds)
     {
@@ -2109,6 +2139,14 @@ namespace ESM4
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
         {
+            if (entry.mType.mValue == 3)
+            {
+                if (result.mGlobalVariables.has_value())
+                    throw FONVSaveError(entry.mType.mRange.mOffset,
+                        "multiple global-variable global-data entries are present");
+                result.mGlobalVariables = parseGlobalVariablesState(data, entry, result.mFormIdTable);
+                continue;
+            }
             if (entry.mType.mValue != 8)
                 continue;
             if (result.mSky.has_value())
@@ -2173,6 +2211,9 @@ namespace ESM4
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
         {
+            if (result.mGlobalVariables.has_value()
+                && entry.mUnparsedPayload.mRange == result.mGlobalVariables->mRange)
+                continue;
             if (result.mSky.has_value() && entry.mUnparsedPayload.mRange == result.mSky->mRange)
                 continue;
             appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);

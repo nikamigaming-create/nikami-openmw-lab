@@ -64,4 +64,29 @@ namespace MWDialogue
         EXPECT_EQ(script.mSkippedConditionalCommands, 0);
         EXPECT_FALSE(script.mMalformedControlFlow);
     }
+
+    TEST(Esm4ResultScriptTest, ExecutesExactStripTollInventoryCommandsWithoutGuessingVariableCounts)
+    {
+        const Esm4ResultScript script = parseEsm4ResultScript(
+            "Player.RemoveItem Caps001 400\r\n"
+            "Set VFreeformTheStreet02.bPaid to 1\r\n"
+            "Set VFreeformTheStreet02.bHarassed to 1\r\n"
+            "Set VFreeformTheStreet02.bToll to 0\r\n");
+
+        ASSERT_EQ(script.mCommands.size(), 4);
+        EXPECT_EQ(script.mCommands[0].mType, Esm4ResultCommandType::RemoveItem);
+        EXPECT_EQ(script.mCommands[0].mTarget, "Player");
+        EXPECT_EQ(script.mCommands[0].mItem, "Caps001");
+        EXPECT_EQ(script.mCommands[0].mCount, 400);
+        EXPECT_TRUE(script.mCommands[0].mSource.empty());
+        EXPECT_EQ(script.mCommands[1].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(script.mCommands[2].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(script.mCommands[3].mType, Esm4ResultCommandType::Quest);
+
+        const Esm4ResultScript variableCount
+            = parseEsm4ResultScript("Player.RemoveItem Caps001 VES05.iAllPlayersCaps");
+        ASSERT_EQ(variableCount.mCommands.size(), 1);
+        EXPECT_EQ(variableCount.mCommands[0].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(variableCount.mCommands[0].mSource, "Player.RemoveItem Caps001 VES05.iAllPlayersCaps");
+    }
 }

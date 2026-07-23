@@ -1286,6 +1286,8 @@ namespace Resource
                 "Arrow",
                 "Camera",
                 "Collision",
+                "ProjectileNode",
+                "ShellCasingNode",
                 "Right_Wrist",
                 "Left_Wrist",
                 "Shield_Bone",

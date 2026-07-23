@@ -18,6 +18,7 @@
 #include <components/esm3/loadclas.hpp>
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadglob.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -657,6 +658,15 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         MWBase::Environment::get().getWindowManager()->setNewGame(false);
         MWBase::Environment::get().getLuaManager()->prepareGameLoad();
         mutableWorld.saveLoaded();
+        for (const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved : context.mPlan.mGlobals)
+        {
+            const ESM4::GlobalVariable* global
+                = mutableWorld.getStore().get<ESM4::GlobalVariable>().search(ESM::RefId(saved.mVariable));
+            if (global == nullptr || global->mEditorId.empty())
+                throw std::runtime_error("native FNV global-variable application lost its preflighted GLOB identity");
+            mutableWorld.setGlobalFloat(MWWorld::GlobalVariableName(global->mEditorId), saved.mValue);
+        }
+        Log(Debug::Info) << "Native FNV save restored global variables: count=" << context.mPlan.mGlobals.size();
         if (context.mPlan.mQuestProgress)
         {
             std::string error;

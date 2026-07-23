@@ -612,6 +612,25 @@ namespace MWWorld
         plan.mPlayer.mLocationLabel = save.mHeader.mPlayerLocation.mValue;
         plan.mPlayer.mPlayTimeLabel = save.mHeader.mPlayTime.mValue;
 
+        if (save.mGlobalVariables)
+        {
+            std::set<ESM::FormId> variables;
+            plan.mGlobals.reserve(save.mGlobalVariables->mVariables.size());
+            for (const ESM4::FONVSaveGlobalVariable& saved : save.mGlobalVariables->mVariables)
+            {
+                if (!saved.mVariable.mResolvedFormId)
+                    return loadFailure("FNV save global-variable RefID did not resolve");
+                const std::optional<ESM::FormId> variable
+                    = normalizeSavedFormId(*saved.mVariable.mResolvedFormId, currentPluginIndices);
+                if (!variable)
+                    return loadFailure("FNV save global-variable FormID has unsupported provenance");
+                if (!variables.insert(*variable).second)
+                    return loadFailure("FNV save has duplicate global-variable identities");
+                plan.mGlobals.push_back(
+                    FalloutSaveLoadPlan::GlobalValue{ *variable, saved.mValue.mValue, saved.mRange.mOffset });
+            }
+        }
+
         if (!save.mPlayerProcessInventoryData)
             return loadFailure("FNV save does not expose the canonical Player process/inventory state");
         const ESM4::FONVSavePlayerProcessInventoryData& processInventory = *save.mPlayerProcessInventoryData;
@@ -952,6 +971,12 @@ namespace MWWorld
             const auto blocker = std::ranges::find(plan.mUncoveredState, "quest-stages-objectives-variables");
             if (blocker != plan.mUncoveredState.end())
                 *blocker = "quest-variables";
+        }
+        if (save.mGlobalVariables)
+        {
+            const auto blocker = std::ranges::find(plan.mUncoveredState, "global-variables");
+            if (blocker != plan.mUncoveredState.end())
+                plan.mUncoveredState.erase(blocker);
         }
         return { std::move(plan), {} };
     }

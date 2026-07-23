@@ -63,6 +63,7 @@
 #include "../mwrender/camera.hpp"
 #include "../mwrender/fallouthitreaction.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
+#include "../mwrender/weaponanimation.hpp"
 
 #include "../mwsound/falloutsoundpath.hpp"
 
@@ -637,7 +638,14 @@ namespace
             return ESM::Weapon::None;
 
         if (creature)
-            return MWMechanics::getFalloutWeaponType(0).value();
+        {
+            // Non-biped FNV creatures attack through their skeleton's authored attack1/attack2/attack3
+            // groups. Treating their unarmed strike as the humanoid H2H weapon family tries to bind
+            // Characters/_Male clips to creature rigs and falls back to unsynchronised immediate damage.
+            // Returning no Fallout weapon family keeps the legacy animation state machine, while the
+            // FNV creature hit path below still supplies the authored New Vegas damage contract.
+            return std::nullopt;
+        }
 
         const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
         if (weapon == nullptr)
@@ -2238,6 +2246,16 @@ namespace MWMechanics
         if (mUpperBodyState == UpperBodyState::AttackEnd)
         {
             if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
+                    mFalloutVatsAttackDelivery, equippedFalloutWeapon, groupname, evt))
+            {
+                mFalloutVatsReleaseReady = true;
+                Log(Debug::Info) << "FNV VATS authored release: actor=" << mPtr.toString()
+                                 << " weapon=" << ESM::RefId::formIdRefId(delivery->mWeapon)
+                                 << " animationType=" << static_cast<unsigned int>(delivery->mAnimationType)
+                                 << " group=" << delivery->mAnimationGroup << " key=" << evt;
+                return;
+            }
+            if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
                     mFalloutAttackDelivery, equippedFalloutWeapon, groupname, evt))
             {
                 const bool delivered = isFalloutMeleeAnimationType(delivery->mAnimationType)
@@ -2300,7 +2318,10 @@ namespace MWMechanics
             // and processing multiple hit keys for a single attack
             if (mReadyToHit)
             {
-                charClass.hit(mPtr, mAttackStrength, attackType, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                    strikeFalloutMelee(0);
+                else
+                    charClass.hit(mPtr, mAttackStrength, attackType, mAttackVictim, mAttackHitPos, mAttackSuccess);
                 mReadyToHit = false;
             }
         }
@@ -2329,17 +2350,22 @@ namespace MWMechanics
             {
                 // State update doesn't expect the start key to be the hit key,
                 // so we have to do this early.
-                prepareHit();
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                    strikeFalloutMelee(0);
+                else
+                {
+                    prepareHit();
 
-                if (groupname == "attack1" || groupname == "swimattack1")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Chop, mAttackVictim, mAttackHitPos, mAttackSuccess);
-                else if (groupname == "attack2" || groupname == "swimattack2")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Slash, mAttackVictim, mAttackHitPos, mAttackSuccess);
-                else if (groupname == "attack3" || groupname == "swimattack3")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Thrust, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    if (groupname == "attack1" || groupname == "swimattack1")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Chop, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    else if (groupname == "attack2" || groupname == "swimattack2")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Slash, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    else if (groupname == "attack3" || groupname == "swimattack3")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Thrust, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                }
             }
         }
         else if (action == "shoot attach")
@@ -3247,13 +3273,15 @@ namespace MWMechanics
         if ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0
             && !projectile->mMuzzleFlashModel.empty())
         {
-            if (MWRender::Animation* animation = world->getAnimation(mPtr))
+            if (MWRender::Animation* animation = getFalloutWeaponAnimation())
             {
                 // Fallout weapon meshes author the emission transform beneath ProjectileNode. Some weapon models
                 // expose only the attachment frame to Animation, so retain Weapon and the actor head as ordered
                 // fallbacks instead of inventing a camera-relative flash position.
                 SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
-                animation->getObjectRoot()->accept(projectileNode);
+                osg::Node* weaponRoot = animation->getEquippedWeaponNode();
+                if (weaponRoot != nullptr)
+                    weaponRoot->accept(projectileNode);
                 const osg::Node* resolvedNode = projectileNode.mFoundNode;
                 if (resolvedNode != nullptr)
                     muzzleNode = resolvedNode->getName();
@@ -3594,17 +3622,77 @@ namespace MWMechanics
     bool CharacterController::prepareFalloutVatsRangedAttack()
     {
         mFalloutAttackDelivery = {};
+        mFalloutVatsAttackDelivery = {};
+        mFalloutVatsReleaseReady = false;
+        const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+        if (!animationType || mFalloutWeapon == nullptr)
+            return false;
+
+        // Targeting pauses simulation, so a weapon that was holstered on entry cannot
+        // finish its ordinary equip clip before execution starts. Normalize that
+        // already-requested transition here and expose the actual equipped model before
+        // playing the attack. This keeps gameplay inventory authoritative while
+        // preventing an empty-hand VATS shot.
+        mPtr.getClass().getCreatureStats(mPtr).setDrawState(DrawState::Weapon);
+        if (mUpperBodyState != UpperBodyState::WeaponEquipped)
+        {
+            if (!mCurrentWeapon.empty())
+                disableFalloutWeaponGroup(mCurrentWeapon);
+            detachFalloutWeaponTextKeys();
+            showFalloutWeapons(true);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+            {
+                Log(Debug::Error) << "FNV VATS execution: equipped weapon pose unavailable actor="
+                                  << mPtr.toString() << " weaponType=" << mWeaponType;
+                return false;
+            }
+        }
+        bool authoredHitscan = true;
+        if (!isFalloutMeleeAnimationType(*animationType) && !isFalloutThrownWeapon(*mFalloutWeapon))
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            const ESM4::Projectile* projectile = store != nullptr
+                ? store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile)
+                : nullptr;
+            if (projectile != nullptr)
+                authoredHitscan = (projectile->mData.flags & ESM4::Projectile::Hitscan) != 0;
+        }
+        const FalloutAttackDeliveryEvent deliveryEvent = getFalloutAttackDeliveryEvent(
+            *animationType, authoredHitscan, mFalloutWeapon->mData.isAutomatic());
+        const std::optional<MWRender::FonvWeaponActionSource> source = MWRender::getFonvWeaponActionSource(
+            *animationType, 0, MWRender::FonvWeaponAction::PrimaryAttack);
+        if (!source)
+            return false;
+        if (deliveryEvent != FalloutAttackDeliveryEvent::None
+            && !queueFalloutAttackDelivery(mFalloutVatsAttackDelivery, deliveryEvent,
+                mFalloutWeapon->mId, *animationType, source->mSemanticGroup))
+            return false;
         MWRender::Animation::AnimPriority priority(Priority_Weapon);
         priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
         const bool visualAction
             = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
         if (visualAction)
+        {
             mUpperBodyState = UpperBodyState::AttackEnd;
+            setFalloutWeaponAiming(1.f, true);
+            // Retail hitscan/automatic actions have no deferred delivery key: discharge is coincident with the
+            // authored action start. Projectile and thrown families continue to wait for their exact key above.
+            if (deliveryEvent == FalloutAttackDeliveryEvent::None)
+                mFalloutVatsReleaseReady = true;
+        }
         MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
         mFalloutVatsVisualAttackPrepared = visualAction;
         Log(visualAction ? Debug::Info : Debug::Warning)
             << "FNV VATS weapon visual: actor=" << mPtr.toString() << " prepared=" << visualAction;
         return visualAction;
+    }
+
+    bool CharacterController::consumeFalloutVatsRangedAttackRelease()
+    {
+        const bool ready = mFalloutVatsReleaseReady;
+        mFalloutVatsReleaseReady = false;
+        return ready;
     }
 
     bool CharacterController::executeFalloutVatsRangedHit(
@@ -4559,8 +4647,8 @@ namespace MWMechanics
 
                     MWBase::LuaManager::ActorControls* actorControls
                         = MWBase::Environment::get().getLuaManager()->getActorControls(mPtr);
-                    const bool aiInactive
-                        = actorControls->mDisableAI || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
+                    const bool aiInactive = (actorControls != nullptr && actorControls->mDisableAI)
+                        || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
                     if (mWeaponType != ESM::Weapon::PickProbe && !isLegacyRandomAttackAnimation(mCurrentWeapon))
                     {
                         if (weapclass == ESM::WeaponType::Ranged || weapclass == ESM::WeaponType::Thrown)
@@ -4648,7 +4736,13 @@ namespace MWMechanics
             // Attack animations with no hit key do this earlier.
             else
             {
-                prepareHit();
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                {
+                    mAttackStrength = 1.f;
+                    mReadyToHit = true;
+                }
+                else
+                    prepareHit();
             }
 
             if (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon))

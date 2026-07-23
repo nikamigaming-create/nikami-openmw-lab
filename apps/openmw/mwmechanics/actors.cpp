@@ -2180,6 +2180,13 @@ namespace MWMechanics
             && iter->second->getCharacterController().prepareFalloutVatsRangedAttack();
     }
 
+    bool Actors::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().consumeFalloutVatsRangedAttackRelease();
+    }
+
     bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const
     {

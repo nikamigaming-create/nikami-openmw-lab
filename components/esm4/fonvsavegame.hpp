@@ -142,6 +142,23 @@ namespace ESM4
         std::optional<std::uint32_t> mResolvedFormId;
     };
 
+    struct FONVSaveGlobalVariable
+    {
+        FONVSaveResolvedReferenceId mVariable;
+        FONVSaveField<float> mValue;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Global-data type 3. Retail writes a canonical packed count followed by delimited RefID/float pairs.
+    struct FONVSaveGlobalVariablesState
+    {
+        FONVSaveField<std::uint32_t> mCount;
+        std::vector<FONVSaveGlobalVariable> mVariables;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
     // Unlike the save's packed three-byte RefID, wbFormIDT stores an already-expanded little-endian FormID. Zero is
     // null; nonzero values resolve directly while retaining the exact encoded field bytes and range.
     struct FONVSaveFullFormId
@@ -954,6 +971,7 @@ namespace ESM4
         FONVSaveGlobalDataTable mGlobalDataTable1;
         FONVSaveChangedForms mChangedForms;
         FONVSaveGlobalDataTable mGlobalDataTable2;
+        std::optional<FONVSaveGlobalVariablesState> mGlobalVariables;
         FONVSaveFormIdTable mFormIdTable;
         FONVSaveFormIdTable mVisitedWorldspaces;
         FONVSaveUnknownTable mUnknownTable;

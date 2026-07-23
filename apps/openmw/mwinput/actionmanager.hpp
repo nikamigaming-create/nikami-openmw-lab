@@ -6,6 +6,7 @@
 #include <osgViewer/ViewerEventHandlers>
 
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -119,11 +120,13 @@ namespace MWInput
         std::vector<std::pair<ESM::FormId, float>> mFalloutVatsExecutionTargetHealthBefore;
         bool mFalloutVatsProofEnabled = false;
         bool mFalloutVatsProofFinished = false;
+        bool mFalloutVatsProofWeaponSelected = false;
         unsigned int mFalloutVatsProofStage = 0;
         unsigned int mFalloutVatsProofFrame = 0;
         unsigned int mFalloutVatsProofCaptures = 0;
         unsigned int mFalloutVatsProofCaptureStep = 3;
         std::size_t mFalloutVatsProofShotsFired = 0;
+        std::uint32_t mFalloutVatsProofWeaponFormId = 0x0000434f;
         std::string mFalloutVatsProofTargetName;
         MWWorld::Ptr mFalloutVatsProofTarget;
         float mFalloutVatsProofHealthBefore = 0.f;

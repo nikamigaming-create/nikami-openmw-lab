@@ -22,6 +22,7 @@
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadinfo.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
@@ -84,6 +85,16 @@ namespace MWDialogue
     namespace
     {
         constexpr unsigned int maxEsm4SoundReferenceDepth = 8;
+
+        ESM::RefId resolveEsm4MiscItemEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
+        {
+            for (const ESM4::MiscItem& item : store.get<ESM4::MiscItem>())
+            {
+                if (Misc::StringUtils::ciEqual(item.mEditorId, editorId))
+                    return ESM::RefId(item.mId);
+            }
+            return {};
+        }
 
         std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId id, unsigned int depth = 0)
         {
@@ -419,6 +430,36 @@ namespace MWDialogue
                     windowManager->pushGuiMode(MWGui::GM_Barter, mActor);
                 continue;
             }
+            if (command.mType == Esm4ResultCommandType::AddItem
+                || command.mType == Esm4ResultCommandType::RemoveItem)
+            {
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                const MWWorld::Ptr player = world->getPlayerPtr();
+                const ESM::RefId itemId
+                    = store == nullptr ? ESM::RefId() : resolveEsm4MiscItemEditorId(*store, command.mItem);
+                if (player.isEmpty() || itemId.empty())
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 dialogue: could not resolve player inventory item '"
+                                        << command.mItem << "'";
+                    continue;
+                }
+
+                MWWorld::ContainerStore& inventory = player.getClass().getContainerStore(player);
+                if (command.mType == Esm4ResultCommandType::AddItem)
+                {
+                    inventory.add(itemId, command.mCount, false);
+                    Log(Debug::Info) << "FNV/ESM4 dialogue: player AddItem item=" << command.mItem
+                                     << " id=" << itemId << " count=" << command.mCount;
+                }
+                else
+                {
+                    const int removed = inventory.remove(itemId, command.mCount);
+                    Log(removed == command.mCount ? Debug::Info : Debug::Warning)
+                        << "FNV/ESM4 dialogue: player RemoveItem item=" << command.mItem
+                        << " id=" << itemId << " requested=" << command.mCount << " removed=" << removed;
+                }
+                continue;
+            }
 
             const ESM::FormId referenceId = resolveEsm4ResultReferenceId(command.mTarget);
             const MWWorld::Ptr target = referenceId.isZeroOrUnset()
@@ -471,6 +512,8 @@ namespace MWDialogue
                         Log(Debug::Warning) << "FNV/ESM4 dialogue: StopCombat rejected non-actor reference '"
                                             << command.mTarget << "'";
                     break;
+                case Esm4ResultCommandType::AddItem:
+                case Esm4ResultCommandType::RemoveItem:
                 case Esm4ResultCommandType::Quest:
                 case Esm4ResultCommandType::ShowBarterMenu:
                     break;

@@ -541,6 +541,7 @@ namespace MWRender
         virtual bool useShieldAnimations() const { return false; }
         virtual bool getWeaponsShown() const { return false; }
         virtual void showWeapons(bool showWeapon) {}
+        virtual osg::Node* getEquippedWeaponNode() { return nullptr; }
         virtual bool getCarriedLeftShown() const { return false; }
         virtual void showCarriedLeft(bool show) {}
         virtual void setWeaponGroup(const std::string& group, bool relativeDuration) {}

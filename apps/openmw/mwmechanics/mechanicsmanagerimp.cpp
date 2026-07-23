@@ -840,6 +840,11 @@ namespace MWMechanics
         return actor.getClass().isActor() && mActors.prepareFalloutVatsRangedAttack(actor);
     }
 
+    bool MechanicsManager::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.consumeFalloutVatsRangedAttackRelease(actor);
+    }
+
     bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
     {

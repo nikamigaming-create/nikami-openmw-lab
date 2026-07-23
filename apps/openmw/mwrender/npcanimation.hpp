@@ -159,6 +159,7 @@ namespace MWRender
 
         osg::Group* getArrowBone() override;
         osg::Node* getWeaponNode() override;
+        osg::Node* getEquippedWeaponNode() override { return getWeaponNode(); }
         Resource::ResourceSystem* getResourceSystem() override;
 
         // WeaponAnimation

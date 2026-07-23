@@ -33,6 +33,7 @@ namespace
         rig->setInfluences(std::vector<SceneUtil::RigGeometry::BoneWeights>{
             { { 0, 1.f } }, { { 1, 0.8f }, { 0, 0.2f } }, { { 1, 0.1f }, { 0, 0.9f } }, { { 2, 1.f } } });
         rig->setSourceGeometry(makeSourceGeometry());
+        rig->setFalloutCharacterSkinning(true);
         return rig;
     }
 
@@ -90,6 +91,21 @@ namespace
         const std::array<std::string_view, 1> targetBones{ "Bip01 L Calf" };
 
         EXPECT_FALSE(rig->setFalloutVatsHighlight(targetBones, "Bip01 Weapon", true));
+        EXPECT_EQ(rig->getStateSet(), nullptr);
+    }
+
+    TEST(SceneUtilRigGeometry, FalloutVatsRejectsWeaponRigEvenWhenItSharesAnAuthoredHandBone)
+    {
+        osg::ref_ptr<SceneUtil::RigGeometry> rig = new SceneUtil::RigGeometry;
+        std::vector<SceneUtil::RigGeometry::BoneInfo> bones(2);
+        bones[0].mName = "Bip01 R Hand";
+        bones[1].mName = "Bip01 Weapon";
+        rig->setBoneInfo(std::move(bones));
+        rig->setInfluences(std::vector<SceneUtil::RigGeometry::BoneWeights>(4, { { 0, 1.f } }));
+        rig->setSourceGeometry(makeSourceGeometry());
+        const std::array<std::string_view, 1> targetBones{ "Bip01 R Hand" };
+
+        EXPECT_FALSE(rig->setFalloutVatsHighlight(targetBones, "Bip01 R Hand", true));
         EXPECT_EQ(rig->getStateSet(), nullptr);
     }
 

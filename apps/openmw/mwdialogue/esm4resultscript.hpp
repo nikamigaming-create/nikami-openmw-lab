@@ -17,12 +17,16 @@ namespace MWDialogue
         Unlock,
         EvaluatePackage,
         StopCombat,
+        AddItem,
+        RemoveItem,
     };
 
     struct Esm4ResultCommand
     {
         Esm4ResultCommandType mType = Esm4ResultCommandType::Quest;
         std::string mTarget;
+        std::string mItem;
+        int mCount = 0;
         std::string mSource;
     };
 

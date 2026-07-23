@@ -348,7 +348,7 @@ namespace MWGui
             widgets.mFrame->setAlpha(display.mSelected ? 1.f : 0.72f);
             widgets.mText->setCoord(3, 2, width - 6, height - 4);
             widgets.mText->setTextColour(display.mSelected
-                    ? MyGUI::Colour(1.f, 0.82f, 0.16f, 1.f)
+                    ? MyGUI::Colour(0.18f, 1.f, 0.28f, 1.f)
                     : MyGUI::Colour(1.f, 0.58f, 0.06f, 1.f));
             widgets.mText->setCaption(display.mSelected
                     ? std::string(display.mName) + "\n[ " + std::to_string(display.mHitChance) + "% ]"

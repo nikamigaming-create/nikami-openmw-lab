@@ -9154,6 +9154,11 @@ namespace MWRender
         return renderable;
     }
 
+    osg::Node* ESM4NpcAnimation::getEquippedWeaponNode()
+    {
+        return mFalloutWeaponPart.get();
+    }
+
     bool ESM4NpcAnimation::prepareFalloutWeaponAnimation(
         std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action)
     {

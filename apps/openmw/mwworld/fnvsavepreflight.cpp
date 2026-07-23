@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -15,6 +16,7 @@
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrace.hpp>
@@ -132,6 +134,44 @@ namespace
         }
         return {};
     }
+
+    std::string validateGlobalVariables(MWWorld::FalloutSaveLoadPlan& plan, const MWWorld::ESMStore& store)
+    {
+        bool skippedMissing = false;
+        const auto remove = std::remove_if(plan.mGlobals.begin(), plan.mGlobals.end(),
+            [&](const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved) {
+                const ESM4::GlobalVariable* global
+                    = store.get<ESM4::GlobalVariable>().search(ESM::RefId(saved.mVariable));
+                if (global != nullptr)
+                    return false;
+                if (store.find(ESM::RefId(saved.mVariable)) != 0)
+                    return false;
+                skippedMissing = true;
+                Log(Debug::Warning) << "Native FNV save skipped stale global-variable identity absent from loaded "
+                                       "content: "
+                                    << saved.mVariable.toString();
+                return true;
+            });
+        plan.mGlobals.erase(remove, plan.mGlobals.end());
+        if (skippedMissing)
+            plan.mUncoveredState.push_back("global-variables-unresolved-content-forms");
+
+        for (const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved : plan.mGlobals)
+        {
+            const ESM4::GlobalVariable* global
+                = store.get<ESM4::GlobalVariable>().search(ESM::RefId(saved.mVariable));
+            if (global == nullptr)
+                return "FNV save global variable resolves to a loaded non-GLOB record: "
+                    + saved.mVariable.toString();
+            if (global->mId != saved.mVariable)
+                return "FNV save global variable resolved with a different identity: " + saved.mVariable.toString();
+            if (global->mEditorId.empty())
+                return "FNV save global variable is an unnamed GLOB record: " + saved.mVariable.toString();
+            if (!std::isfinite(saved.mValue))
+                return "FNV save global variable has a non-finite value: " + saved.mVariable.toString();
+        }
+        return {};
+    }
 }
 
 namespace MWWorld
@@ -164,6 +204,9 @@ namespace MWWorld
             = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
         if (!actorValueError.empty())
             return failure(actorValueError);
+        const std::string globalError = validateGlobalVariables(result.mContext->mPlan, store);
+        if (!globalError.empty())
+            return failure(globalError);
         for (const FalloutInventoryItem& item : result.mContext->mPlan.mPlayer.mInventoryItems)
         {
             if (store.find(ESM::RefId(item.mRecord)) == 0)

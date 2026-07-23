@@ -407,6 +407,13 @@ namespace SceneUtil
         if (!enabled || !mData || !mSourceGeometry || targetBones.empty())
             return false;
 
+        // The actor object root also owns separately attached weapons and props. Those
+        // meshes can be skinned to ordinary hand/arm bones, so matching a VATS target
+        // bone alone is not enough to identify anatomy. Only actor-classified rigs
+        // participate in the body overlay.
+        if (!isFalloutCharacterRig())
+            return false;
+
         std::vector<bool> selectedBoneMask(mData->mBones.size(), false);
         bool hasTargetBone = false;
         for (std::size_t boneIndex = 0; boneIndex < mData->mBones.size(); ++boneIndex)

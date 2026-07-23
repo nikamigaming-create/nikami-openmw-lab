@@ -214,17 +214,16 @@ namespace MWMechanics
 
     bool isFalloutNewVegasActor(const MWWorld::Ptr& actor)
     {
-        if (actor.getType() == ESM4::Npc::sRecordId)
-        {
-            const MWWorld::LiveCellRef<ESM4::Npc>* ref = actor.get<ESM4::Npc>();
-            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
-        }
-        if (actor.getType() == ESM4::Creature::sRecordId)
-        {
-            const MWWorld::LiveCellRef<ESM4::Creature>* ref = actor.get<ESM4::Creature>();
-            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
-        }
-        return false;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || store->getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return false;
+
+        // The gameplay Player is a synthetic proxy and does not reliably retain either the source NPC
+        // record's mIsFONV marker or its ESM4 live-record type at every mechanics call site. Recognize the
+        // authoritative player pointer explicitly. Otherwise FNV creatures evaluating the player's combat
+        // range route the player's WEAP4 through ActionWeapon and repeatedly throw a bad WEAP-from-WEAP4 cast.
+        return actor == MWMechanics::getPlayer() || actor.getType() == ESM4::Npc::sRecordId
+            || actor.getType() == ESM4::Creature::sRecordId;
     }
 
     std::optional<float> getFalloutCombatRange(const MWWorld::Ptr& actor, bool& isRanged)

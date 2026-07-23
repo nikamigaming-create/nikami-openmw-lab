@@ -881,6 +881,19 @@ namespace
         bytes.insert(bytes.end(), payload.begin(), payload.end());
     }
 
+    std::vector<std::uint8_t> makeGlobalVariablesPayload()
+    {
+        std::vector<std::uint8_t> result;
+        appendPackedCount(result, 2);
+        appendDelimitedReferenceId(result, 0x400035u);
+        appendF32(result, 42.5f);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400036u);
+        appendF32(result, -7.25f);
+        appendDelimiter(result);
+        return result;
+    }
+
     struct ChangedFormOffsets
     {
         std::size_t mReferenceId = 0;
@@ -979,7 +992,7 @@ namespace
         std::size_t playerCharacterFinalStateBytes = ESM4::sFONVPlayerCharacterFinalStateBytes,
         std::optional<float> playerReferenceScale = std::nullopt,
         std::optional<std::uint32_t> playerActorExtraDataCount = std::nullopt,
-        std::span<const std::uint8_t> playerActorExtraData = {})
+        std::span<const std::uint8_t> playerActorExtraData = {}, bool includeGlobalVariables = false)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -1037,9 +1050,14 @@ namespace
         result.mBytes.insert(result.mBytes.end(), masterTable.begin(), masterTable.end());
         result.mMasterTableEnd = result.mBytes.size();
 
+        std::vector<std::uint8_t> globalData1;
+        if (includeGlobalVariables)
+        {
+            const std::vector<std::uint8_t> globals = makeGlobalVariablesPayload();
+            appendGlobalDataEntry(globalData1, 3u, globals);
+        }
         const std::vector<std::uint8_t> globalData1Payload
             = includeSky ? makeSkyPayload() : std::vector<std::uint8_t>{ 0xaa, 0xbb, 0xcc };
-        std::vector<std::uint8_t> globalData1;
         appendGlobalDataEntry(globalData1, includeSky ? 8u : 0u, globalData1Payload);
 
         std::vector<std::uint8_t> changedForms;
@@ -1188,7 +1206,7 @@ namespace
         result.mGlobalData2OffsetField = result.mBytes.size();
         appendU32(result.mBytes, static_cast<std::uint32_t>(result.mGlobalData2Begin));
         result.mGlobalData1CountField = result.mBytes.size();
-        appendU32(result.mBytes, 1);
+        appendU32(result.mBytes, includeGlobalVariables ? 2u : 1u);
         result.mGlobalData2CountField = result.mBytes.size();
         appendU32(result.mBytes, 1);
         result.mChangedFormsCountField = result.mBytes.size();
@@ -2019,6 +2037,42 @@ namespace
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
+    TEST(FONVSaveGame, ParsesCanonicalGlobalVariablesAndRejectsCorruption)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
+            sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
+            sSyntheticPlayerCharacterAnimationStateBytes, ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+            ESM4::sFONVPlayerCharacterListsStateBytes, ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
+            ESM4::sFONVPlayerCharacterFinalStateBytes, std::nullopt, std::nullopt, {}, true);
+
+        ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        ASSERT_TRUE(save.mGlobalVariables.has_value());
+        const ESM4::FONVSaveGlobalVariablesState& globals = *save.mGlobalVariables;
+        EXPECT_EQ(globals.mCount.mValue, 2u);
+        ASSERT_EQ(globals.mVariables.size(), 2u);
+        EXPECT_EQ(globals.mVariables[0].mVariable.mResolvedFormId, 0x35u);
+        EXPECT_FLOAT_EQ(globals.mVariables[0].mValue.mValue, 42.5f);
+        EXPECT_EQ(globals.mVariables[1].mVariable.mResolvedFormId, 0x36u);
+        EXPECT_FLOAT_EQ(globals.mVariables[1].mValue.mValue, -7.25f);
+        EXPECT_EQ(globals.mRange.mSize, 20u);
+
+        const std::size_t payload = source.mGlobalData1Begin + 8;
+        source.mBytes[payload + 2] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
+            sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
+            sSyntheticPlayerCharacterAnimationStateBytes, ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+            ESM4::sFONVPlayerCharacterListsStateBytes, ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
+            ESM4::sFONVPlayerCharacterFinalStateBytes, std::nullopt, std::nullopt, {}, true);
+        const std::uint32_t nan = std::bit_cast<std::uint32_t>(std::numeric_limits<float>::quiet_NaN());
+        overwriteU32(source.mBytes, source.mGlobalData1Begin + 8 + 2 + 4, nan);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
     TEST(FONVSaveGame, ParsesFlaggedCanonicalPlayerReferenceScale)
     {
         const SaveBytes source = makeSaveWithPlayerProcessInventory(1.25f);
@@ -2763,6 +2817,19 @@ namespace
             EXPECT_EQ(save.mGlobalDataTable1.mEntries[i].mEnvelopeRange.mSize, global1Lengths[i] + 8u);
         }
         EXPECT_EQ(save.mGlobalDataTable1.mEntries.back().mEnvelopeRange.end(), 494730u);
+        ASSERT_TRUE(save.mGlobalVariables.has_value());
+        const ESM4::FONVSaveGlobalVariablesState& globals = *save.mGlobalVariables;
+        EXPECT_EQ(globals.mCount.mValue, 200u);
+        EXPECT_EQ(globals.mCount.mRange, (ESM4::FONVSaveRange{ 492411, 2 }));
+        ASSERT_EQ(globals.mVariables.size(), 200u);
+        EXPECT_EQ(globals.mRange, (ESM4::FONVSaveRange{ 492411, 1803 }));
+        EXPECT_EQ(globals.mVariables.front().mVariable.mEncoded.mValue, 0x00014cu);
+        EXPECT_EQ(globals.mVariables.front().mVariable.mResolvedFormId, 0x04003608u);
+        EXPECT_FLOAT_EQ(globals.mVariables.front().mValue.mValue, 0.f);
+        EXPECT_EQ(globals.mVariables[50].mVariable.mResolvedFormId, 0x00068e75u);
+        EXPECT_FLOAT_EQ(globals.mVariables[50].mValue.mValue, 100.f);
+        EXPECT_EQ(globals.mVariables.back().mVariable.mResolvedFormId, 0x00000035u);
+        EXPECT_FLOAT_EQ(globals.mVariables.back().mValue.mValue, 2277.f);
         ASSERT_TRUE(save.mSky.has_value());
         const ESM4::FONVSaveSkyState& sky = *save.mSky;
         EXPECT_EQ(sky.mRange, (ESM4::FONVSaveRange{ 494355, 71 }));
@@ -3570,8 +3637,8 @@ namespace
         EXPECT_EQ(save.findChangedForm(ESM4::sFONVPlayerNpcFormId), nullptr)
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7089u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2733880u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7088u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2732077u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));
