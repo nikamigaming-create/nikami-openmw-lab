@@ -183,25 +183,33 @@ namespace MWWorld
             GetObjectiveDisplayed,
         };
 
-        enum class CompiledConditionComparison : std::uint8_t
+        enum class CompiledConditionTokenType : std::uint8_t
         {
-            Truthy,
+            Value,
+            Number,
             Equal,
             NotEqual,
             Less,
             LessEqual,
             Greater,
             GreaterEqual,
+            LogicalAnd,
+            LogicalOr,
+        };
+
+        struct CompiledConditionToken
+        {
+            CompiledConditionTokenType mType = CompiledConditionTokenType::Value;
+            CompiledConditionValueType mValueType = CompiledConditionValueType::QuestVariable;
+            ESM::FormId mQuest{};
+            std::string mVariable;
+            std::int32_t mStage = 0;
+            float mNumber = 0.f;
         };
 
         struct CompiledQuestCondition
         {
-            CompiledConditionValueType mValueType = CompiledConditionValueType::QuestVariable;
-            CompiledConditionComparison mComparison = CompiledConditionComparison::Truthy;
-            ESM::FormId mQuest{};
-            std::string mVariable;
-            std::int32_t mStage = 0;
-            float mComparisonValue = 0.f;
+            std::vector<CompiledConditionToken> mPostfix;
         };
 
         struct CompiledQuestCommand

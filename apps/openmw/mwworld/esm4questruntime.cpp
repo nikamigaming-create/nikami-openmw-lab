@@ -429,60 +429,34 @@ namespace MWWorld
                     return false;
                 const std::span<const std::uint8_t> expression = argumentPayload.subspan(4);
 
+                enum class ExpressionDecodeResult
+                {
+                    Supported,
+                    Unsupported,
+                    Malformed,
+                };
                 CompiledQuestCondition condition;
-                bool supported = false;
-                if (expression.size() == 7 && expression[0] == 0x20 && expression[1] == 0x72
-                    && expression[4] == 0x73 && mStore != nullptr)
-                {
-                    const std::uint16_t referenceIndex = readUint16(expression, 2);
-                    const std::uint16_t variableIndex = readUint16(expression, 5);
-                    if (referenceIndex == 0 || referenceIndex > script.references.size())
-                        return false;
-                    condition.mQuest = script.references[referenceIndex - 1];
-                    const ESM4::Quest* quest
-                        = mStore->get<ESM4::Quest>().search(ESM::RefId(condition.mQuest));
-                    const ESM4::Script* questScript = quest == nullptr
-                        ? nullptr
-                        : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
-                    if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
-                        return false;
-                    const auto variable = std::ranges::find(
-                        questScript->mScript.localVarData, variableIndex, &ESM4::ScriptLocalVariableData::index);
-                    if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
-                        return false;
-                    condition.mValueType = CompiledConditionValueType::QuestVariable;
-                    condition.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
-                    supported = true;
-                }
-                else if (expression.size() >= 8 && expression[0] == 0x20 && expression[1] == 0x58)
-                {
-                    const std::uint16_t functionOpcode = readUint16(expression, 2);
-                    const std::uint16_t functionArgumentSize = readUint16(expression, 4);
-                    const std::size_t suffixOffset = 6 + functionArgumentSize;
-                    if (suffixOffset > expression.size())
-                        return false;
-                    std::vector<ESM4::ScriptBytecodeArgument> functionArguments;
-                    if (!ESM4::decodeFalloutScriptArguments(
-                            expression.subspan(6, functionArgumentSize), script.references, functionArguments)
-                             .succeeded())
-                        return false;
+                const auto decodeValue = [&](std::uint16_t functionOpcode,
+                                             const std::vector<ESM4::ScriptBytecodeArgument>& functionArguments,
+                                             CompiledConditionToken& token) {
+                    token.mType = CompiledConditionTokenType::Value;
                     if (functionOpcode == 0x103a && functionArguments.size() == 1)
                     {
                         const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
                         if (quest == nullptr)
-                            return false;
-                        condition.mValueType = CompiledConditionValueType::GetStage;
-                        condition.mQuest = *quest;
+                            return ExpressionDecodeResult::Malformed;
+                        token.mValueType = CompiledConditionValueType::GetStage;
+                        token.mQuest = *quest;
                     }
                     else if (functionOpcode == 0x103b && functionArguments.size() == 2)
                     {
                         const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
                         const std::int32_t* stage = std::get_if<std::int32_t>(&functionArguments[1]);
                         if (quest == nullptr || stage == nullptr)
-                            return false;
-                        condition.mValueType = CompiledConditionValueType::GetStageDone;
-                        condition.mQuest = *quest;
-                        condition.mStage = *stage;
+                            return ExpressionDecodeResult::Malformed;
+                        token.mValueType = CompiledConditionValueType::GetStageDone;
+                        token.mQuest = *quest;
+                        token.mStage = *stage;
                     }
                     else if ((functionOpcode == 0x11a4 || functionOpcode == 0x11a5)
                         && functionArguments.size() == 2)
@@ -490,71 +464,153 @@ namespace MWWorld
                         const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
                         const std::int32_t* objective = std::get_if<std::int32_t>(&functionArguments[1]);
                         if (quest == nullptr || objective == nullptr)
-                            return false;
-                        condition.mValueType = functionOpcode == 0x11a4
+                            return ExpressionDecodeResult::Malformed;
+                        token.mValueType = functionOpcode == 0x11a4
                             ? CompiledConditionValueType::GetObjectiveCompleted
                             : CompiledConditionValueType::GetObjectiveDisplayed;
-                        condition.mQuest = *quest;
-                        condition.mStage = *objective;
+                        token.mQuest = *quest;
+                        token.mStage = *objective;
                     }
                     else
-                    {
-                        prepared.mUseSourceFallback = true;
-                        prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
-                        if (instruction.opcode == 0x0016)
-                            conditionalElseSeen.push_back(false);
-                        continue;
-                    }
+                        return ExpressionDecodeResult::Unsupported;
                     if (mStore == nullptr
-                        || mStore->get<ESM4::Quest>().search(ESM::RefId(condition.mQuest)) == nullptr
-                        || !mStates.contains(condition.mQuest))
-                        return false;
+                        || mStore->get<ESM4::Quest>().search(ESM::RefId(token.mQuest)) == nullptr
+                        || !mStates.contains(token.mQuest))
+                        return ExpressionDecodeResult::Malformed;
+                    return ExpressionDecodeResult::Supported;
+                };
 
-                    if (suffixOffset == expression.size())
-                        supported = true;
+                ExpressionDecodeResult decodeResult = ExpressionDecodeResult::Supported;
+                std::size_t expressionOffset = 0;
+                std::size_t stackDepth = 0;
+                while (expressionOffset < expression.size())
+                {
+                    if (expression[expressionOffset++] != 0x20 || expressionOffset == expression.size())
+                    {
+                        decodeResult = ExpressionDecodeResult::Malformed;
+                        break;
+                    }
+
+                    CompiledConditionToken token;
+                    if (expression[expressionOffset] == 0x72)
+                    {
+                        if (expression.size() - expressionOffset < 6 || expression[expressionOffset + 3] != 0x73)
+                        {
+                            decodeResult = ExpressionDecodeResult::Unsupported;
+                            break;
+                        }
+                        const std::uint16_t referenceIndex = readUint16(expression, expressionOffset + 1);
+                        const std::uint16_t variableIndex = readUint16(expression, expressionOffset + 4);
+                        if (referenceIndex == 0 || referenceIndex > script.references.size() || mStore == nullptr)
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        token.mQuest = script.references[referenceIndex - 1];
+                        const ESM4::Quest* quest
+                            = mStore->get<ESM4::Quest>().search(ESM::RefId(token.mQuest));
+                        const ESM4::Script* questScript = quest == nullptr
+                            ? nullptr
+                            : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+                        if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        const auto variable = std::ranges::find(questScript->mScript.localVarData, variableIndex,
+                            &ESM4::ScriptLocalVariableData::index);
+                        if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        token.mType = CompiledConditionTokenType::Value;
+                        token.mValueType = CompiledConditionValueType::QuestVariable;
+                        token.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                        expressionOffset += 6;
+                        ++stackDepth;
+                    }
+                    else if (expression[expressionOffset] == 0x58)
+                    {
+                        if (expression.size() - expressionOffset < 5)
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        const std::uint16_t functionOpcode = readUint16(expression, expressionOffset + 1);
+                        const std::uint16_t functionArgumentSize = readUint16(expression, expressionOffset + 3);
+                        if (functionArgumentSize > expression.size() - expressionOffset - 5)
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        std::vector<ESM4::ScriptBytecodeArgument> functionArguments;
+                        if (!ESM4::decodeFalloutScriptArguments(expression.subspan(
+                                expressionOffset + 5, functionArgumentSize), script.references, functionArguments)
+                                 .succeeded())
+                        {
+                            decodeResult = ExpressionDecodeResult::Malformed;
+                            break;
+                        }
+                        decodeResult = decodeValue(functionOpcode, functionArguments, token);
+                        if (decodeResult != ExpressionDecodeResult::Supported)
+                            break;
+                        expressionOffset += 5 + functionArgumentSize;
+                        ++stackDepth;
+                    }
                     else
                     {
-                        if (expression[suffixOffset] != 0x20)
-                            return false;
-                        const auto operatorSeparator = std::find(
-                            expression.begin() + static_cast<std::ptrdiff_t>(suffixOffset + 1),
-                            expression.end(), 0x20);
-                        if (operatorSeparator == expression.end())
-                            return false;
-                        const std::size_t operatorOffset
-                            = static_cast<std::size_t>(operatorSeparator - expression.begin()) + 1;
-                        const std::string_view number(reinterpret_cast<const char*>(expression.data()
-                                                          + suffixOffset + 1),
-                            static_cast<std::size_t>(operatorSeparator
-                                - (expression.begin() + static_cast<std::ptrdiff_t>(suffixOffset + 1))));
-                        if (!parseFloat(number, condition.mComparisonValue))
-                            return false;
-                        const std::string_view comparison(
-                            reinterpret_cast<const char*>(expression.data() + operatorOffset),
-                            expression.size() - operatorOffset);
-                        if (comparison == "==")
-                            condition.mComparison = CompiledConditionComparison::Equal;
-                        else if (comparison == "!=")
-                            condition.mComparison = CompiledConditionComparison::NotEqual;
-                        else if (comparison == "<")
-                            condition.mComparison = CompiledConditionComparison::Less;
-                        else if (comparison == "<=")
-                            condition.mComparison = CompiledConditionComparison::LessEqual;
-                        else if (comparison == ">")
-                            condition.mComparison = CompiledConditionComparison::Greater;
-                        else if (comparison == ">=")
-                            condition.mComparison = CompiledConditionComparison::GreaterEqual;
+                        const auto nextSeparator
+                            = std::find(expression.begin() + static_cast<std::ptrdiff_t>(expressionOffset),
+                                expression.end(), 0x20);
+                        const std::size_t tokenEnd = static_cast<std::size_t>(nextSeparator - expression.begin());
+                        const std::string_view text(
+                            reinterpret_cast<const char*>(expression.data() + expressionOffset),
+                            tokenEnd - expressionOffset);
+                        if (parseFloat(text, token.mNumber))
+                        {
+                            token.mType = CompiledConditionTokenType::Number;
+                            ++stackDepth;
+                        }
                         else
                         {
-                            prepared.mUseSourceFallback = true;
-                            prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
-                            if (instruction.opcode == 0x0016)
-                                conditionalElseSeen.push_back(false);
-                            continue;
+                            if (stackDepth < 2)
+                            {
+                                decodeResult = ExpressionDecodeResult::Malformed;
+                                break;
+                            }
+                            if (text == "==")
+                                token.mType = CompiledConditionTokenType::Equal;
+                            else if (text == "!=")
+                                token.mType = CompiledConditionTokenType::NotEqual;
+                            else if (text == "<")
+                                token.mType = CompiledConditionTokenType::Less;
+                            else if (text == "<=")
+                                token.mType = CompiledConditionTokenType::LessEqual;
+                            else if (text == ">")
+                                token.mType = CompiledConditionTokenType::Greater;
+                            else if (text == ">=")
+                                token.mType = CompiledConditionTokenType::GreaterEqual;
+                            else if (text == "&&")
+                                token.mType = CompiledConditionTokenType::LogicalAnd;
+                            else if (text == "||")
+                                token.mType = CompiledConditionTokenType::LogicalOr;
+                            else
+                            {
+                                decodeResult = ExpressionDecodeResult::Unsupported;
+                                break;
+                            }
+                            --stackDepth;
                         }
-                        supported = true;
+                        expressionOffset = tokenEnd;
                     }
+                    condition.mPostfix.push_back(std::move(token));
                 }
+                if (decodeResult == ExpressionDecodeResult::Supported && stackDepth != 1)
+                    decodeResult = ExpressionDecodeResult::Malformed;
+                if (decodeResult == ExpressionDecodeResult::Malformed)
+                    return false;
+                const bool supported = decodeResult == ExpressionDecodeResult::Supported;
 
                 if (!supported)
                 {
@@ -998,63 +1054,100 @@ namespace MWWorld
     std::optional<bool> ESM4QuestRuntime::evaluateCompiledCondition(
         const CompiledQuestCondition& condition, const QuestStateMap& states) const
     {
-        const auto found = states.find(condition.mQuest);
-        if (found == states.end())
+        std::vector<float> stack;
+        stack.reserve(condition.mPostfix.size());
+        for (const CompiledConditionToken& token : condition.mPostfix)
+        {
+            if (token.mType == CompiledConditionTokenType::Number)
+            {
+                stack.push_back(token.mNumber);
+                continue;
+            }
+            if (token.mType == CompiledConditionTokenType::Value)
+            {
+                const auto found = states.find(token.mQuest);
+                if (found == states.end())
+                    return std::nullopt;
+                float value = 0.f;
+                switch (token.mValueType)
+                {
+                    case CompiledConditionValueType::QuestVariable:
+                    {
+                        const auto variable = found->second.mVariables.find(token.mVariable);
+                        if (variable == found->second.mVariables.end())
+                            return std::nullopt;
+                        value = variable->second;
+                        break;
+                    }
+                    case CompiledConditionValueType::GetStage:
+                        value = found->second.mCurrentStage;
+                        break;
+                    case CompiledConditionValueType::GetStageDone:
+                    {
+                        const auto stage = found->second.mStageDone.find(static_cast<std::int16_t>(token.mStage));
+                        value = stage != found->second.mStageDone.end() && stage->second ? 1.f : 0.f;
+                        break;
+                    }
+                    case CompiledConditionValueType::GetObjectiveCompleted:
+                    case CompiledConditionValueType::GetObjectiveDisplayed:
+                    {
+                        const auto objective = found->second.mObjectiveStatus.find(token.mStage);
+                        if (objective == found->second.mObjectiveStatus.end())
+                            return std::nullopt;
+                        const std::uint8_t flag
+                            = token.mValueType == CompiledConditionValueType::GetObjectiveCompleted
+                            ? ESM4QuestState::Objective_Completed
+                            : ESM4QuestState::Objective_Displayed;
+                        value = (objective->second & flag) != 0 ? 1.f : 0.f;
+                        break;
+                    }
+                }
+                stack.push_back(value);
+                continue;
+            }
+
+            if (stack.size() < 2)
+                return std::nullopt;
+            const float right = stack.back();
+            stack.pop_back();
+            const float left = stack.back();
+            stack.pop_back();
+            bool result = false;
+            switch (token.mType)
+            {
+                case CompiledConditionTokenType::Equal:
+                    result = left == right;
+                    break;
+                case CompiledConditionTokenType::NotEqual:
+                    result = left != right;
+                    break;
+                case CompiledConditionTokenType::Less:
+                    result = left < right;
+                    break;
+                case CompiledConditionTokenType::LessEqual:
+                    result = left <= right;
+                    break;
+                case CompiledConditionTokenType::Greater:
+                    result = left > right;
+                    break;
+                case CompiledConditionTokenType::GreaterEqual:
+                    result = left >= right;
+                    break;
+                case CompiledConditionTokenType::LogicalAnd:
+                    result = left != 0.f && right != 0.f;
+                    break;
+                case CompiledConditionTokenType::LogicalOr:
+                    result = left != 0.f || right != 0.f;
+                    break;
+                case CompiledConditionTokenType::Value:
+                case CompiledConditionTokenType::Number:
+                    return std::nullopt;
+            }
+            stack.push_back(result ? 1.f : 0.f);
+        }
+        if (stack.size() != 1)
             return std::nullopt;
-
-        float value = 0.f;
-        switch (condition.mValueType)
-        {
-            case CompiledConditionValueType::QuestVariable:
-            {
-                const auto variable = found->second.mVariables.find(condition.mVariable);
-                if (variable == found->second.mVariables.end())
-                    return std::nullopt;
-                value = variable->second;
-                break;
-            }
-            case CompiledConditionValueType::GetStage:
-                value = found->second.mCurrentStage;
-                break;
-            case CompiledConditionValueType::GetStageDone:
-            {
-                const auto stage = found->second.mStageDone.find(static_cast<std::int16_t>(condition.mStage));
-                value = stage != found->second.mStageDone.end() && stage->second ? 1.f : 0.f;
-                break;
-            }
-            case CompiledConditionValueType::GetObjectiveCompleted:
-            case CompiledConditionValueType::GetObjectiveDisplayed:
-            {
-                const auto objective = found->second.mObjectiveStatus.find(condition.mStage);
-                if (objective == found->second.mObjectiveStatus.end())
-                    return std::nullopt;
-                const std::uint8_t flag
-                    = condition.mValueType == CompiledConditionValueType::GetObjectiveCompleted
-                    ? ESM4QuestState::Objective_Completed
-                    : ESM4QuestState::Objective_Displayed;
-                value = (objective->second & flag) != 0 ? 1.f : 0.f;
-                break;
-            }
-        }
-
-        switch (condition.mComparison)
-        {
-            case CompiledConditionComparison::Truthy:
-                return value != 0.f;
-            case CompiledConditionComparison::Equal:
-                return value == condition.mComparisonValue;
-            case CompiledConditionComparison::NotEqual:
-                return value != condition.mComparisonValue;
-            case CompiledConditionComparison::Less:
-                return value < condition.mComparisonValue;
-            case CompiledConditionComparison::LessEqual:
-                return value <= condition.mComparisonValue;
-            case CompiledConditionComparison::Greater:
-                return value > condition.mComparisonValue;
-            case CompiledConditionComparison::GreaterEqual:
-                return value >= condition.mComparisonValue;
-        }
-        return std::nullopt;
+        return stack.back() != 0.f;
     }
 
     bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,

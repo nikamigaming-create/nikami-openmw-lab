@@ -1849,6 +1849,129 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactRetailObjectiveConditionalsFromCompiledB
     runDisplayed(true);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailPostfixOrAndElseControlFlow)
+{
+    const auto run = [](bool stage63Done, bool aliceTaunted) {
+        MWWorld::ESMStore store;
+        const ESM::FormId questId{ .mIndex = 0x1164f4, .mContentFile = 0 };
+        const ESM::FormId scriptId{ .mIndex = 0x1164f5, .mContentFile = 0 };
+        ESM4::Script questScript;
+        questScript.mId = scriptId;
+        questScript.mEditorId = "VDialogueVegasNorthScript";
+        questScript.mScript.localVarData.push_back({ .index = 69, .variableName = "AliceTaunted" });
+        store.overrideRecord(questScript);
+
+        ESM4::Quest quest = makeQuest(questId, "VDialogueVegasNorth");
+        quest.mQuestScript = scriptId;
+        quest.mStages.push_back({ .mIndex = 63 });
+        quest.mStages.push_back({ .mIndex = 80 });
+        quest.mStages.push_back({ .mIndex = 100 });
+        ESM4::QuestStageEntry entry;
+        // Exact FalloutNV.esm VDialogueVegasNorth stage 76 conditional block:
+        // GetStageDone 63 == 1 || AliceTaunted == 1, then SetStage 80, else SetStage 100.
+        const std::array<std::uint8_t, 82> retailScda{ 0x16, 0x00, 0x28, 0x00, 0x01, 0x00, 0x24,
+            0x00, 0x20, 0x58, 0x3b, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x3f,
+            0x00, 0x00, 0x00, 0x20, 0x31, 0x20, 0x3d, 0x3d, 0x20, 0x72, 0x02, 0x00, 0x73, 0x45,
+            0x00, 0x20, 0x31, 0x20, 0x3d, 0x3d, 0x20, 0x7c, 0x7c, 0x39, 0x10, 0x0a, 0x00, 0x02,
+            0x00, 0x72, 0x02, 0x00, 0x6e, 0x50, 0x00, 0x00, 0x00, 0x17, 0x00, 0x02, 0x00, 0x01,
+            0x00, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x64, 0x00, 0x00,
+            0x00, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references = { ESM::FormId{ .mIndex = 0x1164f6, .mContentFile = 0 }, questId };
+        quest.mStages.push_back({ .mIndex = 76, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setQuestVariable(
+            "VDialogueVegasNorth", "AliceTaunted", aliceTaunted ? 1.f : 0.f));
+        if (stage63Done)
+            ASSERT_TRUE(runtime.setStage(questId, 63));
+        ASSERT_TRUE(runtime.setStage(questId, 76));
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        ASSERT_NE(state, nullptr);
+        const std::uint8_t expectedStage = stage63Done || aliceTaunted ? 80 : 100;
+        EXPECT_EQ(state->mCurrentStage, expectedStage);
+        EXPECT_TRUE(state->mStageDone.at(76));
+        EXPECT_TRUE(state->mStageDone.at(expectedStage));
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+        EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    };
+
+    run(false, false);
+    run(false, true);
+    run(true, false);
+    run(true, true);
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailPostfixAndObjectiveExpression)
+{
+    const auto run = [](bool displayed, bool completed) {
+        MWWorld::ESMStore store;
+        const ESM::FormId questId{ .mIndex = 0x10e4d2, .mContentFile = 0 };
+        ESM4::Quest quest = makeQuest(questId, "VMS16b");
+        quest.mObjectives.push_back({ .mIndex = 45, .mDescription = "Medical supplies" });
+        ESM4::QuestStageEntry entry;
+        // Exact FalloutNV.esm VMS16b stage 70 block:
+        // GetObjectiveDisplayed 45 && GetObjectiveCompleted 45 == 0, then hide objective 45.
+        const std::array<std::uint8_t, 71> retailScda{ 0x16, 0x00, 0x2c, 0x00, 0x03, 0x00, 0x28,
+            0x00, 0x20, 0x58, 0xa5, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x09, 0x00, 0x6e, 0x2d,
+            0x00, 0x00, 0x00, 0x20, 0x58, 0xa4, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x09, 0x00,
+            0x6e, 0x2d, 0x00, 0x00, 0x00, 0x20, 0x30, 0x20, 0x3d, 0x3d, 0x20, 0x26, 0x26, 0xa3,
+            0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x09, 0x00, 0x6e, 0x2d, 0x00, 0x00, 0x00, 0x6e,
+            0x00, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.resize(9);
+        entry.mScript.references[8] = questId;
+        quest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setObjectiveDisplayed(questId, 45, displayed));
+        ASSERT_TRUE(runtime.setObjectiveCompleted(questId, 45, completed));
+        ASSERT_TRUE(runtime.setStage(questId, 70));
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        ASSERT_NE(state, nullptr);
+        const bool expectedDisplayed = displayed && completed;
+        EXPECT_EQ((state->mObjectiveStatus.at(45) & MWWorld::ESM4QuestState::Objective_Displayed) != 0,
+            expectedDisplayed);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    run(false, false);
+    run(false, true);
+    run(true, false);
+    run(true, true);
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedPostfixConditionBeforeQuestMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1200f0, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "MalformedPostfixQuest");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry entry;
+    // The expression contains only binary && with no operands. Its frame is bounded but its
+    // postfix stack is invalid, so source fallback must not turn corruption into quest progress.
+    entry.mScript.compiledData
+        = { 0x16, 0x00, 0x07, 0x00, 0x01, 0x00, 0x03, 0x00, 0x20, 0x26, 0x26, 0x19, 0x00, 0x00, 0x00 };
+    entry.mScript.scriptSource = "SetObjectiveDisplayed MalformedPostfixQuest 10 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_EQ(state->mObjectiveStatus.at(10), 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, SurfacesUnsupportedCompiledOpcodeAndUsesWholeSourceFallback)
 {
     MWWorld::ESMStore store;
