@@ -93,6 +93,7 @@
 #include "../mwscript/globalscripts.hpp"
 
 #include "../mwclass/door.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 
 #include "../mwphysics/actor.hpp"
 #include "../mwphysics/collisiontype.hpp"
@@ -763,6 +764,34 @@ namespace MWWorld
         , mPlayerInJail(false)
         , mSpellPreloadTimer(0.f)
     {
+        mESM4QuestRuntime.setReferenceCommandHandler(
+            [this](ESM4QuestReferenceCommand command, ESM::FormId referenceId) {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty())
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 quest: stage reference is not available id="
+                                        << ESM::RefId(referenceId).serializeText();
+                    return false;
+                }
+
+                switch (command)
+                {
+                    case ESM4QuestReferenceCommand::Enable:
+                        enable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::Disable:
+                        disable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::EvaluatePackage:
+                        if (!MWClass::requestFnvAiPackageEvaluation(target))
+                            return false;
+                        break;
+                }
+                Log(Debug::Info) << "FNV/ESM4 quest: executed stage reference command="
+                                 << static_cast<unsigned int>(command)
+                                 << " id=" << target.getCellRef().getRefId();
+                return true;
+            });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

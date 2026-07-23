@@ -16,8 +16,10 @@
 #include <components/esm/refid.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
@@ -118,6 +120,7 @@ namespace MWWorld
         mUnsupportedStageCommands.clear();
         mUnsupportedCompiledOpcodes.clear();
         mUnsupportedConditionFunctions.clear();
+        mReferenceIds.clear();
     }
 
     bool ESM4QuestRuntime::loadSavedProgress(const ESM4SavedQuestProgress& progress, std::string* error)
@@ -1311,6 +1314,40 @@ namespace MWWorld
         return value ? compare(*value, 1) : std::nullopt;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveReference(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mReferenceIds.find(key); cached != mReferenceIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        const auto search = [&id, &result](const auto& records) {
+            for (const auto& record : records)
+            {
+                if (Misc::StringUtils::ciEqual(record.mEditorId, id))
+                {
+                    result = record.mId;
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (mStore != nullptr && !search(mStore->get<ESM4::Reference>())
+            && !search(mStore->get<ESM4::ActorCharacter>()))
+            search(mStore->get<ESM4::ActorCreature>());
+
+        mReferenceIds.emplace(key, result);
+        return result;
+    }
+
+    bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
+    {
+        const ESM::FormId reference = resolveReference(id);
+        if (reference.isZeroOrUnset() || !mReferenceCommandHandler)
+            return false;
+        return mReferenceCommandHandler(command, reference);
+    }
+
     void ESM4QuestRuntime::executeStageSource(std::string_view source)
     {
         std::istringstream stream{ std::string(source) };
@@ -1368,6 +1405,25 @@ namespace MWWorld
             else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "ForceActiveQuest")
                 && forceActiveQuest(tokens[1]))
                 continue;
+            else
+            {
+                const std::size_t separator = tokens[0].rfind('.');
+                if (separator != std::string_view::npos && separator != 0 && separator + 1 < tokens[0].size())
+                {
+                    const std::string_view target = tokens[0].substr(0, separator);
+                    const std::string_view command = tokens[0].substr(separator + 1);
+                    if (Misc::StringUtils::ciEqual(command, "Enable")
+                        && executeReferenceCommand(ESM4QuestReferenceCommand::Enable, target))
+                        continue;
+                    if (Misc::StringUtils::ciEqual(command, "Disable")
+                        && executeReferenceCommand(ESM4QuestReferenceCommand::Disable, target))
+                        continue;
+                    if ((Misc::StringUtils::ciEqual(command, "evp")
+                            || Misc::StringUtils::ciEqual(command, "EvaluatePackage"))
+                        && executeReferenceCommand(ESM4QuestReferenceCommand::EvaluatePackage, target))
+                        continue;
+                }
+            }
 
             mUnsupportedStageCommands.push_back(line);
         }

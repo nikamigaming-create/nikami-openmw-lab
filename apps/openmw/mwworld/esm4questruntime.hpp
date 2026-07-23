@@ -2,11 +2,13 @@
 #define OPENMW_MWWORLD_ESM4QUESTRUNTIME_H
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <components/esm/formid.hpp>
@@ -97,8 +99,19 @@ namespace MWWorld
         std::optional<ESM::FormId> mActiveQuest;
     };
 
+    enum class ESM4QuestReferenceCommand : std::uint8_t
+    {
+        Enable,
+        Disable,
+        EvaluatePackage,
+    };
+
     class ESM4QuestRuntime
     {
+    public:
+        using ReferenceCommandHandler = std::function<bool(ESM4QuestReferenceCommand, ESM::FormId)>;
+
+    private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
 
         const ESMStore* mStore = nullptr;
@@ -108,6 +121,8 @@ namespace MWWorld
         std::vector<std::string> mUnsupportedStageCommands;
         std::vector<std::uint16_t> mUnsupportedCompiledOpcodes;
         std::vector<std::uint32_t> mUnsupportedConditionFunctions;
+        std::unordered_map<std::string, ESM::FormId> mReferenceIds;
+        ReferenceCommandHandler mReferenceCommandHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -181,11 +196,17 @@ namespace MWWorld
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
         std::optional<bool> evaluateResultCondition(std::string_view expression) const;
+        ESM::FormId resolveReference(std::string_view id);
+        bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
         void executeStageSource(std::string_view source);
 
     public:
         void initialize(const ESMStore& store, const Globals* globals = nullptr);
         void clear();
+        void setReferenceCommandHandler(ReferenceCommandHandler handler)
+        {
+            mReferenceCommandHandler = std::move(handler);
+        }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.

@@ -14,8 +14,10 @@
 #include <components/esm/formid.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
@@ -120,6 +122,84 @@ TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
         EXPECT_EQ(state->mCurrentStage, 0) << editorId;
         EXPECT_TRUE(state->mStageDone.empty()) << editorId;
     }
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId cheyenneId{ .mIndex = 0x10588e, .mContentFile = 0 };
+    const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
+    const ESM::FormId gecko1Id{ .mIndex = 0x10a1fe, .mContentFile = 0 };
+    const ESM::FormId gecko2Id{ .mIndex = 0x10a1fd, .mContentFile = 0 };
+    const ESM::FormId questScriptId{ .mIndex = 0x10a215, .mContentFile = 0 };
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mQuestScript = questScriptId;
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0010A214 VCG02 stage 25 entry 0, byte-for-byte. The five SCROs are
+    // VCG02, CheyenneREF, SunnyREF, VCG02Gecko1REF, and VCG02Gecko2REF.
+    const std::array<std::uint8_t, 50> retailScda{
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x05, 0x00, 0x73, 0x04, 0x00, 0x02, 0x00, 0x20, 0x30, 0x1c, 0x00, 0x01,
+        0x00, 0x5e, 0x10, 0x00, 0x00, 0x1c, 0x00, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x00, 0x1c, 0x00, 0x03, 0x00,
+        0x21, 0x10, 0x02, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x04, 0x00, 0x21, 0x10, 0x02, 0x00, 0x00, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { cheyenneId, sunnyId, gecko1Id, gecko2Id, vcg02Id };
+    entry.mScript.scriptSource = "; sunny moves towards the first well\r\n"
+                                 "set VCG02.bShootingTutorialActive to 0\r\n"
+                                 "CheyenneRef.evp\r\n"
+                                 "sunnyref.evp\r\n"
+                                 "VCG02Gecko1REF.Enable\r\n"
+                                 "VCG02Gecko2REF.Enable";
+    vcg02.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    ESM4::Script questScript;
+    questScript.mId = questScriptId;
+    questScript.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bShootingTutorialActive" } };
+    store.overrideRecord(questScript);
+
+    ESM4::ActorCreature cheyenne;
+    cheyenne.mId = cheyenneId;
+    cheyenne.mEditorId = "CheyenneREF";
+    store.overrideRecord(cheyenne);
+    ESM4::ActorCharacter sunny;
+    sunny.mId = sunnyId;
+    sunny.mEditorId = "SunnyREF";
+    store.overrideRecord(sunny);
+    ESM4::ActorCreature gecko1;
+    gecko1.mId = gecko1Id;
+    gecko1.mEditorId = "VCG02Gecko1REF";
+    store.overrideRecord(gecko1);
+    ESM4::ActorCreature gecko2;
+    gecko2.mId = gecko2Id;
+    gecko2.mEditorId = "VCG02Gecko2REF";
+    store.overrideRecord(gecko2);
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId reference) {
+            commands.emplace_back(command, reference);
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(vcg02Id, 25));
+    EXPECT_EQ(runtime.getQuestVariable("VCG02", "bShootingTutorialActive"), 0.f);
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::EvaluatePackage, cheyenneId },
+            { MWWorld::ESM4QuestReferenceCommand::EvaluatePackage, sunnyId },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, gecko1Id },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, gecko2Id },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(),
+        (std::vector<std::uint16_t>{ 0x0015, 0x105e, 0x105e, 0x1021, 0x1021 }));
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesFourNativeQuestStateCommandsFromFrozenRetailFrames)
