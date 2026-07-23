@@ -21,6 +21,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
@@ -965,6 +966,38 @@ namespace MWWorld
             plan.mQuestProgress = std::move(progress);
         }
 
+        std::map<ESM::FormId, std::vector<FalloutSaveLoadPlan::FactionRelation>> savedFactionRelations;
+        for (const ESM4::FONVSaveFactionChange& change : save.mFactionChanges)
+        {
+            if (!change.mReactionCount)
+                continue;
+            const std::optional<ESM::FormId> faction
+                = normalizeSavedFormId(change.mResolvedFormId, currentPluginIndices);
+            if (!faction)
+                return loadFailure("FNV save changed FACT FormID has unsupported provenance");
+
+            std::vector<FalloutSaveLoadPlan::FactionRelation> relations;
+            relations.reserve(change.mReactions.size());
+            for (const ESM4::FONVSaveFactionReaction& saved : change.mReactions)
+            {
+                if (!saved.mFaction.mResolvedFormId)
+                    return loadFailure("FNV save changed FACT relation has no target identity");
+                const std::optional<ESM::FormId> target
+                    = normalizeSavedFormId(*saved.mFaction.mResolvedFormId, currentPluginIndices);
+                if (!target)
+                    return loadFailure("FNV save changed FACT relation has unsupported target provenance");
+                if (saved.mReaction.mValue
+                    > static_cast<std::uint32_t>(ESM4::Faction::GroupCombatReaction::Friend))
+                {
+                    return loadFailure("FNV save changed FACT has an invalid group-combat reaction");
+                }
+                relations.push_back({ *target, saved.mModifier.mValue, saved.mReaction.mValue });
+            }
+            savedFactionRelations.insert_or_assign(*faction, std::move(relations));
+        }
+        for (auto& [faction, relations] : savedFactionRelations)
+            plan.mFactions.push_back({ faction, std::move(relations) });
+
         if (!save.mSky)
             return loadFailure("FNV save does not expose a proven Sky global-data payload");
         const ESM4::FONVSaveSkyState& sky = *save.mSky;
@@ -999,6 +1032,13 @@ namespace MWWorld
         plan.mScene.mPayloadOffset = sky.mRange.mOffset;
         plan.mScene.mPayloadBytes = sky.mRange.mSize;
         plan.mUncoveredState = falloutSaveLoadBlockers();
+        if (std::ranges::any_of(save.mFactionChanges, [](const ESM4::FONVSaveFactionChange& faction) {
+                return faction.mFormFlags.has_value() || faction.mFactionFlags.has_value()
+                    || faction.mCrimeCount44.has_value() || faction.mCrimeCount48.has_value();
+            }))
+        {
+            plan.mUncoveredState.push_back("faction-form-flags-and-crime-counts");
+        }
         if (plan.mPlayer.mCurrentWeaponAction != -1)
             plan.mUncoveredState.push_back("player-nonidle-weapon-action-animation-resume");
         if (plan.mQuestProgress)
@@ -1114,6 +1154,19 @@ namespace MWWorld
                 found->rank = change.mRank;
             else
                 player.mFactions.push_back(ESM4::ActorFaction{ change.mFaction.toUint32(), change.mRank, 0, 0, 0 });
+        }
+    }
+
+    void applyFalloutSaveFactionState(ESM4::Faction& faction, const FalloutSaveLoadPlan::FactionState& state)
+    {
+        if (faction.mId != state.mFaction)
+            throw std::logic_error("native FNV faction state identity does not match the target FACT");
+        faction.mRelations.clear();
+        faction.mRelations.reserve(state.mRelations.size());
+        for (const FalloutSaveLoadPlan::FactionRelation& relation : state.mRelations)
+        {
+            faction.mRelations.push_back({ relation.mFaction, relation.mModifier,
+                static_cast<ESM4::Faction::GroupCombatReaction>(relation.mGroupCombatReaction) });
         }
     }
 

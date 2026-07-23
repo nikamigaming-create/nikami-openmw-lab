@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -115,6 +116,30 @@ namespace
         return {};
     }
 
+    std::string validateFactionStates(const MWWorld::FalloutSaveLoadPlan& plan, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSaveLoadPlan::FactionState& saved : plan.mFactions)
+        {
+            if (store.get<ESM4::Faction>().search(ESM::RefId(saved.mFaction)) == nullptr)
+                return "FNV save changed faction is not a loaded FACT record: " + saved.mFaction.toString();
+            std::set<ESM::FormId> targets;
+            for (const MWWorld::FalloutSaveLoadPlan::FactionRelation& relation : saved.mRelations)
+            {
+                if (store.get<ESM4::Faction>().search(ESM::RefId(relation.mFaction)) == nullptr)
+                    return "FNV save faction reaction target is not a loaded FACT record: "
+                        + relation.mFaction.toString();
+                if (!targets.insert(relation.mFaction).second)
+                    return "FNV save faction reaction list contains a duplicate target FACT";
+                if (relation.mGroupCombatReaction
+                    > static_cast<std::uint32_t>(ESM4::Faction::GroupCombatReaction::Friend))
+                {
+                    return "FNV save faction reaction has an invalid group-combat reaction";
+                }
+            }
+        }
+        return {};
+    }
+
     std::string validatePlayerActorValuesAndPerks(
         const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
     {
@@ -200,6 +225,9 @@ namespace MWWorld
         const std::string factionError = validateFactionChanges(result.mContext->mPlan.mPlayer, store);
         if (!factionError.empty())
             return failure(factionError);
+        const std::string factionStateError = validateFactionStates(result.mContext->mPlan, store);
+        if (!factionStateError.empty())
+            return failure(factionStateError);
         const std::string actorValueError
             = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
         if (!actorValueError.empty())
