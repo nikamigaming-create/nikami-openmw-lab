@@ -238,6 +238,45 @@ namespace
         EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, reaction));
     }
 
+    TEST(FalloutCombatTest, SetAllyUpdatesBothCombatDirectionsWithoutDuplicateRelations)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        ESM4::Faction sunny;
+        sunny.mId = id(0x001691ea);
+        sunny.mRelations.push_back({ id(0x0001b2a4), -25, Reaction::Enemy });
+        sunny.mRelations.push_back({ id(0x00000042), 10, Reaction::Friend });
+        ESM4::Faction player;
+        player.mId = id(0x0001b2a4);
+
+        ASSERT_TRUE(MWMechanics::setFalloutFactionsAllied(sunny, player));
+        ASSERT_EQ(sunny.mRelations.size(), 2);
+        EXPECT_EQ(sunny.mRelations[0].mFaction, player.mId);
+        EXPECT_EQ(sunny.mRelations[0].mModifier, -25);
+        EXPECT_EQ(sunny.mRelations[0].mGroupCombatReaction, Reaction::Ally);
+        ASSERT_EQ(player.mRelations.size(), 1);
+        EXPECT_EQ(player.mRelations[0].mFaction, sunny.mId);
+        EXPECT_EQ(player.mRelations[0].mModifier, 0);
+        EXPECT_EQ(player.mRelations[0].mGroupCombatReaction, Reaction::Ally);
+
+        ASSERT_TRUE(MWMechanics::setFalloutFactionsAllied(sunny, player));
+        EXPECT_EQ(sunny.mRelations.size(), 2);
+        EXPECT_EQ(player.mRelations.size(), 1);
+
+        const std::array sunnyMembership{ membership(sunny.mId.toUint32()) };
+        const std::array playerMembership{ membership(player.mId.toUint32()) };
+        const auto lookup = [&](ESM::FormId faction) -> const ESM4::Faction* {
+            if (faction == sunny.mId)
+                return &sunny;
+            if (faction == player.mId)
+                return &player;
+            return nullptr;
+        };
+        EXPECT_EQ(MWMechanics::resolveFalloutFactionReaction(sunnyMembership, playerMembership, lookup),
+            Reaction::Ally);
+        EXPECT_EQ(MWMechanics::resolveFalloutFactionReaction(playerMembership, sunnyMembership, lookup),
+            Reaction::Ally);
+    }
+
     TEST(FalloutCombatTest, SelectsFirstAvailableAmmoInAuthoredListOrder)
     {
         const std::array candidates{ id(0x10), id(0x20), id(0x30) };

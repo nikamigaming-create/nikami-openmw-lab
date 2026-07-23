@@ -16,6 +16,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -124,6 +125,296 @@ TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
         EXPECT_EQ(state->mCurrentStage, 0) << editorId;
         EXPECT_TRUE(state->mStageDone.empty()) << editorId;
     }
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsShootingGalleryFactionSetup)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId vcg02ScriptId{ .mIndex = 0x10a1f0, .mContentFile = 0 };
+    const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
+    const ESM::FormId cheyenneId{ .mIndex = 0x10588e, .mContentFile = 0 };
+    const ESM::FormId tutorialQuestId{ .mIndex = 0x059c85, .mContentFile = 0 };
+    const ESM::FormId tutorialScriptId{ .mIndex = 0x104c01, .mContentFile = 0 };
+    const ESM::FormId sunnyFactionId{ .mIndex = 0x1691ea, .mContentFile = 0 };
+    const ESM::FormId playerFactionId{ .mIndex = 0x01b2a4, .mContentFile = 0 };
+    const ESM::FormId victorFactionId{ .mIndex = 0x11cd0d, .mContentFile = 0 };
+    const ESM::FormId goodspringsFactionId{ .mIndex = 0x104c6e, .mContentFile = 0 };
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mQuestScript = vcg02ScriptId;
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0010A214 VCG02 stage 10 entry 0, byte-for-byte. Its
+    // three 0x1079 frames are the authored SetAlly calls that prevent the
+    // shooting tutorial from turning Sunny, Victor, or Goodsprings hostile.
+    const std::array<std::uint8_t, 89> retailScda{
+        0x1c, 0x00, 0x01, 0x00, 0x5e, 0x10, 0x00, 0x00, 0xdd, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72,
+        0x03, 0x00, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x04, 0x00, 0x6e, 0x36, 0x00, 0x00,
+        0x00, 0x79, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x72, 0x06, 0x00, 0x79, 0x10,
+        0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x72, 0x07, 0x00, 0x79, 0x10, 0x08, 0x00, 0x02,
+        0x00, 0x72, 0x08, 0x00, 0x72, 0x07, 0x00, 0x15, 0x00, 0x0a, 0x00, 0x72, 0x03, 0x00, 0x73,
+        0x04, 0x00, 0x02, 0x00, 0x20, 0x31, 0x1c, 0x00, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.scriptSource = "; Sunny goes outside\r\n"
+                                 "SunnyREF.evp\r\n"
+                                 "ForceActiveQuest VCG02\r\n"
+                                 "SetStage CGTutorial 54\r\n"
+                                 "SetAlly SunnySmilesFaction PlayerFaction\r\n"
+                                 "SetAlly SunnySmilesFaction VVictorFaction\r\n"
+                                 "SetAlly GoodspringsFaction VVictorFaction\r\n"
+                                 "set VCG02.bShootingTutorialActive to 1\r\n"
+                                 "CheyenneRef.evp";
+    entry.mScript.references = { sunnyId, cheyenneId, vcg02Id, tutorialQuestId, sunnyFactionId, playerFactionId,
+        victorFactionId, goodspringsFactionId };
+    vcg02.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    ESM4::Script vcg02Script;
+    vcg02Script.mId = vcg02ScriptId;
+    vcg02Script.mEditorId = "VCG02SCRIPT";
+    vcg02Script.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 4, .type = 1, .variableName = "bShootingTutorialActive" } };
+    store.overrideRecord(vcg02Script);
+
+    ESM4::Quest tutorial = makeQuest(tutorialQuestId, "CGTutorial");
+    tutorial.mQuestScript = tutorialScriptId;
+    ESM4::QuestStageEntry tutorialEntry;
+    // FalloutNV.esm 00059C85 CGTutorial stage 54 entry 0, byte-for-byte:
+    // run the quest-target tutorial timer for five seconds.
+    const std::array<std::uint8_t, 28> retailTutorialScda{
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00, 0x02, 0x00, 0x20, 0x31, 0x15, 0x00,
+        0x0a, 0x00, 0x72, 0x01, 0x00, 0x66, 0x02, 0x00, 0x02, 0x00, 0x20, 0x35
+    };
+    tutorialEntry.mScript.compiledData.assign(retailTutorialScda.begin(), retailTutorialScda.end());
+    tutorialEntry.mScript.references = { tutorialQuestId };
+    tutorial.mStages.push_back({ .mIndex = 54, .mEntries = { std::move(tutorialEntry) } });
+    store.overrideRecord(tutorial);
+
+    ESM4::Script tutorialScript;
+    tutorialScript.mId = tutorialScriptId;
+    tutorialScript.mEditorId = "CGTutorialSCRIPT";
+    tutorialScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .type = 1, .variableName = "runTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .type = 0, .variableName = "timer" },
+    };
+    store.overrideRecord(tutorialScript);
+
+    ESM4::ActorCharacter sunny;
+    sunny.mId = sunnyId;
+    sunny.mEditorId = "SunnyREF";
+    store.overrideRecord(sunny);
+    ESM4::ActorCreature cheyenne;
+    cheyenne.mId = cheyenneId;
+    cheyenne.mEditorId = "CheyenneREF";
+    store.overrideRecord(cheyenne);
+    for (const auto& [id, editorId] : std::array{
+             std::pair{ sunnyFactionId, "SunnySmilesFaction" },
+             std::pair{ playerFactionId, "PlayerFaction" },
+             std::pair{ victorFactionId, "VVictorFaction" },
+             std::pair{ goodspringsFactionId, "GoodspringsFaction" },
+         })
+    {
+        ESM4::Faction faction;
+        faction.mId = id;
+        faction.mEditorId = editorId;
+        store.overrideRecord(faction);
+    }
+
+    std::vector<ESM::FormId> evaluatedPackages;
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> allies;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&evaluatedPackages](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            if (command != MWWorld::ESM4QuestReferenceCommand::EvaluatePackage)
+                return false;
+            evaluatedPackages.push_back(target);
+            return true;
+        });
+    runtime.setSetAllyHandler([&allies](ESM::FormId first, ESM::FormId second) {
+        allies.emplace_back(first, second);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(vcg02Id, 10));
+    const MWWorld::ESM4QuestState* vcg02State = runtime.search(vcg02Id);
+    const MWWorld::ESM4QuestState* tutorialState = runtime.search(tutorialQuestId);
+    ASSERT_NE(vcg02State, nullptr);
+    ASSERT_NE(tutorialState, nullptr);
+    EXPECT_EQ(vcg02State->mCurrentStage, 10);
+    EXPECT_EQ(runtime.getActiveQuest(), vcg02Id);
+    EXPECT_EQ(runtime.getQuestVariable("VCG02", "bShootingTutorialActive"), 1.f);
+    EXPECT_EQ(tutorialState->mCurrentStage, 54);
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "runTimer"), 1.f);
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "timer"), 5.f);
+    EXPECT_EQ(evaluatedPackages, (std::vector<ESM::FormId>{ sunnyId, cheyenneId }));
+    EXPECT_EQ(allies, (std::vector<std::pair<ESM::FormId, ESM::FormId>>{
+                           { sunnyFactionId, playerFactionId },
+                           { sunnyFactionId, victorFactionId },
+                           { goodspringsFactionId, victorFactionId },
+                       }));
+    EXPECT_EQ(vcg02State->mAllies.size(), 3);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, MissingSetAllyFactionFailsBeforeQuestMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x100, .mContentFile = 0 };
+    const ESM::FormId existingFactionId{ .mIndex = 0x200, .mContentFile = 0 };
+    const ESM::FormId missingFactionId{ .mIndex = 0x300, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "SetAllyFailure");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData
+        = { 0x79, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x72, 0x02, 0x00 };
+    entry.mScript.references = { existingFactionId, missingFactionId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+    ESM4::Faction existingFaction;
+    existingFaction.mId = existingFactionId;
+    store.overrideRecord(existingFaction);
+
+    int calls = 0;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSetAllyHandler([&calls](ESM::FormId, ESM::FormId) {
+        ++calls;
+        return true;
+    });
+    runtime.initialize(store);
+
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(calls, 0);
+}
+
+TEST(ESM4QuestRuntimeTest, RoundTripsSetAllyAcrossChangedLoadOrder)
+{
+    const ESM::FormId originalQuestId{ .mIndex = 0x100, .mContentFile = 2 };
+    const ESM::FormId originalFirstId{ .mIndex = 0x200, .mContentFile = 2 };
+    const ESM::FormId originalSecondId{ .mIndex = 0x300, .mContentFile = 2 };
+    ESM4::Quest originalQuest = makeQuest(originalQuestId, "SetAllySave");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData
+        = { 0x79, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x72, 0x02, 0x00 };
+    entry.mScript.references = { originalFirstId, originalSecondId };
+    originalQuest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(entry) } });
+
+    MWWorld::ESMStore originalStore;
+    originalStore.overrideRecord(originalQuest);
+    ESM4::Faction originalFirst;
+    originalFirst.mId = originalFirstId;
+    originalStore.overrideRecord(originalFirst);
+    ESM4::Faction originalSecond;
+    originalSecond.mId = originalSecondId;
+    originalStore.overrideRecord(originalSecond);
+    MWWorld::ESM4QuestRuntime originalRuntime;
+    originalRuntime.setSetAllyHandler([](ESM::FormId, ESM::FormId) { return true; });
+    originalRuntime.initialize(originalStore);
+    ASSERT_TRUE(originalRuntime.setStage(originalQuestId, 10));
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        originalRuntime.write(writer);
+    }
+
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-setally-save");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FQST);
+    reader.getRecHeader();
+
+    const ESM::FormId remappedQuestId{ .mIndex = 0x100, .mContentFile = 7 };
+    const ESM::FormId remappedFirstId{ .mIndex = 0x200, .mContentFile = 7 };
+    const ESM::FormId remappedSecondId{ .mIndex = 0x300, .mContentFile = 7 };
+    ESM4::Quest remappedQuest = originalQuest;
+    remappedQuest.mId = remappedQuestId;
+    remappedQuest.mStages[0].mEntries[0].mScript.references = { remappedFirstId, remappedSecondId };
+    MWWorld::ESMStore remappedStore;
+    remappedStore.overrideRecord(remappedQuest);
+    ESM4::Faction remappedFirst;
+    remappedFirst.mId = remappedFirstId;
+    remappedStore.overrideRecord(remappedFirst);
+    ESM4::Faction remappedSecond;
+    remappedSecond.mId = remappedSecondId;
+    remappedStore.overrideRecord(remappedSecond);
+
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> restoredAllies;
+    MWWorld::ESM4QuestRuntime restoredRuntime;
+    restoredRuntime.setSetAllyHandler([&restoredAllies](ESM::FormId first, ESM::FormId second) {
+        restoredAllies.emplace_back(first, second);
+        return true;
+    });
+    restoredRuntime.initialize(remappedStore);
+    restoredRuntime.readRecord(reader);
+
+    const MWWorld::ESM4QuestState* restored = restoredRuntime.search(remappedQuestId);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_EQ(restored->mCurrentStage, 10);
+    EXPECT_TRUE(restored->mStageDone.at(10));
+    EXPECT_EQ(restored->mAllies,
+        (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { remappedFirstId, remappedSecondId } }));
+    EXPECT_EQ(restoredAllies,
+        (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { remappedFirstId, remappedSecondId } }));
+}
+
+TEST(ESM4QuestRuntimeTest, ReadsLegacyQuestStateWithoutAllianceExtension)
+{
+    const ESM::FormId questId{ .mIndex = 0x100, .mContentFile = 2 };
+    const ESM::FormId scriptId{ .mIndex = 0x101, .mContentFile = 2 };
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        writer.startRecord(ESM::REC_FQST);
+        writer.writeFormId(questId, true, "FORM");
+        writer.writeHNT("FLAG", static_cast<std::uint8_t>(1));
+        writer.writeHNT("STAG", static_cast<std::uint8_t>(0));
+        writer.writeHNT("ACTV", static_cast<std::uint8_t>(0));
+        writer.writeHNT("DNCT", std::uint32_t{ 0 });
+        writer.writeHNT("OBCT", std::uint32_t{ 0 });
+        writer.writeHNString("VNAM", "legacyVariable");
+        writer.writeHNT("VVAL", 12.5f);
+        writer.endRecord(ESM::REC_FQST);
+    }
+
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "legacy-fallout-quest-save");
+    const std::map<int, int> contentMapping{ { 2, 2 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FQST);
+    reader.getRecHeader();
+
+    ESM4::Quest quest = makeQuest(questId, "LegacyQuestState");
+    quest.mQuestScript = scriptId;
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "legacyVariable" } };
+    MWWorld::ESMStore store;
+    store.overrideRecord(quest);
+    store.overrideRecord(script);
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    runtime.readRecord(reader);
+
+    EXPECT_EQ(runtime.getQuestVariable("LegacyQuestState", "legacyVariable"), 12.5f);
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_TRUE(state->mAllies.empty());
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects)
@@ -245,7 +536,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction
     store.overrideRecord(tutorial);
     ESM4::Script tutorialScript;
     tutorialScript.mId = tutorialScriptId;
-    tutorialScript.mEditorId = "VCGTutorialSCRIPT";
+    tutorialScript.mEditorId = "CGTutorialSCRIPT";
     tutorialScript.mScript.localVarData = {
         ESM4::ScriptLocalVariableData{ .index = 1, .type = 1, .variableName = "runTimer" },
         ESM4::ScriptLocalVariableData{ .index = 2, .type = 0, .variableName = "timer" },
@@ -394,7 +685,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsVatsTutorialStageTransaction)
 
     ESM4::Script tutorialScript;
     tutorialScript.mId = tutorialScriptId;
-    tutorialScript.mEditorId = "VCGTutorialSCRIPT";
+    tutorialScript.mEditorId = "CGTutorialSCRIPT";
     tutorialScript.mScript.localVarData = {
         ESM4::ScriptLocalVariableData{ .index = 1, .type = 1, .variableName = "runTimer" },
         ESM4::ScriptLocalVariableData{ .index = 2, .type = 0, .variableName = "timer" },

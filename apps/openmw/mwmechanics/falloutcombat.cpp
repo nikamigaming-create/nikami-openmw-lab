@@ -84,6 +84,23 @@ namespace MWMechanics
             || reaction == ESM4::Faction::GroupCombatReaction::Friend;
     }
 
+    bool setFalloutFactionsAllied(ESM4::Faction& first, ESM4::Faction& second)
+    {
+        if (first.mId.isZeroOrUnset() || second.mId.isZeroOrUnset() || first.mId == second.mId)
+            return false;
+        const auto makeAlly = [](ESM4::Faction& source, ESM::FormId target) {
+            const auto relation = std::find_if(source.mRelations.begin(), source.mRelations.end(),
+                [target](const ESM4::Faction::Relation& value) { return value.mFaction == target; });
+            if (relation == source.mRelations.end())
+                source.mRelations.push_back({ target, 0, ESM4::Faction::GroupCombatReaction::Ally });
+            else
+                relation->mGroupCombatReaction = ESM4::Faction::GroupCombatReaction::Ally;
+        };
+        makeAlly(first, second.mId);
+        makeAlly(second, first.mId);
+        return true;
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)

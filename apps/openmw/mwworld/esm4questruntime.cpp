@@ -18,6 +18,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -76,6 +77,15 @@ namespace
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
             value.remove_suffix(1);
         return value;
+    }
+
+    void recordAllyPair(MWWorld::ESM4QuestState& state, ESM::FormId first, ESM::FormId second)
+    {
+        if (second.toUint32() < first.toUint32())
+            std::swap(first, second);
+        const std::pair pair{ first, second };
+        if (std::find(state.mAllies.begin(), state.mAllies.end(), pair) == state.mAllies.end())
+            state.mAllies.push_back(pair);
     }
 
     bool isControlKeyword(std::string_view line, std::string_view keyword, bool allowOpeningParenthesis = false)
@@ -362,8 +372,8 @@ namespace MWWorld
             if (instruction.opcode != 0x0015 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
-                && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2 && instruction.opcode != 0x11a3
-                && instruction.opcode != 0x11dd)
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x1079 && instruction.opcode != 0x11a2
+                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
             {
                 prepared.mUseSourceFallback = true;
                 prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
@@ -454,6 +464,23 @@ namespace MWWorld
                     return false;
                 prepared.mCommands.push_back(
                     { CompiledQuestCommandType::SayTo, speaker, 0, false, 0, *listener, *topic });
+            }
+            else if (instruction.opcode == 0x1079) // SetAlly Faction Faction
+            {
+                if (instruction.callingReferenceIndex || arguments.size() != 2 || !mSetAllyHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId* first = std::get_if<ESM::FormId>(&arguments[0]);
+                const ESM::FormId* second = std::get_if<ESM::FormId>(&arguments[1]);
+                if (first == nullptr || second == nullptr || first->isZeroOrUnset() || second->isZeroOrUnset()
+                    || *first == *second || mStore->get<ESM4::Faction>().search(ESM::RefId(*first)) == nullptr
+                    || mStore->get<ESM4::Faction>().search(ESM::RefId(*second)) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetAlly;
+                command.mQuest = *first;
+                command.mTarget = *second;
+                prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x105e) // EvaluatePackage / evp
             {
@@ -728,6 +755,7 @@ namespace MWWorld
                 variable->second = command.mNumber;
                 return true;
             }
+            case CompiledQuestCommandType::SetAlly:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
@@ -782,6 +810,13 @@ namespace MWWorld
             executedEntry = true;
             for (const CompiledQuestCommand& command : prepared.mCommands)
             {
+                if (command.mType == CompiledQuestCommandType::SetAlly)
+                {
+                    recordAllyPair(state, command.mQuest, command.mTarget);
+                    working.mExternalEffects.push_back(
+                        { command.mType, command.mQuest, command.mTarget, command.mTopic });
+                    continue;
+                }
                 if (!executePureCompiledCommand(command, working))
                 {
                     success = false;
@@ -859,6 +894,10 @@ namespace MWWorld
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
                     executed = mSayToHandler && mSayToHandler(effect.mTarget, effect.mListener, effect.mTopic);
+                    break;
+                case CompiledQuestCommandType::SetAlly:
+                    command = "SetAlly ";
+                    executed = mSetAllyHandler && mSetAllyHandler(effect.mTarget, effect.mListener);
                     break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
@@ -1003,6 +1042,11 @@ namespace MWWorld
                                 && setQuestVariable(targetQuest->mEditorId, command.mVariable, command.mNumber);
                             break;
                         }
+                        case CompiledQuestCommandType::SetAlly:
+                            executed = mSetAllyHandler && mSetAllyHandler(command.mQuest, command.mTarget);
+                            if (executed)
+                                recordAllyPair(*state, command.mQuest, command.mTarget);
+                            break;
                         case CompiledQuestCommandType::EvaluatePackage:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
@@ -1019,13 +1063,17 @@ namespace MWWorld
                     {
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ShowMessage
-                            || command.mType == CompiledQuestCommandType::SayTo)
+                            || command.mType == CompiledQuestCommandType::SayTo
+                            || command.mType == CompiledQuestCommandType::SetAlly)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
                                 failure = "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetAlly)
+                                failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText();
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
@@ -1248,7 +1296,8 @@ namespace MWWorld
         return std::any_of(state.mObjectiveStatus.begin(), state.mObjectiveStatus.end(),
                    [](const auto& value) { return value.second != 0; })
             || std::any_of(state.mVariables.begin(), state.mVariables.end(),
-                [](const auto& value) { return value.second != 0.f; });
+                [](const auto& value) { return value.second != 0.f; })
+            || !state.mAllies.empty();
     }
 
     int ESM4QuestRuntime::countSavedGameRecords() const
@@ -1293,6 +1342,12 @@ namespace MWWorld
                     writer.writeHNString("VNAM", name);
                     writer.writeHNT("VVAL", value);
                 }
+            writer.writeHNT("ALCT", static_cast<std::uint32_t>(state.mAllies.size()));
+            for (const auto& [first, second] : state.mAllies)
+            {
+                writer.writeFormId(first, true, "ALF1");
+                writer.writeFormId(second, true, "ALF2");
+            }
             writer.endRecord(ESM::REC_FQST);
         }
     }
@@ -1327,6 +1382,34 @@ namespace MWWorld
             reader.getHNT(status, "OFLG");
         }
 
+        std::vector<std::pair<std::string, float>> variables;
+        while (reader.isNextSub("VNAM"))
+        {
+            const std::string name = reader.getHString();
+            float value = 0.f;
+            reader.getHNT(value, "VVAL");
+            variables.emplace_back(name, value);
+        }
+
+        std::vector<std::pair<ESM::FormId, ESM::FormId>> allies;
+        if (reader.isNextSub("ALCT"))
+        {
+            std::uint32_t allyCount = 0;
+            reader.getHT(allyCount);
+            if (allyCount > 65536)
+                throw std::runtime_error("Fallout quest save has an invalid allied-faction count");
+            allies.reserve(allyCount);
+            for (std::uint32_t i = 0; i < allyCount; ++i)
+            {
+                ESM::FormId first = reader.getFormId(true, "ALF1");
+                ESM::FormId second = reader.getFormId(true, "ALF2");
+                const bool firstAvailable = reader.applyContentFileMapping(first);
+                const bool secondAvailable = reader.applyContentFileMapping(second);
+                if (firstAvailable && secondAvailable)
+                    allies.emplace_back(first, second);
+            }
+        }
+
         const auto found = contentAvailable ? mStates.find(id) : mStates.end();
         ESM4QuestState* state = found != mStates.end() ? &found->second : nullptr;
         if (state == nullptr)
@@ -1341,17 +1424,21 @@ namespace MWWorld
             status = 0;
         for (const auto& [index, status] : objectives)
             state->mObjectiveStatus[index] = status;
+        state->mAllies.clear();
+        for (const auto& [first, second] : allies)
+        {
+            if (mStore == nullptr || mStore->get<ESM4::Faction>().search(ESM::RefId(first)) == nullptr
+                || mStore->get<ESM4::Faction>().search(ESM::RefId(second)) == nullptr || !mSetAllyHandler
+                || !mSetAllyHandler(first, second))
+                throw std::runtime_error("Fallout quest save could not restore an allied-faction relation");
+            recordAllyPair(*state, first, second);
+        }
         for (auto& [_, value] : state->mVariables)
             value = 0.f;
-        while (reader.isNextSub("VNAM"))
-        {
-            const std::string name = reader.getHString();
-            float value = 0.f;
-            reader.getHNT(value, "VVAL");
+        for (const auto& [name, value] : variables)
             if (const auto found = state->mVariables.find(Misc::StringUtils::lowerCase(name));
                 found != state->mVariables.end())
                 found->second = value;
-        }
         if (active != 0)
             mActiveQuest = id;
 

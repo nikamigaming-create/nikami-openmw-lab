@@ -56,6 +56,7 @@ namespace MWWorld
         std::map<std::int16_t, bool> mStageDone;
         std::map<std::int32_t, std::uint8_t> mObjectiveStatus;
         std::map<std::string, float, std::less<>> mVariables;
+        std::vector<std::pair<ESM::FormId, ESM::FormId>> mAllies;
     };
 
     struct ESM4SavedQuestProgress
@@ -112,6 +113,7 @@ namespace MWWorld
         using ReferenceCommandHandler = std::function<bool(ESM4QuestReferenceCommand, ESM::FormId)>;
         using MessageHandler = std::function<bool(ESM::FormId)>;
         using SayToHandler = std::function<bool(ESM::FormId, ESM::FormId, ESM::FormId)>;
+        using SetAllyHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -127,6 +129,7 @@ namespace MWWorld
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
+        SetAllyHandler mSetAllyHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -138,6 +141,7 @@ namespace MWWorld
             SetObjectiveDisplayed,
             ForceActiveQuest,
             SetVariable,
+            SetAlly,
             EvaluatePackage,
             ShowMessage,
             SayTo,
@@ -231,6 +235,7 @@ namespace MWWorld
         }
         void setMessageHandler(MessageHandler handler) { mMessageHandler = std::move(handler); }
         void setSayToHandler(SayToHandler handler) { mSayToHandler = std::move(handler); }
+        void setSetAllyHandler(SetAllyHandler handler) { mSetAllyHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.

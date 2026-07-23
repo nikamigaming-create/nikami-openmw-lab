@@ -1,5 +1,6 @@
 #include "worldimp.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -813,6 +814,22 @@ namespace MWWorld
             if (speaker.isEmpty() || listener.isEmpty() || dialogueManager == nullptr)
                 return false;
             return dialogueManager->say(speaker, listener, topicId);
+        });
+        mESM4QuestRuntime.setSetAllyHandler([this](ESM::FormId firstId, ESM::FormId secondId) {
+            const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+            const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+            if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                return false;
+
+            ESM4::Faction first = *firstSource;
+            ESM4::Faction second = *secondSource;
+            if (!MWMechanics::setFalloutFactionsAllied(first, second))
+                return false;
+            mStore.overrideRecord(first);
+            mStore.overrideRecord(second);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetAlly factions=" << ESM::RefId(firstId).serializeText() << ","
+                             << ESM::RefId(secondId).serializeText();
+            return true;
         });
     }
 
