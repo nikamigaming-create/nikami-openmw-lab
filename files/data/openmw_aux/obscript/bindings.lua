@@ -259,4 +259,110 @@ obs.bind('GetDestroyed', function(ref)
     return 0
 end)
 
+local function questState(quest)
+    if type(quest) ~= 'string' then
+        return nil
+    end
+    return core.obscript.getQuestState(quest)
+end
+
+obs.bind('GetStage', function(quest)
+    local state = questState(quest)
+    return state and state.stage or 0
+end)
+
+obs.bind('GetStageDone', function(quest, stage)
+    local state = questState(quest)
+    if state == nil or state.stages == nil then
+        return 0
+    end
+    return state.stages[math.floor(tonumber(stage) or 0)] and 1 or 0
+end)
+
+obs.bind('GetQuestRunning', function(quest)
+    local state = questState(quest)
+    return state and state.running and 1 or 0
+end)
+
+obs.bind('GetQuestCompleted', function(quest)
+    local state = questState(quest)
+    return state and state.completed and 1 or 0
+end)
+
+obs.bind('GetObjectiveDisplayed', function(quest, objective)
+    local state = questState(quest)
+    if state == nil or state.objectives == nil then
+        return 0
+    end
+    local objectiveState = state.objectives[math.floor(tonumber(objective) or 0)]
+    return objectiveState and objectiveState.displayed and 1 or 0
+end)
+
+obs.bind('GetObjectiveCompleted', function(quest, objective)
+    local state = questState(quest)
+    if state == nil or state.objectives == nil then
+        return 0
+    end
+    local objectiveState = state.objectives[math.floor(tonumber(objective) or 0)]
+    return objectiveState and objectiveState.completed and 1 or 0
+end)
+
+local function questEvent(name, data)
+    core.sendGlobalEvent(name, data)
+    return 0
+end
+
+obs.bind('SetStage', function(quest, stage)
+    return questEvent('ObScriptSetStage', { quest = quest, stage = math.floor(tonumber(stage) or 0) })
+end)
+
+obs.bind('SetObjectiveDisplayed', function(quest, objective, displayed)
+    return questEvent('ObScriptSetObjectiveDisplayed', {
+        quest = quest,
+        objective = math.floor(tonumber(objective) or 0),
+        displayed = obs.b(displayed),
+    })
+end)
+
+obs.bind('SetObjectiveCompleted', function(quest, objective, completed)
+    return questEvent('ObScriptSetObjectiveCompleted', {
+        quest = quest,
+        objective = math.floor(tonumber(objective) or 0),
+        completed = obs.b(completed),
+    })
+end)
+
+for command, event in pairs({
+    StartQuest = 'ObScriptStartQuest',
+    StopQuest = 'ObScriptStopQuest',
+    CompleteQuest = 'ObScriptCompleteQuest',
+    FailQuest = 'ObScriptFailQuest',
+}) do
+    obs.bind(command, function(quest)
+        return questEvent(event, { quest = quest })
+    end)
+end
+
+obs._getGlobalVariable = core.obscript.getGlobalVariable
+obs._setGlobalVariable = function(name, value)
+    if not core.obscript.hasGlobalVariable(name) then
+        return false
+    end
+    core.sendGlobalEvent('ObScriptSetGlobalVariable', { name = name, value = value })
+    return true
+end
+obs._getMemberVariable = function(base, name)
+    if type(base) ~= 'string' then
+        return nil
+    end
+    return core.obscript.getQuestVariable(base, name)
+end
+obs._setMemberVariable = function(base, name, value)
+    if type(base) ~= 'string' or not core.obscript.hasQuest(base) then
+        return false
+    end
+    core.sendGlobalEvent('ObScriptSetQuestVariable', { quest = base, variable = name, value = value })
+    return true
+end
+
 return obs

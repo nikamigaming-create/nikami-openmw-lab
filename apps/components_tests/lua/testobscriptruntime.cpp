@@ -28,6 +28,8 @@ namespace
     TestingOpenMW::VFSTestFile runtimeFile(readDataFile("openmw_aux/obscript/runtime.lua"));
     constexpr VFS::Path::NormalizedView bindingsPath("openmw_aux/obscript/bindings.lua");
     TestingOpenMW::VFSTestFile bindingsFile(readDataFile("openmw_aux/obscript/bindings.lua"));
+    constexpr VFS::Path::NormalizedView globalBindingsPath("scripts/omw/obscript.lua");
+    TestingOpenMW::VFSTestFile globalBindingsFile(readDataFile("scripts/omw/obscript.lua"));
 
     // The driver simulates what transpiled scripts and the engine host do:
     // register handlers, install bindings, read/write variables, fire events.
@@ -180,6 +182,35 @@ namespace
                     obs.m('player', 'GetDistance', 'PlacedRef')
             end,
 
+            questQueries = function()
+                return {
+                    stage = obs.f('GetStage', 'VMQ01'),
+                    stageDone = obs.f('GetStageDone', 'VMQ01', 10),
+                    running = obs.f('GetQuestRunning', 'VMQ01'),
+                    completed = obs.f('GetQuestCompleted', 'VMQ01'),
+                    objectiveDisplayed = obs.f('GetObjectiveDisplayed', 'VMQ01', 25),
+                    objectiveCompleted = obs.f('GetObjectiveCompleted', 'VMQ01', 25),
+                    questVariable = obs.mv('VFreeformGoodsprings', 'OpenedSafe'),
+                    globalVariable = obs.v('VStoryEventVictorMet'),
+                    missingQuest = obs.f('GetStage', 'MissingQuest'),
+                }
+            end,
+
+            questMutations = function(events)
+                obs.f('SetStage', 'VMQ01', 30)
+                obs.f('SetObjectiveDisplayed', 'VMQ01', 25, 0)
+                obs.f('SetObjectiveCompleted', 'VMQ01', 25, 1)
+                obs.msetv('VFreeformGoodsprings', 'OpenedSafe', 2)
+                obs.setv('VStoryEventVictorMet', 2)
+                obs.f('StartQuest', 'VMQ01')
+                obs.f('StopQuest', 'VMQ01')
+                obs.f('CompleteQuest', 'VMQ01')
+                obs.f('FailQuest', 'VMQ01')
+                return #events,
+                    obs.mv('VFreeformGoodsprings', 'OpenedSafe'),
+                    obs.v('VStoryEventVictorMet')
+            end,
+
             harvestActivation = function(events, animations)
                 local S = obs.locals('BarrelCactusScript')
                 obs.on('OnActivate', function()
@@ -255,6 +286,14 @@ namespace
         }
         local events = {}
         local animations = {}
+        local mutations = {}
+
+        local function mutation(name)
+            return function(...)
+                mutations[#mutations + 1] = { name = name, args = { ... } }
+                return true
+            end
+        end
 
         local function inventory(obj)
             return {
@@ -279,6 +318,44 @@ namespace
                     }
                     return items[editorId:lower()]
                 end,
+                hasQuest = function(quest)
+                    return quest:lower() == 'vmq01' or quest:lower() == 'vfreeformgoodsprings'
+                end,
+                getQuestState = function(quest)
+                    if quest:lower() ~= 'vmq01' then return nil end
+                    return {
+                        stage = 25,
+                        running = true,
+                        completed = false,
+                        stages = { [10] = true },
+                        objectives = {
+                            [25] = { displayed = true, completed = false },
+                        },
+                    }
+                end,
+                getQuestVariable = function(quest, variable)
+                    if quest:lower() == 'vfreeformgoodsprings'
+                        and variable:lower() == 'openedsafe' then
+                        return 1
+                    end
+                    return nil
+                end,
+                hasGlobalVariable = function(name)
+                    return name:lower() == 'vstoryeventvictormet'
+                end,
+                getGlobalVariable = function(name)
+                    if name:lower() == 'vstoryeventvictormet' then return 1 end
+                    return nil
+                end,
+                setQuestStage = mutation('setQuestStage'),
+                setObjectiveDisplayed = mutation('setObjectiveDisplayed'),
+                setObjectiveCompleted = mutation('setObjectiveCompleted'),
+                startQuest = mutation('startQuest'),
+                stopQuest = mutation('stopQuest'),
+                completeQuest = mutation('completeQuest'),
+                failQuest = mutation('failQuest'),
+                setQuestVariable = mutation('setQuestVariable'),
+                setGlobalVariable = mutation('setGlobalVariable'),
             },
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
@@ -317,6 +394,12 @@ namespace
                 objectIsInstance = function(obj) return obj.player end,
             },
         }
+        local world = {
+            players = { player },
+            createObject = function()
+                return { moveInto = function() end, remove = function() end }
+            end,
+        }
         return {
             packages = {
                 ['openmw.animation'] = animation,
@@ -324,9 +407,11 @@ namespace
                 ['openmw.nearby'] = nearby,
                 ['openmw.self'] = { object = own },
                 ['openmw.types'] = types,
+                ['openmw.world'] = world,
             },
             events = events,
             animations = animations,
+            mutations = mutations,
         }
         )X");
 
@@ -335,6 +420,7 @@ namespace
         std::unique_ptr<VFS::Manager> mVFS = TestingOpenMW::createTestVFS({
             { runtimePath, &runtimeFile },
             { bindingsPath, &bindingsFile },
+            { globalBindingsPath, &globalBindingsFile },
             { driverPath, &driverFile },
             { bindingsDriverPath, &bindingsDriverFile },
             { bindingsFactoryPath, &bindingsFactoryFile },
@@ -524,6 +610,93 @@ namespace
             EXPECT_EQ(std::get<5>(values), 0);
             EXPECT_DOUBLE_EQ(std::get<6>(values), 5.0);
             EXPECT_DOUBLE_EQ(std::get<7>(values), 4.0);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, QuestAndGlobalStateBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-quest-bindings-test", extraPackages);
+            sol::table values = LuaUtil::call(s["questQueries"]).get<sol::table>();
+            EXPECT_EQ(values["stage"].get<int>(), 25);
+            EXPECT_EQ(values["stageDone"].get<int>(), 1);
+            EXPECT_EQ(values["running"].get<int>(), 1);
+            EXPECT_EQ(values["completed"].get<int>(), 0);
+            EXPECT_EQ(values["objectiveDisplayed"].get<int>(), 1);
+            EXPECT_EQ(values["objectiveCompleted"].get<int>(), 0);
+            EXPECT_EQ(values["questVariable"].get<int>(), 1);
+            EXPECT_EQ(values["globalVariable"].get<int>(), 1);
+            EXPECT_EQ(values["missingQuest"].get<int>(), 0);
+
+            const auto mutations = LuaUtil::call(s["questMutations"], factory["events"])
+                                       .get<std::tuple<int, int, int>>();
+            EXPECT_EQ(std::get<0>(mutations), 9);
+            EXPECT_EQ(std::get<1>(mutations), 2);
+            EXPECT_EQ(std::get<2>(mutations), 2);
+
+            sol::table events = factory["events"];
+            EXPECT_EQ(events[1].get<sol::table>()["name"].get<std::string>(), "ObScriptSetStage");
+            EXPECT_EQ(events[1].get<sol::table>()["data"].get<sol::table>()["stage"].get<int>(), 30);
+            EXPECT_EQ(events[4].get<sol::table>()["name"].get<std::string>(), "ObScriptSetQuestVariable");
+            EXPECT_EQ(events[5].get<sol::table>()["name"].get<std::string>(), "ObScriptSetGlobalVariable");
+            EXPECT_EQ(events[9].get<sol::table>()["name"].get<std::string>(), "ObScriptFailQuest");
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, GlobalHandlersMutateAuthoritativeQuestState)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.types", packages["openmw.types"] },
+                { "openmw.world", packages["openmw.world"] },
+            };
+            sol::table script
+                = mLua.runInNewSandbox(VFS::Path::Normalized(globalBindingsPath), "obscript-global-test", extraPackages);
+            sol::table handlers = script["eventHandlers"];
+            sol::table data = view.sol().create_table();
+            data["quest"] = "VMQ01";
+            data["stage"] = 30;
+            LuaUtil::call(handlers["ObScriptSetStage"], data);
+
+            data = view.sol().create_table();
+            data["quest"] = "VMQ01";
+            data["objective"] = 25;
+            data["displayed"] = false;
+            LuaUtil::call(handlers["ObScriptSetObjectiveDisplayed"], data);
+
+            data = view.sol().create_table();
+            data["quest"] = "VFreeformGoodsprings";
+            data["variable"] = "OpenedSafe";
+            data["value"] = 2;
+            LuaUtil::call(handlers["ObScriptSetQuestVariable"], data);
+
+            data = view.sol().create_table();
+            data["name"] = "VStoryEventVictorMet";
+            data["value"] = 1;
+            LuaUtil::call(handlers["ObScriptSetGlobalVariable"], data);
+
+            sol::table mutations = factory["mutations"];
+            ASSERT_EQ(mutations.size(), 4);
+            EXPECT_EQ(mutations[1].get<sol::table>()["name"].get<std::string>(), "setQuestStage");
+            EXPECT_EQ(mutations[1].get<sol::table>()["args"].get<sol::table>()[1].get<std::string>(), "VMQ01");
+            EXPECT_EQ(mutations[1].get<sol::table>()["args"].get<sol::table>()[2].get<int>(), 30);
+            EXPECT_EQ(
+                mutations[2].get<sol::table>()["name"].get<std::string>(), "setObjectiveDisplayed");
+            EXPECT_EQ(mutations[3].get<sol::table>()["name"].get<std::string>(), "setQuestVariable");
+            EXPECT_EQ(mutations[4].get<sol::table>()["name"].get<std::string>(), "setGlobalVariable");
         });
     }
 

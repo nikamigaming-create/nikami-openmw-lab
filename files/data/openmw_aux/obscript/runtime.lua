@@ -29,6 +29,8 @@ local zerotable_mt = { __index = function() return 0 end }
 
 obs._scripts = {}      -- script name (lower) -> { locals = S, handlers = {event->fn} }
 obs._globals = setmetatable({}, zerotable_mt)  -- global variables (GameHour etc.)
+obs._globalOverrides = {}
+obs._memberOverrides = {}
 obs._bindings = {}     -- command name (lower) -> function
 obs._unknown = {}      -- command name (lower) -> call count (coverage telemetry)
 obs._log = nil         -- optional function(msg) for stub logging
@@ -107,6 +109,15 @@ function obs.v(name)
     if obs._bindings[key] then
         return dispatch(name)
     end
+    if rawget(obs._globalOverrides, key) ~= nil then
+        return obs._globalOverrides[key]
+    end
+    if obs._getGlobalVariable then
+        local value = obs._getGlobalVariable(name)
+        if value ~= nil then
+            return value
+        end
+    end
     if rawget(obs._globals, key) ~= nil then
         return obs._globals[key]
     end
@@ -117,19 +128,46 @@ end
 
 -- cross-script variable read: Quest.var / Ref.var
 function obs.mv(base, name)
-    local entry = obs._scripts[tostring(base):lower()]
+    local baseKey = tostring(base):lower()
+    local nameKey = name:lower()
+    local overrides = obs._memberOverrides[baseKey]
+    if overrides and rawget(overrides, nameKey) ~= nil then
+        return overrides[nameKey]
+    end
+    local entry = obs._scripts[baseKey]
     if entry then
-        return entry.locals[name:lower()]
+        return entry.locals[nameKey]
+    end
+    if obs._getMemberVariable then
+        local value = obs._getMemberVariable(base, name)
+        if value ~= nil then
+            return value
+        end
     end
     -- script not loaded (or base is a ref whose script we don't know): 0
     return 0
 end
 
 function obs.setv(name, value)
-    obs._globals[name:lower()] = value
+    local key = name:lower()
+    if obs._setGlobalVariable and obs._setGlobalVariable(name, value) then
+        obs._globalOverrides[key] = value
+    else
+        obs._globals[key] = value
+    end
 end
 
 function obs.msetv(base, name, value)
+    if obs._setMemberVariable and obs._setMemberVariable(base, name, value) then
+        local baseKey = tostring(base):lower()
+        local overrides = obs._memberOverrides[baseKey]
+        if overrides == nil then
+            overrides = {}
+            obs._memberOverrides[baseKey] = overrides
+        end
+        overrides[name:lower()] = value
+        return
+    end
     scriptEntry(tostring(base)).locals[name:lower()] = value
 end
 
@@ -234,6 +272,10 @@ function obs.makeLocalScript()
             end,
             onUpdate = function(dt)
                 obs._dt = dt
+                -- Global events requested in the previous frame have now
+                -- reached the authoritative engine state.
+                obs._globalOverrides = {}
+                obs._memberOverrides = {}
                 local h = entry.handlers["gamemode"]
                 if h then fireAll(entry, h) end
             end,

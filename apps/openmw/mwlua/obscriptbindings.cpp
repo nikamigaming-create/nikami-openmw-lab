@@ -1,8 +1,11 @@
 #include "obscriptbindings.hpp"
 
+#include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <sol/state_view.hpp>
 #include <sol/table.hpp>
@@ -24,7 +27,10 @@
 #include <components/misc/strings/lower.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/globalvariablename.hpp"
 #include "../mwworld/store.hpp"
 
 #include "context.hpp"
@@ -128,6 +134,104 @@ namespace MWLua
                 return res;
             }();
             return resolve(index, editorId);
+        };
+
+        api["hasQuest"] = [](std::string_view id) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().search(id) != nullptr;
+        };
+        api["getQuestState"] = [lua](std::string_view id) -> sol::object {
+            const MWWorld::ESM4QuestState* state
+                = MWBase::Environment::get().getWorld()->getESM4QuestRuntime().search(id);
+            if (state == nullptr)
+                return sol::make_object(lua, sol::nil);
+
+            sol::table result(lua, sol::create);
+            result["stage"] = state->mCurrentStage;
+            result["running"] = (state->mFlags & MWWorld::ESM4QuestState::Flag_Running) != 0;
+            result["completed"] = (state->mFlags & MWWorld::ESM4QuestState::Flag_Completed) != 0;
+            result["failed"] = (state->mFlags & MWWorld::ESM4QuestState::Flag_Failed) != 0;
+
+            sol::table stages(lua, sol::create);
+            for (const auto& [stage, done] : state->mStageDone)
+                stages[stage] = done;
+            result["stages"] = std::move(stages);
+
+            sol::table objectives(lua, sol::create);
+            for (const auto& [objective, flags] : state->mObjectiveStatus)
+            {
+                sol::table objectiveState(lua, sol::create);
+                objectiveState["displayed"] = (flags & MWWorld::ESM4QuestState::Objective_Displayed) != 0;
+                objectiveState["completed"] = (flags & MWWorld::ESM4QuestState::Objective_Completed) != 0;
+                objectives[objective] = std::move(objectiveState);
+            }
+            result["objectives"] = std::move(objectives);
+            return sol::make_object(lua, std::move(result));
+        };
+        api["getQuestVariable"] = [](std::string_view quest, std::string_view variable) -> sol::optional<float> {
+            const std::optional<float> value
+                = MWBase::Environment::get().getWorld()->getESM4QuestRuntime().getQuestVariable(quest, variable);
+            return value ? sol::optional<float>(*value) : sol::nullopt;
+        };
+        api["setQuestStage"] = [](std::string_view quest, int stage) {
+            if (stage < 0 || stage > 255)
+                return false;
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().setStage(
+                quest, static_cast<std::uint8_t>(stage));
+        };
+        api["setObjectiveDisplayed"] = [](std::string_view quest, int objective, bool displayed) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().setObjectiveDisplayed(
+                quest, objective, displayed);
+        };
+        api["setObjectiveCompleted"] = [](std::string_view quest, int objective, bool completed) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().setObjectiveCompleted(
+                quest, objective, completed);
+        };
+        api["startQuest"] = [](std::string_view quest) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().startQuest(quest);
+        };
+        api["stopQuest"] = [](std::string_view quest) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().stopQuest(quest);
+        };
+        api["completeQuest"] = [](std::string_view quest) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().completeQuest(quest);
+        };
+        api["failQuest"] = [](std::string_view quest) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().failQuest(quest);
+        };
+        api["setQuestVariable"] = [](std::string_view quest, std::string_view variable, float value) {
+            return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().setQuestVariable(
+                quest, variable, value);
+        };
+        api["getGlobalVariable"] = [](std::string_view name) -> sol::optional<float> {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const MWWorld::GlobalVariableName global(name);
+            const char type = world->getGlobalVariableType(global);
+            if (type == 'f')
+                return world->getGlobalFloat(global);
+            if (type == 's' || type == 'l')
+                return static_cast<float>(world->getGlobalInt(global));
+            return sol::nullopt;
+        };
+        api["hasGlobalVariable"] = [](std::string_view name) {
+            return MWBase::Environment::get().getWorld()->getGlobalVariableType(
+                       MWWorld::GlobalVariableName(name))
+                != ' ';
+        };
+        api["setGlobalVariable"] = [](std::string_view name, float value) {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const MWWorld::GlobalVariableName global(name);
+            const char type = world->getGlobalVariableType(global);
+            if (type == 'f')
+            {
+                world->setGlobalFloat(global, value);
+                return true;
+            }
+            if (type == 's' || type == 'l')
+            {
+                world->setGlobalInt(global, static_cast<int>(value));
+                return true;
+            }
+            return false;
         };
 
         return LuaUtil::makeReadOnly(api);

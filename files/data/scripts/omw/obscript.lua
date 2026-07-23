@@ -43,5 +43,32 @@ return {
                     .. tostring(data.item))
             end
         end,
+        ObScriptSetStage = function(data)
+            core.obscript.setQuestStage(data.quest, data.stage)
+        end,
+        ObScriptSetObjectiveDisplayed = function(data)
+            core.obscript.setObjectiveDisplayed(data.quest, data.objective, data.displayed)
+        end,
+        ObScriptSetObjectiveCompleted = function(data)
+            core.obscript.setObjectiveCompleted(data.quest, data.objective, data.completed)
+        end,
+        ObScriptStartQuest = function(data)
+            core.obscript.startQuest(data.quest)
+        end,
+        ObScriptStopQuest = function(data)
+            core.obscript.stopQuest(data.quest)
+        end,
+        ObScriptCompleteQuest = function(data)
+            core.obscript.completeQuest(data.quest)
+        end,
+        ObScriptFailQuest = function(data)
+            core.obscript.failQuest(data.quest)
+        end,
+        ObScriptSetQuestVariable = function(data)
+            core.obscript.setQuestVariable(data.quest, data.variable, data.value)
+        end,
+        ObScriptSetGlobalVariable = function(data)
+            core.obscript.setGlobalVariable(data.name, data.value)
+        end,
     },
 }
