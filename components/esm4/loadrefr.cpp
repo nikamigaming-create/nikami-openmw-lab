@@ -301,6 +301,21 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 reader.get(mCount);
                 break;
             }
+            case ESM::fourCC("XPRM"):
+            {
+                constexpr std::uint32_t primitiveSize
+                    = sizeof(mPrimitive.mBounds) + sizeof(mPrimitive.mColor) + sizeof(mPrimitive.mType);
+                if (subHdr.dataSize == primitiveSize)
+                {
+                    reader.get(mPrimitive.mBounds.data(), sizeof(mPrimitive.mBounds));
+                    reader.get(mPrimitive.mColor.data(), sizeof(mPrimitive.mColor));
+                    reader.get(mPrimitive.mType);
+                    mHasPrimitive = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
             // lighting
             case ESM::fourCC("LNAM"): // lighting template formId
             case ESM::fourCC("XLIG"): // struct, FOV, fade, etc
@@ -314,7 +329,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XLCM"):
             case ESM::fourCC("ONAM"):
             case ESM::fourCC("VMAD"):
-            case ESM::fourCC("XPRM"):
             case ESM::fourCC("INAM"):
             case ESM::fourCC("PDTO"):
             case ESM::fourCC("SCHR"):

@@ -27,6 +27,7 @@
 #ifndef ESM4_REFR_H
 #define ESM4_REFR_H
 
+#include <array>
 #include <cstdint>
 
 #include "reference.hpp" // EnableParent
@@ -74,6 +75,21 @@ namespace ESM4
         ESM::FormId posReference{}; // only used if broadcastRange == 0
     };
 
+    struct Primitive
+    {
+        enum Type : std::uint32_t
+        {
+            None = 0,
+            Box = 1,
+            Sphere = 2,
+            PortalBox = 3,
+        };
+
+        std::array<float, 3> mBounds{};
+        std::array<float, 4> mColor{};
+        std::uint32_t mType = None;
+    };
+
     struct Reference
     {
         ESM::FormId mId; // from the header
@@ -113,6 +129,10 @@ namespace ESM4
         ESM::FormId mKey;
 
         ESM::FormId mTargetRef;
+
+        // XPRM is the authored collision primitive used by model-less activators such as Fallout trigger volumes.
+        Primitive mPrimitive;
+        bool mHasPrimitive = false;
 
         // Fallout patrol routes are linked REFR chains. XLKR points at the next marker, XPRD stores the
         // marker's authored wait time, and an empty XPPA marks a patrol-idle/script point.

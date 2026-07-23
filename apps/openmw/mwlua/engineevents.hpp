@@ -40,6 +40,16 @@ namespace MWLua
             ESM::RefNum mActor;
             ESM::RefNum mObject;
         };
+        struct OnTriggerEnter
+        {
+            ESM::RefNum mActor;
+            ESM::RefNum mObject;
+        };
+        struct OnTriggerLeave
+        {
+            ESM::RefNum mActor;
+            ESM::RefNum mObject;
+        };
         struct OnUseItem
         {
             ESM::RefNum mActor;
@@ -79,8 +89,9 @@ namespace MWLua
             ESM::RefNum mActor;
             int mDays;
         };
-        using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnUseItem, OnNewExterior, OnTeleported,
-            OnReset, OnAnimationTextKey, OnSkillUse, OnSkillLevelUp, OnJailTimeServed>;
+        using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnTriggerEnter, OnTriggerLeave,
+            OnUseItem, OnNewExterior, OnTeleported, OnReset, OnAnimationTextKey, OnSkillUse, OnSkillLevelUp,
+            OnJailTimeServed>;
 
         void clear() { mQueue.clear(); }
         void addToQueue(Event e) { mQueue.push_back(std::move(e)); }

@@ -400,6 +400,46 @@ namespace
         EXPECT_FLOAT_EQ(reference.mPos.rot[2], position.rot[2]);
     }
 
+    TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutTriggerPrimitiveContract)
+    {
+        std::string payload;
+        appendSubRecord(payload, "NAME", std::uint32_t{ 0x107232 });
+        const std::array<float, 8> primitive{
+            80.414f, 104.688f, 140.f, 0.25f, 0.5f, 0.75f, 0.4f, std::bit_cast<float>(std::uint32_t{ 1 })
+        };
+        appendSubRecord(payload, "XPRM", primitive);
+
+        auto reader = makeReader("REFR", 0x107236, payload);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        ASSERT_TRUE(reference.mHasPrimitive);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mBounds[0], 80.414f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mBounds[1], 104.688f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mBounds[2], 140.f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mColor[0], 0.25f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mColor[1], 0.5f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mColor[2], 0.75f);
+        EXPECT_FLOAT_EQ(reference.mPrimitive.mColor[3], 0.4f);
+        EXPECT_EQ(reference.mPrimitive.mType, ESM4::Primitive::Box);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldIgnoreMalformedFalloutTriggerPrimitiveWithoutLosingAlignment)
+    {
+        std::string payload;
+        appendSubRecord(payload, "XPRM", std::string_view("\x01\x02", 2));
+        ESM::Position position{};
+        position.pos[0] = 101.f;
+        appendSubRecord(payload, "DATA", position);
+
+        auto reader = makeReader("REFR", 0x107236, payload);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        EXPECT_FALSE(reference.mHasPrimitive);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[0], 101.f);
+    }
+
     TEST(Esm4BehaviorRecordTest, shouldIgnoreMalformedFalloutPatrolReferencePayloadsWithoutLosingAlignment)
     {
         std::string payload;

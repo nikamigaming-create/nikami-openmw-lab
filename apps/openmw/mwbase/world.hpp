@@ -624,6 +624,13 @@ namespace MWBase
         /// Return physical or rendering half extents of the given actor.
         virtual osg::Vec3f getHalfExtents(const MWWorld::ConstPtr& actor, bool rendering = false) const = 0;
 
+        /// Return the world-space center of the actor's physical collision shape.
+        virtual osg::Vec3f getActorCollisionPosition(const MWWorld::ConstPtr& actor) const
+        {
+            const osg::Vec3f halfExtents = getHalfExtents(actor);
+            return actor.getRefData().getPosition().asVec3() + osg::Vec3f(0.f, 0.f, halfExtents.z());
+        }
+
         /// Export scene graph to a file and return the filename.
         /// \param ptr object to export scene graph for (if empty, export entire scene graph)
         virtual std::filesystem::path exportSceneGraph(const MWWorld::Ptr& ptr) = 0;

@@ -160,6 +160,11 @@ namespace
                 obs.on('OnHitWith', function() log[#log + 1] = 'hitwith:weapon' end, 'WeaponEditor')
                 obs.on('OnActivate', function() log[#log + 1] = 'activate:actor' end, 'actor')
                 obs.on('OnActivate', function() log[#log + 1] = 'activate:other' end, 'other')
+                obs.on('OnTriggerEnter', function()
+                    log[#log + 1] = 'enter:' .. tostring(obs._actionRef)
+                end, 'actor')
+                obs.on('OnTriggerEnter', function() log[#log + 1] = 'enter:other' end, 'other')
+                obs.on('OnTriggerLeave', function() log[#log + 1] = 'leave:any' end)
                 obs.resolveRecordId = function(value)
                     if value == 'WeaponEditor' then return 'weapon-form' end
                     if type(value) == 'table' then return value.recordId end
@@ -171,6 +176,8 @@ namespace
                 events.Died({ killer = 'player' })
                 events.Hit({ attacker = 'attacker', weapon = { recordId = 'weapon-form' } })
                 script.engineHandlers.onActivated('actor')
+                script.engineHandlers.onTriggerEnter('actor')
+                script.engineHandlers.onTriggerLeave('actor')
                 return #log
             end,
         }
@@ -578,7 +585,7 @@ namespace
         sol::table s = script();
         mLua.protectedCall([&](LuaUtil::LuaView& view) {
             sol::table log = view.sol().create_table();
-            EXPECT_EQ(LuaUtil::call(s["filteredGameplayEvents"], log).get<int>(), 7);
+            EXPECT_EQ(LuaUtil::call(s["filteredGameplayEvents"], log).get<int>(), 9);
             EXPECT_EQ(log[1].get<std::string>(), "death:any");
             EXPECT_EQ(log[2].get<std::string>(), "death:any");
             EXPECT_EQ(log[3].get<std::string>(), "death:player");
@@ -586,6 +593,8 @@ namespace
             EXPECT_EQ(log[5].get<std::string>(), "hit:attacker");
             EXPECT_EQ(log[6].get<std::string>(), "hitwith:weapon");
             EXPECT_EQ(log[7].get<std::string>(), "activate:actor");
+            EXPECT_EQ(log[8].get<std::string>(), "enter:actor");
+            EXPECT_EQ(log[9].get<std::string>(), "leave:any");
         });
     }
 

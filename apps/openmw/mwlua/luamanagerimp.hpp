@@ -25,6 +25,7 @@
 #include "menuscripts.hpp"
 #include "object.hpp"
 #include "objectlists.hpp"
+#include "triggervolume.hpp"
 
 namespace VFS
 {
@@ -220,6 +221,7 @@ namespace MWLua
         std::set<LocalScripts*> mActiveLocalScripts;
         std::vector<LocalScripts*> mQueuedAutoStartedScripts;
         ObjectLists mObjectLists;
+        TriggerVolumeTracker mTriggerVolumes;
 
         MWWorld::Ptr mPlayer;
 

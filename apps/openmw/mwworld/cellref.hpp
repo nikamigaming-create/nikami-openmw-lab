@@ -275,6 +275,12 @@ namespace MWWorld
             return reference != nullptr ? &reference->mRadio : nullptr;
         }
 
+        const ESM4::Primitive* getEsm4Primitive() const
+        {
+            const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);
+            return reference != nullptr && reference->mHasPrimitive ? &reference->mPrimitive : nullptr;
+        }
+
         // Load mutable state without changing the underlying reference format.
         void loadState(const ESM::CellRef& state);
 

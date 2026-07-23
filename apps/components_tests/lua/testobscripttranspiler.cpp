@@ -134,6 +134,21 @@ namespace
         EXPECT_THAT(lua, HasSubstr("S.State = 1"));
     }
 
+    TEST_F(ObScriptTranspilerTest, RetailGoodspringsTriggerRetainsPlayerFilterAndQuestMutation)
+    {
+        const std::string lua = transpile(
+            "scn GSDocMitchellExitTriggerScript\n"
+            "begin OnTriggerEnter player\n"
+            "if GetStage VCG01 == 110\n"
+            "SetStage VCG01 115\n"
+            "endif\n"
+            "end\n");
+        EXPECT_THAT(lua, HasSubstr("obs.on(\"OnTriggerEnter\", function()"));
+        EXPECT_THAT(lua, HasSubstr("end, \"player\")"));
+        EXPECT_THAT(lua, HasSubstr("obs.f(\"GetStage\", \"VCG01\") == 110"));
+        EXPECT_THAT(lua, HasSubstr("obs.f(\"SetStage\", \"VCG01\", 115)"));
+    }
+
     TEST_F(ObScriptTranspilerTest, IfChainAndTruthiness)
     {
         const std::string lua = transpile(
