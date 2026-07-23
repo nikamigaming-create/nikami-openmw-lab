@@ -16,6 +16,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
@@ -199,7 +200,80 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
         }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
     EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(),
-        (std::vector<std::uint16_t>{ 0x0015, 0x105e, 0x105e, 0x1021, 0x1021 }));
+        (std::vector<std::uint16_t>{ 0x0015, 0x1021, 0x1021 }));
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
+    const ESM::FormId tutorialQuestId{ .mIndex = 0x059c85, .mContentFile = 0 };
+    const ESM::FormId tutorialMessageId{ .mIndex = 0x0abc58, .mContentFile = 0 };
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mObjectives.push_back({ .mIndex = 20, .mDescription = "Sneak closer to the geckos" });
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0010A214 VCG02 stage 35 entry 0, byte-for-byte. The SCROs are
+    // SunnyREF, VCG02, CGTutorial, and CGTutorialSneak.
+    const std::array<std::uint8_t, 56> retailScda{
+        0xa2, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x14, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00,
+        0x00, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x5e, 0x10, 0x00, 0x00, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72,
+        0x03, 0x00, 0x6e, 0x5a, 0x00, 0x00, 0x00, 0x59, 0x10, 0x0b, 0x00, 0x01, 0x00, 0x72, 0x04, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { sunnyId, vcg02Id, tutorialQuestId, tutorialMessageId };
+    vcg02.mStages.push_back({ .mIndex = 35, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    ESM4::Quest tutorial = makeQuest(tutorialQuestId, "CGTutorial");
+    tutorial.mStages.push_back({ .mIndex = 90, .mEntries = { ESM4::QuestStageEntry{} } });
+    store.overrideRecord(tutorial);
+    ESM4::ActorCharacter sunny;
+    sunny.mId = sunnyId;
+    sunny.mEditorId = "SunnyREF";
+    store.overrideRecord(sunny);
+    ESM4::Message message;
+    message.mId = tutorialMessageId;
+    message.mEditorId = "CGTutorialSneak";
+    message.mDescription = "To sneak or crouch, &sUActnCrouch;.";
+    store.overrideRecord(message);
+    ASSERT_NE(store.get<ESM4::Quest>().search(ESM::RefId(vcg02Id)), nullptr);
+    ASSERT_NE(store.get<ESM4::Quest>().search(ESM::RefId(tutorialQuestId)), nullptr);
+    ASSERT_NE(store.get<ESM4::ActorCharacter>().search(sunnyId), nullptr);
+    ASSERT_NE(store.get<ESM4::Message>().search(tutorialMessageId), nullptr);
+
+    std::vector<ESM::FormId> evaluatedPackages;
+    std::vector<ESM::FormId> shownMessages;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&evaluatedPackages](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId reference) {
+            if (command != MWWorld::ESM4QuestReferenceCommand::EvaluatePackage)
+                return false;
+            evaluatedPackages.push_back(reference);
+            return true;
+        });
+    runtime.setMessageHandler([&shownMessages](ESM::FormId messageId) {
+        shownMessages.push_back(messageId);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(vcg02Id, 35));
+    const MWWorld::ESM4QuestState* vcg02State = runtime.search(vcg02Id);
+    const MWWorld::ESM4QuestState* tutorialState = runtime.search(tutorialQuestId);
+    ASSERT_NE(vcg02State, nullptr);
+    ASSERT_NE(tutorialState, nullptr);
+    EXPECT_EQ(vcg02State->mCurrentStage, 35);
+    EXPECT_EQ(vcg02State->mObjectiveStatus.at(20), MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_EQ(tutorialState->mCurrentStage, 90);
+    EXPECT_TRUE(tutorialState->mStageDone.at(90));
+    EXPECT_EQ(evaluatedPackages, std::vector<ESM::FormId>{ sunnyId });
+    EXPECT_EQ(shownMessages, std::vector<ESM::FormId>{ tutorialMessageId });
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesFourNativeQuestStateCommandsFromFrozenRetailFrames)

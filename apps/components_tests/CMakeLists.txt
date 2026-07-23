@@ -97,6 +97,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadrcct.cpp
     esm4/testloadrcpe.cpp
     esm4/testloadnote.cpp
+    esm4/testloadmesg.cpp
     esm4/testloadterm.cpp
     esm4/testloadregion.cpp
     esm4/testloadrace.cpp

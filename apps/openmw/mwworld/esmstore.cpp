@@ -848,10 +848,10 @@ namespace MWWorld
             if (shouldSkipStarfieldViewerRecord(reader, recordType))
                 return false;
 
-            // AMEF, AVIF, EXPL, FACT, MGEF, PERK, RCCT, RCPE, SPEL, and NOTE are not cross-game schemas. These typed loaders
+            // AMEF, AVIF, EXPL, FACT, MESG, MGEF, PERK, RCCT, RCPE, SPEL, and NOTE are not cross-game schemas. These typed loaders
             // implement only the frozen Fallout: New Vegas contracts.
             if ((recordType == ESM4::REC_AMEF || recordType == ESM4::REC_AVIF || recordType == ESM4::REC_EXPL
-                    || recordType == ESM4::REC_FACT
+                    || recordType == ESM4::REC_FACT || recordType == ESM4::REC_MESG
                     || recordType == ESM4::REC_MGEF
                     || recordType == ESM4::REC_PERK || recordType == ESM4::REC_RCCT
                     || recordType == ESM4::REC_RCPE || recordType == ESM4::REC_SPEL || recordType == ESM4::REC_NOTE)

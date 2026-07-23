@@ -35,6 +35,7 @@
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -792,6 +793,16 @@ namespace MWWorld
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
             });
+        mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
+            const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
+            MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();
+            if (message == nullptr || message->mDescription.empty() || windowManager == nullptr)
+                return false;
+            windowManager->scheduleMessageBox(message->mDescription, MWGui::ShowInDialogueMode_Never);
+            Log(Debug::Info) << "FNV/ESM4 quest: queued authored message editor=" << message->mEditorId
+                             << " id=" << ESM::RefId(messageId).serializeText();
+            return true;
+        });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

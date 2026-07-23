@@ -18,6 +18,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
@@ -342,7 +343,7 @@ namespace MWWorld
         prepared = {};
         if (script.compiledData.empty())
         {
-            prepared.mUseSourceFallback = true;
+            prepared.mUseSourceFallback = !script.scriptSource.empty();
             return true;
         }
 
@@ -358,21 +359,59 @@ namespace MWWorld
                 return false;
 
             if (instruction.opcode != 0x1036 && instruction.opcode != 0x1037
-                && instruction.opcode != 0x1039 && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2
-                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
+                && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2 && instruction.opcode != 0x11a3
+                && instruction.opcode != 0x11dd)
             {
                 prepared.mUseSourceFallback = true;
                 prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
                 continue;
             }
-            if (instruction.callingReferenceIndex)
-                return false;
-
+            std::span<const std::uint8_t> argumentPayload = instruction.arguments;
+            if (instruction.opcode == 0x1059) // ShowMessage
+            {
+                // Every ShowMessage instruction in FalloutNV.esm (24/24) stores its one
+                // encoded argument followed by six zero bytes inside the instruction frame.
+                constexpr std::size_t encodedArgumentBytes = 5;
+                constexpr std::size_t trailingBytes = 6;
+                if (argumentPayload.size() != encodedArgumentBytes + trailingBytes
+                    || !std::all_of(argumentPayload.end() - trailingBytes, argumentPayload.end(),
+                        [](std::uint8_t value) { return value == 0; }))
+                    return false;
+                argumentPayload = argumentPayload.first(encodedArgumentBytes);
+            }
             std::vector<ESM4::ScriptBytecodeArgument> arguments;
-            if (!ESM4::decodeFalloutScriptArguments(instruction.arguments, script.references, arguments).succeeded())
+            // Zero-argument reference functions such as EVP have an empty frame rather
+            // than the two-byte argument count used by ordinary command functions.
+            if (!(instruction.opcode == 0x105e && argumentPayload.empty())
+                && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x11a2 || instruction.opcode == 0x11a3)
+            if (instruction.opcode == 0x105e) // EvaluatePackage / evp
+            {
+                if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
+                if (mStore->get<ESM4::ActorCharacter>().search(target) == nullptr
+                    && mStore->get<ESM4::ActorCreature>().search(target) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::EvaluatePackage, target });
+            }
+            else if (instruction.opcode == 0x1059) // ShowMessage
+            {
+                if (instruction.callingReferenceIndex || arguments.size() != 1 || !mMessageHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId* messageId = std::get_if<ESM::FormId>(&arguments[0]);
+                if (messageId == nullptr
+                    || mStore->get<ESM4::Message>().search(*messageId) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::ShowMessage, *messageId });
+            }
+            else if (instruction.callingReferenceIndex)
+                return false;
+            else if (instruction.opcode == 0x11a2 || instruction.opcode == 0x11a3)
             {
                 if (arguments.size() != 3)
                     return false;
@@ -558,6 +597,12 @@ namespace MWWorld
     {
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
+        if (command.mType == CompiledQuestCommandType::EvaluatePackage
+            || command.mType == CompiledQuestCommandType::ShowMessage)
+        {
+            working.mExternalEffects.push_back({ command.mType, command.mQuest });
+            return true;
+        }
 
         const auto found = working.mStates.find(command.mQuest);
         if (found == working.mStates.end())
@@ -606,6 +651,9 @@ namespace MWWorld
                 state.mFlags |= ESM4QuestState::Flag_ShownInPipBoy;
                 working.mActiveQuest = command.mQuest;
                 return true;
+            case CompiledQuestCommandType::EvaluatePackage:
+            case CompiledQuestCommandType::ShowMessage:
+                return false;
         }
         return false;
     }
@@ -708,8 +756,40 @@ namespace MWWorld
 
         mStates.swap(working.mStates);
         mActiveQuest.swap(working.mActiveQuest);
+        flushCompiledExternalEffects(working.mExternalEffects);
         flushCompiledStageEffects(working.mEffects);
         return true;
+    }
+
+    void ESM4QuestRuntime::flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects)
+    {
+        for (const PendingExternalEffect& effect : effects)
+        {
+            bool executed = false;
+            std::string command;
+            switch (effect.mType)
+            {
+                case CompiledQuestCommandType::EvaluatePackage:
+                    command = "EvaluatePackage ";
+                    executed = mReferenceCommandHandler
+                        && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::ShowMessage:
+                    command = "ShowMessage ";
+                    executed = mMessageHandler && mMessageHandler(effect.mTarget);
+                    break;
+                default:
+                    throw std::logic_error("non-external command queued as a Fallout quest external effect");
+            }
+            command += ESM::RefId(effect.mTarget).serializeText();
+            if (executed)
+                Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
+            else
+            {
+                mUnsupportedStageCommands.push_back(command);
+                Log(Debug::Warning) << "FNV/ESM4 behavior: committed quest stage effect failed " << command;
+            }
+        }
     }
 
     void ESM4QuestRuntime::flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects)
@@ -833,9 +913,29 @@ namespace MWWorld
                         case CompiledQuestCommandType::ForceActiveQuest:
                             executed = forceActiveQuest(command.mQuest);
                             break;
+                        case CompiledQuestCommandType::EvaluatePackage:
+                            executed = mReferenceCommandHandler
+                                && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::ShowMessage:
+                            executed = mMessageHandler && mMessageHandler(command.mQuest);
+                            break;
                     }
                     if (!executed)
+                    {
+                        if (command.mType == CompiledQuestCommandType::EvaluatePackage
+                            || command.mType == CompiledQuestCommandType::ShowMessage)
+                        {
+                            const std::string failure = command.mType == CompiledQuestCommandType::EvaluatePackage
+                                ? "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText()
+                                : "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
+                            mUnsupportedStageCommands.push_back(failure);
+                            Log(Debug::Warning) << "FNV/ESM4 behavior: quest stage external effect failed: "
+                                                << failure;
+                            continue;
+                        }
                         throw std::logic_error("preflighted Fallout quest command became invalid during execution");
+                    }
                 }
             }
             if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)

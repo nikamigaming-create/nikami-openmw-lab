@@ -110,6 +110,7 @@ namespace MWWorld
     {
     public:
         using ReferenceCommandHandler = std::function<bool(ESM4QuestReferenceCommand, ESM::FormId)>;
+        using MessageHandler = std::function<bool(ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -123,6 +124,7 @@ namespace MWWorld
         std::vector<std::uint32_t> mUnsupportedConditionFunctions;
         std::unordered_map<std::string, ESM::FormId> mReferenceIds;
         ReferenceCommandHandler mReferenceCommandHandler;
+        MessageHandler mMessageHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -133,6 +135,8 @@ namespace MWWorld
             SetObjectiveCompleted,
             SetObjectiveDisplayed,
             ForceActiveQuest,
+            EvaluatePackage,
+            ShowMessage,
         };
 
         struct CompiledQuestCommand
@@ -168,12 +172,19 @@ namespace MWWorld
             std::string mNotification;
         };
 
+        struct PendingExternalEffect
+        {
+            CompiledQuestCommandType mType = CompiledQuestCommandType::EvaluatePackage;
+            ESM::FormId mTarget{};
+        };
+
         struct CompiledStageWorkingState
         {
             QuestStateMap mStates;
             std::optional<ESM::FormId> mActiveQuest;
             std::vector<CompiledStageKey> mStack;
             std::vector<PendingStageEffect> mEffects;
+            std::vector<PendingExternalEffect> mExternalEffects;
         };
 
         const ESM4::Quest* resolveQuest(std::string_view id) const;
@@ -195,6 +206,7 @@ namespace MWWorld
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
+        void flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects);
         std::optional<bool> evaluateResultCondition(std::string_view expression) const;
         ESM::FormId resolveReference(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
@@ -207,6 +219,7 @@ namespace MWWorld
         {
             mReferenceCommandHandler = std::move(handler);
         }
+        void setMessageHandler(MessageHandler handler) { mMessageHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.
