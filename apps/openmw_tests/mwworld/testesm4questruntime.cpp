@@ -965,6 +965,67 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactVms54BunkerDoorUnlockFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x157e60, .mContentFile = 0 };
+    const ESM::FormId bunkerDoorId{ .mIndex = 0x15921a, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS54");
+    ESM4::QuestStageEntry entry;
+    // Exact first command frame from FalloutNV.esm VMS54 stage 110:
+    // SLRemnantsBunkerDoor02Ref.Unlock. Its calling reference is SCRO 1.
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0x73, 0x10, 0x02, 0x00, 0x00, 0x00 };
+    entry.mScript.references = { bunkerDoorId };
+    quest.mStages.push_back({ .mIndex = 110, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference bunkerDoor;
+    bunkerDoor.mId = bunkerDoorId;
+    bunkerDoor.mEditorId = "SLRemnantsBunkerDoor02Ref";
+    bunkerDoor.mLockLevel = 100;
+    store.overrideRecord(bunkerDoor);
+
+    MWWorld::ESM4QuestRuntime unhandledRuntime;
+    unhandledRuntime.initialize(store);
+    EXPECT_FALSE(unhandledRuntime.setStage(questId, 110));
+    const MWWorld::ESM4QuestState* unchanged = unhandledRuntime.search(questId);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+    EXPECT_FALSE(unchanged->mStageDone.at(110));
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    int liveLockLevel = 100;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands, &liveLockLevel](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            commands.emplace_back(command, target);
+            if (command != MWWorld::ESM4QuestReferenceCommand::Unlock || liveLockLevel <= 0)
+                return false;
+            liveLockLevel = -liveLockLevel;
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 110));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Unlock, bunkerDoorId },
+        }));
+    EXPECT_EQ(liveLockLevel, -100);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failedEffectRuntime;
+    failedEffectRuntime.setReferenceCommandHandler(
+        [](MWWorld::ESM4QuestReferenceCommand, ESM::FormId) { return false; });
+    failedEffectRuntime.initialize(store);
+    ASSERT_TRUE(failedEffectRuntime.setStage(questId, 110));
+    EXPECT_EQ(failedEffectRuntime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{ "Unlock FormId:0x15921a" }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
 {
     MWWorld::ESMStore store;

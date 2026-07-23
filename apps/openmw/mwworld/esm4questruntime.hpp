@@ -115,6 +115,7 @@ namespace MWWorld
     {
         Enable,
         Disable,
+        Unlock,
         EvaluatePackage,
     };
 
@@ -175,6 +176,7 @@ namespace MWWorld
             SetEnemy,
             Enable,
             Disable,
+            Unlock,
             AddItem,
             RemoveItem,
             EvaluatePackage,

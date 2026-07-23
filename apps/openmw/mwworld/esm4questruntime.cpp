@@ -409,7 +409,8 @@ namespace MWWorld
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
                 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
-                && instruction.opcode != 0x1071 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
+                && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd)
@@ -870,20 +871,24 @@ namespace MWWorld
                 command.mObjective = *amount;
                 prepared.mCommands.push_back(std::move(command));
             }
-            else if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022) // reference.Enable / Disable
+            else if (instruction.opcode == 0x1021 || instruction.opcode == 0x1022
+                || instruction.opcode == 0x1073) // reference.Enable / Disable / Unlock
             {
                 if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
                     || mStore == nullptr)
                     return false;
                 const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
-                const bool targetExists = mStore->get<ESM4::Reference>().search(target) != nullptr
+                const bool referenceExists = mStore->get<ESM4::Reference>().search(target) != nullptr;
+                const bool targetExists = referenceExists
                     || mStore->get<ESM4::ActorCharacter>().search(target) != nullptr
                     || mStore->get<ESM4::ActorCreature>().search(target) != nullptr;
-                if (!targetExists)
+                if (!targetExists || (instruction.opcode == 0x1073 && !referenceExists))
                     return false;
-                const CompiledQuestCommandType type = instruction.opcode == 0x1021
-                    ? CompiledQuestCommandType::Enable
-                    : CompiledQuestCommandType::Disable;
+                CompiledQuestCommandType type = CompiledQuestCommandType::Unlock;
+                if (instruction.opcode == 0x1021)
+                    type = CompiledQuestCommandType::Enable;
+                else if (instruction.opcode == 0x1022)
+                    type = CompiledQuestCommandType::Disable;
                 prepared.mCommands.push_back({ type, target });
             }
             else if (instruction.opcode == 0x1034) // reference.SayTo listener topic
@@ -1366,6 +1371,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
+            || command.mType == CompiledQuestCommandType::Unlock
             || command.mType == CompiledQuestCommandType::AddItem
             || command.mType == CompiledQuestCommandType::RemoveItem
             || command.mType == CompiledQuestCommandType::RewardXp)
@@ -1454,6 +1460,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetEnemy:
             case CompiledQuestCommandType::Enable:
             case CompiledQuestCommandType::Disable:
+            case CompiledQuestCommandType::Unlock:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -1631,6 +1638,11 @@ namespace MWWorld
                     command = "Disable ";
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::Disable, effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::Unlock:
+                    command = "Unlock ";
+                    executed = mReferenceCommandHandler
+                        && mReferenceCommandHandler(ESM4QuestReferenceCommand::Unlock, effect.mTarget);
                     break;
                 case CompiledQuestCommandType::AddItem:
                     command = "AddItem ";
@@ -1854,6 +1866,10 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Disable, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::Unlock:
+                            executed = mReferenceCommandHandler
+                                && mReferenceCommandHandler(ESM4QuestReferenceCommand::Unlock, command.mQuest);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -1886,6 +1902,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetEnemy
                             || command.mType == CompiledQuestCommandType::Enable
                             || command.mType == CompiledQuestCommandType::Disable
+                            || command.mType == CompiledQuestCommandType::Unlock
                             || command.mType == CompiledQuestCommandType::AddItem
                             || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp)
@@ -1905,6 +1922,8 @@ namespace MWWorld
                                 failure = "Enable " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::Disable)
                                 failure = "Disable " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::Unlock)
+                                failure = "Unlock " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::AddItem)
                                 failure = "AddItem " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "

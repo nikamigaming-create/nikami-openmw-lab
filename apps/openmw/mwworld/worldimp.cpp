@@ -785,6 +785,10 @@ namespace MWWorld
                     case ESM4QuestReferenceCommand::Disable:
                         disable(target);
                         break;
+                    case ESM4QuestReferenceCommand::Unlock:
+                        if (target.getCellRef().isLocked())
+                            target.getCellRef().unlock();
+                        break;
                     case ESM4QuestReferenceCommand::EvaluatePackage:
                         if (!MWClass::requestFnvAiPackageEvaluation(target))
                             return false;
