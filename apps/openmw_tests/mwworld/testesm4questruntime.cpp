@@ -1777,6 +1777,78 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactRetailGetStageComparisonFromCompiledByte
     run(100);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailObjectiveConditionalsFromCompiledBytecode)
+{
+    const auto runCompleted = [](bool completed) {
+        MWWorld::ESMStore store;
+        const ESM::FormId vms16bId{ .mIndex = 0x10e4d2, .mContentFile = 0 };
+        ESM4::Quest quest = makeQuest(vms16bId, "VMS16b");
+        quest.mObjectives.push_back({ .mIndex = 30, .mDescription = "Optional defense" });
+        ESM4::QuestStageEntry entry;
+        // Exact FalloutNV.esm VMS16b stage 70 frames for:
+        // if GetObjectiveCompleted VMS16b 30 == 0 / SetObjectiveDisplayed VMS16b 30 0 / endif.
+        const std::array<std::uint8_t, 52> retailScda{ 0x16, 0x00, 0x19, 0x00, 0x01, 0x00, 0x15,
+            0x00, 0x20, 0x58, 0xa4, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x1e,
+            0x00, 0x00, 0x00, 0x20, 0x30, 0x20, 0x3d, 0x3d, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00,
+            0x72, 0x01, 0x00, 0x6e, 0x1e, 0x00, 0x00, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x19,
+            0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.push_back(vms16bId);
+        quest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setObjectiveDisplayed(vms16bId, 30, true));
+        ASSERT_TRUE(runtime.setObjectiveCompleted(vms16bId, 30, completed));
+        ASSERT_TRUE(runtime.setStage(vms16bId, 70));
+        const MWWorld::ESM4QuestState* state = runtime.search(vms16bId);
+        ASSERT_NE(state, nullptr);
+        EXPECT_EQ((state->mObjectiveStatus.at(30) & MWWorld::ESM4QuestState::Objective_Displayed) != 0,
+            completed);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    const auto runDisplayed = [](bool displayed) {
+        MWWorld::ESMStore store;
+        const ESM::FormId vms31Id{ .mIndex = 0x1214ab, .mContentFile = 0 };
+        ESM4::Quest quest = makeQuest(vms31Id, "VMS31");
+        quest.mObjectives.push_back({ .mIndex = 20, .mDescription = "Search" });
+        quest.mObjectives.push_back({ .mIndex = 25, .mDescription = "Timed search" });
+        quest.mObjectives.push_back({ .mIndex = 60, .mDescription = "Report" });
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm VMS31 stage 60 entry 0, byte-for-byte.
+        const std::array<std::uint8_t, 85> retailScda{ 0xa2, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72,
+            0x01, 0x00, 0x6e, 0x14, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x16, 0x00,
+            0x14, 0x00, 0x01, 0x00, 0x10, 0x00, 0x20, 0x58, 0xa5, 0x11, 0x0a, 0x00, 0x02, 0x00,
+            0x72, 0x01, 0x00, 0x6e, 0x19, 0x00, 0x00, 0x00, 0xa2, 0x11, 0x0f, 0x00, 0x03, 0x00,
+            0x72, 0x01, 0x00, 0x6e, 0x19, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x19,
+            0x00, 0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x3c,
+            0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.push_back(vms31Id);
+        quest.mStages.push_back({ .mIndex = 60, .mEntries = { std::move(entry) } });
+        store.overrideRecord(quest);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setObjectiveDisplayed(vms31Id, 25, displayed));
+        ASSERT_TRUE(runtime.setStage(vms31Id, 60));
+        const MWWorld::ESM4QuestState* state = runtime.search(vms31Id);
+        ASSERT_NE(state, nullptr);
+        EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Completed, 0);
+        EXPECT_EQ((state->mObjectiveStatus.at(25) & MWWorld::ESM4QuestState::Objective_Completed) != 0,
+            displayed);
+        EXPECT_NE(state->mObjectiveStatus.at(60) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    runCompleted(false);
+    runCompleted(true);
+    runDisplayed(false);
+    runDisplayed(true);
+}
+
 TEST(ESM4QuestRuntimeTest, SurfacesUnsupportedCompiledOpcodeAndUsesWholeSourceFallback)
 {
     MWWorld::ESMStore store;

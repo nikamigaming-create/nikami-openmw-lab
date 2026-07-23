@@ -179,6 +179,8 @@ namespace MWWorld
             QuestVariable,
             GetStage,
             GetStageDone,
+            GetObjectiveCompleted,
+            GetObjectiveDisplayed,
         };
 
         enum class CompiledConditionComparison : std::uint8_t

@@ -484,6 +484,19 @@ namespace MWWorld
                         condition.mQuest = *quest;
                         condition.mStage = *stage;
                     }
+                    else if ((functionOpcode == 0x11a4 || functionOpcode == 0x11a5)
+                        && functionArguments.size() == 2)
+                    {
+                        const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
+                        const std::int32_t* objective = std::get_if<std::int32_t>(&functionArguments[1]);
+                        if (quest == nullptr || objective == nullptr)
+                            return false;
+                        condition.mValueType = functionOpcode == 0x11a4
+                            ? CompiledConditionValueType::GetObjectiveCompleted
+                            : CompiledConditionValueType::GetObjectiveDisplayed;
+                        condition.mQuest = *quest;
+                        condition.mStage = *objective;
+                    }
                     else
                     {
                         prepared.mUseSourceFallback = true;
@@ -1007,6 +1020,19 @@ namespace MWWorld
             {
                 const auto stage = found->second.mStageDone.find(static_cast<std::int16_t>(condition.mStage));
                 value = stage != found->second.mStageDone.end() && stage->second ? 1.f : 0.f;
+                break;
+            }
+            case CompiledConditionValueType::GetObjectiveCompleted:
+            case CompiledConditionValueType::GetObjectiveDisplayed:
+            {
+                const auto objective = found->second.mObjectiveStatus.find(condition.mStage);
+                if (objective == found->second.mObjectiveStatus.end())
+                    return std::nullopt;
+                const std::uint8_t flag
+                    = condition.mValueType == CompiledConditionValueType::GetObjectiveCompleted
+                    ? ESM4QuestState::Objective_Completed
+                    : ESM4QuestState::Objective_Displayed;
+                value = (objective->second & flag) != 0 ? 1.f : 0.f;
                 break;
             }
         }
