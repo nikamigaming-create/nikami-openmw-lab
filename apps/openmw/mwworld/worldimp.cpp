@@ -831,6 +831,25 @@ namespace MWWorld
                              << ESM::RefId(secondId).serializeText();
             return true;
         });
+        mESM4QuestRuntime.setSetEnemyHandler(
+            [this](ESM::FormId firstId, ESM::FormId secondId, bool firstNeutral, bool secondNeutral) {
+                const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+                const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+                if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                    return false;
+
+                ESM4::Faction first = *firstSource;
+                ESM4::Faction second = *secondSource;
+                if (!MWMechanics::setFalloutFactionsEnemy(first, second, firstNeutral, secondNeutral))
+                    return false;
+                mStore.overrideRecord(first);
+                mStore.overrideRecord(second);
+                Log(Debug::Info) << "FNV/ESM4 quest: SetEnemy factions="
+                                 << ESM::RefId(firstId).serializeText() << ","
+                                 << ESM::RefId(secondId).serializeText()
+                                 << " firstNeutral=" << firstNeutral << " secondNeutral=" << secondNeutral;
+                return true;
+            });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

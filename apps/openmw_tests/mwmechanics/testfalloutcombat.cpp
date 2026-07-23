@@ -277,6 +277,31 @@ namespace
             Reaction::Ally);
     }
 
+    TEST(FalloutCombatTest, SetEnemyAppliesDirectionalNeutralFlagsWithoutDuplicateRelations)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        ESM4::Faction goodsprings;
+        goodsprings.mId = id(0x00104c6e);
+        goodsprings.mRelations.push_back({ id(0x0001b2a4), 35, Reaction::Ally });
+        ESM4::Faction player;
+        player.mId = id(0x0001b2a4);
+        player.mRelations.push_back({ goodsprings.mId, -10, Reaction::Friend });
+
+        ASSERT_TRUE(MWMechanics::setFalloutFactionsEnemy(goodsprings, player, false, true));
+        ASSERT_EQ(goodsprings.mRelations.size(), 1);
+        EXPECT_EQ(goodsprings.mRelations[0].mModifier, 35);
+        EXPECT_EQ(goodsprings.mRelations[0].mGroupCombatReaction, Reaction::Enemy);
+        ASSERT_EQ(player.mRelations.size(), 1);
+        EXPECT_EQ(player.mRelations[0].mModifier, -10);
+        EXPECT_EQ(player.mRelations[0].mGroupCombatReaction, Reaction::Neutral);
+
+        ASSERT_TRUE(MWMechanics::setFalloutFactionsEnemy(goodsprings, player, true, true));
+        EXPECT_EQ(goodsprings.mRelations.size(), 1);
+        EXPECT_EQ(player.mRelations.size(), 1);
+        EXPECT_EQ(goodsprings.mRelations[0].mGroupCombatReaction, Reaction::Neutral);
+        EXPECT_EQ(player.mRelations[0].mGroupCombatReaction, Reaction::Neutral);
+    }
+
     TEST(FalloutCombatTest, SelectsFirstAvailableAmmoInAuthoredListOrder)
     {
         const std::array candidates{ id(0x10), id(0x20), id(0x30) };

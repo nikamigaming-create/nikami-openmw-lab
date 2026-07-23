@@ -84,8 +84,33 @@ namespace
         if (second.toUint32() < first.toUint32())
             std::swap(first, second);
         const std::pair pair{ first, second };
+        std::erase_if(state.mEnemies, [first, second](const MWWorld::ESM4QuestState::EnemyRelation& value) {
+            return value.mFirst == first && value.mSecond == second;
+        });
         if (std::find(state.mAllies.begin(), state.mAllies.end(), pair) == state.mAllies.end())
             state.mAllies.push_back(pair);
+    }
+
+    void recordEnemyRelation(MWWorld::ESM4QuestState& state, ESM::FormId first, ESM::FormId second,
+        bool firstTreatsSecondAsNeutral, bool secondTreatsFirstAsNeutral)
+    {
+        if (second.toUint32() < first.toUint32())
+        {
+            std::swap(first, second);
+            std::swap(firstTreatsSecondAsNeutral, secondTreatsFirstAsNeutral);
+        }
+        const auto found = std::find_if(state.mEnemies.begin(), state.mEnemies.end(),
+            [first, second](const MWWorld::ESM4QuestState::EnemyRelation& value) {
+                return value.mFirst == first && value.mSecond == second;
+            });
+        const MWWorld::ESM4QuestState::EnemyRelation relation{
+            first, second, firstTreatsSecondAsNeutral, secondTreatsFirstAsNeutral
+        };
+        std::erase(state.mAllies, std::pair{ first, second });
+        if (found == state.mEnemies.end())
+            state.mEnemies.push_back(relation);
+        else
+            *found = relation;
     }
 
     bool isControlKeyword(std::string_view line, std::string_view keyword, bool allowOpeningParenthesis = false)
@@ -133,6 +158,7 @@ namespace MWWorld
         mUnsupportedCompiledOpcodes.clear();
         mUnsupportedConditionFunctions.clear();
         mReferenceIds.clear();
+        mFactionIds.clear();
     }
 
     bool ESM4QuestRuntime::loadSavedProgress(const ESM4SavedQuestProgress& progress, std::string* error)
@@ -372,7 +398,8 @@ namespace MWWorld
             if (instruction.opcode != 0x0015 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
-                && instruction.opcode != 0x1071 && instruction.opcode != 0x1079 && instruction.opcode != 0x11a2
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
+                && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
             {
                 prepared.mUseSourceFallback = true;
@@ -480,6 +507,37 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetAlly;
                 command.mQuest = *first;
                 command.mTarget = *second;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1078) // SetEnemy Faction Faction [firstNeutral] [secondNeutral]
+            {
+                if (instruction.callingReferenceIndex || (arguments.size() != 2 && arguments.size() != 4)
+                    || !mSetEnemyHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId* first = std::get_if<ESM::FormId>(&arguments[0]);
+                const ESM::FormId* second = std::get_if<ESM::FormId>(&arguments[1]);
+                std::int32_t firstNeutral = 0;
+                std::int32_t secondNeutral = 0;
+                if (arguments.size() == 4)
+                {
+                    const std::int32_t* firstFlag = std::get_if<std::int32_t>(&arguments[2]);
+                    const std::int32_t* secondFlag = std::get_if<std::int32_t>(&arguments[3]);
+                    if (firstFlag == nullptr || secondFlag == nullptr
+                        || (*firstFlag != 0 && *firstFlag != 1) || (*secondFlag != 0 && *secondFlag != 1))
+                        return false;
+                    firstNeutral = *firstFlag;
+                    secondNeutral = *secondFlag;
+                }
+                if (first == nullptr || second == nullptr || first->isZeroOrUnset() || second->isZeroOrUnset()
+                    || *first == *second || mStore->get<ESM4::Faction>().search(ESM::RefId(*first)) == nullptr
+                    || mStore->get<ESM4::Faction>().search(ESM::RefId(*second)) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetEnemy;
+                command.mQuest = *first;
+                command.mTarget = *second;
+                command.mValue = firstNeutral != 0;
+                command.mSecondaryValue = secondNeutral != 0;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x105e) // EvaluatePackage / evp
@@ -756,6 +814,7 @@ namespace MWWorld
                 return true;
             }
             case CompiledQuestCommandType::SetAlly:
+            case CompiledQuestCommandType::SetEnemy:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
@@ -810,11 +869,16 @@ namespace MWWorld
             executedEntry = true;
             for (const CompiledQuestCommand& command : prepared.mCommands)
             {
-                if (command.mType == CompiledQuestCommandType::SetAlly)
+                if (command.mType == CompiledQuestCommandType::SetAlly
+                    || command.mType == CompiledQuestCommandType::SetEnemy)
                 {
-                    recordAllyPair(state, command.mQuest, command.mTarget);
-                    working.mExternalEffects.push_back(
-                        { command.mType, command.mQuest, command.mTarget, command.mTopic });
+                    if (command.mType == CompiledQuestCommandType::SetAlly)
+                        recordAllyPair(state, command.mQuest, command.mTarget);
+                    else
+                        recordEnemyRelation(
+                            state, command.mQuest, command.mTarget, command.mValue, command.mSecondaryValue);
+                    working.mExternalEffects.push_back({ command.mType, command.mQuest, command.mTarget,
+                        command.mTopic, command.mValue, command.mSecondaryValue });
                     continue;
                 }
                 if (!executePureCompiledCommand(command, working))
@@ -898,6 +962,12 @@ namespace MWWorld
                 case CompiledQuestCommandType::SetAlly:
                     command = "SetAlly ";
                     executed = mSetAllyHandler && mSetAllyHandler(effect.mTarget, effect.mListener);
+                    break;
+                case CompiledQuestCommandType::SetEnemy:
+                    command = "SetEnemy ";
+                    executed = mSetEnemyHandler
+                        && mSetEnemyHandler(
+                            effect.mTarget, effect.mListener, effect.mValue, effect.mSecondaryValue);
                     break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
@@ -1006,7 +1076,7 @@ namespace MWWorld
                                     << " stage=" << static_cast<unsigned int>(stageIndex);
             }
             if (preparedEntry.mScript.mUseSourceFallback)
-                executeStageSource(entry.mScript.scriptSource);
+                executeStageSource(entry.mScript.scriptSource, state);
             else
             {
                 for (const CompiledQuestCommand& command : preparedEntry.mScript.mCommands)
@@ -1047,6 +1117,14 @@ namespace MWWorld
                             if (executed)
                                 recordAllyPair(*state, command.mQuest, command.mTarget);
                             break;
+                        case CompiledQuestCommandType::SetEnemy:
+                            executed = mSetEnemyHandler
+                                && mSetEnemyHandler(command.mQuest, command.mTarget, command.mValue,
+                                    command.mSecondaryValue);
+                            if (executed)
+                                recordEnemyRelation(
+                                    *state, command.mQuest, command.mTarget, command.mValue, command.mSecondaryValue);
+                            break;
                         case CompiledQuestCommandType::EvaluatePackage:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
@@ -1064,7 +1142,8 @@ namespace MWWorld
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SayTo
-                            || command.mType == CompiledQuestCommandType::SetAlly)
+                            || command.mType == CompiledQuestCommandType::SetAlly
+                            || command.mType == CompiledQuestCommandType::SetEnemy)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -1073,6 +1152,9 @@ namespace MWWorld
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetEnemy)
+                                failure = "SetEnemy " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
@@ -1297,7 +1379,7 @@ namespace MWWorld
                    [](const auto& value) { return value.second != 0; })
             || std::any_of(state.mVariables.begin(), state.mVariables.end(),
                 [](const auto& value) { return value.second != 0.f; })
-            || !state.mAllies.empty();
+            || !state.mAllies.empty() || !state.mEnemies.empty();
     }
 
     int ESM4QuestRuntime::countSavedGameRecords() const
@@ -1347,6 +1429,14 @@ namespace MWWorld
             {
                 writer.writeFormId(first, true, "ALF1");
                 writer.writeFormId(second, true, "ALF2");
+            }
+            writer.writeHNT("ENCT", static_cast<std::uint32_t>(state.mEnemies.size()));
+            for (const ESM4QuestState::EnemyRelation& relation : state.mEnemies)
+            {
+                writer.writeFormId(relation.mFirst, true, "ENF1");
+                writer.writeFormId(relation.mSecond, true, "ENF2");
+                writer.writeHNT("ENR1", static_cast<std::uint8_t>(relation.mFirstTreatsSecondAsNeutral));
+                writer.writeHNT("ENR2", static_cast<std::uint8_t>(relation.mSecondTreatsFirstAsNeutral));
             }
             writer.endRecord(ESM::REC_FQST);
         }
@@ -1410,6 +1500,31 @@ namespace MWWorld
             }
         }
 
+        std::vector<ESM4QuestState::EnemyRelation> enemies;
+        if (reader.isNextSub("ENCT"))
+        {
+            std::uint32_t enemyCount = 0;
+            reader.getHT(enemyCount);
+            if (enemyCount > 65536)
+                throw std::runtime_error("Fallout quest save has an invalid enemy-faction count");
+            enemies.reserve(enemyCount);
+            for (std::uint32_t i = 0; i < enemyCount; ++i)
+            {
+                ESM::FormId first = reader.getFormId(true, "ENF1");
+                ESM::FormId second = reader.getFormId(true, "ENF2");
+                std::uint8_t firstNeutral = 0;
+                std::uint8_t secondNeutral = 0;
+                reader.getHNT(firstNeutral, "ENR1");
+                reader.getHNT(secondNeutral, "ENR2");
+                if (firstNeutral > 1 || secondNeutral > 1)
+                    throw std::runtime_error("Fallout quest save has an invalid enemy-faction reaction");
+                const bool firstAvailable = reader.applyContentFileMapping(first);
+                const bool secondAvailable = reader.applyContentFileMapping(second);
+                if (firstAvailable && secondAvailable)
+                    enemies.push_back({ first, second, firstNeutral != 0, secondNeutral != 0 });
+            }
+        }
+
         const auto found = contentAvailable ? mStates.find(id) : mStates.end();
         ESM4QuestState* state = found != mStates.end() ? &found->second : nullptr;
         if (state == nullptr)
@@ -1432,6 +1547,19 @@ namespace MWWorld
                 || !mSetAllyHandler(first, second))
                 throw std::runtime_error("Fallout quest save could not restore an allied-faction relation");
             recordAllyPair(*state, first, second);
+        }
+        state->mEnemies.clear();
+        for (const ESM4QuestState::EnemyRelation& relation : enemies)
+        {
+            if (mStore == nullptr
+                || mStore->get<ESM4::Faction>().search(ESM::RefId(relation.mFirst)) == nullptr
+                || mStore->get<ESM4::Faction>().search(ESM::RefId(relation.mSecond)) == nullptr
+                || !mSetEnemyHandler
+                || !mSetEnemyHandler(relation.mFirst, relation.mSecond,
+                    relation.mFirstTreatsSecondAsNeutral, relation.mSecondTreatsFirstAsNeutral))
+                throw std::runtime_error("Fallout quest save could not restore an enemy-faction relation");
+            recordEnemyRelation(*state, relation.mFirst, relation.mSecond,
+                relation.mFirstTreatsSecondAsNeutral, relation.mSecondTreatsFirstAsNeutral);
         }
         for (auto& [_, value] : state->mVariables)
             value = 0.f;
@@ -1626,6 +1754,28 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveFaction(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mFactionIds.find(key); cached != mFactionIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Faction& faction : mStore->get<ESM4::Faction>())
+            {
+                if (Misc::StringUtils::ciEqual(faction.mEditorId, id))
+                {
+                    result = faction.mId;
+                    break;
+                }
+            }
+        }
+        mFactionIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -1634,7 +1784,7 @@ namespace MWWorld
         return mReferenceCommandHandler(command, reference);
     }
 
-    void ESM4QuestRuntime::executeStageSource(std::string_view source)
+    void ESM4QuestRuntime::executeStageSource(std::string_view source, ESM4QuestState* ownerState)
     {
         std::istringstream stream{ std::string(source) };
         for (std::string line; std::getline(stream, line);)
@@ -1691,6 +1841,39 @@ namespace MWWorld
             else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "ForceActiveQuest")
                 && forceActiveQuest(tokens[1]))
                 continue;
+            else if ((tokens.size() == 3 || tokens.size() == 5)
+                && Misc::StringUtils::ciEqual(tokens[0], "SetEnemy"))
+            {
+                const ESM::FormId first = resolveFaction(tokens[1]);
+                const ESM::FormId second = resolveFaction(tokens[2]);
+                std::int32_t firstNeutral = 0;
+                std::int32_t secondNeutral = 0;
+                const bool flagsValid = tokens.size() == 3
+                    || (parseInt(tokens[3], firstNeutral) && parseInt(tokens[4], secondNeutral)
+                        && (firstNeutral == 0 || firstNeutral == 1)
+                        && (secondNeutral == 0 || secondNeutral == 1));
+                if (flagsValid && !first.isZeroOrUnset() && !second.isZeroOrUnset() && first != second
+                    && mSetEnemyHandler
+                    && mSetEnemyHandler(first, second, firstNeutral != 0, secondNeutral != 0))
+                {
+                    if (ownerState != nullptr)
+                        recordEnemyRelation(
+                            *ownerState, first, second, firstNeutral != 0, secondNeutral != 0);
+                    continue;
+                }
+            }
+            else if (tokens.size() == 3 && Misc::StringUtils::ciEqual(tokens[0], "SetAlly"))
+            {
+                const ESM::FormId first = resolveFaction(tokens[1]);
+                const ESM::FormId second = resolveFaction(tokens[2]);
+                if (!first.isZeroOrUnset() && !second.isZeroOrUnset() && first != second && mSetAllyHandler
+                    && mSetAllyHandler(first, second))
+                {
+                    if (ownerState != nullptr)
+                        recordAllyPair(*ownerState, first, second);
+                    continue;
+                }
+            }
             else
             {
                 const std::size_t separator = tokens[0].rfind('.');

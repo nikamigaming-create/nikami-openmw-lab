@@ -294,6 +294,155 @@ TEST(ESM4QuestRuntimeTest, MissingSetAllyFactionFailsBeforeQuestMutation)
     EXPECT_EQ(calls, 0);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesRetailVms16SetEnemyFramesWithDirectionalFlags)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x104eae, .mContentFile = 0 };
+    const ESM::FormId goodspringsId{ .mIndex = 0x104c6e, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x01b2a4, .mContentFile = 0 };
+    const ESM::FormId ringoAlliesId{ .mIndex = 0x15f8db, .mContentFile = 0 };
+    const ESM::FormId powderGangId{ .mIndex = 0x104c7e, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS16");
+    ESM4::QuestStageEntry allyEntry;
+    allyEntry.mScript.compiledData
+        = { 0x79, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x72, 0x02, 0x00 };
+    allyEntry.mScript.references = { goodspringsId, playerId };
+    quest.mStages.push_back({ .mIndex = 60, .mEntries = { std::move(allyEntry) } });
+    ESM4::QuestStageEntry fightEntry;
+    // The two exact SetEnemy frames from retail VMS16 stage 70. Omitted flags default both directions to Enemy.
+    fightEntry.mScript.compiledData = {
+        0x78, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x0c, 0x00, 0x72, 0x0b, 0x00,
+        0x78, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x0c, 0x00, 0x72, 0x0a, 0x00,
+    };
+    fightEntry.mScript.references.resize(12);
+    fightEntry.mScript.references[9] = playerId;
+    fightEntry.mScript.references[10] = ringoAlliesId;
+    fightEntry.mScript.references[11] = powderGangId;
+    quest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(fightEntry) } });
+
+    ESM4::QuestStageEntry outcomeEntry;
+    // The two exact SetEnemy frames from retail VMS16 stage 100. Its authored 1,1 flags make both directions Neutral.
+    outcomeEntry.mScript.compiledData = {
+        0x78, 0x10, 0x12, 0x00, 0x04, 0x00, 0x72, 0x08, 0x00, 0x72, 0x09, 0x00, 0x6e, 0x01, 0x00, 0x00,
+        0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x78, 0x10, 0x12, 0x00, 0x04, 0x00, 0x72, 0x0a, 0x00, 0x72, 0x09, 0x00, 0x6e, 0x01, 0x00, 0x00,
+        0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    outcomeEntry.mScript.references.resize(10);
+    outcomeEntry.mScript.references[7] = goodspringsId;
+    outcomeEntry.mScript.references[8] = playerId;
+    outcomeEntry.mScript.references[9] = ringoAlliesId;
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { std::move(outcomeEntry) } });
+    store.overrideRecord(quest);
+
+    for (const auto& [id, editorId] : std::array{
+             std::pair{ goodspringsId, "GoodspringsFaction" },
+             std::pair{ playerId, "PlayerFaction" },
+             std::pair{ ringoAlliesId, "GoodspringsRingoAlliesFaction" },
+             std::pair{ powderGangId, "GoodspringsPowderGangFaction" },
+         })
+    {
+        ESM4::Faction faction;
+        faction.mId = id;
+        faction.mEditorId = editorId;
+        store.overrideRecord(faction);
+    }
+
+    std::vector<MWWorld::ESM4QuestState::EnemyRelation> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSetAllyHandler([](ESM::FormId, ESM::FormId) { return true; });
+    runtime.setSetEnemyHandler(
+        [&calls](ESM::FormId first, ESM::FormId second, bool firstNeutral, bool secondNeutral) {
+            calls.push_back({ first, second, firstNeutral, secondNeutral });
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 60));
+    ASSERT_TRUE(runtime.setStage(questId, 70));
+    ASSERT_TRUE(runtime.setStage(questId, 100));
+    EXPECT_EQ(calls,
+        (std::vector<MWWorld::ESM4QuestState::EnemyRelation>{
+            { powderGangId, ringoAlliesId, false, false },
+            { powderGangId, playerId, false, false },
+            { goodspringsId, playerId, true, true },
+            { ringoAlliesId, playerId, true, true },
+        }));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mEnemies.size(), 4);
+    EXPECT_TRUE(state->mAllies.empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesVms16FactionSetupFromWholeSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x104eae, .mContentFile = 0 };
+    const ESM::FormId goodspringsId{ .mIndex = 0x104c6e, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x01b2a4, .mContentFile = 0 };
+    const ESM::FormId ringoAlliesId{ .mIndex = 0x15f8db, .mContentFile = 0 };
+    const ESM::FormId powderGangId{ .mIndex = 0x104c7e, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS16");
+    ESM4::QuestStageEntry entry;
+    // Exact retail VMS16 stage 70 SetUnconscious frame keeps this entry on the whole-SCTX path while its
+    // independently supported faction commands execute from the authored source.
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0xf1, 0x10, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    entry.mScript.references = { ESM::FormId{ .mIndex = 0x1073e8, .mContentFile = 0 } };
+    entry.mScript.scriptSource = "SetAlly GoodspringsFaction PlayerFaction\r\n"
+                                 "SetAlly GoodspringsRingoAlliesFaction PlayerFaction\r\n"
+                                 "SetEnemy GoodspringsPowderGangFaction GoodspringsRingoAlliesFaction\r\n"
+                                 "SetEnemy GoodspringsPowderGangFaction PlayerFaction";
+    quest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+    for (const auto& [id, editorId] : std::array{
+             std::pair{ goodspringsId, "GoodspringsFaction" },
+             std::pair{ playerId, "PlayerFaction" },
+             std::pair{ ringoAlliesId, "GoodspringsRingoAlliesFaction" },
+             std::pair{ powderGangId, "GoodspringsPowderGangFaction" },
+         })
+    {
+        ESM4::Faction faction;
+        faction.mId = id;
+        faction.mEditorId = editorId;
+        store.overrideRecord(faction);
+    }
+
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> allies;
+    std::vector<MWWorld::ESM4QuestState::EnemyRelation> enemies;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSetAllyHandler([&allies](ESM::FormId first, ESM::FormId second) {
+        allies.emplace_back(first, second);
+        return true;
+    });
+    runtime.setSetEnemyHandler(
+        [&enemies](ESM::FormId first, ESM::FormId second, bool firstNeutral, bool secondNeutral) {
+            enemies.push_back({ first, second, firstNeutral, secondNeutral });
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 70));
+    EXPECT_EQ(allies,
+        (std::vector<std::pair<ESM::FormId, ESM::FormId>>{
+            { goodspringsId, playerId }, { ringoAlliesId, playerId } }));
+    EXPECT_EQ(enemies,
+        (std::vector<MWWorld::ESM4QuestState::EnemyRelation>{
+            { powderGangId, ringoAlliesId, false, false },
+            { powderGangId, playerId, false, false },
+        }));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mAllies.size(), 2);
+    EXPECT_EQ(state->mEnemies.size(), 2);
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0x10f1 }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RoundTripsSetAllyAcrossChangedLoadOrder)
 {
     const ESM::FormId originalQuestId{ .mIndex = 0x100, .mContentFile = 2 };
@@ -367,6 +516,82 @@ TEST(ESM4QuestRuntimeTest, RoundTripsSetAllyAcrossChangedLoadOrder)
         (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { remappedFirstId, remappedSecondId } }));
     EXPECT_EQ(restoredAllies,
         (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { remappedFirstId, remappedSecondId } }));
+}
+
+TEST(ESM4QuestRuntimeTest, RoundTripsSetEnemyAcrossChangedLoadOrder)
+{
+    const ESM::FormId originalQuestId{ .mIndex = 0x100, .mContentFile = 2 };
+    const ESM::FormId originalFirstId{ .mIndex = 0x200, .mContentFile = 2 };
+    const ESM::FormId originalSecondId{ .mIndex = 0x300, .mContentFile = 2 };
+    ESM4::Quest originalQuest = makeQuest(originalQuestId, "SetEnemySave");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0x78, 0x10, 0x12, 0x00, 0x04, 0x00, 0x72, 0x01, 0x00, 0x72, 0x02,
+        0x00, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    entry.mScript.references = { originalFirstId, originalSecondId };
+    originalQuest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(entry) } });
+
+    MWWorld::ESMStore originalStore;
+    originalStore.overrideRecord(originalQuest);
+    ESM4::Faction originalFirst;
+    originalFirst.mId = originalFirstId;
+    originalStore.overrideRecord(originalFirst);
+    ESM4::Faction originalSecond;
+    originalSecond.mId = originalSecondId;
+    originalStore.overrideRecord(originalSecond);
+    MWWorld::ESM4QuestRuntime originalRuntime;
+    originalRuntime.setSetEnemyHandler([](ESM::FormId, ESM::FormId, bool, bool) { return true; });
+    originalRuntime.initialize(originalStore);
+    ASSERT_TRUE(originalRuntime.setStage(originalQuestId, 70));
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        originalRuntime.write(writer);
+    }
+
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-setenemy-save");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FQST);
+    reader.getRecHeader();
+
+    const ESM::FormId remappedQuestId{ .mIndex = 0x100, .mContentFile = 7 };
+    const ESM::FormId remappedFirstId{ .mIndex = 0x200, .mContentFile = 7 };
+    const ESM::FormId remappedSecondId{ .mIndex = 0x300, .mContentFile = 7 };
+    ESM4::Quest remappedQuest = originalQuest;
+    remappedQuest.mId = remappedQuestId;
+    remappedQuest.mStages[0].mEntries[0].mScript.references = { remappedFirstId, remappedSecondId };
+    MWWorld::ESMStore remappedStore;
+    remappedStore.overrideRecord(remappedQuest);
+    ESM4::Faction remappedFirst;
+    remappedFirst.mId = remappedFirstId;
+    remappedStore.overrideRecord(remappedFirst);
+    ESM4::Faction remappedSecond;
+    remappedSecond.mId = remappedSecondId;
+    remappedStore.overrideRecord(remappedSecond);
+
+    std::vector<MWWorld::ESM4QuestState::EnemyRelation> restoredEnemies;
+    MWWorld::ESM4QuestRuntime restoredRuntime;
+    restoredRuntime.setSetEnemyHandler(
+        [&restoredEnemies](ESM::FormId first, ESM::FormId second, bool firstNeutral, bool secondNeutral) {
+            restoredEnemies.push_back({ first, second, firstNeutral, secondNeutral });
+            return true;
+        });
+    restoredRuntime.initialize(remappedStore);
+    restoredRuntime.readRecord(reader);
+
+    const MWWorld::ESM4QuestState* restored = restoredRuntime.search(remappedQuestId);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_EQ(restored->mCurrentStage, 70);
+    EXPECT_TRUE(restored->mStageDone.at(70));
+    EXPECT_EQ(restored->mEnemies,
+        (std::vector<MWWorld::ESM4QuestState::EnemyRelation>{
+            { remappedFirstId, remappedSecondId, false, true } }));
+    EXPECT_EQ(restoredEnemies, restored->mEnemies);
 }
 
 TEST(ESM4QuestRuntimeTest, ReadsLegacyQuestStateWithoutAllianceExtension)

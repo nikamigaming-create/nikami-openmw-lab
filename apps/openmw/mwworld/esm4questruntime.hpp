@@ -34,6 +34,16 @@ namespace MWWorld
 
     struct ESM4QuestState
     {
+        struct EnemyRelation
+        {
+            ESM::FormId mFirst;
+            ESM::FormId mSecond;
+            bool mFirstTreatsSecondAsNeutral = false;
+            bool mSecondTreatsFirstAsNeutral = false;
+
+            bool operator==(const EnemyRelation&) const = default;
+        };
+
         enum Flag : std::uint8_t
         {
             Flag_Running = 0x01,
@@ -57,6 +67,7 @@ namespace MWWorld
         std::map<std::int32_t, std::uint8_t> mObjectiveStatus;
         std::map<std::string, float, std::less<>> mVariables;
         std::vector<std::pair<ESM::FormId, ESM::FormId>> mAllies;
+        std::vector<EnemyRelation> mEnemies;
     };
 
     struct ESM4SavedQuestProgress
@@ -114,6 +125,7 @@ namespace MWWorld
         using MessageHandler = std::function<bool(ESM::FormId)>;
         using SayToHandler = std::function<bool(ESM::FormId, ESM::FormId, ESM::FormId)>;
         using SetAllyHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
+        using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -126,10 +138,12 @@ namespace MWWorld
         std::vector<std::uint16_t> mUnsupportedCompiledOpcodes;
         std::vector<std::uint32_t> mUnsupportedConditionFunctions;
         std::unordered_map<std::string, ESM::FormId> mReferenceIds;
+        std::unordered_map<std::string, ESM::FormId> mFactionIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
         SetAllyHandler mSetAllyHandler;
+        SetEnemyHandler mSetEnemyHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -142,6 +156,7 @@ namespace MWWorld
             ForceActiveQuest,
             SetVariable,
             SetAlly,
+            SetEnemy,
             EvaluatePackage,
             ShowMessage,
             SayTo,
@@ -158,6 +173,7 @@ namespace MWWorld
             ESM::FormId mTopic{};
             std::string mVariable;
             float mNumber = 0.f;
+            bool mSecondaryValue = false;
         };
 
         struct CompiledStageScript
@@ -190,6 +206,8 @@ namespace MWWorld
             ESM::FormId mTarget{};
             ESM::FormId mListener{};
             ESM::FormId mTopic{};
+            bool mValue = false;
+            bool mSecondaryValue = false;
         };
 
         struct CompiledStageWorkingState
@@ -223,8 +241,9 @@ namespace MWWorld
         void flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects);
         std::optional<bool> evaluateResultCondition(std::string_view expression) const;
         ESM::FormId resolveReference(std::string_view id);
+        ESM::FormId resolveFaction(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
-        void executeStageSource(std::string_view source);
+        void executeStageSource(std::string_view source, ESM4QuestState* ownerState = nullptr);
 
     public:
         void initialize(const ESMStore& store, const Globals* globals = nullptr);
@@ -236,6 +255,7 @@ namespace MWWorld
         void setMessageHandler(MessageHandler handler) { mMessageHandler = std::move(handler); }
         void setSayToHandler(SayToHandler handler) { mSayToHandler = std::move(handler); }
         void setSetAllyHandler(SetAllyHandler handler) { mSetAllyHandler = std::move(handler); }
+        void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.
