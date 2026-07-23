@@ -842,9 +842,12 @@ namespace
         ESM4::FONVSaveWorldReferenceFlags result;
         result.mResolvedFormId = *reference.mResolvedFormId;
         result.mChangeType = reference.mChangeType;
-        result.mProcessLevel = readDelimitedField<std::int8_t>(cursor, data,
-            [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
-            "world-reference process level");
+        if (reference.mChangeType == 1 || reference.mChangeType == 2)
+        {
+            result.mProcessLevel = readDelimitedField<std::int8_t>(cursor, data,
+                [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
+                "world-reference process level");
+        }
         result.mFlags = readDelimitedField<std::uint32_t>(cursor, data,
             [&](std::string_view label) { return cursor.readU32(label); }, "world-reference form flags");
         result.mRange = range(stateBegin, cursor.position());
@@ -2435,7 +2438,7 @@ namespace ESM4
         constexpr std::uint32_t changeFormFlags = 0x00000001u;
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if ((entry.mChangeType != 1 && entry.mChangeType != 2)
+            if ((entry.mChangeType != 0 && entry.mChangeType != 1 && entry.mChangeType != 2)
                 || entry.mResolvedFormId == sFONVPlayerReferenceFormId
                 || (entry.mChangeFlags.mValue & changeFormFlags) == 0
                 || (entry.mChangeFlags.mValue & changedCell) != 0)

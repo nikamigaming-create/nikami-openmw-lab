@@ -211,14 +211,14 @@ namespace ESM4
         FONVSaveReferenceMovement mMovement;
     };
 
-    // Exact CHANGE_FORM_FLAGS prefix inside the shared version-27 ChangedREFR block for non-player ACHR/ACRE.
-    // Process level is retained because it is the delimited field immediately preceding ChangedREFR; no broader
-    // process semantics are assigned to it here.
+    // Exact CHANGE_FORM_FLAGS prefix inside the version-27 ChangedREFR block for authored REFR/ACHR/ACRE records.
+    // Actors carry a delimited process-level field immediately before ChangedREFR; ordinary object references do
+    // not. No broader process semantics are assigned to that actor-only field here.
     struct FONVSaveWorldReferenceFlags
     {
         std::uint32_t mResolvedFormId = 0;
         std::uint8_t mChangeType = 0;
-        FONVSaveField<std::int8_t> mProcessLevel;
+        std::optional<FONVSaveField<std::int8_t>> mProcessLevel;
         FONVSaveField<std::uint32_t> mFlags;
         FONVSaveRange mRange;
         FONVSaveRawField mUnparsedRemainder;
@@ -1094,8 +1094,8 @@ namespace ESM4
         std::optional<FONVSaveSkyState> mSky;
         std::vector<FONVSaveQuestChange> mQuestChanges;
         std::vector<FONVSaveFactionChange> mFactionChanges;
-        // Exact initial-data type-4 movement prefixes for authored REFR/ACHR/ACRE records other than Player.
-        // The remaining per-record payload stays explicitly opaque.
+        // Exact initial-data type-4 movement and CHANGE_FORM_FLAGS prefixes for authored REFR/ACHR/ACRE records
+        // other than Player. The remaining per-record payload stays explicitly opaque.
         std::vector<FONVSaveWorldReferenceMovement> mWorldReferenceMovements;
         std::vector<FONVSaveWorldReferenceFlags> mWorldReferenceFlags;
 
