@@ -31,6 +31,7 @@
 namespace
 {
     using testing::Contains;
+    using testing::ElementsAre;
     using testing::ElementsAreArray;
     using testing::HasSubstr;
     using testing::Not;
@@ -930,6 +931,38 @@ namespace
         EXPECT_EQ(findProxyCount(form(0x0000431e, 1)), 14);
         EXPECT_EQ(findProxyCount(form(0x00015038, 1)), 1);
         EXPECT_EQ(findProxyCount(form(0x00025b83, 1)), 1);
+    }
+
+    TEST(FalloutPlayerStateTest, importsDecodedQuestRuntimeFlagsAndNumericVariables)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        const ESM::FormId playerId = form(7, 1);
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(playerId));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x14, 1));
+        ASSERT_TRUE(player) << player.mError;
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSaveQuestChange quest;
+        quest.mResolvedFormId = 0x00000043u;
+        quest.mQuestFlags = ESM4::FONVSaveField<std::uint8_t>{ .mValue = 0x21 };
+        ESM4::FONVSaveQuestScriptVariable variable;
+        variable.mFlagAndVariableId.mValue = 7;
+        variable.mNumericValue = ESM4::FONVSaveField<double>{ .mValue = 42.25 };
+        quest.mVariables.push_back(std::move(variable));
+        save.mQuestChanges.push_back(std::move(quest));
+
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = resolveSavePlan(save, &*player.mState, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        ASSERT_TRUE(resolution.mPlan->mQuestProgress);
+        EXPECT_THAT(resolution.mPlan->mQuestProgress->mStates,
+            ElementsAre(MWWorld::ESM4SavedQuestProgress::State{ form(0x43, 1), 0x21 }));
+        EXPECT_THAT(resolution.mPlan->mQuestProgress->mVariables,
+            ElementsAre(MWWorld::ESM4SavedQuestProgress::Variable{ form(0x43, 1), 7, 42.25f }));
+        EXPECT_THAT(resolution.mPlan->mUncoveredState, Not(Contains("quest-variables")));
+        EXPECT_THAT(resolution.mPlan->mUncoveredState, Not(Contains("quest-reference-variables")));
     }
 
     TEST(FalloutPlayerStateTest, mergesAuthoredInventoryWithSignedSaveDeltasWithoutDuplicatingBaseCounts)

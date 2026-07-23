@@ -936,18 +936,29 @@ TEST(ESM4QuestRuntimeTest, ImportsRetailSaveProgressTransactionallyWithoutExecut
 {
     MWWorld::ESMStore store;
     const ESM::FormId questId{ .mIndex = 0x5229, .mContentFile = 1 };
+    const ESM::FormId scriptId{ .mIndex = 0x522a, .mContentFile = 1 };
     ESM4::Quest quest = makeQuest(questId, "SaveQuest");
+    quest.mQuestScript = scriptId;
     quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Read the imported objective" });
     ESM4::QuestStageEntry stageEntry;
     stageEntry.mScript.scriptSource = "SetObjectiveCompleted SaveQuest 10 1";
     quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(stageEntry) } });
     store.overrideRecord(quest);
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 7, .variableName = "iDialoguePath" } };
+    store.overrideRecord(script);
 
     MWWorld::ESM4QuestRuntime runtime;
     runtime.initialize(store);
     MWWorld::ESM4SavedQuestProgress progress;
+    progress.mStates.push_back({ questId, 0 });
     progress.mStages.push_back({ questId, 5, 1 });
-    progress.mObjectives.push_back({ questId, 10 });
+    progress.mObjectives.push_back(
+        { questId, 10, MWWorld::ESM4QuestState::Objective_Displayed
+                | MWWorld::ESM4QuestState::Objective_Completed });
+    progress.mVariables.push_back({ questId, 7, 42.25f });
     progress.mActiveQuest = questId;
 
     std::string error;
@@ -957,16 +968,20 @@ TEST(ESM4QuestRuntimeTest, ImportsRetailSaveProgressTransactionallyWithoutExecut
     EXPECT_EQ(state->mFlags, 0x21);
     EXPECT_EQ(state->mCurrentStage, 5);
     EXPECT_TRUE(state->mStageDone.at(5));
-    EXPECT_EQ(state->mObjectiveStatus.at(10), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(state->mObjectiveStatus.at(10),
+        MWWorld::ESM4QuestState::Objective_Displayed | MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_EQ(runtime.getQuestVariable("SaveQuest", "iDialoguePath"), 42.25f);
     EXPECT_EQ(runtime.getActiveQuest(), questId);
 
     MWWorld::ESM4SavedQuestProgress invalid = progress;
-    invalid.mObjectives.front().mObjective = 99;
+    invalid.mVariables.front().mIndex = 99;
     EXPECT_FALSE(runtime.loadSavedProgress(invalid, &error));
     EXPECT_FALSE(error.empty());
     state = runtime.search(questId);
     ASSERT_NE(state, nullptr);
-    EXPECT_EQ(state->mObjectiveStatus.at(10), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(state->mObjectiveStatus.at(10),
+        MWWorld::ESM4QuestState::Objective_Displayed | MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_EQ(runtime.getQuestVariable("SaveQuest", "iDialoguePath"), 42.25f);
     EXPECT_EQ(runtime.getActiveQuest(), questId);
 }
 

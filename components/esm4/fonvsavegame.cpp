@@ -71,6 +71,13 @@ namespace
 
         float readF32(std::string_view description) { return std::bit_cast<float>(readU32(description)); }
 
+        double readF64(std::string_view description)
+        {
+            const std::uint64_t low = readU32(description);
+            const std::uint64_t high = readU32(description);
+            return std::bit_cast<double>(low | (high << 32));
+        }
+
         std::uint32_t peekU32(std::string_view description)
         {
             const std::size_t saved = mPosition;
@@ -463,6 +470,164 @@ namespace
         ESM4::FONVSaveResolvedReferenceId result
             = decodeResolvedReferenceId(cursor, data, formIds, description, allowNull, allowEmptyArraySlot);
         cursor.expectDelimiter(description);
+        return result;
+    }
+
+    ESM4::FONVSaveQuestStageLog parseQuestStageLog(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSaveQuestStageLog result;
+        result.mLogEntry = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "quest-stage log-entry ID");
+        result.mHasLogData = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "quest-stage has-log-data");
+        if (result.mHasLogData.mValue != 0)
+        {
+            result.mLogDataUnknown = readField<std::uint16_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU16(label); },
+                "quest-stage log-data unknown");
+            result.mLogDataValue = readDelimitedField<std::uint16_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU16(label); },
+                "quest-stage log-data value");
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSaveQuestStage parseQuestStage(Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSaveQuestStage result;
+        result.mStage = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "quest-stage ID");
+        result.mStatus = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "quest-stage status");
+        result.mLogCount = readPackedCount(cursor, data, "quest-stage log count");
+        validatePackedCountFits(result.mLogCount, cursor, 4, "quest-stage log count");
+        result.mLogs.reserve(result.mLogCount.mValue);
+        for (std::uint32_t i = 0; i < result.mLogCount.mValue; ++i)
+            result.mLogs.push_back(parseQuestStageLog(cursor, data));
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSaveQuestScriptVariable parseQuestScriptVariable(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSaveQuestScriptVariable result;
+        result.mFlagAndVariableId = readDelimitedField<std::uint32_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU32(label); },
+            "quest script FlagAndVarID");
+        if ((result.mFlagAndVariableId.mValue & 0x80000000u) != 0)
+        {
+            result.mReferenceValue = decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "quest script reference variable", true, true);
+        }
+        else
+        {
+            result.mNumericValue = readDelimitedField<double>(
+                cursor, data, [&](std::string_view label) { return cursor.readF64(label); },
+                "quest script numeric variable");
+            if (!std::isfinite(result.mNumericValue->mValue))
+            {
+                throw ESM4::FONVSaveError(
+                    result.mNumericValue->mRange.mOffset, "non-finite quest script numeric variable");
+            }
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSaveQuestChange parseQuestChange(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& entry, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        constexpr std::uint32_t supportedFlags = 0xe0000007u;
+        if (entry.mVersion.mValue < 0x15)
+            throw ESM4::FONVSaveError(entry.mVersion.mRange.mOffset, "unsupported QUST change-form version");
+        if (!entry.mResolvedFormId || (*entry.mResolvedFormId & 0x00ffffffu) == 0)
+            throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset, "QUST change-form has no identity");
+        if ((entry.mChangeFlags.mValue & ~supportedFlags) != 0)
+            throw ESM4::FONVSaveError(entry.mChangeFlags.mRange.mOffset, "unsupported QUST change flags");
+
+        const std::size_t begin = static_cast<std::size_t>(entry.mUnparsedPayload.mRange.mOffset);
+        Cursor cursor(data, begin, static_cast<std::size_t>(entry.mUnparsedPayload.mRange.end()));
+        ESM4::FONVSaveQuestChange result;
+        result.mResolvedFormId = *entry.mResolvedFormId;
+        result.mChangeFlags = entry.mChangeFlags.mValue;
+        if ((result.mChangeFlags & 0x00000001u) != 0)
+        {
+            result.mFormFlags = readDelimitedField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "quest form flags");
+        }
+        if ((result.mChangeFlags & 0x00000002u) != 0)
+        {
+            result.mQuestFlags = readDelimitedField<std::uint8_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "quest flags");
+        }
+        if ((result.mChangeFlags & 0x00000004u) != 0)
+        {
+            result.mScriptDelay = readDelimitedField<float>(
+                cursor, data, [&](std::string_view label) { return cursor.readF32(label); }, "quest script delay");
+            if (!std::isfinite(result.mScriptDelay->mValue))
+                throw ESM4::FONVSaveError(result.mScriptDelay->mRange.mOffset, "non-finite quest script delay");
+        }
+        if ((result.mChangeFlags & 0x80000000u) != 0)
+        {
+            result.mStageCount = readPackedCount(cursor, data, "quest-stage count");
+            validatePackedCountFits(*result.mStageCount, cursor, 6, "quest-stage count");
+            result.mStages.reserve(result.mStageCount->mValue);
+            for (std::uint32_t i = 0; i < result.mStageCount->mValue; ++i)
+                result.mStages.push_back(parseQuestStage(cursor, data));
+        }
+        if ((result.mChangeFlags & 0x40000000u) != 0)
+        {
+            result.mVariableCount = readPackedCount(cursor, data, "quest script-variable count");
+            // A reference-valued entry is 9 bytes including its two field delimiters; numeric entries are 14.
+            validatePackedCountFits(*result.mVariableCount, cursor, 9, "quest script-variable count");
+            result.mVariables.reserve(result.mVariableCount->mValue);
+            for (std::uint32_t i = 0; i < result.mVariableCount->mValue; ++i)
+                result.mVariables.push_back(parseQuestScriptVariable(cursor, data, formIds));
+            result.mHasEventState = readDelimitedField<std::uint8_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU8(label); },
+                "quest script event-state presence");
+            if (result.mHasEventState->mValue != 0)
+            {
+                result.mEventState = readRawField(cursor, data, 8, "quest script event state");
+                cursor.expectDelimiter("quest script event state");
+            }
+            result.mOnLoad = readDelimitedField<std::uint8_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU8(label); },
+                "quest script OnLoad state");
+        }
+        if ((result.mChangeFlags & 0x20000000u) != 0)
+        {
+            result.mObjectiveCount = readPackedCount(cursor, data, "quest-objective count");
+            validatePackedCountFits(*result.mObjectiveCount, cursor, 10, "quest-objective count");
+            result.mObjectives.reserve(result.mObjectiveCount->mValue);
+            for (std::uint32_t i = 0; i < result.mObjectiveCount->mValue; ++i)
+            {
+                const std::size_t objectiveBegin = cursor.position();
+                ESM4::FONVSaveQuestObjective objective;
+                objective.mObjective = readDelimitedField<std::uint32_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU32(label); },
+                    "quest-objective ID");
+                objective.mData = readDelimitedField<std::uint32_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU32(label); },
+                    "quest-objective data");
+                objective.mRange = range(objectiveBegin, cursor.position());
+                objective.mRaw = copyRange(data, objectiveBegin, cursor.position());
+                result.mObjectives.push_back(std::move(objective));
+            }
+        }
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "QUST change-form payload contains unaccounted bytes");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
         return result;
     }
 
@@ -2137,6 +2302,12 @@ namespace ESM4
                 formIdAndWorldspaceTables.position(), "FormID and visited-worldspace tables contain unaccounted bytes");
         resolveChangedFormReferences(result.mChangedForms, result.mFormIdTable);
 
+        for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
+        {
+            if (entry.mChangeType == 9)
+                result.mQuestChanges.push_back(parseQuestChange(data, entry, result.mFormIdTable));
+        }
+
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
         {
             if (entry.mType.mValue == 3)
@@ -2220,6 +2391,13 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
+            const bool parsedQuest = entry.mChangeType == 9
+                && std::ranges::any_of(result.mQuestChanges,
+                    [&](const FONVSaveQuestChange& quest) {
+                        return quest.mRange == entry.mUnparsedPayload.mRange;
+                    });
+            if (parsedQuest)
+                continue;
             if (result.mPlayerCharacterFinalState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerCharacterFinalState->mUnparsedRemainder.mRange);
             else if (result.mPlayerCharacterMagicTargetState.has_value() && &entry == playerReference)
