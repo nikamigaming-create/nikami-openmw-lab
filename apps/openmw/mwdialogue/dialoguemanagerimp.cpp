@@ -1380,6 +1380,111 @@ namespace MWDialogue
         return info != nullptr;
     }
 
+    bool DialogueManager::say(
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& listener, const ESM::FormId& topic)
+    {
+        MWBase::SoundManager* soundManager = MWBase::Environment::get().getSoundManager();
+        if (actor.isEmpty() || soundManager->sayActive(actor))
+            return false;
+        if (actor.getClass().isNpc() && MWBase::Environment::get().getWorld()->isSwimming(actor))
+            return false;
+        if (actor.getClass().getCreatureStats(actor).getKnockedDown())
+            return false;
+        if (actor.getType() != ESM4::Npc::sRecordId && actor.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const MWWorld::Ptr previousActor = mActor;
+        mActor = actor;
+        try
+        {
+            const ESM4::Dialogue* dialogue
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>().search(ESM::RefId(topic));
+            const ESM4::DialogInfo* info = selectEsm4Info(topic);
+            if (dialogue == nullptr || info == nullptr)
+            {
+                mActor = previousActor;
+                return false;
+            }
+
+            std::vector<const ESM4::DialogResponse*> responses;
+            responses.reserve(info->mResponses.size());
+            for (const ESM4::DialogResponse& response : info->mResponses)
+                responses.push_back(&response);
+            std::stable_sort(responses.begin(), responses.end(),
+                [](const ESM4::DialogResponse* left, const ESM4::DialogResponse* right) {
+                    const std::uint32_t leftNumber = left->mData.responseNo != 0
+                        ? left->mData.responseNo
+                        : std::numeric_limits<std::uint32_t>::max();
+                    const std::uint32_t rightNumber = right->mData.responseNo != 0
+                        ? right->mData.responseNo
+                        : std::numeric_limits<std::uint32_t>::max();
+                    return leftNumber < rightNumber;
+                });
+
+            std::string subtitle;
+            std::vector<VFS::Path::Normalized> voices;
+            std::vector<MWBase::FalloutDialogueVoiceMetadata> metadata;
+            const ESM4::DialogResponse* firstUnvoicedResponse = nullptr;
+            for (std::size_t i = 0; i < responses.size(); ++i)
+            {
+                const ESM4::DialogResponse& response = *responses[i];
+                if (!response.mResponse.empty())
+                {
+                    if (!subtitle.empty())
+                        subtitle += "\n";
+                    subtitle += response.mResponse;
+                }
+                const std::string voice = resolveEsm4Voice(*info, response, i);
+                if (voice.empty())
+                {
+                    if (firstUnvoicedResponse == nullptr)
+                        firstUnvoicedResponse = &response;
+                    continue;
+                }
+                voices.emplace_back(voice);
+                metadata.push_back({ response.mData.emoType, response.mData.emoValue, response.mData.flags,
+                    ESM::RefId(response.mSpeakerAnimation), ESM::RefId(response.mListenerAnimation) });
+            }
+
+            if (Settings::gui().mSubtitles && !subtitle.empty())
+                MWBase::Environment::get().getWindowManager()->messageBox(subtitle);
+            if (!voices.empty())
+                soundManager->saySequence(actor, voices, metadata);
+            else if (firstUnvoicedResponse != nullptr)
+            {
+                const ESM4::DialogResponse& response = *firstUnvoicedResponse;
+                if ((response.mData.flags & 0x01) != 0)
+                    setEsm4DialogueExpression(actor.mRef, response.mData.emoType, response.mData.emoValue);
+                if (!response.mSpeakerAnimation.isZeroOrUnset())
+                    MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                        actor, ESM::RefId(response.mSpeakerAnimation));
+                if (!listener.isEmpty() && !response.mListenerAnimation.isZeroOrUnset())
+                    MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                        listener, ESM::RefId(response.mListenerAnimation));
+            }
+
+            if ((info->mInfoFlags & ESM4::INFO_SayOnce) != 0)
+                mEsm4SaidInfos.insert(info->mId);
+            for (ESM::FormId addedTopic : info->mAddTopics)
+                mEsm4AddedTopics.insert(addedTopic);
+            if (!info->mScript.scriptSource.empty())
+                executeEsm4ResultSource(info->mScript.scriptSource);
+            if (!info->mEndScript.scriptSource.empty())
+                executeEsm4ResultSource(info->mEndScript.scriptSource);
+            Log(Debug::Info) << "FNV/ESM4 dialogue: SayTo actor=" << actor.toString()
+                             << " listener=" << listener.toString() << " topic=" << dialogue->mEditorId
+                             << " topicForm=" << ESM::RefId(topic) << " info=" << ESM::RefId(info->mId)
+                             << " responses=" << responses.size() << " voices=" << voices.size();
+            mActor = previousActor;
+            return true;
+        }
+        catch (...)
+        {
+            mActor = previousActor;
+            throw;
+        }
+    }
+
     int DialogueManager::countSavedGameRecords() const
     {
         return 1; // known topics

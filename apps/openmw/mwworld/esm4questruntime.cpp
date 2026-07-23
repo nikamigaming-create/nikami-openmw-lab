@@ -17,6 +17,7 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -358,7 +359,8 @@ namespace MWWorld
                     || *instruction.callingReferenceIndex > script.references.size()))
                 return false;
 
-            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1036 && instruction.opcode != 0x1037
+            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
+                && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2 && instruction.opcode != 0x11a3
                 && instruction.opcode != 0x11dd)
@@ -432,7 +434,28 @@ namespace MWWorld
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x105e) // EvaluatePackage / evp
+            if (instruction.opcode == 0x1034) // reference.SayTo listener topic
+            {
+                if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mSayToHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId speaker = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* listener = std::get_if<ESM::FormId>(&arguments[0]);
+                const ESM::FormId* topic = std::get_if<ESM::FormId>(&arguments[1]);
+                const bool speakerExists = mStore->get<ESM4::ActorCharacter>().search(speaker) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(speaker) != nullptr;
+                const bool listenerIsPlayer
+                    = listener != nullptr && (listener->mIndex == 0x7 || listener->mIndex == 0x14);
+                const bool listenerExists = listener != nullptr
+                    && (listenerIsPlayer || mStore->get<ESM4::ActorCharacter>().search(*listener) != nullptr
+                        || mStore->get<ESM4::ActorCreature>().search(*listener) != nullptr);
+                if (!speakerExists || !listenerExists || topic == nullptr
+                    || mStore->get<ESM4::Dialogue>().search(ESM::RefId(*topic)) == nullptr)
+                    return false;
+                prepared.mCommands.push_back(
+                    { CompiledQuestCommandType::SayTo, speaker, 0, false, 0, *listener, *topic });
+            }
+            else if (instruction.opcode == 0x105e) // EvaluatePackage / evp
             {
                 if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
                     || mStore == nullptr)
@@ -643,9 +666,10 @@ namespace MWWorld
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
-            || command.mType == CompiledQuestCommandType::ShowMessage)
+            || command.mType == CompiledQuestCommandType::ShowMessage
+            || command.mType == CompiledQuestCommandType::SayTo)
         {
-            working.mExternalEffects.push_back({ command.mType, command.mQuest });
+            working.mExternalEffects.push_back({ command.mType, command.mQuest, command.mTarget, command.mTopic });
             return true;
         }
 
@@ -706,6 +730,7 @@ namespace MWWorld
             }
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
+            case CompiledQuestCommandType::SayTo:
                 return false;
         }
         return false;
@@ -830,6 +855,10 @@ namespace MWWorld
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::SayTo:
+                    command = "SayTo ";
+                    executed = mSayToHandler && mSayToHandler(effect.mTarget, effect.mListener, effect.mTopic);
                     break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
@@ -981,15 +1010,24 @@ namespace MWWorld
                         case CompiledQuestCommandType::ShowMessage:
                             executed = mMessageHandler && mMessageHandler(command.mQuest);
                             break;
+                        case CompiledQuestCommandType::SayTo:
+                            executed = mSayToHandler
+                                && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
+                            break;
                     }
                     if (!executed)
                     {
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
-                            || command.mType == CompiledQuestCommandType::ShowMessage)
+                            || command.mType == CompiledQuestCommandType::ShowMessage
+                            || command.mType == CompiledQuestCommandType::SayTo)
                         {
-                            const std::string failure = command.mType == CompiledQuestCommandType::EvaluatePackage
-                                ? "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText()
-                                : "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
+                            std::string failure;
+                            if (command.mType == CompiledQuestCommandType::EvaluatePackage)
+                                failure = "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::ShowMessage)
+                                failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
+                            else
+                                failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
                             Log(Debug::Warning) << "FNV/ESM4 behavior: quest stage external effect failed: "
                                                 << failure;

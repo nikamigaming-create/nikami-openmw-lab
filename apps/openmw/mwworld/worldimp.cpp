@@ -65,6 +65,7 @@
 #include <components/files/conversion.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 
+#include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -802,6 +803,16 @@ namespace MWWorld
             Log(Debug::Info) << "FNV/ESM4 quest: queued authored message editor=" << message->mEditorId
                              << " id=" << ESM::RefId(messageId).serializeText();
             return true;
+        });
+        mESM4QuestRuntime.setSayToHandler([this](ESM::FormId speakerId, ESM::FormId listenerId, ESM::FormId topicId) {
+            const Ptr speaker = searchPtr(ESM::RefId(speakerId), false, false);
+            const Ptr listener = listenerId.mIndex == 0x7 || listenerId.mIndex == 0x14
+                ? getPlayerPtr()
+                : searchPtr(ESM::RefId(listenerId), false, false);
+            MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
+            if (speaker.isEmpty() || listener.isEmpty() || dialogueManager == nullptr)
+                return false;
+            return dialogueManager->say(speaker, listener, topicId);
         });
     }
 

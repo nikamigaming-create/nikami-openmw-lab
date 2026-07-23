@@ -15,6 +15,7 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -293,6 +294,63 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction
     EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "timer"), 0.f);
     EXPECT_EQ(evaluatedPackages, std::vector<ESM::FormId>{ sunnyId });
     EXPECT_EQ(shownMessages, std::vector<ESM::FormId>{ tutorialMessageId });
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSunnySayToBark)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId barkId{ .mIndex = 0x10a1e0, .mContentFile = 0 };
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0010A214 VCG02 stage 40 entry 0, byte-for-byte. The SCROs
+    // are SunnyREF, PlayerRef, and VCG02SunnyBark.
+    const std::array<std::uint8_t, 16> retailScda{
+        0x1c, 0x00, 0x01, 0x00, 0x34, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x72, 0x03, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { sunnyId, playerId, barkId };
+    vcg02.mStages.push_back({ .mIndex = 40, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    ESM4::ActorCharacter sunny;
+    sunny.mId = sunnyId;
+    sunny.mEditorId = "SunnyREF";
+    store.overrideRecord(sunny);
+    ESM4::Dialogue bark;
+    bark.mId = barkId;
+    bark.mEditorId = "VCG02SunnyBark";
+    store.overrideRecord(bark);
+
+    struct SayToCall
+    {
+        ESM::FormId mSpeaker;
+        ESM::FormId mListener;
+        ESM::FormId mTopic;
+    };
+    std::vector<SayToCall> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSayToHandler([&calls](ESM::FormId speaker, ESM::FormId listener, ESM::FormId topic) {
+        calls.push_back({ speaker, listener, topic });
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(vcg02Id, 40));
+    const MWWorld::ESM4QuestState* state = runtime.search(vcg02Id);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 40);
+    EXPECT_TRUE(state->mStageDone.at(40));
+    ASSERT_EQ(calls.size(), 1);
+    EXPECT_EQ(calls[0].mSpeaker, sunnyId);
+    EXPECT_EQ(calls[0].mListener, playerId);
+    EXPECT_EQ(calls[0].mTopic, barkId);
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }

@@ -111,6 +111,7 @@ namespace MWWorld
     public:
         using ReferenceCommandHandler = std::function<bool(ESM4QuestReferenceCommand, ESM::FormId)>;
         using MessageHandler = std::function<bool(ESM::FormId)>;
+        using SayToHandler = std::function<bool(ESM::FormId, ESM::FormId, ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -125,6 +126,7 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mReferenceIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
+        SayToHandler mSayToHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -138,6 +140,7 @@ namespace MWWorld
             SetVariable,
             EvaluatePackage,
             ShowMessage,
+            SayTo,
         };
 
         struct CompiledQuestCommand
@@ -147,6 +150,8 @@ namespace MWWorld
             std::int32_t mObjective = 0;
             bool mValue = false;
             std::uint8_t mStage = 0;
+            ESM::FormId mTarget{};
+            ESM::FormId mTopic{};
             std::string mVariable;
             float mNumber = 0.f;
         };
@@ -179,6 +184,8 @@ namespace MWWorld
         {
             CompiledQuestCommandType mType = CompiledQuestCommandType::EvaluatePackage;
             ESM::FormId mTarget{};
+            ESM::FormId mListener{};
+            ESM::FormId mTopic{};
         };
 
         struct CompiledStageWorkingState
@@ -223,6 +230,7 @@ namespace MWWorld
             mReferenceCommandHandler = std::move(handler);
         }
         void setMessageHandler(MessageHandler handler) { mMessageHandler = std::move(handler); }
+        void setSayToHandler(SayToHandler handler) { mSayToHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.
