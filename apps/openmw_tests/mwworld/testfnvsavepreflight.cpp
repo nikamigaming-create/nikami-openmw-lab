@@ -86,6 +86,7 @@ namespace
 
         ESM4::FONVSavePlayerMobileObjectProcessState processState;
         processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        processState.mHighProcess.mCurrentAction.mValue = -1;
         result.mPlayerMobileObjectProcessState = std::move(processState);
 
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;

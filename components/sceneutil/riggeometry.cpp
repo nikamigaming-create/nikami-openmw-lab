@@ -12,7 +12,11 @@
 #include <unordered_set>
 
 #include <osg/MatrixTransform>
+#include <osg/LineWidth>
+#include <osg/Material>
+#include <osg/PolygonMode>
 #include <osg/Transform>
+#include <osg/Uniform>
 
 #include <osgUtil/CullVisitor>
 
@@ -380,6 +384,123 @@ namespace SceneUtil
     osg::Geometry* RigGeometry::getLastFrameGeometry() const
     {
         return getGeometry(mLastFrameNumber);
+    }
+
+    bool RigGeometry::setFalloutVatsHighlight(
+        std::span<const std::string_view> targetBones, std::string_view selectedBone, bool enabled)
+    {
+        if (mFalloutVatsHighlightActive)
+        {
+            for (std::size_t index = 0; index < std::size(mGeometry); ++index)
+            {
+                if (mGeometry[index] != nullptr)
+                {
+                    mGeometry[index]->setColorArray(mFalloutVatsOriginalColorArrays[index]);
+                    mGeometry[index]->dirtyGLObjects();
+                }
+                mFalloutVatsOriginalColorArrays[index] = nullptr;
+            }
+            setStateSet(mFalloutVatsOriginalStateSet);
+            mFalloutVatsOriginalStateSet = nullptr;
+            mFalloutVatsHighlightActive = false;
+        }
+        if (!enabled || !mData || !mSourceGeometry || targetBones.empty())
+            return false;
+
+        std::vector<bool> selectedBoneMask(mData->mBones.size(), false);
+        bool hasTargetBone = false;
+        for (std::size_t boneIndex = 0; boneIndex < mData->mBones.size(); ++boneIndex)
+        {
+            const std::string_view boneName = mData->mBones[boneIndex].mName;
+            for (const std::string_view targetBone : targetBones)
+            {
+                if (!Misc::StringUtils::ciEqual(boneName, targetBone))
+                    continue;
+                hasTargetBone = true;
+                break;
+            }
+            if (Misc::StringUtils::ciEqual(boneName, selectedBone))
+                selectedBoneMask[boneIndex] = true;
+        }
+        // A character is assembled from several skinned drawables. Every body drawable that contains any authored
+        // VATS bone must receive the amber whole-body pass even when the currently selected bone lives in a different
+        // drawable. Only the drawable carrying the selected bone contributes green vertices.
+        if (!hasTargetBone)
+        {
+            if (getEsm4RuntimeEnv("OPENMW_FNV_VATS_PROOF", "OPENMW_ESM4_VATS_PROOF") != nullptr)
+            {
+                std::ostringstream bones;
+                for (std::size_t index = 0; index < mData->mBones.size(); ++index)
+                {
+                    if (index != 0)
+                        bones << ',';
+                    bones << mData->mBones[index].mName;
+                }
+                Log(Debug::Info) << "FNV VATS rig mismatch: geometry=" << getName()
+                                 << " selected=" << selectedBone << " rigBones=[" << bones.str() << ']';
+            }
+            return false;
+        }
+
+        const std::size_t vertexCount = mSourceGeometry->getVertexArray()->getNumElements();
+        if (vertexCount == 0)
+            return false;
+        std::vector<float> selectedWeights(vertexCount, 0.f);
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            float selectedWeight = 0.f;
+            for (const auto& [boneIndex, weight] : influences)
+            {
+                if (boneIndex < selectedBoneMask.size() && selectedBoneMask[boneIndex])
+                    selectedWeight += weight;
+            }
+            for (const unsigned short vertex : vertices)
+            {
+                if (vertex < selectedWeights.size())
+                    selectedWeights[vertex] = selectedWeight;
+            }
+        }
+
+        const osg::Vec4f vatsAmber(1.f, 0.58f, 0.12f, 1.f);
+        const osg::Vec4f vatsGreen(0.18f, 1.f, 0.28f, 1.f);
+        for (std::size_t index = 0; index < std::size(mGeometry); ++index)
+        {
+            osg::Geometry* geometry = mGeometry[index].get();
+            if (geometry == nullptr)
+                continue;
+            mFalloutVatsOriginalColorArrays[index] = geometry->getColorArray();
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->resize(vertexCount, vatsAmber);
+            for (std::size_t vertex = 0; vertex < selectedWeights.size(); ++vertex)
+            {
+                if (selectedWeights[vertex] >= 0.18f)
+                    (*colors)[vertex] = vatsGreen;
+            }
+            geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+            geometry->dirtyGLObjects();
+        }
+
+        mFalloutVatsOriginalStateSet = getStateSet();
+        osg::ref_ptr<osg::StateSet> stateSet = mFalloutVatsOriginalStateSet
+            ? new osg::StateSet(*mFalloutVatsOriginalStateSet, osg::CopyOp::SHALLOW_COPY)
+            : new osg::StateSet;
+        osg::ref_ptr<osg::PolygonMode> wireframe = new osg::PolygonMode;
+        wireframe->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
+        stateSet->setAttributeAndModes(wireframe,
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        stateSet->setAttributeAndModes(new osg::LineWidth(2.5f),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        material->setColorMode(osg::Material::EMISSION);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 1.f));
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 1.f));
+        stateSet->setAttributeAndModes(material,
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        stateSet->addUniform(new osg::Uniform("colorMode", 1),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        setStateSet(stateSet);
+        mFalloutVatsHighlightActive = true;
+        return true;
     }
 
     void RigGeometry::forceNextUpdate()

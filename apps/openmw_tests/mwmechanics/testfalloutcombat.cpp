@@ -39,6 +39,22 @@ namespace
         EXPECT_TRUE(actors.getActorsSidingWith(MWWorld::Ptr{}).empty());
     }
 
+    TEST(FalloutCombatTest, DefendsSharedFactionAndAuthoredAlliesAfterAssault)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        const std::array victim{ membership(0x01104c6e), membership(0x0116311a) };
+        const std::array sameFaction{ membership(0x01104c6e) };
+        const std::array unrelated{ membership(0x0113f89b) };
+        const std::array noFaction{ membership(0) };
+
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorDefendVictim(sameFaction, victim, Reaction::Neutral));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorDefendVictim(unrelated, victim, Reaction::Ally));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorDefendVictim(unrelated, victim, Reaction::Friend));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorDefendVictim(unrelated, victim, Reaction::Neutral));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorDefendVictim(unrelated, victim, Reaction::Enemy));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorDefendVictim(noFaction, victim, std::nullopt));
+    }
+
     TEST(FalloutCombatTest, AppliesCategoricalAggressionWithoutMorrowindFightBiases)
     {
         using Reaction = ESM4::Faction::GroupCombatReaction;

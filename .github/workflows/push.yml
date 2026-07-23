@@ -1,8 +1,12 @@
 name: Build and test
 
 on:
-- push
-- pull_request
+  # A pull-request branch receives both a push event and a pull_request synchronize event.  Running both doubles
+  # the Ubuntu, Flat Windows, and VR Windows matrices without testing a different tree.
+  push:
+    branches:
+      - main
+  pull_request:
 
 env:
   BUILD_TYPE: RelWithDebInfo

@@ -141,6 +141,7 @@ namespace MWMechanics
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
         bool reloadFalloutWeapon(const MWWorld::Ptr& actor) override;
+        bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) override;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
             const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) override;
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,

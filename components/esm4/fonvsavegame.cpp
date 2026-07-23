@@ -1124,7 +1124,7 @@ namespace
         ESM4::FONVSavePlayerHighProcessState result;
         for (ESM4::FONVSaveField<std::uint8_t>& value : result.mUnk32C_340_374_375)
             value = readPlayerProcessU8(cursor, data, "player high-process initial byte");
-        result.mUnk2FC = readPlayerProcessU16(cursor, data, "player high-process Unk2FC");
+        result.mCurrentAction = readPlayerProcessS16(cursor, data, "player high-process current-action candidate");
         for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk2B4_2F8_310_330_334_338_34C_294_2B8_2BC_298)
             value = readPlayerProcessU32(cursor, data, "player high-process initial word");
         for (ESM4::FONVSaveField<std::uint16_t>& value : result.mUnk2C0_2C2_2C4)

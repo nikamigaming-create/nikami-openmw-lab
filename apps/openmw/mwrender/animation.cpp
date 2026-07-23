@@ -7550,47 +7550,57 @@ namespace MWRender
         }
     }
 
-    void Animation::setFalloutVatsWireframe(std::string_view targetNode, bool enabled)
+    void Animation::setFalloutVatsWireframes(
+        std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled)
     {
-        if (mFalloutVatsWireframeNode)
+        class FalloutVatsHighlightVisitor : public osg::NodeVisitor
         {
-            mFalloutVatsWireframeNode->setStateSet(mFalloutVatsOriginalStateSet);
-            mFalloutVatsWireframeNode = nullptr;
-            mFalloutVatsOriginalStateSet = nullptr;
-        }
-        if (!enabled)
-            return;
+        public:
+            FalloutVatsHighlightVisitor(
+                std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mTargetNodes(targetNodes)
+                , mSelectedNode(selectedNode)
+                , mEnabled(enabled)
+            {
+            }
 
-        osg::Node* node = const_cast<osg::Node*>(getNode(targetNode));
-        if (node == nullptr)
-        {
-            Log(Debug::Warning) << "FNV VATS: refusing whole-actor highlight for missing authored node="
-                                << targetNode;
-            return;
-        }
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                    highlight(geode.getDrawable(index));
+                traverse(geode);
+            }
 
-        mFalloutVatsWireframeNode = node;
-        mFalloutVatsOriginalStateSet = node->getStateSet();
-        osg::ref_ptr<osg::StateSet> stateSet = mFalloutVatsOriginalStateSet
-            ? new osg::StateSet(*mFalloutVatsOriginalStateSet, osg::CopyOp::SHALLOW_COPY)
-            : new osg::StateSet;
+            void apply(osg::Drawable& drawable) override
+            {
+                highlight(&drawable);
+            }
 
-        osg::ref_ptr<osg::PolygonMode> wireframe = new osg::PolygonMode;
-        wireframe->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
-        stateSet->setAttributeAndModes(
-            wireframe, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
-        stateSet->setAttributeAndModes(new osg::LineWidth(3.f),
-            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+            std::size_t mHighlightedRigs{ 0 };
 
-        osg::ref_ptr<osg::Material> material = new osg::Material;
-        const osg::Vec4f vatsAmber(1.f, 0.42f, 0.04f, 1.f);
-        material->setColorMode(osg::Material::OFF);
-        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsAmber);
-        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsAmber);
-        material->setEmission(osg::Material::FRONT_AND_BACK, vatsAmber * 0.65f);
-        stateSet->setAttributeAndModes(
-            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
-        node->setStateSet(stateSet);
+        private:
+            std::span<const std::string_view> mTargetNodes;
+            std::string_view mSelectedNode;
+            bool mEnabled;
+            std::unordered_set<SceneUtil::RigGeometry*> mVisited;
+
+            void highlight(osg::Drawable* drawable)
+            {
+                SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable);
+                if (rig == nullptr || !mVisited.insert(rig).second)
+                    return;
+                if (rig->setFalloutVatsHighlight(mTargetNodes, mSelectedNode, mEnabled))
+                    ++mHighlightedRigs;
+            }
+        } visitor(targetNodes, selectedNode, enabled);
+
+        if (mObjectRoot)
+            mObjectRoot->accept(visitor);
+        Log(Debug::Info) << "FNV VATS: skinned highlight enabled=" << enabled
+                         << " rigs=" << visitor.mHighlightedRigs
+                         << " bodyParts=" << targetNodes.size()
+                         << " selected=" << selectedNode;
     }
 
     void Animation::addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& esmLight)

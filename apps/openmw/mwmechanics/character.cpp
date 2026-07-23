@@ -55,6 +55,7 @@
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/visitor.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -3240,6 +3241,49 @@ namespace MWMechanics
             weaponConditionAfter = *after;
         }
         playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
+        bool muzzleFlashSpawned = false;
+        osg::Vec3f muzzlePosition = origin;
+        std::string muzzleNode = "actor-head";
+        if ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0
+            && !projectile->mMuzzleFlashModel.empty())
+        {
+            if (MWRender::Animation* animation = world->getAnimation(mPtr))
+            {
+                // Fallout weapon meshes author the emission transform beneath ProjectileNode. Some weapon models
+                // expose only the attachment frame to Animation, so retain Weapon and the actor head as ordered
+                // fallbacks instead of inventing a camera-relative flash position.
+                SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+                animation->getObjectRoot()->accept(projectileNode);
+                const osg::Node* resolvedNode = projectileNode.mFoundNode;
+                if (resolvedNode != nullptr)
+                    muzzleNode = resolvedNode->getName();
+                else
+                {
+                    resolvedNode = animation->getNode("Weapon");
+                    if (resolvedNode != nullptr)
+                        muzzleNode = resolvedNode->getName();
+                }
+                if (resolvedNode != nullptr)
+                {
+                    const osg::NodePathList paths = resolvedNode->getParentalNodePaths();
+                    if (!paths.empty())
+                        muzzlePosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                }
+            }
+            world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
+                                   VFS::Path::Normalized(projectile->mMuzzleFlashModel)),
+                "", muzzlePosition, 1.f, false, false,
+                ESM::RefId(projectile->mData.muzzleFlashLight));
+            muzzleFlashSpawned = true;
+        }
+        Log(muzzleFlashSpawned ? Debug::Info : Debug::Warning)
+            << "FNV combat muzzle flash: actor=" << mPtr.toString()
+            << " projectile=" << ESM::RefId::formIdRefId(projectile->mId)
+            << " authoredFlag=" << ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0)
+            << " model=" << projectile->mMuzzleFlashModel
+            << " duration=" << projectile->mData.muzzleFlashDuration
+            << " light=" << ESM::RefId::formIdRefId(projectile->mData.muzzleFlashLight)
+            << " node=" << muzzleNode << " position=" << muzzlePosition << " spawned=" << muzzleFlashSpawned;
         if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
             MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
 
@@ -3547,6 +3591,22 @@ namespace MWMechanics
         return true;
     }
 
+    bool CharacterController::prepareFalloutVatsRangedAttack()
+    {
+        mFalloutAttackDelivery = {};
+        MWRender::Animation::AnimPriority priority(Priority_Weapon);
+        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const bool visualAction
+            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
+        if (visualAction)
+            mUpperBodyState = UpperBodyState::AttackEnd;
+        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+        mFalloutVatsVisualAttackPrepared = visualAction;
+        Log(visualAction ? Debug::Info : Debug::Warning)
+            << "FNV VATS weapon visual: actor=" << mPtr.toString() << " prepared=" << visualAction;
+        return visualAction;
+    }
+
     bool CharacterController::executeFalloutVatsRangedHit(
         const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
         const FalloutVatsQueuedAction& action, bool targetHit)
@@ -3557,17 +3617,10 @@ namespace MWMechanics
             || !std::isfinite(action.mLimbDamageMultiplier) || action.mLimbDamageMultiplier < 0.f)
             return false;
 
-        // V.A.T.S. resolves its queued hit contract authoritatively in this method. Never let a real-time KF key
-        // left over from an interrupted attack deliver a second shot during the cinematic.
-        mFalloutAttackDelivery = {};
-
-        MWRender::Animation::AnimPriority priority(Priority_Weapon);
-        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
-        const bool visualAction
-            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
-        if (visualAction)
-            mUpperBodyState = UpperBodyState::AttackEnd;
-        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+        // The action manager normally starts this animation before releasing the projectile so the authored wind-up
+        // is visible in the cinematic. Retain a direct-call fallback for non-UI callers.
+        const bool visualAction = mFalloutVatsVisualAttackPrepared || prepareFalloutVatsRangedAttack();
+        mFalloutVatsVisualAttackPrepared = false;
 
         osg::Vec3f aimPoint = targetPoint;
         if (!targetHit)

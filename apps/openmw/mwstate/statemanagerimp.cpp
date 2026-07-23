@@ -589,6 +589,15 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                                      << " alternate=1 offset=" << perk.mRange.mOffset << " exact=1";
                 }
             }
+            if (context.mSave.mPlayerMobileObjectProcessState)
+            {
+                const ESM4::FONVSavePlayerHighProcessState& high
+                    = context.mSave.mPlayerMobileObjectProcessState->mHighProcess;
+                Log(Debug::Info) << "FNV Player high-process weapon-action candidate: value="
+                                 << high.mCurrentAction.mValue << " offset=" << high.mCurrentAction.mRange.mOffset
+                                 << " animationBytes=" << high.mSubBuffer.mData.mRaw.size()
+                                 << " animationOffset=" << high.mSubBuffer.mData.mRange.mOffset << " exact=1";
+            }
         }
 
         const ESM::RefId playerId = ESM::RefId::stringRefId("Player");

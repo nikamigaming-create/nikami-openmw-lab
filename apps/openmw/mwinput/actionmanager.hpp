@@ -2,6 +2,7 @@
 #define MWINPUT_ACTIONMANAGER_H
 
 #include <osg/ref_ptr>
+#include <osg/Vec3f>
 #include <osgViewer/ViewerEventHandlers>
 
 #include <optional>
@@ -62,6 +63,8 @@ namespace MWInput
         bool selectFalloutVatsBodyPart(std::size_t index);
         void cycleFalloutVatsBodyPart(int direction);
         void updateFalloutVatsCamera();
+        void updateFalloutVatsHighlight();
+        void clearFalloutVatsHighlight();
         void restoreFalloutVatsView();
         std::size_t getFalloutVatsAvailableShots() const;
         void queueFalloutVatsAttack();
@@ -71,6 +74,8 @@ namespace MWInput
         void finishFalloutVatsExecution(bool interrupted);
         void updateFalloutVatsPointerSelection();
         void updateFalloutVatsHud();
+        void updateFalloutVatsProof();
+        void captureFalloutVatsProofFrame();
 
         BindingsManager* mBindingsManager;
         osg::ref_ptr<osgViewer::Viewer> mViewer;
@@ -90,7 +95,17 @@ namespace MWInput
         unsigned int mFalloutVatsHitChance = 0;
         int mFalloutVatsPreviousCameraMode = -1;
         float mFalloutVatsPreviousCameraDistance = 0.f;
+        float mFalloutVatsPreviousCameraPitch = 0.f;
+        float mFalloutVatsPreviousCameraYaw = 0.f;
+        float mFalloutVatsPreviousCameraRoll = 0.f;
+        float mFalloutVatsPreviousPlayerYaw = 0.f;
+        bool mFalloutVatsPlayerYawChanged = false;
         float mFalloutVatsPreviousSimulationScale = 1.f;
+        osg::Vec3f mFalloutVatsTargetFramingForward{ 0.f, 1.f, 0.f };
+        osg::Vec3f mFalloutVatsExecutionCameraEye;
+        osg::Vec3f mFalloutVatsExecutionCameraFocus;
+        bool mFalloutVatsExecutionCameraInitialized = false;
+        unsigned int mFalloutVatsExecutionCameraPhase = 0;
         float mFalloutVatsExecutionTimer = 0.f;
         float mFalloutVatsExecutionApBefore = 0.f;
         float mFalloutVatsExecutionPlannedApAfter = 0.f;
@@ -100,7 +115,23 @@ namespace MWInput
         std::size_t mFalloutVatsExecutionShotsAttempted = 0;
         std::size_t mFalloutVatsExecutionShotsFired = 0;
         std::size_t mFalloutVatsExecutionRolledHits = 0;
+        bool mFalloutVatsExecutionVisualPrepared = false;
         std::vector<std::pair<ESM::FormId, float>> mFalloutVatsExecutionTargetHealthBefore;
+        bool mFalloutVatsProofEnabled = false;
+        bool mFalloutVatsProofFinished = false;
+        unsigned int mFalloutVatsProofStage = 0;
+        unsigned int mFalloutVatsProofFrame = 0;
+        unsigned int mFalloutVatsProofCaptures = 0;
+        unsigned int mFalloutVatsProofCaptureStep = 3;
+        std::size_t mFalloutVatsProofShotsFired = 0;
+        std::string mFalloutVatsProofTargetName;
+        MWWorld::Ptr mFalloutVatsProofTarget;
+        float mFalloutVatsProofHealthBefore = 0.f;
+        float mFalloutVatsProofCameraPitchBefore = 0.f;
+        float mFalloutVatsProofCameraYawBefore = 0.f;
+        float mFalloutVatsProofCameraRollBefore = 0.f;
+        float mFalloutVatsProofPlayerYawBefore = 0.f;
+        int mFalloutVatsProofCameraModeBefore = -1;
     };
 }
 #endif

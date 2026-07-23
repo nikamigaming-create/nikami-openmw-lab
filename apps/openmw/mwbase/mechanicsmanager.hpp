@@ -175,6 +175,8 @@ namespace MWBase
 
         virtual bool reloadFalloutWeapon(const MWWorld::Ptr&) { return false; }
 
+        virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
+
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
             const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
         {

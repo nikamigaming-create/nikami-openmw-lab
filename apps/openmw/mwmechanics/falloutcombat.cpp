@@ -66,6 +66,24 @@ namespace MWMechanics
         return impact.mVatsAction->mTarget;
     }
 
+    bool shouldFalloutActorDefendVictim(std::span<const ESM4::ActorFaction> actorFactions,
+        std::span<const ESM4::ActorFaction> victimFactions,
+        std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept
+    {
+        for (const ESM4::ActorFaction& actorFaction : actorFactions)
+        {
+            if (actorFaction.faction == 0)
+                continue;
+            for (const ESM4::ActorFaction& victimFaction : victimFactions)
+            {
+                if (actorFaction.faction == victimFaction.faction)
+                    return true;
+            }
+        }
+        return reaction == ESM4::Faction::GroupCombatReaction::Ally
+            || reaction == ESM4::Faction::GroupCombatReaction::Friend;
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)

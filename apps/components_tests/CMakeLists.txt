@@ -120,6 +120,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     sceneutil/lightcommon.cpp
     sceneutil/osgacontroller.cpp
+    sceneutil/riggeometry.cpp
     sceneutil/visitor.cpp
 
     bsa/testbsafile.cpp

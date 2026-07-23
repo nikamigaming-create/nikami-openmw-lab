@@ -258,8 +258,6 @@ namespace MWRender
 
         osg::ref_ptr<SceneUtil::LightSource> mGlowLight;
         osg::ref_ptr<SceneUtil::GlowUpdater> mGlowUpdater;
-        osg::ref_ptr<osg::Node> mFalloutVatsWireframeNode;
-        osg::ref_ptr<osg::StateSet> mFalloutVatsOriginalStateSet;
         osg::ref_ptr<TransparencyUpdater> mTransparencyUpdater;
         osg::ref_ptr<SceneUtil::LightSource> mExtraLightSource;
 
@@ -407,8 +405,10 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
-        /// Apply the VATS selection wireframe to an authored target node, restoring its prior state on disable.
-        void setFalloutVatsWireframe(std::string_view targetNode, bool enabled);
+        /// Render every authored VATS limb as an amber wireframe and the selected limb as green.
+        /// Passing false restores every node's exact prior StateSet.
+        void setFalloutVatsWireframes(
+            std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled);
 
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 

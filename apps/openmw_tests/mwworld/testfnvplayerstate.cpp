@@ -220,6 +220,7 @@ namespace
 
         ESM4::FONVSavePlayerMobileObjectProcessState processState;
         processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        processState.mHighProcess.mCurrentAction.mValue = -1;
         ESM4::FONVSavePlayerProcessModifier healthDamage;
         healthDamage.mActorValue.mValue = 16;
         healthDamage.mModifier.mValue = -25.f;
@@ -772,6 +773,7 @@ namespace
         EXPECT_EQ(plan.mPlayer.mLevel, 12u);
         EXPECT_EQ(plan.mPlayer.mProcessLevel, 0);
         EXPECT_TRUE(plan.mPlayer.mWeaponDrawn);
+        EXPECT_EQ(plan.mPlayer.mCurrentWeaponAction, -1);
         EXPECT_TRUE(plan.mPlayer.mHotkeyItems.empty());
         EXPECT_TRUE(plan.mPlayer.mAmmoSelections.empty());
         EXPECT_THAT(plan.mPlayer.mFactionChanges,
@@ -851,7 +853,8 @@ namespace
         EXPECT_THAT(plan.mUncoveredState,
             Not(Contains("player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-hotkeys-equipment-actions-ammo-selection")));
-        EXPECT_THAT(plan.mUncoveredState, Contains("player-weapon-current-action-clip-reload-state"));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-weapon-current-action-clip-reload-state")));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-nonidle-weapon-action-animation-resume")));
         EXPECT_THAT(plan.mUncoveredState, Contains("player-reputation-crime-disguise"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-factions-reputation-crime-disguise")));
         EXPECT_THAT(plan.mUncoveredState,
@@ -1093,6 +1096,20 @@ namespace
         resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("weapon-out state is not a canonical boolean"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerMobileObjectProcessState->mHighProcess.mCurrentAction.mValue = 14;
+        resolution = resolveSavePlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("current weapon action is outside the retail action domain"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerMobileObjectProcessState->mHighProcess.mCurrentAction.mValue = 9;
+        resolution = resolveSavePlan(save, &player, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_EQ(resolution.mPlan->mPlayer.mCurrentWeaponAction, 9);
+        EXPECT_THAT(
+            resolution.mPlan->mUncoveredState, Contains("player-nonidle-weapon-action-animation-resume"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData->mInventoryEntries[30].mExtendData[0].mExtraData[0].mCount->mValue = 15;

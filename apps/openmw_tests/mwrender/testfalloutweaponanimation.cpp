@@ -242,38 +242,44 @@ namespace MWRender
     TEST(FalloutWeaponAnimationTest, resolvesExactRetailWeaponActionManifestsFromDnam)
     {
         const std::vector<FonvWeaponActionSource> melee = getFonvWeaponActionManifest(1, 0);
-        ASSERT_EQ(melee.size(), 3u);
+        ASSERT_EQ(melee.size(), 4u);
         EXPECT_EQ(melee[0].mAction, FonvWeaponAction::PrimaryAttack);
         EXPECT_EQ(melee[0].mPath, "meshes/characters/_male/1hmattackright_a.kf");
         EXPECT_EQ(melee[0].mSemanticGroup, "attack2");
-        EXPECT_EQ(melee[1].mAction, FonvWeaponAction::Equip);
-        EXPECT_EQ(melee[1].mPath, "meshes/characters/_male/1hmequip.kf");
-        EXPECT_EQ(melee[1].mSemanticGroup, "equip");
-        EXPECT_EQ(melee[2].mAction, FonvWeaponAction::Unequip);
-        EXPECT_EQ(melee[2].mPath, "meshes/characters/_male/1hmunequip.kf");
-        EXPECT_EQ(melee[2].mSemanticGroup, "unequip");
+        EXPECT_EQ(melee[1].mAction, FonvWeaponAction::Aim);
+        EXPECT_EQ(melee[1].mPath, "meshes/characters/_male/1hmaim.kf");
+        EXPECT_EQ(melee[1].mSemanticGroup, "weaponpose");
+        EXPECT_EQ(melee[2].mAction, FonvWeaponAction::Equip);
+        EXPECT_EQ(melee[2].mPath, "meshes/characters/_male/1hmequip.kf");
+        EXPECT_EQ(melee[2].mSemanticGroup, "equip");
+        EXPECT_EQ(melee[3].mAction, FonvWeaponAction::Unequip);
+        EXPECT_EQ(melee[3].mPath, "meshes/characters/_male/1hmunequip.kf");
+        EXPECT_EQ(melee[3].mSemanticGroup, "unequip");
 
         // Retail WeapNVAssaultCarbine DNAM is type=6 (2ha), reload=5 (ReloadF/JamF).
         const std::vector<FonvWeaponActionSource> automatic = getFonvWeaponActionManifest(6, 5);
-        ASSERT_EQ(automatic.size(), 5u);
+        ASSERT_EQ(automatic.size(), 6u);
         EXPECT_EQ(automatic[0].mAction, FonvWeaponAction::PrimaryAttack);
         EXPECT_EQ(automatic[0].mPath, "meshes/characters/_male/2haattackloop.kf");
         EXPECT_EQ(automatic[0].mSemanticGroup, "attack1");
-        EXPECT_EQ(automatic[1].mAction, FonvWeaponAction::Equip);
-        EXPECT_EQ(automatic[1].mPath, "meshes/characters/_male/2haequip.kf");
-        EXPECT_EQ(automatic[2].mAction, FonvWeaponAction::Reload);
-        EXPECT_EQ(automatic[2].mPath, "meshes/characters/_male/2hareloadf.kf");
-        EXPECT_EQ(automatic[2].mSemanticGroup, "reload");
-        EXPECT_TRUE(automatic[2].mRequired);
-        EXPECT_EQ(automatic[3].mAction, FonvWeaponAction::Jam);
-        EXPECT_EQ(automatic[3].mPath, "meshes/characters/_male/2hajamf.kf");
-        EXPECT_EQ(automatic[3].mSemanticGroup, "jam");
-        EXPECT_FALSE(automatic[3].mRequired);
-        EXPECT_EQ(automatic[4].mAction, FonvWeaponAction::Unequip);
-        EXPECT_EQ(automatic[4].mPath, "meshes/characters/_male/2haunequip.kf");
+        EXPECT_EQ(automatic[1].mAction, FonvWeaponAction::Aim);
+        EXPECT_EQ(automatic[1].mPath, "meshes/characters/_male/2haaim.kf");
+        EXPECT_EQ(automatic[1].mSemanticGroup, "weaponpose");
+        EXPECT_EQ(automatic[2].mAction, FonvWeaponAction::Equip);
+        EXPECT_EQ(automatic[2].mPath, "meshes/characters/_male/2haequip.kf");
+        EXPECT_EQ(automatic[3].mAction, FonvWeaponAction::Reload);
+        EXPECT_EQ(automatic[3].mPath, "meshes/characters/_male/2hareloadf.kf");
+        EXPECT_EQ(automatic[3].mSemanticGroup, "reload");
+        EXPECT_TRUE(automatic[3].mRequired);
+        EXPECT_EQ(automatic[4].mAction, FonvWeaponAction::Jam);
+        EXPECT_EQ(automatic[4].mPath, "meshes/characters/_male/2hajamf.kf");
+        EXPECT_EQ(automatic[4].mSemanticGroup, "jam");
+        EXPECT_FALSE(automatic[4].mRequired);
+        EXPECT_EQ(automatic[5].mAction, FonvWeaponAction::Unequip);
+        EXPECT_EQ(automatic[5].mPath, "meshes/characters/_male/2haunequip.kf");
 
         const std::vector<FonvWeaponActionSource> mine = getFonvWeaponActionManifest(11, 0);
-        ASSERT_EQ(mine.size(), 3u);
+        ASSERT_EQ(mine.size(), 4u);
         EXPECT_EQ(mine[0].mPath, "meshes/characters/_male/1mdplacemine.kf");
         EXPECT_EQ(mine[0].mSemanticGroup, "attack1");
 

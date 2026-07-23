@@ -431,7 +431,10 @@ namespace ESM4
     struct FONVSavePlayerHighProcessState
     {
         std::array<FONVSaveField<std::uint8_t>, 4> mUnk32C_340_374_375;
-        FONVSaveField<std::uint16_t> mUnk2FC;
+        // xEdit labels this serialized SInt16 Unk2FC.  Its shape, -1 idle sentinel, and 0..14 action domain match
+        // HighProcess::currentAction in the FNV 1.4.0.525 xNVSE layout.  Non-idle replay still requires a captured
+        // retail fixture before the engine may treat it as more than an exact saved action candidate.
+        FONVSaveField<std::int16_t> mCurrentAction;
         std::array<FONVSaveField<std::uint32_t>, 11> mUnk2B4_2F8_310_330_334_338_34C_294_2B8_2BC_298;
         std::array<FONVSaveField<std::uint16_t>, 3> mUnk2C0_2C2_2C4;
         FONVSaveField<std::uint8_t> mUnk349;

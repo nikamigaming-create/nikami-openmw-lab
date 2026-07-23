@@ -254,6 +254,8 @@ namespace MWWorld
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
         bool mWeaponDrawn = false;
+        std::int16_t mCurrentWeaponAction = -1;
+        std::uint64_t mCurrentWeaponActionSourceOffset = 0;
         std::vector<FalloutInventoryItem> mInventoryItems;
         std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;

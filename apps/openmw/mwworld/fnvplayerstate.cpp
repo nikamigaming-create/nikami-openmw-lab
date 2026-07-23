@@ -201,7 +201,6 @@ namespace
         return {
             "player-runtime-actor-value-unidentified-arrays-244-4b0",
             "player-perk-entry-point-effects",
-            "player-weapon-current-action-clip-reload-state",
             "player-reputation-crime-disguise",
             "quest-stages-objectives-variables",
             "global-variables",
@@ -626,6 +625,12 @@ namespace MWWorld
         if (weaponOut.mValue > 1)
             return loadFailure("FNV save Player weapon-out state is not a canonical boolean");
         plan.mPlayer.mWeaponDrawn = weaponOut.mValue != 0;
+        const ESM4::FONVSaveField<std::int16_t>& currentAction
+            = save.mPlayerMobileObjectProcessState->mHighProcess.mCurrentAction;
+        if (currentAction.mValue < -1 || currentAction.mValue > 13)
+            return loadFailure("FNV save Player current weapon action is outside the retail action domain");
+        plan.mPlayer.mCurrentWeaponAction = currentAction.mValue;
+        plan.mPlayer.mCurrentWeaponActionSourceOffset = currentAction.mRange.mOffset;
         std::set<ESM::FormId> changedFactions;
         for (const ESM4::FONVSavePlayerActorExtraData& extra : processInventory.mActorExtraData)
         {
@@ -940,6 +945,8 @@ namespace MWWorld
         plan.mScene.mPayloadOffset = sky.mRange.mOffset;
         plan.mScene.mPayloadBytes = sky.mRange.mSize;
         plan.mUncoveredState = falloutSaveLoadBlockers();
+        if (plan.mPlayer.mCurrentWeaponAction != -1)
+            plan.mUncoveredState.push_back("player-nonidle-weapon-action-animation-resume");
         if (plan.mQuestProgress)
         {
             const auto blocker = std::ranges::find(plan.mUncoveredState, "quest-stages-objectives-variables");

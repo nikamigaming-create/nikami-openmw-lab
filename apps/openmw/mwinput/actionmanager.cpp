@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <exception>
 #include <limits>
 #include <ranges>
 #include <vector>
@@ -56,6 +58,8 @@
 #include "../mwrender/camera.hpp"
 #include "../mwrender/renderingmanager.hpp"
 
+#include "../mwphysics/raycasting.hpp"
+
 #include "../mwgui/hud.hpp"
 
 #include "actions.hpp"
@@ -71,6 +75,21 @@ namespace MWInput
         , mScreenCaptureHandler(std::move(screenCaptureHandler))
         , mTimeIdle(0.f)
     {
+        if (const char* proof = std::getenv("OPENMW_FNV_VATS_PROOF"))
+            mFalloutVatsProofEnabled = std::string_view(proof) == "1";
+        if (const char* target = std::getenv("OPENMW_FNV_VATS_PROOF_TARGET"))
+            mFalloutVatsProofTargetName = target;
+        if (const char* step = std::getenv("OPENMW_FNV_VATS_PROOF_CAPTURE_STEP"))
+        {
+            try
+            {
+                mFalloutVatsProofCaptureStep = std::max(1u, static_cast<unsigned int>(std::stoul(step)));
+            }
+            catch (const std::exception&)
+            {
+                Log(Debug::Warning) << "FNV VATS proof: invalid capture step=" << step << " using=3";
+            }
+        }
     }
 
     void ActionManager::update(float dt)
@@ -90,6 +109,8 @@ namespace MWInput
             updateFalloutVatsExecution(dt);
         else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
             updateFalloutVatsPointerSelection();
+
+        updateFalloutVatsProof();
     }
 
     void ActionManager::resetIdleTime()
@@ -279,6 +300,14 @@ namespace MWInput
             if (validTarget(candidate) && std::ranges::find(mFalloutVatsTargets, candidate) == mFalloutVatsTargets.end())
                 mFalloutVatsTargets.push_back(candidate);
         }
+        if (mFalloutVatsProofEnabled && !mFalloutVatsProofTargetName.empty())
+        {
+            const auto preferred = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
+                return Misc::StringUtils::ciEqual(candidate.getClass().getName(candidate), mFalloutVatsProofTargetName);
+            });
+            if (preferred != mFalloutVatsTargets.end())
+                std::rotate(mFalloutVatsTargets.begin(), preferred, std::next(preferred));
+        }
         if (mFalloutVatsTargets.empty())
         {
             Log(Debug::Warning) << "FNV VATS: target acquisition failed";
@@ -313,6 +342,9 @@ namespace MWInput
         MWRender::Camera* camera = world->getRenderingManager()->getCamera();
         mFalloutVatsPreviousCameraMode = static_cast<int>(camera->getMode());
         mFalloutVatsPreviousCameraDistance = camera->getCameraDistance();
+        mFalloutVatsPreviousCameraPitch = camera->getPitch();
+        mFalloutVatsPreviousCameraYaw = camera->getYaw();
+        mFalloutVatsPreviousCameraRoll = camera->getRoll();
         mFalloutVatsPreviousSimulationScale = world->getTimeManager()->getSimulationTimeScale();
         world->getTimeManager()->setSimulationTimeScale(0.f);
 
@@ -382,10 +414,21 @@ namespace MWInput
             return false;
         }
 
+        clearFalloutVatsHighlight();
         mFalloutVatsTarget = target;
         mFalloutVatsTargetName = std::string(target.getClass().getName(target));
         mFalloutVatsBodyParts = std::move(bodyParts);
         mFalloutVatsBodyPartIndex = selectedBodyPartIndex;
+        const float targetYaw = mFalloutVatsTarget.getRefData().getPosition().rot[2];
+        mFalloutVatsTargetFramingForward = osg::Vec3f(std::sin(targetYaw), std::cos(targetYaw), 0.f);
+        if (SceneUtil::PositionAttitudeTransform* baseNode = mFalloutVatsTarget.getRefData().getBaseNode())
+            mFalloutVatsTargetFramingForward = baseNode->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
+        mFalloutVatsTargetFramingForward.z() = 0.f;
+        if (mFalloutVatsTargetFramingForward.length2() < 0.001f)
+            mFalloutVatsTargetFramingForward.set(0.f, 1.f, 0.f);
+        else
+            mFalloutVatsTargetFramingForward.normalize();
+        mFalloutVatsExecutionCameraInitialized = false;
         updateFalloutVatsCamera();
         if (!selectFalloutVatsBodyPart(selectedBodyPartIndex))
             return false;
@@ -408,6 +451,7 @@ namespace MWInput
         mFalloutVatsBodyPartName = std::string(bodyPart.mName);
         mFalloutVatsBodyPartTargetNode = std::string(bodyPart.mTargetNode);
         mFalloutVatsHitChance = hitChance;
+        updateFalloutVatsHighlight();
         Log(Debug::Info) << "FNV VATS: selected target=" << mFalloutVatsTargetName
                          << " bodyPart=" << mFalloutVatsBodyPartName
                          << " bodyPartIndex=" << static_cast<unsigned int>(bodyPart.mIndex)
@@ -473,12 +517,63 @@ namespace MWInput
             focus.z() -= actorHeight * 0.3f;
             radius = std::clamp(actorHeight * 0.55f, 70.f, 110.f);
         }
-        const float targetYaw = mFalloutVatsTarget.getRefData().getPosition().rot[2];
-        osg::Vec3f renderedForward(std::sin(targetYaw), std::cos(targetYaw), 0.f);
-        if (SceneUtil::PositionAttitudeTransform* baseNode = mFalloutVatsTarget.getRefData().getBaseNode())
-            renderedForward = baseNode->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
-        const MWMechanics::FalloutVatsCameraPose pose
-            = MWMechanics::buildFalloutVatsFrontalCameraPose(focus, radius, renderedForward);
+        MWMechanics::FalloutVatsCameraPose pose;
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
+        {
+            if (!mFalloutVatsExecutionCameraInitialized)
+            {
+                const MWWorld::Ptr player = world->getPlayerPtr();
+                const osg::Vec3f playerHead = world->getActorHeadTransform(player).getTrans();
+                osg::Vec3f shotAxis = head - playerHead;
+                shotAxis.z() = 0.f;
+                float shotDistance = shotAxis.length();
+                if (!std::isfinite(shotDistance) || shotDistance < 1.f)
+                {
+                    shotAxis.set(0.f, 1.f, 0.f);
+                    shotDistance = 160.f;
+                }
+                else
+                    shotAxis /= shotDistance;
+                if (mFalloutVatsExecutionCameraPhase == 0)
+                {
+                    const osg::Vec3f side(-shotAxis.y(), shotAxis.x(), 0.f);
+                    // Use a three-quarter shooter cut. A nearly straight rear view hid the rifle and both hands
+                    // behind the actor's torso even while the authored attack controllers were advancing.
+                    mFalloutVatsExecutionCameraFocus = playerHead + shotAxis * 15.f
+                        - osg::Vec3f(0.f, 0.f, 10.f);
+                    osg::Vec3f candidate = playerHead - shotAxis * 55.f + side * 70.f
+                        + osg::Vec3f(0.f, 0.f, 15.f);
+                    MWPhysics::RayCastingResult cameraRay;
+                    world->castRenderingRay(cameraRay, playerHead, candidate, true, true);
+                    if (cameraRay.mHit)
+                    {
+                        const osg::Vec3f ray = candidate - playerHead;
+                        const float length = ray.length();
+                        if (length > 0.001f)
+                            candidate = cameraRay.mHitPos - ray / length * 18.f;
+                    }
+                    mFalloutVatsExecutionCameraEye = candidate;
+                    Log(Debug::Info) << "FNV VATS camera: execution phase=shooter shotDistance=" << shotDistance;
+                }
+                else
+                {
+                    const MWMechanics::FalloutVatsCameraPose targetPose
+                        = MWMechanics::buildFalloutVatsFrontalCameraPose(
+                            focus, radius, mFalloutVatsTargetFramingForward);
+                    mFalloutVatsExecutionCameraEye = targetPose.mEye;
+                    mFalloutVatsExecutionCameraFocus = targetPose.mFocus;
+                    Log(Debug::Info) << "FNV VATS camera: execution phase=impact";
+                }
+                mFalloutVatsExecutionCameraInitialized = true;
+                Log(Debug::Info) << "FNV VATS camera: execution eye=" << mFalloutVatsExecutionCameraEye
+                                 << " focus=" << mFalloutVatsExecutionCameraFocus;
+            }
+            pose.mEye = mFalloutVatsExecutionCameraEye;
+            pose.mFocus = mFalloutVatsExecutionCameraFocus;
+        }
+        else
+            pose = MWMechanics::buildFalloutVatsFrontalCameraPose(
+                focus, radius, mFalloutVatsTargetFramingForward);
         const osg::Vec3d lookDirection = pose.mFocus - pose.mEye;
         const double horizontal
             = std::sqrt(lookDirection.x() * lookDirection.x() + lookDirection.y() * lookDirection.y());
@@ -492,9 +587,34 @@ namespace MWInput
         camera->updateCamera();
     }
 
+    void ActionManager::updateFalloutVatsHighlight()
+    {
+        if (mFalloutVatsTarget.isEmpty())
+            return;
+        MWRender::Animation* animation = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget);
+        if (animation == nullptr)
+            return;
+
+        std::vector<std::string_view> targetNodes;
+        targetNodes.reserve(mFalloutVatsBodyParts.size());
+        for (const MWMechanics::FalloutVatsBodyPartContract& bodyPart : mFalloutVatsBodyParts)
+            targetNodes.push_back(bodyPart.mTargetNode);
+        animation->setFalloutVatsWireframes(targetNodes, mFalloutVatsBodyPartTargetNode, true);
+    }
+
+    void ActionManager::clearFalloutVatsHighlight()
+    {
+        if (mFalloutVatsTarget.isEmpty())
+            return;
+        if (MWRender::Animation* animation
+            = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget))
+            animation->setFalloutVatsWireframes({}, {}, false);
+    }
+
     void ActionManager::restoreFalloutVatsView()
     {
         MWBase::World* world = MWBase::Environment::get().getWorld();
+        clearFalloutVatsHighlight();
         world->getFalloutPlayerRuntimeState().setVatsActive(false);
         if (mFalloutVatsPreviousCameraMode >= 0)
         {
@@ -503,6 +623,9 @@ namespace MWInput
             camera->attachTo(world->getPlayerPtr());
             camera->setPreferredCameraDistance(mFalloutVatsPreviousCameraDistance);
             camera->setMode(static_cast<MWRender::Camera::Mode>(mFalloutVatsPreviousCameraMode), true);
+            camera->setPitch(mFalloutVatsPreviousCameraPitch, true);
+            camera->setYaw(mFalloutVatsPreviousCameraYaw, true);
+            camera->setRoll(mFalloutVatsPreviousCameraRoll);
             camera->instantTransition();
             camera->processViewChange();
         }
@@ -519,7 +642,17 @@ namespace MWInput
         mFalloutVatsHitChance = 0;
         mFalloutVatsPreviousCameraMode = -1;
         mFalloutVatsPreviousCameraDistance = 0.f;
+        mFalloutVatsPreviousCameraPitch = 0.f;
+        mFalloutVatsPreviousCameraYaw = 0.f;
+        mFalloutVatsPreviousCameraRoll = 0.f;
+        mFalloutVatsPreviousPlayerYaw = 0.f;
+        mFalloutVatsPlayerYawChanged = false;
         mFalloutVatsPreviousSimulationScale = 1.f;
+        mFalloutVatsTargetFramingForward.set(0.f, 1.f, 0.f);
+        mFalloutVatsExecutionCameraEye.set(0.f, 0.f, 0.f);
+        mFalloutVatsExecutionCameraFocus.set(0.f, 0.f, 0.f);
+        mFalloutVatsExecutionCameraInitialized = false;
+        mFalloutVatsExecutionCameraPhase = 0;
         mFalloutVatsExecutionTimer = 0.f;
         mFalloutVatsExecutionApBefore = 0.f;
         mFalloutVatsExecutionPlannedApAfter = 0.f;
@@ -529,6 +662,7 @@ namespace MWInput
         mFalloutVatsExecutionShotsAttempted = 0;
         mFalloutVatsExecutionShotsFired = 0;
         mFalloutVatsExecutionRolledHits = 0;
+        mFalloutVatsExecutionVisualPrepared = false;
     }
 
     void ActionManager::queueFalloutVatsAttack()
@@ -602,7 +736,27 @@ namespace MWInput
         mFalloutVatsExecutionShotsFired = 0;
         mFalloutVatsExecutionRolledHits = 0;
         mFalloutVatsExecutionTargetHealthBefore.clear();
-        MWBase::Environment::get().getWorld()->getTimeManager()->setSimulationTimeScale(0.2f);
+        mFalloutVatsExecutionVisualPrepared = false;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        world->getTimeManager()->setSimulationTimeScale(0.2f);
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        const ESM::Position& playerPosition = player.getRefData().getPosition();
+        mFalloutVatsPreviousPlayerYaw = playerPosition.rot[2];
+        osg::Vec3f toTarget = world->getActorHeadTransform(mFalloutVatsTarget).getTrans()
+            - world->getActorHeadTransform(player).getTrans();
+        toTarget.z() = 0.f;
+        if (toTarget.length2() > 0.001f)
+        {
+            const float targetYaw = std::atan2(toTarget.x(), toTarget.y());
+            world->rotateObject(player,
+                osg::Vec3f(playerPosition.rot[0], playerPosition.rot[1], targetYaw),
+                MWBase::RotationFlag_none);
+            mFalloutVatsPlayerYawChanged = true;
+            Log(Debug::Info) << "FNV VATS execution: shooter-facing previousYaw="
+                             << mFalloutVatsPreviousPlayerYaw << " targetYaw=" << targetYaw;
+        }
+        mFalloutVatsExecutionCameraPhase = 0;
+        mFalloutVatsExecutionCameraInitialized = false;
         Log(Debug::Info) << "FNV VATS execution: phase=begin queued=" << mFalloutVatsExecutionQueued
                          << " apBefore=" << mFalloutVatsExecutionApBefore
                          << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter;
@@ -615,19 +769,57 @@ namespace MWInput
             return;
         if (std::isfinite(dt) && dt > 0.f)
             mFalloutVatsExecutionTimer += dt;
-        updateFalloutVatsCamera();
-        updateFalloutVatsHud();
-
         if (mFalloutVats.getExecutingAction() != nullptr)
         {
-            const float delay = mFalloutVatsExecutionShotsAttempted == 0 ? 0.35f : 0.65f;
-            if (mFalloutVatsExecutionTimer < delay)
+            if (!mFalloutVatsExecutionVisualPrepared)
+            {
+                if (mFalloutVatsExecutionShotsAttempted > 0 && mFalloutVatsExecutionTimer < 0.35f)
+                {
+                    // Hold the shooter cut through discharge long enough for the authored muzzle flash to render,
+                    // then show the target impact before preparing the next queued action.
+                    if (mFalloutVatsExecutionTimer >= 0.12f && mFalloutVatsExecutionCameraPhase == 0)
+                    {
+                        mFalloutVatsExecutionCameraPhase = 1;
+                        mFalloutVatsExecutionCameraInitialized = false;
+                    }
+                    updateFalloutVatsCamera();
+                    updateFalloutVatsHud();
+                    return;
+                }
+                if (!MWBase::Environment::get().getMechanicsManager()->prepareFalloutVatsRangedAttack(
+                        MWBase::Environment::get().getWorld()->getPlayerPtr()))
+                {
+                    Log(Debug::Error) << "FNV VATS execution: authored visual wind-up unavailable";
+                    finishFalloutVatsExecution(true);
+                    return;
+                }
+                mFalloutVatsExecutionVisualPrepared = true;
+                mFalloutVatsExecutionCameraPhase = 0;
+                mFalloutVatsExecutionCameraInitialized = false;
+                mFalloutVatsExecutionTimer = 0.f;
+            }
+            updateFalloutVatsCamera();
+            updateFalloutVatsHud();
+
+            // Release during the authored attack rather than after its 1.33-second animation has already returned
+            // to idle. Simulation time is already scaled by VATS, so this remains a deliberately slow cinematic.
+            if (mFalloutVatsExecutionTimer < 0.55f)
                 return;
             mFalloutVatsExecutionTimer = 0.f;
             if (!executeNextFalloutVatsAction())
                 finishFalloutVatsExecution(true);
+            mFalloutVatsExecutionVisualPrepared = false;
             return;
         }
+
+        if (mFalloutVatsExecutionShotsAttempted > 0 && mFalloutVatsExecutionTimer >= 0.12f
+            && mFalloutVatsExecutionCameraPhase == 0)
+        {
+            mFalloutVatsExecutionCameraPhase = 1;
+            mFalloutVatsExecutionCameraInitialized = false;
+        }
+        updateFalloutVatsCamera();
+        updateFalloutVatsHud();
 
         if (mFalloutVats.isExecutionComplete() && mFalloutVatsExecutionTimer >= 0.9f
             && MWBase::Environment::get().getWorld()->countPendingFalloutVatsProjectiles(
@@ -668,6 +860,7 @@ namespace MWInput
         mFalloutVatsBodyPartName = executing.mBodyPartName;
         mFalloutVatsBodyPartTargetNode = executing.mTargetNode;
         mFalloutVatsHitChance = executing.mDisplayedHitChance;
+        updateFalloutVatsHighlight();
         updateFalloutVatsCamera();
         updateFalloutVatsHud();
 
@@ -752,10 +945,21 @@ namespace MWInput
             << " apBefore=" << mFalloutVatsExecutionApBefore
             << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter
             << " apAfter=" << apAfter << " totalDamage=" << mFalloutVatsExecutionDamage;
+        if (mFalloutVatsProofEnabled)
+            mFalloutVatsProofShotsFired = mFalloutVatsExecutionShotsFired;
         if (!interrupted && !mFalloutVats.finishExecution())
             mFalloutVats.cancel();
         else if (interrupted)
             mFalloutVats.cancel();
+        if (mFalloutVatsPlayerYawChanged)
+        {
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            const ESM::Position& position = player.getRefData().getPosition();
+            world->rotateObject(player,
+                osg::Vec3f(position.rot[0], position.rot[1], mFalloutVatsPreviousPlayerYaw),
+                MWBase::RotationFlag_none);
+            mFalloutVatsPlayerYawChanged = false;
+        }
         restoreFalloutVatsView();
         updateFalloutVatsHud();
     }
@@ -817,7 +1021,8 @@ namespace MWInput
             return;
         const bool visible = mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive;
         std::vector<MWGui::FalloutVatsBodyPartDisplay> bodyPartDisplays;
-        if (visible && !mFalloutVatsTarget.isEmpty() && mFalloutVatsWeapon && mViewer != nullptr)
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting
+            && !mFalloutVatsTarget.isEmpty() && mFalloutVatsWeapon && mViewer != nullptr)
         {
             const osg::Camera* renderCamera = mViewer->getCamera();
             const osg::Viewport* viewport = renderCamera != nullptr ? renderCamera->getViewport() : nullptr;
@@ -851,6 +1056,188 @@ namespace MWInput
             mFalloutVats.getActionPointsBefore(), mFalloutVats.getActionPointsAfter(),
             mFalloutVats.getQueue().size(), visible ? getFalloutVatsAvailableShots() : 0,
             mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing);
+    }
+
+    void ActionManager::captureFalloutVatsProofFrame()
+    {
+        if (mScreenCaptureHandler == nullptr || mViewer == nullptr)
+            return;
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
+        ++mFalloutVatsProofCaptures;
+    }
+
+    void ActionManager::updateFalloutVatsProof()
+    {
+        if (!mFalloutVatsProofEnabled || mFalloutVatsProofFinished)
+            return;
+
+        ++mFalloutVatsProofFrame;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        const auto quitWithFailure = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV VATS proof: result=fail stage=" << mFalloutVatsProofStage
+                              << " reason=" << reason << " captures=" << mFalloutVatsProofCaptures;
+            mFalloutVatsProofFinished = true;
+            MWBase::Environment::get().getStateManager()->requestQuit();
+        };
+
+        switch (mFalloutVatsProofStage)
+        {
+            case 0:
+            {
+                // Let the native save finish instantiating actors, animations, HUD, and the first rendered pose.
+                if (mFalloutVatsProofFrame < 180)
+                    return;
+                MWRender::Camera* camera = world->getRenderingManager()->getCamera();
+                mFalloutVatsProofCameraModeBefore = static_cast<int>(camera->getMode());
+                mFalloutVatsProofCameraPitchBefore = camera->getPitch();
+                mFalloutVatsProofCameraYawBefore = camera->getYaw();
+                mFalloutVatsProofCameraRollBefore = camera->getRoll();
+                mFalloutVatsProofPlayerYawBefore = player.getRefData().getPosition().rot[2];
+                toggleFalloutVats();
+                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Targeting)
+                {
+                    quitWithFailure("enter-vats");
+                    return;
+                }
+                if (!mFalloutVatsProofTargetName.empty()
+                    && !Misc::StringUtils::ciEqual(mFalloutVatsTargetName, mFalloutVatsProofTargetName))
+                {
+                    quitWithFailure("named-target-not-selected");
+                    return;
+                }
+                mFalloutVatsProofTarget = mFalloutVatsTarget;
+                mFalloutVatsProofHealthBefore
+                    = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget).getHealth().getCurrent();
+                Log(Debug::Info) << "FNV VATS proof: stage=targeting target=" << mFalloutVatsTargetName
+                                 << " healthBefore=" << mFalloutVatsProofHealthBefore;
+                mFalloutVatsProofStage = 1;
+                mFalloutVatsProofFrame = 0;
+                captureFalloutVatsProofFrame();
+                return;
+            }
+            case 1:
+            {
+                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
+                    captureFalloutVatsProofFrame();
+                if (mFalloutVatsProofFrame == 30)
+                {
+                    queueFalloutVatsAttack();
+                    if (mFalloutVats.getQueue().empty())
+                    {
+                        quitWithFailure("queue-attack");
+                        return;
+                    }
+                    Log(Debug::Info) << "FNV VATS proof: stage=queued bodyPart=" << mFalloutVatsBodyPartName;
+                }
+                if (mFalloutVatsProofFrame == 36)
+                {
+                    queueFalloutVatsAttack();
+                    Log(Debug::Info) << "FNV VATS proof: stage=queued-second queue="
+                                     << mFalloutVats.getQueue().size();
+                }
+                if (mFalloutVatsProofFrame == 45 && mFalloutVatsBodyParts.size() > 1)
+                {
+                    cycleFalloutVatsBodyPart(1);
+                    Log(Debug::Info) << "FNV VATS proof: stage=limb-selected bodyPart=" << mFalloutVatsBodyPartName;
+                }
+                if (mFalloutVatsProofFrame < 90)
+                    return;
+                executeFalloutVatsQueue();
+                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Executing)
+                {
+                    quitWithFailure("begin-execution");
+                    return;
+                }
+                mFalloutVatsProofStage = 2;
+                mFalloutVatsProofFrame = 0;
+                return;
+            }
+            case 2:
+            {
+                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
+                    captureFalloutVatsProofFrame();
+                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
+                {
+                    // The proof renderer is intentionally uncapped and can advance hundreds of render frames
+                    // during one second of wall time. VATS, meanwhile, runs simulation at 0.2x and must retain
+                    // its post-shot impact hold. Keep this only as a runaway guard; execution completion itself
+                    // is governed by simulation time and pending projectile state above.
+                    if (mFalloutVatsProofFrame > 12000)
+                        quitWithFailure("execution-timeout");
+                    return;
+                }
+                mFalloutVatsProofStage = 3;
+                mFalloutVatsProofFrame = 0;
+                Log(Debug::Info) << "FNV VATS proof: stage=post-execution";
+                return;
+            }
+            case 3:
+            {
+                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
+                    captureFalloutVatsProofFrame();
+                if (mFalloutVatsProofFrame < 180)
+                    return;
+                if (mFalloutVatsProofTarget.isEmpty())
+                {
+                    quitWithFailure("target-lost");
+                    return;
+                }
+                const float healthAfter = mFalloutVatsProofTarget.getClass()
+                    .getCreatureStats(mFalloutVatsProofTarget).getHealth().getCurrent();
+                const bool damaged = std::isfinite(healthAfter) && healthAfter < mFalloutVatsProofHealthBefore;
+                const bool aggro = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget)
+                    .getAiSequence().isInCombat(player);
+                std::vector<MWWorld::Ptr> nearbyActors;
+                MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                    player.getRefData().getPosition().asVec3(), 4096.f, nearbyActors);
+                std::size_t hostileWitnesses = 0;
+                for (const MWWorld::Ptr& actor : nearbyActors)
+                {
+                    if (actor.isEmpty() || actor == player || actor == mFalloutVatsProofTarget
+                        || !actor.getClass().isActor() || !actor.getRefData().isEnabled()
+                        || actor.getClass().getCreatureStats(actor).isDead())
+                        continue;
+                    if (actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat(player))
+                        ++hostileWitnesses;
+                }
+                const int bounty = player.getClass().getNpcStats(player).getBounty();
+                const bool witnessResponse = hostileWitnesses > 0 || bounty > 0;
+                const bool requireWitnessResponse
+                    = std::getenv("OPENMW_FNV_VATS_PROOF_REQUIRE_WITNESSES") != nullptr;
+                const MWRender::Camera* camera = world->getRenderingManager()->getCamera();
+                const float pitchDelta = std::abs(camera->getPitch() - mFalloutVatsProofCameraPitchBefore);
+                const float yawDelta = std::abs(camera->getYaw() - mFalloutVatsProofCameraYawBefore);
+                const float rollDelta = std::abs(camera->getRoll() - mFalloutVatsProofCameraRollBefore);
+                const bool cameraRestored = static_cast<int>(camera->getMode()) == mFalloutVatsProofCameraModeBefore
+                    && pitchDelta < 0.001f && yawDelta < 0.001f && rollDelta < 0.001f;
+                const bool fired = mFalloutVatsProofShotsFired > 0;
+                const float playerYawDelta = std::abs(std::remainder(
+                    player.getRefData().getPosition().rot[2] - mFalloutVatsProofPlayerYawBefore,
+                    static_cast<float>(2.0 * osg::PI)));
+                const bool playerYawRestored = playerYawDelta < 0.001f;
+                const bool passed = fired && damaged && aggro && cameraRestored && playerYawRestored
+                    && (!requireWitnessResponse || witnessResponse);
+                Log(passed ? Debug::Info : Debug::Error)
+                    << "FNV VATS proof: result=" << (passed ? "pass" : "fail")
+                     << " target=" << mFalloutVatsProofTarget.getClass().getName(mFalloutVatsProofTarget)
+                     << " fired=" << fired << " damaged=" << damaged << " aggro=" << aggro
+                     << " hostileWitnesses=" << hostileWitnesses << " bounty=" << bounty
+                     << " witnessResponse=" << witnessResponse
+                     << " healthBefore=" << mFalloutVatsProofHealthBefore << " healthAfter=" << healthAfter
+                     << " cameraRestored=" << cameraRestored << " pitchDelta=" << pitchDelta
+                     << " yawDelta=" << yawDelta << " rollDelta=" << rollDelta
+                     << " playerYawRestored=" << playerYawRestored << " playerYawDelta=" << playerYawDelta
+                     << " captures=" << mFalloutVatsProofCaptures;
+                mFalloutVatsProofFinished = true;
+                MWBase::Environment::get().getStateManager()->requestQuit();
+                return;
+            }
+            default:
+                quitWithFailure("invalid-stage");
+                return;
+        }
     }
 
     bool ActionManager::checkAllowedToUseItems() const

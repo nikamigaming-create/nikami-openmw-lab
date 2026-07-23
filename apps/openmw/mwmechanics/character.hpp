@@ -142,6 +142,7 @@ namespace MWMechanics
         const ESM4::Weapon* mFalloutWeapon = nullptr;
         FalloutTriggerState mFalloutTriggerState;
         FalloutAttackDelivery mFalloutAttackDelivery;
+        bool mFalloutVatsVisualAttackPrepared = false;
         bool mFalloutReloadQueued = false;
         MWRender::Animation* mAnimation;
         MWRender::Animation* mFalloutWeaponAnimation = nullptr;
@@ -367,6 +368,7 @@ namespace MWMechanics
 
         /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
         /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
+        bool prepareFalloutVatsRangedAttack();
         bool executeFalloutVatsRangedHit(
             const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
             const FalloutVatsQueuedAction& action, bool targetHit);

@@ -835,6 +835,11 @@ namespace MWMechanics
         return actor.getClass().isActor() && mActors.reloadFalloutWeapon(actor);
     }
 
+    bool MechanicsManager::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.prepareFalloutVatsRangedAttack(actor);
+    }
+
     bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
     {
@@ -1658,6 +1663,44 @@ namespace MWMechanics
                     SidingCache cachedAllies{ mActors, false };
                     const std::set<MWWorld::Ptr>& attackerAllies = cachedAllies.getActorsSidingWith(attacker);
                     startCombat(target, attacker, &attackerAllies);
+                    if (attacker == player && isFalloutNewVegasActor(target))
+                    {
+                        std::vector<MWWorld::Ptr> nearbyActors;
+                        const float alarmRadius = MWBase::Environment::get()
+                                                      .getESMStore()
+                                                      ->get<ESM::GameSetting>()
+                                                      .find("fAlarmRadius")
+                                                      ->mValue.getFloat();
+                        getActorsInRange(target.getRefData().getPosition().asVec3(), alarmRadius, nearbyActors);
+                        const std::vector<ESM4::ActorFaction> victimFactions = getFalloutActorFactions(target);
+                        const MWWorld::Store<ESM4::Faction>& factionStore
+                            = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+                        std::size_t defendersStarted = 0;
+                        for (const MWWorld::Ptr& witness : nearbyActors)
+                        {
+                            if (witness.isEmpty() || witness == target || witness == attacker
+                                || !isFalloutNewVegasActor(witness) || !witness.getRefData().isEnabled()
+                                || witness.getClass().getCreatureStats(witness).isDead()
+                                || witness.getClass().getCreatureStats(witness).getAiSequence().isInCombat(attacker))
+                                continue;
+                            const std::vector<ESM4::ActorFaction> witnessFactions
+                                = getFalloutActorFactions(witness);
+                            const std::optional<ESM4::Faction::GroupCombatReaction> relation
+                                = resolveFalloutFactionReaction(witnessFactions, victimFactions,
+                                    [&](ESM::FormId faction) {
+                                        return factionStore.search(ESM::RefId(faction));
+                                    });
+                            if (!shouldFalloutActorDefendVictim(witnessFactions, victimFactions, relation))
+                                continue;
+                            startCombat(witness, attacker, &attackerAllies);
+                            ++defendersStarted;
+                        }
+                        Log(Debug::Info) << "FNV assault response: victim=" << target.toString()
+                                         << " attacker=" << attacker.toString()
+                                         << " radius=" << alarmRadius
+                                         << " nearby=" << nearbyActors.size()
+                                         << " defendersStarted=" << defendersStarted;
+                    }
                     // Force friendly actors into combat to prevent infighting between followers
                     for (const auto& follower : cachedAllies.getActorsSidingWith(target))
                     {

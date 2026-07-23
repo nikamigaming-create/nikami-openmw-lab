@@ -586,6 +586,12 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction);
 
+    /// Decide whether an actor joins combat when a nearby faction ally is attacked. Shared faction membership is
+    /// authoritative even when no explicit FACT relation is authored; explicit Ally/Friend relations also defend.
+    [[nodiscard]] bool shouldFalloutActorDefendVictim(std::span<const ESM4::ActorFaction> actorFactions,
+        std::span<const ESM4::ActorFaction> victimFactions,
+        std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept;
+
     /// Apply Fallout's categorical aggression contract: 0 never initiates, 1 attacks enemies, 2 attacks enemies and
     /// neutrals, and 3 attacks anyone. Invalid aggression or an unknown required reaction fails closed.
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(

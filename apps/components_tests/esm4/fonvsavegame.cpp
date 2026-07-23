@@ -3143,6 +3143,8 @@ namespace
 
         const auto& high = processState.mHighProcess;
         EXPECT_EQ(high.mRange, (ESM4::FONVSaveRange{ 500058, 1129 }));
+        EXPECT_EQ(high.mCurrentAction.mValue, -1);
+        EXPECT_EQ(high.mCurrentAction.mRange, (ESM4::FONVSaveRange{ 500066, 2 }));
         EXPECT_FLOAT_EQ(high.mCoords.mComponents[0].mValue, 11.7265625f);
         EXPECT_FLOAT_EQ(high.mCoords.mComponents[1].mValue, 39.951904296875f);
         EXPECT_FLOAT_EQ(high.mCoords.mComponents[2].mValue, 83.052734375f);
