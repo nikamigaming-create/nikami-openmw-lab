@@ -1479,11 +1479,44 @@ namespace
         const ESM4::FONVSaveWorldReferenceFlags& flags = save.mWorldReferenceFlags.front();
         EXPECT_EQ(flags.mResolvedFormId, 0x00000123u);
         EXPECT_EQ(flags.mChangeType, 1u);
-        EXPECT_EQ(flags.mProcessLevel.mValue, 0);
+        ASSERT_TRUE(flags.mProcessLevel);
+        EXPECT_EQ(flags.mProcessLevel->mValue, 0);
         EXPECT_EQ(flags.mFlags.mValue, ESM4::Rec_Disabled);
         EXPECT_EQ(flags.mRange.mSize, 7u);
         EXPECT_EQ(flags.mUnparsedRemainder.mRaw, (std::vector<std::uint8_t>{ 0xaa, 0xbb }));
         EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 17u);
+    }
+
+    TEST(FONVSaveGame, ParsesOrdinaryObjectReferenceFormFlagsWithoutInventingActorProcessState)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        std::vector<std::uint8_t> payload;
+        appendU32(payload, ESM4::Rec_Disabled);
+        appendDelimiter(payload);
+
+        std::vector<std::uint8_t> envelope;
+        appendChangedForm(envelope, { 0x40, 0x01, 0x23 }, 0x00000001u, 0, 27, 2, payload);
+        source.mBytes.insert(source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mGlobalData2Begin),
+            envelope.begin(), envelope.end());
+        overwriteU32(source.mBytes, source.mGlobalData2OffsetField,
+            static_cast<std::uint32_t>(source.mGlobalData2Begin + envelope.size()));
+        overwriteU32(source.mBytes, source.mRefIdArrayOffsetField,
+            static_cast<std::uint32_t>(source.mRefIdArrayBegin + envelope.size()));
+        overwriteU32(source.mBytes, source.mUnknownTableOffsetField,
+            static_cast<std::uint32_t>(source.mUnknownTableBegin + envelope.size()));
+        overwriteU32(source.mBytes, source.mChangedFormsCountField, 4);
+
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        ASSERT_EQ(save.mWorldReferenceFlags.size(), 1u);
+        const ESM4::FONVSaveWorldReferenceFlags& flags = save.mWorldReferenceFlags.front();
+        EXPECT_EQ(flags.mResolvedFormId, 0x00000123u);
+        EXPECT_EQ(flags.mChangeType, 0u);
+        EXPECT_FALSE(flags.mProcessLevel);
+        EXPECT_EQ(flags.mFlags.mValue, ESM4::Rec_Disabled);
+        EXPECT_EQ(flags.mRange.mSize, 5u);
+        EXPECT_TRUE(flags.mUnparsedRemainder.mRaw.empty());
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u);
     }
 
     TEST(FONVSaveGame, ParsesNewVegasPrefixAndPreservesRawProvenance)
@@ -3879,12 +3912,20 @@ namespace
                 return total + movement.mMovement.mRange.mSize;
             });
         EXPECT_EQ(decodedWorldMovementBytes, 40936u);
-        ASSERT_EQ(save.mWorldReferenceFlags.size(), 19u);
+        ASSERT_EQ(save.mWorldReferenceFlags.size(), 45u);
         EXPECT_EQ(std::count_if(save.mWorldReferenceFlags.begin(), save.mWorldReferenceFlags.end(),
                       [&](const ESM4::FONVSaveWorldReferenceFlags& flags) {
                           return (flags.mResolvedFormId >> 24) >= save.mMasters.size();
                       }),
             0);
+        EXPECT_EQ(std::count_if(save.mWorldReferenceFlags.begin(), save.mWorldReferenceFlags.end(),
+                      [](const ESM4::FONVSaveWorldReferenceFlags& flags) { return flags.mChangeType == 0; }),
+            26);
+        EXPECT_EQ(std::count_if(save.mWorldReferenceFlags.begin(), save.mWorldReferenceFlags.end(),
+                      [](const ESM4::FONVSaveWorldReferenceFlags& flags) {
+                          return flags.mChangeType == 0 && (flags.mFlags.mValue & ESM4::Rec_Disabled) != 0;
+                      }),
+            18);
         EXPECT_EQ(std::count_if(save.mWorldReferenceMovements.begin(), save.mWorldReferenceMovements.end(),
                       [&](const ESM4::FONVSaveWorldReferenceMovement& movement) {
                           return (movement.mResolvedFormId >> 24) >= save.mMasters.size()
@@ -3892,8 +3933,8 @@ namespace
                               || (*movement.mMovement.mCellOrWorldspace.mResolvedFormId >> 24) >= save.mMasters.size();
                       }),
             0);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6617u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2685440u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6600u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2685310u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

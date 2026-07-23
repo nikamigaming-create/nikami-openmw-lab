@@ -186,10 +186,13 @@ namespace
         for (const MWWorld::FalloutSaveLoadPlan::WorldReferenceFlags& state : plan.mWorldReferenceFlags)
         {
             if (!references.insert(state.mReference).second)
-                return "FNV save contains duplicate form-flags state for one ACHR/ACRE";
+                return "FNV save contains duplicate form-flags state for one REFR/ACHR/ACRE";
             bool found = false;
             switch (state.mChangeType)
             {
+                case 0:
+                    found = store.get<ESM4::Reference>().search(state.mReference) != nullptr;
+                    break;
                 case 1:
                     found = store.get<ESM4::ActorCharacter>().search(state.mReference) != nullptr;
                     break;
@@ -201,7 +204,7 @@ namespace
             }
             if (!found)
             {
-                return "FNV save form-flags reference is not a loaded record of its exact ACHR/ACRE type: "
+                return "FNV save form-flags reference is not a loaded record of its exact REFR/ACHR/ACRE type: "
                     + state.mReference.toString();
             }
         }

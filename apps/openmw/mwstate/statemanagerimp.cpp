@@ -895,7 +895,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 mutableWorld.enable(reference);
             ++appliedReferenceFlags;
         }
-        Log(Debug::Info) << "Native FNV save restored ACHR/ACRE enabled state: applied=" << appliedReferenceFlags
+        Log(Debug::Info) << "Native FNV save restored REFR/ACHR/ACRE enabled state: applied=" << appliedReferenceFlags
                          << " missing=" << missingReferenceFlags
                          << " decodedTotal=" << context.mPlan.mWorldReferenceFlags.size();
 
