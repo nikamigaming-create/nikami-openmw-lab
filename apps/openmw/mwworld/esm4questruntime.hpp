@@ -117,6 +117,7 @@ namespace MWWorld
         Disable,
         Unlock,
         Kill,
+        ResetAi,
         EvaluatePackage,
     };
 
@@ -179,6 +180,7 @@ namespace MWWorld
             Disable,
             Unlock,
             Kill,
+            ResetAi,
             AddItem,
             RemoveItem,
             EvaluatePackage,

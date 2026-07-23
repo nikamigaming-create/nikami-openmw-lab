@@ -625,6 +625,27 @@ namespace MWClass
         return true;
     }
 
+    bool resetFnvCreatureAiState(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        if (creature == nullptr || !creature->mIsFONV)
+            return false;
+
+        ptr.getClass().getCreatureStats(ptr);
+        auto* data = dynamic_cast<ESM4CreatureCustomData*>(ptr.getRefData().getCustomData());
+        if (data == nullptr)
+            return false;
+
+        data->mCreatureStats.getAiSequence().reset();
+        data->mMovement = {};
+        data->mFnvAiSequenceInitialised = false;
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
+    }
+
     static int positiveOrDefault(int value, int fallback)
     {
         value = value < 0 ? -value : value;

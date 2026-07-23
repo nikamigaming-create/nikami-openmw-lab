@@ -804,6 +804,10 @@ namespace MWWorld
                             return false;
                         break;
                     }
+                    case ESM4QuestReferenceCommand::ResetAi:
+                        if (!MWClass::resetFnvAiState(target))
+                            return false;
+                        break;
                     case ESM4QuestReferenceCommand::EvaluatePackage:
                         if (!MWClass::requestFnvAiPackageEvaluation(target))
                             return false;

@@ -376,6 +376,15 @@ namespace MWMechanics
         mNumPursuitPackages = 0;
     }
 
+    void AiSequence::reset()
+    {
+        clear();
+        mDone = false;
+        mResetFriendlyHits = false;
+        mLastAiPackage = AiPackageTypeId::None;
+        mAiState.reset();
+    }
+
     void AiSequence::stack(const AiPackage& package, const MWWorld::Ptr& actor, bool cancelOther)
     {
         if (actor == getPlayer())

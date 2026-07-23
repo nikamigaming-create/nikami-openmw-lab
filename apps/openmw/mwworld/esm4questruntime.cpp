@@ -414,7 +414,8 @@ namespace MWWorld
                 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x11a2
-                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd)
+                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
+                && instruction.opcode != 0x11fa)
             {
                 prepared.mUseSourceFallback = true;
                 prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
@@ -803,9 +804,10 @@ namespace MWWorld
                 argumentPayload = argumentPayload.first(encodedArgumentBytes);
             }
             std::vector<ESM4::ScriptBytecodeArgument> arguments;
-            // Zero-argument reference functions such as EVP have an empty frame rather
+            // Zero-argument reference functions such as EVP and ResetAI have an empty frame rather
             // than the two-byte argument count used by ordinary command functions.
-            if (!(instruction.opcode == 0x105e && argumentPayload.empty())
+            if (!((instruction.opcode == 0x105e || instruction.opcode == 0x11fa)
+                    && argumentPayload.empty())
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
@@ -974,6 +976,19 @@ namespace MWWorld
                     && mStore->get<ESM4::ActorCreature>().search(target) == nullptr)
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::EvaluatePackage, target });
+            }
+            else if (instruction.opcode == 0x11fa) // reference.ResetAI
+            {
+                // FalloutNV.esm has 26/26 reference-called, zero-argument frames:
+                // 22 ACHR targets and 4 ACRE targets.
+                if (!instruction.callingReferenceIndex || !arguments.empty() || !mReferenceCommandHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
+                if (mStore->get<ESM4::ActorCharacter>().search(target) == nullptr
+                    && mStore->get<ESM4::ActorCreature>().search(target) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::ResetAi, target });
             }
             else if (instruction.opcode == 0x1059) // ShowMessage
             {
@@ -1371,6 +1386,7 @@ namespace MWWorld
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
+            || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
@@ -1467,6 +1483,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Disable:
             case CompiledQuestCommandType::Unlock:
             case CompiledQuestCommandType::Kill:
+            case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -1616,6 +1633,11 @@ namespace MWWorld
                     command = "EvaluatePackage ";
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::ResetAi:
+                    command = "ResetAI ";
+                    executed = mReferenceCommandHandler
+                        && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, effect.mTarget);
                     break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
@@ -1885,6 +1907,10 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Kill, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::ResetAi:
+                            executed = mReferenceCommandHandler
+                                && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, command.mQuest);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -1911,6 +1937,7 @@ namespace MWWorld
                     if (!executed)
                     {
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
+                            || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
@@ -1926,6 +1953,8 @@ namespace MWWorld
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
                                 failure = "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::ResetAi)
+                                failure = "ResetAI " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetAlly)

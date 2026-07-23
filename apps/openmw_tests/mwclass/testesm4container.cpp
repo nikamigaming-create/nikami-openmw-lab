@@ -29,11 +29,13 @@
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 #include "apps/openmw/mwclass/esm4npc.hpp"
+#include "apps/openmw/mwclass/fnvaipackage.hpp"
 
 #include "apps/openmw/mwgui/tradeitemmodel.hpp"
 
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
+#include "apps/openmw/mwmechanics/movement.hpp"
 
 #include "apps/openmw/mwworld/actiondoor.hpp"
 #include "apps/openmw/mwworld/actionopen.hpp"
@@ -1474,6 +1476,71 @@ namespace
         const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
 
         EXPECT_EQ(stats.getAiSetting(MWMechanics::AiSetting::Fight).getBase(), 1);
+        EXPECT_TRUE(stats.getAiSequence().isEmpty());
+    }
+
+    TEST_F(ESM4ContainerTest, ResetAiClearsNpcMovementAndFurnitureState)
+    {
+        MWWorld::ESMStore store;
+        populateNpcWorldStore(store);
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr ptr = findPlacedNpc(*cell);
+        ASSERT_FALSE(ptr.isEmpty());
+
+        // This fixture deliberately has no MWBase::World, so package selection
+        // is disabled while the actor-side reset contract is exercised.
+        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
+        MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+        ASSERT_TRUE(stats.getAiSequence().isEmpty());
+        MWMechanics::Movement& movement = ptr.getClass().getMovementSettings(ptr);
+        movement.mPosition[0] = 1.f;
+        movement.mRotation[2] = 0.5f;
+        MWClass::FalloutFurniturePlacement placement;
+        placement.mFurnitureRef = ESM::FormId::fromUint32(0x01104c42);
+        placement.mValid = true;
+        MWClass::ESM4Npc::setFurniturePlacement(ptr, placement);
+        MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Seated);
+
+        ASSERT_TRUE(MWClass::resetFnvAiState(ptr));
+        EXPECT_EQ(MWClass::ESM4Npc::getFurnitureState(ptr), MWClass::FalloutFurnitureState::None);
+        EXPECT_FALSE(MWClass::ESM4Npc::getFurniturePlacement(ptr).mValid);
+        EXPECT_FLOAT_EQ(movement.mPosition[0], 0.f);
+        EXPECT_FLOAT_EQ(movement.mRotation[2], 0.f);
+        EXPECT_TRUE(stats.getAiSequence().isEmpty());
+    }
+
+    TEST_F(ESM4ContainerTest, ResetAiClearsCreatureMovementState)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr ptr = findPlacedCreature(*cell);
+        ASSERT_FALSE(ptr.isEmpty());
+
+        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
+        MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+        ASSERT_TRUE(stats.getAiSequence().isEmpty());
+        MWMechanics::Movement& movement = ptr.getClass().getMovementSettings(ptr);
+        movement.mPosition[1] = 0.75f;
+
+        ASSERT_TRUE(MWClass::resetFnvAiState(ptr));
+        EXPECT_FLOAT_EQ(movement.mPosition[1], 0.f);
         EXPECT_TRUE(stats.getAiSequence().isEmpty());
     }
 

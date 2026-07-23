@@ -267,6 +267,40 @@ namespace MWClass
         return true;
     }
 
+    bool resetFnvAiState(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return false;
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+            return resetFnvCreatureAiState(ptr);
+        if (ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+
+        // CreatureStats access creates the per-reference custom data when the
+        // actor has not been simulated yet.
+        ptr.getClass().getCreatureStats(ptr);
+        MWWorld::CustomData* customData = ptr.getRefData().getCustomData();
+        if (customData == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = customData->asESM4NpcCustomData();
+        if (data.mTraits == nullptr || !data.mTraits->mIsFONV)
+            return false;
+
+        // ResetAI is deliberately stronger than EVP: retail clears combat,
+        // pursuit, pathing/package progress, and current furniture behavior,
+        // then evaluates the actor's authored package list from scratch.
+        data.mCreatureStats.getAiSequence().reset();
+        data.mMovement = {};
+        data.mFnvAiSequenceInitialised = false;
+        data.mFnvSandboxPackageNeedsReevaluation = false;
+        data.mFnvSandboxSaveFallback.reset();
+        data.mFurnitureState = FalloutFurnitureState::None;
+        data.mFurniturePlacement = {};
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
+    }
+
     static std::string_view getFalloutNpcFallbackSkeleton(const ESM4NpcCustomData& data)
     {
         if (data.mTraits != nullptr && data.mTraits->mIsFONV)

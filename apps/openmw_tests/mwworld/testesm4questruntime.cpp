@@ -1090,6 +1090,61 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactHooverDamFinalBattleKillFrame)
         (std::vector<std::string>{ "Kill FormId:0x143b3d" }));
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactVms16bEasyPeteResetAiFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x15ec5b, .mContentFile = 0 };
+    const ESM::FormId easyPeteId{ .mIndex = 0x104c80, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS16b");
+    ESM4::QuestStageEntry entry;
+    // Exact first command frame from FalloutNV.esm VMS16b stage 100:
+    // EasyPeteRef.ResetAI. Its calling reference is SCRO 1.
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0xfa, 0x11, 0x00, 0x00 };
+    entry.mScript.references = { easyPeteId };
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter easyPete;
+    easyPete.mId = easyPeteId;
+    easyPete.mEditorId = "EasyPeteRef";
+    store.overrideRecord(easyPete);
+
+    MWWorld::ESM4QuestRuntime unhandledRuntime;
+    unhandledRuntime.initialize(store);
+    EXPECT_FALSE(unhandledRuntime.setStage(questId, 100));
+    const MWWorld::ESM4QuestState* unchanged = unhandledRuntime.search(questId);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+    EXPECT_FALSE(unchanged->mStageDone.at(100));
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            commands.emplace_back(command, target);
+            return command == MWWorld::ESM4QuestReferenceCommand::ResetAi;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 100));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::ResetAi, easyPeteId },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failedEffectRuntime;
+    failedEffectRuntime.setReferenceCommandHandler(
+        [](MWWorld::ESM4QuestReferenceCommand, ESM::FormId) { return false; });
+    failedEffectRuntime.initialize(store);
+    ASSERT_TRUE(failedEffectRuntime.setStage(questId, 100));
+    EXPECT_EQ(failedEffectRuntime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{ "ResetAI FormId:0x104c80" }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
 {
     MWWorld::ESMStore store;
