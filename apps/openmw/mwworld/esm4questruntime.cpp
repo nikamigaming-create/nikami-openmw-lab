@@ -407,7 +407,8 @@ namespace MWWorld
                 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
-                && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
+                && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
+                && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x11a2
@@ -822,6 +823,30 @@ namespace MWWorld
                     return false;
                 CompiledQuestCommand command;
                 command.mType = CompiledQuestCommandType::AddItem;
+                command.mQuest = owner;
+                command.mTarget = *item;
+                command.mObjective = *count;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1052) // reference.RemoveItem item count
+            {
+                // FalloutNV.esm uses a reference-called two-argument form in the quest-stage
+                // frames covered here. Do not guess at the optional third argument used by a
+                // small number of other scripts until its retail semantics are proven.
+                if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mRemoveItemHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId owner = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* item = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* count = std::get_if<std::int32_t>(&arguments[1]);
+                const bool ownerIsPlayer = owner.mIndex == 0x7 || owner.mIndex == 0x14;
+                const bool ownerExists = ownerIsPlayer || mStore->get<ESM4::Reference>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCharacter>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(owner) != nullptr;
+                if (!ownerExists || item == nullptr || item->isZeroOrUnset() || count == nullptr || *count <= 0)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::RemoveItem;
                 command.mQuest = owner;
                 command.mTarget = *item;
                 command.mObjective = *count;
@@ -1342,6 +1367,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
             || command.mType == CompiledQuestCommandType::AddItem
+            || command.mType == CompiledQuestCommandType::RemoveItem
             || command.mType == CompiledQuestCommandType::RewardXp)
         {
             working.mExternalEffects.push_back(
@@ -1429,6 +1455,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Enable:
             case CompiledQuestCommandType::Disable:
             case CompiledQuestCommandType::AddItem:
+            case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SayTo:
@@ -1610,6 +1637,11 @@ namespace MWWorld
                     executed = mAddItemHandler
                         && mAddItemHandler(effect.mTarget, effect.mListener, effect.mCount);
                     break;
+                case CompiledQuestCommandType::RemoveItem:
+                    command = "RemoveItem ";
+                    executed = mRemoveItemHandler
+                        && mRemoveItemHandler(effect.mTarget, effect.mListener, effect.mCount);
+                    break;
                 case CompiledQuestCommandType::RewardXp:
                     command = "RewardXP ";
                     executed = mRewardXpHandler && mRewardXpHandler(effect.mCount);
@@ -1621,7 +1653,8 @@ namespace MWWorld
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
-            if (effect.mType == CompiledQuestCommandType::AddItem)
+            if (effect.mType == CompiledQuestCommandType::AddItem
+                || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(effect.mCount);
             if (executed)
@@ -1825,6 +1858,10 @@ namespace MWWorld
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
                             break;
+                        case CompiledQuestCommandType::RemoveItem:
+                            executed = mRemoveItemHandler
+                                && mRemoveItemHandler(command.mQuest, command.mTarget, command.mObjective);
+                            break;
                         case CompiledQuestCommandType::EvaluatePackage:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
@@ -1850,6 +1887,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Enable
                             || command.mType == CompiledQuestCommandType::Disable
                             || command.mType == CompiledQuestCommandType::AddItem
+                            || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp)
                         {
                             std::string failure;
@@ -1869,6 +1907,10 @@ namespace MWWorld
                                 failure = "Disable " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::AddItem)
                                 failure = "AddItem " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText() + " "
+                                    + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::RemoveItem)
+                                failure = "RemoveItem " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "
                                     + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::RewardXp)

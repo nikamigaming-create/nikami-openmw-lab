@@ -128,6 +128,7 @@ namespace MWWorld
         using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
         using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
         using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using RemoveItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
 
@@ -150,6 +151,7 @@ namespace MWWorld
         SetEnemyHandler mSetEnemyHandler;
         ItemCountHandler mItemCountHandler;
         AddItemHandler mAddItemHandler;
+        RemoveItemHandler mRemoveItemHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
 
@@ -174,6 +176,7 @@ namespace MWWorld
             Enable,
             Disable,
             AddItem,
+            RemoveItem,
             EvaluatePackage,
             ShowMessage,
             SayTo,
@@ -332,6 +335,7 @@ namespace MWWorld
         void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
         void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
         void setAddItemHandler(AddItemHandler handler) { mAddItemHandler = std::move(handler); }
+        void setRemoveItemHandler(RemoveItemHandler handler) { mRemoveItemHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
         void setRewardXpHandler(RewardXpHandler handler) { mRewardXpHandler = std::move(handler); }
 

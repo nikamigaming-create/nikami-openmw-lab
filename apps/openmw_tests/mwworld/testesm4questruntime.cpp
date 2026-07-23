@@ -868,6 +868,67 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactForlornHopePlayerAddItemRewardStages)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsMedicalSuppliesRemoveItemFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId questId{ .mIndex = 0x15ec5b, .mContentFile = 0 };
+    const ESM::FormId medicalSuppliesId{ .mIndex = 0x15ef9c, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VMS16b");
+    ESM4::QuestStageEntry entry;
+    // Exact FalloutNV.esm VMS16b stage 70 frame at SCDA offset 459:
+    // player.RemoveItem VMS16bMedicalSupplies 1. Its calling reference is
+    // SCRO 8 (Player) and its item argument is SCRO 18.
+    const std::array<std::uint8_t, 18> retailScda{
+        0x1c, 0x00, 0x08, 0x00, 0x52, 0x10, 0x0a, 0x00, 0x02,
+        0x00, 0x72, 0x12, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references.resize(18);
+    entry.mScript.references[7] = playerId;
+    entry.mScript.references[17] = medicalSuppliesId;
+    quest.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime unhandledRuntime;
+    unhandledRuntime.initialize(store);
+    EXPECT_FALSE(unhandledRuntime.setStage(questId, 70));
+    const MWWorld::ESM4QuestState* unchanged = unhandledRuntime.search(questId);
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+    EXPECT_FALSE(unchanged->mStageDone.at(70));
+
+    struct Request
+    {
+        ESM::FormId mOwner;
+        ESM::FormId mItem;
+        int mCount = 0;
+
+        bool operator==(const Request&) const = default;
+    };
+    std::vector<Request> requests;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setRemoveItemHandler([&requests](ESM::FormId owner, ESM::FormId item, int count) {
+        requests.push_back({ owner, item, count });
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 70));
+    EXPECT_EQ(requests, (std::vector<Request>{ { playerId, medicalSuppliesId, 1 } }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+
+    MWWorld::ESM4QuestRuntime failedEffectRuntime;
+    failedEffectRuntime.setRemoveItemHandler([](ESM::FormId, ESM::FormId, int) { return false; });
+    failedEffectRuntime.initialize(store);
+    ASSERT_TRUE(failedEffectRuntime.setStage(questId, 70));
+    ASSERT_EQ(failedEffectRuntime.getUnsupportedStageCommands().size(), 1);
+    EXPECT_EQ(failedEffectRuntime.getUnsupportedStageCommands().front(),
+        "RemoveItem FormId:0x14 FormId:0x15ef9c 1");
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
 {
     MWWorld::ESMStore store;
