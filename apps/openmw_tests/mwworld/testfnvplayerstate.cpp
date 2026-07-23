@@ -780,7 +780,17 @@ namespace
             = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, referenceId);
         ASSERT_TRUE(player) << player.mError;
 
-        const ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSaveWorldReferenceMovement moved;
+        moved.mResolvedFormId = 0x0000104eu;
+        moved.mChangeType = 1;
+        moved.mMovement.mCellOrWorldspace.mResolvedFormId = 0x000da726u;
+        moved.mMovement.mPosition[0].mValue = -72320.f;
+        moved.mMovement.mPosition[1].mValue = -1200.f;
+        moved.mMovement.mPosition[2].mValue = 8100.f;
+        moved.mMovement.mRotationRadians[2].mValue = 1.25f;
+        moved.mMovement.mRange = { 4000, 28 };
+        save.mWorldReferenceMovements.push_back(std::move(moved));
         const MWWorld::FalloutSaveLoadPlanResolution resolution
             = resolveSavePlan(save, &*player.mState, content);
         ASSERT_TRUE(resolution) << resolution.mError;
@@ -846,6 +856,13 @@ namespace
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[2], 8137.58643f);
         EXPECT_FLOAT_EQ(plan.mTransform.mRotationRadians[2], 2.93332028f);
+        ASSERT_EQ(plan.mWorldReferenceTransforms.size(), 1u);
+        EXPECT_EQ(plan.mWorldReferenceTransforms[0].mReference, form(0x104e, 1));
+        EXPECT_EQ(plan.mWorldReferenceTransforms[0].mChangeType, 1u);
+        EXPECT_EQ(plan.mWorldReferenceTransforms[0].mCellOrWorldspace, form(0x0da726, 1));
+        EXPECT_FLOAT_EQ(plan.mWorldReferenceTransforms[0].mPosition[0], -72320.f);
+        EXPECT_FLOAT_EQ(plan.mWorldReferenceTransforms[0].mRotationRadians[2], 1.25f);
+        EXPECT_EQ(plan.mWorldReferenceTransforms[0].mSourceOffset, 4000u);
         EXPECT_TRUE(plan.mCamera.mFirstPerson);
         EXPECT_FLOAT_EQ(plan.mCamera.mFirstPersonModelFov, 55.f);
         EXPECT_FLOAT_EQ(plan.mCamera.mWorldFov, 75.f);
@@ -911,6 +928,15 @@ namespace
         EXPECT_EQ(placement.mPlacement->mCellRecord, form(0x000e1aa7, 1));
         EXPECT_EQ(placement.mPlacement->mCellX, -18);
         EXPECT_EQ(placement.mPlacement->mCellY, -1);
+        EXPECT_TRUE(MWWorld::targetsFalloutExteriorCell(
+            plan.mWorldReferenceTransforms.front(), *placement.mPlacement));
+        MWWorld::FalloutSaveLoadPlan::WorldReferenceTransform outside
+            = plan.mWorldReferenceTransforms.front();
+        outside.mPosition[0] = 0.f;
+        outside.mPosition[1] = 0.f;
+        EXPECT_FALSE(MWWorld::targetsFalloutExteriorCell(outside, *placement.mPlacement));
+        outside.mCellOrWorldspace = placement.mPlacement->mCellRecord;
+        EXPECT_TRUE(MWWorld::targetsFalloutExteriorCell(outside, *placement.mPlacement));
 
         ESM::NPC proxy;
         proxy.blank();

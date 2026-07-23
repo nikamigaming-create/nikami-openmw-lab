@@ -998,6 +998,33 @@ namespace MWWorld
         for (auto& [faction, relations] : savedFactionRelations)
             plan.mFactions.push_back({ faction, std::move(relations) });
 
+        plan.mWorldReferenceTransforms.reserve(save.mWorldReferenceMovements.size());
+        for (const ESM4::FONVSaveWorldReferenceMovement& saved : save.mWorldReferenceMovements)
+        {
+            const std::optional<ESM::FormId> reference
+                = normalizeSavedFormId(saved.mResolvedFormId, currentPluginIndices);
+            if (!reference)
+                return loadFailure("FNV save moved world reference FormID has unsupported provenance");
+            if (!saved.mMovement.mCellOrWorldspace.mResolvedFormId)
+                return loadFailure("FNV save moved world reference has no CELL/WRLD identity");
+            const std::optional<ESM::FormId> cellOrWorldspace
+                = normalizeSavedFormId(*saved.mMovement.mCellOrWorldspace.mResolvedFormId, currentPluginIndices);
+            if (!cellOrWorldspace)
+                return loadFailure("FNV save moved world reference CELL/WRLD has unsupported provenance");
+
+            FalloutSaveLoadPlan::WorldReferenceTransform transform;
+            transform.mReference = *reference;
+            transform.mChangeType = saved.mChangeType;
+            transform.mCellOrWorldspace = *cellOrWorldspace;
+            for (std::size_t i = 0; i < transform.mPosition.size(); ++i)
+            {
+                transform.mPosition[i] = saved.mMovement.mPosition[i].mValue;
+                transform.mRotationRadians[i] = saved.mMovement.mRotationRadians[i].mValue;
+            }
+            transform.mSourceOffset = saved.mMovement.mRange.mOffset;
+            plan.mWorldReferenceTransforms.push_back(std::move(transform));
+        }
+
         if (!save.mSky)
             return loadFailure("FNV save does not expose a proven Sky global-data payload");
         const ESM4::FONVSaveSkyState& sky = *save.mSky;
@@ -1109,6 +1136,18 @@ namespace MWWorld
         placement.mCellX = location.mX;
         placement.mCellY = location.mY;
         return { std::move(placement), {} };
+    }
+
+    bool targetsFalloutExteriorCell(const FalloutSaveLoadPlan::WorldReferenceTransform& transform,
+        const FalloutExteriorPlayerPlacement& placement)
+    {
+        if (transform.mCellOrWorldspace == placement.mCellRecord)
+            return true;
+        if (transform.mCellOrWorldspace != placement.mWorldspaceRecord)
+            return false;
+        const ESM::ExteriorCellLocation location = ESM::positionToExteriorCellLocation(
+            transform.mPosition[0], transform.mPosition[1], ESM::RefId(transform.mCellOrWorldspace));
+        return location.mX == placement.mCellX && location.mY == placement.mCellY;
     }
 
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state)

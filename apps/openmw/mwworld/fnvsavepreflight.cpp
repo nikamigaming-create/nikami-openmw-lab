@@ -12,6 +12,7 @@
 #include <components/misc/strings/algorithm.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
@@ -21,6 +22,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -140,6 +142,43 @@ namespace
         return {};
     }
 
+    std::string validateWorldReferenceTransforms(
+        const MWWorld::FalloutSaveLoadPlan& plan, const MWWorld::ESMStore& store)
+    {
+        std::set<ESM::FormId> references;
+        for (const MWWorld::FalloutSaveLoadPlan::WorldReferenceTransform& transform
+            : plan.mWorldReferenceTransforms)
+        {
+            if (!references.insert(transform.mReference).second)
+                return "FNV save contains duplicate movement state for one REFR/ACHR/ACRE";
+            bool found = false;
+            switch (transform.mChangeType)
+            {
+                case 0:
+                    found = store.get<ESM4::Reference>().search(transform.mReference) != nullptr;
+                    break;
+                case 1:
+                    found = store.get<ESM4::ActorCharacter>().search(transform.mReference) != nullptr;
+                    break;
+                case 2:
+                    found = store.get<ESM4::ActorCreature>().search(transform.mReference) != nullptr;
+                    break;
+                default:
+                    return "FNV save movement state has an unsupported changed-reference type";
+            }
+            if (!found)
+                return "FNV save moved reference is not a loaded record of its exact REFR/ACHR/ACRE type: "
+                    + transform.mReference.toString();
+            if (store.get<ESM4::World>().search(ESM::RefId(transform.mCellOrWorldspace)) == nullptr
+                && store.get<ESM4::Cell>().search(ESM::RefId(transform.mCellOrWorldspace)) == nullptr)
+            {
+                return "FNV save moved reference target is not a loaded CELL or WRLD: "
+                    + transform.mCellOrWorldspace.toString();
+            }
+        }
+        return {};
+    }
+
     std::string validatePlayerActorValuesAndPerks(
         const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
     {
@@ -228,6 +267,9 @@ namespace MWWorld
         const std::string factionStateError = validateFactionStates(result.mContext->mPlan, store);
         if (!factionStateError.empty())
             return failure(factionStateError);
+        const std::string transformError = validateWorldReferenceTransforms(result.mContext->mPlan, store);
+        if (!transformError.empty())
+            return failure(transformError);
         const std::string actorValueError
             = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
         if (!actorValueError.empty())

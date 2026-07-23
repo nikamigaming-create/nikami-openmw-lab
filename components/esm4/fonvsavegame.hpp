@@ -191,7 +191,7 @@ namespace ESM4
     // This is only the type-4 "Reference moved" prefix selected by ACHR change flags 1/2. Other initial-data
     // layouts remain opaque. The container can be either a CELL or WRLD; save bytes alone cannot distinguish them,
     // and this block carries no separate exterior cell-grid coordinates.
-    struct FONVSavePlayerReferenceMovement
+    struct FONVSaveReferenceMovement
     {
         FONVSaveResolvedReferenceId mCellOrWorldspace;
         std::array<FONVSaveField<float>, 3> mPosition;
@@ -200,6 +200,15 @@ namespace ESM4
         FONVSaveField<std::uint8_t> mTerminator;
         FONVSaveRange mRange;
         FONVSaveRawField mUnparsedRemainder;
+    };
+
+    using FONVSavePlayerReferenceMovement = FONVSaveReferenceMovement;
+
+    struct FONVSaveWorldReferenceMovement
+    {
+        std::uint32_t mResolvedFormId = 0;
+        std::uint8_t mChangeType = 0;
+        FONVSaveReferenceMovement mMovement;
     };
 
     // Fixed player-only prefix immediately after the ACHR reference-movement block in changed-form version 27.
@@ -1072,6 +1081,9 @@ namespace ESM4
         std::optional<FONVSaveSkyState> mSky;
         std::vector<FONVSaveQuestChange> mQuestChanges;
         std::vector<FONVSaveFactionChange> mFactionChanges;
+        // Exact initial-data type-4 movement prefixes for authored REFR/ACHR/ACRE records other than Player.
+        // The remaining per-record payload stays explicitly opaque.
+        std::vector<FONVSaveWorldReferenceMovement> mWorldReferenceMovements;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
         // meaning is still deliberately unknown: unrecognized global data, undecoded change-form bytes, and the
