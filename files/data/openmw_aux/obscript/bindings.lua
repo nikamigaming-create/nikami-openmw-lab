@@ -68,6 +68,22 @@ obs.bind('GetSecondsPassed', function()
     return obs._dt or 0
 end)
 
+obs.bind('GameDaysPassed', function()
+    return core.getGameTime() / (24 * 60 * 60)
+end)
+
+obs.bind('GetCurrentTime', function()
+    return (core.getGameTime() / (60 * 60)) % 24
+end)
+
+obs.bind('GetSelf', function()
+    return self.object
+end)
+
+obs.bind('GetActionRef', function()
+    return obs._actionRef or 0
+end)
+
 local function setEnabled(ref, enabled)
     if ref == nil or type(ref) ~= 'string' then
         core.sendGlobalEvent('ObScriptSetEnabled', { object = resolveObject(ref), enabled = enabled })
@@ -146,6 +162,54 @@ obs.bind('GetItemCount', function(ref, item)
     end
     local ok, count = pcall(function() return inventory:countOf(recordId) end)
     return ok and count or 0
+end)
+
+obs.bind('GetEquipped', function(ref, item)
+    local actor = resolveObject(ref)
+    if not isInstance(types.Actor, actor) or type(item) ~= 'string' then
+        return 0
+    end
+    local recordId = core.obscript.resolveItemEditorId(item)
+    if recordId == nil then
+        return 0
+    end
+    local ok, equipment = pcall(types.Actor.getEquipment, actor)
+    if not ok then
+        return 0
+    end
+    for _, equipped in pairs(equipment) do
+        if equipped.recordId == recordId then
+            return 1
+        end
+    end
+    return 0
+end)
+
+obs.bind('GetDistance', function(ref, target)
+    -- `GetDistance SomeRef` is relative to the script owner, while
+    -- `ActorRef.GetDistance SomeRef` supplies both objects.
+    if target == nil then
+        target = ref
+        ref = nil
+    end
+    local sourceObject = resolveObject(ref)
+    local targetObject = resolveObject(target)
+    if sourceObject == nil or targetObject == nil
+        or sourceObject.cell == nil or targetObject.cell == nil then
+        return 0
+    end
+    local ok, sameSpace = pcall(function()
+        return sourceObject.cell:isInSameSpace(targetObject)
+    end)
+    if not ok or not sameSpace then
+        return 0
+    end
+    local sourcePosition = sourceObject.position
+    local targetPosition = targetObject.position
+    local x = sourcePosition.x - targetPosition.x
+    local y = sourcePosition.y - targetPosition.y
+    local z = sourcePosition.z - targetPosition.z
+    return math.sqrt(x * x + y * y + z * z)
 end)
 
 return obs

@@ -163,6 +163,21 @@ namespace
                     obs.m('player', 'GetItemCount', 'MissingItem')
             end,
 
+            commonQueries = function()
+                obs._actionRef = nearby.players[1]
+                local selfId = obs.f('GetSelf').id
+                local actionRefId = obs.f('GetActionRef').id
+                obs._actionRef = nil
+                return obs.f('GameDaysPassed'),
+                    obs.f('GetCurrentTime'),
+                    selfId,
+                    actionRefId,
+                    obs.m('player', 'GetEquipped', 'AmmoItem'),
+                    obs.m('player', 'GetEquipped', 'MissingItem'),
+                    obs.f('GetDistance', 'PlacedRef'),
+                    obs.m('player', 'GetDistance', 'PlacedRef')
+            end,
+
             existingBindings = function(events)
                 obs.m('PlacedRef', 'Enable')
                 obs.m('player', 'AddItem', 'AmmoItem', 2)
@@ -178,7 +193,10 @@ namespace
 
     constexpr VFS::Path::NormalizedView bindingsFactoryPath("obscript/bindingsfactory.lua");
     TestingOpenMW::VFSTestFile bindingsFactoryFile(R"X(
-        local function object(id, kind, enabled, dead, itemCount, player)
+        local sameCell = {}
+        sameCell.isInSameSpace = function(_, obj) return obj.cell == sameCell end
+
+        local function object(id, kind, enabled, dead, itemCount, player, x, y, z)
             local obj = {
                 id = id,
                 kind = kind,
@@ -186,14 +204,16 @@ namespace
                 dead = dead,
                 itemCount = itemCount or 0,
                 player = player or false,
+                cell = sameCell,
+                position = { x = x or 0, y = y or 0, z = z or 0 },
             }
             obj.isValid = function() return true end
             return obj
         end
 
         local own = object('self', 'container', false, false, 1)
-        local placed = object('placed', 'actor', false, true, 3)
-        local player = object('player', 'actor', true, false, 12, true)
+        local placed = object('placed', 'actor', false, true, 3, false, 3, 4, 0)
+        local player = object('player', 'actor', true, false, 12, true, 3, 0, 0)
         local crate = object('crate', 'container', true, false, 4)
         local byFormId = {
             ['form:placed'] = placed,
@@ -211,6 +231,7 @@ namespace
         end
 
         local core = {
+            getGameTime = function() return 90000 end,
             obscript = {
                 resolveRefEditorId = function(editorId)
                     local refs = { placedref = 'form:placed', crateref = 'form:crate' }
@@ -233,6 +254,12 @@ namespace
                 objectIsInstance = function(obj) return obj.kind == 'actor' end,
                 isDead = function(obj) return obj.dead end,
                 inventory = inventory,
+                getEquipment = function(obj)
+                    if obj.player then
+                        return { [0] = { recordId = 'record:ammo' } }
+                    end
+                    return {}
+                end,
             },
             Container = {
                 objectIsInstance = function(obj) return obj.kind == 'container' end,
@@ -417,6 +444,32 @@ namespace
             EXPECT_EQ(std::get<3>(values), "AmmoItem");
             EXPECT_EQ(std::get<4>(values), 2);
             EXPECT_EQ(std::get<5>(values), 1);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, CommonReadOnlyBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["commonQueries"])
+                                    .get<std::tuple<double, double, std::string, std::string, int, int, double, double>>();
+            EXPECT_DOUBLE_EQ(std::get<0>(values), 90000.0 / 86400.0);
+            EXPECT_DOUBLE_EQ(std::get<1>(values), 1.0);
+            EXPECT_EQ(std::get<2>(values), "self");
+            EXPECT_EQ(std::get<3>(values), "player");
+            EXPECT_EQ(std::get<4>(values), 1);
+            EXPECT_EQ(std::get<5>(values), 0);
+            EXPECT_DOUBLE_EQ(std::get<6>(values), 5.0);
+            EXPECT_DOUBLE_EQ(std::get<7>(values), 4.0);
         });
     }
 
