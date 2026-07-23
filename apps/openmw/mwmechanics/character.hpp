@@ -142,6 +142,10 @@ namespace MWMechanics
         const ESM4::Weapon* mFalloutWeapon = nullptr;
         FalloutTriggerState mFalloutTriggerState;
         FalloutAttackDelivery mFalloutAttackDelivery;
+        FalloutAttackDelivery mFalloutVatsAttackDelivery;
+        bool mFalloutVatsVisualAttackPrepared = false;
+        bool mFalloutVatsReleaseReady = false;
+        bool mFalloutReloadQueued = false;
         MWRender::Animation* mAnimation;
         MWRender::Animation* mFalloutWeaponAnimation = nullptr;
         bool mFalloutWeaponListenerAttached = false;
@@ -319,6 +323,7 @@ namespace MWMechanics
 
         void persistAnimationState() const;
         bool playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted = false);
+        bool playFalloutDialogueAnimation(const ESM::RefId& animationId);
         bool playGroupLua(std::string_view groupname, float speed, std::string_view startKey, std::string_view stopKey,
             uint32_t loops, bool forceLoop);
         std::string getAnimationGroupFromSource(
@@ -365,9 +370,13 @@ namespace MWMechanics
 
         /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
         /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
+        bool prepareFalloutVatsRangedAttack();
+        bool consumeFalloutVatsRangedAttackRelease();
         bool executeFalloutVatsRangedHit(
             const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
             const FalloutVatsQueuedAction& action, bool targetHit);
+
+        bool reloadFalloutWeapon();
 
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& target, const osg::Vec3f& segmentStart,
             const osg::Vec3f& hitPosition, const FalloutProjectileImpactContract& impact);

@@ -10,6 +10,7 @@
 #include <components/esm4/loadhair.hpp>
 #include <components/esm4/loadhdpt.hpp>
 #include <components/esm4/loadidle.hpp>
+#include <components/esm4/script.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
@@ -78,6 +79,7 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwclass/esm4npc.hpp"
+#include "../mwdialogue/esm4dialogueutils.hpp"
 #include "../mwclass/fnvsandbox.hpp"
 #include "../mwworld/cell.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -1395,8 +1397,18 @@ namespace MWRender
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            const std::string texture = findExistingTexture(resourceSystem,
-                { "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_0.dds" });
+            std::vector<std::string> candidates;
+            // Fallout 3's player-relative NPCs (notably Dad) export one FaceGen
+            // texture per race.  Those files use m<RACE>_<NPC> rather than the
+            // ordinary <NPC> stem used by FO3's fixed actors and by FNV.
+            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
+            {
+                candidates.emplace_back("textures/characters/facemods/" + pluginDirectory + "/m"
+                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + "_0.dds");
+            }
+            candidates.emplace_back(
+                "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_0.dds");
+            const std::string texture = findExistingTexture(resourceSystem, candidates);
             if (texture.empty())
                 return {};
 
@@ -1411,9 +1423,19 @@ namespace MWRender
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            return findExistingTexture(resourceSystem,
-                { "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_1.dds",
-                    "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_n.dds" });
+            std::vector<std::string> candidates;
+            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
+            {
+                const std::string composite = "textures/characters/facemods/" + pluginDirectory + "/m"
+                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex;
+                candidates.emplace_back(composite + "_1.dds");
+                candidates.emplace_back(composite + "_n.dds");
+            }
+            const std::string simple
+                = "textures/characters/facemods/" + pluginDirectory + "/" + formIndex;
+            candidates.emplace_back(simple + "_1.dds");
+            candidates.emplace_back(simple + "_n.dds");
+            return findExistingTexture(resourceSystem, candidates);
         }
 
         std::string findFonvNpcBodyTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
@@ -1421,8 +1443,15 @@ namespace MWRender
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale.dds" : "modbodymale.dds";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            const std::string texture = findExistingTexture(
-                resourceSystem, { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix });
+            std::vector<std::string> candidates;
+            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
+            {
+                candidates.emplace_back("textures/characters/bodymods/" + pluginDirectory + "/"
+                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix);
+            }
+            candidates.emplace_back(
+                "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix);
+            const std::string texture = findExistingTexture(resourceSystem, candidates);
             if (texture.empty())
                 return {};
 
@@ -1442,8 +1471,15 @@ namespace MWRender
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale.dds" : "modbodymale.dds";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            const std::string texture = findExistingTexture(
-                resourceSystem, { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix });
+            std::vector<std::string> candidates;
+            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
+            {
+                candidates.emplace_back("textures/characters/bodymods/" + pluginDirectory + "/"
+                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix);
+            }
+            candidates.emplace_back(
+                "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix);
+            const std::string texture = findExistingTexture(resourceSystem, candidates);
             if (texture.empty())
                 return {};
 
@@ -1548,9 +1584,19 @@ namespace MWRender
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale" : "modbodymale";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            return findExistingTexture(resourceSystem,
-                { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix + "_n.dds",
-                    "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix + "_1.dds" });
+            std::vector<std::string> candidates;
+            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
+            {
+                const std::string composite = "textures/characters/bodymods/" + pluginDirectory + "/"
+                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix;
+                candidates.emplace_back(composite + "_n.dds");
+                candidates.emplace_back(composite + "_1.dds");
+            }
+            const std::string simple
+                = "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix;
+            candidates.emplace_back(simple + "_n.dds");
+            candidates.emplace_back(simple + "_1.dds");
+            return findExistingTexture(resourceSystem, candidates);
         }
 
         void overrideTextureSlot(std::string_view texture, std::string_view textureType, unsigned int unit,
@@ -3654,6 +3700,19 @@ namespace MWRender
                     m.deltas = deltas;
                     mMorphs.push_back(std::move(m));
                 }
+                if (std::getenv("OPENMW_FNV_PROOF_LIP_MORPH_LIST") != nullptr)
+                {
+                    std::ostringstream names;
+                    for (std::size_t i = 0; i < mMorphs.size(); ++i)
+                    {
+                        if (i != 0)
+                            names << ',';
+                        names << mMorphs[i].name;
+                    }
+                    Log(Debug::Info) << "FNV/ESM4 LIP MORPHS actor=" << mActor.getCellRef().getRefId()
+                                     << " model=\"" << mModel << "\" count=" << mMorphs.size()
+                                     << " names=" << names.str();
+                }
                 mLastValues.resize(mMorphs.size(), -1.f);
             }
 
@@ -3671,6 +3730,33 @@ namespace MWRender
                 values.reserve(mMorphs.size());
                 float dominantLipValue = 0.f;
                 std::string_view dominantLipTarget;
+                const std::optional<MWDialogue::Esm4DialogueExpression> expression
+                    = MWBase::Environment::get().getSoundManager()->sayActive(mActor)
+                    ? MWDialogue::getEsm4DialogueExpression(mActor.mRef)
+                    : std::nullopt;
+                const auto expressionMorph = [](std::uint32_t type) -> std::string_view {
+                    switch (type)
+                    {
+                        case ESM4::EMO_Neutral:
+                            return "MoodNeutral";
+                        case ESM4::EMO_Anger:
+                            return "Anger";
+                        case ESM4::EMO_Disgust:
+                            return "Disgust";
+                        case ESM4::EMO_Fear:
+                            return "Fear";
+                        case ESM4::EMO_Sad:
+                            return "Sad";
+                        case ESM4::EMO_Happy:
+                            return "Happy";
+                        case ESM4::EMO_Surprise:
+                            return "Surprise";
+                        case ESM4::EMO_Pained:
+                            return "Pained";
+                    }
+                    return {};
+                };
+                const std::string_view expressionTarget = expression ? expressionMorph(expression->mType) : std::string_view{};
 
                 for (const Morph& morph : mMorphs)
                 {
@@ -3678,6 +3764,8 @@ namespace MWRender
                     const float lipValue
                         = MWBase::Environment::get().getSoundManager()->getSaySoundFacialTrackValue(mActor, morph.name);
                     val += lipValue;
+                    if (expression && morph.name == expressionTarget)
+                        val += expression->mWeight;
                     if (std::abs(lipValue) > std::abs(dominantLipValue))
                     {
                         dominantLipValue = lipValue;
@@ -3697,7 +3785,9 @@ namespace MWRender
                                          << " frame=" << frame << " target="
                                          << (dominantLipTarget.empty() ? std::string_view("<neutral>")
                                                                       : dominantLipTarget)
-                                         << " value=" << dominantLipValue;
+                                         << " value=" << dominantLipValue << " expression="
+                                         << (expressionTarget.empty() ? std::string_view("<none>") : expressionTarget)
+                                         << " expressionValue=" << (expression ? expression->mWeight : 0.f);
                     }
                 }
 
@@ -7808,6 +7898,15 @@ namespace MWRender
             const std::vector<ESM::FormId>& packageIds)
         {
             std::vector<std::string> result;
+            // OPENMW_FNV_DISABLE_AI_PACKAGES must disable the animation assets selected by those packages too.
+            // Otherwise a neutralized actor can keep a package-only sleep/sit KF as its highest-priority generic
+            // `idle` source even though the package that owns that procedure is no longer running.
+            if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: package-selected IDLE animation disabled by proof env for "
+                                    << traits.mEditorId;
+                return result;
+            }
             const auto& packageStore = store.get<ESM4::AIPackage>();
             const auto& idleStore = store.get<ESM4::IdleAnimation>();
             const auto& markerStore = store.get<ESM4::IdleMarker>();
@@ -8535,11 +8634,17 @@ namespace MWRender
 
                 float sandboxRadius = 0.f;
                 const auto& packageStore = store->get<ESM4::AIPackage>();
-                for (ESM::FormId packageId : packageIds)
+                // A sandbox marker is still package-owned animation authority.  Proof actors with packages
+                // disabled must not inherit a nearby marker's idle merely because their staged position falls
+                // inside the authored sandbox radius.
+                if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") == nullptr)
                 {
-                    const ESM4::AIPackage* package = packageStore.search(packageId);
-                    if (package != nullptr && (package->mData.type == 11 || package->mData.type == 12))
-                        sandboxRadius = std::max(sandboxRadius, MWClass::getFalloutSandboxRadius(*package));
+                    for (ESM::FormId packageId : packageIds)
+                    {
+                        const ESM4::AIPackage* package = packageStore.search(packageId);
+                        if (package != nullptr && (package->mData.type == 11 || package->mData.type == 12))
+                            sandboxRadius = std::max(sandboxRadius, MWClass::getFalloutSandboxRadius(*package));
+                    }
                 }
                 if (sandboxRadius > 0.f && mPtr.getCell() != nullptr && mPtr.getCell()->getCell() != nullptr)
                 {
@@ -9047,6 +9152,11 @@ namespace MWRender
             << " firstPerson=" << mFirstPersonView << " attached=" << (mFalloutWeaponPart != nullptr)
             << " renderable=" << renderable << " gate=dynamic-weapon-family";
         return renderable;
+    }
+
+    osg::Node* ESM4NpcAnimation::getEquippedWeaponNode()
+    {
+        return mFalloutWeaponPart.get();
     }
 
     bool ESM4NpcAnimation::prepareFalloutWeaponAnimation(

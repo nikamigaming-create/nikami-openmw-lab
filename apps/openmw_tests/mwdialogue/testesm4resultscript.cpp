@@ -40,9 +40,10 @@ namespace MWDialogue
             "GSGasStationDoorRef.Unlock\r\n"
             "TrudyRef.Enable\r\n"
             "set VFreeformGoodsprings.bEnableTrudyDone to 1\r\n"
-            "SunnyREF.evp;\r\n");
+            "SunnyREF.evp;\r\n"
+            "VictorREF.stopcombat player\r\n");
 
-        ASSERT_EQ(script.mCommands.size(), 5);
+        ASSERT_EQ(script.mCommands.size(), 6);
         EXPECT_EQ(script.mCommands[0].mType, Esm4ResultCommandType::Quest);
         EXPECT_EQ(script.mCommands[0].mSource,
             "if(GetQuestRunning VCG03)\n"
@@ -58,7 +59,34 @@ namespace MWDialogue
         EXPECT_EQ(script.mCommands[3].mSource, "set VFreeformGoodsprings.bEnableTrudyDone to 1");
         EXPECT_EQ(script.mCommands[4].mType, Esm4ResultCommandType::EvaluatePackage);
         EXPECT_EQ(script.mCommands[4].mTarget, "SunnyREF");
+        EXPECT_EQ(script.mCommands[5].mType, Esm4ResultCommandType::StopCombat);
+        EXPECT_EQ(script.mCommands[5].mTarget, "VictorREF");
         EXPECT_EQ(script.mSkippedConditionalCommands, 0);
         EXPECT_FALSE(script.mMalformedControlFlow);
+    }
+
+    TEST(Esm4ResultScriptTest, ExecutesExactStripTollInventoryCommandsWithoutGuessingVariableCounts)
+    {
+        const Esm4ResultScript script = parseEsm4ResultScript(
+            "Player.RemoveItem Caps001 400\r\n"
+            "Set VFreeformTheStreet02.bPaid to 1\r\n"
+            "Set VFreeformTheStreet02.bHarassed to 1\r\n"
+            "Set VFreeformTheStreet02.bToll to 0\r\n");
+
+        ASSERT_EQ(script.mCommands.size(), 4);
+        EXPECT_EQ(script.mCommands[0].mType, Esm4ResultCommandType::RemoveItem);
+        EXPECT_EQ(script.mCommands[0].mTarget, "Player");
+        EXPECT_EQ(script.mCommands[0].mItem, "Caps001");
+        EXPECT_EQ(script.mCommands[0].mCount, 400);
+        EXPECT_TRUE(script.mCommands[0].mSource.empty());
+        EXPECT_EQ(script.mCommands[1].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(script.mCommands[2].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(script.mCommands[3].mType, Esm4ResultCommandType::Quest);
+
+        const Esm4ResultScript variableCount
+            = parseEsm4ResultScript("Player.RemoveItem Caps001 VES05.iAllPlayersCaps");
+        ASSERT_EQ(variableCount.mCommands.size(), 1);
+        EXPECT_EQ(variableCount.mCommands[0].mType, Esm4ResultCommandType::Quest);
+        EXPECT_EQ(variableCount.mCommands[0].mSource, "Player.RemoveItem Caps001 VES05.iAllPlayersCaps");
     }
 }

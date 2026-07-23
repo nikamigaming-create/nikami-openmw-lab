@@ -21,9 +21,11 @@ namespace ESM
 
 namespace ESM4
 {
+    struct Ammunition;
     struct Cell;
     struct Class;
     struct FONVSaveGamePrefix;
+    struct FormIdList;
     struct Npc;
     struct Race;
     struct World;
@@ -141,6 +143,12 @@ namespace MWWorld
     FalloutPlayerStateResolution resolveFalloutPlayerIdentity(
         const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId, ESM::FormId normalizedPlayerReferenceFormId);
 
+    // FNV's Player NPC_ gives compatible ammunition through an authored FLST. Retail materializes the first AMMO
+    // member as the initial inventory stack, then applies save deltas to concrete AMMO records. Resolve that carrier
+    // before creating the temporary ESM3 Player inventory so a FLST is never mistaken for an item.
+    FalloutPlayerStateResolution resolveFalloutPlayerInventoryFormLists(FalloutPlayerState state,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition);
+
     struct FalloutNativePlayerRecords
     {
         const ESM4::Npc* mBaseNpc = nullptr;
@@ -193,6 +201,44 @@ namespace MWWorld
             std::uint64_t mSourceOffset = 0;
         };
 
+        struct FactionChange
+        {
+            ESM::FormId mFaction;
+            std::int8_t mRank = -1;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const FactionChange&) const = default;
+        };
+
+        enum class ActorValueModifierKind : std::uint8_t
+        {
+            Permanent,
+            Damage,
+            Temporary,
+        };
+
+        struct ActorValueModifier
+        {
+            std::uint8_t mActorValue = 0;
+            float mModifier = 0.f;
+            ActorValueModifierKind mKind = ActorValueModifierKind::Permanent;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const ActorValueModifier&) const = default;
+        };
+
+        struct PerkRank
+        {
+            ESM::FormId mPerk;
+            // Exact PlayerCharacter list byte. The retail list is authoritative for possession; callers that need
+            // rank arithmetic must keep its zero-based representation distinct from user-facing rank numbers.
+            std::uint8_t mRankByte = 0;
+            bool mAlternate = false;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const PerkRank&) const = default;
+        };
+
         ESM::FormId mBaseRecord;
         ESM::FormId mReferenceRecord;
         std::size_t mSaveFalloutNewVegasMasterIndex = 0;
@@ -208,15 +254,29 @@ namespace MWWorld
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
         bool mWeaponDrawn = false;
+        std::int16_t mCurrentWeaponAction = -1;
+        std::uint64_t mCurrentWeaponActionSourceOffset = 0;
         std::vector<FalloutInventoryItem> mInventoryItems;
         std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;
         std::vector<HotkeyItem> mHotkeyItems;
         std::vector<AmmoSelection> mAmmoSelections;
+        std::vector<FactionChange> mFactionChanges;
+        std::vector<ActorValueModifier> mActorValueModifiers;
+        std::vector<PerkRank> mPerks;
     };
 
     struct FalloutSaveLoadPlan
     {
+        struct GlobalValue
+        {
+            ESM::FormId mVariable;
+            float mValue = 0.f;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const GlobalValue&) const = default;
+        };
+
         FalloutSavePlayerHeaderState mPlayer;
         struct PlayerTransform
         {
@@ -249,6 +309,7 @@ namespace MWWorld
             std::uint64_t mPayloadOffset = 0;
             std::uint64_t mPayloadBytes = 0;
         } mScene;
+        std::vector<GlobalValue> mGlobals;
         std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };
@@ -278,7 +339,8 @@ namespace MWWorld
     };
 
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
-        const FalloutPlayerState* nativePlayerState, std::span<const std::string> currentContentFiles);
+        const FalloutPlayerState* nativePlayerState, const Store<ESM4::FormIdList>& formLists,
+        const Store<ESM4::Ammunition>& ammunition, std::span<const std::string> currentContentFiles);
 
     // Bethesda saves horizontal degrees at a 4:3 reference aspect; OpenMW consumes vertical fovy degrees.
     float convertFalloutReferenceFovToOpenMwVertical(float horizontalReferenceFov);
@@ -290,6 +352,11 @@ namespace MWWorld
     // Per-instance condition and ExtraWorn remain separate runtime signals because ESM::InventoryList cannot carry
     // either property.
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
+
+    // Apply the save's exact ExtraFactionChanges overlay to the authored Player faction list. Negative ranks are
+    // the retail removal sentinel; non-negative ranks add or replace a membership.
+    void applyFalloutSavePlayerFactionChanges(
+        FalloutPlayerState& player, std::span<const FalloutSavePlayerHeaderState::FactionChange> changes);
 
     // Seed only fields that have an explicit same-unit shared representation, including positive authored inventory
     // counts. The ESM3 proxy remains a compatibility carrier: its 0-100 attributes and 27 skills must retain their

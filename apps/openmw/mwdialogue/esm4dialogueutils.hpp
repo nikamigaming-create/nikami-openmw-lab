@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWDIALOGUE_ESM4DIALOGUEUTILS_H
 #define OPENMW_MWDIALOGUE_ESM4DIALOGUEUTILS_H
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -27,6 +28,15 @@ namespace MWWorld
 
 namespace MWDialogue
 {
+    struct Esm4DialogueExpression
+    {
+        std::uint32_t mType = 0;
+        float mWeight = 0.f;
+    };
+
+    void setEsm4DialogueExpression(const void* actorRef, std::uint32_t type, std::int32_t value);
+    std::optional<Esm4DialogueExpression> getEsm4DialogueExpression(const void* actorRef);
+
     using Esm4DialogueConditionEvaluator
         = std::function<std::optional<bool>(const ESM4::TargetCondition&)>;
 

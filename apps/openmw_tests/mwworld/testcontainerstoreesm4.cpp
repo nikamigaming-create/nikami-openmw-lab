@@ -104,22 +104,28 @@ namespace MWWorld
 
             InventoryStore source;
             source.setFalloutAmmoSelection(weapon, ammo);
+            source.setFalloutLoadedAmmo(weapon, 7);
             EXPECT_EQ(source.getFalloutAmmoSelection(weapon), ammo);
+            EXPECT_EQ(source.getFalloutLoadedAmmo(weapon), 7);
 
             ESM::InventoryState state;
             source.writeState(state);
             InventoryStore restored;
             restored.readState(state);
             EXPECT_EQ(restored.getFalloutAmmoSelection(weapon), ammo);
+            EXPECT_EQ(restored.getFalloutLoadedAmmo(weapon), 7);
 
             InventoryStore copied(restored);
             EXPECT_EQ(copied.getFalloutAmmoSelection(weapon), ammo);
+            EXPECT_EQ(copied.getFalloutLoadedAmmo(weapon), 7);
             InventoryStore assigned;
             assigned = copied;
             EXPECT_EQ(assigned.getFalloutAmmoSelection(weapon), ammo);
+            EXPECT_EQ(assigned.getFalloutLoadedAmmo(weapon), 7);
 
             assigned.clear();
             EXPECT_FALSE(assigned.getFalloutAmmoSelection(weapon));
+            EXPECT_FALSE(assigned.getFalloutLoadedAmmo(weapon));
         }
     }
 }

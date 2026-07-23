@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "fnvplayerstate.hpp"
 
@@ -43,17 +45,20 @@ namespace MWWorld
     public:
         static constexpr std::uint32_t HealthActorValue = 16;
         static constexpr std::uint32_t ActionPointsActorValue = 12;
+        static constexpr std::uint32_t ExperienceActorValue = 24;
         static constexpr std::uint32_t SpecialActorValueBegin = 5;
         static constexpr std::uint32_t SpecialActorValueEnd = 11;
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
-        static constexpr std::uint32_t SaveVersion = 2;
+        static constexpr std::size_t ActorValueCount = 96;
+        static constexpr std::uint32_t SaveVersion = 3;
 
     private:
         struct CurrentState
         {
             float mHealth = 0.f;
             float mActionPoints = 0.f;
+            float mExperience = 0.f;
             std::array<float, FalloutPlayerState::SpecialCount> mSpecial{};
             std::array<float, FalloutPlayerState::SkillCount> mSkills{};
 
@@ -62,6 +67,10 @@ namespace MWWorld
 
         std::optional<FalloutPlayerState> mBase;
         CurrentState mCurrent;
+        std::array<float, ActorValueCount> mPermanentModifiers{};
+        std::array<float, ActorValueCount> mDamageModifiers{};
+        std::array<float, ActorValueCount> mTemporaryModifiers{};
+        std::vector<FalloutSavePlayerHeaderState::PerkRank> mPerks;
         // Transient input/mechanics coordination only. V.A.T.S. owns its queue in ActionManager and this flag keeps
         // the ordinary held-attack path from firing an additional unqueued shot while targeting or executing.
         bool mVatsActive = false;
@@ -74,6 +83,8 @@ namespace MWWorld
     public:
         void initialize(const std::optional<FalloutPlayerState>& base);
         void initialize(const FalloutPlayerState& base);
+        void applyNativeSaveState(std::span<const FalloutSavePlayerHeaderState::ActorValueModifier> modifiers,
+            std::span<const FalloutSavePlayerHeaderState::PerkRank> perks);
         void clear();
         void resetCurrent();
 
@@ -85,6 +96,11 @@ namespace MWWorld
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
         [[nodiscard]] std::optional<float> getCarryCapacity() const;
         [[nodiscard]] std::optional<float> getMaxActionPoints() const;
+        [[nodiscard]] float getSavedDamageModifier(std::uint32_t actorValue) const;
+        [[nodiscard]] bool hasPerk(ESM::FormId perk, bool alternate = false) const;
+        [[nodiscard]] std::optional<std::uint8_t> getPerkRankByte(
+            ESM::FormId perk, bool alternate = false) const;
+        [[nodiscard]] const std::vector<FalloutSavePlayerHeaderState::PerkRank>& getPerks() const { return mPerks; }
         bool isVatsActive() const { return mVatsActive; }
         void setVatsActive(bool active) { mVatsActive = active; }
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);

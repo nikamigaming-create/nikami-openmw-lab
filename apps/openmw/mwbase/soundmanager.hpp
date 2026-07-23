@@ -1,6 +1,7 @@
 #ifndef GAME_MWBASE_SOUNDMANAGER_H
 #define GAME_MWBASE_SOUNDMANAGER_H
 
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <span>
@@ -8,6 +9,7 @@
 #include <string_view>
 
 #include <components/vfs/pathutil.hpp>
+#include <components/esm/refid.hpp>
 
 #include "../mwsound/type.hpp"
 #include "../mwworld/ptr.hpp"
@@ -15,11 +17,6 @@
 namespace MWWorld
 {
     class CellStore;
-}
-
-namespace ESM
-{
-    class RefId;
 }
 
 namespace MWSound
@@ -89,6 +86,15 @@ namespace MWBase
     using Sound = MWSound::Sound;
     using SoundStream = MWSound::Stream;
 
+    struct FalloutDialogueVoiceMetadata
+    {
+        std::uint32_t mEmotionType = 0;
+        std::int32_t mEmotionValue = 0;
+        std::uint8_t mFlags = 0;
+        ESM::RefId mSpeakerAnimation;
+        ESM::RefId mListenerAnimation;
+    };
+
     /// \brief Interface for sound manager (implemented in MWSound)
     class SoundManager
     {
@@ -132,7 +138,8 @@ namespace MWBase
         /// \param filename name of a sound file in the VFS
 
         virtual void saySequence(
-            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames)
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames,
+            std::span<const FalloutDialogueVoiceMetadata> metadata = {})
             = 0;
         ///< Replace the actor's speech with an authored sequence of voice files.
         /// Each file begins only after the previous file finishes.

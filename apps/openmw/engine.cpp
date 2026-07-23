@@ -53,6 +53,7 @@
 
 #include <components/misc/rng.hpp>
 #include <components/misc/constants.hpp>
+#include <components/misc/mathutil.hpp>
 #include <components/misc/strings/format.hpp>
 
 #include <components/vfs/manager.hpp>
@@ -3363,12 +3364,13 @@ namespace
         }
     }
 
-    void applyFNVLevelOneCourierBootstrap(
-        MWBase::World& world, MWBase::Journal& journal, bool moveOutsideDoc, bool applyProfile)
+    void applyFNVLevelOneCourierBootstrap(MWBase::World& world, bool moveOutsideDoc, bool applyProfile)
     {
         const int vcg01Stage = readProofInt("OPENMW_FNV_BOOTSTRAP_VCG01_STAGE", 200);
-        const ESM::RefId vcg01 = ESM::RefId::stringRefId("VCG01");
-        journal.setJournalIndex(vcg01, vcg01Stage);
+        const bool questStageSet = world.getESM4QuestRuntime().setStage(
+            "VCG01", static_cast<std::uint8_t>(std::clamp(vcg01Stage, 0, 255)));
+        if (!questStageSet)
+            Log(Debug::Warning) << "FNV/ESM4 proof: could not set native VCG01 stage=" << vcg01Stage;
         const float proofHour = readProofFloat("OPENMW_FNV_BOOTSTRAP_HOUR", 12.f);
         world.setGlobalFloat(MWWorld::Globals::sGameHour, proofHour);
         world.advanceTime(0.0, false);
@@ -3486,7 +3488,8 @@ namespace
             = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
         const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
         const bool bobbyPinAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "BobbyPin", 5);
-        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", 75);
+        const int starterCaps = std::max(0, readProofInt("OPENMW_FNV_PROOF_STARTER_CAPS", 75));
+        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", starterCaps);
         const bool outfitAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "VaultSuit21", 1);
         const bool headgearAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "CowboyHat02", 1);
         for (const bool present : { pistolAdded, rifleAdded, ammo9mmAdded, ammo556Added, stimpakAdded,
@@ -4395,6 +4398,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static const std::vector<int> proofInventoryPaneFrames = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_FRAME");
     static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
+    static const int proofFalloutQuickKeyAssignFrame
+        = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ASSIGN_FRAME");
+    static const int proofFalloutQuickKeyActivateFrame
+        = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ACTIVATE_FRAME");
+    static const int proofFalloutReloadFrame = getProofFrame("OPENMW_FNV_PROOF_RELOAD_FRAME");
+    static const int proofFalloutWeaponAuditFrame = getProofFrame("OPENMW_FNV_PROOF_WEAPON_AUDIT_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
     static std::vector<std::string> proofActorBatchTargets
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
@@ -4420,6 +4429,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int worldViewerCameraAngleSequenceIndex = -1;
     static bool proofInventoryOpened = false;
     static bool proofQuickSaveQueued = false;
+    static bool proofFalloutQuickKeyAssigned = false;
+    static bool proofFalloutQuickKeyActivated = false;
+    static bool proofFalloutReloaded = false;
+    static bool proofFalloutWeaponAudited = false;
     static bool proofSayQueued = false;
     static bool proofDialogueTopicQueued = false;
     static bool proofTimedScript1Executed = false;
@@ -4791,6 +4804,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                                 << placementFormId << "\" for missing actor target \"" << value << "\"";
                     }
 
+                    // A clean base-record portrait can otherwise overlap the authored
+                    // quest reference for the same NPC. Retire only same-base actors,
+                    // leaving the rest of the authored cell intact as background.
+                    if (forceBaseSpawn && proofEnvEnabled("OPENMW_PROOF_HIDE_EXISTING_ACTOR_BASE"))
+                    {
+                        std::vector<MWWorld::Ptr> duplicates;
+                        for (MWWorld::CellStore* activeCell : mWorld->getWorldScene().getActiveCells())
+                        {
+                            if (activeCell == nullptr)
+                                continue;
+                            activeCell->forEach([&](const MWWorld::Ptr& candidate) {
+                                if (!candidate.isEmpty() && candidate.getClass().isActor()
+                                    && candidate.getCellRef().getRefId() == placementRefId
+                                    && candidate.getRefData().isEnabled())
+                                    duplicates.push_back(candidate);
+                                return true;
+                            });
+                        }
+                        for (const MWWorld::Ptr& duplicate : duplicates)
+                            mWorld->disable(duplicate);
+                        Log(Debug::Info) << "FNV/ESM4 proof: retired existing same-base actors target=\""
+                                         << value << "\" base=" << placementRefId.toDebugString()
+                                         << " count=" << duplicates.size();
+                    }
+
                     MWWorld::ManualRef ref(mWorld->getStore(), placementRefId);
                     ref.getPtr().mRef->mData.mPhysicsPostponed = !ref.getPtr().getClass().isActor();
                     ref.getPtr().getCellRef().setPosition(pos);
@@ -4836,7 +4874,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         worldViewerTrace(frameNumber, "input.begin");
         {
             ScopedProfile<UserStatsType::Input> profile(frameStart, frameNumber, *timer, *stats);
-            mInputManager->update(frametime, false);
+            // Terminal-only audits drive their own deterministic world transitions and must not consume
+            // keyboard, mouse, or controller events from the unattended host. A physical Inventory press
+            // otherwise opens the Pip-Boy, pauses actor simulation, and can fight the audit's mode cleanup.
+            const bool isolateGoodspringsActorAuditInput
+                = proofEnvEnabled("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT");
+            mInputManager->update(
+                frametime, isolateGoodspringsActorAuditInput, isolateGoodspringsActorAuditInput);
         }
         worldViewerTrace(frameNumber, "input.end");
 
@@ -5923,13 +5967,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
     const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
-    if (!proofFNVBootstrapApplied && proofRunning && !nativeFalloutSaveOwnsCamera()
+    if (!proofFNVBootstrapApplied && proofWorldReady && !nativeFalloutSaveOwnsCamera()
         && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
     {
         try
         {
-            applyFNVLevelOneCourierBootstrap(
-                *mWorld, *mJournal, proofFNVBootstrapOutside, proofFNVBootstrapProfile);
+            applyFNVLevelOneCourierBootstrap(*mWorld, proofFNVBootstrapOutside, proofFNVBootstrapProfile);
         }
         catch (const std::exception& e)
         {
@@ -6023,6 +6066,58 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         Log(Debug::Info) << "FNV/ESM4 proof: requesting quicksave \"" << name << "\" at frame " << frameNumber;
         mStateManager->quickSave(name);
         proofQuickSaveQueued = true;
+    }
+
+    const int proofFalloutQuickKeyIndex
+        = std::clamp(readProofInt("OPENMW_FNV_PROOF_QUICKKEY_INDEX", 1), 1, 8);
+    if (!proofFalloutQuickKeyAssigned && proofFalloutQuickKeyAssignFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutQuickKeyAssignFrame) && proofRunning)
+    {
+        const char* itemText = std::getenv("OPENMW_FNV_PROOF_QUICKKEY_ITEM");
+        const bool assigned = itemText != nullptr && *itemText != '\0'
+            && mWindowManager->setFalloutSaveQuickKey(
+                static_cast<std::uint8_t>(proofFalloutQuickKeyIndex - 1), makeProofRefId(itemText));
+        Log(assigned ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 proof: Fallout quickkey assignment index=" << proofFalloutQuickKeyIndex
+            << " item=" << (itemText != nullptr ? itemText : "") << " assigned=" << assigned;
+        proofFalloutQuickKeyAssigned = true;
+    }
+    if (!proofFalloutQuickKeyActivated && proofFalloutQuickKeyActivateFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutQuickKeyActivateFrame) && proofRunning)
+    {
+        mWindowManager->activateQuickKey(proofFalloutQuickKeyIndex);
+        Log(Debug::Info) << "FNV/ESM4 proof: activated Fallout quickkey index=" << proofFalloutQuickKeyIndex;
+        proofFalloutQuickKeyActivated = true;
+    }
+    if (!proofFalloutReloaded && proofFalloutReloadFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutReloadFrame) && proofRunning && mWorld != nullptr
+        && mMechanicsManager != nullptr)
+    {
+        const bool reloaded = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+        Log(reloaded ? Debug::Info : Debug::Error) << "FNV/ESM4 proof: requested Fallout reload result=" << reloaded;
+        proofFalloutReloaded = true;
+    }
+    if (!proofFalloutWeaponAudited && proofFalloutWeaponAuditFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutWeaponAuditFrame) && proofRunning && mWorld != nullptr)
+    {
+        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ConstContainerStoreIterator equipped
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        if (equipped == inventory.end())
+            Log(Debug::Error) << "FNV/ESM4 proof: Fallout weapon audit has no equipped right-hand item";
+        else
+        {
+            const ESM::RefId weapon = equipped->getCellRef().getRefId();
+            const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weapon);
+            const std::optional<int> loaded = inventory.getFalloutLoadedAmmo(weapon);
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout weapon audit equipped=" << weapon
+                             << " name=\"" << equipped->getClass().getName(*equipped) << "\" ammo="
+                             << (ammo ? ammo->toString() : std::string("none")) << " loaded="
+                             << (loaded ? std::to_string(*loaded) : std::string("uninitialized"))
+                             << " reserve=" << (ammo ? inventory.count(*ammo) : 0);
+        }
+        proofFalloutWeaponAudited = true;
     }
 
     if (!proofGodModeEnabled && proofRunning && std::getenv("OPENMW_PROOF_GOD_MODE") != nullptr && mWorld != nullptr)
@@ -6795,6 +6890,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 try
                 {
                     MWMechanics::CreatureStats& proofActorStats = proofActor.getClass().getCreatureStats(proofActor);
+                    const bool proofActorWasDead = proofActorStats.isDead();
+                    if (proofActorWasDead && proofEnvEnabled("OPENMW_PROOF_REVIVE_ACTOR")
+                        && mMechanicsManager != nullptr)
+                    {
+                        mMechanicsManager->resurrect(proofActor);
+                        Log(Debug::Info) << "FNV/ESM4 proof: revived staged actor target=\""
+                                         << proofSayActor << "\" ptr=" << proofActor.toString();
+                    }
+                    // A clean proof copy can still inherit transient combat/death flags from the authored
+                    // reference or from its first mechanics update. Those flags select hit, knockdown, block,
+                    // or death controller states even after the copy has been resurrected and its AI queue has
+                    // been cleared. Reset only the isolated proof actor so CharacterController can rebuild the
+                    // native data-driven idle from a genuinely neutral state.
+                    proofActorStats.setKnockedDown(false);
+                    proofActorStats.setKnockedDownOneFrame(false);
+                    proofActorStats.setKnockedDownOverOneFrame(false);
+                    proofActorStats.setHitRecovery(false);
+                    proofActorStats.setBlock(false);
+                    proofActorStats.setAttacked(false);
+                    proofActorStats.setAlarmed(false);
+                    proofActorStats.setDeathAnimationFinished(false);
+                    proofActorStats.setDeathAnimation(-1);
                     // A Fallout package can leave a scripted furniture animation running after the actor is moved.
                     // The capture copy must start from a deterministic neutral state; ordinary world actors keep
                     // their authored packages and animations because this path is proof-only.
@@ -7217,7 +7334,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                             << faceBoundsVisitor.getMatched();
                 }
                 if (!useFaceAxisCamera
-                    && std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_HEAD_POSE_AXIS") != nullptr)
+                    && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_USE_HEAD_POSE_AXIS"))
                 {
                     osg::Vec3d headCenter;
                     osg::Vec3d headForward;
@@ -8541,6 +8658,25 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (eligible)
             {
                 mMechanicsManager->startCombat(proofActorBatchPrevious, fnvStripSniperTarget, nullptr);
+                // Keep the production combat target, but isolate the deterministic proof actor from AiCombat's
+                // approach movement so its requested primary attack reaches CharacterController unchanged.
+                if (MWBase::LuaManager::ActorControls* controls
+                    = mLuaManager->getActorControls(proofActorBatchPrevious))
+                {
+                    controls->mDisableAI = true;
+                    controls->mMovement = 0.f;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mChanged = true;
+                }
+                MWMechanics::Movement& shooterMovement
+                    = proofActorBatchPrevious.getClass().getMovementSettings(proofActorBatchPrevious);
+                shooterMovement.mPosition[0] = 0.f;
+                shooterMovement.mPosition[1] = 0.f;
+                shooterMovement.mPosition[2] = 0.f;
+                // The shooter and target are staged on the same X axis with retail forward (+Y), so the weapon
+                // controller can use its ordinary transform-derived ray without an AI package moving the actor.
+                shooterStats.getAiSequence().clear();
                 const float slowScale
                     = std::clamp(readProofFloat("OPENMW_FNV_STRIP_SNIPER_SLOW_SCALE", 0.2f), 0.01f, 1.f);
                 mWorld->getTimeManager()->setSimulationTimeScale(slowScale);
@@ -8569,6 +8705,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             && static_cast<int>(frameNumber) > fnvStripSniperTriggerFrame && mMechanicsManager != nullptr
             && !fnvStripSniperAmmoId.empty())
         {
+            MWMechanics::CreatureStats& shooterStats
+                = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+            shooterStats.getAiSequence().clear();
+            shooterStats.setAttackingOrSpell(true);
+            MWMechanics::Movement& shooterMovement
+                = proofActorBatchPrevious.getClass().getMovementSettings(proofActorBatchPrevious);
+            shooterMovement.mPosition[0] = 0.f;
+            shooterMovement.mPosition[1] = 0.f;
+            shooterMovement.mPosition[2] = 0.f;
             MWWorld::ContainerStore& inventory
                 = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
             const int ammoNow = inventory.count(fnvStripSniperAmmoId);
@@ -8615,12 +8760,25 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 fnvStripSniperResultLogged = true;
                 if (pass)
                 {
-                    targetStats.setHitRecovery(true);
-                    mMechanicsManager->forceStateUpdate(fnvStripSniperTarget);
-                    fnvStripSniperReactionFrame = static_cast<int>(frameNumber);
-                    Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
-                                     << fnvStripSniperTarget.toString() << " frame=" << frameNumber
-                                     << " phase=armed source=health-drop exact=1 status=pass";
+                    if (targetStats.isDead())
+                    {
+                        fnvStripSniperReactionComplete = true;
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " phase=armed source=lethal-health-drop exact=1 status=pass";
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " control=death-state manualTransform=0 exact=1 status=pass";
+                    }
+                    else
+                    {
+                        targetStats.setHitRecovery(true);
+                        mMechanicsManager->forceStateUpdate(fnvStripSniperTarget);
+                        fnvStripSniperReactionFrame = static_cast<int>(frameNumber);
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " phase=armed source=health-drop exact=1 status=pass";
+                    }
                 }
             }
         }
@@ -8863,7 +9021,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         } callback;
         Log(Debug::Info) << "FNV/ESM4 proof: selecting dialogue topic \"" << proofDialogueTopic << "\" at frame "
                          << frameNumber;
-        mDialogueManager->keywordSelected(proofDialogueTopic, &callback);
+        const auto& choices = mDialogueManager->getChoices();
+        const auto choice = std::find_if(choices.begin(), choices.end(), [&](const auto& item) {
+            return Misc::StringUtils::ciEqual(item.first, proofDialogueTopic);
+        });
+        if (choice != choices.end())
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: matched dialogue choice \"" << choice->first
+                             << "\" index=" << choice->second;
+            mDialogueManager->questionAnswered(choice->second, &callback);
+        }
+        else
+            mDialogueManager->keywordSelected(proofDialogueTopic, &callback);
         proofDialogueTopicQueued = true;
     }
 
@@ -9313,6 +9482,451 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 pass ? (fnvInteractionDoorOnly ? "complete authored door circuit"
                                                : "complete authored interaction circuit")
                      : "one or more authored interaction gates failed");
+        }
+    }
+
+    const bool fnvGoodspringsActorAuditRequested
+        = proofEnvEnabled("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT");
+    if (fnvGoodspringsActorAuditRequested && proofRunning && proofWorldReady
+        && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        // A saved Pip-Boy mode pauses simulation. The actor audit must observe live package/animation execution.
+        // Input is isolated above, so this only clears a mode restored by the loaded save; it no longer competes
+        // with physical input and repeatedly rebuilds the paper-doll scene.
+        if (mWindowManager->containsMode(MWGui::GM_Inventory))
+            mWindowManager->removeGuiMode(MWGui::GM_Inventory);
+
+        struct GoodspringsActorAuditTarget
+        {
+            std::string_view mLabel;
+            std::uint32_t mReference;
+            osg::Vec3f mAuthoredPosition;
+            float mAuthoredYaw;
+            ESM::RefId mInteriorCell;
+            int mExpectedPackage;
+            unsigned int mSampleFrames;
+            bool mRequireTravel;
+            bool mRequireCombat;
+            bool mRequireAuthoredAnchor;
+        };
+        struct GoodspringsActorAuditState
+        {
+            osg::Vec3f mFirstPosition;
+            osg::Vec3f mPreviousPosition;
+            float mFirstAnimationTime = std::numeric_limits<float>::quiet_NaN();
+            float mPreviousAnimationTime = std::numeric_limits<float>::quiet_NaN();
+            float mTotalTravel = 0.f;
+            float mMaximumStep = 0.f;
+            float mMinimumZ = std::numeric_limits<float>::infinity();
+            float mMaximumZ = -std::numeric_limits<float>::infinity();
+            float mMinimumMovingFacingDot = 1.f;
+            float mAnchorDistance = std::numeric_limits<float>::infinity();
+            float mAuthoredYawError = std::numeric_limits<float>::infinity();
+            float mRenderedForwardDot = -1.f;
+            unsigned int mSamples = 0;
+            unsigned int mGroundedSamples = 0;
+            unsigned int mMovingSamples = 0;
+            unsigned int mFacingSamples = 0;
+            unsigned int mAnimationSamples = 0;
+            unsigned int mAnimationAdvanceSamples = 0;
+            unsigned int mAnimationLoopWraps = 0;
+            unsigned int mDogAnimationSourceSamples = 0;
+            unsigned int mDogAnimationSourceMismatchSamples = 0;
+            unsigned int mExpectedPackageSamples = 0;
+            unsigned int mCombatSamples = 0;
+            std::string mAnimationGroup;
+            std::string mAnimationSource;
+            bool mPass = false;
+            std::string mFailure;
+        };
+
+        // These are real authored references from the canonical Goodsprings census. The audit moves only the
+        // player between their authored cells; it never stages, enables, repositions, or drives an actor.
+        static const std::array<GoodspringsActorAuditTarget, 11> targets = { {
+            { "victor", 0x11073e8, osg::Vec3f(-72314.5f, -5998.995f, 8312.f), 0.0000006258f,
+                ESM::RefId(), -1, 300, false, false, true },
+            { "bighorner-south", 0x110769d, osg::Vec3f(-71884.938f, -4167.562f, 8239.664f), 5.410522f,
+                ESM::RefId(), 0, 600, false, false, false },
+            { "bighorner-west-01", 0x110706e, osg::Vec3f(-69717.367f, -1103.671f, 8104.f), 0.768998f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-west-02", 0x115ef63, osg::Vec3f(-69849.406f, -713.539f, 8105.812f), 6.193186f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-west-03", 0x1107077, osg::Vec3f(-70112.203f, -1018.393f, 8111.649f), 2.110000f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-north-01", 0x1109a39, osg::Vec3f(-70053.609f, 6021.109f, 8496.f), 4.712390f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-north-02", 0x1106b16, osg::Vec3f(-71550.914f, 6246.456f, 8502.403f), 5.593186f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "cheyenne", 0x110588e, osg::Vec3f(153.364f, -464.028f, 3456.f), 3.100010f,
+                ESM::RefId(ESM::FormId::fromUint32(0x1106185)), 3, 360, false, false, false },
+            { "coyote", 0x1157b3b, osg::Vec3f(-58562.f, -5984.f, 8439.875f), 0.f,
+                ESM::RefId(), 0, 600, true, false, false },
+            { "gecko", 0x1157b3d, osg::Vec3f(-69248.f, -17219.f, 8818.688f), 2.216570f,
+                ESM::RefId(), 5, 600, true, true, false },
+            { "ambient-raven", 0x114c44a, osg::Vec3f(-69456.f, -3284.f, 8520.f), 0.f,
+                ESM::RefId(), -1, 240, false, false, false },
+        } };
+        static std::array<GoodspringsActorAuditState, targets.size()> targetStates;
+        static int targetIndex = -1;
+        static int targetPhase = 0;
+        static unsigned int phaseFrame = 0;
+        static MWWorld::Ptr targetPtr;
+        static bool auditFinished = false;
+        static bool victorCaptureQueued = false;
+
+        const auto findActiveActorAuditRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto actorAuditPackageName = [](int package) -> std::string_view {
+            switch (package)
+            {
+                case -1:
+                    return "None";
+                case 0:
+                    return "Wander";
+                case 1:
+                    return "Travel";
+                case 3:
+                    return "Follow";
+                case 5:
+                    return "Combat";
+                default:
+                    return "Other";
+            }
+        };
+        const auto visitActorAuditTarget = [&](int index) {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(index)];
+            const osg::Vec3f authoredForward(std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
+            ESM::Position playerPosition;
+            playerPosition.pos[0] = target.mAuthoredPosition.x() + authoredForward.x() * 384.f;
+            playerPosition.pos[1] = target.mAuthoredPosition.y() + authoredForward.y() * 384.f;
+            playerPosition.pos[2] = target.mAuthoredPosition.z() + 48.f;
+            playerPosition.rot[0] = 0.f;
+            playerPosition.rot[1] = 0.f;
+            playerPosition.rot[2] = target.mAuthoredYaw + osg::PI;
+
+            ESM::RefId cellId = target.mInteriorCell;
+            if (cellId.empty())
+            {
+                ESM::Position probe = playerPosition;
+                cellId = mWorld->findExteriorPosition("Goodsprings", probe);
+            }
+            if (cellId.empty())
+            {
+                targetStates[static_cast<std::size_t>(index)].mFailure = "authored cell did not resolve";
+                Log(Debug::Error) << "FNV Goodsprings actor audit: visit target=" << target.mLabel
+                                  << " result=fail reason=cell-not-resolved";
+                return false;
+            }
+
+            mWorld->changeToCell(cellId, playerPosition, false, true);
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (!player.isEmpty())
+            {
+                player = mWorld->moveObject(player, playerPosition.asVec3(), true, true);
+                mWorld->rotateObject(player,
+                    osg::Vec3f(playerPosition.rot[0], playerPosition.rot[1], playerPosition.rot[2]));
+                mWorld->adjustPosition(player, true);
+            }
+            targetPtr = MWWorld::Ptr();
+            targetPhase = 1;
+            phaseFrame = frameNumber;
+            Log(Debug::Info) << "FNV Goodsprings actor audit: visit index=" << index
+                             << " target=" << target.mLabel << " ref=FormId:0x" << std::hex
+                             << target.mReference << std::dec << " cell=" << cellId.toDebugString()
+                             << " playerPos=(" << playerPosition.pos[0] << "," << playerPosition.pos[1]
+                             << "," << playerPosition.pos[2] << ")";
+            return true;
+        };
+        const auto finishActorAuditTarget = [&]() {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+            GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+            const float groundedFraction = state.mSamples != 0
+                ? static_cast<float>(state.mGroundedSamples) / static_cast<float>(state.mSamples)
+                : 0.f;
+            const float facingFraction = state.mMovingSamples != 0
+                ? static_cast<float>(state.mFacingSamples) / static_cast<float>(state.mMovingSamples)
+                : 1.f;
+            const bool grounded = groundedFraction >= 0.5f;
+            const bool animation = state.mSamples != 0
+                && state.mAnimationSamples * 2 >= state.mSamples
+                && state.mAnimationAdvanceSamples != 0;
+            const bool package = target.mExpectedPackage < 0
+                || state.mExpectedPackageSamples != 0
+                || (target.mRequireCombat && state.mCombatSamples != 0);
+            const bool travelled = !target.mRequireTravel || state.mTotalTravel >= 8.f;
+            const bool combat = !target.mRequireCombat || state.mCombatSamples != 0;
+            const bool facing = state.mMovingSamples == 0 || facingFraction >= 0.6f;
+            const bool noWarp = state.mMaximumStep <= 96.f;
+            const bool noVerticalWarp = state.mMaximumZ - state.mMinimumZ <= 192.f;
+            const bool authoredAnchor = !target.mRequireAuthoredAnchor
+                || (state.mAnchorDistance <= 64.f && state.mAuthoredYawError <= 0.1f
+                    && state.mRenderedForwardDot >= 0.9f);
+            const bool dogTarget = target.mLabel == "cheyenne" || target.mLabel == "coyote";
+            const bool dogAnimationSource = !dogTarget
+                || (state.mDogAnimationSourceSamples != 0 && state.mDogAnimationSourceMismatchSamples == 0);
+            state.mPass = grounded && animation && package && travelled && combat && facing && noWarp
+                && noVerticalWarp && authoredAnchor && dogAnimationSource && state.mFailure.empty();
+            if (!state.mPass && state.mFailure.empty())
+            {
+                std::ostringstream failure;
+                if (!grounded) failure << "grounding ";
+                if (!animation) failure << "animation ";
+                if (!package) failure << "package ";
+                if (!travelled) failure << "travel ";
+                if (!combat) failure << "combat ";
+                if (!facing) failure << "facing ";
+                if (!noWarp) failure << "warp ";
+                if (!noVerticalWarp) failure << "vertical-warp ";
+                if (!authoredAnchor) failure << "authored-anchor ";
+                if (!dogAnimationSource) failure << "dog-animation-source ";
+                state.mFailure = failure.str();
+            }
+            Log(state.mPass ? Debug::Info : Debug::Error)
+                << "FNV Goodsprings actor audit: target=" << target.mLabel
+                << " ref=FormId:0x" << std::hex << target.mReference << std::dec
+                << " result=" << (state.mPass ? "pass" : "fail")
+                << " reason=\"" << state.mFailure << "\" samples=" << state.mSamples
+                << " groundedFraction=" << groundedFraction
+                << " package=" << actorAuditPackageName(target.mExpectedPackage)
+                << " packageSamples=" << state.mExpectedPackageSamples
+                << " combatSamples=" << state.mCombatSamples
+                << " animationGroup=\"" << state.mAnimationGroup << "\""
+                << " animationSource=\"" << state.mAnimationSource << "\""
+                << " animationSamples=" << state.mAnimationSamples
+                << " animationAdvanceSamples=" << state.mAnimationAdvanceSamples
+                << " animationLoopWraps=" << state.mAnimationLoopWraps
+                << " dogAnimationSourceSamples=" << state.mDogAnimationSourceSamples
+                << " dogAnimationSourceMismatchSamples=" << state.mDogAnimationSourceMismatchSamples
+                << " travel=" << state.mTotalTravel << " maxStep=" << state.mMaximumStep
+                << " zRange=" << (state.mMaximumZ - state.mMinimumZ)
+                << " movingSamples=" << state.mMovingSamples << " facingFraction=" << facingFraction
+                << " minimumMovingFacingDot=" << state.mMinimumMovingFacingDot
+                << " anchorDistance=" << state.mAnchorDistance
+                << " authoredYawError=" << state.mAuthoredYawError
+                << " renderedForwardDot=" << state.mRenderedForwardDot;
+        };
+
+        if (!auditFinished && targetIndex < 0 && proofWorldReadyFrames >= 240)
+        {
+            if (!mWorld->getGodModeState())
+                mWorld->toggleGodMode();
+            targetIndex = 0;
+            if (!visitActorAuditTarget(targetIndex))
+                targetPhase = 3;
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 1
+            && frameNumber - phaseFrame >= 150)
+        {
+            targetPtr = findActiveActorAuditRef(targets[static_cast<std::size_t>(targetIndex)].mReference);
+            if (targetPtr.isEmpty() || !targetPtr.getClass().isActor())
+            {
+                GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+                state.mFailure = "authored actor reference did not become active";
+                state.mPass = false;
+                Log(Debug::Error) << "FNV Goodsprings actor audit: target="
+                                  << targets[static_cast<std::size_t>(targetIndex)].mLabel
+                                  << " result=fail reason=actor-not-active";
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
+            else
+            {
+                GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+                const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+                state = {};
+                state.mFirstPosition = targetPtr.getRefData().getPosition().asVec3();
+                state.mPreviousPosition = state.mFirstPosition;
+                state.mAnchorDistance = (state.mFirstPosition - target.mAuthoredPosition).length();
+                state.mAuthoredYawError = std::abs(Misc::normalizeAngle(
+                    targetPtr.getRefData().getPosition().rot[2] - target.mAuthoredYaw));
+                if (targetPtr.getRefData().getBaseNode() != nullptr)
+                {
+                    osg::Vec3f renderedForward
+                        = targetPtr.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
+                    renderedForward.z() = 0.f;
+                    if (renderedForward.length2() > 0.f)
+                        renderedForward.normalize();
+                    const osg::Vec3f authoredForward(
+                        std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
+                    state.mRenderedForwardDot = renderedForward * authoredForward;
+                }
+                targetPhase = 2;
+                phaseFrame = frameNumber;
+                Log(Debug::Info) << "FNV Goodsprings actor audit: sampling target=" << target.mLabel
+                                 << " ptr=" << targetPtr.toString() << " pos=(" << state.mFirstPosition.x()
+                                 << "," << state.mFirstPosition.y() << "," << state.mFirstPosition.z()
+                                 << ") yaw=" << targetPtr.getRefData().getPosition().rot[2];
+            }
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 2 && !targetPtr.isEmpty())
+        {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+            GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+            const osg::Vec3f position = targetPtr.getRefData().getPosition().asVec3();
+            const osg::Vec3f step = position - state.mPreviousPosition;
+            const float horizontalStep = osg::Vec2f(step.x(), step.y()).length();
+            state.mTotalTravel += horizontalStep;
+            state.mMaximumStep = std::max(state.mMaximumStep, horizontalStep);
+            state.mMinimumZ = std::min(state.mMinimumZ, position.z());
+            state.mMaximumZ = std::max(state.mMaximumZ, position.z());
+            ++state.mSamples;
+            if (mWorld->isOnGround(targetPtr))
+                ++state.mGroundedSamples;
+
+            // Ignore sub-pixel physics settling/jitter; it is not locomotion and cannot establish facing.
+            if (horizontalStep > 0.25f)
+            {
+                ++state.mMovingSamples;
+                osg::Vec3f direction(step.x(), step.y(), 0.f);
+                direction.normalize();
+                osg::Vec3f renderedForward(
+                    std::sin(targetPtr.getRefData().getPosition().rot[2]),
+                    std::cos(targetPtr.getRefData().getPosition().rot[2]), 0.f);
+                if (targetPtr.getRefData().getBaseNode() != nullptr)
+                {
+                    renderedForward
+                        = targetPtr.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
+                    renderedForward.z() = 0.f;
+                    if (renderedForward.length2() > 0.f)
+                        renderedForward.normalize();
+                }
+                const float facingDot = direction * renderedForward;
+                state.mMinimumMovingFacingDot = std::min(state.mMinimumMovingFacingDot, facingDot);
+                if (facingDot >= 0.25f)
+                    ++state.mFacingSamples;
+            }
+
+            const MWMechanics::AiSequence& sequence
+                = targetPtr.getClass().getCreatureStats(targetPtr).getAiSequence();
+            const int package = static_cast<int>(sequence.getTypeId());
+            if (package == target.mExpectedPackage)
+                ++state.mExpectedPackageSamples;
+            if (sequence.isInCombat())
+                ++state.mCombatSamples;
+
+            if (MWRender::Animation* animation = mWorld->getAnimation(targetPtr))
+            {
+                std::string group(animation->getActiveGroup(MWRender::BoneGroup_LowerBody));
+                if (group.empty())
+                    group = std::string(animation->getActiveGroup(MWRender::BoneGroup_Torso));
+                if (!group.empty())
+                {
+                    ++state.mAnimationSamples;
+                    const float animationTime = animation->getCurrentTime(group);
+                    if (state.mAnimationGroup == group && std::isfinite(state.mPreviousAnimationTime)
+                        && std::abs(animationTime - state.mPreviousAnimationTime) > 0.00001f)
+                    {
+                        ++state.mAnimationAdvanceSamples;
+                        if (animationTime + 0.00001f < state.mPreviousAnimationTime)
+                            ++state.mAnimationLoopWraps;
+                    }
+                    if (state.mAnimationGroup.empty())
+                        state.mFirstAnimationTime = animationTime;
+                    const std::string source = animation->getAnimationSourceName(group);
+                    if (target.mLabel == "cheyenne" || target.mLabel == "coyote")
+                    {
+                        ++state.mDogAnimationSourceSamples;
+                        const std::string lowerSource = Misc::StringUtils::lowerCase(source);
+                        const bool swimmingSource = lowerSource.find("/swim") != std::string::npos
+                            || lowerSource.find("\\swim") != std::string::npos;
+                        const bool neutralSource = group != "idle"
+                            || Misc::StringUtils::ciEndsWith(lowerSource, "/mtidle.kf")
+                            || Misc::StringUtils::ciEndsWith(lowerSource, "\\mtidle.kf");
+                        const bool dedicatedRunSource = group != "runforward"
+                            || (!Misc::StringUtils::ciEndsWith(lowerSource, "/mtforward.kf")
+                                && !Misc::StringUtils::ciEndsWith(lowerSource, "\\mtforward.kf"));
+                        if (swimmingSource || !neutralSource || !dedicatedRunSource)
+                            ++state.mDogAnimationSourceMismatchSamples;
+                    }
+                    state.mAnimationGroup = std::move(group);
+                    state.mAnimationSource = source;
+                    state.mPreviousAnimationTime = animationTime;
+                }
+            }
+            state.mPreviousPosition = position;
+
+            if (targetIndex == 0 && !victorCaptureQueued && state.mSamples >= 30
+                && mScreenCaptureHandler != nullptr)
+            {
+                victorCaptureQueued = true;
+                if (MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    const osg::Vec3d cameraPosition = camera->getPosition();
+                    osg::Vec3d aimPosition = position;
+                    aimPosition.z() += 72.f;
+                    const osg::Vec3d delta = aimPosition - cameraPosition;
+                    const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                    if (horizontal > 1.0)
+                    {
+                        camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                        camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                        camera->setRoll(0.f);
+                        camera->instantTransition();
+                        camera->updateCamera();
+                    }
+                }
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                Log(Debug::Info) << "FNV Goodsprings actor audit: queued Victor authored-facing capture";
+            }
+
+            if (frameNumber - phaseFrame >= target.mSampleFrames)
+            {
+                finishActorAuditTarget();
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 3
+            && frameNumber - phaseFrame >= 8)
+        {
+            ++targetIndex;
+            if (targetIndex >= static_cast<int>(targets.size()))
+            {
+                unsigned int passCount = 0;
+                std::ostringstream failures;
+                for (std::size_t index = 0; index < targetStates.size(); ++index)
+                {
+                    if (targetStates[index].mPass)
+                        ++passCount;
+                    else
+                    {
+                        if (failures.tellp() > 0)
+                            failures << ',';
+                        failures << targets[index].mLabel << ':' << targetStates[index].mFailure;
+                    }
+                }
+                const bool pass = passCount == targets.size();
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV Goodsprings actor audit: result=" << (pass ? "pass" : "fail")
+                    << " passed=" << passCount << " total=" << targets.size()
+                    << " failures=\"" << failures.str() << "\"";
+                auditFinished = true;
+                mStateManager->requestQuit();
+            }
+            else if (!visitActorAuditTarget(targetIndex))
+            {
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
         }
     }
 

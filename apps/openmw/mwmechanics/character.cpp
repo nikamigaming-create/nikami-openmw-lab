@@ -37,6 +37,7 @@
 #include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadsndr.hpp>
@@ -54,6 +55,7 @@
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/visitor.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -61,6 +63,7 @@
 #include "../mwrender/camera.hpp"
 #include "../mwrender/fallouthitreaction.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
+#include "../mwrender/weaponanimation.hpp"
 
 #include "../mwsound/falloutsoundpath.hpp"
 
@@ -635,7 +638,14 @@ namespace
             return ESM::Weapon::None;
 
         if (creature)
-            return MWMechanics::getFalloutWeaponType(0).value();
+        {
+            // Non-biped FNV creatures attack through their skeleton's authored attack1/attack2/attack3
+            // groups. Treating their unarmed strike as the humanoid H2H weapon family tries to bind
+            // Characters/_Male clips to creature rigs and falls back to unsynchronised immediate damage.
+            // Returning no Fallout weapon family keeps the legacy animation state machine, while the
+            // FNV creature hit path below still supplies the authored New Vegas damage contract.
+            return std::nullopt;
+        }
 
         const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
         if (weapon == nullptr)
@@ -2236,6 +2246,16 @@ namespace MWMechanics
         if (mUpperBodyState == UpperBodyState::AttackEnd)
         {
             if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
+                    mFalloutVatsAttackDelivery, equippedFalloutWeapon, groupname, evt))
+            {
+                mFalloutVatsReleaseReady = true;
+                Log(Debug::Info) << "FNV VATS authored release: actor=" << mPtr.toString()
+                                 << " weapon=" << ESM::RefId::formIdRefId(delivery->mWeapon)
+                                 << " animationType=" << static_cast<unsigned int>(delivery->mAnimationType)
+                                 << " group=" << delivery->mAnimationGroup << " key=" << evt;
+                return;
+            }
+            if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
                     mFalloutAttackDelivery, equippedFalloutWeapon, groupname, evt))
             {
                 const bool delivered = isFalloutMeleeAnimationType(delivery->mAnimationType)
@@ -2298,7 +2318,10 @@ namespace MWMechanics
             // and processing multiple hit keys for a single attack
             if (mReadyToHit)
             {
-                charClass.hit(mPtr, mAttackStrength, attackType, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                    strikeFalloutMelee(0);
+                else
+                    charClass.hit(mPtr, mAttackStrength, attackType, mAttackVictim, mAttackHitPos, mAttackSuccess);
                 mReadyToHit = false;
             }
         }
@@ -2327,17 +2350,22 @@ namespace MWMechanics
             {
                 // State update doesn't expect the start key to be the hit key,
                 // so we have to do this early.
-                prepareHit();
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                    strikeFalloutMelee(0);
+                else
+                {
+                    prepareHit();
 
-                if (groupname == "attack1" || groupname == "swimattack1")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Chop, mAttackVictim, mAttackHitPos, mAttackSuccess);
-                else if (groupname == "attack2" || groupname == "swimattack2")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Slash, mAttackVictim, mAttackHitPos, mAttackSuccess);
-                else if (groupname == "attack3" || groupname == "swimattack3")
-                    charClass.hit(
-                        mPtr, mAttackStrength, ESM::Weapon::AT_Thrust, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    if (groupname == "attack1" || groupname == "swimattack1")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Chop, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    else if (groupname == "attack2" || groupname == "swimattack2")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Slash, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                    else if (groupname == "attack3" || groupname == "swimattack3")
+                        charClass.hit(
+                            mPtr, mAttackStrength, ESM::Weapon::AT_Thrust, mAttackVictim, mAttackHitPos, mAttackSuccess);
+                }
             }
         }
         else if (action == "shoot attach")
@@ -2610,6 +2638,11 @@ namespace MWMechanics
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
                         settleUsableWithoutAction("missing-primary-after-equip");
+                    if (mFalloutReloadQueued)
+                    {
+                        mFalloutReloadQueued = false;
+                        reloadFalloutWeapon();
+                    }
                     break;
                 case UpperBodyState::Unequipping:
                     failVisualClosed();
@@ -2746,6 +2779,93 @@ namespace MWMechanics
         return forceStateUpdate;
     }
 
+    bool CharacterController::reloadFalloutWeapon()
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV reload rejected: actor=" << mPtr.toString() << " weapon="
+                              << (mFalloutWeapon != nullptr
+                                      ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                      : std::string("none"))
+                              << " weaponType=" << mWeaponType << " upperBodyState="
+                              << static_cast<int>(mUpperBodyState) << " reason=" << reason;
+            return false;
+        };
+        if (mFalloutWeapon == nullptr || !isFalloutWeaponType(mWeaponType)
+            || isFalloutThrownWeapon(*mFalloutWeapon) || mFalloutWeapon->mData.ammoUse == 0
+            || mFalloutWeapon->mData.clipSize == 0)
+            return fail("weapon-state-not-reloadable");
+        if (mUpperBodyState == UpperBodyState::Equipping)
+        {
+            mFalloutReloadQueued = true;
+            Log(Debug::Info) << "FNV reload queued until weapon equip completes: actor=" << mPtr.toString()
+                             << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+            return true;
+        }
+        if (mUpperBodyState != UpperBodyState::WeaponEquipped)
+            return fail("weapon-action-in-progress");
+
+        MWWorld::ContainerStore& container = mPtr.getClass().getContainerStore(mPtr);
+        auto* inventory = dynamic_cast<MWWorld::InventoryStore*>(&container);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (inventory == nullptr || store == nullptr)
+            return fail("inventory-or-store-unavailable");
+
+        std::vector<ESM::FormId> candidates;
+        if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
+            candidates.push_back(mFalloutWeapon->mAmmo);
+        else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
+            candidates = list->mObjects;
+        if (candidates.empty())
+            return fail("authored-ammo-candidates-unavailable");
+
+        const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+        std::optional<ESM::RefId> ammoId = inventory->getFalloutAmmoSelection(weaponId);
+        auto candidateAvailable = [&](ESM::FormId candidate) {
+            return store->get<ESM4::Ammunition>().search(candidate) != nullptr
+                && inventory->count(ESM::RefId::formIdRefId(candidate)) > 0;
+        };
+        if (!ammoId || std::ranges::none_of(candidates,
+                [&](ESM::FormId candidate) { return ESM::RefId::formIdRefId(candidate) == *ammoId; })
+            || inventory->count(*ammoId) <= 0)
+        {
+            const auto candidate = std::ranges::find_if(candidates, candidateAvailable);
+            if (candidate == candidates.end())
+                return fail("compatible-reserve-ammo-unavailable");
+            ammoId = ESM::RefId::formIdRefId(*candidate);
+        }
+
+        const int loaded = inventory->getFalloutLoadedAmmo(weaponId).value_or(0);
+        const int capacity = static_cast<int>(mFalloutWeapon->mData.clipSize);
+        const int transfer = std::min(capacity - std::clamp(loaded, 0, capacity), inventory->count(*ammoId));
+        if (transfer <= 0)
+            return fail("magazine-full-or-reserve-empty");
+
+        MWRender::Animation::AnimPriority priority(Priority_Weapon);
+        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const bool visualAction
+            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Reload, priority);
+
+        const int removed = inventory->remove(*ammoId, transfer);
+        if (removed != transfer)
+        {
+            if (removed > 0)
+                container.add(*ammoId, removed);
+            return fail("ammo-transaction-mismatch");
+        }
+        inventory->setFalloutAmmoSelection(weaponId, *ammoId);
+        inventory->setFalloutLoadedAmmo(weaponId, loaded + transfer);
+        if (visualAction)
+            mUpperBodyState = UpperBodyState::AttackEnd;
+        Log(Debug::Info) << "FNV reload: actor=" << mPtr.toString() << " weapon=" << weaponId
+                         << " ammo=" << *ammoId << " loadedBefore=" << loaded
+                         << " transferred=" << transfer << " loadedAfter=" << (loaded + transfer)
+                         << " capacity=" << capacity << " visualAction=" << visualAction << " status=pass";
+        if (!visualAction)
+            Log(Debug::Warning) << "FNV reload used gameplay fallback because the authored reload animation "
+                                << "could not be played: actor=" << mPtr.toString() << " weapon=" << weaponId;
+        return true;
+    }
+
     bool CharacterController::fireFalloutWeapon(const MWWorld::Ptr& vatsTarget,
         const std::optional<osg::Vec3f>& vatsAimPoint, const FalloutVatsQueuedAction* vatsAction,
         bool vatsTargetHit)
@@ -2791,6 +2911,7 @@ namespace MWMechanics
         }
 
         MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
+        auto* inventoryStore = dynamic_cast<MWWorld::InventoryStore*>(&inventory);
         const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);
         std::optional<ESM::FormId> consumable;
         const ESM4::Ammunition* ammunition = nullptr;
@@ -2813,9 +2934,9 @@ namespace MWMechanics
             else
                 return fail("invalid-ammo-reference");
 
-            if (const auto* inventoryStore = dynamic_cast<const MWWorld::InventoryStore*>(&inventory))
+            const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+            if (inventoryStore != nullptr)
             {
-                const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
                 if (const std::optional<ESM::RefId> selected = inventoryStore->getFalloutAmmoSelection(weaponId))
                 {
                     const auto found = std::find_if(ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
@@ -2826,13 +2947,43 @@ namespace MWMechanics
                 }
             }
 
-            consumable = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
-                [&](ESM::FormId candidate) {
-                    return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
-                },
-                [&](ESM::FormId candidate) {
-                    return inventory.count(ESM::RefId::formIdRefId(candidate));
-                });
+            const auto isAmmo = [&](ESM::FormId candidate) {
+                return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
+            };
+            const std::optional<int> loaded
+                = inventoryStore != nullptr ? inventoryStore->getFalloutLoadedAmmo(weaponId) : std::nullopt;
+            if (loaded)
+            {
+                const std::optional<ESM::RefId> selected = inventoryStore->getFalloutAmmoSelection(weaponId);
+                const auto found = selected ? std::ranges::find_if(ammoCandidates, [&](ESM::FormId candidate) {
+                    return ESM::RefId::formIdRefId(candidate) == *selected && isAmmo(candidate);
+                }) : ammoCandidates.end();
+                if (found == ammoCandidates.end() || *loaded < mFalloutWeapon->mData.ammoUse)
+                {
+                    playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+                    return fail("empty-magazine");
+                }
+                consumable = *found;
+            }
+            else
+            {
+                // Migrate inventories created before magazine state existed by treating the equipped weapon as
+                // freshly loaded. Native FNV saves enter through ExtraAmmo and never use this compatibility path.
+                consumable = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse, isAmmo,
+                    [&](ESM::FormId candidate) {
+                        return inventory.count(ESM::RefId::formIdRefId(candidate));
+                    });
+                if (consumable && inventoryStore != nullptr)
+                {
+                    const ESM::RefId ammoId = ESM::RefId::formIdRefId(*consumable);
+                    const int capacity = std::max<int>(mFalloutWeapon->mData.clipSize, mFalloutWeapon->mData.ammoUse);
+                    const int initial = std::min(capacity, inventory.count(ammoId));
+                    if (initial < mFalloutWeapon->mData.ammoUse || inventory.remove(ammoId, initial) != initial)
+                        return fail("initial-magazine-transaction-mismatch");
+                    inventoryStore->setFalloutAmmoSelection(weaponId, ammoId);
+                    inventoryStore->setFalloutLoadedAmmo(weaponId, initial);
+                }
+            }
             if (!consumable)
             {
                 playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
@@ -3040,10 +3191,20 @@ namespace MWMechanics
         if (contract->mConsumesWeapon && !mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId
             && mWeapon.getCellRef().getRefId() == consumableRefId && mWeapon.getContainerStore() == &inventory)
             removed = inventory.remove(mWeapon, contract->mAmmoUse);
-        else
+        else if (contract->mConsumesWeapon)
             removed = inventory.remove(consumableRefId, contract->mAmmoUse);
+        else if (inventoryStore != nullptr)
+        {
+            const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+            const int loaded = inventoryStore->getFalloutLoadedAmmo(weaponId).value_or(0);
+            if (loaded < contract->mAmmoUse)
+                return fail("magazine-underflow");
+            inventoryStore->setFalloutLoadedAmmo(weaponId, loaded - contract->mAmmoUse);
+            removed = contract->mAmmoUse;
+        }
         const int consumableAfter = inventory.count(consumableRefId);
-        if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
+        const int expectedInventoryDelta = contract->mConsumesWeapon ? contract->mAmmoUse : 0;
+        if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != expectedInventoryDelta)
             return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
 
         // Fallout equips consumable thrown weapons as a one-item stack. Removing that item clears the carried-right
@@ -3106,6 +3267,51 @@ namespace MWMechanics
             weaponConditionAfter = *after;
         }
         playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
+        bool muzzleFlashSpawned = false;
+        osg::Vec3f muzzlePosition = origin;
+        std::string muzzleNode = "actor-head";
+        if ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0
+            && !projectile->mMuzzleFlashModel.empty())
+        {
+            if (MWRender::Animation* animation = getFalloutWeaponAnimation())
+            {
+                // Fallout weapon meshes author the emission transform beneath ProjectileNode. Some weapon models
+                // expose only the attachment frame to Animation, so retain Weapon and the actor head as ordered
+                // fallbacks instead of inventing a camera-relative flash position.
+                SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+                osg::Node* weaponRoot = animation->getEquippedWeaponNode();
+                if (weaponRoot != nullptr)
+                    weaponRoot->accept(projectileNode);
+                const osg::Node* resolvedNode = projectileNode.mFoundNode;
+                if (resolvedNode != nullptr)
+                    muzzleNode = resolvedNode->getName();
+                else
+                {
+                    resolvedNode = animation->getNode("Weapon");
+                    if (resolvedNode != nullptr)
+                        muzzleNode = resolvedNode->getName();
+                }
+                if (resolvedNode != nullptr)
+                {
+                    const osg::NodePathList paths = resolvedNode->getParentalNodePaths();
+                    if (!paths.empty())
+                        muzzlePosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                }
+            }
+            world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
+                                   VFS::Path::Normalized(projectile->mMuzzleFlashModel)),
+                "", muzzlePosition, 1.f, false, false,
+                ESM::RefId(projectile->mData.muzzleFlashLight));
+            muzzleFlashSpawned = true;
+        }
+        Log(muzzleFlashSpawned ? Debug::Info : Debug::Warning)
+            << "FNV combat muzzle flash: actor=" << mPtr.toString()
+            << " projectile=" << ESM::RefId::formIdRefId(projectile->mId)
+            << " authoredFlag=" << ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0)
+            << " model=" << projectile->mMuzzleFlashModel
+            << " duration=" << projectile->mData.muzzleFlashDuration
+            << " light=" << ESM::RefId::formIdRefId(projectile->mData.muzzleFlashLight)
+            << " node=" << muzzleNode << " position=" << muzzlePosition << " spawned=" << muzzleFlashSpawned;
         if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
             MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
 
@@ -3413,6 +3619,82 @@ namespace MWMechanics
         return true;
     }
 
+    bool CharacterController::prepareFalloutVatsRangedAttack()
+    {
+        mFalloutAttackDelivery = {};
+        mFalloutVatsAttackDelivery = {};
+        mFalloutVatsReleaseReady = false;
+        const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+        if (!animationType || mFalloutWeapon == nullptr)
+            return false;
+
+        // Targeting pauses simulation, so a weapon that was holstered on entry cannot
+        // finish its ordinary equip clip before execution starts. Normalize that
+        // already-requested transition here and expose the actual equipped model before
+        // playing the attack. This keeps gameplay inventory authoritative while
+        // preventing an empty-hand VATS shot.
+        mPtr.getClass().getCreatureStats(mPtr).setDrawState(DrawState::Weapon);
+        if (mUpperBodyState != UpperBodyState::WeaponEquipped)
+        {
+            if (!mCurrentWeapon.empty())
+                disableFalloutWeaponGroup(mCurrentWeapon);
+            detachFalloutWeaponTextKeys();
+            showFalloutWeapons(true);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+            {
+                Log(Debug::Error) << "FNV VATS execution: equipped weapon pose unavailable actor="
+                                  << mPtr.toString() << " weaponType=" << mWeaponType;
+                return false;
+            }
+        }
+        bool authoredHitscan = true;
+        if (!isFalloutMeleeAnimationType(*animationType) && !isFalloutThrownWeapon(*mFalloutWeapon))
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            const ESM4::Projectile* projectile = store != nullptr
+                ? store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile)
+                : nullptr;
+            if (projectile != nullptr)
+                authoredHitscan = (projectile->mData.flags & ESM4::Projectile::Hitscan) != 0;
+        }
+        const FalloutAttackDeliveryEvent deliveryEvent = getFalloutAttackDeliveryEvent(
+            *animationType, authoredHitscan, mFalloutWeapon->mData.isAutomatic());
+        const std::optional<MWRender::FonvWeaponActionSource> source = MWRender::getFonvWeaponActionSource(
+            *animationType, 0, MWRender::FonvWeaponAction::PrimaryAttack);
+        if (!source)
+            return false;
+        if (deliveryEvent != FalloutAttackDeliveryEvent::None
+            && !queueFalloutAttackDelivery(mFalloutVatsAttackDelivery, deliveryEvent,
+                mFalloutWeapon->mId, *animationType, source->mSemanticGroup))
+            return false;
+        MWRender::Animation::AnimPriority priority(Priority_Weapon);
+        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const bool visualAction
+            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
+        if (visualAction)
+        {
+            mUpperBodyState = UpperBodyState::AttackEnd;
+            setFalloutWeaponAiming(1.f, true);
+            // Retail hitscan/automatic actions have no deferred delivery key: discharge is coincident with the
+            // authored action start. Projectile and thrown families continue to wait for their exact key above.
+            if (deliveryEvent == FalloutAttackDeliveryEvent::None)
+                mFalloutVatsReleaseReady = true;
+        }
+        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+        mFalloutVatsVisualAttackPrepared = visualAction;
+        Log(visualAction ? Debug::Info : Debug::Warning)
+            << "FNV VATS weapon visual: actor=" << mPtr.toString() << " prepared=" << visualAction;
+        return visualAction;
+    }
+
+    bool CharacterController::consumeFalloutVatsRangedAttackRelease()
+    {
+        const bool ready = mFalloutVatsReleaseReady;
+        mFalloutVatsReleaseReady = false;
+        return ready;
+    }
+
     bool CharacterController::executeFalloutVatsRangedHit(
         const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
         const FalloutVatsQueuedAction& action, bool targetHit)
@@ -3423,17 +3705,10 @@ namespace MWMechanics
             || !std::isfinite(action.mLimbDamageMultiplier) || action.mLimbDamageMultiplier < 0.f)
             return false;
 
-        // V.A.T.S. resolves its queued hit contract authoritatively in this method. Never let a real-time KF key
-        // left over from an interrupted attack deliver a second shot during the cinematic.
-        mFalloutAttackDelivery = {};
-
-        MWRender::Animation::AnimPriority priority(Priority_Weapon);
-        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
-        const bool visualAction
-            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
-        if (visualAction)
-            mUpperBodyState = UpperBodyState::AttackEnd;
-        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+        // The action manager normally starts this animation before releasing the projectile so the authored wind-up
+        // is visible in the cinematic. Retain a direct-call fallback for non-UI callers.
+        const bool visualAction = mFalloutVatsVisualAttackPrepared || prepareFalloutVatsRangedAttack();
+        mFalloutVatsVisualAttackPrepared = false;
 
         osg::Vec3f aimPoint = targetPoint;
         if (!targetHit)
@@ -4372,8 +4647,8 @@ namespace MWMechanics
 
                     MWBase::LuaManager::ActorControls* actorControls
                         = MWBase::Environment::get().getLuaManager()->getActorControls(mPtr);
-                    const bool aiInactive
-                        = actorControls->mDisableAI || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
+                    const bool aiInactive = (actorControls != nullptr && actorControls->mDisableAI)
+                        || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
                     if (mWeaponType != ESM::Weapon::PickProbe && !isLegacyRandomAttackAnimation(mCurrentWeapon))
                     {
                         if (weapclass == ESM::WeaponType::Ranged || weapclass == ESM::WeaponType::Thrown)
@@ -4461,7 +4736,13 @@ namespace MWMechanics
             // Attack animations with no hit key do this earlier.
             else
             {
-                prepareHit();
+                if (mPtr.getType() == ESM4::Creature::sRecordId && isFalloutActor(mPtr))
+                {
+                    mAttackStrength = 1.f;
+                    mReadyToHit = true;
+                }
+                else
+                    prepareHit();
             }
 
             if (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon))
@@ -5346,6 +5627,76 @@ namespace MWMechanics
         else
             mAnimation->play(
                 groupname, priority, blendMask, autodisable, speedmult, start, stop, startpoint, loops, loopfallback);
+    }
+
+    bool CharacterController::playFalloutDialogueAnimation(const ESM::RefId& animationId)
+    {
+        if (mAnimation == nullptr || animationId.empty())
+            return false;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::IdleAnimation* idle
+            = store != nullptr ? store->get<ESM4::IdleAnimation>().search(animationId) : nullptr;
+        if (idle == nullptr)
+            return false;
+
+        const std::string actionGroup = Misc::StringUtils::lowerCase(idle->mEditorId);
+        if (!actionGroup.empty() && mAnimation->hasAnimation(actionGroup))
+        {
+            mAnimation->play(
+                actionGroup, Priority_Scripted, MWRender::BlendMask_All, true, 1.f, "start", "stop", 0.f, 0);
+            Log(Debug::Info) << "FNV/ESM4 dialogue: playing authored gesture action actor="
+                             << mPtr.getCellRef().getRefId() << " animation=" << animationId << " editor="
+                             << idle->mEditorId << " group=" << actionGroup << " source=\""
+                             << mAnimation->getAnimationSourceName(actionGroup) << "\"";
+            return mAnimation->isPlaying(actionGroup);
+        }
+
+        if (idle->mModel.empty())
+            return false;
+
+        const auto normalizeIdlePath = [](std::string_view model) {
+            VFS::Path::Normalized path = VFS::Path::toNormalized(model);
+            if (!path.view().starts_with("meshes/"))
+                path = Misc::ResourceHelpers::correctMeshPath(path);
+            return Misc::ResourceHelpers::correctActorModelPath(
+                path, MWBase::Environment::get().getResourceSystem()->getVFS());
+        };
+        VFS::Path::Normalized path = normalizeIdlePath(idle->mModel);
+        if (mPtr.getType() == ESM4::Npc::sRecordId
+            && path.view().find("creatures/") != std::string_view::npos)
+        {
+            for (const ESM4::IdleAnimation& candidate : store->get<ESM4::IdleAnimation>())
+            {
+                if (!Misc::StringUtils::ciEqual(candidate.mEditorId, idle->mEditorId) || candidate.mModel.empty())
+                    continue;
+                VFS::Path::Normalized candidatePath = normalizeIdlePath(candidate.mModel);
+                if (candidatePath.view().find("creatures/") == std::string_view::npos)
+                {
+                    path = std::move(candidatePath);
+                    Log(Debug::Info) << "FNV/ESM4 dialogue: resolved actor-compatible gesture variant animation="
+                                     << animationId << " editor=" << idle->mEditorId << " variant="
+                                     << ESM::RefId(candidate.mId) << " model=\"" << path << "\"";
+                    break;
+                }
+            }
+        }
+        const bool incompatibleCreatureSource
+            = mPtr.getType() == ESM4::Npc::sRecordId && path.view().find("creatures/") != std::string_view::npos;
+        constexpr std::string_view group = "dialoguegesture";
+        if (path.empty() || incompatibleCreatureSource
+            || !mAnimation->addFalloutDialogueAnimSource(path.value(), idle->mEditorId, group))
+        {
+            Log(Debug::Warning) << "FNV/ESM4 dialogue: missing authored gesture animation=" << animationId
+                                << " editor=" << idle->mEditorId << " model=\"" << path << "\"";
+            return false;
+        }
+
+        mAnimation->play(group, Priority_Scripted, MWRender::BlendMask_All, true, 1.f, "start", "stop", 0.f, 0);
+        Log(Debug::Info) << "FNV/ESM4 dialogue: playing authored gesture actor=" << mPtr.getCellRef().getRefId()
+                         << " animation=" << animationId << " editor=" << idle->mEditorId << " model=\"" << path
+                         << "\"";
+        return mAnimation->isPlaying(group);
     }
 
     bool CharacterController::playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted)

@@ -1,7 +1,6 @@
 #ifndef OPENMW_MWWORLD_FNVSAVEPREFLIGHT_H
 #define OPENMW_MWWORLD_FNVSAVEPREFLIGHT_H
 
-#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -15,8 +14,10 @@
 
 namespace ESM4
 {
+    struct Ammunition;
     struct Cell;
     struct Climate;
+    struct FormIdList;
     struct Weather;
     struct World;
 }
@@ -65,16 +66,11 @@ namespace MWWorld
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(
         ESM4::FONVSaveGamePrefix save, const ESMStore& store, std::span<const std::string> currentContentFiles);
 
-    // Fallout saves can persist an inventory ammo stack using the WEAP ammo FLST rather than one of the concrete
-    // AMMO records in that list. OpenMW containers cannot hold FLST records, so materialize the authored default
-    // AMMO before the compatibility-carrier inventory is rebuilt.
-    std::size_t resolveFalloutSaveInventoryAmmoLists(
-        FalloutSavePlayerHeaderState& player, const ESMStore& store);
-
     // Pure core used to prove the transaction boundary without needing a running World. Production obtains these
     // inputs exclusively from the validated ESMStore entry point above.
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(ESM4::FONVSaveGamePrefix save,
         const FalloutPlayerState* player, const FalloutNativePlayerRecordsResolution& nativePlayer,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition,
         const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells, const Store<ESM4::Climate>& climates,
         const Store<ESM4::Weather>& weather, std::span<const std::string> currentContentFiles);
 

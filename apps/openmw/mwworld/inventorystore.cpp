@@ -108,6 +108,7 @@ MWWorld::InventoryStore::InventoryStore(const InventoryStore& store)
     , mFirstAutoEquip(store.mFirstAutoEquip)
     , mSelectedEnchantItem(end())
     , mFalloutAmmoSelections(store.mFalloutAmmoSelections)
+    , mFalloutLoadedAmmo(store.mFalloutLoadedAmmo)
 {
     copySlots(store);
 }
@@ -125,6 +126,7 @@ MWWorld::InventoryStore& MWWorld::InventoryStore::operator=(const InventoryStore
     mSlots.clear();
     copySlots(store);
     mFalloutAmmoSelections = store.mFalloutAmmoSelections;
+    mFalloutLoadedAmmo = store.mFalloutLoadedAmmo;
     return *this;
 }
 
@@ -580,16 +582,33 @@ std::optional<ESM::RefId> MWWorld::InventoryStore::getFalloutAmmoSelection(const
     return found->second;
 }
 
+void MWWorld::InventoryStore::setFalloutLoadedAmmo(const ESM::RefId& weapon, int count)
+{
+    if (weapon.empty() || count < 0)
+        throw std::invalid_argument("Fallout loaded ammo requires a weapon ID and non-negative count");
+    mFalloutLoadedAmmo[weapon] = count;
+}
+
+std::optional<int> MWWorld::InventoryStore::getFalloutLoadedAmmo(const ESM::RefId& weapon) const
+{
+    const auto found = mFalloutLoadedAmmo.find(weapon);
+    if (found == mFalloutLoadedAmmo.end())
+        return std::nullopt;
+    return found->second;
+}
+
 void MWWorld::InventoryStore::writeState(ESM::InventoryState& state) const
 {
     ContainerStore::writeState(state);
     state.mFalloutAmmoSelections = mFalloutAmmoSelections;
+    state.mFalloutLoadedAmmo = mFalloutLoadedAmmo;
 }
 
 void MWWorld::InventoryStore::readState(const ESM::InventoryState& state)
 {
     ContainerStore::readState(state);
     mFalloutAmmoSelections = state.mFalloutAmmoSelections;
+    mFalloutLoadedAmmo = state.mFalloutLoadedAmmo;
 }
 
 int MWWorld::InventoryStore::remove(const Ptr& item, int count, bool equipReplacement, bool resolve)
@@ -749,6 +768,7 @@ void MWWorld::InventoryStore::clear()
     mSlots.clear();
     initSlots(mSlots);
     mFalloutAmmoSelections.clear();
+    mFalloutLoadedAmmo.clear();
     ContainerStore::clear();
 }
 

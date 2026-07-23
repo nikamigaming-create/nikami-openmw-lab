@@ -904,6 +904,40 @@ namespace MWWorld
 
             ESM::Position pos;
             ESM::RefId cellId = findExteriorPosition(mStartCell, pos);
+            ESM::RefId explicitInteriorId;
+            if (cellId.empty())
+            {
+                try
+                {
+                    const ESM::RefId requestedId = ESM::RefId::deserializeText(mStartCell);
+                    if (const ESM4::Cell* requestedCell = mStore.get<ESM4::Cell>().search(requestedId);
+                        requestedCell != nullptr)
+                    {
+                        if (requestedCell->isExterior())
+                        {
+                            const ESM::ExteriorCellLocation location = requestedCell->getExteriorCellLocation();
+                            const osg::Vec2f center = indexToPosition(location, true);
+                            cellId = requestedCell->mId;
+                            pos.pos[0] = center.x();
+                            pos.pos[1] = center.y();
+                            pos.pos[2] = 0.f;
+                            pos.rot[0] = pos.rot[1] = pos.rot[2] = 0.f;
+                            Log(Debug::Info) << "World viewer: resolved ESM4 exterior start cell id=" << requestedId
+                                             << " location=" << location;
+                        }
+                        else
+                        {
+                            explicitInteriorId = requestedCell->mId;
+                            Log(Debug::Info) << "World viewer: resolved ESM4 interior start cell id=" << requestedId
+                                             << " editor=\"" << requestedCell->mEditorId << "\"";
+                        }
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    // A non-RefId start value may still be a valid authored cell name.
+                }
+            }
             auto changeToResolvedExterior = [&](ESM::RefId resolvedCellId, ESM::Position resolvedPos,
                                                 std::string_view source) {
                 if (hasExplicitAnchor)
@@ -965,18 +999,36 @@ namespace MWWorld
 
                 if (!usedExplicitExterior)
                 {
-                    cellId = findInteriorPosition(mStartCell, pos);
-                    if (hasExplicitAnchor)
-                        pos = anchor;
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
-                                     << cellId << " explicitAnchor=" << hasExplicitAnchor;
-                    Log(Debug::Info) << "World viewer: start cell interior change begin cell=\"" << mStartCell
-                                     << "\" pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", " << pos.pos[2] << ")";
-                    viewerTrace("change-to-interior.begin");
-                    changeToInteriorCell(mStartCell, pos, !hasExplicitAnchor);
-                    viewerTrace("change-to-interior.end");
-                    Log(Debug::Info) << "World viewer: start cell interior change complete cell=\"" << mStartCell
-                                     << "\"";
+                    if (!explicitInteriorId.empty())
+                    {
+                        if (hasExplicitAnchor)
+                            pos = anchor;
+                        Log(Debug::Info) << "World viewer: start cell interior change begin cell="
+                                         << explicitInteriorId << " pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", "
+                                         << pos.pos[2] << ")";
+                        viewerTrace("change-to-interior.begin");
+                        changeToCell(explicitInteriorId, pos, !hasExplicitAnchor);
+                        viewerTrace("change-to-interior.end");
+                        Log(Debug::Info) << "World viewer: start cell interior change complete cell="
+                                         << explicitInteriorId;
+                    }
+                    else
+                    {
+                        cellId = findInteriorPosition(mStartCell, pos);
+                        if (hasExplicitAnchor)
+                            pos = anchor;
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell
+                                            << "' resolved as interior " << cellId
+                                            << " explicitAnchor=" << hasExplicitAnchor;
+                        Log(Debug::Info) << "World viewer: start cell interior change begin cell=\"" << mStartCell
+                                         << "\" pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", " << pos.pos[2]
+                                         << ")";
+                        viewerTrace("change-to-interior.begin");
+                        changeToInteriorCell(mStartCell, pos, !hasExplicitAnchor);
+                        viewerTrace("change-to-interior.end");
+                        Log(Debug::Info) << "World viewer: start cell interior change complete cell=\"" << mStartCell
+                                         << "\"";
+                    }
                     if (hasExplicitAnchor)
                     {
                         viewerTrace("pin-start-anchor.begin");
@@ -2602,10 +2654,35 @@ namespace MWWorld
         facedObject = rayToObject.mHitObject;
         if (facedObject.isEmpty() && rayToObject.mHitRefnum.isSet())
             facedObject = MWBase::Environment::get().getWorldModel()->getPtr(rayToObject.mHitRefnum);
+
+        // Native ESM4 creatures can assemble their visible body from separately skinned NIF parts. Until those
+        // parts have valid cull-time geometry the rendering ray can miss an actor whose physics body is already
+        // usable. Fall back to that body only for actors, keeping precise object and door selection unchanged.
+        if (facedObject.isEmpty() && !MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            const osg::Vec3f rayOrigin(mRendering->getCamera()->getPosition());
+            const osg::Vec3f rayDirection
+                = mRendering->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+            const MWPhysics::RayCastingResult actorHit = mPhysics->castRay(rayOrigin,
+                rayOrigin + rayDirection * maxDistance, { getPlayerPtr() }, {}, MWPhysics::CollisionType_Actor);
+            if (actorHit.mHit && !actorHit.mHitObject.isEmpty())
+            {
+                facedObject = actorHit.mHitObject;
+                mDistanceToFacedObject = std::max(0.f, (actorHit.mHitPos - rayOrigin).length() - camDist);
+                if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+                    Log(Debug::Info) << "FNV interaction audit: faced object source=physics-actor target="
+                                     << facedObject.toString() << " distance=" << mDistanceToFacedObject;
+                return facedObject;
+            }
+        }
+
         if (rayToObject.mHit)
             mDistanceToFacedObject = (rayToObject.mRatio * maxDistance) - camDist;
         else
             mDistanceToFacedObject = -1;
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr && !facedObject.isEmpty())
+            Log(Debug::Info) << "FNV interaction audit: faced object source=render target="
+                             << facedObject.toString() << " distance=" << mDistanceToFacedObject;
         return facedObject;
     }
 

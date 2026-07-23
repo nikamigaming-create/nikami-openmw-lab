@@ -1,5 +1,6 @@
 #include "hud.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
@@ -151,25 +152,37 @@ namespace MWGui
             const MyGUI::IntSize size = mMainWidget->getSize();
             mFalloutVatsOverlay = mMainWidget->createWidget<MyGUI::Widget>(
                 "", MyGUI::IntCoord(0, 0, size.width, size.height), MyGUI::Align::Stretch);
-            const MyGUI::Colour vatsGreen(0.35f, 1.f, 0.28f, 1.f);
+            const MyGUI::Colour vatsAmber(1.f, 0.64f, 0.08f, 1.f);
             const auto makeVatsText = [&](const MyGUI::IntCoord& coord, MyGUI::Align align) {
                 MyGUI::TextBox* text = mFalloutVatsOverlay->createWidget<MyGUI::TextBox>(
                     "SandBrightText", coord, align);
                 text->setTextAlign(MyGUI::Align::Center);
-                text->setTextColour(vatsGreen);
+                text->setTextColour(vatsAmber);
                 text->setNeedMouseFocus(false);
                 return text;
             };
             mFalloutVatsTarget = makeVatsText(
-                MyGUI::IntCoord(size.width / 2 - 260, size.height / 2 - 95, 520, 32), MyGUI::Align::Center);
-            mFalloutVatsBodyPart = makeVatsText(
-                MyGUI::IntCoord(size.width / 2 - 180, size.height / 2 - 45, 360, 30), MyGUI::Align::Center);
-            mFalloutVatsChance = makeVatsText(
-                MyGUI::IntCoord(size.width / 2 - 90, size.height / 2 - 5, 180, 38), MyGUI::Align::Center);
+                MyGUI::IntCoord(size.width / 2 - 260, size.height - 130, 520, 32), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
             mFalloutVatsActionPoints = makeVatsText(
-                MyGUI::IntCoord(size.width / 2 - 260, size.height - 150, 520, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+                MyGUI::IntCoord(size.width / 2 - 300, size.height - 92, 600, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
             mFalloutVatsInstructions = makeVatsText(
-                MyGUI::IntCoord(size.width / 2 - 350, size.height - 95, 700, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+                MyGUI::IntCoord(size.width / 2 - 430, size.height - 56, 860, 30), MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+
+            constexpr std::size_t maxVatsBodyParts = 15;
+            mFalloutVatsBodyPartWidgets.reserve(maxVatsBodyParts);
+            for (std::size_t index = 0; index < maxVatsBodyParts; ++index)
+            {
+                MyGUI::Widget* frame = mFalloutVatsOverlay->createWidget<MyGUI::Widget>(
+                    "MW_Box", MyGUI::IntCoord(0, 0, 92, 34), MyGUI::Align::Default);
+                frame->setNeedMouseFocus(false);
+                frame->setVisible(false);
+                MyGUI::TextBox* text = frame->createWidget<MyGUI::TextBox>(
+                    "SandBrightText", MyGUI::IntCoord(3, 2, 86, 30), MyGUI::Align::Stretch);
+                text->setTextAlign(MyGUI::Align::Center);
+                text->setTextColour(vatsAmber);
+                text->setNeedMouseFocus(false);
+                mFalloutVatsBodyPartWidgets.push_back({ frame, text });
+            }
             mFalloutVatsOverlay->setVisible(false);
         }
 
@@ -296,8 +309,8 @@ namespace MWGui
     }
 
     void HUD::setFalloutVatsVisible(bool visible, std::string_view targetName,
-        std::string_view bodyPartName, unsigned int hitChance, float actionPointsBefore,
-        float actionPointsAfter, std::size_t queuedAttacks, bool executing)
+        std::span<const FalloutVatsBodyPartDisplay> bodyParts, float actionPointsBefore,
+        float actionPointsAfter, std::size_t queuedAttacks, std::size_t availableShots, bool executing)
     {
         if (mFalloutVatsOverlay == nullptr)
             return;
@@ -306,15 +319,42 @@ namespace MWGui
             return;
 
         mFalloutVatsTarget->setCaption("<  " + std::string(targetName) + "  >");
-        mFalloutVatsBodyPart->setCaption("[ " + std::string(bodyPartName) + " ]");
-        mFalloutVatsChance->setCaption(std::to_string(hitChance) + "%");
         std::ostringstream ap;
         ap << "AP  " << static_cast<int>(actionPointsBefore) << "  >  "
-           << static_cast<int>(actionPointsAfter) << "     QUEUED  " << queuedAttacks;
+           << static_cast<int>(actionPointsAfter) << "     QUEUED  " << queuedAttacks
+           << "     AMMO  " << availableShots;
         mFalloutVatsActionPoints->setCaption(ap.str());
         mFalloutVatsInstructions->setCaption(executing
             ? "EXECUTING ATTACK"
-            : "[LEFT CLICK] QUEUE     [E] ACCEPT     [V] EXIT");
+            : "[W/S] LIMB     [A/D] TARGET     [LMB] QUEUE     [E] ACCEPT     [V] RETURN");
+
+        for (FalloutVatsBodyPartWidgets& widgets : mFalloutVatsBodyPartWidgets)
+            widgets.mFrame->setVisible(false);
+
+        const MyGUI::IntSize size = mFalloutVatsOverlay->getSize();
+        const std::size_t count = std::min(bodyParts.size(), mFalloutVatsBodyPartWidgets.size());
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const FalloutVatsBodyPartDisplay& display = bodyParts[index];
+            FalloutVatsBodyPartWidgets& widgets = mFalloutVatsBodyPartWidgets[index];
+            const int width = display.mSelected ? 132 : 84;
+            const int height = display.mSelected ? 50 : 34;
+            const int centerX = static_cast<int>(std::lround(display.mViewportX * size.width));
+            const int centerY = static_cast<int>(std::lround(display.mViewportY * size.height));
+            const int left = std::clamp(centerX - width / 2, 4, std::max(4, size.width - width - 4));
+            const int top = std::clamp(centerY - height / 2, 4, std::max(4, size.height - height - 4));
+
+            widgets.mFrame->setCoord(left, top, width, height);
+            widgets.mFrame->setAlpha(display.mSelected ? 1.f : 0.72f);
+            widgets.mText->setCoord(3, 2, width - 6, height - 4);
+            widgets.mText->setTextColour(display.mSelected
+                    ? MyGUI::Colour(0.18f, 1.f, 0.28f, 1.f)
+                    : MyGUI::Colour(1.f, 0.58f, 0.06f, 1.f));
+            widgets.mText->setCaption(display.mSelected
+                    ? std::string(display.mName) + "\n[ " + std::to_string(display.mHitChance) + "% ]"
+                    : "[ " + std::to_string(display.mHitChance) + "% ]");
+            widgets.mFrame->setVisible(true);
+        }
     }
 
     HUD::~HUD()

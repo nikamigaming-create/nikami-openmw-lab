@@ -396,6 +396,12 @@ namespace MWMechanics
         bool mAbsoluteHitChance = false;
     };
 
+    struct FalloutVatsCameraPose
+    {
+        osg::Vec3f mFocus;
+        osg::Vec3f mEye;
+    };
+
     /// The authored BPTD fields shared by ordinary ray hits and VATS. Unlike the VATS presentation contract,
     /// this keeps every authored node identity so a rendered hit can be mapped without name heuristics.
     struct FalloutBodyPartContract
@@ -580,6 +586,12 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction);
 
+    /// Decide whether an actor joins combat when a nearby faction ally is attacked. Shared faction membership is
+    /// authoritative even when no explicit FACT relation is authored; explicit Ally/Friend relations also defend.
+    [[nodiscard]] bool shouldFalloutActorDefendVictim(std::span<const ESM4::ActorFaction> actorFactions,
+        std::span<const ESM4::ActorFaction> victimFactions,
+        std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept;
+
     /// Apply Fallout's categorical aggression contract: 0 never initiates, 1 attacks enemies, 2 attacks enemies and
     /// neutrals, and 3 attacks anyone. Invalid aggression or an unknown required reaction fails closed.
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(
@@ -745,6 +757,14 @@ namespace MWMechanics
 
     [[nodiscard]] std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
         const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index, FalloutVatsBodyPartFailure& failure);
+
+    [[nodiscard]] unsigned int getFalloutVatsDisplayedHitChance(
+        const FalloutVatsBodyPartContract& bodyPart, const FalloutVatsWeaponContract& weapon) noexcept;
+
+    /// Frame the rendered front of an actor around a caller-supplied focus and framing radius. The caller supplies
+    /// the rendered forward vector so ESM4 skeleton basis corrections remain authoritative.
+    [[nodiscard]] FalloutVatsCameraPose buildFalloutVatsFrontalCameraPose(
+        const osg::Vec3f& center, float radius, const osg::Vec3f& renderedForward) noexcept;
 
     /// Resolve the winning native BPTD used by a placed actor: player BPTD for the player, race GNAM or the exact
     /// default human BPTD for NPCs, and the resolved CREA PNAM provider for creatures.

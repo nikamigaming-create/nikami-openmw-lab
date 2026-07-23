@@ -116,6 +116,9 @@ namespace MWBase
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
 
+        virtual bool playFalloutDialogueAnimation(
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) = 0;
+
         enum OffenseType
         {
             OT_Theft, // Taking items owned by an NPC or a faction you are not a member of
@@ -169,6 +172,11 @@ namespace MWBase
         ///< Perform a persuasion action on NPC
 
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
+
+        virtual bool reloadFalloutWeapon(const MWWorld::Ptr&) { return false; }
+
+        virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
+        virtual bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr&) { return false; }
 
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
             const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)

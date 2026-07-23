@@ -53,6 +53,7 @@ namespace MWRender
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
+        osg::Node* getEquippedWeaponNode() override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
         bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) override;

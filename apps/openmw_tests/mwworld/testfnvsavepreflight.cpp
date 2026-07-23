@@ -19,7 +19,6 @@
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
 
-#include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/fnvsavepreflight.hpp"
 #include "apps/openmw/mwworld/store.hpp"
 
@@ -79,12 +78,15 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        result.mPlayerActorValueData.emplace();
+
         ESM4::FONVSavePlayerProcessInventoryData processInventory;
         processInventory.mProcessLevel.mValue = 0;
         result.mPlayerProcessInventoryData = std::move(processInventory);
 
         ESM4::FONVSavePlayerMobileObjectProcessState processState;
         processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        processState.mHighProcess.mCurrentAction.mValue = -1;
         result.mPlayerMobileObjectProcessState = std::move(processState);
 
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
@@ -92,6 +94,8 @@ namespace
         camera.mFirstPersonModelFov.mValue = 55.f;
         camera.mWorldFov.mValue = 75.f;
         result.mPlayerCharacterScalarReferenceState = std::move(camera);
+        result.mPlayerCharacterListsState.emplace();
+        result.mPlayerCharacterFinalState.emplace();
 
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
@@ -164,6 +168,8 @@ namespace
             if (includeCurrentWeather)
                 weather.insertStatic(mCurrent);
             weather.insertStatic(mDefault);
+            MWWorld::Store<ESM4::FormIdList> formLists;
+            MWWorld::Store<ESM4::Ammunition> ammunition;
 
             MWWorld::FalloutNativePlayerRecordsResolution native;
             if (includeNative)
@@ -172,7 +178,8 @@ namespace
                 native.mError = "validated native records were not published";
 
             return MWWorld::resolveFalloutSavePreflightContext(makeSave(), includePlayer ? &mPlayer : nullptr,
-                native, worlds, cells, climates, weather, contentFiles == nullptr ? mContentFiles : *contentFiles);
+                native, formLists, ammunition, worlds, cells, climates, weather,
+                contentFiles == nullptr ? mContentFiles : *contentFiles);
         }
     };
 
@@ -182,32 +189,6 @@ namespace
         EXPECT_TRUE(MWWorld::isFalloutNewVegasSavePath("Save330.FOS"));
         EXPECT_FALSE(MWWorld::isFalloutNewVegasSavePath("Save330.omwsave"));
         EXPECT_FALSE(MWWorld::isFalloutNewVegasSavePath("Save330.fos.tmp"));
-    }
-
-    TEST(FalloutSavePreflight, MaterializesInventoryAmmoListAsAuthoredDefaultAmmo)
-    {
-        const ESM::FormId ammoList = form(0x1537ea);
-        const ESM::FormId standardAmmo = form(0x4240);
-        const ESM::FormId alternateAmmo = form(0x13e441);
-
-        MWWorld::ESMStore store;
-        ESM4::Ammunition standard;
-        standard.mId = standardAmmo;
-        store.insertStatic(standard);
-        ESM4::Ammunition alternate;
-        alternate.mId = alternateAmmo;
-        store.insertStatic(alternate);
-        ESM4::FormIdList list;
-        list.mId = ammoList;
-        list.mObjects = { standardAmmo, alternateAmmo };
-        store.insertStatic(list);
-
-        MWWorld::FalloutSavePlayerHeaderState player;
-        player.mInventoryItems = { { ammoList, 100 }, { alternateAmmo, 20 } };
-
-        EXPECT_EQ(MWWorld::resolveFalloutSaveInventoryAmmoLists(player, store), 1u);
-        EXPECT_EQ(player.mInventoryItems[0], (MWWorld::FalloutInventoryItem{ standardAmmo, 100 }));
-        EXPECT_EQ(player.mInventoryItems[1], (MWWorld::FalloutInventoryItem{ alternateAmmo, 20 }));
     }
 
     TEST(FalloutSavePreflight, ResolvesExactContextThroughBlockerEvaluationWithoutMutation)
@@ -227,12 +208,14 @@ namespace
         EXPECT_EQ(context.mWeather.mCurrent.mWeather, form(0x1237d7));
         EXPECT_EQ(context.mWeather.mDefault.mWeather, form(0x0ffc88));
         EXPECT_NO_THROW(MWWorld::requireFalloutSaveVisualApplicationReady(context));
-        const MWWorld::FalloutSaveLoadPlanResolution expectedPlan
-            = MWWorld::resolveFalloutSaveLoadPlan(makeSave(), &fixture.mPlayer, fixture.mContentFiles);
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        const MWWorld::FalloutSaveLoadPlanResolution expectedPlan = MWWorld::resolveFalloutSaveLoadPlan(
+            makeSave(), &fixture.mPlayer, formLists, ammunition, fixture.mContentFiles);
         ASSERT_TRUE(expectedPlan) << expectedPlan.mError;
         EXPECT_EQ(context.mPlan.mUncoveredState, expectedPlan.mPlan->mUncoveredState);
         EXPECT_THAT(context.mPlan.mUncoveredState, Contains("global-variables"));
-        EXPECT_THAT(context.mPlan.mUncoveredState, Contains("quest-stages-objectives-variables"));
+        EXPECT_THAT(context.mPlan.mUncoveredState, Contains("quest-variables"));
 
         int mutationCount = 0;
         bool rejected = false;
@@ -245,7 +228,7 @@ namespace
         {
             rejected = true;
             EXPECT_THAT(error.what(), HasSubstr("global-variables"));
-            EXPECT_THAT(error.what(), HasSubstr("quest-stages-objectives-variables"));
+            EXPECT_THAT(error.what(), HasSubstr("quest-variables"));
         }
         EXPECT_TRUE(rejected);
         EXPECT_EQ(mutationCount, 0);

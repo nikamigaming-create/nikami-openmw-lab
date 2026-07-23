@@ -393,11 +393,13 @@ namespace MWRender
                 if (const ESM4::Armor* armor = store->get<ESM4::Armor>().search(record))
                 {
                     const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                    const auto equipped = MWClass::ESM4Npc::getEquippedArmor(visualPtr);
+                    const bool present = std::ranges::find(equipped, armor) != equipped.end();
                     ++savedArmor;
-                    Log(added ? Debug::Info : Debug::Error)
+                    Log(present ? Debug::Info : Debug::Error)
                         << "FNV first-person saveWorn: ordinal=" << saveWorn << " type=ARMO form="
                         << record << " editor=" << armor->mEditorId << " flags=0x" << std::hex
-                        << armor->mArmorFlags << std::dec << " added=" << added;
+                        << armor->mArmorFlags << std::dec << " added=" << added << " present=" << present;
                 }
                 else if (const ESM4::Weapon* weapon = store->get<ESM4::Weapon>().search(record))
                 {

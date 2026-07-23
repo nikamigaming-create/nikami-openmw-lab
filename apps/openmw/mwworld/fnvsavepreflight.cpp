@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -13,13 +14,17 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "store.hpp"
 
 namespace
@@ -84,6 +89,8 @@ namespace
                 return "FNV save ExtraAmmo owner is not a loaded Player weapon: " + weaponId.toString();
             if (store.get<ESM4::Ammunition>().search(ESM::RefId(selection.mAmmo)) == nullptr)
                 return "FNV save ExtraAmmo selection is not a loaded AMMO record: " + selection.mAmmo.toString();
+            if (selection.mSavedCount < 0 || selection.mSavedCount > weapon->mData.clipSize)
+                return "FNV save ExtraAmmo count exceeds the authored WEAP magazine: " + weaponId.toString();
 
             bool compatible = weapon->mAmmo == selection.mAmmo;
             if (!compatible)
@@ -96,32 +103,79 @@ namespace
         }
         return {};
     }
+
+    std::string validateFactionChanges(
+        const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSavePlayerHeaderState::FactionChange& change : player.mFactionChanges)
+        {
+            if (store.get<ESM4::Faction>().search(ESM::RefId(change.mFaction)) == nullptr)
+                return "FNV save Player faction change is not a loaded FACT record: " + change.mFaction.toString();
+        }
+        return {};
+    }
+
+    std::string validatePlayerActorValuesAndPerks(
+        const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSavePlayerHeaderState::ActorValueModifier& modifier
+            : player.mActorValueModifiers)
+        {
+            if (modifier.mActorValue >= MWWorld::FalloutPlayerRuntimeState::ActorValueCount
+                || !std::isfinite(modifier.mModifier))
+            {
+                return "FNV save Player actor-value modifier is outside the supported native range";
+            }
+        }
+        for (const MWWorld::FalloutSavePlayerHeaderState::PerkRank& perk : player.mPerks)
+        {
+            if (store.get<ESM4::Perk>().search(ESM::RefId(perk.mPerk)) == nullptr)
+                return "FNV save Player perk is not a loaded PERK record: " + perk.mPerk.toString();
+        }
+        return {};
+    }
+
+    std::string validateGlobalVariables(MWWorld::FalloutSaveLoadPlan& plan, const MWWorld::ESMStore& store)
+    {
+        bool skippedMissing = false;
+        const auto remove = std::remove_if(plan.mGlobals.begin(), plan.mGlobals.end(),
+            [&](const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved) {
+                const ESM4::GlobalVariable* global
+                    = store.get<ESM4::GlobalVariable>().search(ESM::RefId(saved.mVariable));
+                if (global != nullptr)
+                    return false;
+                if (store.find(ESM::RefId(saved.mVariable)) != 0)
+                    return false;
+                skippedMissing = true;
+                Log(Debug::Warning) << "Native FNV save skipped stale global-variable identity absent from loaded "
+                                       "content: "
+                                    << saved.mVariable.toString();
+                return true;
+            });
+        plan.mGlobals.erase(remove, plan.mGlobals.end());
+        if (skippedMissing)
+            plan.mUncoveredState.push_back("global-variables-unresolved-content-forms");
+
+        for (const MWWorld::FalloutSaveLoadPlan::GlobalValue& saved : plan.mGlobals)
+        {
+            const ESM4::GlobalVariable* global
+                = store.get<ESM4::GlobalVariable>().search(ESM::RefId(saved.mVariable));
+            if (global == nullptr)
+                return "FNV save global variable resolves to a loaded non-GLOB record: "
+                    + saved.mVariable.toString();
+            if (global->mId != saved.mVariable)
+                return "FNV save global variable resolved with a different identity: " + saved.mVariable.toString();
+            if (global->mEditorId.empty())
+                return "FNV save global variable is an unnamed GLOB record: " + saved.mVariable.toString();
+            if (!std::isfinite(saved.mValue))
+                return "FNV save global variable has a non-finite value: " + saved.mVariable.toString();
+        }
+        return {};
+    }
 }
 
 namespace MWWorld
 {
-    std::size_t resolveFalloutSaveInventoryAmmoLists(
-        FalloutSavePlayerHeaderState& player, const ESMStore& store)
-    {
-        std::size_t resolved = 0;
-        for (FalloutInventoryItem& item : player.mInventoryItems)
-        {
-            const ESM4::FormIdList* list = store.get<ESM4::FormIdList>().search(item.mRecord);
-            if (list == nullptr || list->mObjects.empty())
-                continue;
-
-            const bool ammoOnly = std::ranges::all_of(list->mObjects, [&](ESM::FormId candidate) {
-                return store.get<ESM4::Ammunition>().search(candidate) != nullptr;
-            });
-            if (!ammoOnly)
-                continue;
-
-            item.mRecord = list->mObjects.front();
-            ++resolved;
-        }
-        return resolved;
-    }
-
     bool isFalloutNewVegasSavePath(const std::filesystem::path& path)
     {
         return Misc::StringUtils::ciEqual(Files::pathToUnicodeString(path.extension()), ".fos");
@@ -131,12 +185,11 @@ namespace MWWorld
         ESM4::FONVSaveGamePrefix save, const ESMStore& store, std::span<const std::string> currentContentFiles)
     {
         FalloutSavePreflightResolution result = resolveFalloutSavePreflightContext(std::move(save), store.getFalloutPlayerState(),
-            store.getFalloutNativePlayerRecords(), store.get<ESM4::World>(), store.get<ESM4::Cell>(),
-            store.get<ESM4::Climate>(), store.get<ESM4::Weather>(), currentContentFiles);
+            store.getFalloutNativePlayerRecords(), store.get<ESM4::FormIdList>(), store.get<ESM4::Ammunition>(),
+            store.get<ESM4::World>(), store.get<ESM4::Cell>(), store.get<ESM4::Climate>(),
+            store.get<ESM4::Weather>(), currentContentFiles);
         if (!result)
             return result;
-
-        resolveFalloutSaveInventoryAmmoLists(result.mContext->mPlan.mPlayer, store);
 
         const std::string inventoryError = validateConditionedInventory(result.mContext->mPlan.mPlayer, store);
         if (!inventoryError.empty())
@@ -144,6 +197,16 @@ namespace MWWorld
         const std::string selectionError = validateInventorySelections(result.mContext->mPlan.mPlayer, store);
         if (!selectionError.empty())
             return failure(selectionError);
+        const std::string factionError = validateFactionChanges(result.mContext->mPlan.mPlayer, store);
+        if (!factionError.empty())
+            return failure(factionError);
+        const std::string actorValueError
+            = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
+        if (!actorValueError.empty())
+            return failure(actorValueError);
+        const std::string globalError = validateGlobalVariables(result.mContext->mPlan, store);
+        if (!globalError.empty())
+            return failure(globalError);
         for (const FalloutInventoryItem& item : result.mContext->mPlan.mPlayer.mInventoryItems)
         {
             if (store.find(ESM::RefId(item.mRecord)) == 0)
@@ -165,6 +228,7 @@ namespace MWWorld
 
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(ESM4::FONVSaveGamePrefix save,
         const FalloutPlayerState* player, const FalloutNativePlayerRecordsResolution& nativePlayer,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition,
         const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells, const Store<ESM4::Climate>& climates,
         const Store<ESM4::Weather>& weather, std::span<const std::string> currentContentFiles)
     {
@@ -188,7 +252,7 @@ namespace MWWorld
         }
 
         FalloutSaveLoadPlanResolution plan
-            = resolveFalloutSaveLoadPlan(save, player, currentContentFiles);
+            = resolveFalloutSaveLoadPlan(save, player, formLists, ammunition, currentContentFiles);
         if (!plan)
             return failure("FNV save load-plan resolution failed: " + plan.mError);
 

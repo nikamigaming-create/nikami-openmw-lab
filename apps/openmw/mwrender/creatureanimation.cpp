@@ -342,8 +342,9 @@ namespace MWRender
         class ForceFalloutCreatureBodyVisibleVisitor : public osg::NodeVisitor
         {
         public:
-            ForceFalloutCreatureBodyVisibleVisitor()
+            explicit ForceFalloutCreatureBodyVisibleVisitor(SceneUtil::Skeleton* skeleton)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mSkeleton(skeleton)
             {
             }
 
@@ -378,8 +379,26 @@ namespace MWRender
                     if (node != nullptr)
                         node->setNodeMask(~0u);
                 }
+
+                // RigGeometry is reparented under the live actor skeleton during
+                // attachment. The traversal path above can still describe the
+                // detached body clone, so restore the masks on the drawable's
+                // actual skeleton path as well. This is the exact failure seen
+                // on Victor: all 13 rigs were anchored correctly but every live
+                // parental path remained masked off.
+                for (const osg::NodePath& path : drawable.getParentalNodePaths())
+                {
+                    bool insideSkeleton = false;
+                    for (osg::Node* node : path)
+                    {
+                        insideSkeleton = insideSkeleton || node == mSkeleton;
+                        if (insideSkeleton && node != nullptr)
+                            node->setNodeMask(~0u);
+                    }
+                }
             }
 
+            SceneUtil::Skeleton* mSkeleton;
             unsigned int mRigGeometryCount = 0;
             unsigned int mStaticGeometryCount = 0;
             unsigned int mOtherDrawableCount = 0;
@@ -388,8 +407,9 @@ namespace MWRender
         class CreatureRigTopologyVisitor : public osg::NodeVisitor
         {
         public:
-            explicit CreatureRigTopologyVisitor(const SceneUtil::Skeleton* expectedSkeleton)
+            CreatureRigTopologyVisitor(const osg::Node* auditRoot, const SceneUtil::Skeleton* expectedSkeleton)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mAuditRoot(auditRoot)
                 , mExpectedSkeleton(expectedSkeleton)
             {
             }
@@ -406,9 +426,13 @@ namespace MWRender
                 for (const osg::NodePath& path : paths)
                 {
                     unsigned int effectiveMask = drawable.getNodeMask();
+                    bool insideAuditRoot = false;
                     for (const osg::Node* node : path)
-                        if (node != nullptr)
+                    {
+                        insideAuditRoot = insideAuditRoot || node == mAuditRoot;
+                        if (insideAuditRoot && node != nullptr)
                             effectiveMask &= node->getNodeMask();
+                    }
                     hasVisiblePath = hasVisiblePath || effectiveMask != 0;
                 }
                 if (hasVisiblePath)
@@ -433,6 +457,7 @@ namespace MWRender
                     ++mVisibleRigGeometryCount;
             }
 
+            const osg::Node* mAuditRoot;
             const SceneUtil::Skeleton* mExpectedSkeleton;
             unsigned int mDrawableCount = 0;
             unsigned int mParentedDrawableCount = 0;
@@ -450,7 +475,11 @@ namespace MWRender
             if (bodyNode == nullptr)
                 return;
 
-            CreatureRigTopologyVisitor visitor(skeleton);
+            // Audit the creature body subtree itself. The actor owner can be
+            // temporarily hidden while its render object is assembled (and corpse
+            // pose wrappers intentionally do this), which is not evidence that the
+            // body's authored drawable masks or rig topology failed.
+            CreatureRigTopologyVisitor visitor(bodyNode, skeleton);
             bodyNode->accept(visitor);
             const bool drawableGate = visitor.mDrawableCount != 0
                 && visitor.mParentedDrawableCount == visitor.mDrawableCount
@@ -477,13 +506,13 @@ namespace MWRender
                 << " status=" << (passed ? "passed" : "failed");
         }
 
-        void forceFalloutCreatureBodyVisible(
-            osg::Node* bodyNode, const std::string& editorId, const VFS::Path::Normalized& bodyPath)
+        void forceFalloutCreatureBodyVisible(osg::Node* bodyNode, SceneUtil::Skeleton* skeleton,
+            const std::string& editorId, const VFS::Path::Normalized& bodyPath)
         {
             if (bodyNode == nullptr)
                 return;
 
-            ForceFalloutCreatureBodyVisibleVisitor visitor;
+            ForceFalloutCreatureBodyVisibleVisitor visitor(skeleton);
             bodyNode->accept(visitor);
             Log(Debug::Verbose) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
                              << " path=" << bodyPath
@@ -1728,7 +1757,7 @@ void main()
                     }
                     const bool requireVisible = shouldForceFalloutCreatureAddonVisible(bodyPath, nifPrn);
                     if (requireVisible)
-                        forceFalloutCreatureBodyVisible(bodyNode, ref->mBase->mEditorId, bodyPath);
+                        forceFalloutCreatureBodyVisible(bodyNode, mSkeleton, ref->mBase->mEditorId, bodyPath);
                     auditCreatureRigTopology(
                         bodyNode, mSkeleton, mObjectRoot, ref->mBase->mEditorId, bodyPath, requireVisible);
                     if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)

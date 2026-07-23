@@ -66,6 +66,24 @@ namespace MWMechanics
         return impact.mVatsAction->mTarget;
     }
 
+    bool shouldFalloutActorDefendVictim(std::span<const ESM4::ActorFaction> actorFactions,
+        std::span<const ESM4::ActorFaction> victimFactions,
+        std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept
+    {
+        for (const ESM4::ActorFaction& actorFaction : actorFactions)
+        {
+            if (actorFaction.faction == 0)
+                continue;
+            for (const ESM4::ActorFaction& victimFaction : victimFactions)
+            {
+                if (actorFaction.faction == victimFaction.faction)
+                    return true;
+            }
+        }
+        return reaction == ESM4::Faction::GroupCombatReaction::Ally
+            || reaction == ESM4::Faction::GroupCombatReaction::Friend;
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)
@@ -941,6 +959,29 @@ namespace MWMechanics
         return FalloutVatsBodyPartContract{ index, bodyPart.mPartName, bodyPart.mVATSTarget,
             bodyPart.mData.actorValue, bodyPart.mData.toHitChance, bodyPart.mData.healthPercent,
             bodyPart.mData.damageMult, (bodyPart.mData.flags & 0x40) != 0 };
+    }
+
+    unsigned int getFalloutVatsDisplayedHitChance(
+        const FalloutVatsBodyPartContract& bodyPart, const FalloutVatsWeaponContract& weapon) noexcept
+    {
+        if (bodyPart.mAbsoluteHitChance)
+            return bodyPart.mBaseHitChance;
+        return std::min(100u, static_cast<unsigned int>(bodyPart.mBaseHitChance)
+                + static_cast<unsigned int>(weapon.mBaseHitChance));
+    }
+
+    FalloutVatsCameraPose buildFalloutVatsFrontalCameraPose(
+        const osg::Vec3f& center, float radius, const osg::Vec3f& renderedForward) noexcept
+    {
+        osg::Vec3f forward(renderedForward.x(), renderedForward.y(), 0.f);
+        if (!std::isfinite(forward.x()) || !std::isfinite(forward.y()) || forward.length2() < 0.000001f)
+            forward.set(0.f, 1.f, 0.f);
+        else
+            forward.normalize();
+
+        const float finiteRadius = std::isfinite(radius) && radius > 0.f ? radius : 80.f;
+        const float distance = std::clamp(finiteRadius * 2.15f, 150.f, 360.f);
+        return FalloutVatsCameraPose{ center, center + forward * distance };
     }
 
     const ESM4::BodyPartData* getFalloutActorBodyPartData(const MWWorld::Ptr& actor)

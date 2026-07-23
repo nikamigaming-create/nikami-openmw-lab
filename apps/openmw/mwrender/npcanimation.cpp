@@ -18,6 +18,7 @@
 #include <components/esm3/loadbody.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -976,10 +977,16 @@ namespace MWRender
             MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (weapon != inv.end())
             {
-                osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
-                const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
-                addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
-                    !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                // Native Fallout weapons are attached by the ESM4 player-equipment bridge using the retail
+                // Bip01 weapon nodes. The ESM3 part path targets "Weapon Bone", which does not exist in Fallout
+                // skeletons and used to emit an error every time a saved weapon was switched or redrawn.
+                if (weapon->getType() != ESM4::Weapon::sRecordId)
+                {
+                    osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
+                    const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
+                    addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
+                        !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                }
 
                 // Crossbows start out with a bolt attached
                 if (weapon->getType() == ESM::Weapon::sRecordId

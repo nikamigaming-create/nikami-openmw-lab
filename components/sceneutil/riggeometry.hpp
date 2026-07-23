@@ -9,6 +9,7 @@
 #include <atomic>
 #include <string>
 #include <string_view>
+#include <span>
 #include <vector>
 
 namespace SceneUtil
@@ -83,6 +84,11 @@ namespace SceneUtil
         bool getFalloutFingerVertexWeights(
             std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
         bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
+
+        /// Apply the retail-style VATS wireframe to this skinned body mesh. Vertex colors are derived from the
+        /// authored skin weights, so rigid attachments under target bones are deliberately unaffected.
+        bool setFalloutVatsHighlight(
+            std::span<const std::string_view> targetBones, std::string_view selectedBone, bool enabled);
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
@@ -168,6 +174,9 @@ namespace SceneUtil
         mutable bool mFalloutCharacterRig{ false };
         std::vector<osg::Matrixf> mFalloutMatrixBaseline;
         std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
+        std::array<osg::ref_ptr<osg::Array>, 2> mFalloutVatsOriginalColorArrays;
+        osg::ref_ptr<osg::StateSet> mFalloutVatsOriginalStateSet;
+        bool mFalloutVatsHighlightActive{ false };
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 

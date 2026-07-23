@@ -1539,6 +1539,7 @@ namespace MWMechanics
     void Actors::updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor,
         bool allowBodyTurn, bool updatePausedHeadTracking)
     {
+        static int proofLastDialogueFacingActorId = -1;
         int activeActorId = -1;
         if (!dialogueActor.isEmpty())
             activeActorId = dialogueActor.getClass().getCreatureStats(dialogueActor).getActorId();
@@ -1564,6 +1565,19 @@ namespace MWMechanics
                 && MWClass::ESM4Npc::getFurnitureState(ptr) != MWClass::FalloutFurnitureState::None;
             const DialogueFacingPolicy policy
                 = makeDialogueFacingPolicy(true, true, true, furnitureConstrained);
+            if (std::getenv("OPENMW_FNV_PROOF_DIALOGUE_FACING_TELEMETRY") != nullptr
+                && proofLastDialogueFacingActorId != actorId)
+            {
+                const osg::Vec3f proofDirection
+                    = player.getRefData().getPosition().asVec3() - ptr.getRefData().getPosition().asVec3();
+                Log(Debug::Info) << "FNV/ESM4 dialogue facing: actor=" << ptr.getCellRef().getRefId()
+                                 << " headTrack=" << policy.mTrackHead << " stopMovement=" << policy.mStopMovement
+                                 << " turnBody=" << policy.mTurnBody << " furnitureConstrained="
+                                 << furnitureConstrained << " yawBefore=" << ptr.getRefData().getPosition().rot[2]
+                                 << " yawTarget=" << std::atan2(proofDirection.x(), proofDirection.y())
+                                 << " pausedHeadUpdate=" << updatePausedHeadTracking;
+                proofLastDialogueFacingActorId = actorId;
+            }
             if (policy.mTrackHead)
                 controller.setHeadTrackTarget(player);
 
@@ -1593,6 +1607,15 @@ namespace MWMechanics
         }
 
         mDialogueFacingActorId = activeActorId;
+        if (activeActorId < 0)
+            proofLastDialogueFacingActorId = -1;
+    }
+
+    bool Actors::playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const
+    {
+        const auto iter = mIndex.find(ptr.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().playFalloutDialogueAnimation(animationId);
     }
 
     void Actors::update(float duration, bool paused)
@@ -2142,6 +2165,26 @@ namespace MWMechanics
         const auto iter = mIndex.find(ptr.mRef);
         if (iter != mIndex.end())
             iter->second->getCharacterController().forceStateUpdate();
+    }
+
+    bool Actors::reloadFalloutWeapon(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end() && iter->second->getCharacterController().reloadFalloutWeapon();
+    }
+
+    bool Actors::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().prepareFalloutVatsRangedAttack();
+    }
+
+    bool Actors::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().consumeFalloutVatsRangedAttackRelease();
     }
 
     bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,

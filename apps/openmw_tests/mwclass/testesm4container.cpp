@@ -278,6 +278,7 @@ namespace
     {
     public:
         void newGameStarted() override {}
+        void prepareGameLoad() override {}
         void gameLoaded() override {}
         void gameEnded() override {}
         void noGame() override {}
@@ -1975,6 +1976,42 @@ namespace
         Misc::Rng::Generator reloadPrng(0x333);
         EXPECT_FALSE(MWClass::ESM4Npc::materializeFnvDeathItem(restored, reloadPrng, 1));
         EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 3);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureActivationTalksWhileAliveRejectsKnockdownAndOpensLootWhenDead)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr creature = findPlacedCreature(*cell);
+        ASSERT_FALSE(creature.isEmpty());
+
+        std::unique_ptr<MWWorld::Action> talk = creature.getClass().activate(creature, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionTalk*>(talk.get()), nullptr);
+
+        MWMechanics::CreatureStats& stats = creature.getClass().getCreatureStats(creature);
+        stats.setKnockedDown(true);
+        std::unique_ptr<MWWorld::Action> unavailable = creature.getClass().activate(creature, {});
+        EXPECT_NE(dynamic_cast<MWWorld::FailedAction*>(unavailable.get()), nullptr);
+        stats.setKnockedDown(false);
+
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
+        stats.readState(deadState);
+
+        std::unique_ptr<MWWorld::Action> loot = creature.getClass().activate(creature, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(loot.get()), nullptr);
     }
 
     TEST_F(ESM4ContainerTest, NpcActivationTalksWhileAliveAndOpensLootWhenDead)

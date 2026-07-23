@@ -26,6 +26,7 @@ namespace MWRender
     enum class FonvWeaponAction : std::uint8_t
     {
         PrimaryAttack,
+        Aim,
         Equip,
         Reload,
         Jam,
@@ -296,6 +297,8 @@ namespace MWRender
 
         if (action == FonvWeaponAction::Equip)
             return FonvWeaponActionSource{ action, getFonvWeaponAnimationKf(animationType, "equip"), "equip", true };
+        if (action == FonvWeaponAction::Aim)
+            return FonvWeaponActionSource{ action, getFonvWeaponAnimationKf(animationType, "aim"), "weaponpose", true };
         if (action == FonvWeaponAction::Unequip)
         {
             return FonvWeaponActionSource{
@@ -357,8 +360,8 @@ namespace MWRender
     inline std::vector<FonvWeaponActionSource> getFonvWeaponActionManifest(
         std::uint8_t animationType, std::uint8_t reloadAnimation)
     {
-        static constexpr std::array<FonvWeaponAction, 5> actions{ FonvWeaponAction::PrimaryAttack,
-            FonvWeaponAction::Equip, FonvWeaponAction::Reload, FonvWeaponAction::Jam,
+        static constexpr std::array<FonvWeaponAction, 6> actions{ FonvWeaponAction::PrimaryAttack,
+            FonvWeaponAction::Aim, FonvWeaponAction::Equip, FonvWeaponAction::Reload, FonvWeaponAction::Jam,
             FonvWeaponAction::Unequip };
 
         std::vector<FonvWeaponActionSource> result;
