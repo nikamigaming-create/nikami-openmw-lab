@@ -126,6 +126,7 @@ namespace MWWorld
         using SayToHandler = std::function<bool(ESM::FormId, ESM::FormId, ESM::FormId)>;
         using SetAllyHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
         using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
+        using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -144,6 +145,7 @@ namespace MWWorld
         SayToHandler mSayToHandler;
         SetAllyHandler mSetAllyHandler;
         SetEnemyHandler mSetEnemyHandler;
+        ItemCountHandler mItemCountHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -155,6 +157,7 @@ namespace MWWorld
             SetObjectiveDisplayed,
             ForceActiveQuest,
             SetVariable,
+            SetVariableFromItemCount,
             SetAlly,
             SetEnemy,
             Enable,
@@ -258,6 +261,7 @@ namespace MWWorld
         void setSayToHandler(SayToHandler handler) { mSayToHandler = std::move(handler); }
         void setSetAllyHandler(SetAllyHandler handler) { mSetAllyHandler = std::move(handler); }
         void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
+        void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
         // no runtime state changes unless every quest, stage and objective resolves against the loaded content.

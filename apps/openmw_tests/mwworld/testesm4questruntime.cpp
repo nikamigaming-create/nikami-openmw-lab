@@ -719,6 +719,93 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSurvivalTutorialInventoryAssignmentAndEnables)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId questId{ .mIndex = 0x15d912, .mContentFile = 0 };
+    const ESM::FormId questScriptId{ .mIndex = 0x15d900, .mContentFile = 0 };
+    const ESM::FormId xanderRootId{ .mIndex = 0x15d982, .mContentFile = 0 };
+    const ESM::FormId brocFlowerId{ .mIndex = 0x15d981, .mContentFile = 0 };
+    const ESM::FormId critter1Id{ .mIndex = 0x168c25, .mContentFile = 0 };
+    const ESM::FormId critter2Id{ .mIndex = 0x168c26, .mContentFile = 0 };
+    const ESM::FormId critter3Id{ .mIndex = 0x168c27, .mContentFile = 0 };
+    const ESM::FormId critter4Id{ .mIndex = 0x168c28, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId healingPowderId{ .mIndex = 0x136a1d, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "VCG03");
+    quest.mQuestScript = questScriptId;
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0015D912 VCG03 stage 10 entry 0, byte-for-byte. It snapshots
+    // Player.GetItemCount NVHealingPowder and then enables the two harvest plants
+    // and four tutorial creatures placed around Goodsprings.
+    const std::array<std::uint8_t, 86> retailScda{
+        0x15, 0x00, 0x16, 0x00, 0x72, 0x07, 0x00, 0x73, 0x01, 0x00, 0x0e, 0x00, 0x20, 0x72, 0x08,
+        0x00, 0x58, 0x2f, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x09, 0x00, 0x1c, 0x00, 0x01, 0x00,
+        0x21, 0x10, 0x02, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x02, 0x00, 0x21, 0x10, 0x02, 0x00, 0x00,
+        0x00, 0x1c, 0x00, 0x03, 0x00, 0x21, 0x10, 0x02, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x04, 0x00,
+        0x21, 0x10, 0x02, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x05, 0x00, 0x21, 0x10, 0x02, 0x00, 0x00,
+        0x00, 0x1c, 0x00, 0x06, 0x00, 0x21, 0x10, 0x02, 0x00, 0x00, 0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { xanderRootId, brocFlowerId, critter1Id, critter2Id, critter3Id, critter4Id,
+        questId, playerId, healingPowderId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Script questScript;
+    questScript.mId = questScriptId;
+    questScript.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "nHealingPowdersAtStart" } };
+    store.overrideRecord(questScript);
+
+    ESM4::Reference xanderRoot;
+    xanderRoot.mId = xanderRootId;
+    store.overrideRecord(xanderRoot);
+    ESM4::Reference brocFlower;
+    brocFlower.mId = brocFlowerId;
+    store.overrideRecord(brocFlower);
+    for (const ESM::FormId id : { critter1Id, critter2Id, critter3Id, critter4Id })
+    {
+        ESM4::ActorCreature critter;
+        critter.mId = id;
+        store.overrideRecord(critter);
+    }
+
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> countRequests;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId reference) {
+            commands.emplace_back(command, reference);
+            return true;
+        });
+    runtime.setItemCountHandler([&countRequests, playerId, healingPowderId](ESM::FormId owner, ESM::FormId item) {
+        countRequests.emplace_back(owner, item);
+        if (owner != playerId || item != healingPowderId)
+            return std::optional<int>{};
+        return std::optional<int>{ 3 };
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 10));
+    EXPECT_EQ(runtime.getQuestVariable("VCG03", "nHealingPowdersAtStart"), 3.f);
+    EXPECT_EQ(countRequests,
+        (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { playerId, healingPowderId } }));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Enable, xanderRootId },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, brocFlowerId },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, critter1Id },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, critter2Id },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, critter3Id },
+            { MWWorld::ESM4QuestReferenceCommand::Enable, critter4Id },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
 {
     MWWorld::ESMStore store;

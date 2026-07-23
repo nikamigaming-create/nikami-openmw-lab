@@ -850,6 +850,21 @@ namespace MWWorld
                                  << " firstNeutral=" << firstNeutral << " secondNeutral=" << secondNeutral;
                 return true;
             });
+        mESM4QuestRuntime.setItemCountHandler([this](ESM::FormId ownerId, ESM::FormId itemId) -> std::optional<int> {
+            if ((ownerId.mIndex != 0x7 && ownerId.mIndex != 0x14) || itemId.isZeroOrUnset())
+                return std::nullopt;
+            try
+            {
+                const Ptr player = getPlayerPtr();
+                if (player.isEmpty())
+                    return std::nullopt;
+                return player.getClass().getContainerStore(player).count(ESM::RefId(itemId));
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

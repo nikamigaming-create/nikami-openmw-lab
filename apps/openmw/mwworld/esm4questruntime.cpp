@@ -408,7 +408,7 @@ namespace MWWorld
                 continue;
             }
             std::span<const std::uint8_t> argumentPayload = instruction.arguments;
-            if (instruction.opcode == 0x0015) // set Quest.local to literal
+            if (instruction.opcode == 0x0015) // set Quest.local to literal or compiled expression
             {
                 if (instruction.callingReferenceIndex || argumentPayload.size() < 8 || argumentPayload[0] != 0x72
                     || (argumentPayload[3] != 0x66 && argumentPayload[3] != 0x73) || mStore == nullptr)
@@ -436,20 +436,47 @@ namespace MWWorld
                 if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
                     return false;
 
-                float value = 0.f;
                 const std::string_view expression(
                     reinterpret_cast<const char*>(argumentPayload.data() + 8), expressionSize);
-                if (!parseFloat(trim(expression), value))
+                float value = 0.f;
+                CompiledQuestCommand command;
+                command.mQuest = questId;
+                command.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                if (parseFloat(trim(expression), value))
+                {
+                    command.mType = CompiledQuestCommandType::SetVariable;
+                    command.mNumber = value;
+                    prepared.mCommands.push_back(std::move(command));
+                    continue;
+                }
+
+                // Fallout's compiled "Player.GetItemCount Item" expression is:
+                // 20 72 <owner-ref> 58 2f10 0500 0100 72 <item-ref>.
+                // Keep this deliberately narrow so other expression bytecode cannot be
+                // mistaken for a supported value and silently produce bad quest state.
+                if (expressionSize != 14 || argumentPayload[8] != 0x20 || argumentPayload[9] != 0x72
+                    || argumentPayload[12] != 0x58 || readUint16(argumentPayload, 13) != 0x102f
+                    || readUint16(argumentPayload, 15) != 5 || readUint16(argumentPayload, 17) != 1
+                    || argumentPayload[19] != 0x72)
                 {
                     prepared.mUseSourceFallback = true;
                     prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
                     continue;
                 }
-                CompiledQuestCommand command;
-                command.mType = CompiledQuestCommandType::SetVariable;
-                command.mQuest = questId;
-                command.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
-                command.mNumber = value;
+                if (!mItemCountHandler)
+                    return false;
+                const std::uint16_t ownerIndex = readUint16(argumentPayload, 10);
+                const std::uint16_t itemIndex = readUint16(argumentPayload, 20);
+                if (ownerIndex == 0 || ownerIndex > script.references.size() || itemIndex == 0
+                    || itemIndex > script.references.size())
+                    return false;
+                const ESM::FormId owner = script.references[ownerIndex - 1];
+                const ESM::FormId item = script.references[itemIndex - 1];
+                if ((owner.mIndex != 0x7 && owner.mIndex != 0x14) || item.isZeroOrUnset())
+                    return false;
+                command.mType = CompiledQuestCommandType::SetVariableFromItemCount;
+                command.mTarget = owner;
+                command.mTopic = item;
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -832,6 +859,17 @@ namespace MWWorld
                 variable->second = command.mNumber;
                 return true;
             }
+            case CompiledQuestCommandType::SetVariableFromItemCount:
+            {
+                const auto variable = state.mVariables.find(command.mVariable);
+                const std::optional<int> count = mItemCountHandler
+                    ? mItemCountHandler(command.mTarget, command.mTopic)
+                    : std::nullopt;
+                if (variable == state.mVariables.end() || !count || *count < 0)
+                    return false;
+                variable->second = static_cast<float>(*count);
+                return true;
+            }
             case CompiledQuestCommandType::SetAlly:
             case CompiledQuestCommandType::SetEnemy:
             case CompiledQuestCommandType::Enable:
@@ -1141,6 +1179,18 @@ namespace MWWorld
                                 = mStore->get<ESM4::Quest>().search(ESM::RefId(command.mQuest));
                             executed = targetQuest != nullptr
                                 && setQuestVariable(targetQuest->mEditorId, command.mVariable, command.mNumber);
+                            break;
+                        }
+                        case CompiledQuestCommandType::SetVariableFromItemCount:
+                        {
+                            const ESM4::Quest* targetQuest
+                                = mStore->get<ESM4::Quest>().search(ESM::RefId(command.mQuest));
+                            const std::optional<int> count = mItemCountHandler
+                                ? mItemCountHandler(command.mTarget, command.mTopic)
+                                : std::nullopt;
+                            executed = targetQuest != nullptr && count && *count >= 0
+                                && setQuestVariable(
+                                    targetQuest->mEditorId, command.mVariable, static_cast<float>(*count));
                             break;
                         }
                         case CompiledQuestCommandType::SetAlly:
