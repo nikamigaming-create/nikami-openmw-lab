@@ -418,6 +418,9 @@ namespace MWWorld
                 { "fCombatInvisoMult", ESM::Variant(0.2f) },
                 { "fCombatKODamageMult", ESM::Variant(0.5f) },
                 { "fCorpseRespawnDelay", ESM::Variant(72.f) },
+                // Fallout 3/New Vegas engine default. The setting is built into the executable rather than authored
+                // as a GMST record in FalloutNV.esm; xNVSE exposes the same setting as iHoursToRespawnCell.
+                { "iHoursToRespawnCell", ESM::Variant(72) },
                 { "fCrimeStealing", ESM::Variant(1.f) },
                 { "fDamageStrengthBase", ESM::Variant(0.5f) },
                 { "fDamageStrengthMult", ESM::Variant(0.1f) },

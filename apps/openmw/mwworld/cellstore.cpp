@@ -46,6 +46,7 @@
 #include <components/esm3/objectstate.hpp>
 #include <components/esm3/readerscache.hpp>
 
+#include <components/esm4/common.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
@@ -82,6 +83,7 @@
 #include <components/resource/resourcesystem.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
@@ -476,6 +478,16 @@ namespace
 
 namespace MWWorld
 {
+    bool isEsm4CellResetDue(const TimeStamp& now, const TimeStamp& lastReset, int resetHours)
+    {
+        return resetHours >= 0 && now - lastReset > resetHours;
+    }
+
+    bool isEsm4ReferenceResettable(std::uint32_t recordFlags)
+    {
+        return (recordFlags & ESM4::Rec_NoRespawn) == 0;
+    }
+
     namespace
     {
         template <class T>
@@ -1648,6 +1660,26 @@ namespace MWWorld
     {
         if (mState == State_Loaded)
         {
+            if (getCell()->isEsm4())
+            {
+                const int respawnHours
+                    = mStore.get<ESM::GameSetting>().find("iHoursToRespawnCell")->mValue.getInteger();
+                const MWWorld::TimeStamp now = MWBase::Environment::get().getWorld()->getTimeStamp();
+                if (isEsm4CellResetDue(now, mLastRespawn, respawnHours))
+                {
+                    mLastRespawn = now;
+                    for (LiveCellRefBase& base : get<ESM4::Flora>().mList)
+                    {
+                        Ptr ptr = getCurrentPtr(&base);
+                        if (ptr.isEmpty() || ptr.mRef->isDeleted()
+                            || !isEsm4ReferenceResettable(ptr.getCellRef().getEsm4RecordFlags()))
+                            continue;
+                        MWBase::Environment::get().getLuaManager()->objectReset(ptr);
+                    }
+                }
+                return;
+            }
+
             static const int iMonthsToRespawn
                 = mStore.get<ESM::GameSetting>().find("iMonthsToRespawn")->mValue.getInteger();
             if (MWBase::Environment::get().getWorld()->getTimeStamp() - mLastRespawn > 24 * 30 * iMonthsToRespawn)

@@ -71,6 +71,7 @@ namespace MWLua
         void onConsume(const LObject& consumable) { callEngineHandlers(mOnConsumeHandlers, consumable); }
         void onActivated(const LObject& actor) { callEngineHandlers(mOnActivatedHandlers, actor); }
         void onTeleported() { callEngineHandlers(mOnTeleportedHandlers); }
+        void onReset() { callEngineHandlers(mOnResetHandlers); }
         void onAnimationTextKey(std::string_view groupname, std::string_view key)
         {
             callEngineHandlers(mOnAnimationTextKeyHandlers, groupname, key);
@@ -113,6 +114,7 @@ namespace MWLua
         EngineHandlerList mOnConsumeHandlers{ "onConsume" };
         EngineHandlerList mOnActivatedHandlers{ "onActivated" };
         EngineHandlerList mOnTeleportedHandlers{ "onTeleported" };
+        EngineHandlerList mOnResetHandlers{ "onReset" };
         EngineHandlerList mOnAnimationTextKeyHandlers{ "_onAnimationTextKey" };
         EngineHandlerList mOnPlayAnimationHandlers{ "_onPlayAnimation" };
         EngineHandlerList mOnSkillUse{ "_onSkillUse" };

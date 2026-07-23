@@ -87,6 +87,10 @@ namespace MWLua
         void noGame() override;
         void objectAddedToScene(const MWWorld::Ptr& ptr) override;
         void objectRemovedFromScene(const MWWorld::Ptr& ptr) override;
+        void objectReset(const MWWorld::Ptr& ptr) override
+        {
+            mEngineEvents.addToQueue(EngineEvents::OnReset{ getId(ptr) });
+        }
         void inputEvent(const InputEvent& event) override;
         void itemConsumed(const MWWorld::Ptr& consumable, const MWWorld::Ptr& actor) override
         {
