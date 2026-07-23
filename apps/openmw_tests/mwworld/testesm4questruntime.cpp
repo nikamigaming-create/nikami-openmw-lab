@@ -2041,6 +2041,87 @@ TEST(ESM4QuestRuntimeTest, RollsBackGetDeadStageWhenLiveActorReadFails)
     EXPECT_EQ(state->mObjectiveStatus.at(40), 0);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailQuestLifecycleConditions)
+{
+    const auto runRunning = [](bool running) {
+        MWWorld::ESMStore store;
+        const ESM::FormId targetId{ .mIndex = 0x1262c4, .mContentFile = 0 };
+        ESM4::Quest target = makeQuest(targetId, "VMQHouse1");
+        target.mStages.push_back({ .mIndex = 66 });
+        store.overrideRecord(target);
+
+        const ESM::FormId ownerId{ .mIndex = 0x1262c5, .mContentFile = 0 };
+        ESM4::Quest owner = makeQuest(ownerId, "VMQHouseFail");
+        ESM4::QuestStageEntry entry;
+        // Exact first conditional block from FalloutNV.esm VMQHouseFail stage 1.
+        const std::array<std::uint8_t, 37> retailScda{ 0x16, 0x00, 0x0f, 0x00, 0x01, 0x00, 0x0b,
+            0x00, 0x20, 0x58, 0x38, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x03, 0x00, 0x39, 0x10,
+            0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x42, 0x00, 0x00, 0x00, 0x19, 0x00,
+            0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references = { ESM::FormId{}, ESM::FormId{}, targetId };
+        owner.mStages.push_back({ .mIndex = 1, .mEntries = { std::move(entry) } });
+        store.overrideRecord(owner);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        if (running)
+            ASSERT_TRUE(runtime.startQuest(targetId));
+        ASSERT_TRUE(runtime.setStage(ownerId, 1));
+        const MWWorld::ESM4QuestState* state = runtime.search(targetId);
+        ASSERT_NE(state, nullptr);
+        EXPECT_EQ(state->mCurrentStage, running ? 66 : 0);
+        EXPECT_EQ(state->mStageDone.at(66), running);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    const auto runCompletedAndStage = [](std::uint8_t initialStage, bool completed) {
+        MWWorld::ESMStore store;
+        const ESM::FormId targetId{ .mIndex = 0x10e3d2, .mContentFile = 0 };
+        ESM4::Quest target = makeQuest(targetId, "VMS21a");
+        target.mStages.push_back({ .mIndex = 4 });
+        target.mStages.push_back({ .mIndex = 5 });
+        target.mStages.push_back({ .mIndex = 190 });
+        store.overrideRecord(target);
+
+        const ESM::FormId ownerId{ .mIndex = 0x10e3d3, .mContentFile = 0 };
+        ESM4::Quest owner = makeQuest(ownerId, "VMS21");
+        ESM4::QuestStageEntry entry;
+        // Exact final conditional block from FalloutNV.esm VMS21 stage 50:
+        // GetQC VMS21a != 1 && GetStage VMS21a >= 5, then SetStage VMS21a 190.
+        const std::array<std::uint8_t, 61> retailScda{ 0x16, 0x00, 0x27, 0x00, 0x01, 0x00, 0x23,
+            0x00, 0x20, 0x58, 0x22, 0x12, 0x05, 0x00, 0x01, 0x00, 0x72, 0x0a, 0x00, 0x20, 0x31,
+            0x20, 0x21, 0x3d, 0x20, 0x58, 0x3a, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x0a, 0x00,
+            0x20, 0x35, 0x20, 0x3e, 0x3d, 0x20, 0x26, 0x26, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00,
+            0x72, 0x0a, 0x00, 0x6e, 0xbe, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.resize(10);
+        entry.mScript.references[9] = targetId;
+        owner.mStages.push_back({ .mIndex = 50, .mEntries = { std::move(entry) } });
+        store.overrideRecord(owner);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        ASSERT_TRUE(runtime.setStage(targetId, initialStage));
+        if (completed)
+            ASSERT_TRUE(runtime.completeQuest(targetId));
+        ASSERT_TRUE(runtime.setStage(ownerId, 50));
+        const MWWorld::ESM4QuestState* state = runtime.search(targetId);
+        ASSERT_NE(state, nullptr);
+        const bool shouldAdvance = !completed && initialStage >= 5;
+        EXPECT_EQ(state->mCurrentStage, shouldAdvance ? 190 : initialStage);
+        EXPECT_EQ(state->mStageDone.at(190), shouldAdvance);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    runRunning(false);
+    runRunning(true);
+    runCompletedAndStage(4, false);
+    runCompletedAndStage(4, true);
+    runCompletedAndStage(5, false);
+    runCompletedAndStage(5, true);
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedPostfixConditionBeforeQuestMutation)
 {
     MWWorld::ESMStore store;

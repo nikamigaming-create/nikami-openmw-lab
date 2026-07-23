@@ -184,6 +184,8 @@ namespace MWWorld
             GetObjectiveCompleted,
             GetObjectiveDisplayed,
             GetDead,
+            GetQuestRunning,
+            GetQuestCompleted,
         };
 
         enum class CompiledConditionTokenType : std::uint8_t

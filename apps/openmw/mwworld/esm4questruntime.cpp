@@ -471,6 +471,17 @@ namespace MWWorld
                         token.mQuest = *quest;
                         token.mStage = *objective;
                     }
+                    else if ((functionOpcode == 0x1038 || functionOpcode == 0x1222)
+                        && functionArguments.size() == 1)
+                    {
+                        const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
+                        if (quest == nullptr)
+                            return ExpressionDecodeResult::Malformed;
+                        token.mValueType = functionOpcode == 0x1038
+                            ? CompiledConditionValueType::GetQuestRunning
+                            : CompiledConditionValueType::GetQuestCompleted;
+                        token.mQuest = *quest;
+                    }
                     else
                         return ExpressionDecodeResult::Unsupported;
                     if (mStore == nullptr
@@ -1178,6 +1189,12 @@ namespace MWWorld
                         value = (objective->second & flag) != 0 ? 1.f : 0.f;
                         break;
                     }
+                    case CompiledConditionValueType::GetQuestRunning:
+                        value = (found->second.mFlags & ESM4QuestState::Flag_Running) != 0 ? 1.f : 0.f;
+                        break;
+                    case CompiledConditionValueType::GetQuestCompleted:
+                        value = (found->second.mFlags & ESM4QuestState::Flag_Completed) != 0 ? 1.f : 0.f;
+                        break;
                     case CompiledConditionValueType::GetDead:
                         return std::nullopt;
                 }
