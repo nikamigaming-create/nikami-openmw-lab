@@ -71,6 +71,26 @@ namespace MWLua
                 scripts->onActivated(LObject(actor));
         }
 
+        void operator()(const OnTriggerEnter& event) const
+        {
+            MWWorld::Ptr obj = getPtr(event.mObject);
+            MWWorld::Ptr actor = getPtr(event.mActor);
+            if (actor.isEmpty() || obj.isEmpty())
+                return;
+            if (auto* scripts = getLocalScripts(obj))
+                scripts->onTriggerEnter(LObject(actor));
+        }
+
+        void operator()(const OnTriggerLeave& event) const
+        {
+            MWWorld::Ptr obj = getPtr(event.mObject);
+            MWWorld::Ptr actor = getPtr(event.mActor);
+            if (actor.isEmpty() || obj.isEmpty())
+                return;
+            if (auto* scripts = getLocalScripts(obj))
+                scripts->onTriggerLeave(LObject(actor));
+        }
+
         void operator()(const OnUseItem& event) const
         {
             MWWorld::Ptr obj = getPtr(event.mObject);

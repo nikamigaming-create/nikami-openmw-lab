@@ -70,6 +70,8 @@ namespace MWLua
         bool isActive() const override { return mData.mIsActive; }
         void onConsume(const LObject& consumable) { callEngineHandlers(mOnConsumeHandlers, consumable); }
         void onActivated(const LObject& actor) { callEngineHandlers(mOnActivatedHandlers, actor); }
+        void onTriggerEnter(const LObject& actor) { callEngineHandlers(mOnTriggerEnterHandlers, actor); }
+        void onTriggerLeave(const LObject& actor) { callEngineHandlers(mOnTriggerLeaveHandlers, actor); }
         void onTeleported() { callEngineHandlers(mOnTeleportedHandlers); }
         void onReset() { callEngineHandlers(mOnResetHandlers); }
         void onAnimationTextKey(std::string_view groupname, std::string_view key)
@@ -113,6 +115,8 @@ namespace MWLua
         EngineHandlerList mOnInactiveHandlers{ "onInactive" };
         EngineHandlerList mOnConsumeHandlers{ "onConsume" };
         EngineHandlerList mOnActivatedHandlers{ "onActivated" };
+        EngineHandlerList mOnTriggerEnterHandlers{ "onTriggerEnter" };
+        EngineHandlerList mOnTriggerLeaveHandlers{ "onTriggerLeave" };
         EngineHandlerList mOnTeleportedHandlers{ "onTeleported" };
         EngineHandlerList mOnResetHandlers{ "onReset" };
         EngineHandlerList mOnAnimationTextKeyHandlers{ "_onAnimationTextKey" };
