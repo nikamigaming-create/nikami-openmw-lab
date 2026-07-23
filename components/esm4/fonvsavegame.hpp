@@ -898,6 +898,65 @@ namespace ESM4
         std::vector<FONVSaveChangedFormEnvelope> mEntries;
     };
 
+    struct FONVSaveQuestScriptVariable
+    {
+        FONVSaveField<std::uint32_t> mFlagAndVariableId;
+        std::optional<FONVSaveResolvedReferenceId> mReferenceValue;
+        std::optional<FONVSaveField<double>> mNumericValue;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSaveQuestStageLog
+    {
+        FONVSaveField<std::uint8_t> mLogEntry;
+        FONVSaveField<std::uint8_t> mHasLogData;
+        std::optional<FONVSaveField<std::uint16_t>> mLogDataUnknown;
+        std::optional<FONVSaveField<std::uint16_t>> mLogDataValue;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSaveQuestStage
+    {
+        FONVSaveField<std::uint8_t> mStage;
+        FONVSaveField<std::uint8_t> mStatus;
+        FONVSaveField<std::uint32_t> mLogCount;
+        std::vector<FONVSaveQuestStageLog> mLogs;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSaveQuestObjective
+    {
+        FONVSaveField<std::uint32_t> mObjective;
+        FONVSaveField<std::uint32_t> mData;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact version-27 QUST change-form payload. The script-event list owns quest-local variables; retaining its
+    // numeric/reference distinction is required because a reference value is not a floating-point variable.
+    struct FONVSaveQuestChange
+    {
+        std::uint32_t mResolvedFormId = 0;
+        std::uint32_t mChangeFlags = 0;
+        std::optional<FONVSaveField<std::uint32_t>> mFormFlags;
+        std::optional<FONVSaveField<std::uint8_t>> mQuestFlags;
+        std::optional<FONVSaveField<float>> mScriptDelay;
+        std::optional<FONVSaveField<std::uint32_t>> mStageCount;
+        std::vector<FONVSaveQuestStage> mStages;
+        std::optional<FONVSaveField<std::uint32_t>> mVariableCount;
+        std::vector<FONVSaveQuestScriptVariable> mVariables;
+        std::optional<FONVSaveField<std::uint8_t>> mHasEventState;
+        std::optional<FONVSaveRawField> mEventState;
+        std::optional<FONVSaveField<std::uint8_t>> mOnLoad;
+        std::optional<FONVSaveField<std::uint32_t>> mObjectiveCount;
+        std::vector<FONVSaveQuestObjective> mObjectives;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
     struct FONVSaveFormIdTable
     {
         FONVSaveField<std::uint32_t> mCount;
@@ -986,6 +1045,7 @@ namespace ESM4
         std::optional<FONVSavePlayerCharacterMagicTargetState> mPlayerCharacterMagicTargetState;
         std::optional<FONVSavePlayerCharacterFinalState> mPlayerCharacterFinalState;
         std::optional<FONVSaveSkyState> mSky;
+        std::vector<FONVSaveQuestChange> mQuestChanges;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
         // meaning is still deliberately unknown: unrecognized global data, undecoded change-form bytes, and the

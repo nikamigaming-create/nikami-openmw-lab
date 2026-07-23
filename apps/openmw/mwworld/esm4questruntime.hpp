@@ -58,21 +58,42 @@ namespace MWWorld
 
     struct ESM4SavedQuestProgress
     {
+        struct State
+        {
+            ESM::FormId mQuest;
+            std::uint8_t mFlags = 0;
+
+            bool operator==(const State&) const = default;
+        };
+
         struct Stage
         {
             ESM::FormId mQuest;
             std::uint8_t mStage = 0;
             std::uint8_t mLogEntry = 0;
+            bool mDone = true;
         };
 
         struct Objective
         {
             ESM::FormId mQuest;
             std::int32_t mObjective = 0;
+            std::uint8_t mStatus = ESM4QuestState::Objective_Displayed;
         };
 
+        struct Variable
+        {
+            ESM::FormId mQuest;
+            std::uint32_t mIndex = 0;
+            float mValue = 0.f;
+
+            bool operator==(const Variable&) const = default;
+        };
+
+        std::vector<State> mStates;
         std::vector<Stage> mStages;
         std::vector<Objective> mObjectives;
+        std::vector<Variable> mVariables;
         std::optional<ESM::FormId> mActiveQuest;
     };
 

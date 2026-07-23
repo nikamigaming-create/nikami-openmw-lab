@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <span>
@@ -149,6 +150,13 @@ namespace
     void appendF32(std::vector<std::uint8_t>& bytes, float value)
     {
         appendU32(bytes, std::bit_cast<std::uint32_t>(value));
+    }
+
+    void appendF64(std::vector<std::uint8_t>& bytes, double value)
+    {
+        const std::uint64_t encoded = std::bit_cast<std::uint64_t>(value);
+        appendU32(bytes, static_cast<std::uint32_t>(encoded));
+        appendU32(bytes, static_cast<std::uint32_t>(encoded >> 32));
     }
 
     void overwriteU32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t value)
@@ -1263,6 +1271,104 @@ namespace
             sSyntheticPlayerCharacterAnimationStateBytes, ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
             ESM4::sFONVPlayerCharacterListsStateBytes, ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
             ESM4::sFONVPlayerCharacterFinalStateBytes, referenceScale, actorExtraDataCount, actorExtraData);
+    }
+
+    SaveBytes makeSaveWithQuestChange()
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes result = makeSave(true, 2, 1, masters);
+        std::vector<std::uint8_t> payload;
+        appendU32(payload, 0x00000400u);
+        appendDelimiter(payload);
+        appendU8(payload, 0x21);
+        appendDelimiter(payload);
+        appendF32(payload, 5.f);
+        appendDelimiter(payload);
+
+        appendPackedCount(payload, 1);
+        appendU8(payload, 20);
+        appendDelimiter(payload);
+        appendU8(payload, 1);
+        appendDelimiter(payload);
+        appendPackedCount(payload, 1);
+        appendU8(payload, 2);
+        appendDelimiter(payload);
+        appendU8(payload, 1);
+        appendDelimiter(payload);
+        appendU16(payload, 0x1234);
+        appendU16(payload, 0x5678);
+        appendDelimiter(payload);
+
+        appendPackedCount(payload, 2);
+        appendU32(payload, 7);
+        appendDelimiter(payload);
+        appendF64(payload, 42.25);
+        appendDelimiter(payload);
+        appendU32(payload, 0x80000008u);
+        appendDelimiter(payload);
+        appendDelimitedReferenceId(payload, 0x400456);
+        appendU8(payload, 1);
+        appendDelimiter(payload);
+        payload.insert(payload.end(), { 0, 1, 2, 3, 4, 5, 6, 7 });
+        appendDelimiter(payload);
+        appendU8(payload, 1);
+        appendDelimiter(payload);
+
+        appendPackedCount(payload, 1);
+        appendU32(payload, 10);
+        appendDelimiter(payload);
+        appendU32(payload, 3);
+        appendDelimiter(payload);
+
+        std::vector<std::uint8_t> envelope;
+        constexpr std::uint32_t flags = 0xe0000007u;
+        appendChangedForm(envelope, { 0x40, 0x01, 0x23 }, flags, 9, 27, 2, payload);
+        result.mBytes.insert(result.mBytes.begin() + static_cast<std::ptrdiff_t>(result.mGlobalData2Begin),
+            envelope.begin(), envelope.end());
+        overwriteU32(result.mBytes, result.mGlobalData2OffsetField,
+            static_cast<std::uint32_t>(result.mGlobalData2Begin + envelope.size()));
+        overwriteU32(result.mBytes, result.mRefIdArrayOffsetField,
+            static_cast<std::uint32_t>(result.mRefIdArrayBegin + envelope.size()));
+        overwriteU32(result.mBytes, result.mUnknownTableOffsetField,
+            static_cast<std::uint32_t>(result.mUnknownTableBegin + envelope.size()));
+        overwriteU32(result.mBytes, result.mChangedFormsCountField, 4);
+        return result;
+    }
+
+    TEST(FONVSaveGame, ParsesTypedQuestChangeFormState)
+    {
+        const SaveBytes source = makeSaveWithQuestChange();
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        ASSERT_EQ(save.mQuestChanges.size(), 1u);
+        const ESM4::FONVSaveQuestChange& quest = save.mQuestChanges.front();
+        EXPECT_EQ(quest.mResolvedFormId, 0x00000123u);
+        EXPECT_EQ(quest.mChangeFlags, 0xe0000007u);
+        ASSERT_TRUE(quest.mFormFlags);
+        EXPECT_EQ(quest.mFormFlags->mValue, 0x400u);
+        ASSERT_TRUE(quest.mQuestFlags);
+        EXPECT_EQ(quest.mQuestFlags->mValue, 0x21);
+        ASSERT_TRUE(quest.mScriptDelay);
+        EXPECT_FLOAT_EQ(quest.mScriptDelay->mValue, 5.f);
+        ASSERT_EQ(quest.mStages.size(), 1u);
+        EXPECT_EQ(quest.mStages[0].mStage.mValue, 20);
+        EXPECT_EQ(quest.mStages[0].mStatus.mValue, 1);
+        ASSERT_EQ(quest.mStages[0].mLogs.size(), 1u);
+        EXPECT_EQ(quest.mStages[0].mLogs[0].mLogEntry.mValue, 2);
+        ASSERT_TRUE(quest.mStages[0].mLogs[0].mLogDataUnknown);
+        EXPECT_EQ(quest.mStages[0].mLogs[0].mLogDataUnknown->mValue, 0x1234);
+        ASSERT_EQ(quest.mVariables.size(), 2u);
+        ASSERT_TRUE(quest.mVariables[0].mNumericValue);
+        EXPECT_DOUBLE_EQ(quest.mVariables[0].mNumericValue->mValue, 42.25);
+        ASSERT_TRUE(quest.mVariables[1].mReferenceValue);
+        EXPECT_EQ(quest.mVariables[1].mReferenceValue->mResolvedFormId, 0x00000456u);
+        ASSERT_TRUE(quest.mEventState);
+        EXPECT_EQ(quest.mEventState->mRaw.size(), 8u);
+        ASSERT_TRUE(quest.mOnLoad);
+        EXPECT_EQ(quest.mOnLoad->mValue, 1);
+        ASSERT_EQ(quest.mObjectives.size(), 1u);
+        EXPECT_EQ(quest.mObjectives[0].mObjective.mValue, 10u);
+        EXPECT_EQ(quest.mObjectives[0].mData.mValue, 3u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u);
     }
 
     TEST(FONVSaveGame, ParsesNewVegasPrefixAndPreservesRawProvenance)
@@ -3637,8 +3743,15 @@ namespace
         EXPECT_EQ(save.findChangedForm(ESM4::sFONVPlayerNpcFormId), nullptr)
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7088u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2732077u);
+        ASSERT_EQ(save.mQuestChanges.size(), 468u);
+        const std::uint64_t decodedQuestBytes = std::accumulate(save.mQuestChanges.begin(),
+            save.mQuestChanges.end(), std::uint64_t{ 0 },
+            [](std::uint64_t total, const ESM4::FONVSaveQuestChange& quest) {
+                return total + quest.mRange.mSize;
+            });
+        EXPECT_EQ(decodedQuestBytes, 4776u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 6620u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2727301u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

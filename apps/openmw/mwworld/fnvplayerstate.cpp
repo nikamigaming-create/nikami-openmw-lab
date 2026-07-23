@@ -920,6 +920,41 @@ namespace MWWorld
                 progress.mObjectives.push_back({ *quest, static_cast<std::int32_t>(entry.mObjective.mValue) });
             }
 
+            std::map<ESM::FormId, std::uint8_t> savedQuestStates;
+            std::map<std::pair<ESM::FormId, std::uint32_t>, float> savedQuestVariables;
+            for (const ESM4::FONVSaveQuestChange& change : save.mQuestChanges)
+            {
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(change.mResolvedFormId, currentPluginIndices);
+                if (!quest)
+                    return loadFailure("FNV save changed QUST FormID has unsupported provenance");
+                if (change.mQuestFlags)
+                    savedQuestStates.insert_or_assign(*quest, change.mQuestFlags->mValue);
+                for (const ESM4::FONVSaveQuestScriptVariable& variable : change.mVariables)
+                {
+                    const std::uint32_t index = variable.mFlagAndVariableId.mValue & 0x7fffffffu;
+                    if (index == 0)
+                        return loadFailure("FNV save changed QUST has a zero script-variable index");
+                    const std::pair key{ *quest, index };
+                    if (variable.mReferenceValue)
+                    {
+                        savedQuestVariables.erase(key);
+                        continue;
+                    }
+                    if (!variable.mNumericValue
+                        || variable.mNumericValue->mValue < -std::numeric_limits<float>::max()
+                        || variable.mNumericValue->mValue > std::numeric_limits<float>::max())
+                    {
+                        return loadFailure("FNV save changed QUST numeric variable is outside the runtime range");
+                    }
+                    savedQuestVariables.insert_or_assign(key, static_cast<float>(variable.mNumericValue->mValue));
+                }
+            }
+            for (const auto& [quest, flags] : savedQuestStates)
+                progress.mStates.push_back({ quest, flags });
+            for (const auto& [key, value] : savedQuestVariables)
+                progress.mVariables.push_back({ key.first, key.second, value });
+
             if (camera.mQuest.mResolvedFormId)
             {
                 progress.mActiveQuest
@@ -970,7 +1005,24 @@ namespace MWWorld
         {
             const auto blocker = std::ranges::find(plan.mUncoveredState, "quest-stages-objectives-variables");
             if (blocker != plan.mUncoveredState.end())
-                *blocker = "quest-variables";
+            {
+                if (save.mQuestChanges.empty())
+                    *blocker = "quest-variables";
+                else
+                {
+                    const bool hasReferenceVariables = std::ranges::any_of(save.mQuestChanges,
+                        [](const ESM4::FONVSaveQuestChange& quest) {
+                            return std::ranges::any_of(quest.mVariables,
+                                [](const ESM4::FONVSaveQuestScriptVariable& variable) {
+                                    return variable.mReferenceValue.has_value();
+                                });
+                        });
+                    if (hasReferenceVariables)
+                        *blocker = "quest-reference-variables";
+                    else
+                        plan.mUncoveredState.erase(blocker);
+                }
+            }
         }
         if (save.mGlobalVariables)
         {

@@ -7,6 +7,7 @@
 #include <bit>
 #include <charconv>
 #include <cctype>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -131,6 +132,20 @@ namespace MWWorld
 
         QuestStateMap states = mStates;
         std::optional<ESM::FormId> activeQuest;
+        std::set<ESM::FormId> savedStateIds;
+        for (const ESM4SavedQuestProgress::State& saved : progress.mStates)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+                return fail("saved quest state references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            if (!savedStateIds.insert(saved.mQuest).second)
+                return fail("saved quest state contains a duplicate QUST identity");
+            if ((saved.mFlags & 0x80u) != 0)
+                return fail("saved quest state contains an unsupported runtime flag");
+            state->second.mFlags = saved.mFlags;
+        }
+
         for (const ESM4SavedQuestProgress::Stage& saved : progress.mStages)
         {
             const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
@@ -141,9 +156,12 @@ namespace MWWorld
             if (stage == state->second.mStageDone.end())
                 return fail("saved quest stage index is absent from loaded QUST " + quest->mEditorId);
 
-            stage->second = true;
-            state->second.mCurrentStage = std::max(state->second.mCurrentStage, saved.mStage);
-            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+            stage->second = saved.mDone;
+            if (saved.mDone)
+            {
+                state->second.mCurrentStage = std::max(state->second.mCurrentStage, saved.mStage);
+                state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+            }
         }
 
         for (const ESM4SavedQuestProgress::Objective& saved : progress.mObjectives)
@@ -158,9 +176,39 @@ namespace MWWorld
             const auto objective = state->second.mObjectiveStatus.find(saved.mObjective);
             if (objective == state->second.mObjectiveStatus.end())
                 return fail("saved quest objective index is absent from loaded QUST " + quest->mEditorId);
+            if ((saved.mStatus
+                    & ~(ESM4QuestState::Objective_Displayed | ESM4QuestState::Objective_Completed))
+                != 0)
+            {
+                return fail("saved quest objective contains unsupported status bits in " + quest->mEditorId);
+            }
 
-            objective->second |= ESM4QuestState::Objective_Displayed;
-            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+            objective->second = saved.mStatus;
+            if (saved.mStatus != 0)
+                state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+        }
+
+        std::set<std::pair<ESM::FormId, std::uint32_t>> savedVariableIds;
+        for (const ESM4SavedQuestProgress::Variable& saved : progress.mVariables)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+                return fail("saved quest variable references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            if (!savedVariableIds.emplace(saved.mQuest, saved.mIndex).second)
+                return fail("saved quest variables contain a duplicate QUST/local index");
+            const ESM4::Script* script = mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+            if (script == nullptr)
+                return fail("saved quest variable references a QUST without a loaded quest script " + quest->mEditorId);
+            const auto variable = std::ranges::find(script->mScript.localVarData, saved.mIndex,
+                &ESM4::ScriptLocalVariableData::index);
+            if (variable == script->mScript.localVarData.end() || variable->variableName.empty())
+                return fail("saved quest variable index is absent from the loaded quest script " + quest->mEditorId);
+            const std::string name = Misc::StringUtils::lowerCase(variable->variableName);
+            const auto destination = state->second.mVariables.find(name);
+            if (destination == state->second.mVariables.end())
+                return fail("saved quest variable has no initialized runtime slot " + quest->mEditorId + "." + name);
+            destination->second = saved.mValue;
         }
 
         if (progress.mActiveQuest)
@@ -179,7 +227,8 @@ namespace MWWorld
         mStates = std::move(states);
         mActiveQuest = activeQuest;
         Log(Debug::Info) << "FNV/ESM4 save: imported quest progress stages=" << progress.mStages.size()
-                         << " objectives=" << progress.mObjectives.size() << " active="
+                         << " objectives=" << progress.mObjectives.size() << " variables="
+                         << progress.mVariables.size() << " states=" << progress.mStates.size() << " active="
                          << (mActiveQuest ? ESM::RefId(*mActiveQuest).serializeText() : std::string("<none>"));
         return true;
     }
