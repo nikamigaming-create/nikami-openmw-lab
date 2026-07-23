@@ -819,6 +819,19 @@ namespace MWWorld
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
             });
+        mESM4QuestRuntime.setSetDestroyedHandler([this](ESM::FormId referenceId, bool destroyed) {
+            const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+            if (target.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 quest: SetDestroyed reference is not available id="
+                                    << ESM::RefId(referenceId).serializeText();
+                return false;
+            }
+            target.getRefData().setDestroyed(destroyed);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetDestroyed id=" << target.getCellRef().getRefId()
+                             << " destroyed=" << destroyed;
+            return target.getRefData().isDestroyed() == destroyed;
+        });
         mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
             try
             {

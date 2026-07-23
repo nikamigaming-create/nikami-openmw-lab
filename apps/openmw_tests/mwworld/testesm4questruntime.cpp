@@ -14,6 +14,8 @@
 #include <components/esm/formid.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm3/objectstate.hpp>
+#include <components/esm4/common.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadfact.hpp>
@@ -27,6 +29,7 @@
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/globals.hpp"
+#include "apps/openmw/mwworld/refdata.hpp"
 
 namespace
 {
@@ -1255,6 +1258,127 @@ TEST(ESM4QuestRuntimeTest, NormalizesExactVms20GreatKhansRetailReputationFlag)
 
     ASSERT_TRUE(runtime.setStage(questId, 100));
     EXPECT_EQ(calls, (std::vector<std::tuple<ESM::FormId, bool, int>>{ { greatKhans, true, 5 } }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailSetAndClearDestroyedFrames)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId setQuestId{ .mIndex = 0x104c1c, .mContentFile = 0 };
+    const ESM::FormId vigorTesterId{ .mIndex = 0x104c13, .mContentFile = 0 };
+    const ESM::FormId clearQuestId{ .mIndex = 0x154233, .mContentFile = 0 };
+    const ESM::FormId consoleId{ .mIndex = 0x153fc7, .mContentFile = 0 };
+
+    ESM4::Quest setQuest = makeQuest(setQuestId, "VCG01");
+    ESM4::QuestStageEntry setEntry;
+    // FalloutNV.esm VCG01 stage 65, byte-for-byte frame:
+    // VCG01VigorTesterREF.SetDestroyed 1
+    setEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xcc, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    setEntry.mScript.references = { vigorTesterId };
+    setQuest.mStages.push_back({ .mIndex = 65, .mEntries = { std::move(setEntry) } });
+    store.overrideRecord(setQuest);
+
+    ESM4::Quest clearQuest = makeQuest(clearQuestId, "VHDIndependentBattle");
+    ESM4::QuestStageEntry clearEntry;
+    // FalloutNV.esm VHDIndependentBattle stage 25, byte-for-byte frame:
+    // VHDWestPPConsoleREF.SetDestroyed 0
+    clearEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xcc, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00,
+    };
+    clearEntry.mScript.references = { consoleId };
+    clearQuest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(clearEntry) } });
+    store.overrideRecord(clearQuest);
+
+    ESM4::Reference vigorTester;
+    vigorTester.mId = vigorTesterId;
+    store.overrideRecord(vigorTester);
+    ESM4::Reference console;
+    console.mId = consoleId;
+    store.overrideRecord(console);
+
+    std::vector<std::pair<ESM::FormId, bool>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSetDestroyedHandler([&](ESM::FormId target, bool destroyed) {
+        calls.emplace_back(target, destroyed);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(setQuestId, 65));
+    ASSERT_TRUE(runtime.setStage(clearQuestId, 25));
+    EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{
+                         { vigorTesterId, true },
+                         { consoleId, false },
+                     }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failed;
+    failed.setSetDestroyedHandler([](ESM::FormId, bool) { return false; });
+    failed.initialize(store);
+    ASSERT_TRUE(failed.setStage(setQuestId, 65));
+    EXPECT_EQ(failed.getUnsupportedStageCommands(),
+        (std::vector<std::string>{ "SetDestroyed FormId:0x104c13 1" }));
+}
+
+TEST(ESM4QuestRuntimeTest, PreservesAuthoredAndRuntimeDestroyedReferenceState)
+{
+    ESM4::Reference reference;
+    reference.mFlags = ESM4::Rec_Destroyed;
+    MWWorld::RefData state(reference);
+    EXPECT_TRUE(state.isDestroyed());
+    EXPECT_FALSE(state.hasChanged());
+    EXPECT_FALSE(state.activate());
+
+    state.setDestroyed(false);
+    EXPECT_FALSE(state.isDestroyed());
+    EXPECT_TRUE(state.hasChanged());
+    EXPECT_TRUE(state.activate());
+
+    state.setDestroyed(true);
+    ESM::ObjectState saved;
+    state.write(saved);
+    MWWorld::RefData restored(saved, false);
+    EXPECT_TRUE(restored.isDestroyed());
+    EXPECT_FALSE(restored.activate());
+
+    ESM4::ActorCharacter actor;
+    actor.mFlags = ESM4::Rec_Destroyed;
+    EXPECT_TRUE(MWWorld::RefData(actor).isDestroyed());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesSetDestroyedFromWholeSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120300, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120301, .mContentFile = 0 };
+    ESM4::Reference target;
+    target.mId = targetId;
+    target.mEditorId = "FallbackConsoleREF";
+    store.overrideRecord(target);
+
+    ESM4::Quest quest = makeQuest(questId, "SetDestroyedFallback");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x00, 0x00 };
+    entry.mScript.scriptSource = "FallbackConsoleREF.SetDestroyed 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    std::vector<std::pair<ESM::FormId, bool>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setSetDestroyedHandler([&](ESM::FormId id, bool destroyed) {
+        calls.emplace_back(id, destroyed);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{ { targetId, true } }));
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 

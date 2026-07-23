@@ -413,6 +413,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x108b
+                && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
@@ -922,6 +923,25 @@ namespace MWWorld
                     type = CompiledQuestCommandType::Unlock;
                 prepared.mCommands.push_back({ type, target });
             }
+            else if (instruction.opcode == 0x10cc) // reference.SetDestroyed bool
+            {
+                if (!instruction.callingReferenceIndex || arguments.size() != 1 || !mSetDestroyedHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
+                const std::int32_t* destroyed = std::get_if<std::int32_t>(&arguments[0]);
+                const bool targetExists = mStore->get<ESM4::Reference>().search(target) != nullptr
+                    || mStore->get<ESM4::ActorCharacter>().search(target) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(target) != nullptr;
+                // Frozen FalloutNV.esm corpus: all 43 frames have one literal boolean argument; 32 set and 11 clear.
+                if (!targetExists || destroyed == nullptr || (*destroyed != 0 && *destroyed != 1))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetDestroyed;
+                command.mQuest = target;
+                command.mValue = *destroyed != 0;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1034) // reference.SayTo listener topic
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mSayToHandler
@@ -1421,7 +1441,8 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::AddItem
             || command.mType == CompiledQuestCommandType::RemoveItem
             || command.mType == CompiledQuestCommandType::RewardXp
-            || command.mType == CompiledQuestCommandType::AddReputation)
+            || command.mType == CompiledQuestCommandType::AddReputation
+            || command.mType == CompiledQuestCommandType::SetDestroyed)
         {
             working.mExternalEffects.push_back(
                 { command.mType, command.mQuest, command.mTarget, command.mTopic,
@@ -1518,6 +1539,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
+            case CompiledQuestCommandType::SetDestroyed:
                 return false;
         }
         return false;
@@ -1724,6 +1746,10 @@ namespace MWWorld
                     executed = mAddReputationHandler
                         && mAddReputationHandler(effect.mTarget, effect.mValue, effect.mCount);
                     break;
+                case CompiledQuestCommandType::SetDestroyed:
+                    command = "SetDestroyed ";
+                    executed = mSetDestroyedHandler && mSetDestroyedHandler(effect.mTarget, effect.mValue);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
@@ -1734,6 +1760,8 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::AddReputation)
                 command += " " + std::to_string(static_cast<int>(effect.mValue)) + " "
                     + std::to_string(effect.mCount);
+            if (effect.mType == CompiledQuestCommandType::SetDestroyed)
+                command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::AddItem
                 || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
@@ -1973,6 +2001,9 @@ namespace MWWorld
                             executed = mAddReputationHandler
                                 && mAddReputationHandler(command.mQuest, command.mValue, command.mObjective);
                             break;
+                        case CompiledQuestCommandType::SetDestroyed:
+                            executed = mSetDestroyedHandler && mSetDestroyedHandler(command.mQuest, command.mValue);
+                            break;
                     }
                     if (!executed)
                     {
@@ -1989,7 +2020,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::AddItem
                             || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp
-                            || command.mType == CompiledQuestCommandType::AddReputation)
+                            || command.mType == CompiledQuestCommandType::AddReputation
+                            || command.mType == CompiledQuestCommandType::SetDestroyed)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -2026,6 +2058,9 @@ namespace MWWorld
                                 failure = "AddReputation " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + std::to_string(static_cast<int>(command.mValue)) + " "
                                     + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::SetDestroyed)
+                                failure = "SetDestroyed " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + std::to_string(static_cast<int>(command.mValue));
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
@@ -2847,6 +2882,15 @@ namespace MWWorld
                     if (Misc::StringUtils::ciEqual(command, "Disable")
                         && executeReferenceCommand(ESM4QuestReferenceCommand::Disable, target))
                         continue;
+                    if (Misc::StringUtils::ciEqual(command, "SetDestroyed") && tokens.size() == 2)
+                    {
+                        std::int32_t destroyed = 0;
+                        const ESM::FormId reference = resolveReference(target);
+                        if (parseInt(tokens[1], destroyed) && (destroyed == 0 || destroyed == 1)
+                            && !reference.isZeroOrUnset() && mSetDestroyedHandler
+                            && mSetDestroyedHandler(reference, destroyed != 0))
+                            continue;
+                    }
                     if ((Misc::StringUtils::ciEqual(command, "evp")
                             || Misc::StringUtils::ciEqual(command, "EvaluatePackage"))
                         && executeReferenceCommand(ESM4QuestReferenceCommand::EvaluatePackage, target))

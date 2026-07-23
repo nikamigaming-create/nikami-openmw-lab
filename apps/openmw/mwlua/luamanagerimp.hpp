@@ -99,6 +99,8 @@ namespace MWLua
         }
         void objectActivated(const MWWorld::Ptr& object, const MWWorld::Ptr& actor) override
         {
+            if (object.getRefData().isDestroyed())
+                return;
             mEngineEvents.addToQueue(EngineEvents::OnActivate{ getId(actor), getId(object) });
         }
         void useItem(const MWWorld::Ptr& object, const MWWorld::Ptr& actor, bool force) override;

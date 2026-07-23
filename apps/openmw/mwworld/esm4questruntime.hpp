@@ -135,6 +135,7 @@ namespace MWWorld
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
         using AddReputationHandler = std::function<bool(ESM::FormId, bool, int)>;
+        using SetDestroyedHandler = std::function<bool(ESM::FormId, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -159,6 +160,7 @@ namespace MWWorld
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
         AddReputationHandler mAddReputationHandler;
+        SetDestroyedHandler mSetDestroyedHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -190,6 +192,7 @@ namespace MWWorld
             SayTo,
             RewardXp,
             AddReputation,
+            SetDestroyed,
         };
 
         enum class CompiledConditionValueType : std::uint8_t
@@ -350,6 +353,10 @@ namespace MWWorld
         void setAddReputationHandler(AddReputationHandler handler)
         {
             mAddReputationHandler = std::move(handler);
+        }
+        void setSetDestroyedHandler(SetDestroyedHandler handler)
+        {
+            mSetDestroyedHandler = std::move(handler);
         }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:

@@ -123,6 +123,10 @@ namespace MWWorld
 
         void disable();
 
+        bool isDestroyed() const;
+
+        void setDestroyed(bool destroyed);
+
         void setPosition(const ESM::Position& pos);
         const ESM::Position& getPosition() const;
 

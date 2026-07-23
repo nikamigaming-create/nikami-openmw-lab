@@ -227,6 +227,9 @@ namespace MWDialogue
             case ESM4::FUN_GetDead:
                 actual = actor.getClass().getCreatureStats(actor).isDead() ? 1.f : 0.f;
                 break;
+            case ESM4::FUN_GetDestroyed:
+                actual = actor.getRefData().isDestroyed() ? 1.f : 0.f;
+                break;
             case ESM4::FUN_GetLevel:
                 actual = static_cast<float>(actor.getClass().getCreatureStats(actor).getLevel());
                 break;
