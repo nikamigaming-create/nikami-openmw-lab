@@ -230,6 +230,17 @@ namespace MWDialogue
             case ESM4::FUN_GetDestroyed:
                 actual = actor.getRefData().isDestroyed() ? 1.f : 0.f;
                 break;
+            case ESM4::FUN_GetMapMarkerVisible:
+            {
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                const ESM::RefNum marker = actor.getCellRef().getRefNum();
+                if (!marker.isSet())
+                    return std::nullopt;
+                actual = static_cast<float>(world->getFalloutMapMarkerState(marker));
+                break;
+            }
             case ESM4::FUN_GetLevel:
                 actual = static_cast<float>(actor.getClass().getCreatureStats(actor).getLevel());
                 break;

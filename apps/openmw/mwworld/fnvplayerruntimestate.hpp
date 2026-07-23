@@ -61,7 +61,7 @@ namespace MWWorld
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 4;
+        static constexpr std::uint32_t SaveVersion = 5;
 
     private:
         struct CurrentState
@@ -82,6 +82,9 @@ namespace MWWorld
         std::array<float, ActorValueCount> mTemporaryModifiers{};
         std::vector<FalloutSavePlayerHeaderState::PerkRank> mPerks;
         std::map<ESM::FormId, FalloutReputationValue> mReputations;
+        // Per-player discovery state for Fallout world-map references. Values use the retail
+        // GetMapMarkerVisible contract: 0 hidden, 1 visible, 2 visible and fast-travel enabled.
+        std::map<ESM::FormId, std::uint8_t> mMapMarkerStates;
         // Transient input/mechanics coordination only. V.A.T.S. owns its queue in ActionManager and this flag keeps
         // the ordinary held-attack path from firing an additional unqueued shot while targeting or executing.
         bool mVatsActive = false;
@@ -116,6 +119,8 @@ namespace MWWorld
         [[nodiscard]] std::optional<int> getReputationThreshold(
             ESM::FormId reputation, float maximum, std::uint32_t axis) const;
         bool addReputationBump(ESM::FormId reputation, bool fame, float maximum, int bump);
+        [[nodiscard]] std::optional<std::uint8_t> getMapMarkerState(ESM::FormId marker) const;
+        bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
         bool isVatsActive() const { return mVatsActive; }
         void setVatsActive(bool active) { mVatsActive = active; }
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);

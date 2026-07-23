@@ -41,21 +41,30 @@ namespace ESM4
     class Reader;
     class Writer;
 
-    enum MapMarkerType
+    enum MapMarkerType : std::uint8_t
     {
-        Map_None = 0x00, // ?
-        Map_Camp = 0x01,
-        Map_Cave = 0x02,
-        Map_City = 0x03,
-        Map_ElvenRuin = 0x04,
-        Map_FortRuin = 0x05,
-        Map_Mine = 0x06,
-        Map_Landmark = 0x07,
-        Map_Tavern = 0x08,
-        Map_Settlement = 0x09,
-        Map_DaedricShrine = 0x0A,
-        Map_OblivionGate = 0x0B,
-        Map_Unknown = 0x0C // ? (door icon)
+        Map_None = 0x00,
+        Map_City = 0x01,
+        Map_Settlement = 0x02,
+        Map_Encampment = 0x03,
+        Map_NaturalLandmark = 0x04,
+        Map_Cave = 0x05,
+        Map_Factory = 0x06,
+        Map_Monument = 0x07,
+        Map_Military = 0x08,
+        Map_Office = 0x09,
+        Map_TownRuins = 0x0A,
+        Map_UrbanRuins = 0x0B,
+        Map_SewerRuins = 0x0C,
+        Map_Metro = 0x0D,
+        Map_Vault = 0x0E,
+    };
+
+    enum MapMarkerFlags : std::uint8_t
+    {
+        MapMarker_Visible = 0x01,
+        MapMarker_CanTravel = 0x02,
+        MapMarker_ShowAllHidden = 0x04,
     };
 
     struct TeleportDest
@@ -110,7 +119,8 @@ namespace ESM4
         std::int32_t mFactionRank = -1;
 
         bool mIsMapMarker = false;
-        std::uint16_t mMapMarker;
+        std::uint8_t mMapMarkerFlags = 0;
+        std::uint8_t mMapMarkerType = Map_None;
 
         EnableParent mEsp;
 

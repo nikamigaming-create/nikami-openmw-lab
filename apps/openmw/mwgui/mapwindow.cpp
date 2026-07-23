@@ -19,6 +19,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
 #include <components/esm/util.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/debug/debuglog.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
@@ -38,6 +39,7 @@
 #include "../mwrender/localmap.hpp"
 
 #include "confirmationdialog.hpp"
+#include "fnvmapmarker.hpp"
 
 #include <numeric>
 
@@ -1226,6 +1228,100 @@ namespace MWGui
         return markerWidget;
     }
 
+    MyGUI::Widget* MapWindow::createFalloutMapMarker(const ESM4::Reference& marker)
+    {
+        float imageX = 0.f;
+        float imageY = 0.f;
+        worldPosToGlobalMapImageSpace(marker.mPos.pos[0], marker.mPos.pos[1], imageX, imageY);
+        constexpr int markerSize = 32;
+        MyGUI::ImageBox* markerWidget = mGlobalMap->createWidget<MyGUI::ImageBox>("ImageBox",
+            MyGUI::IntCoord(static_cast<int>(imageX) - markerSize / 2,
+                static_cast<int>(imageY) - markerSize / 2, markerSize, markerSize),
+            MyGUI::Align::Default);
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        markerWidget->setImageTexture(
+            Misc::ResourceHelpers::correctTexturePath(getFalloutMapMarkerIcon(marker.mMapMarkerType), vfs));
+        markerWidget->setUserString("Caption_TextOneLine", marker.mFullName);
+        markerWidget->setUserString("ToolTipType", "Layout");
+        markerWidget->setUserString("ToolTipLayout", "TextToolTipOneLine");
+        markerWidget->setNeedMouseFocus(true);
+        markerWidget->setUserData(marker.mId);
+        markerWidget->setColour(
+            MyGUI::Colour::parse(MyGUI::LanguageManager::getInstance().replaceTags("#{fontcolour=normal}")));
+        markerWidget->setDepth(Global_MarkerLayer);
+        markerWidget->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
+        markerWidget->eventMouseButtonPressed += MyGUI::newDelegate(this, &MapWindow::onDragStart);
+        markerWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &MapWindow::onFalloutMapMarkerClicked);
+        if (Settings::map().mAllowZooming)
+            markerWidget->eventMouseWheel += MyGUI::newDelegate(this, &MapWindow::onMapZoomed);
+        return markerWidget;
+    }
+
+    void MapWindow::onFalloutMapMarkerClicked(MyGUI::Widget* sender)
+    {
+        requestFalloutFastTravel(*sender->getUserData<ESM::FormId>());
+    }
+
+    bool MapWindow::requestFalloutFastTravel(ESM::FormId markerId)
+    {
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const ESM4::Reference* marker = world->getStore().get<ESM4::Reference>().search(markerId);
+        if (marker == nullptr || world->getFalloutMapMarkerState(markerId) != 2)
+        {
+            MWBase::Environment::get().getWindowManager()->messageBox("You have not discovered that location.");
+            return false;
+        }
+
+        mPendingFalloutFastTravelMarker = markerId;
+        ConfirmationDialog* confirmation = MWBase::Environment::get().getWindowManager()->getConfirmationDialog();
+        confirmation->askForConfirmation("Fast travel to " + marker->mFullName + "?");
+        confirmation->eventCancelClicked.clear();
+        confirmation->eventOkClicked.clear();
+        confirmation->eventOkClicked += MyGUI::newDelegate(this, &MapWindow::onFalloutFastTravelConfirmed);
+        return true;
+    }
+
+    void MapWindow::confirmFalloutFastTravel()
+    {
+        onFalloutFastTravelConfirmed();
+    }
+
+    void MapWindow::onFalloutFastTravelConfirmed()
+    {
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        std::string error;
+        if (!world->fastTravelToFalloutMapMarker(mPendingFalloutFastTravelMarker, error))
+        {
+            MWBase::Environment::get().getWindowManager()->messageBox(error);
+            return;
+        }
+
+        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Inventory);
+        mPendingFalloutFastTravelMarker = {};
+    }
+
+    void MapWindow::refreshFalloutMapMarkers()
+    {
+        for (const auto& [id, widget] : mFalloutMapMarkers)
+            MyGUI::Gui::getInstance().destroyWidget(widget);
+        mFalloutMapMarkers.clear();
+
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world == nullptr || !isFalloutContentLoaded())
+            return;
+        const auto& references = world->getStore().get<ESM4::Reference>();
+        for (std::size_t index = 0; index < references.getSize(); ++index)
+        {
+            const ESM4::Reference* marker = references.at(index);
+            if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty()
+                || world->getFalloutMapMarkerState(marker->mId) == 0)
+                continue;
+            mFalloutMapMarkers.emplace(marker->mId, createFalloutMapMarker(*marker));
+        }
+        Log(Debug::Info) << "FNV/ESM4 map: rendered " << mFalloutMapMarkers.size()
+                         << " exact world-map markers";
+    }
+
     void MapWindow::addVisitedLocation(const std::string& name, int x, int y)
     {
         CellId cell;
@@ -1318,23 +1414,15 @@ namespace MWGui
     {
         if (isFalloutContentLoaded())
         {
-            constexpr float minCellX = -20.f;
-            constexpr float maxCellX = 16.f;
-            constexpr float minCellY = -16.f;
-            constexpr float maxCellY = 16.f;
-            constexpr float mapSize = 1024.f;
-
-            const float cellX = x / static_cast<float>(Constants::CellSizeInUnits);
-            const float cellY = y / static_cast<float>(Constants::CellSizeInUnits);
-            imageX = std::clamp((cellX - minCellX) / (maxCellX - minCellX), 0.f, 1.f) * mapSize * mGlobalMapZoom;
-            imageY = std::clamp((maxCellY - cellY) / (maxCellY - minCellY), 0.f, 1.f) * mapSize * mGlobalMapZoom;
+            const FalloutMapImagePosition image = projectFalloutWorldMapPosition(x, y, mGlobalMapZoom);
+            imageX = image.mX;
+            imageY = image.mY;
 
             static int loggedFalloutMapProjection = 0;
             if (loggedFalloutMapProjection < 12)
             {
                 Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map projection world=(" << x << "," << y
-                                 << ") cell=(" << cellX << "," << cellY << ") image=(" << imageX << ","
-                                 << imageY << ")";
+                                 << ") image=(" << imageX << "," << imageY << ")";
                 ++loggedFalloutMapProjection;
             }
             return;
@@ -1421,6 +1509,7 @@ namespace MWGui
     void MapWindow::onOpen()
     {
         ensureGlobalMapLoaded();
+        refreshFalloutMapMarkers();
 
         globalMapUpdatePlayer();
     }
@@ -1537,6 +1626,9 @@ namespace MWGui
             MyGUI::Gui::getInstance().destroyWidget(widgetPair.first.widget);
         mGlobalMapMarkers.clear();
         mGlobalMapMarkersByName.clear();
+        for (const auto& [id, widget] : mFalloutMapMarkers)
+            MyGUI::Gui::getInstance().destroyWidget(widget);
+        mFalloutMapMarkers.clear();
     }
 
     void MapWindow::write(ESM::ESMWriter& writer, Loading::Listener& progress)

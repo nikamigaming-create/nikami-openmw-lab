@@ -53,6 +53,8 @@ namespace
             writer.writeHNT("PCNT", std::uint32_t{ 0 });
         if (version >= 4)
             writer.writeHNT("RCNT", std::uint32_t{ 0 });
+        if (version >= 5)
+            writer.writeHNT("MCNT", std::uint32_t{ 0 });
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -111,6 +113,9 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSav
     runtime.initialize(makeBaseState(2));
 
     ASSERT_TRUE(runtime.addReputationBump(goodsprings, true, 15.f, 5));
+    const ESM::FormId marker{ .mIndex = 0x15a2e6, .mContentFile = 2 };
+    ASSERT_TRUE(runtime.setMapMarkerState(marker, 1));
+    ASSERT_EQ(runtime.getMapMarkerState(marker), 1);
     ASSERT_TRUE(runtime.addReputationBump(goodsprings, false, 15.f, 3));
     ASSERT_TRUE(runtime.getReputation(goodsprings));
     EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 12.f);
@@ -147,6 +152,8 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSav
     EXPECT_FLOAT_EQ(restored.getReputation(remappedGoodsprings)->mFame, 15.f);
     EXPECT_FLOAT_EQ(restored.getReputation(remappedGoodsprings)->mInfamy, 4.f);
     EXPECT_EQ(restored.getReputationThreshold(remappedGoodsprings, 15.f, 1), 3);
+    const ESM::FormId remappedMarker{ .mIndex = marker.mIndex, .mContentFile = 7 };
+    EXPECT_EQ(restored.getMapMarkerState(remappedMarker), 1);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)

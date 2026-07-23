@@ -3,6 +3,7 @@
 
 #include "rotationflags.hpp"
 
+#include <cstdint>
 #include <deque>
 #include <optional>
 #include <set>
@@ -693,6 +694,12 @@ namespace MWBase
 
         virtual float getActivationDistancePlusTelekinesis() = 0;
         // ## VR_PATCH END
+
+        // Keep FNV extensions at the end so downstream objects compiled against
+        // the pre-extension interface retain their existing virtual-table slots.
+        virtual std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const = 0;
+        virtual bool showFalloutMapMarker(ESM::FormId marker, bool canTravel) = 0;
+        virtual bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) = 0;
     };
 }
 

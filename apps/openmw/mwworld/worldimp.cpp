@@ -37,6 +37,7 @@
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -116,6 +117,7 @@
 
 #include "contentloader.hpp"
 #include "esmloader.hpp"
+#include "fnvfasttravel.hpp"
 
 // ## VR_PATCH BEGIN
 #include "../mwvr/vrgui.hpp"
@@ -832,6 +834,10 @@ namespace MWWorld
                              << " destroyed=" << destroyed;
             return target.getRefData().isDestroyed() == destroyed;
         });
+        mESM4QuestRuntime.setShowMapHandler(
+            [this](ESM::FormId markerId, bool canTravel) {
+                return showFalloutMapMarker(markerId, canTravel);
+            });
         mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
             try
             {
@@ -1426,6 +1432,155 @@ namespace MWWorld
     int World::countSavedGameCells() const
     {
         return mWorldModel.countSavedGameRecords();
+    }
+
+    std::uint8_t World::getFalloutMapMarkerState(ESM::FormId marker) const
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker)
+            return 0;
+        if (const std::optional<std::uint8_t> state = mFalloutPlayerRuntimeState.getMapMarkerState(marker))
+            return *state;
+        if ((reference->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0)
+            return 2;
+        return (reference->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0 ? 1 : 0;
+    }
+
+    bool World::showFalloutMapMarker(ESM::FormId marker, bool canTravel)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker || reference->mFullName.empty())
+            return false;
+        const std::uint8_t requested = canTravel ? 2 : std::max<std::uint8_t>(1, getFalloutMapMarkerState(marker));
+        if (!mFalloutPlayerRuntimeState.setMapMarkerState(marker, requested))
+            return false;
+        if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+            windowManager->refreshFalloutMapMarkers();
+        Log(Debug::Info) << "FNV/ESM4 map: ShowMap id=" << ESM::RefId(marker).serializeText()
+                         << " name=\"" << reference->mFullName << "\" state="
+                         << static_cast<unsigned int>(requested);
+        return getFalloutMapMarkerState(marker) == requested;
+    }
+
+    bool World::fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        const ESM4::Cell* destinationCell
+            = reference == nullptr ? nullptr : mStore.get<ESM4::Cell>().search(reference->mParent);
+        const ESM4::World* destinationWorld
+            = destinationCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(destinationCell->mParent);
+
+        const MWWorld::Cell* playerCell
+            = getPlayerPtr().getCell() == nullptr ? nullptr : getPlayerPtr().getCell()->getCell();
+        const ESM4::Cell* currentCell
+            = playerCell != nullptr && playerCell->isEsm4() ? &playerCell->getEsm4() : nullptr;
+        const ESM4::World* currentWorld
+            = currentCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(currentCell->mParent);
+
+        FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, destinationCell,
+            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld, mPlayer->enemiesNearby());
+        if (!resolution)
+        {
+            error = std::move(resolution.mError);
+            Log(Debug::Warning) << "FNV/ESM4 map: fast travel rejected marker="
+                                << ESM::RefId(marker).serializeText() << " reason=\"" << error << "\"";
+            return false;
+        }
+
+        const FalloutFastTravelDestination& destination = *resolution.mDestination;
+        setPlayerTraveling(true);
+        // Use the normal gameplay teleport path so the player render node,
+        // camera, physics state, and followers all move with the cell change.
+        // Calling changeToCell directly only moved the world-side player
+        // state, leaving the rendered camera behind at the departure point.
+        ActionTeleport(destination.mCell, destination.mPosition, true).execute(getPlayerPtr());
+        Log(Debug::Info) << "FNV/ESM4 map: fast travel complete marker="
+                         << ESM::RefId(marker).serializeText() << " cell=" << destination.mCell << " pos=("
+                         << destination.mPosition.pos[0] << ", " << destination.mPosition.pos[1] << ", "
+                         << destination.mPosition.pos[2] << ")";
+        error.clear();
+        return true;
+    }
+
+    void World::discoverFalloutMapMarkersNearPlayer()
+    {
+        const MWWorld::Ptr player = getPlayerPtr();
+        if (!player.isInCell() || player.getCell()->getCell() == nullptr || !player.getCell()->getCell()->isExterior())
+            return;
+
+        const ESM::RefId playerWorldspace = player.getCell()->getCell()->getWorldSpace();
+        const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+        constexpr float revealDistance = 4000.f;
+        constexpr float revealDistanceSquared = revealDistance * revealDistance;
+        std::size_t discovered = 0;
+        std::size_t markerCount = 0;
+        std::size_t resolvedExteriorCount = 0;
+        std::size_t sameWorldspaceCount = 0;
+        const ESM4::Reference* nearestMarker = nullptr;
+        float nearestDistanceSquared = std::numeric_limits<float>::max();
+
+        const auto& references = mStore.get<ESM4::Reference>();
+        const bool auditAllMarkers = !mFalloutMapMarkerAuditLogged
+            && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT_ALL") != nullptr;
+        for (std::size_t index = 0; index < references.getSize(); ++index)
+        {
+            const ESM4::Reference* marker = references.at(index);
+            if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                continue;
+            ++markerCount;
+
+            const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+            if (markerCell == nullptr || !markerCell->isExterior())
+                continue;
+            ++resolvedExteriorCount;
+            if (markerCell->mParent != playerWorldspace)
+                continue;
+            ++sameWorldspaceCount;
+
+            const float distanceSquared = (marker->mPos.asVec3() - playerPosition).length2();
+            if (auditAllMarkers)
+            {
+                Log(Debug::Info) << "FNV/ESM4 map audit marker: id="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" cell=" << ESM::RefId(marker->mParent).serializeText() << " pos=("
+                                 << marker->mPos.pos[0] << ", " << marker->mPos.pos[1] << ", "
+                                 << marker->mPos.pos[2] << ")";
+            }
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestMarker = marker;
+                nearestDistanceSquared = distanceSquared;
+            }
+            if (getFalloutMapMarkerState(marker->mId) != 2 && distanceSquared <= revealDistanceSquared
+                && mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+            {
+                ++discovered;
+                Log(Debug::Info) << "FNV/ESM4 map: discovered marker="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" distance=" << std::sqrt(distanceSquared);
+            }
+        }
+
+        if (!mFalloutMapMarkerAuditLogged && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT") != nullptr)
+        {
+            mFalloutMapMarkerAuditLogged = true;
+            Log(Debug::Info) << "FNV/ESM4 map audit: markers=" << markerCount
+                             << " resolvedExterior=" << resolvedExteriorCount
+                             << " sameWorldspace=" << sameWorldspaceCount << " playerWorldspace="
+                             << playerWorldspace << " nearest="
+                             << (nearestMarker == nullptr ? "<none>" : nearestMarker->mFullName) << " nearestId="
+                             << (nearestMarker == nullptr ? "<none>"
+                                                         : ESM::RefId(nearestMarker->mId).serializeText())
+                             << " distance="
+                             << (nearestMarker == nullptr ? -1.f : std::sqrt(nearestDistanceSquared));
+        }
+
+        if (discovered != 0)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: proximity discovery published " << discovered << " marker(s)";
+        }
     }
 
     void World::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -2720,6 +2875,16 @@ namespace MWWorld
         updateNavigator();
 
         mPlayer->update();
+
+        if (!paused)
+        {
+            mFalloutMapMarkerDiscoveryTimer -= duration;
+            if (mFalloutMapMarkerDiscoveryTimer <= 0.f)
+            {
+                mFalloutMapMarkerDiscoveryTimer = 0.25f;
+                discoverFalloutMapMarkersNearPlayer();
+            }
+        }
 
         mPhysics->debugDraw();
 

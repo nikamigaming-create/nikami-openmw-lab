@@ -86,6 +86,7 @@ namespace MWWorld
         mTemporaryModifiers = {};
         mPerks.clear();
         mReputations.clear();
+        mMapMarkerStates.clear();
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -135,6 +136,7 @@ namespace MWWorld
         mTemporaryModifiers = temporary;
         mPerks.assign(perks.begin(), perks.end());
         mReputations.clear();
+        mMapMarkerStates.clear();
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -150,6 +152,7 @@ namespace MWWorld
         mTemporaryModifiers = {};
         mPerks.clear();
         mReputations.clear();
+        mMapMarkerStates.clear();
         mVatsActive = false;
     }
 
@@ -166,7 +169,7 @@ namespace MWWorld
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
             || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
-            || !mReputations.empty());
+            || !mReputations.empty() || !mMapMarkerStates.empty());
     }
 
     std::optional<FalloutRuntimeActorValue> FalloutPlayerRuntimeState::getBaseActorValue(
@@ -281,6 +284,22 @@ namespace MWWorld
             mReputations.erase(reputation);
         else
             mReputations[reputation] = value;
+        return true;
+    }
+
+    std::optional<std::uint8_t> FalloutPlayerRuntimeState::getMapMarkerState(ESM::FormId marker) const
+    {
+        if (!mBase || marker.isZeroOrUnset())
+            return std::nullopt;
+        const auto found = mMapMarkerStates.find(marker);
+        return found == mMapMarkerStates.end() ? std::nullopt : std::optional(found->second);
+    }
+
+    bool FalloutPlayerRuntimeState::setMapMarkerState(ESM::FormId marker, std::uint8_t state)
+    {
+        if (!mBase || marker.isZeroOrUnset() || state > 2)
+            return false;
+        mMapMarkerStates[marker] = state;
         return true;
     }
 
@@ -426,6 +445,12 @@ namespace MWWorld
             writer.writeHNT("RINF", value.mInfamy);
             writer.writeHNT("RFAM", value.mFame);
         }
+        writer.writeHNT("MCNT", static_cast<std::uint32_t>(mMapMarkerStates.size()));
+        for (const auto& [marker, state] : mMapMarkerStates)
+        {
+            writer.writeFormId(marker, true, "MPID");
+            writer.writeHNT("MPST", state);
+        }
         writer.endRecord(ESM::REC_FPLR);
     }
 
@@ -436,7 +461,7 @@ namespace MWWorld
 
         std::uint32_t version = 0;
         reader.getHNT(version, "VERS");
-        if (version != 1 && version != 2 && version != SaveVersion)
+        if (version < 1 || version > SaveVersion)
             invalidSave("unsupported version " + std::to_string(version));
 
         ESM::FormId player = reader.getFormId(true, "FORM");
@@ -500,6 +525,24 @@ namespace MWWorld
                     invalidSave("invalid or duplicate reputation identity");
             }
         }
+        std::map<ESM::FormId, std::uint8_t> mapMarkerStates;
+        if (version >= 5)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "MCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId marker = reader.getFormId(true, "MPID");
+                const bool markerContentAvailable = reader.applyContentFileMapping(marker);
+                std::uint8_t state = 0;
+                reader.getHNT(state, "MPST");
+                if (state > 2)
+                    invalidSave("invalid map marker state");
+                if (markerContentAvailable && (marker.isZeroOrUnset()
+                    || !mapMarkerStates.emplace(marker, state).second))
+                    invalidSave("invalid or duplicate map marker identity");
+            }
+        }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
@@ -525,5 +568,6 @@ namespace MWWorld
         mTemporaryModifiers = {};
         mPerks = std::move(perks);
         mReputations = std::move(reputations);
+        mMapMarkerStates = std::move(mapMarkerStates);
     }
 }

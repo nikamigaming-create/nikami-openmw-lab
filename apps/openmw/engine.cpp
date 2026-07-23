@@ -4404,6 +4404,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ACTIVATE_FRAME");
     static const int proofFalloutReloadFrame = getProofFrame("OPENMW_FNV_PROOF_RELOAD_FRAME");
     static const int proofFalloutWeaponAuditFrame = getProofFrame("OPENMW_FNV_PROOF_WEAPON_AUDIT_FRAME");
+    static const int proofFalloutFastTravelDiscoverFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_DISCOVER_FRAME");
+    static const int proofFalloutFastTravelSelectFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_SELECT_FRAME");
+    static const int proofFalloutFastTravelConfirmFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_CONFIRM_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
     static std::vector<std::string> proofActorBatchTargets
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
@@ -4433,6 +4439,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofFalloutQuickKeyActivated = false;
     static bool proofFalloutReloaded = false;
     static bool proofFalloutWeaponAudited = false;
+    static bool proofFalloutFastTravelDiscovered = false;
+    static bool proofFalloutFastTravelSelected = false;
+    static bool proofFalloutFastTravelConfirmed = false;
     static bool proofSayQueued = false;
     static bool proofDialogueTopicQueued = false;
     static bool proofTimedScript1Executed = false;
@@ -9083,6 +9092,52 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     };
     executeProofTimedScript(proofTimedScript1Frame, "OPENMW_PROOF_TIMED_SCRIPT_1", proofTimedScript1Executed);
     executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
+
+    const auto proofFalloutFastTravelMarker = [&]() -> std::optional<ESM::FormId> {
+        const char* markerText = std::getenv("OPENMW_FNV_PROOF_FAST_TRAVEL_MARKER");
+        if (markerText == nullptr || *markerText == '\0')
+            return std::nullopt;
+        try
+        {
+            const ESM::RefId marker = ESM::RefId::deserializeText(markerText);
+            if (const ESM::FormId* formId = marker.getIf<ESM::FormId>())
+                return *formId;
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV fast-travel proof: invalid marker \"" << markerText
+                              << "\": " << error.what();
+        }
+        return std::nullopt;
+    };
+    if (!proofFalloutFastTravelDiscovered && proofFalloutFastTravelDiscoverFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelDiscoverFrame) && proofRunning
+        && proofWorldReady && mWorld != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelDiscovered = marker && mWorld->showFalloutMapMarker(*marker, true);
+        Log(proofFalloutFastTravelDiscovered ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: discover result=" << (proofFalloutFastTravelDiscovered ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelSelected && proofFalloutFastTravelSelectFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelSelectFrame) && proofRunning
+        && proofWorldReady && mWindowManager != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelSelected = marker && mWindowManager->requestFalloutFastTravel(*marker);
+        Log(proofFalloutFastTravelSelected ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: select result=" << (proofFalloutFastTravelSelected ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelConfirmed && proofFalloutFastTravelConfirmFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelConfirmFrame) && proofRunning
+        && proofWorldReady && proofFalloutFastTravelSelected && mWindowManager != nullptr)
+    {
+        mWindowManager->confirmFalloutFastTravel();
+        proofFalloutFastTravelConfirmed = true;
+        Log(Debug::Info) << "FNV fast-travel proof: confirmed frame=" << frameNumber;
+    }
 
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
     const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");

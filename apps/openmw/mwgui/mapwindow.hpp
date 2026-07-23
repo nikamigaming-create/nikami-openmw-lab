@@ -25,6 +25,11 @@ namespace ESM
     class ESMWriter;
 }
 
+namespace ESM4
+{
+    struct Reference;
+}
+
 namespace MWWorld
 {
     class Cell;
@@ -245,6 +250,9 @@ namespace MWGui
         /// adds the marker to the global map
         /// @param name The ESM::Cell::mName
         void addVisitedLocation(const std::string& name, int x, int y);
+        void refreshFalloutMapMarkers();
+        bool requestFalloutFastTravel(ESM::FormId marker);
+        void confirmFalloutFastTravel();
 
         // reveals this cell's map on the global map
         void cellExplored(int x, int y);
@@ -283,6 +291,8 @@ namespace MWGui
         void zoomOnCursor(float speedDiff);
         void updateGlobalMap();
         void onCustomMarkerDoubleClicked(MyGUI::Widget* sender);
+        void onFalloutMapMarkerClicked(MyGUI::Widget* sender);
+        void onFalloutFastTravelConfirmed();
         void onNoteEditOk();
         void onNoteEditDelete();
         void onNoteEditDeleteConfirm();
@@ -296,6 +306,7 @@ namespace MWGui
         void worldPosToGlobalMapImageSpace(float x, float z, float& imageX, float& imageY) const;
         MyGUI::IntCoord createMarkerCoords(float x, float y, float agregatedWeight) const;
         MyGUI::Widget* createMarker(const std::string& name, float x, float y, float agregatedWeight);
+        MyGUI::Widget* createFalloutMapMarker(const ESM4::Reference& marker);
 
         MyGUI::ScrollView* mGlobalMap;
         std::unique_ptr<MyGUI::ITexture> mGlobalMapTexture;
@@ -329,6 +340,8 @@ namespace MWGui
 
         std::map<std::string, MapMarkerType> mGlobalMapMarkersByName;
         std::map<MapMarkerType, std::vector<MapMarkerType>> mGlobalMapMarkers;
+        std::map<ESM::FormId, MyGUI::Widget*> mFalloutMapMarkers;
+        ESM::FormId mPendingFalloutFastTravelMarker;
 
         EditNoteDialog mEditNoteDialog;
         ESM::CustomMarker mEditingMarker;

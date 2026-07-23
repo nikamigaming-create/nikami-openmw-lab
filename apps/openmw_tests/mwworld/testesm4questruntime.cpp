@@ -30,6 +30,7 @@
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/globals.hpp"
 #include "apps/openmw/mwworld/refdata.hpp"
+#include "apps/openmw/mwgui/fnvmapmarker.hpp"
 
 namespace
 {
@@ -1378,6 +1379,99 @@ TEST(ESM4QuestRuntimeTest, ExecutesSetDestroyedFromWholeSourceFallback)
 
     ASSERT_TRUE(runtime.setStage(questId, 5));
     EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{ { targetId, true } }));
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailVms54ShowMapFrame)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x157e60, .mContentFile = 0 };
+    const ESM::FormId markerId{ .mIndex = 0x15a2e6, .mContentFile = 0 };
+
+    ESM4::Reference marker;
+    marker.mId = markerId;
+    marker.mEditorId = "RemnantsBunkerMapMarker";
+    marker.mFullName = "Remnants Bunker";
+    marker.mIsMapMarker = true;
+    marker.mMapMarkerType = ESM4::Map_Cave;
+    store.overrideRecord(marker);
+
+    ESM4::Quest quest = makeQuest(questId, "VMS54");
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm VMS54 stage 30, byte-for-byte frame at the end of the entry:
+    // ShowMap RemnantsBunkerMapMarker. SCRO 2 is the marker and the absent optional
+    // argument means visible (state 1), not fast-travel enabled (state 2).
+    entry.mScript.compiledData = { 0x55, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00 };
+    entry.mScript.references = { questId, markerId };
+    quest.mStages.push_back({ .mIndex = 30, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    std::vector<std::pair<ESM::FormId, bool>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setShowMapHandler([&](ESM::FormId id, bool canTravel) {
+        calls.emplace_back(id, canTravel);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 30));
+    EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{ { markerId, false } }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    MWWorld::ESM4QuestRuntime failed;
+    failed.setShowMapHandler([](ESM::FormId, bool) { return false; });
+    failed.initialize(store);
+    ASSERT_TRUE(failed.setStage(questId, 30));
+    EXPECT_EQ(failed.getUnsupportedStageCommands(),
+        (std::vector<std::string>{ "ShowMap FormId:0x15a2e6" }));
+}
+
+TEST(ESM4QuestRuntimeTest, ProjectsRetailMarkerCoordinatesAndTypesToBethesdaMapAssets)
+{
+    // FalloutNV.esm 0015A2E6 RemnantsBunkerMapMarker, exact DATA XY and TNAM cave type.
+    const MWGui::FalloutMapImagePosition image
+        = MWGui::projectFalloutWorldMapPosition(-77326.984375f, 94496.046875f);
+    EXPECT_NEAR(image.mX, 300.392f, 0.01f);
+    EXPECT_NEAR(image.mY, 142.875f, 0.01f);
+    EXPECT_EQ(MWGui::getFalloutMapMarkerIcon(ESM4::Map_Cave),
+        "textures\\interface\\icons\\world map\\icon_map_cave.dds");
+    EXPECT_EQ(MWGui::getFalloutMapMarkerIcon(ESM4::Map_Vault),
+        "textures\\interface\\icons\\world map\\icon_map_vault.dds");
+    EXPECT_EQ(MWGui::getFalloutMapMarkerIcon(0xff),
+        "textures\\interface\\icons\\world map\\icon_map_undiscovered.dds");
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesShowMapOptionalTravelFromWholeSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120400, .mContentFile = 0 };
+    const ESM::FormId markerId{ .mIndex = 0x120401, .mContentFile = 0 };
+    ESM4::Reference marker;
+    marker.mId = markerId;
+    marker.mEditorId = "FallbackMapMarker";
+    marker.mFullName = "Fallback";
+    marker.mIsMapMarker = true;
+    store.overrideRecord(marker);
+
+    ESM4::Quest quest = makeQuest(questId, "ShowMapFallback");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x00, 0x00 };
+    entry.mScript.scriptSource = "ShowMap FallbackMapMarker, 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    std::vector<std::pair<ESM::FormId, bool>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setShowMapHandler([&](ESM::FormId id, bool canTravel) {
+        calls.emplace_back(id, canTravel);
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{ { markerId, true } }));
     EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }

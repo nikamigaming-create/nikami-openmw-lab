@@ -409,7 +409,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
-                && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
+                && instruction.opcode != 0x1055 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x108b
@@ -942,6 +942,25 @@ namespace MWWorld
                 command.mValue = *destroyed != 0;
                 prepared.mCommands.push_back(std::move(command));
             }
+            else if (instruction.opcode == 0x1055) // ShowMap marker
+            {
+                // Frozen FalloutNV.esm quest corpus: all 32 frames are non-reference-called and carry
+                // exactly one SCRO map-marker reference. None supplies the optional fast-travel flag.
+                if (instruction.callingReferenceIndex || arguments.size() != 1 || !mShowMapHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId* markerId = std::get_if<ESM::FormId>(&arguments[0]);
+                const ESM4::Reference* marker = markerId == nullptr
+                    ? nullptr
+                    : mStore->get<ESM4::Reference>().search(*markerId);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::ShowMap;
+                command.mQuest = *markerId;
+                command.mValue = false;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1034) // reference.SayTo listener topic
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mSayToHandler
@@ -1442,7 +1461,8 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::RemoveItem
             || command.mType == CompiledQuestCommandType::RewardXp
             || command.mType == CompiledQuestCommandType::AddReputation
-            || command.mType == CompiledQuestCommandType::SetDestroyed)
+            || command.mType == CompiledQuestCommandType::SetDestroyed
+            || command.mType == CompiledQuestCommandType::ShowMap)
         {
             working.mExternalEffects.push_back(
                 { command.mType, command.mQuest, command.mTarget, command.mTopic,
@@ -1540,6 +1560,7 @@ namespace MWWorld
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
             case CompiledQuestCommandType::SetDestroyed:
+            case CompiledQuestCommandType::ShowMap:
                 return false;
         }
         return false;
@@ -1750,6 +1771,10 @@ namespace MWWorld
                     command = "SetDestroyed ";
                     executed = mSetDestroyedHandler && mSetDestroyedHandler(effect.mTarget, effect.mValue);
                     break;
+                case CompiledQuestCommandType::ShowMap:
+                    command = "ShowMap ";
+                    executed = mShowMapHandler && mShowMapHandler(effect.mTarget, effect.mValue);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
@@ -1762,6 +1787,8 @@ namespace MWWorld
                     + std::to_string(effect.mCount);
             if (effect.mType == CompiledQuestCommandType::SetDestroyed)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
+            if (effect.mType == CompiledQuestCommandType::ShowMap && effect.mValue)
+                command += " 1";
             if (effect.mType == CompiledQuestCommandType::AddItem
                 || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
@@ -2004,6 +2031,9 @@ namespace MWWorld
                         case CompiledQuestCommandType::SetDestroyed:
                             executed = mSetDestroyedHandler && mSetDestroyedHandler(command.mQuest, command.mValue);
                             break;
+                        case CompiledQuestCommandType::ShowMap:
+                            executed = mShowMapHandler && mShowMapHandler(command.mQuest, command.mValue);
+                            break;
                     }
                     if (!executed)
                     {
@@ -2021,7 +2051,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp
                             || command.mType == CompiledQuestCommandType::AddReputation
-                            || command.mType == CompiledQuestCommandType::SetDestroyed)
+                            || command.mType == CompiledQuestCommandType::SetDestroyed
+                            || command.mType == CompiledQuestCommandType::ShowMap)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -2061,6 +2092,9 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::SetDestroyed)
                                 failure = "SetDestroyed " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + std::to_string(static_cast<int>(command.mValue));
+                            else if (command.mType == CompiledQuestCommandType::ShowMap)
+                                failure = "ShowMap " + ESM::RefId(command.mQuest).serializeText()
+                                    + (command.mValue ? " 1" : "");
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
@@ -2856,6 +2890,20 @@ namespace MWWorld
                             *ownerState, first, second, firstNeutral != 0, secondNeutral != 0);
                     continue;
                 }
+            }
+            else if ((tokens.size() == 2 || tokens.size() == 3)
+                && Misc::StringUtils::ciEqual(tokens[0], "ShowMap"))
+            {
+                std::string_view markerToken = tokens[1];
+                if (!markerToken.empty() && markerToken.back() == ',')
+                    markerToken.remove_suffix(1);
+                std::int32_t canTravel = 0;
+                const bool travelValid = tokens.size() == 2
+                    || (parseInt(tokens[2], canTravel) && (canTravel == 0 || canTravel == 1));
+                const ESM::FormId marker = resolveReference(markerToken);
+                if (travelValid && !marker.isZeroOrUnset() && mShowMapHandler
+                    && mShowMapHandler(marker, canTravel != 0))
+                    continue;
             }
             else if (tokens.size() == 3 && Misc::StringUtils::ciEqual(tokens[0], "SetAlly"))
             {

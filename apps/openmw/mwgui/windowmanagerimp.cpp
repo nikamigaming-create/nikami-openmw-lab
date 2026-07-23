@@ -2404,6 +2404,22 @@ namespace MWGui
         mMap->addVisitedLocation(name, x, y);
     }
 
+    void WindowManager::refreshFalloutMapMarkers()
+    {
+        mMap->refreshFalloutMapMarkers();
+    }
+
+    bool WindowManager::requestFalloutFastTravel(ESM::FormId marker)
+    {
+        return mMap != nullptr && mMap->requestFalloutFastTravel(marker);
+    }
+
+    void WindowManager::confirmFalloutFastTravel()
+    {
+        if (mConfirmationDialog != nullptr)
+            mConfirmationDialog->confirm();
+    }
+
     const Translation::Storage& WindowManager::getTranslationDataStorage() const
     {
         return mTranslationDataStorage;

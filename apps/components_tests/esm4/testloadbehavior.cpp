@@ -400,6 +400,36 @@ namespace
         EXPECT_FLOAT_EQ(reference.mPos.rot[2], position.rot[2]);
     }
 
+    TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutMapMarkerFlagsTypeNameAndPosition)
+    {
+        std::string payload;
+        appendSubRecord(payload, "NAME", std::uint32_t{ 0x10 });
+        appendSubRecord(payload, "XMRK", std::string_view{});
+        appendSubRecord(payload, "FNAM",
+            std::uint8_t{ ESM4::MapMarker_Visible | ESM4::MapMarker_CanTravel });
+        appendSubRecord(payload, "FULL", zString("Remnants Bunker"));
+        appendSubRecord(payload, "TNAM",
+            std::array<std::uint8_t, 2>{ ESM4::Map_Cave, 0 });
+        ESM::Position position{};
+        position.pos[0] = -77326.984375f;
+        position.pos[1] = 94496.046875f;
+        position.pos[2] = 10112.00390625f;
+        appendSubRecord(payload, "DATA", position);
+
+        auto reader = makeReader("REFR", 0x15a2e6, payload);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        EXPECT_TRUE(reference.mIsMapMarker);
+        EXPECT_EQ(reference.mMapMarkerFlags,
+            ESM4::MapMarker_Visible | ESM4::MapMarker_CanTravel);
+        EXPECT_EQ(reference.mMapMarkerType, ESM4::Map_Cave);
+        EXPECT_EQ(reference.mFullName, "Remnants Bunker");
+        EXPECT_FLOAT_EQ(reference.mPos.pos[0], position.pos[0]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[1], position.pos[1]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[2], position.pos[2]);
+    }
+
     TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutTriggerPrimitiveContract)
     {
         std::string payload;

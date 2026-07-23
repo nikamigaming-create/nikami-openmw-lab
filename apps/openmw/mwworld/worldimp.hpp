@@ -143,6 +143,8 @@ namespace MWWorld
 
         uint32_t mRandomSeed{};
         bool mIdsRebuilt{};
+        float mFalloutMapMarkerDiscoveryTimer = 0.f;
+        bool mFalloutMapMarkerAuditLogged = false;
 
         // not implemented
         World(const World&) = delete;
@@ -157,6 +159,7 @@ namespace MWWorld
         void updateSoundListener();
 
         void preloadSpells();
+        void discoverFalloutMapMarkersNearPlayer();
 
         MWWorld::Ptr getFacedObject(float maxDistance, bool ignorePlayer = true);
 
@@ -268,6 +271,9 @@ namespace MWWorld
         {
             return mFalloutPlayerRuntimeState;
         }
+        std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const override;
+        bool showFalloutMapMarker(ESM::FormId marker, bool canTravel) override;
+        bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) override;
 
         const std::vector<int>& getESMVersions() const override;
 
