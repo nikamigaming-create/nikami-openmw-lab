@@ -124,16 +124,18 @@ namespace
                 obs.on('OnActivate', function()
                     log[#log + 1] = 'activated:' .. tostring(obs._actionRef)
                 end)
+                obs.on('OnLoad', function() log[#log + 1] = 'loaded' end)
                 local script = obs.makeLocalScript()
                 local h = script.engineHandlers
                 if type(h) ~= 'table' then
                     return 'no engineHandlers'
                 end
+                h.onActive()
                 h.onUpdate(0.25)
                 h.onActivated('someactor')
                 local dtSeen = obs._dt
                 local save = h.onSave()
-                return #log, log[1], log[2], dtSeen, type(save.locals)
+                return #log, log[1], log[2], log[3], dtSeen, type(save.locals)
             end,
 
             makeLocalScriptEmpty = function()
@@ -381,12 +383,13 @@ namespace
         mLua.protectedCall([&](LuaUtil::LuaView& view) {
             sol::table log = view.sol().create_table();
             auto r = LuaUtil::call(s["makeLocalScript"], log)
-                         .get<std::tuple<int, std::string, std::string, double, std::string>>();
-            EXPECT_EQ(std::get<0>(r), 2); // both handlers fired
-            EXPECT_EQ(std::get<1>(r), "update");
-            EXPECT_EQ(std::get<2>(r), "activated:someactor");
-            EXPECT_DOUBLE_EQ(std::get<3>(r), 0.25); // dt captured for GetSecondsPassed
-            EXPECT_EQ(std::get<4>(r), "table"); // onSave returns serializable locals
+                         .get<std::tuple<int, std::string, std::string, std::string, double, std::string>>();
+            EXPECT_EQ(std::get<0>(r), 3); // OnLoad, GameMode, and OnActivate fired
+            EXPECT_EQ(std::get<1>(r), "loaded");
+            EXPECT_EQ(std::get<2>(r), "update");
+            EXPECT_EQ(std::get<3>(r), "activated:someactor");
+            EXPECT_DOUBLE_EQ(std::get<4>(r), 0.25); // dt captured for GetSecondsPassed
+            EXPECT_EQ(std::get<5>(r), "table"); // onSave returns serializable locals
         });
     }
 
