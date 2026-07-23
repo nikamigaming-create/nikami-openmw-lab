@@ -1086,9 +1086,9 @@ namespace MWRender
                     const osg::Camera* camera = renderInfo.getCurrentCamera();
                     const osg::Viewport* viewport = state == nullptr ? nullptr : state->getCurrentViewport();
                     const osg::Matrixd modelView
-                        = state == nullptr ? osg::Matrixd::identity() : state->getModelViewMatrix();
+                        = state == nullptr ? osg::Matrixd::identity() : osg::Matrixd(state->getModelViewMatrix());
                     const osg::Matrixd projection
-                        = state == nullptr ? osg::Matrixd::identity() : state->getProjectionMatrix();
+                        = state == nullptr ? osg::Matrixd::identity() : osg::Matrixd(state->getProjectionMatrix());
                     const osg::Matrixd modelViewProjection = modelView * projection;
 
                     FalloutCreatureScreenVertexAudit vertexAudit;
