@@ -180,19 +180,36 @@ namespace
                     obs.m('player', 'GetDistance', 'PlacedRef')
             end,
 
-            harvestActivation = function(events)
+            harvestActivation = function(events, animations)
                 local S = obs.locals('BarrelCactusScript')
                 obs.on('OnActivate', function()
                     if obs.b((S.State == 0) and obs.b(
                         (obs.v('GetActionRef') == obs.v('player')))) then
                         obs.m('player', 'AddItem', 'NVFreshBarrelCactusFruit', 1)
                         S.State = 1
+                        obs.f('PlayGroup', 'Forward', 1)
+                        obs.f('SetDestroyed', 1)
+                    end
+                end)
+                obs.on('OnLoad', function()
+                    if obs.b(S.State == 0) then
+                        obs.f('PlayGroup', 'Backward', 1)
+                    elseif obs.b(S.State == 1) then
+                        obs.f('PlayGroup', 'Forward', 1)
                     end
                 end)
                 local script = obs.makeLocalScript()
                 script.engineHandlers.onActivated(nearby.players[1])
+                local saved = script.engineHandlers.onSave()
+                S.State = 0
+                obs.f('SetDestroyed', 0)
+                script.engineHandlers.onLoad(saved)
+                script.engineHandlers.onActive()
+                script.engineHandlers.onActivated(nearby.players[1])
                 return #events, events[1].name, events[1].data.item,
-                    events[1].data.count, S.State
+                    events[1].data.count, S.State, animations[1].group,
+                    animations[1].loops, obs.f('GetDestroyed'),
+                    animations[2].group
             end,
 
             existingBindings = function(events)
@@ -237,6 +254,7 @@ namespace
             ['form:crate'] = crate,
         }
         local events = {}
+        local animations = {}
 
         local function inventory(obj)
             return {
@@ -270,6 +288,15 @@ namespace
             players = { player },
             getObjectByFormId = function(formId) return byFormId[formId] end,
         }
+        local animation = {
+            clearAnimationQueue = function() end,
+            playQueued = function(_, group, options)
+                animations[#animations + 1] = {
+                    group = group,
+                    loops = options.loops,
+                }
+            end,
+        }
         local types = {
             Actor = {
                 objectIsInstance = function(obj) return obj.kind == 'actor' end,
@@ -292,12 +319,14 @@ namespace
         }
         return {
             packages = {
+                ['openmw.animation'] = animation,
                 ['openmw.core'] = core,
                 ['openmw.nearby'] = nearby,
                 ['openmw.self'] = { object = own },
                 ['openmw.types'] = types,
             },
             events = events,
+            animations = animations,
         }
         )X");
 
@@ -425,6 +454,7 @@ namespace
             sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
             sol::table packages = factory["packages"];
             const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
                 { "openmw.core", packages["openmw.core"] },
                 { "openmw.nearby", packages["openmw.nearby"] },
                 { "openmw.self", packages["openmw.self"] },
@@ -451,6 +481,7 @@ namespace
             sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
             sol::table packages = factory["packages"];
             const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
                 { "openmw.core", packages["openmw.core"] },
                 { "openmw.nearby", packages["openmw.nearby"] },
                 { "openmw.self", packages["openmw.self"] },
@@ -475,6 +506,7 @@ namespace
             sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
             sol::table packages = factory["packages"];
             const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
                 { "openmw.core", packages["openmw.core"] },
                 { "openmw.nearby", packages["openmw.nearby"] },
                 { "openmw.self", packages["openmw.self"] },
@@ -501,6 +533,7 @@ namespace
             sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
             sol::table packages = factory["packages"];
             const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
                 { "openmw.core", packages["openmw.core"] },
                 { "openmw.nearby", packages["openmw.nearby"] },
                 { "openmw.self", packages["openmw.self"] },
@@ -508,13 +541,18 @@ namespace
             };
             sol::table s = mLua.runInNewSandbox(
                 VFS::Path::Normalized(bindingsDriverPath), "obscript-harvest-test", extraPackages);
-            const auto values = LuaUtil::call(s["harvestActivation"], factory["events"])
-                                    .get<std::tuple<int, std::string, std::string, int, int>>();
+            const auto values = LuaUtil::call(s["harvestActivation"], factory["events"], factory["animations"])
+                                    .get<std::tuple<int, std::string, std::string, int, int, std::string, int, int,
+                                        std::string>>();
             EXPECT_EQ(std::get<0>(values), 1);
             EXPECT_EQ(std::get<1>(values), "ObScriptAddItem");
             EXPECT_EQ(std::get<2>(values), "NVFreshBarrelCactusFruit");
             EXPECT_EQ(std::get<3>(values), 1);
             EXPECT_EQ(std::get<4>(values), 1);
+            EXPECT_EQ(std::get<5>(values), "Forward");
+            EXPECT_EQ(std::get<6>(values), 0);
+            EXPECT_EQ(std::get<7>(values), 1);
+            EXPECT_EQ(std::get<8>(values), "Forward");
         });
     }
 

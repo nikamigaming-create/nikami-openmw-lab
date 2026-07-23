@@ -252,12 +252,20 @@ function obs.makeLocalScript()
                 for k, v in pairs(entry.locals) do
                     locals[k] = v
                 end
-                return { locals = locals }
+                return { locals = locals, destroyed = obs._destroyed }
             end,
             onLoad = function(data)
                 if data and data.locals then
-                    entry.locals = setmetatable(data.locals, zerotable_mt)
+                    -- Generated handlers close over the original locals table,
+                    -- so restore it in place rather than replacing it.
+                    for key in pairs(entry.locals) do
+                        rawset(entry.locals, key, nil)
+                    end
+                    for key, value in pairs(data.locals) do
+                        rawset(entry.locals, key, value)
+                    end
                 end
+                obs._destroyed = data and data.destroyed or nil
             end,
         },
     }
