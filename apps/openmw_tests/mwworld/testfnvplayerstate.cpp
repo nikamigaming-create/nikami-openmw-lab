@@ -127,6 +127,11 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        ESM4::FONVSavePlayerActorValueData actorValues;
+        actorValues.mActorValues378[24].mValue = 10.f;
+        actorValues.mActorValues378[24].mRange = { 1700, 4 };
+        result.mPlayerActorValueData = std::move(actorValues);
+
         ESM4::FONVSavePlayerProcessInventoryData processInventory;
         processInventory.mProcessLevel.mValue = 0;
         ESM4::FONVSavePlayerActorExtraData factionExtra;
@@ -215,6 +220,21 @@ namespace
 
         ESM4::FONVSavePlayerMobileObjectProcessState processState;
         processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        ESM4::FONVSavePlayerProcessModifier healthDamage;
+        healthDamage.mActorValue.mValue = 16;
+        healthDamage.mModifier.mValue = -25.f;
+        healthDamage.mRange = { 1710, 7 };
+        processState.mLowProcess.mDamageModifiers.push_back(healthDamage);
+        ESM4::FONVSavePlayerProcessModifier limbDamage;
+        limbDamage.mActorValue.mValue = 25;
+        limbDamage.mModifier.mValue = -40.f;
+        limbDamage.mRange = { 1717, 7 };
+        processState.mLowProcess.mDamageModifiers.push_back(limbDamage);
+        ESM4::FONVSavePlayerProcessModifier speechTemporary;
+        speechTemporary.mActorValue.mValue = 43;
+        speechTemporary.mModifier.mValue = 5.f;
+        speechTemporary.mRange = { 1724, 7 };
+        processState.mMiddleLowProcess.mTempModifiers.push_back(speechTemporary);
         result.mPlayerMobileObjectProcessState = std::move(processState);
 
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
@@ -237,7 +257,20 @@ namespace
         objective.mQuest.mResolvedFormId = 0x01000042u;
         objective.mObjective.mValue = 10;
         questLists.mObjectives.push_back(std::move(objective));
+        ESM4::FONVSavePlayerCharacterPerkEntry primaryPerk;
+        primaryPerk.mPerk.mResolvedFormId = 0x00031dacu;
+        primaryPerk.mByt004.mValue = 0;
+        primaryPerk.mRange = { 1731, 6 };
+        questLists.mPerks.push_back(primaryPerk);
         result.mPlayerCharacterListsState = std::move(questLists);
+
+        ESM4::FONVSavePlayerCharacterFinalState finalState;
+        ESM4::FONVSavePlayerCharacterPerkEntry alternatePerk;
+        alternatePerk.mPerk.mResolvedFormId = 0x01000044u;
+        alternatePerk.mByt004.mValue = 1;
+        alternatePerk.mRange = { 1737, 6 };
+        finalState.mPerksAD4.push_back(alternatePerk);
+        result.mPlayerCharacterFinalState = std::move(finalState);
 
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
@@ -746,6 +779,18 @@ namespace
                 { form(0x0001b2a4, 1), -2, 1800 },
                 { form(0x00012345, 1), 3, 1806 },
             } }));
+        EXPECT_THAT(plan.mPlayer.mActorValueModifiers,
+            ElementsAreArray(std::array<MWWorld::FalloutSavePlayerHeaderState::ActorValueModifier, 4>{ {
+                { 24, 10.f, MWWorld::FalloutSavePlayerHeaderState::ActorValueModifierKind::Permanent, 1700 },
+                { 16, -25.f, MWWorld::FalloutSavePlayerHeaderState::ActorValueModifierKind::Damage, 1710 },
+                { 25, -40.f, MWWorld::FalloutSavePlayerHeaderState::ActorValueModifierKind::Damage, 1717 },
+                { 43, 5.f, MWWorld::FalloutSavePlayerHeaderState::ActorValueModifierKind::Temporary, 1724 },
+            } }));
+        EXPECT_THAT(plan.mPlayer.mPerks,
+            ElementsAreArray(std::array<MWWorld::FalloutSavePlayerHeaderState::PerkRank, 2>{ {
+                { form(0x00031dac, 1), 0, false, 1731 },
+                { form(0x00000044, 2), 1, true, 1737 },
+            } }));
         ASSERT_EQ(plan.mPlayer.mWornVisualItems.size(), 3u);
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mRecord, form(0x00025b83, 1));
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[1].mRecord, form(0x00015038, 1));
@@ -809,6 +854,10 @@ namespace
         EXPECT_THAT(plan.mUncoveredState, Contains("player-weapon-current-action-clip-reload-state"));
         EXPECT_THAT(plan.mUncoveredState, Contains("player-reputation-crime-disguise"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-factions-reputation-crime-disguise")));
+        EXPECT_THAT(plan.mUncoveredState,
+            Not(Contains("player-runtime-actor-values-modifiers-health-limbs-perks")));
+        EXPECT_THAT(plan.mUncoveredState, Contains("player-runtime-actor-value-unidentified-arrays-244-4b0"));
+        EXPECT_THAT(plan.mUncoveredState, Contains("player-perk-entry-point-effects"));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("quest-stages-objectives-variables")));
 

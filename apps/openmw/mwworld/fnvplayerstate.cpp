@@ -199,7 +199,8 @@ namespace
     std::vector<std::string> falloutSaveLoadBlockers()
     {
         return {
-            "player-runtime-actor-values-modifiers-health-limbs-perks",
+            "player-runtime-actor-value-unidentified-arrays-244-4b0",
+            "player-perk-entry-point-effects",
             "player-weapon-current-action-clip-reload-state",
             "player-reputation-crime-disguise",
             "quest-stages-objectives-variables",
@@ -644,6 +645,59 @@ namespace MWWorld
                     *faction, change.mRank.mValue, change.mRange.mOffset });
             }
         }
+
+        if (!save.mPlayerActorValueData)
+            return loadFailure("FNV save does not expose canonical Player actor-value arrays");
+        const ESM4::FONVSavePlayerActorValueData& actorValues = *save.mPlayerActorValueData;
+        for (std::size_t actorValue = 0; actorValue < actorValues.mActorValues378.size(); ++actorValue)
+        {
+            const ESM4::FONVSaveField<float>& modifier = actorValues.mActorValues378[actorValue];
+            if (modifier.mValue == 0.f)
+                continue;
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                static_cast<std::uint8_t>(actorValue), modifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Permanent, modifier.mRange.mOffset });
+        }
+        for (const ESM4::FONVSavePlayerProcessModifier& modifier
+            : save.mPlayerMobileObjectProcessState->mLowProcess.mDamageModifiers)
+        {
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                modifier.mActorValue.mValue, modifier.mModifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Damage, modifier.mRange.mOffset });
+        }
+        for (const ESM4::FONVSavePlayerProcessModifier& modifier
+            : save.mPlayerMobileObjectProcessState->mMiddleLowProcess.mTempModifiers)
+        {
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                modifier.mActorValue.mValue, modifier.mModifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Temporary, modifier.mRange.mOffset });
+        }
+
+        std::set<std::pair<bool, ESM::FormId>> savedPerks;
+        const auto appendPerks = [&](std::span<const ESM4::FONVSavePlayerCharacterPerkEntry> entries,
+                                     bool alternate) -> std::string {
+            for (const ESM4::FONVSavePlayerCharacterPerkEntry& entry : entries)
+            {
+                if (!entry.mPerk.mResolvedFormId)
+                    return "FNV save Player perk RefID did not resolve";
+                const std::optional<ESM::FormId> perk
+                    = normalizeSavedFormId(*entry.mPerk.mResolvedFormId, currentPluginIndices);
+                if (!perk)
+                    return "FNV save Player perk FormID has unsupported provenance";
+                if (!savedPerks.emplace(alternate, *perk).second)
+                    return "FNV save Player has duplicate perk identities in one rank list";
+                plan.mPlayer.mPerks.push_back(FalloutSavePlayerHeaderState::PerkRank{
+                    *perk, entry.mByt004.mValue, alternate, entry.mRange.mOffset });
+            }
+            return {};
+        };
+        if (!save.mPlayerCharacterListsState || !save.mPlayerCharacterFinalState)
+            return loadFailure("FNV save does not expose canonical Player perk lists");
+        if (const std::string error = appendPerks(save.mPlayerCharacterListsState->mPerks, false); !error.empty())
+            return loadFailure(error);
+        if (const std::string error = appendPerks(save.mPlayerCharacterFinalState->mPerksAD4, true); !error.empty())
+            return loadFailure(error);
+
         std::map<ESM::FormId, std::int64_t> inventoryTotals;
         std::map<ESM::FormId, std::int64_t> conditionedTotals;
         std::array<bool, 8> assignedHotkeys{};

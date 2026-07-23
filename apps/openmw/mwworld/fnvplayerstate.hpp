@@ -210,6 +210,35 @@ namespace MWWorld
             bool operator==(const FactionChange&) const = default;
         };
 
+        enum class ActorValueModifierKind : std::uint8_t
+        {
+            Permanent,
+            Damage,
+            Temporary,
+        };
+
+        struct ActorValueModifier
+        {
+            std::uint8_t mActorValue = 0;
+            float mModifier = 0.f;
+            ActorValueModifierKind mKind = ActorValueModifierKind::Permanent;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const ActorValueModifier&) const = default;
+        };
+
+        struct PerkRank
+        {
+            ESM::FormId mPerk;
+            // Exact PlayerCharacter list byte. The retail list is authoritative for possession; callers that need
+            // rank arithmetic must keep its zero-based representation distinct from user-facing rank numbers.
+            std::uint8_t mRankByte = 0;
+            bool mAlternate = false;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const PerkRank&) const = default;
+        };
+
         ESM::FormId mBaseRecord;
         ESM::FormId mReferenceRecord;
         std::size_t mSaveFalloutNewVegasMasterIndex = 0;
@@ -231,6 +260,8 @@ namespace MWWorld
         std::vector<HotkeyItem> mHotkeyItems;
         std::vector<AmmoSelection> mAmmoSelections;
         std::vector<FactionChange> mFactionChanges;
+        std::vector<ActorValueModifier> mActorValueModifiers;
+        std::vector<PerkRank> mPerks;
     };
 
     struct FalloutSaveLoadPlan

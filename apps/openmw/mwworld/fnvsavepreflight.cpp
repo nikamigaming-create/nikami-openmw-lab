@@ -16,11 +16,13 @@
 #include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "store.hpp"
 
 namespace
@@ -110,6 +112,26 @@ namespace
         }
         return {};
     }
+
+    std::string validatePlayerActorValuesAndPerks(
+        const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSavePlayerHeaderState::ActorValueModifier& modifier
+            : player.mActorValueModifiers)
+        {
+            if (modifier.mActorValue >= MWWorld::FalloutPlayerRuntimeState::ActorValueCount
+                || !std::isfinite(modifier.mModifier))
+            {
+                return "FNV save Player actor-value modifier is outside the supported native range";
+            }
+        }
+        for (const MWWorld::FalloutSavePlayerHeaderState::PerkRank& perk : player.mPerks)
+        {
+            if (store.get<ESM4::Perk>().search(ESM::RefId(perk.mPerk)) == nullptr)
+                return "FNV save Player perk is not a loaded PERK record: " + perk.mPerk.toString();
+        }
+        return {};
+    }
 }
 
 namespace MWWorld
@@ -138,6 +160,10 @@ namespace MWWorld
         const std::string factionError = validateFactionChanges(result.mContext->mPlan.mPlayer, store);
         if (!factionError.empty())
             return failure(factionError);
+        const std::string actorValueError
+            = validatePlayerActorValuesAndPerks(result.mContext->mPlan.mPlayer, store);
+        if (!actorValueError.empty())
+            return failure(actorValueError);
         for (const FalloutInventoryItem& item : result.mContext->mPlan.mPlayer.mInventoryItems)
         {
             if (store.find(ESM::RefId(item.mRecord)) == 0)

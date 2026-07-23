@@ -78,6 +78,8 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        result.mPlayerActorValueData.emplace();
+
         ESM4::FONVSavePlayerProcessInventoryData processInventory;
         processInventory.mProcessLevel.mValue = 0;
         result.mPlayerProcessInventoryData = std::move(processInventory);
@@ -91,6 +93,8 @@ namespace
         camera.mFirstPersonModelFov.mValue = 55.f;
         camera.mWorldFov.mValue = 75.f;
         result.mPlayerCharacterScalarReferenceState = std::move(camera);
+        result.mPlayerCharacterListsState.emplace();
+        result.mPlayerCharacterFinalState.emplace();
 
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
@@ -210,7 +214,7 @@ namespace
         ASSERT_TRUE(expectedPlan) << expectedPlan.mError;
         EXPECT_EQ(context.mPlan.mUncoveredState, expectedPlan.mPlan->mUncoveredState);
         EXPECT_THAT(context.mPlan.mUncoveredState, Contains("global-variables"));
-        EXPECT_THAT(context.mPlan.mUncoveredState, Contains("quest-stages-objectives-variables"));
+        EXPECT_THAT(context.mPlan.mUncoveredState, Contains("quest-variables"));
 
         int mutationCount = 0;
         bool rejected = false;
@@ -223,7 +227,7 @@ namespace
         {
             rejected = true;
             EXPECT_THAT(error.what(), HasSubstr("global-variables"));
-            EXPECT_THAT(error.what(), HasSubstr("quest-stages-objectives-variables"));
+            EXPECT_THAT(error.what(), HasSubstr("quest-variables"));
         }
         EXPECT_TRUE(rejected);
         EXPECT_EQ(mutationCount, 0);

@@ -247,6 +247,16 @@ namespace MWDialogue
                     return std::nullopt;
                 }
                 break;
+            case ESM4::FUN_HasPerk:
+            {
+                if (!isPlayer)
+                    return std::nullopt;
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                actual = world->getFalloutPlayerRuntimeState().hasPerk(parameter) ? 1.f : 0.f;
+                break;
+            }
             case ESM4::FUN_GetEquipped:
                 if (actorRef != nullptr)
                 {
