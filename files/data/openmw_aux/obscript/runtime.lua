@@ -228,6 +228,10 @@ function obs.makeLocalScript()
 
     return {
         engineHandlers = {
+            onActive = function()
+                local h = entry.handlers["onload"]
+                if h then fireAll(entry, h) end
+            end,
             onUpdate = function(dt)
                 obs._dt = dt
                 local h = entry.handlers["gamemode"]

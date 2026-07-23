@@ -118,6 +118,22 @@ namespace
         EXPECT_THAT(lua, HasSubstr("obs.m(\"SomeRef\", \"Enable\")"));
     }
 
+    TEST_F(ObScriptTranspilerTest, RetailHarvestActivation)
+    {
+        const std::string lua = transpile(
+            "scn BarrelCactusScript\n"
+            "int State\n"
+            "begin onActivate\n"
+            "if State == 0 && GetActionRef == player\n"
+            "player.additem NVFreshBarrelCactusFruit 1\n"
+            "set State to 1\n"
+            "endif\n"
+            "end\n");
+        EXPECT_THAT(lua, HasSubstr("obs.v(\"GetActionRef\") == obs.v(\"player\")"));
+        EXPECT_THAT(lua, HasSubstr("obs.m(\"player\", \"additem\", \"NVFreshBarrelCactusFruit\", 1)"));
+        EXPECT_THAT(lua, HasSubstr("S.State = 1"));
+    }
+
     TEST_F(ObScriptTranspilerTest, IfChainAndTruthiness)
     {
         const std::string lua = transpile(
