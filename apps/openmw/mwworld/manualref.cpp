@@ -1,5 +1,6 @@
 #include "manualref.hpp"
 #include <components/esm/records.hpp>
+#include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -89,12 +90,8 @@ namespace
                 return func(store.get<ESM::Weapon>());
             case ESM::REC_BODY:
                 return func(store.get<ESM::BodyPart>());
-            case ESM::REC_STAT4:
-                return func(store.get<ESM4::Static>());
-            case ESM::REC_TACT4:
-                return func(store.get<ESM4::TalkingActivator>());
-            case ESM::REC_TERM4:
-                return func(store.get<ESM4::Terminal>());
+            case ESM::REC_ACTI4:
+                return func(store.get<ESM4::Activator>());
             case ESM::REC_ALCH4:
                 return func(store.get<ESM4::Potion>());
             case ESM::REC_AMMO4:
@@ -105,18 +102,24 @@ namespace
                 return func(store.get<ESM4::Book>());
             case ESM::REC_CLOT4:
                 return func(store.get<ESM4::Clothing>());
+            case ESM::REC_INGR4:
+                return func(store.get<ESM4::Ingredient>());
+            case ESM::REC_MISC4:
+                return func(store.get<ESM4::MiscItem>());
+            case ESM::REC_STAT4:
+                return func(store.get<ESM4::Static>());
+            case ESM::REC_TACT4:
+                return func(store.get<ESM4::TalkingActivator>());
+            case ESM::REC_TERM4:
+                return func(store.get<ESM4::Terminal>());
             case ESM::REC_CREA4:
                 return func(store.get<ESM4::Creature>());
             case ESM::REC_IMOD4:
                 return func(store.get<ESM4::ItemMod>());
-            case ESM::REC_INGR4:
-                return func(store.get<ESM4::Ingredient>());
             case ESM::REC_KEYM4:
                 return func(store.get<ESM4::Key>());
             case ESM::REC_LIGH4:
                 return func(store.get<ESM4::Light>());
-            case ESM::REC_MISC4:
-                return func(store.get<ESM4::MiscItem>());
             case ESM::REC_NPC_4:
                 return func(store.get<ESM4::Npc>());
             case ESM::REC_WEAP4:

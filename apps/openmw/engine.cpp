@@ -13068,6 +13068,11 @@ void OMW::Engine::prepareEngine()
 
     VFS::registerArchives(mVFS.get(), mFileCollections, mArchives, true, &mEncoder.get()->getStatelessEncoder());
 
+    auto generatedFiles = std::make_unique<VFS::InMemoryArchive>("engine-generated files");
+    mGeneratedFiles = generatedFiles.get();
+    mVFS->addArchive(std::move(generatedFiles));
+    mVFS->buildIndex();
+
     mResourceSystem = std::make_unique<Resource::ResourceSystem>(
         mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());
     mResourceSystem->getSceneManager()->getShaderManager().setMaxTextureUnits(mGlMaxTextureImageUnits);
@@ -13219,6 +13224,9 @@ void OMW::Engine::prepareEngine()
     mDialogueManager = std::make_unique<MWDialogue::DialogueManager>(mExtensions, mTranslationDataStorage);
     mEnvironment.setDialogueManager(*mDialogueManager);
     Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine dialogue ready";
+
+    if (mGeneratedFiles != nullptr)
+        mLuaManager->compileObScripts(*mVFS, *mGeneratedFiles);
 
     mLuaManager->loadPermanentStorage(mCfgMgr.getUserConfigPath());
     mLuaManager->initPreLoad();
