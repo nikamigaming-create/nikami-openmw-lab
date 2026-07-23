@@ -135,6 +135,7 @@ namespace MWWorld
             SetObjectiveCompleted,
             SetObjectiveDisplayed,
             ForceActiveQuest,
+            SetVariable,
             EvaluatePackage,
             ShowMessage,
         };
@@ -146,6 +147,8 @@ namespace MWWorld
             std::int32_t mObjective = 0;
             bool mValue = false;
             std::uint8_t mStage = 0;
+            std::string mVariable;
+            float mNumber = 0.f;
         };
 
         struct CompiledStageScript

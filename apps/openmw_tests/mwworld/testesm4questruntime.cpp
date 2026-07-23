@@ -134,7 +134,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
     const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
     const ESM::FormId gecko1Id{ .mIndex = 0x10a1fe, .mContentFile = 0 };
     const ESM::FormId gecko2Id{ .mIndex = 0x10a1fd, .mContentFile = 0 };
-    const ESM::FormId questScriptId{ .mIndex = 0x10a215, .mContentFile = 0 };
+    const ESM::FormId questScriptId{ .mIndex = 0x10a1f0, .mContentFile = 0 };
 
     ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
     vcg02.mQuestScript = questScriptId;
@@ -160,7 +160,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
     ESM4::Script questScript;
     questScript.mId = questScriptId;
     questScript.mScript.localVarData
-        = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bShootingTutorialActive" } };
+        = { ESM4::ScriptLocalVariableData{ .index = 4, .variableName = "bShootingTutorialActive" } };
     store.overrideRecord(questScript);
 
     ESM4::ActorCreature cheyenne;
@@ -200,7 +200,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsGeckoTutorialReferenceEffects
         }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
     EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(),
-        (std::vector<std::uint16_t>{ 0x0015, 0x1021, 0x1021 }));
+        (std::vector<std::uint16_t>{ 0x1021, 0x1021 }));
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction)
@@ -210,6 +210,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction
     const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
     const ESM::FormId sunnyId{ .mIndex = 0x104e85, .mContentFile = 0 };
     const ESM::FormId tutorialQuestId{ .mIndex = 0x059c85, .mContentFile = 0 };
+    const ESM::FormId tutorialScriptId{ .mIndex = 0x104c01, .mContentFile = 0 };
     const ESM::FormId tutorialMessageId{ .mIndex = 0x0abc58, .mContentFile = 0 };
 
     ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
@@ -229,8 +230,26 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction
     store.overrideRecord(vcg02);
 
     ESM4::Quest tutorial = makeQuest(tutorialQuestId, "CGTutorial");
-    tutorial.mStages.push_back({ .mIndex = 90, .mEntries = { ESM4::QuestStageEntry{} } });
+    tutorial.mQuestScript = tutorialScriptId;
+    ESM4::QuestStageEntry tutorialEntry;
+    // FalloutNV.esm 00059C85 CGTutorial stage 90 entry 0, byte-for-byte:
+    // set CGTutorial.runTimer to 1; set CGTutorial.timer to 0.
+    const std::array<std::uint8_t, 28> retailTutorialScda{
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00, 0x02, 0x00, 0x20, 0x31, 0x15, 0x00,
+        0x0a, 0x00, 0x72, 0x01, 0x00, 0x66, 0x02, 0x00, 0x02, 0x00, 0x20, 0x30
+    };
+    tutorialEntry.mScript.compiledData.assign(retailTutorialScda.begin(), retailTutorialScda.end());
+    tutorialEntry.mScript.references = { tutorialQuestId };
+    tutorial.mStages.push_back({ .mIndex = 90, .mEntries = { std::move(tutorialEntry) } });
     store.overrideRecord(tutorial);
+    ESM4::Script tutorialScript;
+    tutorialScript.mId = tutorialScriptId;
+    tutorialScript.mEditorId = "VCGTutorialSCRIPT";
+    tutorialScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .type = 1, .variableName = "runTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .type = 0, .variableName = "timer" },
+    };
+    store.overrideRecord(tutorialScript);
     ESM4::ActorCharacter sunny;
     sunny.mId = sunnyId;
     sunny.mEditorId = "SunnyREF";
@@ -270,8 +289,73 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsSneakTutorialStageTransaction
     EXPECT_EQ(vcg02State->mObjectiveStatus.at(20), MWWorld::ESM4QuestState::Objective_Completed);
     EXPECT_EQ(tutorialState->mCurrentStage, 90);
     EXPECT_TRUE(tutorialState->mStageDone.at(90));
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "runTimer"), 1.f);
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "timer"), 0.f);
     EXPECT_EQ(evaluatedPackages, std::vector<ESM::FormId>{ sunnyId });
     EXPECT_EQ(shownMessages, std::vector<ESM::FormId>{ tutorialMessageId });
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsVatsTutorialStageTransaction)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId tutorialQuestId{ .mIndex = 0x059c85, .mContentFile = 0 };
+    const ESM::FormId tutorialScriptId{ .mIndex = 0x104c01, .mContentFile = 0 };
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mObjectives.push_back({ .mIndex = 30, .mDescription = "Kill the geckos at the well" });
+    ESM4::QuestStageEntry entry;
+    // FalloutNV.esm 0010A214 VCG02 stage 45 entry 0, byte-for-byte:
+    // display objective 30 and advance CGTutorial to stage 70.
+    const std::array<std::uint8_t, 33> retailScda{
+        0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x1e, 0x00, 0x00, 0x00, 0x6e, 0x01,
+        0x00, 0x00, 0x00, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x46, 0x00, 0x00,
+        0x00
+    };
+    entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+    entry.mScript.references = { vcg02Id, tutorialQuestId };
+    vcg02.mStages.push_back({ .mIndex = 45, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    ESM4::Quest tutorial = makeQuest(tutorialQuestId, "CGTutorial");
+    tutorial.mQuestScript = tutorialScriptId;
+    ESM4::QuestStageEntry tutorialEntry;
+    // FalloutNV.esm 00059C85 CGTutorial stage 70 entry 0, byte-for-byte:
+    // set CGTutorial.runTimer to 1; set CGTutorial.timer to 3.
+    const std::array<std::uint8_t, 28> retailTutorialScda{
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00, 0x02, 0x00, 0x20, 0x31, 0x15, 0x00,
+        0x0a, 0x00, 0x72, 0x01, 0x00, 0x66, 0x02, 0x00, 0x02, 0x00, 0x20, 0x33
+    };
+    tutorialEntry.mScript.compiledData.assign(retailTutorialScda.begin(), retailTutorialScda.end());
+    tutorialEntry.mScript.references = { tutorialQuestId };
+    tutorial.mStages.push_back({ .mIndex = 70, .mEntries = { std::move(tutorialEntry) } });
+    store.overrideRecord(tutorial);
+
+    ESM4::Script tutorialScript;
+    tutorialScript.mId = tutorialScriptId;
+    tutorialScript.mEditorId = "VCGTutorialSCRIPT";
+    tutorialScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .type = 1, .variableName = "runTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .type = 0, .variableName = "timer" },
+    };
+    store.overrideRecord(tutorialScript);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(vcg02Id, 45));
+    const MWWorld::ESM4QuestState* vcg02State = runtime.search(vcg02Id);
+    const MWWorld::ESM4QuestState* tutorialState = runtime.search(tutorialQuestId);
+    ASSERT_NE(vcg02State, nullptr);
+    ASSERT_NE(tutorialState, nullptr);
+    EXPECT_EQ(vcg02State->mCurrentStage, 45);
+    EXPECT_EQ(vcg02State->mObjectiveStatus.at(30), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(tutorialState->mCurrentStage, 70);
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "runTimer"), 1.f);
+    EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "timer"), 3.f);
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }

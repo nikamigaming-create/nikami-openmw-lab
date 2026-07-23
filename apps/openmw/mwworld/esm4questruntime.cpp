@@ -358,7 +358,7 @@ namespace MWWorld
                     || *instruction.callingReferenceIndex > script.references.size()))
                 return false;
 
-            if (instruction.opcode != 0x1036 && instruction.opcode != 0x1037
+            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1036 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2 && instruction.opcode != 0x11a3
                 && instruction.opcode != 0x11dd)
@@ -368,6 +368,51 @@ namespace MWWorld
                 continue;
             }
             std::span<const std::uint8_t> argumentPayload = instruction.arguments;
+            if (instruction.opcode == 0x0015) // set Quest.local to literal
+            {
+                if (instruction.callingReferenceIndex || argumentPayload.size() < 8 || argumentPayload[0] != 0x72
+                    || (argumentPayload[3] != 0x66 && argumentPayload[3] != 0x73) || mStore == nullptr)
+                    return false;
+                const auto readUint16 = [](std::span<const std::uint8_t> bytes, std::size_t offset) {
+                    return static_cast<std::uint16_t>(
+                        bytes[offset] | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
+                };
+                const std::uint16_t referenceIndex = readUint16(argumentPayload, 1);
+                const std::uint16_t variableIndex = readUint16(argumentPayload, 4);
+                const std::uint16_t expressionSize = readUint16(argumentPayload, 6);
+                if (referenceIndex == 0 || referenceIndex > script.references.size()
+                    || expressionSize != argumentPayload.size() - 8)
+                    return false;
+
+                const ESM::FormId questId = script.references[referenceIndex - 1];
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(questId));
+                const ESM4::Script* questScript = quest == nullptr
+                    ? nullptr
+                    : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+                if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                    return false;
+                const auto variable = std::ranges::find(
+                    questScript->mScript.localVarData, variableIndex, &ESM4::ScriptLocalVariableData::index);
+                if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
+                    return false;
+
+                float value = 0.f;
+                const std::string_view expression(
+                    reinterpret_cast<const char*>(argumentPayload.data() + 8), expressionSize);
+                if (!parseFloat(trim(expression), value))
+                {
+                    prepared.mUseSourceFallback = true;
+                    prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                    continue;
+                }
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetVariable;
+                command.mQuest = questId;
+                command.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                command.mNumber = value;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
             if (instruction.opcode == 0x1059) // ShowMessage
             {
                 // Every ShowMessage instruction in FalloutNV.esm (24/24) stores its one
@@ -651,6 +696,14 @@ namespace MWWorld
                 state.mFlags |= ESM4QuestState::Flag_ShownInPipBoy;
                 working.mActiveQuest = command.mQuest;
                 return true;
+            case CompiledQuestCommandType::SetVariable:
+            {
+                const auto variable = state.mVariables.find(command.mVariable);
+                if (variable == state.mVariables.end())
+                    return false;
+                variable->second = command.mNumber;
+                return true;
+            }
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
                 return false;
@@ -913,6 +966,14 @@ namespace MWWorld
                         case CompiledQuestCommandType::ForceActiveQuest:
                             executed = forceActiveQuest(command.mQuest);
                             break;
+                        case CompiledQuestCommandType::SetVariable:
+                        {
+                            const ESM4::Quest* targetQuest
+                                = mStore->get<ESM4::Quest>().search(ESM::RefId(command.mQuest));
+                            executed = targetQuest != nullptr
+                                && setQuestVariable(targetQuest->mEditorId, command.mVariable, command.mNumber);
+                            break;
+                        }
                         case CompiledQuestCommandType::EvaluatePackage:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::EvaluatePackage, command.mQuest);
