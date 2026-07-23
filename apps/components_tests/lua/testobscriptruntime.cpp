@@ -149,6 +149,30 @@ namespace
                 local script = obs.makeLocalScript()
                 return type(script) == 'table' and 1 or 0
             end,
+
+            filteredGameplayEvents = function(log)
+                obs.locals('FilteredGameplayEvents')
+                obs.on('OnDeath', function() log[#log + 1] = 'death:any' end)
+                obs.on('OnDeath', function() log[#log + 1] = 'death:player' end, 'player')
+                obs.on('OnHit', function() log[#log + 1] = 'hit:any' end)
+                obs.on('OnHit', function() log[#log + 1] = 'hit:attacker' end, 'attacker')
+                obs.on('OnHit', function() log[#log + 1] = 'hit:other' end, 'other')
+                obs.on('OnHitWith', function() log[#log + 1] = 'hitwith:weapon' end, 'WeaponEditor')
+                obs.on('OnActivate', function() log[#log + 1] = 'activate:actor' end, 'actor')
+                obs.on('OnActivate', function() log[#log + 1] = 'activate:other' end, 'other')
+                obs.resolveRecordId = function(value)
+                    if value == 'WeaponEditor' then return 'weapon-form' end
+                    if type(value) == 'table' then return value.recordId end
+                    return value
+                end
+                local script = obs.makeLocalScript()
+                local events = script.eventHandlers
+                events.Died({})
+                events.Died({ killer = 'player' })
+                events.Hit({ attacker = 'attacker', weapon = { recordId = 'weapon-form' } })
+                script.engineHandlers.onActivated('actor')
+                return #log
+            end,
         }
         )X");
 
@@ -547,6 +571,22 @@ namespace
         sol::table s = script();
         auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<int>();
         EXPECT_EQ(r, 1);
+    }
+
+    TEST_F(ObScriptRuntimeTest, GameplayEventFiltersRequireMatchingAuthoritativeReference)
+    {
+        sol::table s = script();
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table log = view.sol().create_table();
+            EXPECT_EQ(LuaUtil::call(s["filteredGameplayEvents"], log).get<int>(), 7);
+            EXPECT_EQ(log[1].get<std::string>(), "death:any");
+            EXPECT_EQ(log[2].get<std::string>(), "death:any");
+            EXPECT_EQ(log[3].get<std::string>(), "death:player");
+            EXPECT_EQ(log[4].get<std::string>(), "hit:any");
+            EXPECT_EQ(log[5].get<std::string>(), "hit:attacker");
+            EXPECT_EQ(log[6].get<std::string>(), "hitwith:weapon");
+            EXPECT_EQ(log[7].get<std::string>(), "activate:actor");
+        });
     }
 
     TEST_F(ObScriptRuntimeTest, ObjectQueryBindings)

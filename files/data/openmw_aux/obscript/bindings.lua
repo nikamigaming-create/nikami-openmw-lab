@@ -65,6 +65,17 @@ obs.resolveRef = function(ref)
     return resolveObject(ref) or ref
 end
 
+obs.resolveRecordId = function(ref)
+    if type(ref) == 'string' then
+        return core.obscript.resolveRefEditorId(ref) or ref
+    end
+    local ok, recordId = pcall(function() return ref.recordId end)
+    if ok then
+        return recordId
+    end
+    return nil
+end
+
 -- `player` is also a value expression (`GetActionRef == player`), not only
 -- a member-call base. Binding it lets obs.v resolve that comparison to the
 -- actual local player object.

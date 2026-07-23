@@ -25,9 +25,12 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwmechanics/creaturestats.hpp"
+
 #include "../mwrender/bonegroup.hpp"
 #include "../mwrender/postprocessor.hpp"
 
+#include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
@@ -482,7 +485,13 @@ namespace MWLua
     {
         if (actor.isEmpty())
             return;
-        mLuaEvents.addLocalEvent({ getId(actor), "Died", {} });
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table data = view.newTable();
+            const ESM::RefId& killer = actor.getClass().getCreatureStats(actor).getLastHitObject();
+            if (!killer.empty())
+                data["killer"] = killer.serializeText();
+            sendLocalEvent(actor, "Died", data);
+        });
     }
 
     void LuaManager::useItem(const MWWorld::Ptr& object, const MWWorld::Ptr& actor, bool force)
