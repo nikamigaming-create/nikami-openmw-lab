@@ -1667,6 +1667,56 @@ TEST(ESM4QuestRuntimeTest, SurfacesUnsupportedCompiledOpcodeAndUsesWholeSourceFa
     EXPECT_EQ(runtime.search(questId)->mObjectiveStatus.at(3), MWWorld::ESM4QuestState::Objective_Displayed);
 }
 
+TEST(ESM4QuestRuntimeTest, WholeSourceFallbackExecutesOnlySelectedConditionalBranches)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120110, .mContentFile = 0 };
+    const ESM::FormId scriptId{ .mIndex = 0x120111, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "ConditionalFallback");
+    quest.mQuestScript = scriptId;
+    for (const std::int32_t objective : { 10, 20, 30, 40 })
+        quest.mObjectives.push_back({ .mIndex = objective, .mDescription = "Conditional objective" });
+
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x00, 0x00 };
+    entry.mScript.scriptSource = "set ConditionalFallback.route to 0\r\n"
+                                 "if ConditionalFallback.route == 1\r\n"
+                                 "  if SunnyRef.GetDead == 0\r\n"
+                                 "    SetObjectiveDisplayed ConditionalFallback 10 1\r\n"
+                                 "  endif\r\n"
+                                 "elseif ConditionalFallback.route == 0\r\n"
+                                 "  SetObjectiveDisplayed ConditionalFallback 20 1\r\n"
+                                 "else\r\n"
+                                 "  SetObjectiveDisplayed ConditionalFallback 30 1\r\n"
+                                 "endif\r\n"
+                                 "if SunnyRef.GetDead == 0\r\n"
+                                 "  SetObjectiveDisplayed ConditionalFallback 10 1\r\n"
+                                 "else\r\n"
+                                 "  SetObjectiveDisplayed ConditionalFallback 30 1\r\n"
+                                 "endif\r\n"
+                                 "SetObjectiveDisplayed ConditionalFallback 40 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mScript.localVarData = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "route" } };
+    store.overrideRecord(script);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mObjectiveStatus.at(10), 0);
+    EXPECT_EQ(state->mObjectiveStatus.at(20), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(state->mObjectiveStatus.at(30), 0);
+    EXPECT_EQ(state->mObjectiveStatus.at(40), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
+    EXPECT_EQ(runtime.getUnsupportedStageCommands(), (std::vector<std::string>{ "if SunnyRef.GetDead == 0" }));
+}
+
 TEST(ESM4QuestRuntimeTest, MalformedCompiledStageFailsClosedWithoutSourceFallback)
 {
     MWWorld::ESMStore store;

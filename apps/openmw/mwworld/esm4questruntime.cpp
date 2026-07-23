@@ -1923,9 +1923,97 @@ namespace MWWorld
 
     void ESM4QuestRuntime::executeStageSource(std::string_view source, ESM4QuestState* ownerState)
     {
-        std::istringstream stream{ std::string(source) };
-        for (std::string line; std::getline(stream, line);)
+        struct ConditionalFrame
         {
+            bool mParentActive = true;
+            bool mBranchTaken = false;
+            bool mCurrentBranchActive = false;
+            bool mIndeterminate = false;
+            bool mSawElse = false;
+        };
+
+        std::vector<ConditionalFrame> conditionals;
+        std::istringstream stream{ std::string(source) };
+        for (std::string storage; std::getline(stream, storage);)
+        {
+            std::string_view line = trim(storage);
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+                line = trim(line.substr(0, comment));
+            if (line.empty())
+                continue;
+
+            if (isControlKeyword(line, "if", true))
+            {
+                ConditionalFrame frame;
+                frame.mParentActive = conditionals.empty() || conditionals.back().mCurrentBranchActive;
+                if (frame.mParentActive)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(2)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                conditionals.push_back(frame);
+                continue;
+            }
+            if (isControlKeyword(line, "elseif", true))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mCurrentBranchActive = false;
+                if (frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(6)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                continue;
+            }
+            if (isControlKeyword(line, "else"))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mSawElse = true;
+                frame.mCurrentBranchActive
+                    = frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate;
+                frame.mBranchTaken |= frame.mCurrentBranchActive;
+                continue;
+            }
+            if (isControlKeyword(line, "endif"))
+            {
+                if (conditionals.empty())
+                    mUnsupportedStageCommands.emplace_back(line);
+                else
+                    conditionals.pop_back();
+                continue;
+            }
+
+            if (!conditionals.empty() && !conditionals.back().mCurrentBranchActive)
+                continue;
+
             const std::vector<std::string_view> tokens = tokenize(line);
             if (tokens.empty())
                 continue;
@@ -2031,8 +2119,11 @@ namespace MWWorld
                 }
             }
 
-            mUnsupportedStageCommands.push_back(line);
+            mUnsupportedStageCommands.emplace_back(line);
         }
+
+        if (!conditionals.empty())
+            mUnsupportedStageCommands.emplace_back("unterminated quest-stage conditional");
     }
 
     void ESM4QuestRuntime::executeResultSource(std::string_view source)
