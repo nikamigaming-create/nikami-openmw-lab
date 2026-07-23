@@ -151,6 +151,10 @@ namespace MWWorld
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
+            If,
+            ElseIf,
+            Else,
+            EndIf,
             StartQuest,
             StopQuest,
             CompleteQuest,
@@ -170,6 +174,34 @@ namespace MWWorld
             SayTo,
         };
 
+        enum class CompiledConditionValueType : std::uint8_t
+        {
+            QuestVariable,
+            GetStage,
+            GetStageDone,
+        };
+
+        enum class CompiledConditionComparison : std::uint8_t
+        {
+            Truthy,
+            Equal,
+            NotEqual,
+            Less,
+            LessEqual,
+            Greater,
+            GreaterEqual,
+        };
+
+        struct CompiledQuestCondition
+        {
+            CompiledConditionValueType mValueType = CompiledConditionValueType::QuestVariable;
+            CompiledConditionComparison mComparison = CompiledConditionComparison::Truthy;
+            ESM::FormId mQuest{};
+            std::string mVariable;
+            std::int32_t mStage = 0;
+            float mComparisonValue = 0.f;
+        };
+
         struct CompiledQuestCommand
         {
             CompiledQuestCommandType mType = CompiledQuestCommandType::ForceActiveQuest;
@@ -182,6 +214,14 @@ namespace MWWorld
             std::string mVariable;
             float mNumber = 0.f;
             bool mSecondaryValue = false;
+            std::optional<CompiledQuestCondition> mCondition;
+        };
+
+        struct CompiledConditionalFrame
+        {
+            bool mParentActive = false;
+            bool mBranchTaken = false;
+            bool mActive = false;
         };
 
         struct CompiledStageScript
@@ -245,6 +285,10 @@ namespace MWWorld
         bool executePureCompiledStage(ESM::FormId id, std::uint8_t stage, CompiledStageWorkingState& working);
         bool executePureCompiledCommand(
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
+        std::optional<bool> evaluateCompiledCondition(
+            const CompiledQuestCondition& condition, const QuestStateMap& states) const;
+        bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
+            std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
         void flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects);

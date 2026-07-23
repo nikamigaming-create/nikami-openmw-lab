@@ -388,6 +388,11 @@ namespace MWWorld
         if (!ESM4::decodeFalloutScriptBytecode(script.compiledData, instructions).succeeded())
             return false;
 
+        const auto readUint16 = [](std::span<const std::uint8_t> bytes, std::size_t offset) {
+            return static_cast<std::uint16_t>(
+                bytes[offset] | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
+        };
+        std::vector<bool> conditionalElseSeen;
         for (const ESM4::ScriptBytecodeInstruction& instruction : instructions)
         {
             if (instruction.callingReferenceIndex
@@ -395,7 +400,10 @@ namespace MWWorld
                     || *instruction.callingReferenceIndex > script.references.size()))
                 return false;
 
-            if (instruction.opcode != 0x0015 && instruction.opcode != 0x1002
+            if (instruction.opcode != 0x0015
+                && instruction.opcode != 0x0016 && instruction.opcode != 0x0017
+                && instruction.opcode != 0x0018 && instruction.opcode != 0x0019
+                && instruction.opcode != 0x1002
                 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
@@ -409,15 +417,176 @@ namespace MWWorld
                 continue;
             }
             std::span<const std::uint8_t> argumentPayload = instruction.arguments;
+            if (instruction.opcode == 0x0016 || instruction.opcode == 0x0018) // If / ElseIf
+            {
+                if (instruction.callingReferenceIndex || argumentPayload.size() < 4)
+                    return false;
+                if (instruction.opcode == 0x0018
+                    && (conditionalElseSeen.empty() || conditionalElseSeen.back()))
+                    return false;
+                const std::uint16_t expressionSize = readUint16(argumentPayload, 2);
+                if (expressionSize != argumentPayload.size() - 4)
+                    return false;
+                const std::span<const std::uint8_t> expression = argumentPayload.subspan(4);
+
+                CompiledQuestCondition condition;
+                bool supported = false;
+                if (expression.size() == 7 && expression[0] == 0x20 && expression[1] == 0x72
+                    && expression[4] == 0x73 && mStore != nullptr)
+                {
+                    const std::uint16_t referenceIndex = readUint16(expression, 2);
+                    const std::uint16_t variableIndex = readUint16(expression, 5);
+                    if (referenceIndex == 0 || referenceIndex > script.references.size())
+                        return false;
+                    condition.mQuest = script.references[referenceIndex - 1];
+                    const ESM4::Quest* quest
+                        = mStore->get<ESM4::Quest>().search(ESM::RefId(condition.mQuest));
+                    const ESM4::Script* questScript = quest == nullptr
+                        ? nullptr
+                        : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+                    if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                        return false;
+                    const auto variable = std::ranges::find(
+                        questScript->mScript.localVarData, variableIndex, &ESM4::ScriptLocalVariableData::index);
+                    if (variable == questScript->mScript.localVarData.end() || variable->variableName.empty())
+                        return false;
+                    condition.mValueType = CompiledConditionValueType::QuestVariable;
+                    condition.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                    supported = true;
+                }
+                else if (expression.size() >= 8 && expression[0] == 0x20 && expression[1] == 0x58)
+                {
+                    const std::uint16_t functionOpcode = readUint16(expression, 2);
+                    const std::uint16_t functionArgumentSize = readUint16(expression, 4);
+                    const std::size_t suffixOffset = 6 + functionArgumentSize;
+                    if (suffixOffset > expression.size())
+                        return false;
+                    std::vector<ESM4::ScriptBytecodeArgument> functionArguments;
+                    if (!ESM4::decodeFalloutScriptArguments(
+                            expression.subspan(6, functionArgumentSize), script.references, functionArguments)
+                             .succeeded())
+                        return false;
+                    if (functionOpcode == 0x103a && functionArguments.size() == 1)
+                    {
+                        const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
+                        if (quest == nullptr)
+                            return false;
+                        condition.mValueType = CompiledConditionValueType::GetStage;
+                        condition.mQuest = *quest;
+                    }
+                    else if (functionOpcode == 0x103b && functionArguments.size() == 2)
+                    {
+                        const ESM::FormId* quest = std::get_if<ESM::FormId>(&functionArguments[0]);
+                        const std::int32_t* stage = std::get_if<std::int32_t>(&functionArguments[1]);
+                        if (quest == nullptr || stage == nullptr)
+                            return false;
+                        condition.mValueType = CompiledConditionValueType::GetStageDone;
+                        condition.mQuest = *quest;
+                        condition.mStage = *stage;
+                    }
+                    else
+                    {
+                        prepared.mUseSourceFallback = true;
+                        prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                        if (instruction.opcode == 0x0016)
+                            conditionalElseSeen.push_back(false);
+                        continue;
+                    }
+                    if (mStore == nullptr
+                        || mStore->get<ESM4::Quest>().search(ESM::RefId(condition.mQuest)) == nullptr
+                        || !mStates.contains(condition.mQuest))
+                        return false;
+
+                    if (suffixOffset == expression.size())
+                        supported = true;
+                    else
+                    {
+                        if (expression[suffixOffset] != 0x20)
+                            return false;
+                        const auto operatorSeparator = std::find(
+                            expression.begin() + static_cast<std::ptrdiff_t>(suffixOffset + 1),
+                            expression.end(), 0x20);
+                        if (operatorSeparator == expression.end())
+                            return false;
+                        const std::size_t operatorOffset
+                            = static_cast<std::size_t>(operatorSeparator - expression.begin()) + 1;
+                        const std::string_view number(reinterpret_cast<const char*>(expression.data()
+                                                          + suffixOffset + 1),
+                            static_cast<std::size_t>(operatorSeparator
+                                - (expression.begin() + static_cast<std::ptrdiff_t>(suffixOffset + 1))));
+                        if (!parseFloat(number, condition.mComparisonValue))
+                            return false;
+                        const std::string_view comparison(
+                            reinterpret_cast<const char*>(expression.data() + operatorOffset),
+                            expression.size() - operatorOffset);
+                        if (comparison == "==")
+                            condition.mComparison = CompiledConditionComparison::Equal;
+                        else if (comparison == "!=")
+                            condition.mComparison = CompiledConditionComparison::NotEqual;
+                        else if (comparison == "<")
+                            condition.mComparison = CompiledConditionComparison::Less;
+                        else if (comparison == "<=")
+                            condition.mComparison = CompiledConditionComparison::LessEqual;
+                        else if (comparison == ">")
+                            condition.mComparison = CompiledConditionComparison::Greater;
+                        else if (comparison == ">=")
+                            condition.mComparison = CompiledConditionComparison::GreaterEqual;
+                        else
+                        {
+                            prepared.mUseSourceFallback = true;
+                            prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                            if (instruction.opcode == 0x0016)
+                                conditionalElseSeen.push_back(false);
+                            continue;
+                        }
+                        supported = true;
+                    }
+                }
+
+                if (!supported)
+                {
+                    prepared.mUseSourceFallback = true;
+                    prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                }
+                else
+                {
+                    CompiledQuestCommand command;
+                    command.mType = instruction.opcode == 0x0016
+                        ? CompiledQuestCommandType::If
+                        : CompiledQuestCommandType::ElseIf;
+                    command.mCondition = std::move(condition);
+                    prepared.mCommands.push_back(std::move(command));
+                }
+                if (instruction.opcode == 0x0016)
+                    conditionalElseSeen.push_back(false);
+                continue;
+            }
+            if (instruction.opcode == 0x0017) // Else
+            {
+                if (instruction.callingReferenceIndex || argumentPayload.size() != 2
+                    || conditionalElseSeen.empty() || conditionalElseSeen.back())
+                    return false;
+                conditionalElseSeen.back() = true;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::Else;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x0019) // EndIf
+            {
+                if (instruction.callingReferenceIndex || !argumentPayload.empty() || conditionalElseSeen.empty())
+                    return false;
+                conditionalElseSeen.pop_back();
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::EndIf;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
             if (instruction.opcode == 0x0015) // set Quest.local to literal or compiled expression
             {
                 if (instruction.callingReferenceIndex || argumentPayload.size() < 8 || argumentPayload[0] != 0x72
                     || (argumentPayload[3] != 0x66 && argumentPayload[3] != 0x73) || mStore == nullptr)
                     return false;
-                const auto readUint16 = [](std::span<const std::uint8_t> bytes, std::size_t offset) {
-                    return static_cast<std::uint16_t>(
-                        bytes[offset] | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
-                };
                 const std::uint16_t referenceIndex = readUint16(argumentPayload, 1);
                 const std::uint16_t variableIndex = readUint16(argumentPayload, 4);
                 const std::uint16_t expressionSize = readUint16(argumentPayload, 6);
@@ -696,6 +865,8 @@ namespace MWWorld
             }
         }
 
+        if (!conditionalElseSeen.empty())
+            return false;
         // Never mix native prefix execution with an unsupported command. The already existing
         // source path is retained only as a whole-script compatibility fallback.
         if (prepared.mUseSourceFallback)
@@ -811,6 +982,109 @@ namespace MWWorld
         return valid;
     }
 
+    std::optional<bool> ESM4QuestRuntime::evaluateCompiledCondition(
+        const CompiledQuestCondition& condition, const QuestStateMap& states) const
+    {
+        const auto found = states.find(condition.mQuest);
+        if (found == states.end())
+            return std::nullopt;
+
+        float value = 0.f;
+        switch (condition.mValueType)
+        {
+            case CompiledConditionValueType::QuestVariable:
+            {
+                const auto variable = found->second.mVariables.find(condition.mVariable);
+                if (variable == found->second.mVariables.end())
+                    return std::nullopt;
+                value = variable->second;
+                break;
+            }
+            case CompiledConditionValueType::GetStage:
+                value = found->second.mCurrentStage;
+                break;
+            case CompiledConditionValueType::GetStageDone:
+            {
+                const auto stage = found->second.mStageDone.find(static_cast<std::int16_t>(condition.mStage));
+                value = stage != found->second.mStageDone.end() && stage->second ? 1.f : 0.f;
+                break;
+            }
+        }
+
+        switch (condition.mComparison)
+        {
+            case CompiledConditionComparison::Truthy:
+                return value != 0.f;
+            case CompiledConditionComparison::Equal:
+                return value == condition.mComparisonValue;
+            case CompiledConditionComparison::NotEqual:
+                return value != condition.mComparisonValue;
+            case CompiledConditionComparison::Less:
+                return value < condition.mComparisonValue;
+            case CompiledConditionComparison::LessEqual:
+                return value <= condition.mComparisonValue;
+            case CompiledConditionComparison::Greater:
+                return value > condition.mComparisonValue;
+            case CompiledConditionComparison::GreaterEqual:
+                return value >= condition.mComparisonValue;
+        }
+        return std::nullopt;
+    }
+
+    bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,
+        const QuestStateMap& states, std::vector<CompiledConditionalFrame>& stack, bool& execute) const
+    {
+        execute = stack.empty() || stack.back().mActive;
+        if (command.mType == CompiledQuestCommandType::If)
+        {
+            if (!command.mCondition)
+                return false;
+            const bool parentActive = execute;
+            const std::optional<bool> condition
+                = parentActive ? evaluateCompiledCondition(*command.mCondition, states) : false;
+            if (!condition)
+                return false;
+            const bool active = parentActive && *condition;
+            stack.push_back({ parentActive, active, active });
+            execute = false;
+            return true;
+        }
+        if (command.mType == CompiledQuestCommandType::ElseIf)
+        {
+            if (stack.empty() || !command.mCondition)
+                return false;
+            CompiledConditionalFrame& frame = stack.back();
+            const std::optional<bool> condition = frame.mParentActive && !frame.mBranchTaken
+                ? evaluateCompiledCondition(*command.mCondition, states)
+                : false;
+            if (!condition)
+                return false;
+            frame.mActive = frame.mParentActive && !frame.mBranchTaken && *condition;
+            frame.mBranchTaken = frame.mBranchTaken || frame.mActive;
+            execute = false;
+            return true;
+        }
+        if (command.mType == CompiledQuestCommandType::Else)
+        {
+            if (stack.empty())
+                return false;
+            CompiledConditionalFrame& frame = stack.back();
+            frame.mActive = frame.mParentActive && !frame.mBranchTaken;
+            frame.mBranchTaken = true;
+            execute = false;
+            return true;
+        }
+        if (command.mType == CompiledQuestCommandType::EndIf)
+        {
+            if (stack.empty())
+                return false;
+            stack.pop_back();
+            execute = false;
+            return true;
+        }
+        return true;
+    }
+
     bool ESM4QuestRuntime::executePureCompiledCommand(
         const CompiledQuestCommand& command, CompiledStageWorkingState& working)
     {
@@ -834,6 +1108,11 @@ namespace MWWorld
         ESM4QuestState& state = found->second;
         switch (command.mType)
         {
+            case CompiledQuestCommandType::If:
+            case CompiledQuestCommandType::ElseIf:
+            case CompiledQuestCommandType::Else:
+            case CompiledQuestCommandType::EndIf:
+                return false;
             case CompiledQuestCommandType::StartQuest:
                 state.mFlags |= ESM4QuestState::Flag_Running;
                 return true;
@@ -951,8 +1230,17 @@ namespace MWWorld
                 break;
             }
             executedEntry = true;
+            std::vector<CompiledConditionalFrame> conditionalStack;
             for (const CompiledQuestCommand& command : prepared.mCommands)
             {
+                bool execute = true;
+                if (!updateCompiledConditionalState(command, working.mStates, conditionalStack, execute))
+                {
+                    success = false;
+                    break;
+                }
+                if (!execute)
+                    continue;
                 if (command.mType == CompiledQuestCommandType::SetAlly
                     || command.mType == CompiledQuestCommandType::SetEnemy)
                 {
@@ -971,6 +1259,8 @@ namespace MWWorld
                     break;
                 }
             }
+            if (!conditionalStack.empty())
+                success = false;
             if (!success)
                 break;
             if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
@@ -1181,11 +1471,22 @@ namespace MWWorld
                 executeStageSource(entry.mScript.scriptSource, state);
             else
             {
+                std::vector<CompiledConditionalFrame> conditionalStack;
                 for (const CompiledQuestCommand& command : preparedEntry.mScript.mCommands)
                 {
+                    bool execute = true;
+                    if (!updateCompiledConditionalState(command, mStates, conditionalStack, execute))
+                        throw std::logic_error("preflighted Fallout quest conditional became invalid");
+                    if (!execute)
+                        continue;
                     bool executed = false;
                     switch (command.mType)
                     {
+                        case CompiledQuestCommandType::If:
+                        case CompiledQuestCommandType::ElseIf:
+                        case CompiledQuestCommandType::Else:
+                        case CompiledQuestCommandType::EndIf:
+                            throw std::logic_error("compiled conditional escaped control-flow handling");
                         case CompiledQuestCommandType::StartQuest:
                             executed = startQuest(command.mQuest);
                             break;
@@ -1303,6 +1604,8 @@ namespace MWWorld
                         throw std::logic_error("preflighted Fallout quest command became invalid during execution");
                     }
                 }
+                if (!conditionalStack.empty())
+                    throw std::logic_error("preflighted Fallout quest conditional stack remained open");
             }
             if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
             {

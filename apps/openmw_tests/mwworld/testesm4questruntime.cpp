@@ -1645,6 +1645,138 @@ TEST(ESM4QuestRuntimeTest, DecodesOneBasedScroReferencesAndRejectsEveryBoundedAr
     expectFailure(trailingData, Error::TrailingArgumentData);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailGetStageDoneConditionalFromCompiledBytecode)
+{
+    const auto run = [](bool stage29Done) {
+        MWWorld::ESMStore store;
+        const ESM::FormId vms25Id{ .mIndex = 0x11f86a, .mContentFile = 0 };
+        ESM4::Quest vms25 = makeQuest(vms25Id, "VMS25");
+        vms25.mObjectives.push_back({ .mIndex = 29, .mDescription = "Earlier objective" });
+        vms25.mObjectives.push_back({ .mIndex = 40, .mDescription = "Next objective" });
+        vms25.mStages.push_back({ .mIndex = 29 });
+
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm 0011F86A VMS25 stage 40 entry 0, byte-for-byte:
+        // If GetStageDone VMS25 29 == 1, complete objective 29, then display objective 40.
+        const std::array<std::uint8_t, 71> retailScda{ 0x16, 0x00, 0x19, 0x00, 0x01, 0x00, 0x15,
+            0x00, 0x20, 0x58, 0x3b, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x1d, 0x00,
+            0x00, 0x00, 0x20, 0x31, 0x20, 0x3d, 0x3d, 0xa2, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72,
+            0x01, 0x00, 0x6e, 0x1d, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x19, 0x00,
+            0x00, 0x00, 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x28, 0x00,
+            0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.push_back(vms25Id);
+        vms25.mStages.push_back({ .mIndex = 40, .mEntries = { std::move(entry) } });
+        store.overrideRecord(vms25);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        if (stage29Done)
+            EXPECT_TRUE(runtime.setStage(vms25Id, 29));
+        EXPECT_TRUE(runtime.setStage(vms25Id, 40));
+        const MWWorld::ESM4QuestState* state = runtime.search(vms25Id);
+        EXPECT_NE(state, nullptr);
+        EXPECT_EQ((state->mObjectiveStatus.at(29) & MWWorld::ESM4QuestState::Objective_Completed) != 0,
+            stage29Done);
+        EXPECT_NE(state->mObjectiveStatus.at(40) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+        EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    };
+
+    run(false);
+    run(true);
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailQuestLocalConditionalFromCompiledBytecode)
+{
+    const auto run = [](bool hasSearchTime) {
+        MWWorld::ESMStore store;
+        const ESM::FormId vms31Id{ .mIndex = 0x1214ab, .mContentFile = 0 };
+        const ESM::FormId scriptId{ .mIndex = 0x1214ac, .mContentFile = 0 };
+        ESM4::Script questScript;
+        questScript.mId = scriptId;
+        questScript.mEditorId = "VMS31Script";
+        questScript.mScript.localVarData.push_back(
+            { .index = 14, .variableName = "bHaveSearchTime" });
+        store.overrideRecord(questScript);
+
+        ESM4::Quest vms31 = makeQuest(vms31Id, "VMS31");
+        vms31.mQuestScript = scriptId;
+        vms31.mObjectives.push_back({ .mIndex = 20, .mDescription = "Search" });
+        vms31.mObjectives.push_back({ .mIndex = 25, .mDescription = "Timed search" });
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm 001214AB VMS31 stage 20 entry 0, byte-for-byte.
+        const std::array<std::uint8_t, 57> retailScda{ 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72,
+            0x01, 0x00, 0x6e, 0x14, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x16, 0x00,
+            0x0b, 0x00, 0x01, 0x00, 0x07, 0x00, 0x20, 0x72, 0x01, 0x00, 0x73, 0x0e, 0x00, 0xa3,
+            0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x19, 0x00, 0x00, 0x00, 0x6e,
+            0x01, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references.push_back(vms31Id);
+        vms31.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(entry) } });
+        store.overrideRecord(vms31);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        EXPECT_TRUE(runtime.setQuestVariable("VMS31", "bHaveSearchTime", hasSearchTime ? 1.f : 0.f));
+        EXPECT_TRUE(runtime.setStage(vms31Id, 20));
+        const MWWorld::ESM4QuestState* state = runtime.search(vms31Id);
+        ASSERT_NE(state, nullptr);
+        EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+        EXPECT_EQ((state->mObjectiveStatus.at(25) & MWWorld::ESM4QuestState::Objective_Displayed) != 0,
+            hasSearchTime);
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    run(false);
+    run(true);
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailGetStageComparisonFromCompiledBytecode)
+{
+    const auto run = [](std::uint8_t currentCg02Stage) {
+        MWWorld::ESMStore store;
+        const ESM::FormId cg02Id{ .mIndex = 0x14e84, .mContentFile = 0 };
+        ESM4::Quest cg02 = makeQuest(cg02Id, "CG02");
+        cg02.mStages.push_back({ .mIndex = 99 });
+        cg02.mStages.push_back({ .mIndex = 100 });
+        store.overrideRecord(cg02);
+
+        const ESM::FormId tutorialId{ .mIndex = 0x59c85, .mContentFile = 0 };
+        const ESM::FormId scriptId{ .mIndex = 0x59c86, .mContentFile = 0 };
+        ESM4::Script questScript;
+        questScript.mId = scriptId;
+        questScript.mEditorId = "CGTutorialScript";
+        questScript.mScript.localVarData.push_back({ .index = 1, .variableName = "runTimer" });
+        store.overrideRecord(questScript);
+
+        ESM4::Quest tutorial = makeQuest(tutorialId, "CGTutorial");
+        tutorial.mQuestScript = scriptId;
+        ESM4::QuestStageEntry entry;
+        // FalloutNV.esm 00059C85 CGTutorial stage 72 entry 0, byte-for-byte.
+        const std::array<std::uint8_t, 43> retailScda{ 0x16, 0x00, 0x15, 0x00, 0x01, 0x00, 0x11,
+            0x00, 0x20, 0x58, 0x3a, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00, 0x20, 0x31,
+            0x30, 0x30, 0x20, 0x3c, 0x15, 0x00, 0x0a, 0x00, 0x72, 0x02, 0x00, 0x73, 0x01, 0x00,
+            0x02, 0x00, 0x20, 0x30, 0x19, 0x00, 0x00, 0x00 };
+        entry.mScript.compiledData.assign(retailScda.begin(), retailScda.end());
+        entry.mScript.references = { cg02Id, tutorialId };
+        tutorial.mStages.push_back({ .mIndex = 72, .mEntries = { std::move(entry) } });
+        store.overrideRecord(tutorial);
+
+        MWWorld::ESM4QuestRuntime runtime;
+        runtime.initialize(store);
+        EXPECT_TRUE(runtime.setStage(cg02Id, currentCg02Stage));
+        EXPECT_TRUE(runtime.setQuestVariable("CGTutorial", "runTimer", 7.f));
+        EXPECT_TRUE(runtime.setStage(tutorialId, 72));
+        EXPECT_EQ(runtime.getQuestVariable("CGTutorial", "runTimer"),
+            currentCg02Stage < 100 ? std::optional<float>(0.f) : std::optional<float>(7.f));
+        EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    };
+
+    run(99);
+    run(100);
+}
+
 TEST(ESM4QuestRuntimeTest, SurfacesUnsupportedCompiledOpcodeAndUsesWholeSourceFallback)
 {
     MWWorld::ESMStore store;
