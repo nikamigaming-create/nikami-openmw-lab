@@ -64,6 +64,13 @@ obs.resolveRef = function(ref)
     return resolveObject(ref) or ref
 end
 
+-- `player` is also a value expression (`GetActionRef == player`), not only
+-- a member-call base. Binding it lets obs.v resolve that comparison to the
+-- actual local player object.
+obs.bind('player', function()
+    return nearby.players[1] or 0
+end)
+
 obs.bind('GetSecondsPassed', function()
     return obs._dt or 0
 end)

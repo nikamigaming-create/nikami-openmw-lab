@@ -180,6 +180,21 @@ namespace
                     obs.m('player', 'GetDistance', 'PlacedRef')
             end,
 
+            harvestActivation = function(events)
+                local S = obs.locals('BarrelCactusScript')
+                obs.on('OnActivate', function()
+                    if obs.b((S.State == 0) and obs.b(
+                        (obs.v('GetActionRef') == obs.v('player')))) then
+                        obs.m('player', 'AddItem', 'NVFreshBarrelCactusFruit', 1)
+                        S.State = 1
+                    end
+                end)
+                local script = obs.makeLocalScript()
+                script.engineHandlers.onActivated(nearby.players[1])
+                return #events, events[1].name, events[1].data.item,
+                    events[1].data.count, S.State
+            end,
+
             existingBindings = function(events)
                 obs.m('PlacedRef', 'Enable')
                 obs.m('player', 'AddItem', 'AmmoItem', 2)
@@ -240,7 +255,11 @@ namespace
                     return refs[editorId:lower()]
                 end,
                 resolveItemEditorId = function(editorId)
-                    if editorId:lower() == 'ammoitem' then return 'record:ammo' end
+                    local items = {
+                        ammoitem = 'record:ammo',
+                        nvfreshbarrelcactusfruit = 'record:cactus',
+                    }
+                    return items[editorId:lower()]
                 end,
             },
             sendGlobalEvent = function(name, data)
@@ -473,6 +492,29 @@ namespace
             EXPECT_EQ(std::get<5>(values), 0);
             EXPECT_DOUBLE_EQ(std::get<6>(values), 5.0);
             EXPECT_DOUBLE_EQ(std::get<7>(values), 4.0);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, HarvestActivationAddsRetailIngredient)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-harvest-test", extraPackages);
+            const auto values = LuaUtil::call(s["harvestActivation"], factory["events"])
+                                    .get<std::tuple<int, std::string, std::string, int, int>>();
+            EXPECT_EQ(std::get<0>(values), 1);
+            EXPECT_EQ(std::get<1>(values), "ObScriptAddItem");
+            EXPECT_EQ(std::get<2>(values), "NVFreshBarrelCactusFruit");
+            EXPECT_EQ(std::get<3>(values), 1);
+            EXPECT_EQ(std::get<4>(values), 1);
         });
     }
 
