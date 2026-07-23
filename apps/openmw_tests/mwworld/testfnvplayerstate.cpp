@@ -791,6 +791,12 @@ namespace
         moved.mMovement.mRotationRadians[2].mValue = 1.25f;
         moved.mMovement.mRange = { 4000, 28 };
         save.mWorldReferenceMovements.push_back(std::move(moved));
+        ESM4::FONVSaveWorldReferenceFlags flags;
+        flags.mResolvedFormId = 0x0000104eu;
+        flags.mChangeType = 1;
+        flags.mFlags.mValue = ESM4::Rec_Disabled;
+        flags.mFlags.mRange = { 4100, 5 };
+        save.mWorldReferenceFlags.push_back(std::move(flags));
         const MWWorld::FalloutSaveLoadPlanResolution resolution
             = resolveSavePlan(save, &*player.mState, content);
         ASSERT_TRUE(resolution) << resolution.mError;
@@ -863,6 +869,11 @@ namespace
         EXPECT_FLOAT_EQ(plan.mWorldReferenceTransforms[0].mPosition[0], -72320.f);
         EXPECT_FLOAT_EQ(plan.mWorldReferenceTransforms[0].mRotationRadians[2], 1.25f);
         EXPECT_EQ(plan.mWorldReferenceTransforms[0].mSourceOffset, 4000u);
+        ASSERT_EQ(plan.mWorldReferenceFlags.size(), 1u);
+        EXPECT_EQ(plan.mWorldReferenceFlags[0].mReference, form(0x104e, 1));
+        EXPECT_EQ(plan.mWorldReferenceFlags[0].mChangeType, 1u);
+        EXPECT_EQ(plan.mWorldReferenceFlags[0].mFlags, ESM4::Rec_Disabled);
+        EXPECT_EQ(plan.mWorldReferenceFlags[0].mSourceOffset, 4100u);
         EXPECT_TRUE(plan.mCamera.mFirstPerson);
         EXPECT_FLOAT_EQ(plan.mCamera.mFirstPersonModelFov, 55.f);
         EXPECT_FLOAT_EQ(plan.mCamera.mWorldFov, 75.f);

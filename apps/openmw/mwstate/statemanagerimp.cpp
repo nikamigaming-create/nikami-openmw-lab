@@ -876,6 +876,29 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                          << localReferenceTransforms << " missing=" << missingLocalReferences << " decodedTotal="
                          << context.mPlan.mWorldReferenceTransforms.size();
 
+        std::size_t appliedReferenceFlags = 0;
+        std::size_t missingReferenceFlags = 0;
+        for (const MWWorld::FalloutSaveLoadPlan::WorldReferenceFlags& state
+            : context.mPlan.mWorldReferenceFlags)
+        {
+            MWWorld::Ptr reference = mutableWorld.searchPtr(ESM::RefId(state.mReference), false);
+            if (reference.isEmpty())
+            {
+                ++missingReferenceFlags;
+                Log(Debug::Warning) << "Native FNV save could not instantiate flagged world reference: form="
+                                    << state.mReference.toString() << " sourceOffset=" << state.mSourceOffset;
+                continue;
+            }
+            if ((state.mFlags & ESM4::Rec_Disabled) != 0)
+                mutableWorld.disable(reference);
+            else
+                mutableWorld.enable(reference);
+            ++appliedReferenceFlags;
+        }
+        Log(Debug::Info) << "Native FNV save restored ACHR/ACRE enabled state: applied=" << appliedReferenceFlags
+                         << " missing=" << missingReferenceFlags
+                         << " decodedTotal=" << context.mPlan.mWorldReferenceFlags.size();
+
         // Camera tracking uses inverse player Euler angles. Apply the save-owned view only after the final cell,
         // render-node and physics transforms exist, so no transitional/default camera state can win a frame.
         MWRender::Camera* camera = mutableWorld.getCamera();

@@ -810,6 +810,49 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveWorldReferenceFlags parseWorldReferenceFlags(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& reference, const ESM4::FONVSaveReferenceMovement* movement)
+    {
+        if (reference.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                reference.mVersion.mRange.mOffset, "unsupported world-reference form-flags changed-form version");
+        if (!reference.mResolvedFormId)
+            throw ESM4::FONVSaveError(
+                reference.mEncodedReferenceId.mRange.mOffset, "world-reference form-flags change has no identity");
+
+        const std::size_t payloadBegin = static_cast<std::size_t>(reference.mUnparsedPayload.mRange.mOffset);
+        const std::size_t payloadEnd = static_cast<std::size_t>(reference.mUnparsedPayload.mRange.end());
+        const std::size_t begin
+            = movement == nullptr ? payloadBegin : static_cast<std::size_t>(movement->mRange.end());
+        Cursor cursor(data, begin, payloadEnd);
+        constexpr std::uint32_t changeReferenceHavokMove = 0x00000004u;
+        if (movement != nullptr && (reference.mChangeFlags.mValue & changeReferenceHavokMove) != 0)
+        {
+            const ESM4::FONVSaveField<std::uint32_t> length
+                = readPackedCount(cursor, data, "reference Havok-moved sub-buffer length");
+            if (length.mValue > cursor.end() - cursor.position())
+            {
+                throw ESM4::FONVSaveError(
+                    length.mRange.mOffset, "reference Havok-moved sub-buffer overruns changed-form payload");
+            }
+            readRawField(cursor, data, length.mValue, "reference Havok-moved sub-buffer");
+        }
+
+        const std::size_t stateBegin = cursor.position();
+        ESM4::FONVSaveWorldReferenceFlags result;
+        result.mResolvedFormId = *reference.mResolvedFormId;
+        result.mChangeType = reference.mChangeType;
+        result.mProcessLevel = readDelimitedField<std::int8_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
+            "world-reference process level");
+        result.mFlags = readDelimitedField<std::uint32_t>(cursor, data,
+            [&](std::string_view label) { return cursor.readU32(label); }, "world-reference form flags");
+        result.mRange = range(stateBegin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining changed world-reference payload");
+        return result;
+    }
+
     ESM4::FONVSavePlayerActorValueData parsePlayerActorValueData(std::span<const std::uint8_t> data,
         const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSavePlayerReferenceMovement& movement)
     {
@@ -2389,6 +2432,24 @@ namespace ESM4
             result.mWorldReferenceMovements.push_back(
                 { *entry.mResolvedFormId, entry.mChangeType, parseReferenceMovement(data, entry, result.mFormIdTable) });
         }
+        constexpr std::uint32_t changeFormFlags = 0x00000001u;
+        for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
+        {
+            if ((entry.mChangeType != 1 && entry.mChangeType != 2)
+                || entry.mResolvedFormId == sFONVPlayerReferenceFormId
+                || (entry.mChangeFlags.mValue & changeFormFlags) == 0
+                || (entry.mChangeFlags.mValue & changedCell) != 0)
+            {
+                continue;
+            }
+            const auto movement = std::ranges::find_if(result.mWorldReferenceMovements,
+                [&](const FONVSaveWorldReferenceMovement& candidate) {
+                    return candidate.mResolvedFormId == entry.mResolvedFormId
+                        && candidate.mChangeType == entry.mChangeType;
+                });
+            result.mWorldReferenceFlags.push_back(parseWorldReferenceFlags(data, entry,
+                movement == result.mWorldReferenceMovements.end() ? nullptr : &movement->mMovement));
+        }
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
         {
@@ -2509,6 +2570,28 @@ namespace ESM4
                 appendUnparsedSemanticPayload(result, result.mPlayerReferenceMovement->mUnparsedRemainder.mRange);
             else
             {
+                const auto flags = std::ranges::find_if(result.mWorldReferenceFlags,
+                    [&](const FONVSaveWorldReferenceFlags& candidate) {
+                        return candidate.mResolvedFormId == entry.mResolvedFormId
+                            && candidate.mChangeType == entry.mChangeType;
+                    });
+                if (flags != result.mWorldReferenceFlags.end())
+                {
+                    const auto movement = std::ranges::find_if(result.mWorldReferenceMovements,
+                        [&](const FONVSaveWorldReferenceMovement& candidate) {
+                            return candidate.mResolvedFormId == entry.mResolvedFormId
+                                && candidate.mChangeType == entry.mChangeType;
+                        });
+                    if (movement != result.mWorldReferenceMovements.end()
+                        && movement->mMovement.mRange.end() < flags->mRange.mOffset)
+                    {
+                        appendUnparsedSemanticPayload(result,
+                            { movement->mMovement.mRange.end(),
+                                flags->mRange.mOffset - movement->mMovement.mRange.end() });
+                    }
+                    appendUnparsedSemanticPayload(result, flags->mUnparsedRemainder.mRange);
+                    continue;
+                }
                 const auto movement = std::ranges::find_if(result.mWorldReferenceMovements,
                     [&](const FONVSaveWorldReferenceMovement& candidate) {
                         return candidate.mMovement.mRange.mOffset == entry.mUnparsedPayload.mRange.mOffset;
