@@ -90,6 +90,9 @@ namespace MWWorld
     class ESMStore;
     struct CellStoreImp;
 
+    bool isEsm4CellResetDue(const TimeStamp& now, const TimeStamp& lastReset, int resetHours);
+    bool isEsm4ReferenceResettable(std::uint32_t recordFlags);
+
     using CellStoreTuple = std::tuple<CellRefList<ESM::Activator>, CellRefList<ESM::Potion>,
         CellRefList<ESM::Apparatus>, CellRefList<ESM::Armor>, CellRefList<ESM::Book>, CellRefList<ESM::Clothing>,
         CellRefList<ESM::Container>, CellRefList<ESM::Creature>, CellRefList<ESM::Door>, CellRefList<ESM::Ingredient>,

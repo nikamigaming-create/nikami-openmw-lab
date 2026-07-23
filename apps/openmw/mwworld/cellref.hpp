@@ -258,6 +258,17 @@ namespace MWWorld
 
         void setCount(int value);
 
+        std::uint32_t getEsm4RecordFlags() const
+        {
+            struct Visitor
+            {
+                std::uint32_t operator()(const ESM::CellRef&) { return 0; }
+                std::uint32_t operator()(const ESM4::Reference& ref) { return ref.mFlags; }
+                std::uint32_t operator()(const ESM4::ActorCharacter& ref) { return ref.mFlags; }
+            };
+            return std::visit(Visitor(), mCellRef.mVariant);
+        }
+
         const ESM4::RadioStationData* getEsm4RadioStationData() const
         {
             const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);

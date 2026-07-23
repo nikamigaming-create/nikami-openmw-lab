@@ -31,6 +31,10 @@ namespace MWLua
         {
             ESM::RefNum mObject;
         };
+        struct OnReset
+        {
+            ESM::RefNum mObject;
+        };
         struct OnActivate
         {
             ESM::RefNum mActor;
@@ -85,7 +89,7 @@ namespace MWLua
             int mDays;
         };
         using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnUseItem, OnNewExterior, OnTeleported,
-            OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed>;
+            OnReset, OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed>;
 
         void clear() { mQueue.clear(); }
         void addToQueue(Event e) { mQueue.push_back(std::move(e)); }

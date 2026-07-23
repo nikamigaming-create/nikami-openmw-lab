@@ -233,7 +233,8 @@ namespace MWLua
         lua->protectedCall(
             [&](LuaUtil::LuaView& view) { addPackage("openmw.self", sol::make_object(view.sol(), &mData)); });
         registerEngineHandlers({ &mOnActiveHandlers, &mOnInactiveHandlers, &mOnConsumeHandlers, &mOnActivatedHandlers,
-            &mOnTeleportedHandlers, &mOnAnimationTextKeyHandlers, &mOnPlayAnimationHandlers, &mOnAnimationEndedHandlers,
+            &mOnTeleportedHandlers, &mOnResetHandlers, &mOnAnimationTextKeyHandlers, &mOnPlayAnimationHandlers,
+            &mOnAnimationEndedHandlers,
             &mOnSkillUse, &mOnSkillLevelUp, &mOnJailTimeServed });
     }
 
