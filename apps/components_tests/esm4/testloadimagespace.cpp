@@ -2,6 +2,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadipct.hpp>
 #include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/esm4/reader.hpp>
@@ -113,6 +114,49 @@ namespace
             ESM4::ImpactDataSet impactDataSet;
             EXPECT_THROW(impactDataSet.load(*reader), std::runtime_error);
         }
+    }
+
+    TEST(Esm4ImpactDataTest, shouldParseRetailEffectAndDecalContracts)
+    {
+        std::string payload;
+        std::string data;
+        appendPod(data, 0.75f);
+        appendPod(data, std::uint32_t{ 1 });
+        appendPod(data, 55.f);
+        appendPod(data, 12.f);
+        appendPod(data, std::uint32_t{ 2 });
+        appendPod(data, std::uint32_t{ 0 });
+        appendSubRecord(payload, "DATA", data);
+
+        std::string decal;
+        for (float value : { 1.f, 3.f, 2.f, 4.f, 0.125f, 6.f, 0.25f })
+            appendPod(decal, value);
+        appendPod(decal, std::uint8_t{ 4 });
+        appendPod(decal,
+            std::uint8_t{ ESM4::DecalData::Parallax | ESM4::DecalData::AlphaBlending });
+        appendPod(decal, std::uint16_t{ 0 });
+        for (std::uint8_t value : { 10, 20, 30, 40 })
+            appendPod(decal, value);
+        appendSubRecord(payload, "DODT", decal);
+        appendSubRecord(payload, "DNAM", std::uint32_t{ 0x00112233 });
+
+        auto reader = makeReader("IPCT", 0x1234, payload);
+        ESM4::ImpactData impact;
+        impact.load(*reader);
+
+        ASSERT_TRUE(impact.mData.mPresent);
+        EXPECT_FLOAT_EQ(impact.mData.mEffectDuration, 0.75f);
+        EXPECT_EQ(impact.mData.mOrientation, 1u);
+        EXPECT_FLOAT_EQ(impact.mData.mPlacementRadius, 12.f);
+        ASSERT_TRUE(impact.mDecal.mPresent);
+        EXPECT_FLOAT_EQ(impact.mDecal.mMinWidth, 1.f);
+        EXPECT_FLOAT_EQ(impact.mDecal.mMaxHeight, 4.f);
+        EXPECT_FLOAT_EQ(impact.mDecal.mDepth, 0.125f);
+        EXPECT_EQ(impact.mDecal.mParallaxPasses, 4);
+        EXPECT_EQ(impact.mDecal.mFlags,
+            ESM4::DecalData::Parallax | ESM4::DecalData::AlphaBlending);
+        EXPECT_EQ(impact.mDecal.mColor, (std::array<std::uint8_t, 3>{ 10, 20, 30 }));
+        EXPECT_EQ(impact.mTextureSet, ESM::FormId::fromUint32(0x00112233));
     }
 
     TEST(Esm4ImageSpaceTest, shouldParseRetailFNVBaseTraits)

@@ -5181,6 +5181,14 @@ namespace MWWorld
             useAmbientLight, light, isCellExterior());
     }
 
+    void World::spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
+        const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+        const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime)
+    {
+        mRendering->spawnFalloutDecal(texture, worldPos, surfaceNormal, width, height,
+            depth, color, alphaBlend, alphaTest, lifetime);
+    }
+
     struct ResetActorsVisitor
     {
         World& mWorld;

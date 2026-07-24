@@ -41,6 +41,7 @@
 #include <components/esm4/loadipct.hpp>
 #include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadtxst.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
@@ -3159,6 +3160,7 @@ namespace MWMechanics
         if (rayCasting == nullptr)
             return fail("missing-ray-caster");
 
+        Misc::Rng::Generator& prng = world->getPrng();
         const auto presentImpact = [&](const MWPhysics::RayCastingResult& hit) {
             if (mFalloutWeapon->mImpactDataSet.isZeroOrUnset())
                 return false;
@@ -3173,6 +3175,46 @@ namespace MWMechanics
             const ESM4::ImpactData* impact = store->get<ESM4::ImpactData>().search(impactId);
             if (impact == nullptr)
                 return false;
+            bool decalSpawned = false;
+            const ESM4::TextureSet* textureSet = impact->mTextureSet.isZeroOrUnset()
+                ? nullptr
+                : store->get<ESM4::TextureSet>().search(impact->mTextureSet);
+            if (impact->mData.mPresent
+                && (impact->mData.mFlags & ESM4::ImpactData::Data::NoDecalData) == 0
+                && impact->mDecal.mPresent && textureSet != nullptr && !textureSet->mDiffuse.empty())
+            {
+                const float widthRange = impact->mDecal.mMaxWidth - impact->mDecal.mMinWidth;
+                const float heightRange = impact->mDecal.mMaxHeight - impact->mDecal.mMinHeight;
+                if (impact->mDecal.mMinWidth > 0.f && widthRange >= 0.f
+                    && impact->mDecal.mMinHeight > 0.f && heightRange >= 0.f)
+                {
+                    const float width
+                        = impact->mDecal.mMinWidth + widthRange * Misc::Rng::rollProbability(prng);
+                    const float height
+                        = impact->mDecal.mMinHeight + heightRange * Misc::Rng::rollProbability(prng);
+                    const osg::Vec4f color(
+                        impact->mDecal.mColor[0] / 255.f, impact->mDecal.mColor[1] / 255.f,
+                        impact->mDecal.mColor[2] / 255.f, 1.f);
+                    const bool alphaBlend
+                        = (impact->mDecal.mFlags & ESM4::DecalData::AlphaBlending) != 0;
+                    const bool alphaTest
+                        = (impact->mDecal.mFlags & ESM4::DecalData::AlphaTesting) != 0;
+                    // Match this installation's retail Fallout.ini fDecalLifetime contract.
+                    constexpr float retailDecalLifetime = 10.f;
+                    world->spawnFalloutDecal(VFS::Path::Normalized(textureSet->mDiffuse),
+                        hit.mHitPos, hit.mHitNormal, width, height, impact->mDecal.mDepth,
+                        color, alphaBlend, alphaTest, retailDecalLifetime);
+                    decalSpawned = true;
+                    Log(Debug::Info) << "FNV combat authored decal: impact="
+                                     << ESM::RefId::formIdRefId(impact->mId)
+                                     << " textureSet=" << ESM::RefId::formIdRefId(textureSet->mId)
+                                     << " texture=" << textureSet->mDiffuse << " width=" << width
+                                     << " height=" << height << " depth=" << impact->mDecal.mDepth
+                                     << " flags=" << static_cast<unsigned int>(impact->mDecal.mFlags)
+                                     << " lifetime=" << retailDecalLifetime
+                                     << " position=" << hit.mHitPos << " normal=" << hit.mHitNormal;
+                }
+            }
             if (!impact->mModel.empty())
             {
                 world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
@@ -3190,7 +3232,7 @@ namespace MWMechanics
                              << " impact=" << ESM::RefId::formIdRefId(impact->mId)
                              << " material=" << material << " model=" << impact->mModel
                              << " sound=" << ESM::RefId::formIdRefId(impact->mSound)
-                             << " position=" << hit.mHitPos;
+                             << " decal=" << decalSpawned << " position=" << hit.mHitPos;
             return true;
         };
 
@@ -3217,7 +3259,6 @@ namespace MWMechanics
 
         std::vector<osg::Vec3f> rayDirections;
         rayDirections.reserve(contract->mProjectileCount);
-        Misc::Rng::Generator& prng = world->getPrng();
         const bool vatsCritical = vatsAttack && rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f
             && doesFalloutCriticalHit(critical->mChancePercent, Misc::Rng::rollProbability(prng));
         for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)

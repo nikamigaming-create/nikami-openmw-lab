@@ -2298,6 +2298,15 @@ namespace MWRender
             model, texture, worldPosition, scale, isMagicVFX, useAmbientLight, light, isExterior);
     }
 
+    void RenderingManager::spawnFalloutDecal(VFS::Path::NormalizedView texture,
+        const osg::Vec3f& worldPosition, const osg::Vec3f& surfaceNormal, float width,
+        float height, float depth, const osg::Vec4f& color, bool alphaBlend,
+        bool alphaTest, float lifetime)
+    {
+        mEffectManager->addDecal(texture, worldPosition, surfaceNormal, width, height,
+            depth, color, alphaBlend, alphaTest, lifetime);
+    }
+
     void RenderingManager::notifyWorldSpaceChanged()
     {
         mEffectManager->clear();

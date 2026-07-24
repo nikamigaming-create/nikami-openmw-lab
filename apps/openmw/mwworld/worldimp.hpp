@@ -661,6 +661,9 @@ namespace MWWorld
         void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true,
             bool useAmbientLight = true, const ESM::RefId& lightId = {}) override;
+        void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime) override;
 
         /// @see MWWorld::WeatherManager::isInStorm
         bool isInStorm() const override;

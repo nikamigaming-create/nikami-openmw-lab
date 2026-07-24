@@ -12,6 +12,7 @@ namespace osg
 {
     class Group;
     class Vec3f;
+    class Vec4f;
     class PositionAttitudeTransform;
 }
 
@@ -43,6 +44,11 @@ namespace MWRender
             const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true, bool useAmbientLight = true,
             const ESM4::Light* light = nullptr, bool isExterior = false);
 
+        /// Add a Fallout impact decal using the authored TXST diffuse texture and DODT dimensions.
+        void addDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime);
+
         void update(float dt);
 
         /// Remove all effects
@@ -56,7 +62,14 @@ namespace MWRender
             osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         };
 
+        struct Decal
+        {
+            float mRemainingLifetime;
+            osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
+        };
+
         std::vector<Effect> mEffects;
+        std::vector<Decal> mDecals;
 
         osg::ref_ptr<osg::Group> mParentNode;
         Resource::ResourceSystem* mResourceSystem;
