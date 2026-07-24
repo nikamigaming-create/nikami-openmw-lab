@@ -341,6 +341,14 @@ namespace
                     nearby.players[1].sentEvents[1].data.recordId
             end,
 
+            combatMutations = function(mutations)
+                obs.m('PlacedRef', 'StartCombat', 'player')
+                obs.f('StartCombat', 'player')
+                obs.m('PlacedRef', 'StopCombat')
+                obs.f('StopCombat')
+                return #mutations
+            end,
+
             corpusCoverage = function()
                 local corpus = require('openmw_aux.obscript.fnv_retail_coverage')
                 local mismatches = {}
@@ -528,6 +536,8 @@ namespace
                     return true
                 end,
                 activate = mutation('activate'),
+                startCombat = mutation('startCombat'),
+                stopCombat = mutation('stopCombat'),
             },
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
@@ -847,6 +857,43 @@ namespace
             sol::table placedEvents = objects["placed"].get<sol::table>()["sentEvents"];
             ASSERT_EQ(placedEvents.size(), 1);
             EXPECT_EQ(placedEvents[1].get<sol::table>()["name"].get<std::string>(), "ObScriptUnequipItem");
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, CombatBindingsDispatchAuthoritativeActors)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-combat-bindings-test", extraPackages);
+            EXPECT_EQ(LuaUtil::call(s["combatMutations"], factory["mutations"]).get<int>(), 4);
+
+            sol::table mutations = factory["mutations"];
+            sol::table memberStart = mutations[1];
+            EXPECT_EQ(memberStart["name"].get<std::string>(), "startCombat");
+            EXPECT_EQ(memberStart["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "placed");
+            EXPECT_EQ(memberStart["args"].get<sol::table>()[2].get<sol::table>()["id"].get<std::string>(), "player");
+
+            sol::table implicitStart = mutations[2];
+            EXPECT_EQ(implicitStart["name"].get<std::string>(), "startCombat");
+            EXPECT_EQ(implicitStart["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "self");
+            EXPECT_EQ(implicitStart["args"].get<sol::table>()[2].get<sol::table>()["id"].get<std::string>(), "player");
+
+            sol::table memberStop = mutations[3];
+            EXPECT_EQ(memberStop["name"].get<std::string>(), "stopCombat");
+            EXPECT_EQ(memberStop["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "placed");
+
+            sol::table implicitStop = mutations[4];
+            EXPECT_EQ(implicitStop["name"].get<std::string>(), "stopCombat");
+            EXPECT_EQ(implicitStop["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "self");
         });
     }
 

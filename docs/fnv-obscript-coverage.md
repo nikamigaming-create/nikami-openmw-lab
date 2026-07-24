@@ -15,14 +15,14 @@ machine-readable result. The current baseline is:
 
 | Kind | In corpus | Implemented | Required gap | Explicitly unsupported |
 | --- | ---: | ---: | ---: | ---: |
-| Commands | 166 | 37 | 11 | 118 |
+| Commands | 166 | 39 | 9 | 118 |
 | Events | 23 | 9 | 5 | 9 |
 
 The required command gaps are:
 
 - dialogue: `Say`, `SayTo`, `SayToDone`, `StartConversation`
 - actor packages: `AddScriptPackage`, `RemoveScriptPackage`, `EVP`, `ResetAI`
-- combat and crime: `StartCombat`, `StopCombat`, `SendAssaultAlarm`
+- crime response: `SendAssaultAlarm`
 
 The required event gaps are `OnTrigger`, `OnStartCombat`, `OnCombatEnd`,
 `OnPackageStart`, and `OnPackageDone`.

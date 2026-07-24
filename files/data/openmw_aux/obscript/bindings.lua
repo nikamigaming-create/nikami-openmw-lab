@@ -198,6 +198,29 @@ obs.bind('Activate', function(ref)
     return 0
 end)
 
+obs.bind('StartCombat', function(ref, target)
+    if target == nil then
+        target = ref
+        ref = nil
+    end
+    local actor = resolveObject(ref)
+    local combatTarget = resolveObject(target)
+    if not isInstance(types.Actor, actor) or not isInstance(types.Actor, combatTarget) then
+        return 0
+    end
+    core.obscript.startCombat(actor, combatTarget)
+    return 0
+end)
+
+obs.bind('StopCombat', function(ref)
+    local actor = resolveObject(ref)
+    if not isInstance(types.Actor, actor) then
+        return 0
+    end
+    core.obscript.stopCombat(actor)
+    return 0
+end)
+
 obs.bind('GetItemCount', function(ref, item)
     local object = resolveObject(ref)
     if object == nil or type(item) ~= 'string' then

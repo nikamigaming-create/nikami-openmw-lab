@@ -33,6 +33,7 @@
 #include <components/misc/strings/lower.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwmechanics/creaturestats.hpp"
@@ -245,6 +246,62 @@ namespace MWLua
                                      << delayedObject.toString() << " destroyed=" << destroyed;
                 },
                 "ObScriptSetDestroyed");
+            return true;
+        };
+        api["startCombat"] = [context](const Object& actor, const Object& target) {
+            const MWWorld::Ptr& actorPtr = actor.ptrOrEmpty();
+            const MWWorld::Ptr& targetPtr = target.ptrOrEmpty();
+            if (actorPtr.isEmpty() || targetPtr.isEmpty())
+                return false;
+
+            context.mLuaManager->addAction(
+                [actor = Object(actorPtr), target = Object(targetPtr)] {
+                    const MWWorld::Ptr& delayedActor = actor.ptrOrEmpty();
+                    const MWWorld::Ptr& delayedTarget = target.ptrOrEmpty();
+                    if (delayedActor.isEmpty() || delayedTarget.isEmpty())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript StartCombat skipped stale reference: actor="
+                                            << actor.id().toString() << " target=" << target.id().toString();
+                        return;
+                    }
+                    if (!delayedActor.getClass().isActor() || !delayedTarget.getClass().isActor())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript StartCombat rejected non-actor: actor="
+                                            << delayedActor.toString() << " target=" << delayedTarget.toString();
+                        return;
+                    }
+                    MWBase::Environment::get().getMechanicsManager()->startCombat(
+                        delayedActor, delayedTarget, nullptr);
+                    Log(Debug::Info) << "FNV/ESM4 ObScript StartCombat: actor=" << delayedActor.toString()
+                                     << " target=" << delayedTarget.toString();
+                },
+                "ObScriptStartCombat");
+            return true;
+        };
+        api["stopCombat"] = [context](const Object& actor) {
+            const MWWorld::Ptr& actorPtr = actor.ptrOrEmpty();
+            if (actorPtr.isEmpty())
+                return false;
+
+            context.mLuaManager->addAction(
+                [actor = Object(actorPtr)] {
+                    const MWWorld::Ptr& delayedActor = actor.ptrOrEmpty();
+                    if (delayedActor.isEmpty())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript StopCombat skipped stale reference: actor="
+                                            << actor.id().toString();
+                        return;
+                    }
+                    if (!delayedActor.getClass().isActor())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript StopCombat rejected non-actor: actor="
+                                            << delayedActor.toString();
+                        return;
+                    }
+                    MWBase::Environment::get().getMechanicsManager()->stopCombat(delayedActor);
+                    Log(Debug::Info) << "FNV/ESM4 ObScript StopCombat: actor=" << delayedActor.toString();
+                },
+                "ObScriptStopCombat");
             return true;
         };
         api["activate"] = [context](const Object& object, const Object& actor) {
