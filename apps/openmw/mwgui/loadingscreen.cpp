@@ -84,7 +84,7 @@ namespace MWGui
         if (mSplashScreens.empty())
             Log(Debug::Warning) << "Warning: no splash screens found!";
         else
-            Log(Debug::Info) << "FNV/ESM4 diag: found " << mSplashScreens.size()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: found " << mSplashScreens.size()
                              << " candidate loading screen image(s)";
     }
 

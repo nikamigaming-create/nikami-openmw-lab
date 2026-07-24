@@ -348,7 +348,7 @@ namespace MWSound
         const VFS::Path::NormalizedView remapped = getNewVegasFallbackMusic(*mVFS, filename);
         if (remapped != filename)
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
+            Log(Debug::Verbose) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
                              << "\"";
             filename = remapped;
         }
@@ -374,7 +374,31 @@ namespace MWSound
         if (!sound)
             return;
 
-        mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound) });
+        std::shared_ptr<const ESM4::LipAnimation> lip;
+        std::string lipName(filename.value());
+        const std::size_t extension = lipName.find_last_of('.');
+        if (extension != std::string::npos)
+            lipName.replace(extension, std::string::npos, ".lip");
+        else
+            lipName += ".lip";
+        const VFS::Path::Normalized lipPath(std::move(lipName));
+        if (mVFS->exists(lipPath))
+        {
+            try
+            {
+                Files::IStreamPtr stream = mVFS->get(lipPath);
+                lip = std::make_shared<ESM4::LipAnimation>(ESM4::LipAnimation::load(*stream));
+                Log(Debug::Info) << "FNV/ESM4 dialogue: loaded authored LIP path=\"" << lipPath
+                                 << "\" startFrame=" << lip->getStartFrame()
+                                 << " frames=" << lip->getFrameCount();
+            }
+            catch (const std::exception& error)
+            {
+                Log(Debug::Warning) << "Failed to load Fallout LIP \"" << lipPath << "\": " << error.what();
+            }
+        }
+
+        mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound), std::move(lip) });
     }
 
     float SoundManager::getSaySoundLoudness(const MWWorld::ConstPtr& ptr) const
@@ -387,6 +411,24 @@ namespace MWSound
         }
 
         return 0.0f;
+    }
+
+    float SoundManager::getSaySoundFacialTrackValue(
+        const MWWorld::ConstPtr& ptr, std::string_view trackName) const
+    {
+        const auto evaluate = [&](const SaySoundMap& sounds) {
+            const SaySoundMap::const_iterator found = sounds.find(ptr.mRef);
+            if (found == sounds.end() || found->second.mLip == nullptr
+                || !mOutput->isStreamPlaying(found->second.mStream.get()))
+                return 0.f;
+            const double seconds = mOutput->getStreamOffset(found->second.mStream.get());
+            return found->second.mLip->getValue(trackName, seconds);
+        };
+
+        const float queued = evaluate(mSaySoundsQueue);
+        if (queued != 0.f || mSaySoundsQueue.find(ptr.mRef) != mSaySoundsQueue.end())
+            return queued;
+        return evaluate(mActiveSaySounds);
     }
 
     void SoundManager::say(VFS::Path::NormalizedView filename)
@@ -403,7 +445,7 @@ namespace MWSound
         if (!sound)
             return;
 
-        mActiveSaySounds.emplace(nullptr, SaySound{ nullptr, std::move(sound) });
+        mActiveSaySounds.emplace(nullptr, SaySound{ nullptr, std::move(sound), nullptr });
     }
 
     bool SoundManager::sayDone(const MWWorld::ConstPtr& ptr) const

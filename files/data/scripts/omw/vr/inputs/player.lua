@@ -96,16 +96,24 @@ local function updatePointer()
     
 end
 
-local smoothTurn= false
+local smoothTurn = false
 local smoothTurnSensitivity = 2.0
 local snapTurnRate = 30.0 * math.pi / 180
 local function updateControlsSettings()
     smoothTurn = common.controlsSection:get('SmoothTurn')
+    if smoothTurn == nil then smoothTurn = false end
     smoothTurnSensitivity = common.controlsSection:get('SmoothTurnSensitivity')
-    snapTurnRate = common.controlsSection:get('SnapTurnRate') * math.pi / 180
+    if smoothTurnSensitivity == nil then smoothTurnSensitivity = 2.0 end
+    local snapTurn = common.controlsSection:get('SnapTurnRate')
+    if snapTurn == nil then snapTurn = 30 end
+    snapTurnRate = snapTurn * math.pi / 180
     physicalSneak = common.controlsSection:get('PhysicalSneak')
+    if physicalSneak == nil then physicalSneak = false end
     physicalSneakMessage = common.controlsSection:get('PhysicalSneakMessage')
-    physicalSneakOffset = common.controlsSection:get('PhysicalSneakOffset') * I.vrspaces.unitsPerMeter / 100
+    if physicalSneakMessage == nil then physicalSneakMessage = false end
+    local sneakOffset = common.controlsSection:get('PhysicalSneakOffset')
+    if sneakOffset == nil then sneakOffset = 25 end
+    physicalSneakOffset = sneakOffset * I.vrspaces.unitsPerMeter / 100
 end
 updateControlsSettings()
 common.controlsSection:subscribe(async:callback(updateControlsSettings))

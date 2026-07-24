@@ -47,6 +47,34 @@ namespace Nif
 
     using CreateRecord = std::unique_ptr<Record> (*)();
 
+    struct SkippedRecord : Record
+    {
+        std::uint32_t mSize = 0;
+
+        explicit SkippedRecord(std::uint32_t size)
+            : mSize(size)
+        {
+        }
+
+        void read(NIFStream* nif) override { nif->skip(mSize); }
+    };
+
+    static bool shouldSkipStarfieldNifRecord(std::string_view record)
+    {
+        return record == "BSShaderTextureSet";
+    }
+
+    static RecordType skippedRecordType(std::string_view record)
+    {
+        if (record == "BSLightingShaderProperty")
+            return RC_BSLightingShaderProperty;
+        if (record == "BSEffectShaderProperty")
+            return RC_BSEffectShaderProperty;
+        if (record == "BSShaderTextureSet")
+            return RC_BSShaderTextureSet;
+        return RC_MISSING;
+    }
+
     /// These are all the record types we know how to read.
     static std::map<std::string, CreateRecord> makeFactory()
     {
@@ -73,6 +101,7 @@ namespace Nif
             { "BSDebrisNode", &construct<BSRangeNode, RC_NiNode> },
             { "BSDistantObjectInstancedNode",
                 &construct<BSDistantObjectInstancedNode, RC_BSDistantObjectInstancedNode> },
+            { "BSFaceGenNiNode", &construct<BSFaceGenNiNode, RC_BSFaceGenNiNode> },
             { "BSFadeNode", &construct<NiNode, RC_NiNode> },
             { "BSLeafAnimNode", &construct<NiNode, RC_NiNode> },
             { "BSMasterParticleSystem", &construct<BSMasterParticleSystem, RC_NiNode> },
@@ -81,6 +110,7 @@ namespace Nif
             { "BSRangeNode", &construct<BSRangeNode, RC_NiNode> },
             { "BSTreeNode", &construct<BSTreeNode, RC_NiNode> },
             { "BSValueNode", &construct<BSValueNode, RC_NiNode> },
+            { "CsNiNode", &construct<NiNode, RC_CsNiNode> },
 
             // Switch nodes, 4.0.0.2
             { "NiSwitchNode", &construct<NiSwitchNode, RC_NiSwitchNode> },
@@ -276,11 +306,15 @@ namespace Nif
             { "BSDistantObjectLargeRefExtraData",
                 &construct<BSDistantObjectLargeRefExtraData, RC_BSDistantObjectLargeRefExtraData> },
             { "BSEyeCenterExtraData", &construct<BSEyeCenterExtraData, RC_BSEyeCenterExtraData> },
+            { "BoneTranslations", &construct<BoneTranslations, RC_BoneTranslations> },
             { "BSPackedCombinedSharedGeomDataExtra",
                 &construct<BSPackedCombinedSharedGeomDataExtra, RC_BSPackedCombinedSharedGeomDataExtra> },
             { "BSPositionData", &construct<BSPositionData, RC_BSPositionData> },
             { "BSWArray", &construct<BSWArray, RC_BSWArray> },
             { "BSXFlags", &construct<NiIntegerExtraData, RC_BSXFlags> },
+            { "SkinAttach", &construct<SkinAttach, RC_SkinAttach> },
+            { "BSFaceFX", &construct<StarfieldNamedRecord, RC_BSFaceFX> },
+            { "BoneModifierExtra", &construct<StarfieldNamedRecord, RC_BoneModifierExtra> },
 
             // GEOMETRY
 
@@ -300,6 +334,7 @@ namespace Nif
             { "BSSkin::Instance", &construct<BSSkinInstance, RC_BSSkinInstance> },
             { "BSSkin::BoneData", &construct<BSSkinBoneData, RC_BSSkinBoneData> },
             { "BSTriShape", &construct<BSTriShape, RC_BSTriShape> },
+            { "BSGeometry", &construct<BSTriShape, RC_BSTriShape> },
             { "BSDynamicTriShape", &construct<BSDynamicTriShape, RC_BSDynamicTriShape> },
             { "BSLODTriShape", &construct<BSLODTriShape, RC_BSLODTriShape> },
             { "BSMeshLODTriShape", &construct<BSMeshLODTriShape, RC_BSMeshLODTriShape> },
@@ -650,9 +685,9 @@ namespace Nif
             }
         }
 
+        std::vector<std::uint32_t> recSizes;
         if (hasRecordSizes) // Record sizes
         {
-            std::vector<std::uint32_t> recSizes; // Currently unused
             nif.readVector(recSizes, mRecords.size());
         }
 
@@ -691,16 +726,41 @@ namespace Nif
             if (entry == factories.end())
                 throw Nif::Exception("Unknown record type " + rec, mFilename);
 
-            r = entry->second();
+            if (mBethVersion >= NIFFile::BethVersion::BETHVER_STF && hasRecordSizes
+                && shouldSkipStarfieldNifRecord(rec))
+            {
+                r = std::make_unique<SkippedRecord>(recSizes[i]);
+                r->recType = skippedRecordType(rec);
+                Log(Debug::Verbose) << "NIF Debug: Skipping Starfield record of type " << rec << ", index " << i
+                                    << ", bytes " << recSizes[i];
+            }
+            else
+                r = entry->second();
 
             if (writeDebug)
                 Log(Debug::Verbose) << "NIF Debug: Reading record of type " << rec << ", index " << i;
+
+            const std::streampos recordStart = hasRecordSizes ? nif.tell() : std::streampos(-1);
 
             assert(r != nullptr);
             assert(r->recType != RC_MISSING);
             r->recName = std::move(rec);
             r->recIndex = i;
             r->read(&nif);
+
+            if (mBethVersion >= NIFFile::BethVersion::BETHVER_STF && hasRecordSizes)
+            {
+                const std::streampos recordEnd = recordStart + static_cast<std::streamoff>(recSizes[i]);
+                const std::streampos current = nif.tell();
+                if (current != recordEnd)
+                {
+                    Log(Debug::Warning) << "NIFFile Warning: Starfield record " << r->recName << " index " << i
+                                        << " consumed " << static_cast<std::streamoff>(current - recordStart)
+                                        << " bytes, expected " << recSizes[i] << ". File: " << mFilename;
+                    nif.seek(recordEnd);
+                }
+            }
+
             mRecords[i] = std::move(r);
         }
 

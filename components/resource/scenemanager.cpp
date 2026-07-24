@@ -1,13 +1,19 @@
 #include "scenemanager.hpp"
 
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 
 #include <osg/AlphaFunc>
 #include <osg/Capability>
 #include <osg/ColorMaski>
+#include <osg/Geode>
+#include <osg/Geometry>
 #include <osg/Group>
+#include <osg/Material>
 #include <osg/Node>
+#include <osg/Program>
+#include <osg/Texture2D>
 #include <osg/UserDataContainer>
 
 #include <osgAnimation/BasicAnimationManager>
@@ -43,7 +49,9 @@
 #include <components/sceneutil/controller.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
+#include <components/sceneutil/morphgeometry.hpp>
 #include <components/sceneutil/optimizer.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/util.hpp>
 #include <components/sceneutil/visitor.hpp>
@@ -637,6 +645,484 @@ namespace Resource
 
     namespace
     {
+        bool worldViewerEnvEnabled(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && value[0] != '0';
+        }
+
+        bool worldViewerMeshLoadTelemetryEnabled()
+        {
+            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MESH_LOAD_TELEMETRY")
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        }
+
+        bool worldViewerForceFlatTemplateMaterials()
+        {
+            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_NIF_MATERIALS")
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_WORLD_MATERIALS");
+        }
+
+        bool worldViewerForceFullbrightTemplateMaterials()
+        {
+            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_NIF_MATERIALS")
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_WORLD_MATERIALS");
+        }
+
+        bool isWorldViewerActorMeshPath(std::string_view lowered)
+        {
+            return lowered.find("meshes/actors/") != std::string::npos
+                || lowered.find("meshes/characters/") != std::string::npos
+                || lowered.find("meshes/armor/") != std::string::npos
+                || lowered.find("meshes/clothes/") != std::string::npos;
+        }
+
+        bool shouldLogWorldViewerMeshLoad(VFS::Path::NormalizedView path)
+        {
+            if (!worldViewerMeshLoadTelemetryEnabled())
+                return false;
+
+            const std::string lowered = Misc::StringUtils::lowerCase(path.value());
+            return isWorldViewerActorMeshPath(lowered);
+        }
+
+        void applyWorldViewerFlatTemplateStateSet(osg::StateSet* stateSet, const osg::Vec4f& color)
+        {
+            if (stateSet == nullptr)
+                return;
+
+            osg::ref_ptr<osg::Material> material = new osg::Material;
+            material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+            material->setDiffuse(osg::Material::FRONT_AND_BACK, color);
+            material->setAmbient(osg::Material::FRONT_AND_BACK, color);
+            material->setEmission(osg::Material::FRONT_AND_BACK, color);
+            material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+            material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
+
+            stateSet->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            for (unsigned int unit = 0; unit < 8; ++unit)
+                stateSet->setTextureMode(unit, GL_TEXTURE_2D, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setRenderingHint(osg::StateSet::DEFAULT_BIN);
+        }
+
+        void applyWorldViewerFlatTemplateGeometry(osg::Geometry* geometry, const osg::Vec4f& color)
+        {
+            if (geometry == nullptr)
+                return;
+
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->push_back(color);
+            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+            geometry->dirtyDisplayList();
+            geometry->dirtyBound();
+        }
+
+        void applyWorldViewerFullbrightTemplateStateSet(osg::StateSet* stateSet, unsigned int& textureUnitsKept,
+            unsigned int& textureUnitsDisabled)
+        {
+            if (stateSet == nullptr)
+                return;
+
+            osg::ref_ptr<osg::Material> material = new osg::Material;
+            material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+            material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            material->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+            material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
+
+            stateSet->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            for (unsigned int unit = 0; unit < 8; ++unit)
+            {
+                if (stateSet->getTextureAttribute(unit, osg::StateAttribute::TEXTURE) == nullptr)
+                    continue;
+
+                if (unit == 0)
+                {
+                    stateSet->setTextureMode(unit, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    ++textureUnitsKept;
+                }
+                else
+                {
+                    stateSet->setTextureMode(unit, GL_TEXTURE_2D, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    ++textureUnitsDisabled;
+                }
+            }
+            stateSet->setRenderingHint(osg::StateSet::DEFAULT_BIN);
+        }
+
+        void applyWorldViewerFullbrightTemplateGeometry(osg::Geometry* geometry)
+        {
+            if (geometry == nullptr)
+                return;
+
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->push_back(osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+            geometry->dirtyDisplayList();
+            geometry->dirtyBound();
+        }
+
+        class WorldViewerFlatTemplateVisitor : public osg::NodeVisitor
+        {
+        public:
+            explicit WorldViewerFlatTemplateVisitor(const osg::Vec4f& color)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mColor(color)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                node.setUserValue("shaderRequired", false);
+                node.setUserValue("shaderPrefix", std::string());
+                applyWorldViewerFlatTemplateStateSet(node.getOrCreateStateSet(), mColor);
+                ++mStateSets;
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                geode.setUserValue("shaderRequired", false);
+                geode.setUserValue("shaderPrefix", std::string());
+                applyWorldViewerFlatTemplateStateSet(geode.getOrCreateStateSet(), mColor);
+                ++mStateSets;
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        flattenDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { flattenDrawable(drawable); }
+
+            unsigned int mStateSets = 0;
+            unsigned int mGeometries = 0;
+
+        private:
+            void flattenDrawable(osg::Drawable& drawable)
+            {
+                applyWorldViewerFlatTemplateStateSet(drawable.getOrCreateStateSet(), mColor);
+                ++mStateSets;
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                {
+                    applyWorldViewerFlatTemplateGeometry(geometry, mColor);
+                    ++mGeometries;
+                }
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                    {
+                        applyWorldViewerFlatTemplateStateSet(source->getOrCreateStateSet(), mColor);
+                        applyWorldViewerFlatTemplateGeometry(source, mColor);
+                        ++mStateSets;
+                        ++mGeometries;
+                    }
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                        {
+                            applyWorldViewerFlatTemplateStateSet(geometry->getOrCreateStateSet(), mColor);
+                            applyWorldViewerFlatTemplateGeometry(geometry, mColor);
+                            ++mStateSets;
+                            ++mGeometries;
+                        }
+                }
+                if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+                {
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = holder->getGeometry(i))
+                        {
+                            applyWorldViewerFlatTemplateStateSet(geometry->getOrCreateStateSet(), mColor);
+                            applyWorldViewerFlatTemplateGeometry(geometry, mColor);
+                            ++mStateSets;
+                            ++mGeometries;
+                        }
+                }
+                if (SceneUtil::MorphGeometry* morph = dynamic_cast<SceneUtil::MorphGeometry*>(&drawable))
+                    if (osg::Geometry* source = morph->getSourceGeometry())
+                    {
+                        applyWorldViewerFlatTemplateStateSet(source->getOrCreateStateSet(), mColor);
+                        applyWorldViewerFlatTemplateGeometry(source, mColor);
+                        ++mStateSets;
+                        ++mGeometries;
+                    }
+            }
+
+            osg::Vec4f mColor;
+        };
+
+        class WorldViewerFullbrightTemplateVisitor : public osg::NodeVisitor
+        {
+        public:
+            WorldViewerFullbrightTemplateVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                node.setUserValue("shaderRequired", false);
+                node.setUserValue("shaderPrefix", std::string());
+                applyWorldViewerFullbrightTemplateStateSet(
+                    node.getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                ++mStateSets;
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                geode.setUserValue("shaderRequired", false);
+                geode.setUserValue("shaderPrefix", std::string());
+                applyWorldViewerFullbrightTemplateStateSet(
+                    geode.getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                ++mStateSets;
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        fullbrightDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { fullbrightDrawable(drawable); }
+
+            unsigned int mStateSets = 0;
+            unsigned int mGeometries = 0;
+            unsigned int mTextureUnitsKept = 0;
+            unsigned int mTextureUnitsDisabled = 0;
+
+        private:
+            void fullbrightDrawable(osg::Drawable& drawable)
+            {
+                applyWorldViewerFullbrightTemplateStateSet(
+                    drawable.getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                ++mStateSets;
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                {
+                    applyWorldViewerFullbrightTemplateGeometry(geometry);
+                    ++mGeometries;
+                }
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                    {
+                        applyWorldViewerFullbrightTemplateStateSet(
+                            source->getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                        applyWorldViewerFullbrightTemplateGeometry(source);
+                        ++mStateSets;
+                        ++mGeometries;
+                    }
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                        {
+                            applyWorldViewerFullbrightTemplateStateSet(
+                                geometry->getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                            applyWorldViewerFullbrightTemplateGeometry(geometry);
+                            ++mStateSets;
+                            ++mGeometries;
+                        }
+                }
+                if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+                {
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = holder->getGeometry(i))
+                        {
+                            applyWorldViewerFullbrightTemplateStateSet(
+                                geometry->getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                            applyWorldViewerFullbrightTemplateGeometry(geometry);
+                            ++mStateSets;
+                            ++mGeometries;
+                        }
+                }
+                if (SceneUtil::MorphGeometry* morph = dynamic_cast<SceneUtil::MorphGeometry*>(&drawable))
+                    if (osg::Geometry* source = morph->getSourceGeometry())
+                    {
+                        applyWorldViewerFullbrightTemplateStateSet(
+                            source->getOrCreateStateSet(), mTextureUnitsKept, mTextureUnitsDisabled);
+                        applyWorldViewerFullbrightTemplateGeometry(source);
+                        ++mStateSets;
+                        ++mGeometries;
+                    }
+            }
+        };
+
+        void applyWorldViewerFlatTemplateMaterials(VFS::Path::NormalizedView path, osg::Node* node)
+        {
+            if (node == nullptr)
+                return;
+
+            const std::string lowered = Misc::StringUtils::lowerCase(path.value());
+            const bool actorPath = isWorldViewerActorMeshPath(lowered);
+            const bool flatMaterials = worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_NIF_MATERIALS")
+                || (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_WORLD_MATERIALS") && !actorPath);
+            const bool fullbrightMaterials = !flatMaterials
+                && (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_NIF_MATERIALS")
+                    || (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_WORLD_MATERIALS") && !actorPath));
+            if (!flatMaterials && !fullbrightMaterials)
+                return;
+
+            unsigned int stateSets = 0;
+            unsigned int geometries = 0;
+            unsigned int textureUnitsKept = 0;
+            unsigned int textureUnitsDisabled = 0;
+
+            if (flatMaterials)
+            {
+                const osg::Vec4f color = actorPath ? osg::Vec4f(0.86f, 0.82f, 0.74f, 1.f)
+                                                   : osg::Vec4f(0.78f, 0.83f, 0.76f, 1.f);
+                WorldViewerFlatTemplateVisitor visitor(color);
+                node->accept(visitor);
+                stateSets = visitor.mStateSets;
+                geometries = visitor.mGeometries;
+            }
+            else
+            {
+                WorldViewerFullbrightTemplateVisitor visitor;
+                node->accept(visitor);
+                stateSets = visitor.mStateSets;
+                geometries = visitor.mGeometries;
+                textureUnitsKept = visitor.mTextureUnitsKept;
+                textureUnitsDisabled = visitor.mTextureUnitsDisabled;
+            }
+
+            static std::atomic<int> logCount{ 0 };
+            const int logIndex = logCount.fetch_add(1);
+            if (logIndex < 180)
+                Log(Debug::Info) << "World viewer template proof material: mode="
+                                 << (flatMaterials ? "flat" : "fullbright")
+                                 << " path=\"" << path.value() << "\""
+                                 << " actorPath=" << actorPath
+                                 << " stateSets=" << stateSets
+                                 << " geometries=" << geometries
+                                 << " textureUnitsKept=" << textureUnitsKept
+                                 << " textureUnitsDisabled=" << textureUnitsDisabled;
+            else if (logIndex == 180)
+                Log(Debug::Info) << "World viewer template proof material: further logs suppressed";
+        }
+
+        class WorldViewerMeshAuditVisitor : public osg::NodeVisitor
+        {
+        public:
+            WorldViewerMeshAuditVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                ++mNodes;
+                if (node.getNodeMask() == 0)
+                    ++mZeroMaskNodes;
+                if (osg::Drawable* drawable = node.asDrawable())
+                    auditDrawable(*drawable);
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                ++mNodes;
+                ++mGeodes;
+                if (geode.getNodeMask() == 0)
+                    ++mZeroMaskNodes;
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        auditDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                ++mNodes;
+                auditDrawable(drawable);
+            }
+
+            void apply(osg::Geometry& geometry) override
+            {
+                ++mNodes;
+                auditDrawable(geometry);
+            }
+
+            unsigned int mNodes = 0;
+            unsigned int mZeroMaskNodes = 0;
+            unsigned int mGeodes = 0;
+            unsigned int mDrawables = 0;
+            unsigned int mGeometry = 0;
+            unsigned int mRigGeometry = 0;
+            unsigned int mRigGeometryHolder = 0;
+            unsigned int mRigRenderGeometry = 0;
+            unsigned int mMorphGeometry = 0;
+            unsigned int mMorphSourceGeometry = 0;
+            unsigned int mParticles = 0;
+
+        private:
+            void auditDrawable(osg::Drawable& drawable)
+            {
+                ++mDrawables;
+                if (drawable.asGeometry() != nullptr)
+                    ++mGeometry;
+                if (dynamic_cast<osgParticle::ParticleSystem*>(&drawable) != nullptr)
+                    ++mParticles;
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    ++mRigGeometry;
+                    if (rig->getSourceGeometry() != nullptr)
+                        ++mGeometry;
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (rig->getRenderGeometry(i) != nullptr)
+                            ++mRigRenderGeometry;
+                }
+                if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+                {
+                    ++mRigGeometryHolder;
+                    if (holder->getSourceRigGeometry() != nullptr)
+                        ++mGeometry;
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (holder->getGeometry(i) != nullptr)
+                            ++mRigRenderGeometry;
+                }
+                if (SceneUtil::MorphGeometry* morph = dynamic_cast<SceneUtil::MorphGeometry*>(&drawable))
+                {
+                    ++mMorphGeometry;
+                    if (morph->getSourceGeometry() != nullptr)
+                    {
+                        ++mMorphSourceGeometry;
+                        ++mGeometry;
+                    }
+                }
+            }
+        };
+
+        void logWorldViewerMeshAudit(VFS::Path::NormalizedView path, std::string_view stage, osg::Node* node)
+        {
+            if (!shouldLogWorldViewerMeshLoad(path) || node == nullptr)
+                return;
+
+            WorldViewerMeshAuditVisitor visitor;
+            node->accept(visitor);
+            const osg::BoundingSphere sphere = node->getBound();
+            Log(Debug::Info) << "World viewer mesh ledger: stage=" << stage
+                             << " path=\"" << path.value() << "\""
+                             << " nodes=" << visitor.mNodes
+                             << " zeroMaskNodes=" << visitor.mZeroMaskNodes
+                             << " geodes=" << visitor.mGeodes
+                             << " drawables=" << visitor.mDrawables
+                             << " geometry=" << visitor.mGeometry
+                             << " rigGeometry=" << visitor.mRigGeometry
+                             << " rigGeometryHolder=" << visitor.mRigGeometryHolder
+                             << " rigRenderGeometry=" << visitor.mRigRenderGeometry
+                             << " morphGeometry=" << visitor.mMorphGeometry
+                             << " morphSourceGeometry=" << visitor.mMorphSourceGeometry
+                             << " particles=" << visitor.mParticles
+                             << " boundValid=" << sphere.valid()
+                             << " boundRadius=" << (sphere.valid() ? sphere.radius() : 0.f);
+        }
+
         osg::ref_ptr<osg::Node> loadNonNif(
             VFS::Path::NormalizedView normalizedFilename, std::istream& model, Resource::ImageManager* imageManager)
         {
@@ -1001,6 +1487,7 @@ namespace Resource
                 Log(Debug::Error) << "Failed to load '" << path << "': " << e.what() << ", using marker_error instead";
                 loaded = cloneErrorMarker();
             }
+            logWorldViewerMeshAudit(path, "loaded", loaded.get());
 
             // set filtering settings
             SetFilterSettingsVisitor setFilterSettingsVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
@@ -1011,6 +1498,7 @@ namespace Resource
 
             osg::ref_ptr<Shader::ShaderVisitor> shaderVisitor(createShaderVisitor());
             loaded->accept(*shaderVisitor);
+            logWorldViewerMeshAudit(path, "shader", loaded.get());
 
             if (canOptimize(path.value()))
             {
@@ -1022,15 +1510,21 @@ namespace Resource
                     = getOptimizationOptions() | SceneUtil::Optimizer::SHARE_DUPLICATE_STATE;
 
                 optimizer.optimize(loaded, options);
+                logWorldViewerMeshAudit(path, "optimized", loaded.get());
             }
             else
+            {
                 shareState(loaded);
+                logWorldViewerMeshAudit(path, "shared", loaded.get());
+            }
 
             if (compile && mIncrementalCompileOperation)
                 mIncrementalCompileOperation->add(loaded);
             else
                 loaded->getBound();
 
+            applyWorldViewerFlatTemplateMaterials(path, loaded.get());
+            logWorldViewerMeshAudit(path, "template-final", loaded.get());
             mCache->addEntryToObjectCache(path.value(), loaded);
             return loaded;
         }

@@ -1,38 +1,86 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <MyGUI type="Layout">
-  <Widget type="Widget" layer="HUD_3D" position="0 0 255 91" name="_Main" align="Default">
+  <Widget type="Widget" layer="HUD_3D" position="0 0 520 242" name="_Main" align="Default">
     <!-- Energy bars -->
-    <Widget type="ProgressBar" skin="MW_EnergyBar_Yellow" position="0 34 65 12" align="Left Bottom" name="EnemyHealth">
+    <Widget type="ProgressBar" skin="MW_EnergyBar_Yellow" position="8 8 260 16" align="Left Top" name="EnemyHealth">
       <Property key="Visible" value="false"/>
     </Widget>
-    <Widget type="Button" skin="" position="0 49 65 12" align="Left Bottom" name="HealthFrame">
+    <Widget type="TextBox" skin="ProgressText" position="8 12 42 24" name="HealthLabel" align="Left Top">
+      <Property key="Caption" value="HP"/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="TextColour" value="0.25 1 0.25"/>
+      <Property key="TextShadow" value="true"/>
+      <Property key="TextShadowColour" value="0 0 0"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
+    <Widget type="Button" skin="" position="50 12 260 24" align="Left Top" name="HealthFrame">
       <UserString key="ToolTipType" value="Layout"/>
       <UserString key="ToolTipLayout" value="HealthToolTip"/>
       <UserString key="ImageTexture_HealthImage" value="icons\k\health.dds"/>
-      <Widget type="ProgressBar" skin="MW_EnergyBar_Red" position="0 0 65 12" align="Left Bottom" name="Health">
+      <Widget type="ProgressBar" skin="MW_EnergyBar_Green" position="0 0 260 24" align="Left Top" name="Health">
         <Property key="NeedMouse" value="false"/>
       </Widget>
     </Widget>
-    <Widget type="Button" skin="" position="0 64 65 12" align="Left Bottom" name="MagickaFrame">
+    <Widget type="TextBox" skin="ProgressText" position="322 12 118 24" name="HealthValue" align="Left Top">
+      <Property key="Caption" value="--/--"/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="TextColour" value="0.25 1 0.25"/>
+      <Property key="TextShadow" value="true"/>
+      <Property key="TextShadowColour" value="0 0 0"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
+    <Widget type="TextBox" skin="ProgressText" position="8 44 42 24" name="MagickaLabel" align="Left Top">
+      <Property key="Caption" value="AP"/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="TextColour" value="0.25 1 0.25"/>
+      <Property key="TextShadow" value="true"/>
+      <Property key="TextShadowColour" value="0 0 0"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
+    <Widget type="Button" skin="" position="50 44 260 24" align="Left Top" name="MagickaFrame">
       <UserString key="ToolTipType" value="Layout"/>
       <UserString key="ToolTipLayout" value="HealthToolTip"/>
       <UserString key="ImageTexture_HealthImage" value="icons\k\magicka.dds"/>
-      <Widget type="ProgressBar" skin="MW_EnergyBar_Blue" position="0 0 65 12" align="Left Bottom" name="Magicka">
+      <Widget type="ProgressBar" skin="MW_EnergyBar_Green" position="0 0 260 24" align="Left Top" name="Magicka">
         <Property key="NeedMouse" value="false"/>
       </Widget>
     </Widget>
-    <Widget type="Button" skin="" position="0 79 65 12" align="Left Bottom" name="FatigueFrame">
+    <Widget type="TextBox" skin="ProgressText" position="322 44 118 24" name="MagickaValue" align="Left Top">
+      <Property key="Caption" value="--/--"/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="TextColour" value="0.25 1 0.25"/>
+      <Property key="TextShadow" value="true"/>
+      <Property key="TextShadowColour" value="0 0 0"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
+    <Widget type="TextBox" skin="ProgressText" position="444 12 68 24" name="ArmorValue" align="Left Top">
+      <Property key="Caption" value="AMMO --"/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="TextColour" value="0.25 1 0.25"/>
+      <Property key="TextShadow" value="true"/>
+      <Property key="TextShadowColour" value="0 0 0"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
+    <Widget type="Button" skin="" position="8 230 1 1" align="Left Top" name="FatigueFrame">
+      <Property key="Visible" value="false"/>
       <UserString key="ToolTipType" value="Layout"/>
       <UserString key="ToolTipLayout" value="HealthToolTip"/>
       <UserString key="ImageTexture_HealthImage" value="icons\k\fatigue.dds"/>
-      <Widget type="ProgressBar" skin="MW_EnergyBar_Green" position="0 0 65 12" align="Left Bottom" name="Stamina">
+      <Widget type="ProgressBar" skin="MW_EnergyBar_Green" position="0 0 1 1" align="Left Top" name="Stamina">
+        <Property key="Visible" value="false"/>
         <Property key="NeedMouse" value="false"/>
       </Widget>
     </Widget>
+    <Widget type="TextBox" skin="ProgressText" position="470 44 42 24" name="StaminaValue" align="Left Top">
+      <Property key="Visible" value="false"/>
+      <Property key="Caption" value=""/>
+      <Property key="TextAlign" value="Left VCenter"/>
+      <Property key="NeedMouse" value="false"/>
+    </Widget>
 
     <!-- Equipped weapon box -->
-    <Widget type="Button" skin="" position="69 49 36 41" align="Left Bottom" name="WeapBox">
+    <Widget type="Button" skin="" position="444 44 42 48" align="Left Top" name="WeapBox">
       <Widget type="Widget" skin="HUD_Box" position="0 0 36 36">
         <Property key="NeedMouse" value="false"/>
         <Widget type="ItemWidget" skin="MW_ItemIconNoShadow" position="-3 -3 42 42" align="Left Top" name="WeapImage">
@@ -45,7 +93,7 @@
     </Widget>
 
     <!-- Selected spell box -->
-    <Widget type="Button" position="109 49 36 41" align="Left Bottom" name="SpellBox">
+    <Widget type="Button" position="488 44 42 48" align="Left Top" name="SpellBox">
       <Widget type="Widget" skin="HUD_Box" position="0 0 36 36">
         <Widget type="SpellWidget" skin="MW_ItemIconNoShadow" position="-3 -3 42 42" align="Left Top" name="SpellImage"/>
         <Property key="NeedMouse" value="false"/>
@@ -56,7 +104,7 @@
     </Widget>
 
     <!-- Sneak indicator box -->
-    <Widget type="Button" skin="" position="149 49 36 36" align="Left Bottom" name="SneakBox">
+    <Widget type="Button" skin="" position="488 88 36 36" align="Left Top" name="SneakBox">
       <Property key="Visible" value="false"/>
       <Widget type="Widget" skin="HUD_Box" position="0 0 36 36">
         <Property key="NeedMouse" value="false"/>
@@ -72,11 +120,12 @@
     </Widget>
 	
     <!-- Map box -->
-    <Widget type="Widget" skin="" position="189 20 65 65" name="MiniMapBox" align="Right Bottom">
-      <Widget type="Widget" skin="HUD_Box" position="0 0 65 65" align="Center">
+    <Widget type="Widget" skin="" position="8 82 150 150" name="MiniMapBox" align="Left Top">
+      <Widget type="Widget" skin="HUD_Box" position="0 0 150 150" align="Center">
 
-        <Widget type="ScrollView" skin="MW_MapView" position="2 2 61 61" align="Left Bottom" name="MiniMap">
-          <Widget type="ImageBox" skin="RotatingSkin" position="0 0 32 32" align="Bottom Left" name="Compass">
+        <Widget type="ScrollView" skin="MW_MapView" position="5 5 140 140" align="Left Top" name="MiniMap">
+          <Widget type="ImageBox" skin="RotatingSkin" position="39 39 72 72" align="Top Left" name="Compass">
+            <Property key="Visible" value="false"/>
             <Property key="ImageTexture" value="textures\compass.dds"/>
           </Widget>
 
@@ -84,6 +133,16 @@
             <Property key="Depth" value="10"/>
           </Widget>
 
+        </Widget>
+
+        <Widget type="TextBox" skin="ProgressText" position="39 63 72 24" name="CompassHeading" align="Top HCenter">
+          <Property key="Caption" value="N"/>
+          <Property key="Depth" value="20"/>
+          <Property key="TextAlign" value="Center VCenter"/>
+          <Property key="TextColour" value="0.25 1 0.25"/>
+          <Property key="TextShadow" value="true"/>
+          <Property key="TextShadowColour" value="0 0 0"/>
+          <Property key="NeedMouse" value="false"/>
         </Widget>
 
       </Widget>
@@ -108,7 +167,7 @@
     </Widget>
 
     <!-- Equipped weapon/selected spell name display for a few seconds after it changes -->
-    <Widget type="TextBox" skin="SandText" position="0 20 255 24" name="WeaponSpellName" align="Left Bottom HStretch">
+    <Widget type="TextBox" skin="SandText" position="168 118 344 24" name="WeaponSpellName" align="Left Top HStretch">
       <Property key="Visible" value="false"/>
       <Property key="TextAlign" value="Left"/>
       <Property key="TextShadow" value="true"/>
@@ -117,7 +176,7 @@
     </Widget>
 
     <!-- Cell name display when cell changes -->
-    <Widget type="TextBox" skin="SandText" position="0 20 255 24" name="CellName" align="Left Bottom HStretch">
+    <Widget type="TextBox" skin="SandText" position="168 118 344 24" name="CellName" align="Left Top HStretch">
       <Property key="Visible" value="false"/>
       <Property key="TextAlign" value="Left"/>
       <Property key="TextShadow" value="true"/>

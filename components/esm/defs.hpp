@@ -131,6 +131,7 @@ namespace ESM
         REC_CAM_ = esm3Recname("CAM_"),
         REC_STLN = esm3Recname("STLN"),
         REC_INPU = esm3Recname("INPU"),
+        REC_FQST = esm3Recname("FQST"), // Fallout TES4-family quest runtime state
 
         // format 1
         REC_FILT = esm3Recname("FILT"),

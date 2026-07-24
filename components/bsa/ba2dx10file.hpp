@@ -35,6 +35,7 @@ namespace Bsa
         };
 
         uint32_t mVersion{ 0u };
+        uint32_t mCompressionMethod{ 0u };
 
         using FolderRecord = std::map<std::pair<uint32_t, uint32_t>, FileRecord>;
         std::map<uint32_t, FolderRecord> mFolders;

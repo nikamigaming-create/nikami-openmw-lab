@@ -281,7 +281,7 @@ namespace MWWorld
                 firstTag = false;
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: pause state " << (paused ? "paused" : "running")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: pause state " << (paused ? "paused" : "running")
                              << " tags='" << tags.str() << "' console=" << consoleMode
                              << " postProcessorHud=" << postProcessorHud << " interactiveMessageBox="
                              << interactiveMessageBox << " state=" << static_cast<int>(state)

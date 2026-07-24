@@ -1,5 +1,6 @@
 #include "inventorywindow.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -239,14 +240,40 @@ namespace MWGui
             return;
         }
 
+        const bool falloutContent = hasFalloutContent();
+        mLeftPane->setVisible(true);
         mRightPane->setVisible(true);
-        const float aspect = hasFalloutContent() ? 0.78f : 0.5f; // fixed aspect ratio for the avatar image
+        mAvatar->setVisible(true);
+        mAvatarImage->setVisible(true);
+        mArmorRating->setVisible(true);
+
+        const float aspect = falloutContent ? 0.78f : 0.5f; // fixed aspect ratio for the avatar image
         int leftPaneWidth = static_cast<int>((mMainWidget->getSize().height - 44 - mArmorRating->getHeight()) * aspect);
-        if (hasFalloutContent())
-            leftPaneWidth = std::min(leftPaneWidth, std::max(220, mMainWidget->getSize().width / 3));
+        if (falloutContent)
+        {
+            const int windowWidth = std::max(1, mMainWidget->getSize().width);
+            const int maxPaperDollWidth = std::max(260, windowWidth - 360);
+            leftPaneWidth = std::clamp(windowWidth * 38 / 100, 260, maxPaperDollWidth);
+        }
         mLeftPane->setSize(leftPaneWidth, mMainWidget->getSize().height - 44);
         mRightPane->setCoord(mLeftPane->getPosition().left + leftPaneWidth + 4, mRightPane->getPosition().top,
-            mMainWidget->getSize().width - 12 - leftPaneWidth - 15, mMainWidget->getSize().height - 44);
+            std::max(1, mMainWidget->getSize().width - 12 - leftPaneWidth - 15), mMainWidget->getSize().height - 44);
+
+        if (falloutContent)
+        {
+            static int logged = 0;
+            if (logged < 8)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: inventory paper doll pane visible left="
+                                 << mLeftPane->getCoord().left << "," << mLeftPane->getCoord().top << ","
+                                 << mLeftPane->getCoord().width << "," << mLeftPane->getCoord().height
+                                 << " avatar=" << mAvatar->getCoord().left << "," << mAvatar->getCoord().top
+                                 << "," << mAvatar->getCoord().width << "," << mAvatar->getCoord().height
+                                 << " right=" << mRightPane->getCoord().left << "," << mRightPane->getCoord().top
+                                 << "," << mRightPane->getCoord().width << "," << mRightPane->getCoord().height;
+                ++logged;
+            }
+        }
     }
 
     void InventoryWindow::updatePlayer()
@@ -596,8 +623,16 @@ namespace MWGui
             updateEncumbranceBar();
             mItemView->update();
             notifyContentChanged();
+            if (hasFalloutContent())
+            {
+                mPreview->updatePtr(mPtr);
+                mPreview->rebuild();
+                mPreview->update();
+                rebuildProfilerPreviews();
+            }
         }
         adjustPanes();
+        updatePreviewSize();
 
         mItemTransfer->addTarget(*mItemView);
     }
@@ -681,9 +716,25 @@ namespace MWGui
 
         const MyGUI::IntSize viewport = getPreviewViewportSize();
         mPreview->setViewport(viewport.width, viewport.height);
+        mPreview->update();
         mAvatarImage->getSubWidgetMain()->_setUVSet(
             MyGUI::FloatRect(0.f, 0.f, viewport.width / float(mPreview->getTextureWidth()),
                 viewport.height / float(mPreview->getTextureHeight())));
+
+        if (hasFalloutContent())
+        {
+            static int logged = 0;
+            if (logged < 8)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: inventory paper doll preview viewport="
+                                 << viewport.width << "x" << viewport.height
+                                 << " texture=" << mPreview->getTextureWidth() << "x" << mPreview->getTextureHeight()
+                                 << " avatarImage=" << mAvatarImage->getCoord().left << ","
+                                 << mAvatarImage->getCoord().top << "," << mAvatarImage->getCoord().width << ","
+                                 << mAvatarImage->getCoord().height;
+                ++logged;
+            }
+        }
     }
 
     void InventoryWindow::updateProfilerPreviews()

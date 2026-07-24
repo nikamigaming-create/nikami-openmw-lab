@@ -1,8 +1,11 @@
 #ifndef GAME_MWCLASS_ESM4BASE_H
 #define GAME_MWCLASS_ESM4BASE_H
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 
 #include <components/esm4/inventory.hpp>
 #include <components/esm4/loadalch.hpp>
@@ -27,6 +30,9 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/actiondoor.hpp"
+#include "../mwworld/actionteleport.hpp"
+#include "../mwworld/failedaction.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/registeredclass.hpp"
@@ -43,6 +49,9 @@ namespace MWClass
             const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface);
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics);
+        bool worldViewerDisableEsm4Actors();
+        bool worldViewerUseEsm4ActorProxies();
+        void logWorldViewerSkippedActor(const MWWorld::ConstPtr& ptr, std::string_view actorType);
         MWGui::ToolTipInfo getToolTipInfo(std::string_view name, int count);
 
         // We don't handle ESM4 player stats yet, so for resolving levelled object we use an arbitrary number.
@@ -191,6 +200,39 @@ namespace MWClass
                     res = candidate;
             }
             return res;
+        }
+
+        template <class LevelledRecord, class TargetRecord>
+        void resolveLevelledAll(
+            const ESM::RefId& id, std::vector<const TargetRecord*>& out, int level = sDefaultLevel, int depth = 0)
+        {
+            if (id.empty() || depth > 16)
+                return;
+
+            const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
+            const TargetRecord* record = esmStore->get<TargetRecord>().search(id);
+            if (record != nullptr)
+            {
+                if (std::find(out.begin(), out.end(), record) == out.end())
+                    out.push_back(record);
+                return;
+            }
+
+            const LevelledRecord* lvlRec = esmStore->get<LevelledRecord>().search(id);
+            if (lvlRec == nullptr)
+                return;
+
+            for (const ESM4::LVLO& obj : lvlRec->mLvlObject)
+            {
+                if (obj.level > level)
+                    continue;
+
+                const ESM::RefId candidateId = ESM::FormId::fromUint32(obj.item);
+                if (candidateId == id)
+                    continue;
+
+                resolveLevelledAll<LevelledRecord, TargetRecord>(candidateId, out, level, depth + 1);
+            }
         }
 
         // TODO: Figure out a better way to find markers and LOD meshes
@@ -370,6 +412,35 @@ namespace MWClass
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
 
         bool canLock(const MWWorld::ConstPtr& ptr) const override { return true; }
+
+        std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
+        {
+            (void)actor;
+
+            const MWWorld::LiveCellRef<ESM4::Door>* ref = ptr.get<ESM4::Door>();
+            const ESM::RefId openSound(ref->mBase->mOpenSound);
+            const ESM::RefId closeSound(ref->mBase->mCloseSound);
+
+            if (ptr.getCellRef().isLocked())
+            {
+                std::unique_ptr<MWWorld::Action> action
+                    = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
+                action->setSound(ESM::RefId::stringRefId("LockedDoor"));
+                return action;
+            }
+
+            if (ptr.getCellRef().getTeleport())
+            {
+                std::unique_ptr<MWWorld::Action> action = std::make_unique<MWWorld::ActionTeleport>(
+                    ptr.getCellRef().getDestCell(), ptr.getCellRef().getDoorDest(), true);
+                action->setSound(openSound);
+                return action;
+            }
+
+            std::unique_ptr<MWWorld::Action> action = std::make_unique<MWWorld::ActionDoor>(ptr);
+            action->setSound(getDoorState(ptr) == MWWorld::DoorState::Opening ? closeSound : openSound);
+            return action;
+        }
 
         MWWorld::DoorState getDoorState(const MWWorld::ConstPtr& ptr) const override
         {

@@ -1,4 +1,7 @@
 #include "vrbindings.hpp"
+#include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
+#include "../mwgui/windowbase.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwvr/openxrinput.hpp"
 #include "../mwvr/vrgui.hpp"
@@ -108,7 +111,7 @@ namespace MWLua
         MWVR::LayerConfig layerConfigFromTable(const sol::table& options)
         {
             MWVR::LayerConfig layerConfig;
-            layerConfig.opacity = options.get_or("backgroundOpacity", 0);
+            layerConfig.opacity = options.get_or("backgroundOpacity", 0.f);
             layerConfig.center = get_or(options, "center", osg::Vec2());
             layerConfig.extent = get_or(options, "extent", osg::Vec2(1, 1));
             layerConfig.spatialResolution = options.get_or("pixelsPerMeter", 1024);
@@ -227,6 +230,13 @@ namespace MWLua
         api["_isLayerRendering"] = [&guiManager = MWVR::VRGUIManager::instance()](
                                        const std::string& layer) { return guiManager.isLayerRendering(layer);
             };
+
+        api["_getActiveControllerLayer"] = []() -> std::string {
+            auto* activeWindow = MWBase::Environment::get().getWindowManager()->getActiveControllerWindow();
+            if (!activeWindow || !activeWindow->mMainWidget || !activeWindow->mMainWidget->getLayer())
+                return {};
+            return activeWindow->mMainWidget->getLayer()->getName();
+        };
 
         // api[]
 

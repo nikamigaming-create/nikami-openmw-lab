@@ -1,7 +1,10 @@
 #include "renderingmanager.hpp"
 
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
 
@@ -34,6 +37,8 @@
 #include <components/shader/shadermanager.hpp>
 
 #include <components/settings/values.hpp>
+
+#include <components/vfs/manager.hpp>
 
 #include <components/sceneutil/cullsafeboundsvisitor.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -74,6 +79,7 @@
 #include "../mwgui/postprocessorhud.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/movement.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -82,6 +88,7 @@
 #include "../mwclass/esm4npc.hpp"
 
 #include "actorspaths.hpp"
+#include "playervisualpolicy.hpp"
 #include "camera.hpp"
 #include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
@@ -112,27 +119,43 @@ namespace MWRender
 {
     namespace
     {
-        const ESM4::Npc* findFalloutPlayerVisualRecord()
+        bool envFlagEnabled(const char* name)
         {
-            if (std::getenv("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY") != nullptr)
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && std::string(value) != "0";
+        }
+
+        float envFloatOr(const char* name, float fallback)
+        {
+            const char* value = std::getenv(name);
+            if (value == nullptr || *value == '\0')
+                return fallback;
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            return end != value && std::isfinite(parsed) ? parsed : fallback;
+        }
+
+        const ESM4::Npc* findEsm4PlayerVisualRecord()
+        {
+            if (envFlagEnabled("OPENMW_ESM4_DISABLE_PLAYER_VISUAL_PROXY")
+                || envFlagEnabled("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY"))
             {
                 Log(Debug::Info)
-                    << "FNV/ESM4 proof: Fallout NPC player visual proxy disabled by "
-                       "OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY";
+                    << "ESM4 player visual proxy disabled by runtime environment";
                 return nullptr;
             }
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (store == nullptr)
                 return nullptr;
 
-            const char* env = std::getenv("OPENMW_FNV_PLAYER_NPC");
+            const char* env = std::getenv("OPENMW_ESM4_PLAYER_NPC");
+            if (env == nullptr || *env == '\0')
+                env = std::getenv("OPENMW_FNV_PLAYER_NPC");
             const std::string_view wanted = env != nullptr && *env != '\0' ? std::string_view(env) : "Player";
             const ESM4::Npc* fallback = nullptr;
 
             for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
             {
-                if (!npc.mIsFONV)
-                    continue;
                 if (Misc::StringUtils::ciEqual(npc.mEditorId, wanted))
                     return &npc;
                 if (fallback == nullptr && Misc::StringUtils::ciEqual(npc.mEditorId, "Player"))
@@ -140,6 +163,12 @@ namespace MWRender
             }
 
             return fallback;
+        }
+
+        const ESM4::Npc* findFalloutPlayerVisualRecord()
+        {
+            const ESM4::Npc* player = findEsm4PlayerVisualRecord();
+            return player != nullptr && player->mIsFONV ? player : nullptr;
         }
 
         bool hasFalloutNvContentLoaded()
@@ -172,29 +201,42 @@ namespace MWRender
             return nullptr;
         }
 
-        void applyFalloutPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr, const char* context)
+        void applyFalloutPlayerProxyConfiguredEquipment(const MWWorld::Ptr& visualPtr, const char* context)
         {
-            const char* outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
-            const bool useProofDefault = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
-            if ((outfitEnv == nullptr || *outfitEnv == '\0') && !useProofDefault)
+            const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
+                std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
+                std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty())
                 return;
 
-            const std::string_view outfitEditorId
-                = outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv) : "OutfitRepublican02";
-            const ESM4::Armor* armor = findFalloutArmorByEditorId(outfitEditorId);
-            if (armor == nullptr)
-            {
-                Log(Debug::Warning) << "FNV/ESM4 proof: " << context << " player proxy outfit "
-                                    << outfitEditorId << " not found";
-                return;
-            }
+            const auto addArmor = [&](std::string_view editorId, std::string_view role) {
+                if (editorId.empty())
+                    return;
+                const ESM4::Armor* armor = findFalloutArmorByEditorId(editorId);
+                if (armor == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 proof: " << context << " player proxy " << role << " "
+                                        << editorId << " not found";
+                    return;
+                }
 
-            const bool added = MWClass::ESM4Npc::addEquippedArmor(visualPtr, armor);
-            Log(Debug::Info) << "FNV/ESM4 proof: " << context << " player proxy outfit "
-                             << armor->mEditorId << " model="
-                             << MWClass::ESM4Npc::chooseEquipmentModel(
-                                    armor, MWClass::ESM4Npc::isFemale(visualPtr))
-                             << " added=" << added;
+                const std::size_t armorBefore = MWClass::ESM4Npc::getEquippedArmor(visualPtr).size();
+                const std::size_t clothingBefore = MWClass::ESM4Npc::getEquippedClothing(visualPtr).size();
+                const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                const std::size_t armorAfter = MWClass::ESM4Npc::getEquippedArmor(visualPtr).size();
+                const std::size_t clothingAfter = MWClass::ESM4Npc::getEquippedClothing(visualPtr).size();
+                Log(Debug::Info) << "ESM4 proof: " << context << " player proxy " << role << " "
+                                 << armor->mEditorId << " model="
+                                 << MWClass::ESM4Npc::chooseEquipmentModel(
+                                        armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                                 << " added=" << added << " replacedArmor="
+                                 << (armorBefore + (added ? 1 : 0) - armorAfter) << " replacedClothing="
+                                 << (clothingBefore - clothingAfter);
+            };
+
+            addArmor(policy.mOutfit, "outfit");
+            addArmor(policy.mHeadgear, "headgear");
         }
 
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
@@ -227,7 +269,7 @@ namespace MWRender
         {
             if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly source " << label
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly source " << label
                                  << " is not ESM4 NPC; ptr=" << actorPtr.toString();
                 return;
             }
@@ -241,7 +283,7 @@ namespace MWRender
             const bool coversRight = (coveredSlots & ESM4::Armor::FO3_RightHand) != 0;
             const bool coversPipBoy = (coveredSlots & ESM4::Armor::FO3_PipBoy) != 0;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly source " << label
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly source " << label
                              << " ptr=" << actorPtr.toString()
                              << " traits=" << (traits != nullptr ? traits->mEditorId : std::string_view{})
                              << " traitsForm=" << (traits != nullptr ? ESM::RefId(traits->mId) : ESM::RefId())
@@ -253,7 +295,7 @@ namespace MWRender
                              << " coversRightHand=" << coversRight
                              << " coversPipBoy=" << coversPipBoy;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly intended attach leftBone=Bip01 L Hand rightBone=Bip01 R Hand";
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly intended attach leftBone=Bip01 L Hand rightBone=Bip01 R Hand";
 
             if (race != nullptr)
             {
@@ -263,7 +305,7 @@ namespace MWRender
                 {
                     if (!falloutModelMentionsHand(bodyPart.mesh))
                         continue;
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly race hand candidate source=" << label
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly race hand candidate source=" << label
                                      << " mesh=" << bodyPart.mesh
                                      << " texture=" << bodyPart.texture
                                      << " skippedByLeftCoverage="
@@ -283,7 +325,7 @@ namespace MWRender
                                                 | ESM4::Armor::FO3_PipBoy))
                         != 0);
                 if (handSlots || falloutModelMentionsHand(model))
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly equipped armor candidate source=" << label
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped armor candidate source=" << label
                                      << " editor=" << (armor != nullptr ? armor->mEditorId : std::string_view{})
                                      << " form=" << (armor != nullptr ? ESM::RefId(armor->mId) : ESM::RefId())
                                      << " flags="
@@ -300,7 +342,7 @@ namespace MWRender
                                                      | ESM4::Armor::FO3_PipBoy))
                         != 0);
                 if (handSlots || falloutModelMentionsHand(model))
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly equipped clothing candidate source=" << label
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped clothing candidate source=" << label
                                      << " editor=" << (clothing != nullptr ? clothing->mEditorId : std::string_view{})
                                      << " form=" << (clothing != nullptr ? ESM::RefId(clothing->mId) : ESM::RefId())
                                      << " flags="
@@ -311,7 +353,7 @@ namespace MWRender
 
             if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actorPtr))
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
                                  << " editor=" << weapon->mEditorId
                                  << " form=" << ESM::RefId(weapon->mId)
                                  << " model=" << weapon->mModel
@@ -320,7 +362,7 @@ namespace MWRender
                                  << " intendedAttach=Weapon/Bip01 R Hand";
             }
             else
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
                                  << " editor=<none>";
         }
 
@@ -336,7 +378,7 @@ namespace MWRender
                     return false;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
                     weapon->mModel, {}, std::move(source), false });
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
                                  << surfaces.back().source << " editor=" << weapon->mEditorId
                                  << " model=" << weapon->mModel;
                 return true;
@@ -363,7 +405,7 @@ namespace MWRender
                     return addWeaponSurface(weapon, std::string(label) + ":npc-weapon:" + weapon->mEditorId);
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly no right-hand weapon surface source=" << label;
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly no right-hand weapon surface source=" << label;
             return false;
         }
 
@@ -447,20 +489,44 @@ namespace MWRender
 
             ESM::CellRef visualRef;
             visualRef.blank();
-            visualRef.mRefID = ESM::RefId::stringRefId("Player");
+            visualRef.mRefID = ESM::RefId(visualRecord->mId);
             MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-attach");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
+            const bool rightPipBoyCalibration = [] {
+                if (const char* value = std::getenv("OPENMW_FNV_RIGHT_PIPBOY_CALIBRATION"))
+                    return *value != '\0' && std::string_view(value) != "0";
+                return false;
+            }();
+            if (rightPipBoyCalibration)
+            {
+                std::optional<MWVR::VRAnimation::FalloutVrHandSurface> rightPipBoySurface;
+                for (const MWVR::VRAnimation::FalloutVrHandSurface& surface : surfaces)
+                {
+                    const std::string lowered = Misc::StringUtils::lowerCase(surface.model);
+                    if (lowered.find("pipboyarm") == std::string::npos)
+                        continue;
+                    rightPipBoySurface = MWVR::VRAnimation::FalloutVrHandSurface{
+                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false };
+                    break;
+                }
+                if (rightPipBoySurface)
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right PipBoy calibration model="
+                                     << rightPipBoySurface->model;
+                    surfaces.push_back(std::move(*rightPipBoySurface));
+                }
+            }
             appendFalloutVrWeaponSurface(surfaces, player, "save-loaded-vr-player-ptr");
             return surfaces;
         }
 
         void logFalloutVrHandSelectionDiagnostic(const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly diagnostic begin playerPtr=" << player.toString()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly diagnostic begin playerPtr=" << player.toString()
                              << " playerType=" << player.getTypeDescription()
                              << " visualRecord="
                              << (visualRecord != nullptr ? visualRecord->mEditorId : std::string_view{})
@@ -471,17 +537,17 @@ namespace MWRender
 
             if (visualRecord == nullptr)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly diagnostic no Fallout visual record available";
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly diagnostic no Fallout visual record available";
                 return;
             }
 
             ESM::CellRef visualRef;
             visualRef.blank();
-            visualRef.mRefID = ESM::RefId::stringRefId("Player");
+            visualRef.mRefID = ESM::RefId(visualRecord->mId);
             MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-diagnostic");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-diagnostic");
             logFalloutVrHandSourceCandidates(visualPtr, "fallout-visual-record");
         }
     }
@@ -1013,6 +1079,8 @@ namespace MWRender
 
     RenderingManager::~RenderingManager()
     {
+        clearLiveObjectsForShutdown();
+
         // let background loading thread finish before we delete anything else
         mWorkQueue = nullptr;
     }
@@ -1048,7 +1116,11 @@ namespace MWRender
         mSky->listAssetsToPreload(workItem->mModels, workItem->mTextures);
         mWater->listAssetsToPreload(workItem->mTextures);
 
-        if (!hasFalloutNvContentLoaded())
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        const bool hasMorrowindCommonActors = vfs != nullptr && vfs->exists(Settings::models().mXbaseanim)
+            && vfs->exists(Settings::models().mXbaseanimkf);
+
+        if (hasMorrowindCommonActors)
         {
             workItem->mModels.push_back(Settings::models().mXbaseanim);
             workItem->mModels.push_back(Settings::models().mXbaseanim1st);
@@ -1061,7 +1133,7 @@ namespace MWRender
             workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
         }
         else
-            Log(Debug::Info) << "FNV/ESM4: skipped Morrowind common actor preloads for Fallout content";
+            Log(Debug::Info) << "World viewer: skipped Morrowind common actor preloads because xbase assets are absent";
 
         workItem->mTextures.emplace_back("textures/_land_default.dds");
 
@@ -1176,6 +1248,13 @@ namespace MWRender
 
         mSky->setSunDirection(position);
 
+        mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);
+    }
+
+    void RenderingManager::setSunPosition(const osg::Vec3f& position)
+    {
+        mSunLight->setPosition(osg::Vec4f(position, 0.f));
+        mSky->setSunDirection(position);
         mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);
     }
 
@@ -1328,10 +1407,98 @@ namespace MWRender
 
             if (mFalloutPlayerVisualAnimation)
             {
-                if (!mFalloutPlayerVisualAnimation->isPlaying("idle"))
-                    mFalloutPlayerVisualAnimation->play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f,
-                        "start", "stop", 0.f, 0, true);
+                const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+                std::string requestedGroup = "idle";
+                const std::string driverGroup(mPlayerAnimation->getActiveGroup(BoneGroup_LowerBody));
+                const auto mapDriverLocomotionGroup = [](std::string_view group) -> std::string_view {
+                    if (group.find("forward") != std::string_view::npos)
+                        return "walkforward";
+                    if (group.find("back") != std::string_view::npos)
+                        return "walkback";
+                    if (group.find("left") != std::string_view::npos)
+                        return "walkleft";
+                    if (group.find("right") != std::string_view::npos)
+                        return "walkright";
+                    return {};
+                };
+                const std::string_view driverLocomotionGroup = mapDriverLocomotionGroup(driverGroup);
+                if (!driverLocomotionGroup.empty())
+                    requestedGroup = driverLocomotionGroup;
+                else if (std::abs(movement.mPosition[0]) > 0.01f || std::abs(movement.mPosition[1]) > 0.01f)
+                {
+                    if (std::abs(movement.mPosition[1]) >= std::abs(movement.mPosition[0]))
+                        requestedGroup = movement.mPosition[1] >= 0.f ? "walkforward" : "walkback";
+                    else
+                        requestedGroup = movement.mPosition[0] >= 0.f ? "walkright" : "walkleft";
+                }
+
+                osg::Vec2f horizontalDelta;
+                if (mFalloutPlayerVisualPreviousPositionValid)
+                {
+                    horizontalDelta.set(playerPos.x() - mFalloutPlayerVisualPreviousPosition.x(),
+                        playerPos.y() - mFalloutPlayerVisualPreviousPosition.y());
+                    if (requestedGroup == "idle" && horizontalDelta.length2() > 0.0001f)
+                        requestedGroup = "walkforward";
+                }
+                mFalloutPlayerVisualPreviousPosition = playerPos;
+                mFalloutPlayerVisualPreviousPositionValid = true;
+                const std::string movementRequestedGroup = requestedGroup;
+                const bool authoredGroupAvailable = mFalloutPlayerVisualAnimation->hasAnimation(requestedGroup);
+                ESM4NpcAnimation* esm4PlayerVisual
+                    = dynamic_cast<ESM4NpcAnimation*>(mFalloutPlayerVisualAnimation.get());
+                const bool useProcedural = !authoredGroupAvailable && esm4PlayerVisual != nullptr
+                    && esm4PlayerVisual->supportsProceduralHumanoidLocomotion();
+                if (!authoredGroupAvailable && !useProcedural)
+                    requestedGroup = "idle";
+
+                const bool groupChanged = requestedGroup != mFalloutPlayerVisualGroup;
+                if (groupChanged)
+                {
+                    if (!mFalloutPlayerVisualGroup.empty()
+                        && mFalloutPlayerVisualAnimation->hasAnimation(mFalloutPlayerVisualGroup))
+                        mFalloutPlayerVisualAnimation->disable(mFalloutPlayerVisualGroup);
+                    mFalloutPlayerVisualGroup = std::move(requestedGroup);
+                    if (!useProcedural && mFalloutPlayerVisualAnimation->hasAnimation(mFalloutPlayerVisualGroup))
+                    {
+                        mFalloutPlayerVisualAnimation->play(mFalloutPlayerVisualGroup, Animation::AnimPriority(1),
+                            BlendMask_All, false, 1.f, "start", "stop", 0.f,
+                            std::numeric_limits<std::uint32_t>::max(), true);
+                    }
+                    mFalloutPlayerVisualGroupElapsed = 0.f;
+                    mFalloutPlayerVisualCycleLogged = false;
+                }
                 mFalloutPlayerVisualAnimation->runAnimation(dt);
+                bool proceduralApplied = false;
+                if (useProcedural)
+                {
+                    proceduralApplied = esm4PlayerVisual->applyProceduralHumanoidLocomotion(
+                        mFalloutPlayerVisualGroup, mFalloutPlayerVisualGroupElapsed + dt);
+                }
+                const bool selectedGroupAvailable = authoredGroupAvailable || proceduralApplied;
+                if (groupChanged)
+                {
+                    Log(Debug::Info) << "ESM4 player visual locomotion: phase=selected requested=\""
+                                     << movementRequestedGroup << "\" selected=\"" << mFalloutPlayerVisualGroup
+                                     << "\" available=" << selectedGroupAvailable
+                                     << " authoredAvailable=" << authoredGroupAvailable
+                                     << " driver=\"" << (useProcedural ? "procedural-humanoid-ik" : driverGroup)
+                                     << "\" side=" << movement.mPosition[0]
+                                     << " forward=" << movement.mPosition[1] << " horizontalDelta=("
+                                     << horizontalDelta.x() << "," << horizontalDelta.y() << ")";
+                }
+                mFalloutPlayerVisualGroupElapsed += dt;
+                if (!mFalloutPlayerVisualCycleLogged && mFalloutPlayerVisualGroupElapsed >= 0.25f)
+                {
+                    mFalloutPlayerVisualCycleLogged = true;
+                    const float animationTime = useProcedural
+                        ? mFalloutPlayerVisualGroupElapsed
+                        : mFalloutPlayerVisualAnimation->getCurrentTime(mFalloutPlayerVisualGroup);
+                    Log(Debug::Info) << "ESM4 player visual locomotion: phase=advanced selected=\""
+                                     << mFalloutPlayerVisualGroup << "\" elapsed="
+                                     << mFalloutPlayerVisualGroupElapsed << " animationTime=" << animationTime
+                                     << " driver=\"" << (useProcedural ? "procedural-humanoid-ik" : driverGroup)
+                                     << "\" available=" << selectedGroupAvailable;
+                }
             }
         }
 
@@ -1344,6 +1511,16 @@ namespace MWRender
             updateProjectionMatrix();
         }
         mCamera->update(dt, paused);
+
+        if (mFalloutPlayerVisualAnimation)
+        {
+            const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
+                || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
+            const bool showThirdPersonPlayer = !VR::getVR() && !proofHidePlayerVisual
+                && mCamera->getMode() != Camera::Mode::FirstPerson;
+            if (osg::Group* playerVisualRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : 0);
+        }
 
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
@@ -1387,7 +1564,7 @@ namespace MWRender
                 {
                     if (ptr.getType() == ESM4::Npc::sRecordId)
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly save-loaded live player surface refresh";
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly save-loaded live player surface refresh";
                         logFalloutVrHandSourceCandidates(ptr, "save-loaded-vr-player-ptr");
                         vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
                         vrAnimation->setFalloutVrHandSurfaces(
@@ -1395,7 +1572,7 @@ namespace MWRender
                     }
                     else if (const ESM4::Npc* falloutPlayerVisualRecord = findFalloutPlayerVisualRecord())
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly save-loaded visual-record surface refresh";
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly save-loaded visual-record surface refresh";
                         logFalloutVrHandSelectionDiagnostic(ptr, falloutPlayerVisualRecord);
                         vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
                         vrAnimation->setFalloutVrHandSurfaces(
@@ -1756,6 +1933,45 @@ namespace MWRender
             mObjectPaging->clear();
     }
 
+    void RenderingManager::clearLiveObjectsForShutdown()
+    {
+        if (mCamera)
+        {
+            mCamera->setAnimation(nullptr);
+            mCamera->attachTo(MWWorld::Ptr());
+        }
+
+        if (mFalloutPlayerVisualAnimation)
+        {
+            mFalloutPlayerVisualAnimation->removeFromScene();
+            mFalloutPlayerVisualAnimation = nullptr;
+        }
+        mFalloutPlayerVisualGroup.clear();
+        mFalloutPlayerVisualGroupElapsed = 0.f;
+        mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerVisualPreviousPositionValid = false;
+        mFalloutPlayerVisualRef.reset();
+
+        if (mPlayerAnimation)
+        {
+            mPlayerAnimation->removeFromScene();
+            mPlayerAnimation = nullptr;
+        }
+
+        if (mPlayerNode)
+        {
+            if (mPlayerNode->getNumParents() > 0)
+                mPlayerNode->getParent(0)->removeChild(mPlayerNode);
+            mPlayerNode = nullptr;
+        }
+
+        if (mObjects)
+            mObjects->clear();
+
+        if (mWater)
+            mWater->clearRipples();
+    }
+
     MWRender::Animation* RenderingManager::getAnimation(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr())
@@ -1800,7 +2016,12 @@ namespace MWRender
     {
         mFalloutPlayerVisualAnimation = nullptr;
         mFalloutPlayerVisualRef.reset();
-        const ESM4::Npc* falloutPlayerVisualRecord = findFalloutPlayerVisualRecord();
+        mFalloutPlayerVisualGroup.clear();
+        mFalloutPlayerVisualGroupElapsed = 0.f;
+        mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerVisualPreviousPositionValid = false;
+        const ESM4::Npc* falloutPlayerVisualRecord
+            = VR::getVR() ? findFalloutPlayerVisualRecord() : findEsm4PlayerVisualRecord();
         const bool falloutFlatProfile = !VR::getVR() && falloutPlayerVisualRecord != nullptr;
         const bool falloutVrProfile = VR::getVR() && falloutPlayerVisualRecord != nullptr;
 
@@ -1829,13 +2050,11 @@ namespace MWRender
 //## VR_PATCH END
 
         const bool hideLocalPlayerVisual = VR::getVR();
-        const bool proofHidePlayerVisual = std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr
-            || std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr;
-        const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || falloutFlatProfile || proofHidePlayerVisual;
+        const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
+            || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
+        const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || proofHidePlayerVisual;
         if (proofHidePlayerVisual)
             Log(Debug::Info) << "FNV/ESM4: skipped Fallout NPC player visual proxy for hidden player capture";
-        if (falloutFlatProfile)
-            Log(Debug::Info) << "FNV/ESM4: flat gameplay camera hides local player body until Fallout first-person arms are available";
         if (const ESM4::Npc* falloutPlayerVisual
             = suppressFalloutPlayerProxy ? nullptr : falloutPlayerVisualRecord)
         {
@@ -1845,9 +2064,9 @@ namespace MWRender
             mFalloutPlayerVisualRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "world");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
 
-            Log(Debug::Info) << "FNV/ESM4 diag: using Fallout NPC player visual proxy "
+            Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
                              << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
                              << ") on player root; hiding legacy ESM3 body";
 
@@ -1863,16 +2082,28 @@ namespace MWRender
         {
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);
-            if (mFalloutPlayerVisualAnimation)
+            if (proofHidePlayerVisual && mFalloutPlayerVisualAnimation)
             {
                 if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
                     falloutRoot->setNodeMask(0);
             }
-            Log(Debug::Info) << "FNV/ESM4: hidden player render roots";
+            Log(Debug::Info) << "ESM4: hidden legacy player render root";
         }
 
         mCamera->setAnimation(mPlayerAnimation.get());
         mCamera->attachTo(player);
+
+        if (falloutFlatProfile)
+        {
+            // The hidden legacy Morrowind rig tracks its camera at roughly 124 units,
+            // while the native ESM4 human head/eye anchor is about 110 units above
+            // the authored floor. Compensate for that rig mismatch so first person
+            // does not intersect Bethesda's 128-unit ceilings and exterior awnings.
+            const float profileEyeOffsetZ
+                = envFloatOr("OPENMW_ESM4_FIRST_PERSON_EYE_OFFSET_Z", -40.f);
+            mCamera->setFirstPersonProfileOffset(osg::Vec3f(0.f, 0.f, profileEyeOffsetZ));
+            Log(Debug::Info) << "ESM4: persistent first-person eye offset z=" << profileEyeOffsetZ;
+        }
 
         if (falloutVrProfile)
         {
@@ -1885,12 +2116,12 @@ namespace MWRender
         {
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);
-            if (mFalloutPlayerVisualAnimation)
+            if (proofHidePlayerVisual && mFalloutPlayerVisualAnimation)
             {
                 if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
                     falloutRoot->setNodeMask(0);
             }
-            Log(Debug::Info) << "FNV/ESM4: hidden player render roots after camera attachment";
+            Log(Debug::Info) << "ESM4: hidden legacy player render root after camera attachment";
         }
     }
 

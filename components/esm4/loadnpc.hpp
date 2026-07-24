@@ -187,8 +187,10 @@ namespace ESM4
         std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         bool mIsTES4 = false;
+        bool mIsFO3 = false;
         bool mIsFONV = false;
         bool mIsFO4 = false;
+        bool mIsStarfield = false;
 
         std::string mEditorId;
         std::string mFullName;
@@ -198,6 +200,7 @@ namespace ESM4
         ESM::FormId mClass;
         ESM::FormId mHair; // not for TES5, see mHeadParts
         ESM::FormId mEyes;
+        ESM::FormId mVoiceType;
 
         std::vector<ESM::FormId> mHeadParts; // FO3/FONV/TES5
 
@@ -214,6 +217,7 @@ namespace ESM4
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
         ActorBaseConfig mBaseConfig{}; // union
         ActorFaction mFaction{};
+        std::vector<ActorFaction> mFactions;
         Data mData{};
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;

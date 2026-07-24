@@ -31,10 +31,29 @@
 #include "reader.hpp"
 //#include "writer.hpp"
 
+namespace
+{
+    template <class T>
+    void readByteSubRecord(ESM4::Reader& reader, const ESM4::SubRecordHeader& subHdr, T& value)
+    {
+        if (subHdr.dataSize == 0)
+            return;
+
+        reader.get(value);
+        if (subHdr.dataSize > sizeof(value))
+            reader.skipSubRecordData(subHdr.dataSize - static_cast<std::uint32_t>(sizeof(value)));
+    }
+}
+
 void ESM4::LevelledItem::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+    mChanceNone = 0;
+    mHasLvlItemFlags = false;
+    mLvlItemFlags = 0;
+    mData = 0;
+    mLvlObject.clear();
 
     while (reader.getSubRecordHeader())
     {
@@ -45,18 +64,18 @@ void ESM4::LevelledItem::load(ESM4::Reader& reader)
                 reader.getZString(mEditorId);
                 break;
             case ESM::fourCC("LVLD"):
-                reader.get(mChanceNone);
+                readByteSubRecord(reader, subHdr, mChanceNone);
                 break;
             case ESM::fourCC("LVLF"):
-                reader.get(mLvlItemFlags);
+                readByteSubRecord(reader, subHdr, mLvlItemFlags);
                 mHasLvlItemFlags = true;
                 break;
             case ESM::fourCC("DATA"):
-                reader.get(mData);
+                readByteSubRecord(reader, subHdr, mData);
                 break;
             case ESM::fourCC("LVLO"):
             {
-                LVLO lvlo;
+                LVLO lvlo{};
                 if (subHdr.dataSize != 12)
                 {
                     if (subHdr.dataSize == 8)
@@ -64,7 +83,6 @@ void ESM4::LevelledItem::load(ESM4::Reader& reader)
                         reader.get(lvlo.level);
                         reader.get(lvlo.item);
                         reader.get(lvlo.count);
-                        break;
                     }
                     else
                         throw std::runtime_error("ESM4::LVLI::load - " + mEditorId + " LVLO size error");
@@ -87,6 +105,8 @@ void ESM4::LevelledItem::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadlvli"))
+                    break;
                 throw std::runtime_error("ESM4::LVLI::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

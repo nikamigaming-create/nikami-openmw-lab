@@ -201,6 +201,8 @@ namespace MWRender
         osg::ref_ptr<osg::Group> mObjectRoot;
         SceneUtil::Skeleton* mSkeleton;
 
+        virtual void applyPostManualFalloutActorPose() {}
+
         // The node expected to accumulate movement during movement animations.
         osg::ref_ptr<osg::Node> mAccumRoot;
 
@@ -258,6 +260,9 @@ namespace MWRender
 
         bool mPlayScriptedOnly;
         bool mRequiresBoneMap;
+        bool mProofPreviewAnimation;
+        bool mProofPreviewGameplayAudit;
+        int mBethesdaBoneLodLevel;
 
         const NodeMap& getNodeMap() const;
 
@@ -266,6 +271,13 @@ namespace MWRender
          * in the AnimationState to the corresponding nodes.
          */
         void resetActiveGroups();
+
+        int getBethesdaBoneLodLevel() const;
+        bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
+        bool shouldDeferBethesdaBoneLodChange() const;
+
+        std::string describeActiveFalloutAnimationStates() const;
+        size_t forceFalloutNativeUpdateTraversalOnce(std::string_view reason);
 
         size_t detectBlendMask(const osg::Node* node, const std::string& controllerName) const;
 
@@ -339,6 +351,11 @@ namespace MWRender
         MWWorld::ConstPtr getPtr() const { return mPtr; }
 
         MWWorld::Ptr getPtr() { return mPtr; }
+
+        void setProofPreviewAnimation(bool enabled);
+        void setProofPreviewGameplayAudit(bool enabled);
+        bool isProofPreviewAnimation() const { return mProofPreviewAnimation; }
+        bool shouldAuditProofPreviewGameplay() const { return !mProofPreviewAnimation || mProofPreviewGameplayAudit; }
 
         /// Set active flag on the object skeleton, if one exists.
         /// @see SceneUtil::Skeleton::setActive

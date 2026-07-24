@@ -1,4 +1,5 @@
 #include "openxrinput.hpp"
+#include "fnvxrliveframesurface.hpp"
 #include "vranimation.hpp"
 #include "vrgui.hpp"
 #include "vrpointer.hpp"
@@ -632,7 +633,7 @@ namespace MWVR
                 stream << "]\n  }";
             }
             stream << "\n}\n";
-            Log(Debug::Info) << "FNV/ESM4 diag: VR hand mesh proof exported path=" << path.string()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand mesh proof exported path=" << path.string()
                              << " vertices=" << vertices->size() << " triangles=" << triangles.size();
         }
         catch (const std::exception& e)
@@ -959,6 +960,8 @@ namespace MWVR
     bool sVrDebugSnapshotModeLogged = false;
     bool sVrDebugLastLeftSnapshot = false;
     bool sVrDebugLastRightSnapshot = false;
+    int sVrDebugSnapshotFrameCount = 0;
+    bool sVrDebugAutoSnapshotCaptured = false;
 
     void writeFingerSampleJson(std::ostream& stream, const VrFingerDebugSample& sample)
     {
@@ -1065,10 +1068,10 @@ namespace MWVR
             return;
 
         sVrDebugSnapshotModeLogged = true;
-        Log(Debug::Info) << "FNV/ESM4 diag: VR debug capture modes snapshot="
+        Log(Debug::Verbose) << "FNV/ESM4 diag: VR debug capture modes snapshot="
                          << vrDebugSnapshotEnabled()
                          << " runningLog=" << vrDebugRunningLogEnabled()
-                         << " image=" << (getEnvFloat("OPENMW_FNV_VR_DEBUG_SNAPSHOT_IMAGE", 1.f) != 0.f)
+                         << " image=true"
                          << " dir=" << vrDebugSnapshotDir().string();
     }
 
@@ -1085,7 +1088,7 @@ namespace MWVR
         const std::filesystem::path jsonPath = dir / (baseName.str() + ".json");
         const std::filesystem::path imagePath = dir / (baseName.str() + ".png");
 
-        bool imageRequested = getEnvFloat("OPENMW_FNV_VR_DEBUG_SNAPSHOT_IMAGE", 1.f) != 0.f;
+        bool imageRequested = true;
         bool imageWritten = false;
         try
         {
@@ -1142,7 +1145,7 @@ namespace MWVR
 
             stream << "\n  ]\n"
                    << "}\n";
-            Log(Debug::Info) << "FNV/ESM4 diag: VR debug snapshot trigger=" << trigger
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR debug snapshot trigger=" << trigger
                              << " json=" << jsonPath.string()
                              << " image=" << (imageWritten ? imagePath.string() : "not-written");
         }
@@ -1158,6 +1161,15 @@ namespace MWVR
         logVrDebugSnapshotModeOnce();
         if (!vrDebugSnapshotEnabled())
             return;
+
+        const int autoCaptureFrames
+            = std::max(0, static_cast<int>(getEnvFloat("OPENMW_FNV_VR_DEBUG_SNAPSHOT_AUTO_FRAMES", 0.f)));
+        if (!sVrDebugAutoSnapshotCaptured && autoCaptureFrames > 0
+            && ++sVrDebugSnapshotFrameCount >= autoCaptureFrames)
+        {
+            sVrDebugAutoSnapshotCaptured = true;
+            writeVrDebugSnapshot("auto_frame");
+        }
 
         const bool leftDown = readDebugSnapshotButton("/user/hand/left");
         const bool rightDown = false;
@@ -1238,7 +1250,7 @@ namespace MWVR
             repeatedLineCount[side] = 0;
         }
 
-        Log(Debug::Info) << "FNV/ESM4 diag: VR finger sensors hand=" << (left ? "left" : "right") << line;
+        Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger sensors hand=" << (left ? "left" : "right") << line;
     }
 
     class DirectHandFingerPoseState
@@ -1437,7 +1449,7 @@ namespace MWVR
             if (getEnvFloat("OPENMW_FNV_VR_FINGER_CHAIN_LOG", 1.f) == 0.f)
                 return;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VR finger chain pose ready hand=" << (mLeft ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger chain pose ready hand=" << (mLeft ? "left" : "right")
                              << " group=" << getFingerPoseGroupName(group)
                              << " rootLen=" << segment0.length()
                              << " midLen=" << segment1.length()
@@ -1459,7 +1471,7 @@ namespace MWVR
                 return;
 
             mLoggedPoseDetail[index] = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: VR finger chain pose detail hand=" << (mLeft ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger chain pose detail hand=" << (mLeft ? "left" : "right")
                              << " group=" << getFingerPoseGroupName(group)
                              << " curl=" << curl
                              << " maxDegrees=" << maxDegrees
@@ -1548,7 +1560,7 @@ namespace MWVR
         if (shouldLog)
         {
             ++mCurlLogCount;
-            Log(Debug::Info) << "FNV/ESM4 diag: VR finger curl hand=" << (mLeft ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger curl hand=" << (mLeft ? "left" : "right")
                              << " source=" << getFingerCurlSourceName(mSpec.source)
                              << " group=" << getFingerPoseGroupName(mSpec.group)
                              << " chainIndex=" << mSpec.chainIndex
@@ -1629,7 +1641,7 @@ namespace MWVR
             if (shouldLogApply)
             {
                 ++mApplyLogCount;
-                Log(Debug::Info) << "FNV/ESM4 diag: VR finger apply node="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger apply node="
                                  << (node != nullptr ? node->getName() : std::string("<null>"))
                                  << " hand=" << (mLeft ? "left" : "right")
                                  << " context=" << (mSkeleton != nullptr ? "trackedSkeleton" : "directWrapper")
@@ -1714,7 +1726,7 @@ namespace MWVR
             if (!mLogged)
             {
                 mLogged = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: VR static hand finger deform attached hand="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR static hand finger deform attached hand="
                                  << (mLeft ? "left" : "right") << " vertices=" << vertices->size()
                                  << " weightedSlots=" << countWeightedSlots()
                                  << " weightedVertices=" << countWeightedVertices();
@@ -2041,7 +2053,7 @@ namespace MWVR
             else
                 mLoggedStageRejected = true;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VR static hand stage " << (stageSafety.safe ? "accepted" : "rejected")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR static hand stage " << (stageSafety.safe ? "accepted" : "rejected")
                              << " hand=" << (mLeft ? "left" : "right")
                              << " key=" << mSharedBasisKey
                              << " sharedBasis=" << mUseSharedBindBasis
@@ -2460,7 +2472,7 @@ namespace MWVR
                         if (!mLoggedSharedBasisPublish)
                         {
                             mLoggedSharedBasisPublish = true;
-                            Log(Debug::Info) << "FNV/ESM4 diag: VR static hand shared finger basis published key="
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: VR static hand shared finger basis published key="
                                              << mSharedBasisKey << " hand=" << (mLeft ? "left" : "right")
                                              << " score=" << mLocalBindBasis.score
                                              << " completeChains=" << mLocalBindBasis.completeChainCount
@@ -2471,7 +2483,7 @@ namespace MWVR
                 else if (!mLoggedRejectedLocalBasis)
                 {
                     mLoggedRejectedLocalBasis = true;
-                    Log(Debug::Info) << "FNV/ESM4 diag: VR static hand local finger basis rejected key="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VR static hand local finger basis rejected key="
                                      << mSharedBasisKey << " hand=" << (mLeft ? "left" : "right")
                                      << " fullCurlSafe=" << mLocalBindBasis.fullCurlSafe
                                      << " completeChains=" << mLocalBindBasis.completeChainCount
@@ -2490,7 +2502,7 @@ namespace MWVR
                     if (!mLoggedMirroredLeftBasisUse)
                     {
                         mLoggedMirroredLeftBasisUse = true;
-                        Log(Debug::Info)
+                        Log(Debug::Verbose)
                             << "FNV/ESM4 diag: VR static hand using mirrored left finger basis hand=right"
                             << " localScore=" << mLocalBindBasis.score
                             << " mirroredScore=" << mirrored->score
@@ -2508,7 +2520,7 @@ namespace MWVR
             if (shouldUseShared && !mUseSharedBindBasis && !mLoggedSharedBasisUse)
             {
                 mLoggedSharedBasisUse = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: VR static hand using shared finger basis key=" << mSharedBasisKey
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR static hand using shared finger basis key=" << mSharedBasisKey
                                  << " hand=" << (mLeft ? "left" : "right")
                                  << " localScore=" << mLocalBindBasis.score
                                  << " sharedScore=" << found->second.score;
@@ -2562,7 +2574,7 @@ namespace MWVR
         auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
         // Morrowind models do not hold most weapons at a natural angle, so i rotate the hand
         // to more natural angles on weapons to allow more comfortable combat.
-        if (!windowManager->isGuiMode() && !mFingerPointingMode)
+        if ((!windowManager->isGuiMode() || FNVXRLiveFrameSurface::instance().visible()) && !mFingerPointingMode)
         {
 
             switch (weaponType)
@@ -2774,7 +2786,7 @@ namespace MWVR
                                     << " name=" << drawable.getName() << " source=" << sourceName;
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly staticized rig drawable kind=" << kind
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly staticized rig drawable kind=" << kind
                              << " name=" << drawable.getName() << " source=" << sourceName
                              << " rootBone=" << rootBone << " bones=" << boneCount;
             return staticGeometry;
@@ -2913,7 +2925,7 @@ namespace MWVR
                 break;
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VR finger bind dump hand=" << (mLeft ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR finger bind dump hand=" << (mLeft ? "left" : "right")
                              << " context=" << (mSkeleton != nullptr ? "trackedSkeleton" : "directWrapper")
                              << " bone=" << node.getName()
                              << " parent=" << parentName
@@ -3475,7 +3487,7 @@ namespace MWVR
                     double handAngle = 0.0;
                     osg::Vec3 handAxis;
                     handFromAim.getRotate(handAngle, handAxis);
-                    Log(Debug::Info) << "FNV/ESM4 diag: VR hand aim-frame audit hand=" << mDebugName
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand aim-frame audit hand=" << mDebugName
                                      << " handSpace=" << mAuditSourceSpaceName
                                      << " aimSpace=" << mAuditAimSpaceName
                                      << " aimWorld=(" << aimWorld.x() << "," << aimWorld.y() << ","
@@ -3511,7 +3523,7 @@ namespace MWVR
             if (handTrackingLog && (mAlignmentLogCount < 20 || (++mAlignmentLogFrame % 300) == 0))
             {
                 ++mAlignmentLogCount;
-                Log(Debug::Info) << "FNV/ESM4 diag: VR hand pointer alignment hand=" << mDebugName
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand pointer alignment hand=" << mDebugName
                                  << " rayOriginMW=(" << rayOrigin.x() << "," << rayOrigin.y() << ","
                                  << rayOrigin.z() << ") computedHandMW=(" << position.x() << ","
                                  << position.y() << "," << position.z() << ") worldDeltaMW=("
@@ -3580,7 +3592,7 @@ namespace MWVR
                     const osg::Vec3f worldPosition = localToWorld.getTrans();
                     const osg::Quat worldAttitude = localToWorld.getRotate();
                     ++mLogCount;
-                    Log(Debug::Info) << "FNV/ESM4 diag: VR tracked XYZ axis label=" << mLabel
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VR tracked XYZ axis label=" << mLabel
                                      << " worldPosition=(" << worldPosition.x() << "," << worldPosition.y() << ","
                                      << worldPosition.z() << ") worldAttitude=(" << worldAttitude.x() << ","
                                      << worldAttitude.y() << "," << worldAttitude.z() << "," << worldAttitude.w()
@@ -3632,7 +3644,7 @@ namespace MWVR
                         if (mLogCount < 8 || (++mLogFrame % 300) == 0)
                         {
                             ++mLogCount;
-                            Log(Debug::Info) << "FNV/ESM4 diag: VR wrist/tracking XYZ axis side=" << mSide
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: VR wrist/tracking XYZ axis side=" << mSide
                                              << " space=" << mSpaceName
                                              << " controllerWorld=(" << cached->second.mWorldPosition.x() << ","
                                              << cached->second.mWorldPosition.y() << ","
@@ -3719,7 +3731,7 @@ namespace MWVR
             const osg::Vec3f surfaceZLocal
                 = controllerOrientation.inverse() * osg::Matrix::transform3x3(osg::Vec3f(0.f, 0.f, 1.f), localToWorld);
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VR hand cuff controller-local audit side=" << mSide
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand cuff controller-local audit side=" << mSide
                              << " model=" << mModel
                              << " space=" << mSpaceName
                              << " controllerWorld=(" << controllerWorld.x() << "," << controllerWorld.y()
@@ -3820,7 +3832,7 @@ namespace MWVR
                                 ? boundsExtent(controllerLocalBounds)
                                 : osg::Vec3f();
                             const osg::Vec3f cuffToVisibleCenter = visibleCenter - mControllerLocalTarget;
-                            Log(Debug::Info) << "FNV/ESM4 diag: VR hand controller-space position solve side="
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand controller-space position solve side="
                                              << mSide << " model=" << mModel
                                              << " controllerLocalTarget=(" << mControllerLocalTarget.x() << ","
                                              << mControllerLocalTarget.y() << "," << mControllerLocalTarget.z() << ")"
@@ -3894,7 +3906,7 @@ namespace MWVR
 
         auto& xrInput = OpenXRInput::instance();
 
-        Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode inventoryHands=1";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand tracking mode inventoryHands=1";
 
         for (int i = 0; i < 2; i++)
         {
@@ -3917,7 +3929,7 @@ namespace MWVR
                                     << "; using grip tracking space " << gripSpace;
             const osg::Vec3 offset = useWristTop ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
             const bool useNativeGripOrientation = useWristTop;
-            Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking source hand=" << (i == 0 ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand tracking source hand=" << (i == 0 ? "left" : "right")
                              << " space=" << ctx.spaceName
                              << " nativeOrientation=" << useNativeGripOrientation
                              << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
@@ -3946,9 +3958,14 @@ namespace MWVR
     {
         if (viewMode != VM_VRFirstPerson && viewMode != VM_VRNormal)
         {
-            clearFalloutVrHandSurfaces();
-            NpcAnimation::setViewMode(viewMode);
-            return;
+            static int sLoggedCoerce = 0;
+            if (sLoggedCoerce < 24)
+            {
+                ++sLoggedCoerce;
+                Log(Debug::Warning)
+                    << "FNV/ESM4 diag: coerced non-VR player view mode to VM_VRFirstPerson to keep VR hands";
+            }
+            viewMode = VM_VRFirstPerson;
         }
         NpcAnimation::setViewMode(viewMode);
         return;
@@ -3957,7 +3974,6 @@ namespace MWVR
     void VRAnimation::updateParts()
     {
         NpcAnimation::updateParts();
-        clearFalloutVrHandSurfaces();
 
         if (mViewMode == VM_VRFirstPerson)
         {
@@ -4008,9 +4024,15 @@ namespace MWVR
                         && left.source == right.source && left.left == right.left;
                 });
 
+        if (sameSurfaces)
+        {
+            attachFalloutVrHandSurfaces();
+            updateTrackingControllers();
+            return;
+        }
+
         clearFalloutVrHandSurfaces();
-        if (!sameSurfaces)
-            mFalloutVrHandSurfaces = std::move(surfaces);
+        mFalloutVrHandSurfaces = std::move(surfaces);
         attachFalloutVrHandSurfaces();
         updateTrackingControllers();
     }
@@ -4033,7 +4055,7 @@ namespace MWVR
         }
 
         if (!mFalloutVrHandSurfaceNodes.empty() || parentLinksRemoved > 0)
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly cleared attached surfaces nodes="
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly cleared attached surfaces nodes="
                              << mFalloutVrHandSurfaceNodes.size() << " parentLinks=" << parentLinksRemoved;
 
         mFalloutVrHandSurfaceNodes.clear();
@@ -4043,9 +4065,6 @@ namespace MWVR
     void VRAnimation::attachFalloutVrHandSurfaces()
     {
         if (mViewMode != VM_VRFirstPerson)
-            return;
-
-        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
             return;
 
         if (mFalloutVrHandSurfacesAttached || mFalloutVrHandSurfaces.empty() || mObjectRoot == nullptr)
@@ -4185,7 +4204,7 @@ namespace MWVR
             pipBoySocketTargets[socketIndex] = surfacePipBoyOffset + surfacePipBoyAttitude * socketModel;
             pipBoySocketTargetValid[socketIndex] = true;
             const osg::Vec3f extent = boundsExtent(pipBoyBounds);
-            Log(Debug::Info) << "FNV/ESM4 diag: PipBoy socket target side=" << (surface.left ? "left" : "right")
+            Log(Debug::Verbose) << "FNV/ESM4 diag: PipBoy socket target side=" << (surface.left ? "left" : "right")
                              << " model=" << correctedModel.value()
                              << " boundsMin=(" << pipBoyBounds.xMin() << "," << pipBoyBounds.yMin() << ","
                              << pipBoyBounds.zMin() << ") boundsMax=(" << pipBoyBounds.xMax() << ","
@@ -4199,6 +4218,10 @@ namespace MWVR
                              << pipBoySocketTargets[socketIndex].z() << ")";
         }
         int attachedCount = 0;
+        int leftHandSurfaceCount = 0;
+        int rightHandSurfaceCount = 0;
+        int leftPipBoySurfaceCount = 0;
+        int rightPipBoySurfaceCount = 0;
         for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
         {
             if (surface.model.empty())
@@ -4245,7 +4268,7 @@ namespace MWVR
                             = computeHandCuffAnchor(*staticTemplate, staticizedHandBounds, surface.left);
                         const osg::Vec3f center = staticizedHandBounds.center();
                         const osg::Vec3f extent = boundsExtent(staticizedHandBounds);
-                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds model="
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds model="
                                          << correctedModel.value()
                                          << " center=(" << center.x() << "," << center.y() << "," << center.z()
                                          << ") extent=(" << extent.x() << "," << extent.y() << "," << extent.z()
@@ -4267,7 +4290,7 @@ namespace MWVR
             }
 
             if (pipBoyArm)
-                Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist rotation degrees side="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: PipBoy wrist rotation degrees side="
                                  << (surface.left ? "left" : "right")
                                  << " calibration=" << rightPipBoyCalibration
                                  << " x=" << getPipBoyEnvFloat(surface.left, "ROT_X", pipBoyRotX)
@@ -4293,7 +4316,7 @@ namespace MWVR
                 handTransform->addChild(directStaticHandNode);
                 attachNode->addChild(handTransform);
                 attached = handTransform;
-                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly direct hand wrapper attached model="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly direct hand wrapper attached model="
                                  << correctedModel.value() << " attachNode=" << attachNode->getName()
                                  << " handRotationDegrees=(" << handRotX << "," << handRotY << "," << handRotZ
                                  << ") fingerBoneBindings=" << bindFingerVisitor.mBoundCount
@@ -4352,12 +4375,29 @@ namespace MWVR
                     const std::size_t socketIndex = surface.left ? 0 : 1;
                     const bool anchorToPipBoy = pipBoySocketTargetValid[socketIndex]
                         && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", 1.f) != 0.f;
+                    const bool mirrorLeftPipBoySocket = !surface.left && !anchorToPipBoy
+                        && pipBoySocketTargetValid[0]
+                        && getHandEnvFloat(false, "MIRROR_LEFT_PIPBOY_SOCKET", 1.f) != 0.f;
                     if (anchorToPipBoy)
                     {
                         targetCuffAnchor = pipBoySocketTargets[socketIndex];
                         targetCuffAnchor += osg::Vec3f(getHandEnvFloat(surface.left, "SOCKET_X", 0.f),
                             getHandEnvFloat(surface.left, "SOCKET_Y", 0.f),
                             getHandEnvFloat(surface.left, "SOCKET_Z", 0.f));
+                    }
+                    else if (mirrorLeftPipBoySocket)
+                    {
+                        // Both wrist spaces are derived from their matching OpenXR aim pose. Mirror the
+                        // calibrated left cuff target so the bare right hand uses the same anatomical
+                        // wrist/palm reference instead of the raw RightWristTop origin.
+                        targetCuffAnchor = pipBoySocketTargets[0]
+                            + osg::Vec3f(getHandEnvFloat(true, "SOCKET_X", 0.f),
+                                getHandEnvFloat(true, "SOCKET_Y", 0.f),
+                                getHandEnvFloat(true, "SOCKET_Z", 0.f));
+                        targetCuffAnchor.x() = -targetCuffAnchor.x();
+                        targetCuffAnchor += osg::Vec3f(getHandEnvFloat(false, "OFFSET_X", 0.f),
+                            getHandEnvFloat(false, "OFFSET_Y", 0.f),
+                            getHandEnvFloat(false, "OFFSET_Z", 0.f));
                     }
                     else
                     {
@@ -4406,7 +4446,7 @@ namespace MWVR
                         transform->setAttitude(solvedRotation);
                         normalizeOffset = targetCuffAnchor - (solvedRotation * modelCuffAnchor);
                         transform->setPosition(normalizeOffset);
-                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand frame solved side="
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly hand frame solved side="
                                          << (surface.left ? "left" : "right")
                                          << " model=" << correctedModel.value() << " modelForward=("
                                          << modelForward.x() << "," << modelForward.y() << ","
@@ -4479,7 +4519,7 @@ namespace MWVR
                     const osg::Vec3f worldAxisX = osg::Matrix::transform3x3(localAxisX, parentToWorld);
                     const osg::Vec3f worldAxisY = osg::Matrix::transform3x3(localAxisY, parentToWorld);
                     const osg::Vec3f worldAxisZ = osg::Matrix::transform3x3(localAxisZ, parentToWorld);
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
                                      << correctedModel.value()
                                      << " offset=(" << normalizeOffset.x() << "," << normalizeOffset.y() << ","
                                      << normalizeOffset.z() << ") finalPosition=(" << transform->getPosition().x()
@@ -4502,7 +4542,7 @@ namespace MWVR
                                      << staticizedHandCuffAnchor.mSliceMax.x() << ","
                                      << staticizedHandCuffAnchor.mSliceMax.y() << ","
                                      << staticizedHandCuffAnchor.mSliceMax.z() << ")";
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand local anchor candidates model="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly hand local anchor candidates model="
                                      << correctedModel.value()
                                      << " side=" << (surface.left ? "left" : "right")
                                      << " wrist=(" << candidateWrist.x() << "," << candidateWrist.y() << ","
@@ -4516,7 +4556,7 @@ namespace MWVR
                                      << candidateZMin.y() << "," << candidateZMin.z() << ") zMax=("
                                      << candidateZMax.x() << "," << candidateZMax.y() << ","
                                      << candidateZMax.z() << ")";
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand rotation axes model="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly hand rotation axes model="
                                      << correctedModel.value()
                                      << " side=" << (surface.left ? "left" : "right")
                                      << " attachNode=" << attachNode->getName()
@@ -4580,7 +4620,7 @@ namespace MWVR
                                 const osg::Vec3f socketCompensation
                                     = transform->getAttitude() * (socketTargetModel - mirroredSocketModel);
                                 surfacePipBoyOffset += socketCompensation;
-                                Log(Debug::Info) << "FNV/ESM4 diag: right PipBoy visual mirror compensation socketScale=("
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: right PipBoy visual mirror compensation socketScale=("
                                                  << socketMirrorScale.x() << "," << socketMirrorScale.y() << ","
                                                  << socketMirrorScale.z() << ") visualScale=("
                                                  << pipBoyMirrorScale.x() << "," << pipBoyMirrorScale.y() << ","
@@ -4621,7 +4661,7 @@ namespace MWVR
                             wrapChildrenInSocketMirror(*transform, visualSocketMirrorPivot, visualSocketMirrorScale);
                             if (visualSocketMirror)
                             {
-                                Log(Debug::Info) << "FNV/ESM4 diag: right PipBoy socket visual mirror pivot=("
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: right PipBoy socket visual mirror pivot=("
                                                  << visualSocketMirrorPivot.x() << "," << visualSocketMirrorPivot.y()
                                                  << "," << visualSocketMirrorPivot.z() << ") scale=("
                                                  << visualSocketMirrorScale.x() << "," << visualSocketMirrorScale.y()
@@ -4678,7 +4718,7 @@ namespace MWVR
                                 = targetValid ? pipBoySocketTargets[socketIndex] : osg::Vec3f();
                             const osg::Vec3f socketError = targetValid ? visualSocket - targetSocket : osg::Vec3f();
                             const osg::Vec3f centerFromSocket = visualCenter - visualSocket;
-                            Log(Debug::Info) << "FNV/ESM4 diag: PipBoy visual anchors side="
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: PipBoy visual anchors side="
                                              << (surface.left ? "left" : "right")
                                              << " calibration=" << rightPipBoyCalibration
                                              << " rawSocketModel=(" << rawSocketModel.x() << ","
@@ -4716,7 +4756,7 @@ namespace MWVR
                             addLocalAxisMarker(
                                 *transform, osg::Vec3f(), getEnvFloat("OPENMW_FNV_VR_DEBUG_AXIS_LENGTH", 16.f));
                     }
-                    Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist offset applied side="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: PipBoy wrist offset applied side="
                                      << (surface.left ? "left" : "right")
                                      << " calibration=" << rightPipBoyCalibration
                                      << " x=" << surfacePipBoyOffset.x()
@@ -4735,7 +4775,11 @@ namespace MWVR
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
             mFalloutVrHandSurfaceNodes.push_back(attached);
             ++attachedCount;
-            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly attached model=" << correctedModel.value()
+            if (riggedHandPart)
+                ++(surface.left ? leftHandSurfaceCount : rightHandSurfaceCount);
+            if (pipBoyArm)
+                ++(surface.left ? leftPipBoySurfaceCount : rightPipBoySurfaceCount);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly attached model=" << correctedModel.value()
                              << " source=" << surface.source
                              << " side=" << (surface.left ? "left" : "right")
                              << " attachNode=" << attachNode->getName()
@@ -4747,14 +4791,22 @@ namespace MWVR
         }
 
         mFalloutVrHandSurfacesAttached = true;
-        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly attached surfaces count=" << attachedCount
+        const bool nativeRigReady = leftHandSurfaceCount == 1 && rightHandSurfaceCount == 1
+            && leftPipBoySurfaceCount == 1 && rightPipBoySurfaceCount == 0;
+        Log(nativeRigReady ? Debug::Info : Debug::Warning)
+            << "OpenMW VR player rig status=" << (nativeRigReady ? "ready" : "degraded")
+            << " leftHands=" << leftHandSurfaceCount << " rightHands=" << rightHandSurfaceCount
+            << " leftPipBoys=" << leftPipBoySurfaceCount << " rightPipBoys=" << rightPipBoySurfaceCount
+            << " attachedSurfaces=" << attachedCount << " requestedSurfaces=" << mFalloutVrHandSurfaces.size();
+        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly attached surfaces count=" << attachedCount
                          << " requested=" << mFalloutVrHandSurfaces.size();
     }
 
     void VRAnimation::updateFalloutVrHandSurfaceVisibility()
     {
-        const bool shouldRenderHands = mViewMode == VM_VRFirstPerson
-            && !MWBase::Environment::get().getWindowManager()->isGuiMode();
+        // Native OpenMW VR hands must not depend on the experimental retail sidecar.
+        // GUI mode is also when the player needs tracked hands for inventory and pointer input.
+        const bool shouldRenderHands = mViewMode == VM_VRFirstPerson;
         if (!shouldRenderHands)
         {
             if (mFalloutVrHandSurfacesAttached || !mFalloutVrHandSurfaceNodes.empty())
@@ -4768,6 +4820,7 @@ namespace MWVR
     void VRAnimation::updateCrosshairs()
     {
         updateFalloutVrHandSurfaceVisibility();
+        updateVrDebugSnapshotControls();
 
         if (!mCrosshairsEnabled)
             return;
@@ -5035,7 +5088,19 @@ namespace MWVR
         for (auto& it : mVrControllers)
         {
             disableTracking(it.second.topLevelPath);
-            if (VR::getControllerActive(it.second.topLevelPath))
+            const bool controllerActive = VR::getControllerActive(it.second.topLevelPath);
+            const bool trackingSpaceAvailable = OpenXRInput::instance().getSpace(it.second.spaceName) != nullptr;
+            static int sLoggedControllerState = 0;
+            if (sLoggedControllerState < 24)
+            {
+                ++sLoggedControllerState;
+                Log(Debug::Warning) << "FNV/ESM4 diag: VR controller tracking gate hand="
+                                    << (it.second.handBone.find(" L ") != std::string::npos ? "left" : "right")
+                                    << " active=" << controllerActive
+                                    << " trackingSpaceAvailable=" << trackingSpaceAvailable
+                                    << " space=" << it.second.spaceName;
+            }
+            if (controllerActive || trackingSpaceAvailable)
                 enableTracking(it.second.topLevelPath);
         }
 
@@ -5080,7 +5145,7 @@ namespace MWVR
         }
 
         ctx.enabled = true;
-        Log(Debug::Info) << "FNV/ESM4 diag: VR tracking enabled hand=" << (ctx.handBone.find(" L ") != std::string::npos ? "left" : "right")
+        Log(Debug::Verbose) << "FNV/ESM4 diag: VR tracking enabled hand=" << (ctx.handBone.find(" L ") != std::string::npos ? "left" : "right")
                          << " active=" << VR::getControllerActive(ctx.topLevelPath)
                          << " forearmBound=" << forearmBound
                          << " handBound=" << handBound

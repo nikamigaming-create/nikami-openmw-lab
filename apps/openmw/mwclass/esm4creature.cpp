@@ -13,6 +13,7 @@
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/script.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -23,6 +24,7 @@
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
+#include "../mwworld/esm4questruntime.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -158,6 +160,32 @@ namespace MWClass
         return hour;
     }
 
+    static bool fnvPackageConditionsPass(const ESM4::AIPackage& package)
+    {
+        if (package.mConditions.empty())
+            return true;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        std::vector<ESM4::TargetCondition> conditions;
+        conditions.reserve(package.mConditions.size());
+        for (const ESM4::AIPackage::CTDA& source : package.mConditions)
+        {
+            ESM4::TargetCondition target;
+            target.condition = static_cast<std::uint32_t>(source.condition)
+                | (static_cast<std::uint32_t>(source.unknown1) << 8)
+                | (static_cast<std::uint32_t>(source.unknown2) << 16)
+                | (static_cast<std::uint32_t>(source.unknown3) << 24);
+            target.comparison = source.compValue;
+            target.functionIndex = static_cast<std::uint32_t>(source.fnIndex);
+            target.param1 = source.param1;
+            target.param2 = source.param2;
+            conditions.push_back(target);
+        }
+        return world->getESM4QuestRuntime().evaluateConditions(conditions);
+    }
+
     static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -170,6 +198,8 @@ namespace MWClass
         {
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
+                continue;
+            if (!fnvPackageConditionsPass(*package))
                 continue;
             if (fnvPackageCoversHour(*package, hour))
                 return package;
@@ -234,7 +264,7 @@ namespace MWClass
 
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: native FNV creature AI package movement disabled by proof env for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: native FNV creature AI package movement disabled by proof env for "
                              << creature.mEditorId;
             return;
         }
@@ -262,7 +292,7 @@ namespace MWClass
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped native creature AI travel package "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI travel package "
                                  << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " targetResolved=" << static_cast<bool>(target)
                                  << " currentCell=" << currentCellId << " for " << creature.mEditorId;
@@ -277,7 +307,7 @@ namespace MWClass
             const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
             if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped native creature AI travel package "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI travel package "
                                  << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
                                  << " furnitureTarget=" << furnitureTarget
@@ -287,7 +317,7 @@ namespace MWClass
 
             MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
             sequence.stack(travel, ptr, true);
-            Log(Debug::Info) << "FNV/ESM4 diag: stacked native creature AI travel from FNV package "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI travel from FNV package "
                              << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                              << " hour=" << hour << " override=" << usedHourOverride
                              << " targetRef=" << target->mEditorId << " pos=(" << target->mPos.pos[0] << ","
@@ -306,7 +336,7 @@ namespace MWClass
             std::vector<unsigned char> idles(8, 0);
             MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true);
             sequence.stack(wander, ptr, true);
-            Log(Debug::Info) << "FNV/ESM4 diag: stacked native creature AI wander from FNV package "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI wander from FNV package "
                              << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                              << " hour=" << hour << " override=" << usedHourOverride << " distance=" << distance
                              << " duration=" << duration << " for " << creature.mEditorId;
@@ -355,7 +385,7 @@ namespace MWClass
         initialiseActorStats(result, effective);
         refData.setCustomData(std::move(data));
 
-        Log(Debug::Info) << "FNV/ESM4 diag: initialized creature actor shell for \"" << creature->mEditorId << "\" ("
+        Log(Debug::Verbose) << "FNV/ESM4 diag: initialized creature actor shell for \"" << creature->mEditorId << "\" ("
                          << ESM::RefId(creature->mId) << ") level=" << result.mCreatureStats.getLevel()
                          << " health=" << result.mCreatureStats.getHealth().getModified()
                          << " model=" << effective.mModel << " kfCount=" << effective.mKf.size()

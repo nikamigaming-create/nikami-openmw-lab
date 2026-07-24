@@ -12,6 +12,7 @@
 #include <osgDB/ReadFile>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/fogstate.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/resource/resourcesystem.hpp>
@@ -255,16 +256,19 @@ namespace MWRender
     void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell, MapSegment& segment)
     {
         mInterior = false;
+        mMapWorldSize = ESM::getCellSize(cell->getCell()->getWorldSpace());
 
         const int x = cell->getCell()->getGridX();
         const int y = cell->getCell()->getGridY();
+        const osg::Vec2f center = ESM::indexToPosition(cell->getCell()->getExteriorCellLocation(), true);
+        const float centerX = center.x();
+        const float centerY = center.y();
 
         osg::BoundingSphere bound = mSceneRoot->getBound();
         float zmin = bound.center().z() - bound.radius();
         float zmax = bound.center().z() + bound.radius();
 
-        setupRenderToTexture(x, y, x * mMapWorldSize + mMapWorldSize / 2.f, y * mMapWorldSize + mMapWorldSize / 2.f,
-            osg::Vec3d(0, 1, 0), zmin, zmax);
+        setupRenderToTexture(x, y, centerX, centerY, osg::Vec3d(0, 1, 0), zmin, zmax);
 
         if (segment.mFogOfWarImage != nullptr)
             return;

@@ -1,5 +1,7 @@
 #include "statemanagerimp.hpp"
 
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 
 #include <SDL_clipboard.h>
@@ -51,6 +53,26 @@
 
 #include "quicksavemanager.hpp"
 
+namespace
+{
+    bool readPlayableStartHour(float& hour)
+    {
+        const char* value = std::getenv("OPENMW_PLAYABLE_START_HOUR");
+        if (value == nullptr || *value == '\0')
+            return false;
+
+        char* end = nullptr;
+        const float parsed = std::strtof(value, &end);
+        if (end == value || !std::isfinite(parsed))
+            return false;
+
+        hour = std::fmod(parsed, 24.f);
+        if (hour < 0.f)
+            hour += 24.f;
+        return true;
+    }
+}
+
 void MWState::StateManager::cleanup(bool force)
 {
     if (mState != State_NoGame || force)
@@ -63,7 +85,7 @@ void MWState::StateManager::cleanup(bool force)
         MWBase::Environment::get().getWorld()->clear();
         MWBase::Environment::get().getInputManager()->clear();
         MWBase::Environment::get().getMechanicsManager()->clear();
-        if(VR::getVR())
+        if (VR::getVR())
         {
             MWVR::VRGUIManager::instance().clearLua();
         }
@@ -551,6 +573,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 case ESM::REC_CREA:
                 case ESM::REC_CONT:
                 case ESM::REC_RAND:
+                case ESM::REC_FQST:
                     MWBase::Environment::get().getWorld()->readRecord(reader, n.toInt());
                     break;
 
@@ -617,6 +640,14 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
 
         if (firstPersonCam != MWBase::Environment::get().getWorld()->isFirstPerson())
             MWBase::Environment::get().getWorld()->togglePOV();
+
+        float playableStartHour = 0.f;
+        if (readPlayableStartHour(playableStartHour))
+        {
+            MWBase::Environment::get().getWorld()->setGlobalFloat(MWWorld::Globals::sGameHour, playableStartHour);
+            MWBase::Environment::get().getWorld()->advanceTime(0.0, false);
+            Log(Debug::Info) << "OpenMW playable start hour=" << playableStartHour << " applied before cell insertion";
+        }
 
         MWWorld::ConstPtr ptr = MWMechanics::getPlayer();
 

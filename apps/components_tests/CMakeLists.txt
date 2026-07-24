@@ -69,6 +69,11 @@ file(GLOB UNITTEST_SRC_FILES
     toutf8/toutf8.cpp
 
     esm4/includes.cpp
+    esm4/testlip.cpp
+    esm4/testloadbehavior.cpp
+    esm4/testloadweap.cpp
+    esm4/testloadweather.cpp
+    esm4/testloadimagespace.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -80,6 +85,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm3/testcstringids.cpp
 
     nifosg/testnifloader.cpp
+    nifosg/testcontroller.cpp
 
     esmterrain/testgridsampling.cpp
 

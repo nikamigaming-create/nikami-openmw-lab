@@ -13,6 +13,8 @@
 
 #include "../mwworld/ptr.hpp"
 
+#include <osg/Vec2f>
+
 namespace XR
 {
     class ActionSet;
@@ -21,6 +23,9 @@ namespace XR
 
 namespace MWVR
 {
+    bool hasFallbackMovementInput();
+    osg::Vec2f getFallbackMovementInput();
+
     class OpenXRInput;
     class UserPointer;
 
@@ -78,7 +83,12 @@ namespace MWVR
 
     protected:
         void updateVRPointer(bool disableControls);
+        void updateRetailSurfaceGripRecenter(bool disableControls);
+        void updateRetailSurfaceDirectClick(bool retailSurfaceReady);
+        void updateRetailSurfaceXInput(bool retailSurfaceReady);
+        void updateRetailSurfaceModalAudio(bool active);
         void updateRealisticCombat(float dt);
+        void updateFallbackMovement(bool disableControls);
         void updateVoidMessages();
 
         void injectChannelValue(MWInput::Actions action, float value);
@@ -91,8 +101,8 @@ namespace MWVR
         std::unique_ptr<OpenXRInput> mXRInput;
         std::unique_ptr<RealisticCombat::StateMachine> mRealisticCombat;
         //bool mPointerActivation = false;
-        bool mPointerLeft = true;
-        bool mPointerRight = true;
+        bool mPointerLeft = false;
+        bool mPointerRight = false;
         bool mDelayedPointerActivate = false;
         bool mDelayedPointerActivateInjectMouseClickIfApplicable = false;
         float mDt = 0.f;
@@ -101,6 +111,15 @@ namespace MWVR
         osg::ref_ptr<osg::Node> mVRAimNode;
         std::string mLastPointerSourceName;
         int mPointerSourceLogFrames = 0;
+        bool mRetailSurfaceClickDown = false;
+        bool mRetailSurfaceLeftGripDown = false;
+        bool mRetailSurfaceRightGripDown = false;
+        bool mRetailSurfaceAudioPaused = false;
+        int mRetailSurfaceDirectClickLogCount = 0;
+        int mRetailSurfaceXInputLogCount = 0;
+        int mRetailSurfaceStartupGateLogCount = 0;
+        bool mFallbackMovementActive = false;
+        int mFallbackMovementLogCount = 0;
 
         std::optional<std::chrono::steady_clock::time_point> mGameMenuLongPressTimer;
         std::queue<std::string> mVoidMessages;

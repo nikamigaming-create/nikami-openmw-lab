@@ -26,10 +26,23 @@
 */
 #include "loadweap.hpp"
 
+#include <array>
 #include <stdexcept>
 
 #include "reader.hpp"
 //#include "writer.hpp"
+
+bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data)
+{
+    if (dnam.size() < 16)
+        return false;
+
+    data.animationType = dnam[0];
+    data.handGrip = dnam[13];
+    data.ammoUse = dnam[14];
+    data.reloadAnim = dnam[15];
+    return true;
+}
 
 void ESM4::Weapon::load(ESM4::Reader& reader)
 {
@@ -37,6 +50,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
     mFlags = reader.hdr().record.flags;
     std::uint32_t esmVer = reader.esmVersion();
     bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    bool isFalloutWeapon = isFONV;
 
     while (reader.getSubRecordHeader())
     {
@@ -60,6 +74,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                 }
                 else if (isFONV || subHdr.dataSize == 15)
                 {
+                    isFalloutWeapon = true;
                     reader.get(mData.value);
                     reader.get(mData.health);
                     reader.get(mData.weight);
@@ -121,6 +136,20 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("INAM"):
                 reader.getFormId(mImpactDataSet);
                 break;
+            case ESM::fourCC("DNAM"):
+                if (isFalloutWeapon && subHdr.dataSize >= 16)
+                {
+                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP animation fields documented by xNVSE:
+                    // type, three padding bytes, animation multiplier, reach, flags, hand grip, ammo use, reload.
+                    std::array<std::uint8_t, 16> dnam{};
+                    reader.get(dnam.data(), dnam.size());
+                    loadFalloutWeaponDnam(dnam, mData);
+                    if (subHdr.dataSize > 16)
+                        reader.skipSubRecordData(subHdr.dataSize - 16);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("WNAM"):
                 reader.getFormId(mWorldModel);
                 break;
@@ -146,7 +175,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("CNAM"):
             case ESM::fourCC("CRDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
             case ESM::fourCC("KSIZ"):
@@ -221,6 +249,8 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadweap"))
+                    break;
                 throw std::runtime_error("ESM4::WEAP::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

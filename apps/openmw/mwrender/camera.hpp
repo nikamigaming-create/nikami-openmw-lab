@@ -143,12 +143,15 @@ namespace MWRender
         void calculateDeferredRotation();
         void setFirstPersonOffset(const osg::Vec3f& v) { mFirstPersonOffset = v; }
         osg::Vec3f getFirstPersonOffset() const { return mFirstPersonOffset; }
+        void setFirstPersonProfileOffset(const osg::Vec3f& v) { mFirstPersonProfileOffset = v; }
+        osg::Vec3f getFirstPersonProfileOffset() const { return mFirstPersonProfileOffset; }
 
         int getCollisionType() const { return mCollisionType; }
         void setCollisionType(int collisionType) { mCollisionType = collisionType; }
 
         const osg::Matrixf& getViewMatrix() const { return mViewMatrix; }
         const osg::Matrixf& getProjectionMatrix() const { return mProjectionMatrix; }
+        float getLodScale() const;
 
 //## VR_PATCH BEGIN
         void setPose(const Stereo::Pose& pose);
@@ -164,6 +167,7 @@ namespace MWRender
 //## VR_PATCH END
         MWWorld::Ptr mTrackingPtr;
         osg::ref_ptr<const osg::Node> mTrackingNode;
+        bool mFirstPersonUsesTrackingRoot = false;
         osg::Vec3d mTrackedPosition;
         float mHeightScale;
         int mCollisionType;
@@ -194,6 +198,9 @@ namespace MWRender
         float mCameraDistance, mPreferredCameraDistance;
 
         osg::Vec3f mFirstPersonOffset{ 0, 0, 0 };
+        // Persistent game-profile correction. Lua owns mFirstPersonOffset for head bobbing and
+        // resets it each frame, so profile-specific eye height must remain separate.
+        osg::Vec3f mFirstPersonProfileOffset{ 0, 0, 0 };
 
         osg::Vec2d mFocalPointCurrentOffset;
         osg::Vec2d mFocalPointTargetOffset;

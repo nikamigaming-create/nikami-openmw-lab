@@ -287,6 +287,24 @@ namespace MWRender
         mRendering.getSkyManager()->setSunglare(true);
     }
 
+    void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+        const osg::Vec4f& tint, const osg::Vec4f& fade)
+    {
+        if (!mFalloutImageSpaceTechnique)
+        {
+            mFalloutImageSpaceTechnique = loadTechnique("internal_fallout_imagespace");
+            mFalloutImageSpaceTechnique->setInternal(true);
+            mFalloutImageSpaceTechnique->setLocked(true);
+            mInternalTechniques.push_back(mFalloutImageSpaceTechnique);
+            enable();
+        }
+
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
+    }
+
     void PostProcessor::traverse(osg::NodeVisitor& nv)
     {
         size_t frameId = nv.getTraversalNumber() % 2;

@@ -148,6 +148,11 @@ namespace MWBase
         /// and get an average loudness value (scale [0,1]) at the current time position.
         /// If the actor is not saying anything, returns 0.
 
+        virtual float getSaySoundFacialTrackValue(
+            const MWWorld::ConstPtr& reference, std::string_view trackName) const = 0;
+        ///< Evaluate a Fallout 3/New Vegas LIP facial target at the voice playback position.
+        /// If the actor has no authored LIP timeline or is not speaking, returns 0.
+
         virtual SoundStream* playTrack(const MWSound::DecoderPtr& decoder, Type type) = 0;
         ///< Play a 2D audio track, using a custom decoder. The caller is expected to call
         /// stopTrack with the returned handle when done.

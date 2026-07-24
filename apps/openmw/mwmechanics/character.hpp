@@ -148,9 +148,11 @@ namespace MWMechanics
 
         CharacterState mIdleState{ CharState_None };
         std::string mCurrentIdle;
+        std::string mLastMissingIdleAnimation;
 
         CharacterState mMovementState{ CharState_None };
         std::string mCurrentMovement;
+        std::string mLastMissingMovementAnimation;
         float mMovementAnimSpeed{ 0.f };
         bool mAdjustMovementAnimSpeed{ false };
         bool mMovementAnimationHasMovement{ false };

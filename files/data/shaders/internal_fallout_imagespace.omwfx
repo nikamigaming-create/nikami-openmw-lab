@@ -1,0 +1,140 @@
+uniform_vec4 uFalloutHdr {
+    default = vec4(1.0, 0.0, 1.0, 1.0);
+    static = false;
+}
+
+uniform_vec4 uFalloutCinematic {
+    default = vec4(1.0, 0.0, 1.0, 1.0);
+    static = false;
+}
+
+uniform_vec4 uFalloutTint {
+    default = vec4(1.0, 1.0, 1.0, 0.0);
+    static = false;
+}
+
+uniform_vec4 uFalloutFade {
+    default = vec4(0.0, 0.0, 0.0, 0.0);
+    static = false;
+}
+
+render_target RT_FalloutBright {
+    width_ratio = 0.25;
+    height_ratio = 0.25;
+    internal_format = rgb16f;
+    source_type = half_float;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+render_target RT_FalloutBlurX {
+    width_ratio = 0.25;
+    height_ratio = 0.25;
+    internal_format = rgb16f;
+    source_type = half_float;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+render_target RT_FalloutBloom {
+    width_ratio = 0.25;
+    height_ratio = 0.25;
+    internal_format = rgb16f;
+    source_type = half_float;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+fragment bright(target=RT_FalloutBright) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec3 source = omw_GetLastShader(omw_TexCoord).rgb;
+        vec3 brightColor = max(source - vec3(uFalloutHdr.z), vec3(0.0));
+        omw_FragColor = vec4(brightColor * uFalloutHdr.y * uFalloutHdr.w, 1.0);
+    }
+}
+
+fragment blur_x(target=RT_FalloutBlurX, rt1=RT_FalloutBright) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec3 color = vec3(0.0);
+        float weight = 0.0;
+        for (int i = -4; i <= 4; ++i)
+        {
+            float w = exp(-0.5 * float(i * i) / 4.0);
+            color += omw_Texture2D(RT_FalloutBright,
+                omw_TexCoord + vec2(float(i) / (omw.resolution.x * 0.25), 0.0)).rgb * w;
+            weight += w;
+        }
+        omw_FragColor = vec4(color / weight, 1.0);
+    }
+}
+
+fragment blur_y(target=RT_FalloutBloom, rt1=RT_FalloutBlurX) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec3 color = vec3(0.0);
+        float weight = 0.0;
+        for (int i = -4; i <= 4; ++i)
+        {
+            float w = exp(-0.5 * float(i * i) / 4.0);
+            color += omw_Texture2D(RT_FalloutBlurX,
+                omw_TexCoord + vec2(0.0, float(i) / (omw.resolution.y * 0.25))).rgb * w;
+            weight += w;
+        }
+        omw_FragColor = vec4(color / weight, 1.0);
+    }
+}
+
+fragment final(rt1=RT_FalloutBloom) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 source = omw_GetLastShader(omw_TexCoord);
+        vec3 color = source.rgb;
+
+        // ISHDRBLENDINSHADER*.pso: the unblurred scene contribution is
+        // normalized by twice the greater of scene alpha and the authored
+        // target luminance. OpenMW's intercepted scene is already LDR-scaled,
+        // unlike retail's HDR source; the measured LDR-equivalent source
+        // coefficient is 2/3 rather than retail's 1/2. Keep this conversion
+        // at the buffer boundary instead of baking a grade into actor assets.
+        float hdrDenominator = max(max(source.a, uFalloutHdr.x), 0.01);
+        color = max(color / (1.5 * hdrDenominator), vec3(0.0));
+        color += omw_Texture2D(RT_FalloutBloom, omw_TexCoord).rgb
+            * (uFalloutHdr.x / hdrDenominator);
+
+        // ISHDRBLENDINSHADERCIN.pso, package 13: luminance/saturation,
+        // weighted tint, then brightness/contrast about average luminance.
+        float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(luminance), color, uFalloutCinematic.x);
+        color = mix(color, vec3(luminance) * uFalloutTint.rgb, uFalloutTint.a);
+        color = ((color * uFalloutCinematic.w) - uFalloutCinematic.y)
+            * uFalloutCinematic.z + uFalloutCinematic.y;
+        color = mix(color, uFalloutFade.rgb, uFalloutFade.a);
+
+        omw_FragColor = vec4(color, source.a);
+    }
+}
+
+technique {
+    description = "Internal Fallout 3/New Vegas image-space cinematic stage";
+    version = "1.0";
+    author = "OpenMW Fallout compatibility overlay";
+    passes = bright, blur_x, blur_y, final;
+    flags = hidden;
+    hdr = true;
+}

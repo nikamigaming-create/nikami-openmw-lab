@@ -135,16 +135,14 @@ namespace XR
         std::vector<XrCompositionLayerQuad> quadLayers;
         quadLayers.reserve(20);
 
-        XrCompositionLayerProjection xrProjectionLayer{};
-        xrProjectionLayer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
+        std::vector<XrCompositionLayerProjection> projectionLayers;
+        projectionLayers.reserve(frame.layers.size());
 
-        std::array<XrCompositionLayerProjectionView, 2> compositionLayerProjectionViews{};
-        compositionLayerProjectionViews[0].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-        compositionLayerProjectionViews[1].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+        std::vector<std::array<XrCompositionLayerProjectionView, 2>> projectionLayerViews;
+        projectionLayerViews.reserve(frame.layers.size());
 
-        std::array<XrCompositionLayerDepthInfoKHR, 2> compositionLayerDepth{};
-        compositionLayerDepth[0].type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
-        compositionLayerDepth[1].type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
+        std::vector<std::array<XrCompositionLayerDepthInfoKHR, 2>> projectionLayerDepth;
+        projectionLayerDepth.reserve(frame.layers.size());
 
         XrCompositionLayerReprojectionInfoMSFT reprojectionInfoDepth{};
         reprojectionInfoDepth.type = XR_TYPE_COMPOSITION_LAYER_REPROJECTION_INFO_MSFT;
@@ -164,8 +162,26 @@ namespace XR
                     case VR::Layer::Type::ProjectionLayer:
                     {
                         VR::ProjectionLayer* projectionLayer = static_cast<VR::ProjectionLayer*>(layer.get());
+                        if (!projectionLayer->space)
+                        {
+                            Log(Debug::Warning) << "Skipping projection layer without space";
+                            break;
+                        }
+                        if (!projectionLayer->views[0].colorSwapchain || !projectionLayer->views[1].colorSwapchain)
+                        {
+                            Log(Debug::Warning) << "Skipping projection layer without color swapchains";
+                            break;
+                        }
+                        projectionLayers.push_back({});
+                        auto& xrProjectionLayer = projectionLayers.back();
+                        xrProjectionLayer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
                         xrProjectionLayer.space = dynamic_cast<XR::Space*>(projectionLayer->space.get())->xrSpace();
                         xrProjectionLayer.viewCount = 2;
+
+                        projectionLayerViews.push_back({});
+                        auto& compositionLayerProjectionViews = projectionLayerViews.back();
+                        compositionLayerProjectionViews[0].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+                        compositionLayerProjectionViews[1].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
                         xrProjectionLayer.views = compositionLayerProjectionViews.data();
 
                         for (uint32_t i = 0; i < 2; i++)
@@ -184,6 +200,10 @@ namespace XR
 
                         if (appShouldShareDepthInfo())
                         {
+                            projectionLayerDepth.push_back({});
+                            auto& compositionLayerDepth = projectionLayerDepth.back();
+                            compositionLayerDepth[0].type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
+                            compositionLayerDepth[1].type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
                             // TODO: Cache these values instead?
                             auto nearClip = Settings::Manager::getFloat("near clip", "Camera");
                             auto farClip = Settings::Manager::getFloat("viewing distance", "Camera");

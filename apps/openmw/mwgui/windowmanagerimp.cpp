@@ -850,6 +850,7 @@ namespace MWGui
             }
             else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
             {
+                const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
                 eff = GW_Map | GW_Inventory | GW_Magic | GW_Stats;
                 static bool loggedPipBoySurface = false;
                 if (!loggedPipBoySurface)
@@ -858,14 +859,18 @@ namespace MWGui
                         << "FNV/ESM4 proof: Fallout inventory mode opens all native panes map=1 items=1 aid=1 data=1";
                     loggedPipBoySurface = true;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy active pane index="
-                                 << std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3) << " visibleMask=0x"
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
+                                 << activeIndex << " visibleMask=0x"
                                  << std::hex << eff << std::dec;
             }
-            mMap->setVisible(eff & GW_Map);
-            mInventoryWindow->setVisible(eff & GW_Inventory);
-            mSpellWindow->setVisible(eff & GW_Magic);
-            mStatsWindow->setVisible(eff & GW_Stats);
+            auto setWindowVisibleIfChanged = [](WindowBase* window, bool visible) {
+                if (window != nullptr && window->isVisible() != visible)
+                    window->setVisible(visible);
+            };
+            setWindowVisibleIfChanged(mMap, eff & GW_Map);
+            setWindowVisibleIfChanged(mInventoryWindow, eff & GW_Inventory);
+            setWindowVisibleIfChanged(mSpellWindow, eff & GW_Magic);
+            setWindowVisibleIfChanged(mStatsWindow, eff & GW_Stats);
 
             if (flatPaperDollProfiler)
             {
@@ -884,25 +889,68 @@ namespace MWGui
                 const int bottom = 36;
                 const int gap = 8;
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
-                const int shelfWidth = std::min(std::max(viewSize.width / 5, 220), 320);
-                const int activeWidth = std::max(480, viewSize.width - margin * 2 - shelfWidth - gap);
-                const int activeHeight = std::max(360, viewSize.height - top - bottom);
-                const int shelfLeft = margin + activeWidth + gap;
+                const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
+                const int availableWidth = viewSize.width - margin * 2;
+                const int availableHeight = viewSize.height - top - bottom;
+                const int activeWidth = VR::getVR() ? std::clamp(availableWidth, 640, 840)
+                                                     : std::max(640, availableWidth);
+                const int activeHeight = VR::getVR() ? std::clamp(availableHeight, 460, 620)
+                                                      : std::max(360, availableHeight);
+                int loggedActiveWidth = activeWidth;
+                int loggedActiveHeight = activeHeight;
+                int loggedActiveLeft = margin;
+                int loggedActiveTop = top;
+                const int shelfLeft = viewSize.width - margin - shelfWidth;
                 const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
 
                 WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
-                int shelfSlot = 0;
-                for (int i = 0; i < 4; ++i)
+                if (VR::getVR())
                 {
-                    if (i == activeIndex)
-                    {
-                        setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, activeWidth, activeHeight));
-                        continue;
-                    }
+                    const int mapActiveWidth = std::clamp(availableWidth, 860, 1080);
+                    const int mapActiveHeight = std::clamp(availableHeight, 520, 680);
+                    const int inactiveWidth = std::clamp(activeWidth / 2, 320, 440);
+                    const int inactiveHeight = std::clamp(activeHeight / 2, 240, 340);
+                    const int inactiveLeft = margin + std::max(0, (std::max(activeWidth, mapActiveWidth) - inactiveWidth) / 2);
+                    const int inactiveTop = top + std::max(0, (std::max(activeHeight, mapActiveHeight) - inactiveHeight) / 2);
 
-                    const int shelfTop = top + shelfSlot * (shelfHeight + gap);
-                    setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
-                    ++shelfSlot;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? mapActiveWidth : activeWidth;
+                            const int paneHeight = i == 0 ? mapActiveHeight : activeHeight;
+                            const int paneLeft = std::max(margin, (viewSize.width - paneWidth) / 2);
+                            const int paneTop = std::max(top, (viewSize.height - paneHeight) / 2);
+                            loggedActiveLeft = paneLeft;
+                            loggedActiveTop = paneTop;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(paneLeft, paneTop, paneWidth, paneHeight));
+                        }
+                        else
+                            setWindowCoord(
+                                windows[i], MyGUI::IntCoord(inactiveLeft, inactiveTop, inactiveWidth, inactiveHeight));
+                    }
+                }
+                else
+                {
+                    int shelfSlot = 0;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? std::max(activeWidth, 920) : activeWidth;
+                            const int paneHeight = i == 0 ? std::max(activeHeight, 560) : activeHeight;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
+                            continue;
+                        }
+
+                        const int shelfTop = top + shelfSlot * (shelfHeight + gap);
+                        setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
+                        ++shelfSlot;
+                    }
                 }
 
                 if (WindowBase* activeWindow = windows[activeIndex])
@@ -910,19 +958,24 @@ namespace MWGui
                     if (activeWindow->mMainWidget != nullptr)
                         MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
                 }
-                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out all-visible active="
-                                 << activeIndex << " activeRect=" << margin << "," << top << "," << activeWidth
-                                 << "," << activeHeight << " shelfWidth=" << shelfWidth;
+                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out active="
+                                 << activeIndex << " activeRect=" << loggedActiveLeft << "," << loggedActiveTop
+                                 << "," << loggedActiveWidth << "," << loggedActiveHeight << " vrFullPanels="
+                                 << VR::getVR()
+                                 << " shelfWidth=" << shelfWidth;
             }
         }
 
         updateControllerButtonsOverlay();
         if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr) && getMode() == GM_Inventory
-            && mInventoryTabsOverlay != nullptr)
+            && !VR::getVR() && mInventoryTabsOverlay != nullptr)
         {
             mInventoryTabsOverlay->setVisible(true);
             mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
         }
+        else if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            && getMode() == GM_Inventory && VR::getVR() && mInventoryTabsOverlay != nullptr)
+            mInventoryTabsOverlay->setVisible(false);
 
         switch (mode)
         {
@@ -1027,6 +1080,8 @@ namespace MWGui
 
     void WindowManager::messageBox(std::string_view message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+            Log(Debug::Info) << "FNV interaction audit: rendered notification text=\"" << message << "\"";
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
         {
             MyGUI::UString text = MyGUI::LanguageManager::getInstance().replaceTags(MyGUI::UString(message));
@@ -1191,15 +1246,17 @@ namespace MWGui
             {
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
             }
-            if (mInventoryTabsOverlay != nullptr)
+            if (mInventoryTabsOverlay != nullptr && !VR::getVR())
             {
                 mInventoryTabsOverlay->setVisible(true);
                 mInventoryTabsOverlay->setTab(activeIndex);
                 if (mInventoryTabsOverlay->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
             }
+            else if (mInventoryTabsOverlay != nullptr)
+                mInventoryTabsOverlay->setVisible(false);
 
             if (winCount > 1)
                 playSound(ESM::RefId::stringRefId("Menu Size"));
@@ -3061,7 +3118,7 @@ namespace MWGui
 
         // setButtons will handle setting visibility based on if any buttons are defined.
         mControllerButtonsOverlay->setButtons(topWin->getControllerButtons());
-        if (getMode() == GM_Inventory)
+        if (getMode() == GM_Inventory && !VR::getVR())
         {
             mInventoryTabsOverlay->setVisible(true);
             mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);

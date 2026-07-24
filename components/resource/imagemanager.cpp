@@ -1,6 +1,7 @@
 #include "imagemanager.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <osgDB/Registry>
 
 #include <components/debug/debuglog.hpp>
@@ -33,11 +34,27 @@ namespace
         warningImage->allocateImage(width, height, 1, GL_RGB, GL_UNSIGNED_BYTE);
         assert(warningImage->isDataContiguous());
         unsigned char* data = warningImage->data();
-        for (int i = 0; i < width * height; ++i)
+        const bool neutralWorldViewerFallback
+            = std::getenv("OPENMW_WORLD_VIEWER_NEUTRAL_MISSING_TEXTURES") != nullptr;
+        for (int y = 0; y < height; ++y)
         {
-            data[3 * i] = (255);
-            data[3 * i + 1] = (0);
-            data[3 * i + 2] = (255);
+            for (int x = 0; x < width; ++x)
+            {
+                const int i = y * width + x;
+                if (neutralWorldViewerFallback)
+                {
+                    const unsigned char shade = ((x / 2 + y / 2) % 2) == 0 ? 150 : 96;
+                    data[3 * i] = shade;
+                    data[3 * i + 1] = shade;
+                    data[3 * i + 2] = shade;
+                }
+                else
+                {
+                    data[3 * i] = (255);
+                    data[3 * i + 1] = (0);
+                    data[3 * i + 2] = (255);
+                }
+            }
         }
         return warningImage;
     }

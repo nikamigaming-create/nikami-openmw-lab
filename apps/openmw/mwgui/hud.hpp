@@ -52,6 +52,7 @@ namespace MWGui
         void onFrame(float dt) override;
 
         void setCellName(const std::string& cellName);
+        void setPlayerDir(float x, float y);
 
         bool getWorldMouseOver() { return mWorldMouseOver; }
 
@@ -76,6 +77,7 @@ namespace MWGui
         MyGUI::ImageBox* mCrosshair;
         MyGUI::TextBox* mCellNameBox;
         MyGUI::TextBox* mWeaponSpellBox;
+        MyGUI::TextBox* mCompassHeading;
         MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
 
         // bottom left elements

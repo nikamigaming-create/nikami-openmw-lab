@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <format>
 #include <istream>
+#include <limits>
 
+#include <lz4.h>
 #include <zlib.h>
 
 #include <components/esm/fourcc.hpp>
@@ -101,14 +103,23 @@ namespace Bsa
                 case BA2Version::Fallout4NextGen_v7:
                 case BA2Version::Fallout4NextGen_v8:
                     break;
+                case BA2Version::StarfieldGeneral:
+                {
+                    uint64_t dummy;
+                    input.read(reinterpret_cast<char*>(&dummy), 8);
+                    break;
+                }
                 case BA2Version::StarfieldDDS:
+                {
                     uint64_t dummy;
                     input.read(reinterpret_cast<char*>(&dummy), 8);
                     uint32_t compressionMethod;
                     input.read(reinterpret_cast<char*>(&compressionMethod), 4);
-                    if (compressionMethod == 3)
-                        fail("Unsupported LZ4-compressed DDS BA2");
+                    if (compressionMethod != 0 && compressionMethod != 3)
+                        fail("Unsupported DDS BA2 compression method");
+                    mCompressionMethod = compressionMethod;
                     break;
+                }
                 default:
                     fail("Unrecognized DDS BA2 version");
             }
@@ -644,12 +655,26 @@ namespace Bsa
             if (c.packedSize != 0)
             {
                 streamPtr->read(inputBuffer.data(), c.packedSize);
-                uLongf destSize = static_cast<uLongf>(c.size);
-                int ec = ::uncompress(reinterpret_cast<Bytef*>(memoryStreamPtr->getRawData() + offset), &destSize,
-                    reinterpret_cast<Bytef*>(inputBuffer.data()), static_cast<uLong>(c.packedSize));
+                if (mCompressionMethod == 3)
+                {
+                    if (c.packedSize > static_cast<uint32_t>(std::numeric_limits<int>::max())
+                        || c.size > static_cast<uint32_t>(std::numeric_limits<int>::max()))
+                        fail("LZ4 chunk is too large");
 
-                if (ec != Z_OK)
-                    fail("zlib uncompress failed: " + std::string(::zError(ec)));
+                    const int decoded = LZ4_decompress_safe(inputBuffer.data(), memoryStreamPtr->getRawData() + offset,
+                        static_cast<int>(c.packedSize), static_cast<int>(c.size));
+                    if (decoded < 0 || static_cast<uint32_t>(decoded) != c.size)
+                        fail("LZ4 decompress failed");
+                }
+                else
+                {
+                    uLongf destSize = static_cast<uLongf>(c.size);
+                    int ec = ::uncompress(reinterpret_cast<Bytef*>(memoryStreamPtr->getRawData() + offset), &destSize,
+                        reinterpret_cast<Bytef*>(inputBuffer.data()), static_cast<uLong>(c.packedSize));
+
+                    if (ec != Z_OK)
+                        fail("zlib uncompress failed: " + std::string(::zError(ec)));
+                }
             }
             // uncompressed chunk
             else

@@ -109,6 +109,8 @@ void ESM4::BodyPartData::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadbptd"))
+                    break;
                 throw std::runtime_error("ESM4::BPTD::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

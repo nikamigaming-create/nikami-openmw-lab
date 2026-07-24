@@ -28,6 +28,7 @@
 #include <istream>
 #include <map>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 
 #include "cellgrid.hpp"
@@ -213,7 +214,17 @@ namespace ESM4
 
         inline std::filesystem::path getFileName() const { return mCtx.filename; } // not used
 
-        inline bool hasMoreRecs() const { return (mFileSize - mCtx.fileRead) > 0; }
+        inline bool hasMoreRecs() const
+        {
+            const std::streampos pos
+                = mSavedStream ? mSavedStream->tellg() : (mStream ? mStream->tellg() : std::streampos(-1));
+            if (pos != std::streampos(-1))
+            {
+                const std::streamoff offset = static_cast<std::streamoff>(pos);
+                return offset >= 0 && static_cast<std::size_t>(offset) < mFileSize;
+            }
+            return mCtx.fileRead < mFileSize;
+        }
 
         // Methods added for updating loading progress bars
         inline std::size_t getFileSize() const { return mFileSize; }
@@ -329,6 +340,8 @@ namespace ESM4
         // Skip the data part of a subrecord
         // Note: assumes the header was read correctly and nothing else was read
         void skipSubRecordData();
+
+        bool skipUnknownStarfieldSubRecordData(std::string_view owner);
 
         // Special for a subrecord following a XXXX subrecord
         void skipSubRecordData(std::uint32_t size);

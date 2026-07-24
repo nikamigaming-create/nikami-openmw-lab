@@ -7,14 +7,18 @@ file(GLOB UNITTEST_SRC_FILES
     options.cpp
 
     mwworld/teststore.cpp
+    mwworld/testesm4questruntime.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
+    mwworld/testcellvisitors.cpp
     mwworld/testweather.cpp
 
     mwdialogue/testkeywordsearch.cpp
 
     mwgui/tooltips.cpp
+
+    mwrender/testplayervisualpolicy.cpp
 
     mwscript/testscripts.cpp
 )

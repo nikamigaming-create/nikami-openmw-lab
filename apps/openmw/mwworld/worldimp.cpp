@@ -1,7 +1,12 @@
 #include "worldimp.hpp"
 
 #include <charconv>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -27,6 +32,7 @@
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadland.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -56,7 +62,6 @@
 #include <components/files/conversion.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 
-#include <components/settings/values.hpp>
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -64,6 +69,7 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include <components/settings/values.hpp>
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/aiavoiddoor.hpp" //Used to tell actors to avoid doors
@@ -91,7 +97,6 @@
 #include "../mwphysics/object.hpp"
 #include "../mwphysics/physicssystem.hpp"
 
-
 #include "actionteleport.hpp"
 #include "cellstore.hpp"
 #include "containerstore.hpp"
@@ -105,21 +110,245 @@
 #include "contentloader.hpp"
 #include "esmloader.hpp"
 
-//## VR_PATCH BEGIN
-#include <components/vr/session.hpp>
-#include <components/vr/vr.hpp>
+// ## VR_PATCH BEGIN
 #include "../mwvr/vrgui.hpp"
 #include "../mwvr/vrinputmanager.hpp"
 #include "../mwvr/vrpointer.hpp"
 #include "../mwvr/vrutil.hpp"
+#include <components/vr/session.hpp>
 #include <components/vr/trackinglistener.hpp>
 #include <components/vr/trackingmanager.hpp>
-//## VR_PATCH END
+#include <components/vr/vr.hpp>
+// ## VR_PATCH END
 
 namespace MWWorld
 {
     namespace
     {
+        bool readViewerProofFloat(const char* name, float& value)
+        {
+            const char* text = std::getenv(name);
+            if (text == nullptr || *text == '\0')
+                return false;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(text, &end);
+            if (end == text)
+                return false;
+
+            value = parsed;
+            return true;
+        }
+
+        float readViewerProofFloatOr(const char* name, float fallback)
+        {
+            float value = fallback;
+            readViewerProofFloat(name, value);
+            return value;
+        }
+
+        bool readViewerProofInt(const char* name, int& value)
+        {
+            const char* text = std::getenv(name);
+            if (text == nullptr || *text == '\0')
+                return false;
+
+            int parsed = 0;
+            const char* end = text + std::char_traits<char>::length(text);
+            const std::from_chars_result result = std::from_chars(text, end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end)
+                return false;
+
+            value = parsed;
+            return true;
+        }
+
+        bool readViewerProofHour(float& hour)
+        {
+            const char* value = std::getenv("OPENMW_PLAYABLE_START_HOUR");
+            if (value == nullptr || *value == '\0')
+                value = std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR");
+            if (value == nullptr || *value == '\0')
+                return false;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value)
+                return false;
+
+            hour = parsed;
+            if (hour < 0.f)
+                hour = 0.f;
+            else if (hour >= 24.f)
+                hour = std::fmod(hour, 24.f);
+            return true;
+        }
+
+        bool readViewerStartAnchor(ESM::Position& position)
+        {
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_X", position.pos[0]))
+                return false;
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_Y", position.pos[1]))
+                return false;
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_Z", position.pos[2]))
+                return false;
+
+            position.rot[0] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_X", 0.f);
+            position.rot[1] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_Y", 0.f);
+            position.rot[2] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_Z", 0.f);
+            const char* cameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+            const bool firstPersonCamera = cameraMode != nullptr && std::string(cameraMode) == "firstperson";
+            if (firstPersonCamera)
+            {
+                float cameraPitch = 0.f;
+                if (readViewerProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH", cameraPitch))
+                    position.rot[0] = -cameraPitch;
+
+                float cameraYaw = 0.f;
+                if (readViewerProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_YAW", cameraYaw))
+                    position.rot[2] = -cameraYaw;
+            }
+            return true;
+        }
+
+        bool readViewerStartExteriorLocation(ESM::ExteriorCellLocation& location)
+        {
+            const char* worldspaceText = std::getenv("OPENMW_WORLD_VIEWER_START_WORLDSPACE");
+            if (worldspaceText == nullptr || *worldspaceText == '\0')
+                return false;
+
+            int gridX = 0;
+            int gridY = 0;
+            if (!readViewerProofInt("OPENMW_WORLD_VIEWER_START_GRID_X", gridX)
+                || !readViewerProofInt("OPENMW_WORLD_VIEWER_START_GRID_Y", gridY))
+            {
+                Log(Debug::Warning) << "World viewer: explicit exterior start ignored; grid is missing or invalid";
+                return false;
+            }
+
+            try
+            {
+                ESM::RefId worldspace = ESM::RefId::deserializeText(worldspaceText);
+                if (worldspace.empty())
+                {
+                    Log(Debug::Warning) << "World viewer: explicit exterior start ignored; worldspace is empty";
+                    return false;
+                }
+                location = ESM::ExteriorCellLocation(gridX, gridY, worldspace);
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "World viewer: explicit exterior start ignored; worldspace '" << worldspaceText
+                                    << "' is invalid: " << e.what();
+                return false;
+            }
+        }
+
+        bool viewerEnvEnabled(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && std::string(value) != "0";
+        }
+
+        bool viewerTraceEnabled()
+        {
+            return viewerEnvEnabled("OPENMW_WORLD_VIEWER_TRACE") || viewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        }
+
+        void viewerTrace(std::string_view phase)
+        {
+            if (!viewerTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "World viewer trace: phase=\"world." << phase << "\"";
+            std::fflush(stdout);
+            std::fflush(stderr);
+        }
+
+        void settleViewerStartCamera(MWRender::Camera* camera, const Ptr& player, const ESM::Position& position)
+        {
+            if (camera == nullptr || player.isEmpty())
+                return;
+
+            const char* cameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+            const bool staticCamera = cameraMode != nullptr && std::string(cameraMode) == "static";
+            const bool thirdPerson = cameraMode != nullptr && std::string(cameraMode) == "thirdperson";
+            const float cameraDistance
+                = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_DISTANCE", thirdPerson ? 192.f : 0.f);
+            const float cameraPitch
+                = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH", -position.rot[0]);
+            const float cameraYaw = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_YAW", -position.rot[2]);
+
+            if (staticCamera)
+            {
+                const osg::Vec3d playerTarget(position.pos[0], position.pos[1], position.pos[2] + 128.f);
+                osg::Vec3d target(readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_X", playerTarget.x()),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Y", playerTarget.y()),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Z", playerTarget.z()));
+                osg::Vec3d eye(
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_X", position.pos[0] + 2048.f),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Y", position.pos[1] - 4096.f),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Z", position.pos[2] + 2048.f));
+
+                camera->setMode(MWRender::Camera::Mode::Static, true);
+                camera->setStaticPosition(eye);
+                const osg::Vec3d delta = target - eye;
+                const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                camera->setRoll(0.f);
+                camera->instantTransition();
+                camera->updateCamera();
+
+                Log(Debug::Info) << "World viewer: settled static survey camera eye=(" << eye.x() << "," << eye.y()
+                                 << "," << eye.z() << ") target=(" << target.x() << "," << target.y() << ","
+                                 << target.z() << ") pitch=" << camera->getPitch() << " yaw=" << camera->getYaw();
+                return;
+            }
+
+            camera->attachTo(player);
+            camera->setMode(
+                thirdPerson ? MWRender::Camera::Mode::ThirdPerson : MWRender::Camera::Mode::FirstPerson, true);
+            camera->setPreferredCameraDistance(cameraDistance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->setPitch(cameraPitch, true);
+            camera->setYaw(cameraYaw, true);
+            camera->setRoll(0.f);
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+        }
+
+        void pinViewerStartAnchor(World& world, const ESM::Position& position)
+        {
+            ESM::Position pinnedPosition = position;
+            float syntheticGroundZ = 0.f;
+            if (readViewerProofFloat("OPENMW_WORLD_VIEWER_SYNTHETIC_GROUND_Z", syntheticGroundZ))
+            {
+                world.addWorldViewerFlatGround(position.pos[0], position.pos[1], syntheticGroundZ);
+                pinnedPosition.pos[2] = syntheticGroundZ + 4.f;
+                Log(Debug::Warning) << "World viewer: installed proof-only flat ground at z=" << syntheticGroundZ
+                                    << " beneath explicit start anchor; authored collision remains unsupported";
+            }
+
+            MWWorld::Ptr player = world.getPlayerPtr();
+            player = world.moveObject(player, pinnedPosition.asVec3(), true, true);
+            if (viewerEnvEnabled("OPENMW_WORLD_VIEWER_START_DRY") && player.getCell() != nullptr)
+                player.getCell()->setWaterLevel(-200000.f);
+            world.rotateObject(player, pinnedPosition.asRotationVec3(), MWBase::RotationFlag_none);
+            settleViewerStartCamera(world.getCamera(), player, pinnedPosition);
+            const ESM::Position& actual = player.getRefData().getPosition();
+            const osg::Vec3d cameraPos = world.getCamera() != nullptr ? world.getCamera()->getPosition() : osg::Vec3d();
+            Log(Debug::Info) << "World viewer: pinned explicit start anchor pos=(" << actual.pos[0] << ", "
+                             << actual.pos[1] << ", " << actual.pos[2] << ") rot=(" << actual.rot[0] << ", "
+                             << actual.rot[1] << ", " << actual.rot[2]
+                             << ") dry=" << viewerEnvEnabled("OPENMW_WORLD_VIEWER_START_DRY") << " cameraPos=("
+                             << cameraPos.x() << ", " << cameraPos.y() << ", " << cameraPos.z() << ")";
+        }
+
         std::vector<std::pair<std::string_view, ESM::Variant>> generateDefaultGameSettings()
         {
             return {
@@ -498,6 +727,14 @@ namespace MWWorld
             mRendering->setSkyEnabled(false);
     }
 
+    void World::addWorldViewerFlatGround(float x, float y, float height)
+    {
+        constexpr int cellSize = 4096;
+        const int cellX = static_cast<int>(std::floor(x / static_cast<float>(cellSize)));
+        const int cellY = static_cast<int>(std::floor(y / static_cast<float>(cellSize)));
+        mPhysics->addFlatHeightField(cellX, cellY, cellSize, height);
+    }
+
     World::World(Resource::ResourceSystem* resourceSystem, int activationDistanceOverride, const std::string& startCell,
         const std::filesystem::path& userDataPath)
         : mResourceSystem(resourceSystem)
@@ -536,6 +773,7 @@ namespace MWWorld
         fillGlobalVariables();
 
         mStore.setUp();
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         mStore.validateRecords(mReaders);
         mStore.movePlayerRecord();
 
@@ -545,32 +783,46 @@ namespace MWWorld
     void World::init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
         SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<MWRender::Camera> camera)
     {
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init begin";
         mPhysics = std::make_unique<MWPhysics::PhysicsSystem>(mResourceSystem, rootNode);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init physics ready";
 
         if (Settings::navigator().mEnable)
         {
             auto navigatorSettings = DetourNavigator::makeSettingsFromSettingsManager(maxRecastLogLevel);
             navigatorSettings.mRecast.mSwimHeightScale = mSwimHeightScale;
             mNavigator = DetourNavigator::makeNavigator(navigatorSettings, mUserDataPath);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator ready";
         }
         else
         {
             mNavigator = DetourNavigator::makeNavigatorStub();
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator stub ready";
         }
 
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering begin";
         mRendering = std::make_unique<MWRender::RenderingManager>(
-//## VR_PATCH BEGIN
-            viewer, rootNode, mResourceSystem, workQueue, *mNavigator, mGroundcoverStore, unrefQueue, std::move(camera));
+            // ## VR_PATCH BEGIN
+            viewer, rootNode, mResourceSystem, workQueue, *mNavigator, mGroundcoverStore, unrefQueue,
+            std::move(camera));
 
-
-//## VR_PATCH END
+        // ## VR_PATCH END
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager begin";
         mProjectileManager = std::make_unique<ProjectileManager>(
             mRendering->getLightRoot()->asGroup(), mResourceSystem, mRendering.get(), mPhysics.get());
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets begin";
         mRendering->preloadCommonAssets();
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets queued";
 
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager begin";
         mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering, mStore);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager ready";
 
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene begin";
         mWorldScene = std::make_unique<Scene>(*this, *mRendering.get(), mPhysics.get(), *mNavigator);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene ready";
     }
 
     void World::fillGlobalVariables()
@@ -581,9 +833,11 @@ namespace MWWorld
 
     void World::startNewGame(bool bypass)
     {
-        Log(Debug::Info) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
+        viewerTrace("start-new-game.begin");
+        Log(Debug::Verbose) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
 
         mGoToJail = false;
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -592,15 +846,31 @@ namespace MWWorld
         mSky = true;
 
         // Rebuild player
+        viewerTrace("setup-player.begin");
         setupPlayer();
+        viewerTrace("setup-player.end");
 
+        float proofHour = 0.f;
+        if (readViewerProofHour(proofHour))
+        {
+            setGlobalFloat(Globals::sGameHour, proofHour);
+            advanceTime(0.0, false);
+            Log(Debug::Info) << "OpenMW playable start hour=" << proofHour;
+        }
+
+        viewerTrace("render-player.begin");
         renderPlayer();
+        viewerTrace("render-player.end");
+        viewerTrace("camera-reset.begin");
         mRendering->getCamera()->reset();
+        viewerTrace("camera-reset.end");
 
         // we don't want old weather to persist on a new game
         // Note that if reset later, the initial ChangeWeather that the chargen script calls will be lost.
+        viewerTrace("weather-reset.begin");
         mWeatherManager.reset();
         mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering.get(), mStore);
+        viewerTrace("weather-reset.end");
 
         if (!bypass)
         {
@@ -610,25 +880,99 @@ namespace MWWorld
         else
             mGlobalVariables[Globals::sCharGenState].setInteger(-1);
 
+        viewerTrace("lua-new-game-started.begin");
         MWBase::Environment::get().getLuaManager()->newGameStarted();
+        viewerTrace("lua-new-game-started.end");
 
         if (bypass && !mStartCell.empty())
         {
+            ESM::Position anchor;
+            const bool hasExplicitAnchor = readViewerStartAnchor(anchor);
+
             ESM::Position pos;
             ESM::RefId cellId = findExteriorPosition(mStartCell, pos);
+            auto changeToResolvedExterior = [&](ESM::RefId resolvedCellId, ESM::Position resolvedPos,
+                                                std::string_view source) {
+                if (hasExplicitAnchor)
+                    resolvedPos = anchor;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
+                                 << resolvedCellId << " explicitAnchor=" << hasExplicitAnchor << " source=" << source;
+                Log(Debug::Info) << "World viewer: start cell exterior change begin cell=" << resolvedCellId << " pos=("
+                                 << resolvedPos.pos[0] << ", " << resolvedPos.pos[1] << ", " << resolvedPos.pos[2]
+                                 << ")";
+                viewerTrace("change-to-exterior.begin");
+                changeToCell(resolvedCellId, resolvedPos, !hasExplicitAnchor);
+                viewerTrace("change-to-exterior.end");
+                Log(Debug::Info) << "World viewer: start cell exterior change complete cell=" << resolvedCellId;
+                if (hasExplicitAnchor)
+                {
+                    viewerTrace("pin-start-anchor.begin");
+                    pinViewerStartAnchor(*this, resolvedPos);
+                    viewerTrace("pin-start-anchor.end");
+                }
+                else
+                {
+                    viewerTrace("adjust-position.begin");
+                    adjustPosition(getPlayerPtr(), false);
+                    viewerTrace("adjust-position.end");
+                }
+                Log(Debug::Info) << "World viewer: start cell exterior placement complete cell=" << resolvedCellId;
+            };
+
             if (!cellId.empty())
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
-                                 << cellId;
-                changeToCell(cellId, pos, true);
-                adjustPosition(getPlayerPtr(), false);
+                changeToResolvedExterior(cellId, pos, "named-cell");
             }
             else
             {
-                cellId = findInteriorPosition(mStartCell, pos);
-                Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
-                                 << cellId;
-                changeToInteriorCell(mStartCell, pos, true);
+                bool usedExplicitExterior = false;
+                ESM::ExteriorCellLocation explicitExterior;
+                if (readViewerStartExteriorLocation(explicitExterior))
+                {
+                    try
+                    {
+                        MWWorld::CellStore& exteriorStore = mWorldModel.getExterior(explicitExterior);
+                        cellId = exteriorStore.getCell()->getId();
+                        const osg::Vec2f posFromIndex = indexToPosition(explicitExterior, true);
+                        pos.pos[0] = posFromIndex.x();
+                        pos.pos[1] = posFromIndex.y();
+                        pos.pos[2] = 0;
+                        pos.rot[0] = pos.rot[1] = pos.rot[2] = 0;
+                        Log(Debug::Info) << "World viewer: explicit exterior start location=" << explicitExterior
+                                         << " cell=" << cellId;
+                        changeToResolvedExterior(cellId, pos, "explicit-exterior-location");
+                        usedExplicitExterior = true;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Log(Debug::Warning) << "World viewer: explicit exterior start failed for " << explicitExterior
+                                            << ": " << e.what();
+                    }
+                }
+
+                if (!usedExplicitExterior)
+                {
+                    cellId = findInteriorPosition(mStartCell, pos);
+                    if (hasExplicitAnchor)
+                        pos = anchor;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
+                                     << cellId << " explicitAnchor=" << hasExplicitAnchor;
+                    Log(Debug::Info) << "World viewer: start cell interior change begin cell=\"" << mStartCell
+                                     << "\" pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", " << pos.pos[2] << ")";
+                    viewerTrace("change-to-interior.begin");
+                    changeToInteriorCell(mStartCell, pos, !hasExplicitAnchor);
+                    viewerTrace("change-to-interior.end");
+                    Log(Debug::Info) << "World viewer: start cell interior change complete cell=\"" << mStartCell
+                                     << "\"";
+                    if (hasExplicitAnchor)
+                    {
+                        viewerTrace("pin-start-anchor.begin");
+                        pinViewerStartAnchor(*this, pos);
+                        viewerTrace("pin-start-anchor.end");
+                    }
+                    Log(Debug::Info) << "World viewer: start cell interior placement complete cell=\"" << mStartCell
+                                     << "\"";
+                }
             }
         }
         else
@@ -638,17 +982,72 @@ namespace MWWorld
             if (!getPlayerPtr().isInCell())
             {
                 ESM::Position pos;
-                const int cellSize = Constants::CellSizeInUnits;
-                pos.pos[0] = cellSize / 2;
-                pos.pos[1] = cellSize / 2;
-                pos.pos[2] = 0;
-                pos.rot[0] = 0;
-                pos.rot[1] = 0;
-                pos.rot[2] = 0;
+                bool usedEsm4Fallback = false;
+                const auto& esm4Lands = mStore.get<ESM4::Land>().getLands();
+                if (!esm4Lands.empty())
+                {
+                    ESM::ExteriorCellLocation fallbackLocation;
+                    int bestScore = std::numeric_limits<int>::max();
+                    bool haveFallbackLocation = false;
+                    for (const auto& [candidateLocation, land] : esm4Lands)
+                    {
+                        const ESM4::World* world = mStore.get<ESM4::World>().search(candidateLocation.mWorldspace);
+                        if (world == nullptr || !world->mParent.isZeroOrUnset()
+                            || (world->mWorldFlags & ESM4::World::WLD_NoLandscpe))
+                        {
+                            continue;
+                        }
 
-                ESM::ExteriorCellLocation exteriorCellPos = ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1]);
-                ESM::RefId cellId = ESM::RefId::esm3ExteriorCell(exteriorCellPos.mX, exteriorCellPos.mY);
-                mWorldScene->changeToExteriorCell(cellId, pos, true);
+                        const int score = std::abs(candidateLocation.mX) + std::abs(candidateLocation.mY);
+                        if (!haveFallbackLocation || score < bestScore
+                            || (score == bestScore && candidateLocation.mX == 0 && candidateLocation.mY == 0))
+                        {
+                            fallbackLocation = candidateLocation;
+                            bestScore = score;
+                            haveFallbackLocation = true;
+                            if (score == 0)
+                                break;
+                        }
+                    }
+
+                    if (haveFallbackLocation)
+                    {
+                        const osg::Vec2f posFromIndex = indexToPosition(fallbackLocation, true);
+                        pos.pos[0] = posFromIndex.x();
+                        pos.pos[1] = posFromIndex.y();
+                        pos.pos[2] = 0;
+                        pos.rot[0] = 0;
+                        pos.rot[1] = 0;
+                        pos.rot[2] = 0;
+
+                        MWWorld::CellStore& exteriorStore = mWorldModel.getExterior(fallbackLocation);
+                        const ESM::RefId cellId = exteriorStore.getCell()->getId();
+                        Log(Debug::Info) << "World viewer: ESM4 fallback change to real exterior location="
+                                         << fallbackLocation << " cell=" << cellId;
+                        viewerTrace("fallback-change-to-esm4-exterior.begin");
+                        mWorldScene->changeToExteriorCell(cellId, pos, true);
+                        viewerTrace("fallback-change-to-esm4-exterior.end");
+                        usedEsm4Fallback = true;
+                    }
+                }
+
+                if (!usedEsm4Fallback)
+                {
+                    const int cellSize = Constants::CellSizeInUnits;
+                    pos.pos[0] = cellSize / 2;
+                    pos.pos[1] = cellSize / 2;
+                    pos.pos[2] = 0;
+                    pos.rot[0] = 0;
+                    pos.rot[1] = 0;
+                    pos.rot[2] = 0;
+
+                    ESM::ExteriorCellLocation exteriorCellPos
+                        = ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1]);
+                    ESM::RefId cellId = ESM::RefId::esm3ExteriorCell(exteriorCellPos.mX, exteriorCellPos.mY);
+                    viewerTrace("fallback-change-to-exterior.begin");
+                    mWorldScene->changeToExteriorCell(cellId, pos, true);
+                    viewerTrace("fallback-change-to-exterior.end");
+                }
             }
         }
 
@@ -664,14 +1063,33 @@ namespace MWWorld
         }
 
         // enable collision
+        if (viewerEnvEnabled("OPENMW_PROOF_DISABLE_SKY"))
+        {
+            viewerTrace("proof-disable-sky.begin");
+            bool skyEnabled = toggleSky();
+            if (skyEnabled)
+                skyEnabled = toggleSky();
+            Log(Debug::Info) << "World viewer proof: disabled sky before first frame finalEnabled=" << skyEnabled;
+            viewerTrace("proof-disable-sky.end");
+        }
+
+        viewerTrace("collision-enable.begin");
         if (!mPhysics->toggleCollisionMode())
             mPhysics->toggleCollisionMode();
+        viewerTrace("collision-enable.end");
 
+        viewerTrace("window-update-player.begin");
         MWBase::Environment::get().getWindowManager()->updatePlayer();
+        viewerTrace("window-update-player.end");
+        viewerTrace("time-manager-setup.begin");
         mTimeManager->setup(mGlobalVariables);
+        viewerTrace("time-manager-setup.end");
 
         // Initial seed.
         mPrng.seed(mRandomSeed);
+        Log(Debug::Info) << "World viewer: startNewGame complete bypass=" << bypass << " startCell='" << mStartCell
+                         << "' playerInCell=" << getPlayerPtr().isInCell();
+        viewerTrace("start-new-game.end");
     }
 
     void World::clear()
@@ -702,13 +1120,14 @@ namespace MWWorld
         mIdsRebuilt = false;
 
         fillGlobalVariables();
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
     }
 
     int World::countSavedGameRecords() const
     {
         return mWorldModel.countSavedGameRecords() + mStore.countSavedGameRecords()
             + mGlobalVariables.countSavedGameRecords() + mProjectileManager->countSavedGameRecords()
-            + 1 // player record
+            + mESM4QuestRuntime.countSavedGameRecords() + 1 // player record
             + 1 // weather record
             + 1 // actorId counter
             + 1 // levitation/teleport enabled state
@@ -740,6 +1159,7 @@ namespace MWWorld
         mWorldModel.write(writer, progress); // the player's cell needs to be loaded before the player
         mPlayer->write(writer, progress);
         mGlobalVariables.write(writer, progress);
+        mESM4QuestRuntime.write(writer);
         mWeatherManager->write(writer, progress);
         mProjectileManager->write(writer, progress);
 
@@ -770,6 +1190,9 @@ namespace MWWorld
                 Misc::Rng::deserialize(data, mPrng);
             }
             break;
+            case ESM::REC_FQST:
+                mESM4QuestRuntime.readRecord(reader);
+                break;
             case ESM::REC_PLAY:
                 if (reader.getFormatVersion() <= ESM::MaxPlayerBeforeCellDataFormatVersion && !mIdsRebuilt)
                 {
@@ -853,15 +1276,40 @@ namespace MWWorld
 
     World::~World()
     {
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown begin";
+
         // Must be cleared before mRendering is destroyed
         if (mProjectileManager)
             mProjectileManager->clear();
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown projectile-clear";
 
         if (Settings::navigator().mWaitForAllJobsOnExit && mNavigator != nullptr)
         {
             Log(Debug::Verbose) << "Waiting for all navmesh jobs to be done...";
             mNavigator->wait(DetourNavigator::WaitConditionType::allJobsDone, nullptr);
         }
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown navigator-wait";
+
+        mProjectileManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown projectile-manager";
+        mWeatherManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown weather";
+        mWorldScene = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown scene";
+        if (mRendering)
+            mRendering->clearLiveObjectsForShutdown();
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown render-live-clear";
+        mRendering = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown rendering";
+        mPhysics = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown physics";
+        mNavigator = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown navigator";
+        mPlayer = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown player";
+        mTimeManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown time";
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown end";
     }
 
     void World::setRandomSeed(uint32_t seed)
@@ -1263,11 +1711,11 @@ namespace MWWorld
 
     MWWorld::Ptr World::getFacedObject()
     {
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         if (VR::getVR())
             return MWVR::Util::getPointerTarget().first;
 
-//## VR_PATCH END
+        // ## VR_PATCH END
         MWWorld::Ptr facedObject;
 
         if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame)
@@ -1292,14 +1740,14 @@ namespace MWWorld
 
     float World::getDistanceToFacedObject()
     {
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         if (VR::getVR())
         {
             return MWVR::Util::getPointerTarget().second;
         }
         else
             return mDistanceToFacedObject;
-//## VR_PATCH END
+        // ## VR_PATCH END
     }
 
     osg::Matrixf World::getActorHeadTransform(const MWWorld::ConstPtr& actor) const
@@ -1708,9 +2156,9 @@ namespace MWWorld
             spawnPoint.z() += 30; // move up a little to account for slopes, will snap down later
 
             if (!mPhysics
-                     ->castRay(spawnPoint, osg::Vec3f(pos.x(), pos.y(), pos.z() + 20),
-                         MWPhysics::CollisionType_World | MWPhysics::CollisionType_Door)
-                     .mHit)
+                    ->castRay(spawnPoint, osg::Vec3f(pos.x(), pos.y(), pos.z() + 20),
+                        MWPhysics::CollisionType_World | MWPhysics::CollisionType_Door)
+                    .mHit)
             {
                 // safe
                 break;
@@ -2092,9 +2540,9 @@ namespace MWWorld
         const float camDist = mRendering->getCamera()->getCameraDistance();
         maxDistance += camDist;
         MWWorld::Ptr facedObject;
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         MWRender::RayResult rayToObject;
-//## VR_PATCH END
+        // ## VR_PATCH END
 
         if (MWBase::Environment::get().getWindowManager()->isGuiMode())
         {
@@ -2119,9 +2567,9 @@ namespace MWWorld
         bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList)
     {
         MWRender::RayResult rayRes
-//## VR_PATCH BEGIN
+            // ## VR_PATCH BEGIN
             = mRendering->castRay(from, to, ignorePlayer, ignoreActors, true, ignoreList);
-//## VR_PATCH END
+        // ## VR_PATCH END
         res.mHit = rayRes.mHit;
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
@@ -2290,9 +2738,9 @@ namespace MWWorld
     {
         const float maxDist = 200.f;
 
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         MWRender::RayResult result = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
-//## VR_PATCH END
+        // ## VR_PATCH END
 
         CellStore* cell = getPlayerPtr().getCell();
 
@@ -2320,9 +2768,9 @@ namespace MWWorld
     bool World::canPlaceObject(float cursorX, float cursorY)
     {
         const float maxDist = 200.f;
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         MWRender::RayResult result = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
-//## VR_PATCH END
+        // ## VR_PATCH END
 
         if (result.mHit)
         {
@@ -2426,9 +2874,9 @@ namespace MWWorld
 
         float len = 1000000.0;
 
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         MWRender::RayResult result = mRendering->castRay(orig, orig + dir * len, true, true, true);
-//## VR_PATCH END
+        // ## VR_PATCH END
         if (result.mHit)
             pos.pos[2] = result.mHitPointWorld.z();
 
@@ -2728,6 +3176,50 @@ namespace MWWorld
                 state = MWWorld::DoorState::Closing; // if opening, then close
                 break;
         }
+
+        if (door.getType() == ESM::REC_DOOR4)
+        {
+            MWRender::Animation* animation = getAnimation(door);
+            const std::string_view group = state == MWWorld::DoorState::Opening ? "Open" : "Close";
+            const std::string_view oppositeGroup = state == MWWorld::DoorState::Opening ? "Close" : "Open";
+
+            if (animation && animation->hasAnimation(group))
+            {
+                animation->disable(oppositeGroup);
+                animation->play(group, MWRender::AnimPriority(1), MWRender::BlendMask_All, true, 1.f, "start", "stop",
+                    0.f, 1, true);
+
+                if (state == MWWorld::DoorState::Opening)
+                {
+                    mPhysics->markAsNonSolid(door);
+                    mPhysics->remove(door);
+                    if (osg::Node* node = door.getRefData().getBaseNode())
+                        node->setNodeMask(0);
+                }
+
+                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
+                mDoorStates.erase(door);
+
+                Log(Debug::Info) << "FNV/ESM4 proof: played animated door group '" << group
+                                 << "' instead of rotating door " << door.getCellRef().getRefId();
+                return;
+            }
+
+            if (state == MWWorld::DoorState::Opening)
+            {
+                mPhysics->markAsNonSolid(door);
+                mPhysics->remove(door);
+                if (osg::Node* node = door.getRefData().getBaseNode())
+                    node->setNodeMask(0);
+                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
+                mDoorStates.erase(door);
+
+                Log(Debug::Warning) << "FNV/ESM4 proof: removed animated ESM4 door collision and hidden fallback gate "
+                                    << door.getCellRef().getRefId();
+                return;
+            }
+        }
+
         door.getClass().setDoorState(door, state);
         mDoorStates[door] = state;
     }
@@ -3272,8 +3764,8 @@ namespace MWWorld
 
         const bool casterIsPlayer = actor == MWMechanics::getPlayer();
         MWWorld::Ptr target;
-//## VR_PATCH BEGIN
-        if(VR::getVR())
+        // ## VR_PATCH BEGIN
+        if (VR::getVR())
         {
             if (VR::getKBMouseModeActive())
                 target = getFacedObject();
@@ -3284,8 +3776,8 @@ namespace MWWorld
         // if the faced object can not be activated, do not use it
         if (!target.isEmpty() && !target.getClass().hasToolTip(target))
             target = nullptr;
-//## VR_PATCH END
-        // For scripted spells we should not use hit contact
+        // ## VR_PATCH END
+        //  For scripted spells we should not use hit contact
         if (scriptedSpell)
         {
             if (!casterIsPlayer)
@@ -3305,7 +3797,7 @@ namespace MWWorld
             bool aimFromVRPointer = casterIsPlayer && VR::getVR() && !VR::getKBMouseModeActive();
             if (casterIsPlayer)
             {
-                if(aimFromVRPointer)
+                if (aimFromVRPointer)
                     target = MWVR::Util::getTouchTarget().first;
                 else
                     target = getFacedObject();
@@ -3320,7 +3812,7 @@ namespace MWWorld
                 // If we used the bounding boxes for static objects, then we would not be able to target e.g.
                 // objects lying on a shelf.
                 const float fCombatDistance = mStore.get<ESM::GameSetting>().find("fCombatDistance")->mValue.getFloat();
-                if(!aimFromVRPointer)
+                if (!aimFromVRPointer)
                     target = MWMechanics::getHitContact(actor, fCombatDistance).first;
 
                 if (target.isEmpty())
@@ -3329,8 +3821,8 @@ namespace MWWorld
                     osg::Vec3f origin = getActorHeadTransform(actor).getTrans();
                     osg::Quat orient = osg::Quat(actor.getRefData().getPosition().rot[0], osg::Vec3f(-1, 0, 0))
                         * osg::Quat(actor.getRefData().getPosition().rot[2], osg::Vec3f(0, 0, -1));
-//## VR_PATCH BEGIN
-                    // VR should aim from the HAND unless it's KBMouseMode
+                    // ## VR_PATCH BEGIN
+                    //  VR should aim from the HAND unless it's KBMouseMode
                     if (aimFromVRPointer)
                     {
                         auto* node = MWVR::VRInputManager::instance().vrAimNode();
@@ -3341,7 +3833,7 @@ namespace MWWorld
                             orient = worldMatrix.getRotate();
                         }
                     }
-//## VR_PATCH END
+                    // ## VR_PATCH END
                     const osg::Vec3f direction = orient * osg::Vec3f(0, 1, 0);
                     const osg::Vec3f dest = origin + direction * getMaxActivationDistance();
                     const MWRender::RayResult result = mRendering->castRay(origin, dest, true, true);
@@ -3739,23 +4231,39 @@ namespace MWWorld
         mWeatherManager->update(duration, paused, time, isExterior);
         if (const char* weatherIdEnv = std::getenv("OPENMW_FNV_PROOF_WEATHER_ID"))
         {
-            char* end = nullptr;
-            const long weatherId = std::strtol(weatherIdEnv, &end, 10);
             static bool loggedProofWeather = false;
-            if (end != weatherIdEnv && weatherId >= 0)
+            const std::string_view weatherText(weatherIdEnv);
+            if (weatherText.starts_with("FormId:") || weatherText.starts_with("formid:"))
             {
-                mWeatherManager->forceWeather(static_cast<int>(weatherId));
+                const ESM::RefId weatherId = ESM::RefId::deserializeText(weatherText);
+                const bool forced = mWeatherManager->forceWeather(weatherId);
                 if (!loggedProofWeather)
                 {
-                    Log(Debug::Info) << "FNV/ESM4 proof: force-weather manager override weatherId=" << weatherId
-                                     << " isExterior=" << isExterior;
+                    Log(forced ? Debug::Info : Debug::Warning)
+                        << "FNV/ESM4 proof: force-weather FormID override weatherId=" << weatherId
+                        << " resolved=" << forced << " isExterior=" << isExterior;
                     loggedProofWeather = true;
                 }
             }
-            else if (!loggedProofWeather)
+            else
             {
-                Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid force-weather id '" << weatherIdEnv << "'";
-                loggedProofWeather = true;
+                char* end = nullptr;
+                const long weatherId = std::strtol(weatherIdEnv, &end, 10);
+                if (end != weatherIdEnv && weatherId >= 0)
+                {
+                    mWeatherManager->forceWeather(static_cast<int>(weatherId));
+                    if (!loggedProofWeather)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 proof: force-weather manager override weatherId=" << weatherId
+                                         << " isExterior=" << isExterior;
+                        loggedProofWeather = true;
+                    }
+                }
+                else if (!loggedProofWeather)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid force-weather id '" << weatherIdEnv << "'";
+                    loggedProofWeather = true;
+                }
             }
         }
     }
@@ -4207,7 +4715,7 @@ namespace MWWorld
         return btRayAabb(localFrom, localTo, aabbMin, aabbMax, hitDistance, hitNormal);
     }
 
-//## VR_PATCH BEGIN
+    // ## VR_PATCH BEGIN
     float World::getTargetObject(MWRender::RayResult& result, const osg::Vec3f& origin, const osg::Quat& orientation,
         float maxDistance, bool ignorePlayer, uint32_t ignoreMask)
     {
@@ -4281,7 +4789,7 @@ namespace MWWorld
         return ESM::Weapon::Type::None;
     }
 
-//## VR_PATCH END
+    // ## VR_PATCH END
 
     bool World::isAreaOccupiedByOtherActor(const MWWorld::ConstPtr& actor, const osg::Vec3f& position) const
     {
@@ -4307,7 +4815,7 @@ namespace MWWorld
         return mPrng;
     }
 
-//## VR_PATCH BEGIN
+    // ## VR_PATCH BEGIN
     void World::enableVRPointer(bool left, bool right)
     {
         mRendering->enableVRPointer(left, right);
@@ -4327,7 +4835,6 @@ namespace MWWorld
         if (!weapon.isEmpty() && weapon.getType() != ESM::Weapon::sRecordId)
             weapon = MWWorld::Ptr();
 
-
         const float fCombatDistance = store.find("fCombatDistance")->mValue.getFloat();
         float distance = fCombatDistance
             * (!weapon.isEmpty() ? weapon.get<ESM::Weapon>()->mBase->mData.mReach
@@ -4344,7 +4851,7 @@ namespace MWWorld
         return result;
     }
 
-//## VR_PATCH END
+    // ## VR_PATCH END
     MWRender::PostProcessor* World::getPostProcessor()
     {
         return mRendering->getPostProcessor();

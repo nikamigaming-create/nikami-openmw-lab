@@ -56,6 +56,13 @@ namespace MWRender
                 || lowered.find("\\skeleton") != std::string::npos;
         }
 
+        bool isMarkerCreatureModel(std::string_view value)
+        {
+            const std::string lowered = toLowerAscii(value);
+            return lowered.ends_with("marker_creature.nif") || lowered.find("/marker_creature.nif") != std::string::npos
+                || lowered.find("\\marker_creature.nif") != std::string::npos;
+        }
+
         bool findCreatureKf(const VFS::Manager& vfs, const std::string& path, std::string& normalizedPath)
         {
             VFS::Path::Normalized normalized(path);
@@ -82,7 +89,7 @@ namespace MWRender
 
                 if (logCandidates && logged < 24)
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: creature KF candidate " << editorId << " path=" << name;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: creature KF candidate " << editorId << " path=" << name;
                     ++logged;
                 }
             }
@@ -99,7 +106,7 @@ namespace MWRender
 
                     if (logCandidates && logged < 24)
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: creature KF global candidate " << editorId
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: creature KF global candidate " << editorId
                                          << " path=" << name;
                         ++logged;
                     }
@@ -289,7 +296,7 @@ namespace MWRender
 
             const osg::Vec3f center = box.center();
             const osg::Vec3f extent = boundingBoxExtent(box);
-            Log(Debug::Info) << "FNV/ESM4 diag: creature " << label << " bounds for " << editorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: creature " << label << " bounds for " << editorId
                              << " path=" << path << " center=(" << center.x() << "," << center.y() << ","
                              << center.z() << ") extent=(" << extent.x() << "," << extent.y() << ","
                              << extent.z() << ")";
@@ -341,7 +348,7 @@ namespace MWRender
 
             ForceFalloutCreatureBodyVisibleVisitor visitor;
             bodyNode->accept(visitor);
-            Log(Debug::Info) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
                              << " path=" << bodyPath
                              << " rigged=" << visitor.mRigGeometryCount
                              << " static=" << visitor.mStaticGeometryCount
@@ -370,7 +377,9 @@ namespace MWRender
             {
                 MWWorld::LiveCellRef<ESM4::Creature>* ref = mPtr.get<ESM4::Creature>();
                 const ESM4::Creature& effective = getEffectiveCreatureForRendering(*ref->mBase);
-                addAnimSource(model, model);
+                const bool markerCreatureRoot = isMarkerCreatureModel(model);
+                if (!markerCreatureRoot)
+                    addAnimSource(model, model);
 
                 std::string animationDirectory = model;
                 const std::size_t slash = animationDirectory.find_last_of("/\\");
@@ -389,7 +398,7 @@ namespace MWRender
                     mObjectRoot->addChild(bodyNode);
                     if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: attached creature body nif "
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: attached creature body nif "
                                          << ref->mBase->mEditorId << " effective=" << effective.mEditorId
                                          << " path=" << bodyPath;
                         logCreatureBounds("body", ref->mBase->mEditorId, bodyPath.value(), *bodyNode);
@@ -399,54 +408,63 @@ namespace MWRender
                 if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr && mObjectRoot != nullptr)
                     logCreatureBounds("root", ref->mBase->mEditorId, model, *mObjectRoot);
                 unsigned int fallbackKfs = 0;
-                for (const std::string& kf : effective.mKf)
+                unsigned int discoveredKfs = 0;
+                if (!markerCreatureRoot)
                 {
-                    if (!kf.empty())
-                        addAnimSource(animationDirectory + kf, model);
-                }
-
-                static constexpr std::string_view fallbackNames[] = {
-                    "skeleton.kf",
-                    "idle.kf",
-                    "forward.kf",
-                    "backward.kf",
-                    "left.kf",
-                    "right.kf",
-                    "walkforward.kf",
-                    "runforward.kf",
-                    "attackleft.kf",
-                    "attackright.kf",
-                    "attack1.kf",
-                };
-                for (std::string_view fallback : fallbackNames)
-                {
-                    std::string path = animationDirectory + std::string(fallback);
-                    std::string normalizedPath;
-                    if (findCreatureKf(*vfs, path, normalizedPath))
+                    for (const std::string& kf : effective.mKf)
                     {
-                        addAnimSource(normalizedPath, model);
-                        ++fallbackKfs;
+                        if (!kf.empty())
+                            addAnimSource(animationDirectory + kf, model);
                     }
+
+                    static constexpr std::string_view fallbackNames[] = {
+                        "skeleton.kf",
+                        "idle.kf",
+                        "forward.kf",
+                        "backward.kf",
+                        "left.kf",
+                        "right.kf",
+                        "walkforward.kf",
+                        "runforward.kf",
+                        "attackleft.kf",
+                        "attackright.kf",
+                        "attack1.kf",
+                    };
+                    for (std::string_view fallback : fallbackNames)
+                    {
+                        std::string path = animationDirectory + std::string(fallback);
+                        std::string normalizedPath;
+                        if (findCreatureKf(*vfs, path, normalizedPath))
+                        {
+                            addAnimSource(normalizedPath, model);
+                            ++fallbackKfs;
+                        }
+                    }
+
+                    std::string normalizedDirectory = animationDirectory;
+                    VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
+                    std::string probeToken = normalizedDirectory;
+                    if (probeToken.ends_with('/'))
+                        probeToken.pop_back();
+                    const std::vector<std::string> discoveredKfPaths
+                        = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
+                    discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
+                    for (const std::string& path : discoveredKfPaths)
+                        addAnimSource(path, model);
                 }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "
+                                        << ref->mBase->mEditorId << " effective=" << effective.mEditorId
+                                        << " model=" << model;
 
-                std::string normalizedDirectory = animationDirectory;
-                VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
-                std::string probeToken = normalizedDirectory;
-                if (probeToken.ends_with('/'))
-                    probeToken.pop_back();
-                const std::vector<std::string> discoveredKfPaths
-                    = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
-                for (const std::string& path : discoveredKfPaths)
-                    addAnimSource(path, model);
-
-                Log(Debug::Info) << "FNV/ESM4 diag: inserted creature animation for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: inserted creature animation for "
                                  << ref->mBase->mEditorId << " model=" << model
                                  << " animated=" << animated << " effective=" << effective.mEditorId
                                  << " kfCount=" << effective.mKf.size()
                                  << " bodyPartCount=" << effective.mBodyParts.size()
                                  << " attachedBodyNifs=" << attachedBodyNifs
                                  << " fallbackKfs=" << fallbackKfs
-                                 << " discoveredKfs=" << discoveredKfPaths.size();
+                                 << " discoveredKfs=" << discoveredKfs;
             }
         }
     }

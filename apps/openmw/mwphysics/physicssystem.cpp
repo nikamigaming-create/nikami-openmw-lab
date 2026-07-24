@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <memory>
 #include <vector>
 
 #include <osg/Group>
+#include <osg/Array>
 #include <osg/Stats>
 #include <osg/Timer>
 
@@ -33,6 +35,7 @@
 #include <components/resource/bulletshapemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -495,6 +498,14 @@ namespace MWPhysics
             = std::make_unique<HeightField>(heights, x, y, size, verts, minH, maxH, holdObject, mTaskScheduler.get());
     }
 
+    void PhysicsSystem::addFlatHeightField(int x, int y, int size, float height)
+    {
+        osg::ref_ptr<osg::FloatArray> heights = new osg::FloatArray;
+        heights->resize(4);
+        std::fill(heights->begin(), heights->end(), height);
+        addHeightField(&(*heights)[0], x, y, size, 2, height - 1.f, height + 1.f, heights.get());
+    }
+
     void PhysicsSystem::removeHeightField(int x, int y)
     {
         HeightFieldMap::iterator heightfield = mHeightFields.find(std::make_pair(x, y));
@@ -668,7 +679,27 @@ namespace MWPhysics
     {
         const VFS::Path::Normalized animationMesh
             = Misc::ResourceHelpers::correctActorModelPath(mesh, mResourceSystem->getVFS());
-        osg::ref_ptr<const Resource::BulletShape> shape = mShapeManager->getShape(animationMesh);
+        osg::ref_ptr<const Resource::BulletShape> shape;
+        const VFS::Manager* vfs = mResourceSystem->getVFS();
+        if (vfs != nullptr && !vfs->exists(animationMesh))
+        {
+            Log(Debug::Info) << "World viewer: using fallback actor physics for missing actor mesh "
+                             << animationMesh;
+            shape = makeFallbackActorShape(ptr);
+        }
+        else
+        {
+            try
+            {
+                shape = mShapeManager->getShape(animationMesh);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Info) << "World viewer: using fallback actor physics after mesh load failed for "
+                                 << animationMesh << ": " << e.what();
+                shape = makeFallbackActorShape(ptr);
+            }
+        }
 
         // Try to get shape from basic model as fallback for creatures
         if (!ptr.getClass().isNpc() && shape && shape->mCollisionBox.mExtents.length2() == 0)

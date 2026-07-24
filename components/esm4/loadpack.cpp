@@ -309,6 +309,8 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                     break;
                 }
+                if (reader.skipUnknownStarfieldSubRecordData("loadpack"))
+                    break;
                 throw std::runtime_error("ESM4::PACK::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
             }
         }

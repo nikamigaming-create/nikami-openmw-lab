@@ -144,6 +144,8 @@ void ESM4::Pathgrid::load(ESM4::Reader& reader)
                 break;
             }
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadpgrd"))
+                    break;
                 throw std::runtime_error("ESM4::PGRD::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

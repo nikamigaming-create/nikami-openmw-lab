@@ -19,7 +19,11 @@
 
 #include "character.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
@@ -43,6 +47,8 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -65,10 +71,39 @@
 #include "../mwrender/npcanimation.hpp"
 #include "../mwvr/openxrinput.hpp"
 #include "../mwvr/vranimation.hpp"
+#include "../mwvr/vrinputmanager.hpp"
 //## VR_PATCH END
 
 namespace
 {
+    float getFNVEnvFloat(std::string_view name, float fallback)
+    {
+        if (const char* value = std::getenv(std::string(name).c_str()))
+            return std::atof(value);
+        return fallback;
+    }
+
+    float getFNVVrLocomotionScale(float speedFactor, bool running, float walkSpeed, float runSpeed)
+    {
+        const float legacyRunScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_MOVE_SCALE", 2.75f), 0.25f, 12.f);
+        const float walkScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_WALK_SCALE", 1.15f), 0.25f, 12.f);
+        const float jogScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_JOG_SCALE", 1.75f), 0.25f, 12.f);
+        const float runScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_RUN_SCALE", legacyRunScale), 0.25f, 12.f);
+
+        if (!running || walkSpeed <= 0.f || runSpeed <= walkSpeed)
+            return walkScale;
+
+        const float walkEquivalentRunFactor = std::clamp(walkSpeed / runSpeed, 0.f, 0.98f);
+        const float runProgress =
+            std::clamp((speedFactor - walkEquivalentRunFactor) / (1.f - walkEquivalentRunFactor), 0.f, 1.f);
+        const float easedRunProgress = runProgress * runProgress * (3.f - 2.f * runProgress);
+        return jogScale + (runScale - jogScale) * easedRunProgress;
+    }
+
     bool isFalloutActor(const MWWorld::Ptr& ptr)
     {
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
@@ -756,7 +791,7 @@ namespace MWMechanics
                     !flyingMovement.empty())
                 {
                     if (isFalloutActor(mPtr))
-                        Log(Debug::Info) << "FNV/ESM4 diag: using '" << flyingMovement
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: using '" << flyingMovement
                                          << "' as flying movement fallback for " << mPtr.getCellRef().getRefId()
                                          << " requested='" << movementAnimName << "'";
                     movementAnimName = std::string(flyingMovement);
@@ -765,15 +800,19 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
-                if (isFalloutActor(mPtr))
+                if (isFalloutActor(mPtr) && mLastMissingMovementAnimation != movementAnimName)
+                {
                     Log(Debug::Warning) << "FNV/ESM4 diag: movement animation missing for "
                                         << mPtr.getCellRef().getRefId() << " group '" << movementAnimName << "'";
+                    mLastMissingMovementAnimation = movementAnimName;
+                }
                 if (!mCurrentMovement.empty())
                     resetCurrentIdleState();
                 resetCurrentMovementState();
                 return;
             }
         }
+        mLastMissingMovementAnimation.clear();
 
         // If we're playing the same animation, start it from the point it ended
         float startpoint = 0.f;
@@ -833,7 +872,7 @@ namespace MWMechanics
             if (!mCurrentIdle.empty())
                 clearStateAnimation(mCurrentIdle);
             resetCurrentIdleState();
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
                              << mPtr.getCellRef().getRefId();
             return;
         }
@@ -862,6 +901,11 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureSeated = falloutFurnitureState == MWClass::FalloutFurnitureState::Seated;
+        const bool falloutFurnitureActive = falloutFurnitureState != MWClass::FalloutFurnitureState::None;
 
         // Only play "idleswim" or "idlesneak" if they exist. Otherwise, fallback to
         // "idle"+weapon or "idle".
@@ -872,7 +916,14 @@ namespace MWMechanics
             idleGroup = idleStateToAnimGroup(CharState_Idle);
         }
 
-        if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
+        if (falloutFurnitureSeated && mAnimation->hasAnimation("chairsit"))
+        {
+            fallback = false;
+            priority = getIdlePriority(CharState_Idle);
+            idleGroup = "chairsit";
+            numLoops = std::numeric_limits<uint32_t>::max();
+        }
+        else if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
         {
             std::string_view weapShortGroup = getWeaponShortGroup(mWeaponType);
             if (!weapShortGroup.empty())
@@ -895,10 +946,10 @@ namespace MWMechanics
             if (const char* forcedIdleGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
             {
                 std::string forced = Misc::StringUtils::lowerCase(forcedIdleGroup);
-                if (forced == "idle" || forced == "sitchairlisten" || forced == "sitchairtalk"
-                    || forced == "sitchaireat")
+                if (forced == "idle" || forced == "chairsit" || forced == "chairsitenter"
+                    || forced == "sitchairlisten" || forced == "sitchairtalk" || forced == "sitchaireat")
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
                                      << mPtr.getCellRef().getRefId();
                     idleGroup = std::move(forced);
                 }
@@ -910,12 +961,16 @@ namespace MWMechanics
 
         if (!mAnimation->hasAnimation(idleGroup))
         {
-            if (isFalloutActor(mPtr))
+            if (isFalloutActor(mPtr) && mLastMissingIdleAnimation != idleGroup)
+            {
                 Log(Debug::Warning) << "FNV/ESM4 diag: idle animation missing for " << mPtr.getCellRef().getRefId()
                                     << " group '" << idleGroup << "'";
+                mLastMissingIdleAnimation = idleGroup;
+            }
             resetCurrentIdleState();
             return;
         }
+        mLastMissingIdleAnimation.clear();
 
         float startPoint = 0.f;
         // There is no need to restart anim if the new and old anims are the same.
@@ -926,13 +981,42 @@ namespace MWMechanics
         clearStateAnimation(mCurrentIdle);
         mCurrentIdle = std::move(idleGroup);
         if (isFalloutActor(mPtr))
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController playing idle for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController playing idle for "
                              << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
         playBlendedAnimation(
             mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
 
         if (isFalloutActor(mPtr))
         {
+            const bool hideEquippedWeaponForProof
+                = std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr;
+            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive
+                && !hideEquippedWeaponForProof)
+            {
+                MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
+                weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                if (mAnimation->isPlaying("weaponpose"))
+                    mAnimation->disable("weaponpose");
+                Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
+                                 << mPtr.getCellRef().getRefId();
+                // Live FNV blend telemetry gives locomotion priority 30 over aim 25 on the lower body, locomotion
+                // 31 over aim 30 on the torso/neck/head, aim 35 over locomotion 31 on both arm branches, and aim 45
+                // on Weapon. Replacing the full upper body with 2hraim therefore freezes the walking torso and
+                // produces the persistent head/neck offset seen by the retail transform oracle.
+                const int weaponPoseMask = MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+                playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
+                    0.f, std::numeric_limits<uint32_t>::max(), true);
+            }
+            else if ((falloutFurnitureActive || hideEquippedWeaponForProof)
+                && mAnimation->isPlaying("weaponpose"))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing standing weapon pose for "
+                                 << mPtr.getCellRef().getRefId() << " reason="
+                                 << (falloutFurnitureActive ? "furniture-seated" : "proof-weapon-hidden");
+                mAnimation->disable("weaponpose");
+            }
+
             if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
             {
                 std::string overlayGroup = Misc::StringUtils::lowerCase(forcedOverlayGroup);
@@ -942,7 +1026,7 @@ namespace MWMechanics
                     {
                         MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
                         overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-                        Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
                                          << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
                         playBlendedAnimation(overlayGroup, overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f,
                             "start", "stop", 0.f, numLoops, true);
@@ -956,20 +1040,21 @@ namespace MWMechanics
 
         const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk")
             && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
-        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && mAnimation->hasAnimation("sitchairlisten")
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit"
+            && mAnimation->hasAnimation("sitchairlisten")
             && !hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
             MWRender::Animation::AnimPriority listenPriority(Priority_Default);
             listenPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
             listenPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
                              << mPtr.getCellRef().getRefId();
             playBlendedAnimation("sitchairlisten",
                 listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
                 "stop", 0.f, numLoops, true);
         }
-        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && hasFalloutSitTalk
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit" && hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
             MWRender::Animation::AnimPriority talkPriority(Priority_Default);
@@ -986,7 +1071,7 @@ namespace MWMechanics
                 talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
                 talkMask |= MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
             }
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
                              << mPtr.getCellRef().getRefId();
             playBlendedAnimation("sitchairtalk",
                 talkPriority, talkMask, false, 1.0f, "start", "stop", 0.f, numLoops, true);
@@ -2175,6 +2260,14 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
+            const bool logFalloutVrPlayerMovement = VR::getVR() && isPlayer;
+            if (logFalloutVrPlayerMovement && MWVR::hasFallbackMovementInput())
+            {
+                const osg::Vec2f fallbackMovement = MWVR::getFallbackMovementInput();
+                movementSettings.mPosition[0] = fallbackMovement.x();
+                movementSettings.mPosition[1] = fallbackMovement.y();
+                movementSettings.mSpeedFactor = std::min(fallbackMovement.length(), 1.f);
+            }
             const bool holdFalloutActorDisplacement = shouldHoldFalloutActorDisplacement(mPtr, isPlayer);
             if (holdFalloutActorDisplacement)
             {
@@ -2206,7 +2299,8 @@ namespace MWMechanics
             movementSettings.mSpeedFactor = std::min(vec.length(), 1.f);
             vec.normalize();
 
-            const bool smoothMovement = Settings::game().mSmoothMovement;
+            const bool vrPlayer = isPlayer && VR::getVR();
+            const bool smoothMovement = Settings::game().mSmoothMovement || vrPlayer;
             if (smoothMovement)
             {
                 float angle = mPtr.getRefData().getPosition().rot[2];
@@ -2217,7 +2311,13 @@ namespace MWMechanics
                 float deltaLen = delta.length();
 
                 float maxDelta;
-                if (isFirstPersonPlayer)
+                if (isFirstPersonPlayer && vrPlayer)
+                {
+                    const float accel = std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_ACCEL", 4.f), 0.5f, 20.f);
+                    const float decel = std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_DECEL", 7.f), 0.5f, 30.f);
+                    maxDelta = duration * (speedDelta < -deltaLen / 2 ? decel : accel);
+                }
+                else if (isFirstPersonPlayer)
                     maxDelta = 1;
                 else if (std::abs(speedDelta) < deltaLen / 2)
                     // Turning is smooth for player and less smooth for NPCs (otherwise NPC can miss a path point).
@@ -2225,7 +2325,7 @@ namespace MWMechanics
                 else if (isPlayer && speedDelta < -deltaLen / 2)
                     // As soon as controls are released, mwinput switches player from running to walking.
                     // So stopping should be instant for player, otherwise it causes a small twitch.
-                    maxDelta = 1;
+                    maxDelta = vrPlayer ? duration * std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_DECEL", 7.f), 0.5f, 30.f) : 1;
                 else // In all other cases speeding up and stopping are smooth.
                     maxDelta = duration * 3.f;
 
@@ -2294,6 +2394,9 @@ namespace MWMechanics
                 mAnimation->setUpperBodyYawRadians(mAnimation->getUpperBodyYawRadians() + mAnimation->getHeadYaw() / 2);
 
             speed = cls.getCurrentSpeed(mPtr);
+            if (vrPlayer)
+                speed *= getFNVVrLocomotionScale(
+                    movementSettings.mSpeedFactor, isrunning, cls.getWalkSpeed(mPtr), cls.getRunSpeed(mPtr));
             vec.x() *= speed;
             vec.y() *= speed;
 
@@ -2630,31 +2733,61 @@ namespace MWMechanics
         osg::Vec3f movementFromAnimation
             = mAnimation->runAnimation(mSkipAnim && !isScriptedAnimPlaying() ? 0.f : duration);
 
-        if (mPtr.getClass().isActor() && !isScriptedAnimPlaying())
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureTransition
+            = falloutFurnitureState == MWClass::FalloutFurnitureState::Entering
+            || falloutFurnitureState == MWClass::FalloutFurnitureState::Exiting;
+        if (mPtr.getClass().isActor() && (!isScriptedAnimPlaying() || falloutFurnitureTransition))
         {
             if (isMovementAnimationControlled())
             {
                 if (duration != 0.f && movementFromAnimation != osg::Vec3f())
                 {
-                    movementFromAnimation /= duration;
-
-                    // Ensure we're moving in the right general direction.
-                    // In vanilla, all horizontal movement is taken from animations, even when moving diagonally (which
-                    // doesn't have a corresponding animation). So to achieve diagonal movement, we have to rotate the
-                    // movement taken from the animation to the intended direction.
-                    //
-                    // Note that while a complete movement animation cycle will have a well defined direction, no
-                    // individual frame will, and therefore we have to determine the direction based on the currently
-                    // playing cycle instead.
-                    if (speed > 0.f)
+                    if (falloutFurnitureTransition)
                     {
-                        float animMovementAngle = getAnimationMovementDirection();
-                        float targetMovementAngle = std::atan2(-movement.x(), movement.y());
-                        float diff = targetMovementAngle - animMovementAngle;
-                        movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        const float actorYaw = mPtr.getRefData().getPosition().rot[2];
+                        const osg::Vec3f localDelta = movementFromAnimation;
+                        const osg::Vec2f worldPlanarDelta = Misc::rotateVec2f(
+                            osg::Vec2f(localDelta.x(), localDelta.y()), -actorYaw);
+                        const ESM::Position& actorPosition = mPtr.getRefData().getPosition();
+                        world->moveObject(mPtr, osg::Vec3f(actorPosition.pos[0] + worldPlanarDelta.x(),
+                                                    actorPosition.pos[1] + worldPlanarDelta.y(),
+                                                    actorPosition.pos[2] + localDelta.z()));
+                        if (std::getenv("OPENMW_FNV_AUDIT_FURNITURE_ROOT_MOTION") != nullptr)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 furniture: root motion state="
+                                             << static_cast<int>(falloutFurnitureState) << " actor="
+                                             << mPtr.getCellRef().getRefId() << " duration=" << duration << " yaw="
+                                             << actorYaw << " localDelta=(" << localDelta.x() << "," << localDelta.y()
+                                             << "," << localDelta.z() << ") worldDelta=(" << worldPlanarDelta.x()
+                                             << "," << worldPlanarDelta.y() << "," << localDelta.z() << ")";
+                        }
+                        movement = osg::Vec3f();
                     }
+                    else
+                    {
+                        movementFromAnimation /= duration;
 
-                    movement = movementFromAnimation;
+                        // Ensure we're moving in the right general direction.
+                        // In vanilla, all horizontal movement is taken from animations, even when moving diagonally
+                        // (which doesn't have a corresponding animation). So to achieve diagonal movement, we have to
+                        // rotate the movement taken from the animation to the intended direction.
+                        //
+                        // Note that while a complete movement animation cycle will have a well defined direction, no
+                        // individual frame will, and therefore we have to determine the direction based on the currently
+                        // playing cycle instead.
+                        if (speed > 0.f)
+                        {
+                            float animMovementAngle = getAnimationMovementDirection();
+                            float targetMovementAngle = std::atan2(-movement.x(), movement.y());
+                            float diff = targetMovementAngle - animMovementAngle;
+                            movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        }
+
+                        movement = movementFromAnimation;
+                    }
                 }
                 else
                 {

@@ -170,10 +170,14 @@ namespace Compiler
             return true;
         }
 
-        if (mState == BeginState && getContext().isId(ESM::RefId::stringRefId(name)))
+        ESM::RefId explicitId = ESM::RefId::deserializeText(name);
+        if (explicitId.empty())
+            explicitId = ESM::RefId::stringRefId(name);
+
+        if (mState == BeginState && getContext().isId(explicitId))
         {
             mState = PotentialExplicitState;
-            mExplicit = Misc::StringUtils::lowerCase(name);
+            mExplicit = explicitId.serializeText();
             return true;
         }
 

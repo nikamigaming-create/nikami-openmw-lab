@@ -28,6 +28,7 @@
 #define ESM4_WEAP_H
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,13 @@ namespace ESM4
             std::uint16_t damage;
             std::uint8_t clipSize; // FO3/FONV only
 
+            // FO3/FONV WEAP.DNAM animation selectors. These choose the authored animation family and the
+            // optional HandGrip overlay; they are not part of the TES4 DATA subrecord above.
+            std::uint8_t animationType;
+            std::uint8_t handGrip;
+            std::uint8_t ammoUse;
+            std::uint8_t reloadAnim;
+
             Data()
                 : type(0)
                 , speed(0.f)
@@ -70,6 +78,10 @@ namespace ESM4
                 , weight(0.f)
                 , damage(0)
                 , clipSize(0)
+                , animationType(0xff)
+                , handGrip(0xff)
+                , ammoUse(0)
+                , reloadAnim(0)
             {
             }
         };
@@ -118,6 +130,9 @@ namespace ESM4
         // void blank();
         static constexpr ESM::RecNameInts sRecordId = ESM::RecNameInts::REC_WEAP4;
     };
+
+    // Parse the stable 16-byte FO3/FNV prefix of WEAP.DNAM. Later games reuse DNAM with incompatible layouts.
+    [[nodiscard]] bool loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data);
 }
 
 #endif // ESM4_WEAP_H

@@ -1,9 +1,13 @@
 #include "controller.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 
+#include <components/debug/debuglog.hpp>
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/TexMat>
@@ -61,6 +65,14 @@ namespace NifOsg
             return value;
         }
 
+        const char* getEsm4RuntimeEnv(const char* name, const char* legacyName)
+        {
+            if (const char* env = std::getenv(name))
+                return env;
+
+            return std::getenv(legacyName);
+        }
+
         bool isFalloutActorBasisBone(const std::string& bone)
         {
             const std::string lowerBone = asciiLower(bone);
@@ -72,6 +84,22 @@ namespace NifOsg
                 || lowerBone.find("foretwist") != std::string::npos
                 || lowerBone.find("hand") != std::string::npos || lowerBone.find("finger") != std::string::npos
                 || lowerBone.find("thumb") != std::string::npos;
+        }
+
+        bool isFalloutActorLowerBodyBone(const std::string& bone)
+        {
+            const std::string lowerBone = asciiLower(bone);
+            return lowerBone.find("pelvis") != std::string::npos || lowerBone.find("thigh") != std::string::npos
+                || lowerBone.find("calf") != std::string::npos || lowerBone.find("foot") != std::string::npos
+                || lowerBone.find("toe") != std::string::npos;
+        }
+
+        bool shouldPinFalloutActorLowerBodyBindRotation()
+        {
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_PIN_ACTOR_LOWER_BODY_BIND_ROTATION",
+                    "OPENMW_FNV_PIN_ACTOR_LOWER_BODY_BIND_ROTATION"))
+                return std::string_view(env) != "0";
+            return false;
         }
 
         bool shouldPinFalloutActorBindRotation(const std::string& bone)
@@ -86,6 +114,109 @@ namespace NifOsg
                 || lowerBone.find("finger") != std::string::npos || lowerBone.find("thumb") != std::string::npos;
         }
 
+        bool esm4ActorBindPinningEnabled(bool defaultEnabled)
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_PIN_ACTOR_BIND_ROTATION", "OPENMW_FNV_PIN_ACTOR_BIND_ROTATION"))
+                return std::string_view(env) != "0";
+            return defaultEnabled;
+        }
+
+        bool shouldPinFalloutActorKeyTranslationsToBind()
+        {
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_PIN_ACTOR_KEY_TRANSLATIONS_TO_BIND",
+                    "OPENMW_FNV_PIN_ACTOR_KEY_TRANSLATIONS_TO_BIND"))
+                return std::string_view(env) != "0";
+            return false;
+        }
+
+        bool shouldDropFalloutActorKeyTranslations()
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_DROP_ACTOR_KEY_TRANSLATIONS", "OPENMW_FNV_DROP_ACTOR_KEY_TRANSLATIONS"))
+                return std::string_view(env) != "0";
+            return false;
+        }
+
+        std::string_view getFalloutActorRotationCompositionMode()
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_ACTOR_ROTATION_COMPOSITION", "OPENMW_FNV_ACTOR_ROTATION_COMPOSITION"))
+            {
+                if (*env != '\0')
+                    return env;
+            }
+
+            return "raw";
+        }
+
+        osg::Quat composeFalloutActorRotation(const osg::Quat& rawRotation, const osg::Quat& bindRotation)
+        {
+            const osg::Quat halfTurn = falloutHalfTurnX();
+            const std::string_view mode = getFalloutActorRotationCompositionMode();
+            if (mode == "raw")
+                return rawRotation;
+            if (mode == "bind")
+                return bindRotation;
+            if (mode == "rawBind")
+                return rawRotation * bindRotation;
+            if (mode == "bindRaw")
+                return bindRotation * rawRotation;
+            if (mode == "halfRaw")
+                return halfTurn * rawRotation;
+            if (mode == "rawHalf")
+                return rawRotation * halfTurn;
+            if (mode == "halfBind")
+                return halfTurn * bindRotation;
+            if (mode == "bindHalf")
+                return bindRotation * halfTurn;
+            if (mode == "halfRawBind")
+                return halfTurn * rawRotation * bindRotation;
+            if (mode == "rawBindHalf")
+                return rawRotation * bindRotation * halfTurn;
+            if (mode == "halfBindRaw")
+                return halfTurn * bindRotation * rawRotation;
+            if (mode == "bindHalfRaw")
+                return bindRotation * halfTurn * rawRotation;
+            if (mode == "bindRawHalf")
+                return bindRotation * rawRotation * halfTurn;
+
+            return rawRotation * halfTurn * bindRotation;
+        }
+
+        void applyFalloutActorTranslationPolicy(SceneUtil::KeyframeController::KfTransform& transform,
+            const std::string& lowerBone, const osg::Vec3f& bindTranslation)
+        {
+            if (lowerBone.empty())
+                return;
+
+            const bool dropTranslations = shouldDropFalloutActorKeyTranslations();
+            const bool pinTranslations = shouldPinFalloutActorKeyTranslationsToBind();
+            if (dropTranslations || pinTranslations)
+            {
+                const bool auditBone = lowerBone == "bip01 pelvis" || lowerBone.find("spine") != std::string::npos
+                    || lowerBone.find("foot") != std::string::npos || lowerBone.find("hand") != std::string::npos;
+                static unsigned int sTranslationPolicyLogs = 0;
+                if (auditBone && sTranslationPolicyLogs < 96)
+                {
+                    ++sTranslationPolicyLogs;
+                    const osg::Vec3f rawTranslation = transform.mTranslation.value_or(osg::Vec3f());
+                    Log(Debug::Info) << "FNV/ESM4 ACTOR KEY TRANSLATION POLICY bone=" << lowerBone
+                                     << " mode=" << (dropTranslations ? "drop" : "pin-bind")
+                                     << " hadTranslation=" << static_cast<bool>(transform.mTranslation)
+                                     << " raw=(" << rawTranslation.x() << "," << rawTranslation.y() << ","
+                                     << rawTranslation.z() << ")"
+                                     << " bind=(" << bindTranslation.x() << "," << bindTranslation.y() << ","
+                                     << bindTranslation.z() << ")";
+                }
+            }
+
+            if (dropTranslations)
+                transform.mTranslation.reset();
+            else if (pinTranslations)
+                transform.mTranslation = bindTranslation;
+        }
+
         void sanitizeTransform(SceneUtil::KeyframeController::KfTransform& transform)
         {
             if (transform.mTranslation && !isReasonableVec3(*transform.mTranslation, 1000000.f))
@@ -94,6 +225,27 @@ namespace NifOsg
                 transform.mRotation.reset();
             if (transform.mScale && !isReasonableScale(*transform.mScale))
                 transform.mScale.reset();
+        }
+
+        float quatAngleDeltaDegrees(osg::Quat left, osg::Quat right)
+        {
+            const double leftLength = std::sqrt(left.x() * left.x() + left.y() * left.y() + left.z() * left.z()
+                + left.w() * left.w());
+            const double rightLength = std::sqrt(right.x() * right.x() + right.y() * right.y() + right.z() * right.z()
+                + right.w() * right.w());
+            if (leftLength <= 0.000001 || rightLength <= 0.000001)
+                return 0.f;
+
+            double dot = (left.x() * right.x() + left.y() * right.y() + left.z() * right.z() + left.w() * right.w())
+                / (leftLength * rightLength);
+            dot = std::clamp(std::abs(dot), 0.0, 1.0);
+            return static_cast<float>(2.0 * std::acos(dot) * 180.0 / osg::PI);
+        }
+
+        bool shouldAuditFalloutActorBasis()
+        {
+            return std::getenv("OPENMW_FNV_ACTOR_BASIS_AUDIT") != nullptr
+                || std::getenv("OPENMW_ESM4_ACTOR_BASIS_AUDIT") != nullptr;
         }
     }
 
@@ -177,6 +329,9 @@ namespace NifOsg
         , mTranslations(copy.mTranslations)
         , mScales(copy.mScales)
         , mAxisOrder(copy.mAxisOrder)
+        , mHasDefaultTranslation(copy.mHasDefaultTranslation)
+        , mHasDefaultRotation(copy.mHasDefaultRotation)
+        , mHasDefaultScale(copy.mHasDefaultScale)
         , mUseFalloutActorRotationBasis(copy.mUseFalloutActorRotationBasis)
         , mPinFalloutActorBindRotation(copy.mPinFalloutActorBindRotation)
         , mFalloutLowerBone(copy.mFalloutLowerBone)
@@ -196,6 +351,7 @@ namespace NifOsg
                 const Nif::NiTransformInterpolator* interp
                     = static_cast<const Nif::NiTransformInterpolator*>(keyctrl->mInterpolator.getPtr());
                 const Nif::NiQuatTransform& defaultTransform = interp->mDefaultValue;
+                setDefaultTransformChannels(defaultTransform);
                 if (!interp->mData.empty())
                 {
                     mRotations = QuaternionInterpolator(interp->mData->mRotations, defaultTransform.mRotation);
@@ -232,6 +388,7 @@ namespace NifOsg
     KeyframeController::KeyframeController(const Nif::NiTransformInterpolator* interp)
     {
         const Nif::NiQuatTransform& defaultTransform = interp->mDefaultValue;
+        setDefaultTransformChannels(defaultTransform);
         if (!interp->mData.empty())
         {
             mRotations = QuaternionInterpolator(interp->mData->mRotations, defaultTransform.mRotation);
@@ -253,16 +410,30 @@ namespace NifOsg
 
     void KeyframeController::initFromDefaultTransform(const Nif::NiQuatTransform& transform)
     {
+        setDefaultTransformChannels(transform);
         mRotations = QuaternionInterpolator(Nif::QuaternionKeyMapPtr(), transform.mRotation);
         mTranslations = Vec3Interpolator(Nif::Vector3KeyMapPtr(), transform.mTranslation);
         mScales = FloatInterpolator(Nif::FloatKeyMapPtr(), transform.mScale);
     }
 
+    void KeyframeController::setDefaultTransformChannels(const Nif::NiQuatTransform& transform)
+    {
+        // Modern NIF interpolators use non-finite/FLT_MAX-style sentinels for channels with no authored default.
+        // Preserve valid constant channels even when the corresponding key array (or spline handle) is absent.
+        mHasDefaultTranslation = isReasonableVec3(transform.mTranslation, 1000000.f);
+        mHasDefaultRotation = isReasonableQuat(transform.mRotation);
+        mHasDefaultScale = isReasonableScale(transform.mScale);
+    }
+
     void KeyframeController::setFalloutActorTransformBasis(
         const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation, float bindScale)
     {
-        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone);
-        mPinFalloutActorBindRotation = shouldPinFalloutActorBindRotation(lowerBone);
+        const bool pinLowerBodyBindRotation = shouldPinFalloutActorLowerBodyBindRotation();
+        const bool pinActorBindRotation = esm4ActorBindPinningEnabled(false);
+        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone)
+            || (pinLowerBodyBindRotation && isFalloutActorLowerBodyBone(lowerBone));
+        mPinFalloutActorBindRotation = (pinActorBindRotation && shouldPinFalloutActorBindRotation(lowerBone))
+            || (pinLowerBodyBindRotation && isFalloutActorLowerBodyBone(lowerBone));
         mFalloutLowerBone = lowerBone;
         mFalloutBindTranslation = bindTranslation;
         mFalloutBindRotation = bindRotation;
@@ -277,6 +448,7 @@ namespace NifOsg
         if (interp->recType == Nif::RC_NiTransformInterpolator)
         {
             const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(interp);
+            setDefaultTransformChannels(transform->mDefaultValue);
             if (!transform->mData.empty())
             {
                 const Nif::NiQuatTransform& defaultTransform = transform->mDefaultValue;
@@ -307,6 +479,7 @@ namespace NifOsg
             data.mStartTime = bspline->mStartTime;
             data.mStopTime = bspline->mStopTime;
             data.mDefaultValue = bspline->mValue;
+            setDefaultTransformChannels(bspline->mValue);
             data.mFloatControlPoints = bspline->mSplineData->mFloatControlPoints;
             data.mCompactControlPoints = bspline->mSplineData->mCompactControlPoints;
             data.mNumControlPoints = bspline->mBasisData->mNumControlPoints;
@@ -368,6 +541,7 @@ namespace NifOsg
         data.mStartTime = interp->mStartTime;
         data.mStopTime = interp->mStopTime;
         data.mDefaultValue = interp->mValue;
+        setDefaultTransformChannels(interp->mValue);
         data.mFloatControlPoints = interp->mSplineData->mFloatControlPoints;
         data.mCompactControlPoints = interp->mSplineData->mCompactControlPoints;
         data.mNumControlPoints = interp->mBasisData->mNumControlPoints;
@@ -395,40 +569,26 @@ namespace NifOsg
         initFromInterpolator(interp);
     }
 
-    static float bsplineBasis(int index, float t)
+    bool isValidBSplineHandle(uint32_t handle)
     {
-        const float t2 = t * t;
-        const float t3 = t2 * t;
-        switch (index)
-        {
-            case 0:
-                return (1.f - 3.f * t + 3.f * t2 - t3) / 6.f;
-            case 1:
-                return (4.f - 6.f * t2 + 3.f * t3) / 6.f;
-            case 2:
-                return (1.f + 3.f * t + 3.f * t2 - 3.f * t3) / 6.f;
-            default:
-                return t3 / 6.f;
-        }
+        // Gamebryo serializes these uint32 fields with the historic ushort sentinel used by NifSkope/NIFTools.
+        return handle != std::numeric_limits<uint16_t>::max()
+            && handle != std::numeric_limits<uint32_t>::max();
     }
 
     float sampleBSplineComponent(
         const KeyframeController::BSplineTransform& data, uint32_t handle, unsigned int stride, unsigned int component,
         float time, float defaultValue, float offset, float halfRange)
     {
-        if (handle == std::numeric_limits<uint32_t>::max() || data.mNumControlPoints < 4
+        constexpr unsigned int degree = 3;
+        if (!isValidBSplineHandle(handle) || data.mNumControlPoints <= degree
             || data.mStopTime <= data.mStartTime)
             return defaultValue;
 
         const float normalized = std::clamp((time - data.mStartTime) / (data.mStopTime - data.mStartTime), 0.f, 1.f);
-        const float scaled = normalized * static_cast<float>(data.mNumControlPoints - 3);
-        unsigned int segment = std::min(static_cast<unsigned int>(scaled), data.mNumControlPoints - 4);
-        const float local = scaled - static_cast<float>(segment);
-
-        float value = 0.f;
-        for (unsigned int i = 0; i < 4; ++i)
+        const auto controlPoint = [&](unsigned int point) -> float
         {
-            const size_t index = static_cast<size_t>(handle) + static_cast<size_t>(segment + i) * stride + component;
+            const size_t index = static_cast<size_t>(handle) + static_cast<size_t>(point) * stride + component;
             float control = defaultValue;
             if (data.mCompressed)
             {
@@ -437,11 +597,45 @@ namespace NifOsg
             }
             else if (index < data.mFloatControlPoints.size())
                 control = data.mFloatControlPoints[index];
+            return control;
+        };
 
-            value += control * bsplineBasis(i, local);
+        const unsigned int lastPoint = data.mNumControlPoints - 1;
+        if (normalized >= 1.f)
+            return controlPoint(lastPoint);
+
+        // NIF B-splines use an open/clamped uniform knot vector.  The former four-weight shortcut sampled an
+        // unclamped uniform curve, so the first and last frames were mixtures of neighbouring control points and
+        // did not match NifSkope or the retail Gamebryo evaluator.  Cubic de Boor evaluation is both exact and local.
+        const float knotRange = static_cast<float>(data.mNumControlPoints - degree);
+        const float parameter = normalized * knotRange;
+        const unsigned int span
+            = std::min(degree + static_cast<unsigned int>(parameter), lastPoint);
+        const auto knot = [&](unsigned int index) -> float {
+            if (index <= degree)
+                return 0.f;
+            if (index >= data.mNumControlPoints)
+                return knotRange;
+            return static_cast<float>(index - degree);
+        };
+
+        std::array<float, degree + 1> values;
+        for (unsigned int i = 0; i <= degree; ++i)
+            values[i] = controlPoint(span - degree + i);
+
+        for (unsigned int level = 1; level <= degree; ++level)
+        {
+            for (unsigned int i = degree; i >= level; --i)
+            {
+                const float left = knot(span - degree + i);
+                const float right = knot(span + 1 + i - level);
+                const float denominator = right - left;
+                const float alpha = denominator > 0.f ? (parameter - left) / denominator : 0.f;
+                values[i] = (1.f - alpha) * values[i - 1] + alpha * values[i];
+            }
         }
 
-        return value;
+        return values[degree];
     }
 
     osg::Quat KeyframeController::getXYZRotation(float time) const
@@ -482,6 +676,22 @@ namespace NifOsg
 
     osg::Vec3f KeyframeController::getTranslation(float time) const
     {
+        if (mBSplineTransform)
+        {
+            const BSplineTransform& data = *mBSplineTransform;
+            if (isValidBSplineHandle(data.mTranslationHandle))
+            {
+                return osg::Vec3f(
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 0, time,
+                        data.mDefaultValue.mTranslation.x(), data.mTranslationOffset, data.mTranslationHalfRange),
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 1, time,
+                        data.mDefaultValue.mTranslation.y(), data.mTranslationOffset, data.mTranslationHalfRange),
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 2, time,
+                        data.mDefaultValue.mTranslation.z(), data.mTranslationOffset, data.mTranslationHalfRange));
+            }
+            if (mHasDefaultTranslation)
+                return data.mDefaultValue.mTranslation;
+        }
         if (!mTranslations.empty())
             return mTranslations.interpKey(time);
         return osg::Vec3f();
@@ -490,6 +700,32 @@ namespace NifOsg
     void KeyframeController::operator()(NifOsg::MatrixTransform* node, osg::NodeVisitor* nv)
     {
         auto [translation, rotation, scale] = getCurrentTransformation(nv);
+
+        if (shouldAuditFalloutActorBasis() && mUseFalloutActorRotationBasis)
+        {
+            static unsigned int sFalloutActorBasisAuditLines = 0;
+            if (sFalloutActorBasisAuditLines < 256)
+            {
+                const KfTransform rawKeyframe = getCurrentTransformationWithoutFalloutActorBasis(nv);
+                float rotationDeltaDegrees = 0.f;
+                if (rotation && rawKeyframe.mRotation)
+                    rotationDeltaDegrees = quatAngleDeltaDegrees(*rotation, *rawKeyframe.mRotation);
+                float translationDelta = 0.f;
+                if (translation && rawKeyframe.mTranslation)
+                    translationDelta = (*translation - *rawKeyframe.mTranslation).length();
+
+                Log(Debug::Info) << "FNV/ESM4 ACTOR BASIS CALLBACK AUDIT bone=" << mFalloutLowerBone
+                                 << " appliedHasRotation=" << static_cast<bool>(rotation)
+                                 << " rawHasRotation=" << static_cast<bool>(rawKeyframe.mRotation)
+                                 << " rotationDeltaDegrees=" << rotationDeltaDegrees
+                                 << " appliedHasTranslation=" << static_cast<bool>(translation)
+                                 << " rawHasTranslation=" << static_cast<bool>(rawKeyframe.mTranslation)
+                                 << " translationDelta=" << translationDelta
+                                 << " compositionMode=" << getFalloutActorRotationCompositionMode()
+                                 << " pinnedBindRotation=" << mPinFalloutActorBindRotation;
+                ++sFalloutActorBasisAuditLines;
+            }
+        }
 
         if (rotation)
         {
@@ -512,6 +748,18 @@ namespace NifOsg
 
     KeyframeController::KfTransform KeyframeController::getCurrentTransformation(osg::NodeVisitor* nv)
     {
+        return getCurrentTransformation(nv, true);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformationWithoutFalloutActorBasis(
+        osg::NodeVisitor* nv)
+    {
+        return getCurrentTransformation(nv, false);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformation(
+        osg::NodeVisitor* nv, bool applyFalloutActorBasis)
+    {
         KfTransform out;
 
         if (hasInput())
@@ -522,7 +770,7 @@ namespace NifOsg
             {
                 const BSplineTransform& data = *mBSplineTransform;
 
-                if (data.mTranslationHandle != std::numeric_limits<uint32_t>::max())
+                if (isValidBSplineHandle(data.mTranslationHandle))
                 {
                     out.mTranslation = osg::Vec3f(
                         sampleBSplineComponent(data, data.mTranslationHandle, 3, 0, time,
@@ -535,29 +783,39 @@ namespace NifOsg
                             data.mDefaultValue.mTranslation.z(), data.mTranslationOffset,
                             data.mTranslationHalfRange));
                 }
+                else if (mHasDefaultTranslation)
+                    out.mTranslation = data.mDefaultValue.mTranslation;
 
-                if (data.mRotationHandle != std::numeric_limits<uint32_t>::max())
+                if (isValidBSplineHandle(data.mRotationHandle))
                 {
-                    const float x = sampleBSplineComponent(data, data.mRotationHandle, 4, 0, time,
-                        data.mDefaultValue.mRotation.x(), data.mRotationOffset, data.mRotationHalfRange);
-                    const float y = sampleBSplineComponent(data, data.mRotationHandle, 4, 1, time,
-                        data.mDefaultValue.mRotation.y(), data.mRotationOffset, data.mRotationHalfRange);
-                    const float z = sampleBSplineComponent(data, data.mRotationHandle, 4, 2, time,
-                        data.mDefaultValue.mRotation.z(), data.mRotationOffset, data.mRotationHalfRange);
-                    const float w = sampleBSplineComponent(data, data.mRotationHandle, 4, 3, time,
+                    // NiBSplineData stores quaternion control points in serialized Quaternion field order:
+                    // W, X, Y, Z.  osg::Quat's constructor takes X, Y, Z, W.  Treating the compact stream as
+                    // X, Y, Z, W changes the rotation of every controlled bone on every frame and tears a rig
+                    // apart as soon as animation starts.
+                    const float w = sampleBSplineComponent(data, data.mRotationHandle, 4, 0, time,
                         data.mDefaultValue.mRotation.w(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float x = sampleBSplineComponent(data, data.mRotationHandle, 4, 1, time,
+                        data.mDefaultValue.mRotation.x(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float y = sampleBSplineComponent(data, data.mRotationHandle, 4, 2, time,
+                        data.mDefaultValue.mRotation.y(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float z = sampleBSplineComponent(data, data.mRotationHandle, 4, 3, time,
+                        data.mDefaultValue.mRotation.z(), data.mRotationOffset, data.mRotationHalfRange);
                     const float length = std::sqrt(x * x + y * y + z * z + w * w);
                     if (length > 0.f)
                         out.mRotation = osg::Quat(x / length, y / length, z / length, w / length);
                 }
+                else if (mHasDefaultRotation)
+                    out.mRotation = data.mDefaultValue.mRotation;
 
-                if (data.mScaleHandle != std::numeric_limits<uint32_t>::max())
+                if (isValidBSplineHandle(data.mScaleHandle))
                 {
                     out.mScale = sampleBSplineComponent(data, data.mScaleHandle, 1, 0, time,
                         data.mDefaultValue.mScale, data.mScaleOffset, data.mScaleHalfRange);
                 }
+                else if (mHasDefaultScale)
+                    out.mScale = data.mDefaultValue.mScale;
 
-                if (mUseFalloutActorRotationBasis)
+                if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
                 {
                     if (mPinFalloutActorBindRotation)
                     {
@@ -566,8 +824,11 @@ namespace NifOsg
                         out.mScale = mFalloutBindScale;
                     }
                     else if (out.mRotation)
-                        out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+                        out.mRotation = composeFalloutActorRotation(*out.mRotation, mFalloutBindRotation);
                 }
+
+                if (applyFalloutActorBasis)
+                    applyFalloutActorTranslationPolicy(out, mFalloutLowerBone, mFalloutBindTranslation);
 
                 sanitizeTransform(out);
                 return out;
@@ -577,14 +838,16 @@ namespace NifOsg
                 out.mRotation = mRotations.interpKey(time);
             else if (!mXRotations.empty() || !mYRotations.empty() || !mZRotations.empty())
                 out.mRotation = getXYZRotation(time);
+            else if (mHasDefaultRotation)
+                out.mRotation = mRotations.interpKey(time);
 
-            if (!mTranslations.empty())
+            if (!mTranslations.empty() || mHasDefaultTranslation)
                 out.mTranslation = mTranslations.interpKey(time);
 
-            if (!mScales.empty())
+            if (!mScales.empty() || mHasDefaultScale)
                 out.mScale = mScales.interpKey(time);
 
-            if (mUseFalloutActorRotationBasis)
+            if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
             {
                 if (mPinFalloutActorBindRotation)
                 {
@@ -593,8 +856,11 @@ namespace NifOsg
                     out.mScale = mFalloutBindScale;
                 }
                 else if (out.mRotation)
-                    out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+                    out.mRotation = composeFalloutActorRotation(*out.mRotation, mFalloutBindRotation);
             }
+
+            if (applyFalloutActorBasis)
+                applyFalloutActorTranslationPolicy(out, mFalloutLowerBone, mFalloutBindTranslation);
         }
 
         sanitizeTransform(out);
@@ -832,7 +1098,11 @@ namespace NifOsg
         if (!mInterpolator.empty())
             return mInterpolator.interpKey(time);
 
-        if (mData->empty())
+        // Newer Bethesda NIFs can contain enabled NiVisControllers without
+        // either an interpolator or legacy key data. Treat those controllers
+        // as visible instead of dereferencing an empty data pointer during
+        // the update traversal.
+        if (!mData || mData->empty())
             return true;
 
         auto iter = std::upper_bound(mData->begin(), mData->end(), time,

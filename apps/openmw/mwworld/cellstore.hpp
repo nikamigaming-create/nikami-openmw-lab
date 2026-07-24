@@ -428,6 +428,8 @@ namespace MWWorld
         void loadRefs();
 
         void loadRef(const ESM4::Reference& ref);
+        void loadStarfieldPackInReference(const ESM4::Reference& ref, ESM::FormId storageCell,
+            unsigned int depth, std::vector<ESM::FormId>& stack);
         void loadRef(const ESM4::ActorCharacter& ref);
         void loadRef(ESM::CellRef& ref, bool deleted, std::map<ESM::RefNum, ESM::RefId>& refNumToID);
         ///< Make case-adjustments to \a ref and insert it into the respective container.

@@ -744,7 +744,10 @@ namespace MWVR
 
     bool FNVXRLiveFrameSurface::enabled() const
     {
-        return envEnabled("OPENMW_FNVXR_RETAIL_SURFACE", true);
+        // The retail sidecar is an experimental oracle/projection path, not part of native
+        // OpenMW VR gameplay. Keep it opt-in so its cull geometry cannot destabilize normal
+        // Fallout 3/New Vegas VR sessions.
+        return envEnabled("OPENMW_FNVXR_RETAIL_SURFACE", false);
     }
 
     void FNVXRLiveFrameSurface::init(osg::Group* geometryRoot)

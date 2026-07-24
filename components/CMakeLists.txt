@@ -208,6 +208,7 @@ add_component_dir (esm4
     grouptype
     inventory
     lighting
+    lip
     loadachr
     loadacti
     loadalch
@@ -222,6 +223,7 @@ add_component_dir (esm4
     loadbptd
     loadcell
     loadclas
+    loadclmt
     loadclfm
     loadclot
     loadcont
@@ -286,6 +288,10 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+    loadwthr
+    loadimgs
+    loadimad
+    imagespacecomposition
     loadwrld
     magiceffectid
     reader
@@ -554,6 +560,10 @@ if(BUILD_OPENMW_VR)
         tracking
         typeconversion
     )
+else()
+    add_component_dir(vr
+        flat
+    )
 endif()
 
 add_component_dir(testing
@@ -774,6 +784,8 @@ if(BUILD_OPENMW_VR)
         target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
         target_link_libraries(components EGL)
     endif()
+else()
+    target_link_libraries(components openmw_openxr_headers)
 endif()
 
 if (USE_SYSTEM_TINYXML)

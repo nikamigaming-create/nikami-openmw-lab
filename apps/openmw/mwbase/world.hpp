@@ -59,7 +59,7 @@ namespace ESM
     struct ExteriorCellLocation;
 }
 
-//## VR_PATCH BEGIN
+// ## VR_PATCH BEGIN
 namespace Stereo
 {
     struct Pose;
@@ -75,7 +75,7 @@ namespace MWRender
 {
     struct RayResult;
 }
-//## VR_PATCH END
+// ## VR_PATCH END
 
 namespace MWPhysics
 {
@@ -109,6 +109,7 @@ namespace MWWorld
     class LocalScripts;
     class TimeStamp;
     class ESMStore;
+    class ESM4QuestRuntime;
     class RefData;
     class Cell;
     class DateTimeManager;
@@ -169,6 +170,9 @@ namespace MWBase
 
         virtual MWWorld::ESMStore& getStore() = 0;
         virtual const MWWorld::ESMStore& getStore() const = 0;
+
+        virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
+        virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
@@ -595,7 +599,8 @@ namespace MWBase
         virtual DetourNavigator::Navigator* getNavigator() const = 0;
 
         virtual void updateActorPath(const MWWorld::ConstPtr& actor, const std::deque<osg::Vec3f>& path,
-            const DetourNavigator::AgentBounds& agentBounds, const osg::Vec3f& start, const osg::Vec3f& end) const = 0;
+            const DetourNavigator::AgentBounds& agentBounds, const osg::Vec3f& start, const osg::Vec3f& end) const
+            = 0;
 
         virtual void removeActorPath(const MWWorld::ConstPtr& actor) const = 0;
 
@@ -604,7 +609,8 @@ namespace MWBase
         virtual DetourNavigator::AgentBounds getPathfindingAgentBounds(const MWWorld::ConstPtr& actor) const = 0;
 
         virtual bool hasCollisionWithDoor(
-            const MWWorld::ConstPtr& door, const osg::Vec3f& position, const osg::Vec3f& destination) const = 0;
+            const MWWorld::ConstPtr& door, const osg::Vec3f& position, const osg::Vec3f& destination) const
+            = 0;
 
         virtual bool isAreaOccupiedByOtherActor(const MWWorld::ConstPtr& actor, const osg::Vec3f& position) const = 0;
 
@@ -622,7 +628,7 @@ namespace MWBase
 
         virtual void setActorActive(const MWWorld::Ptr& ptr, bool value) = 0;
 
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         /// @result pointer to the object and/or node the given node is currently pointing at
         /// @Return distance to the target object, or -1 if no object was targeted / in range
         virtual float getTargetObject(MWRender::RayResult& result, const osg::Vec3f& origin,
@@ -644,7 +650,7 @@ namespace MWBase
         /// @param number of objects to place
 
         virtual float getActivationDistancePlusTelekinesis() = 0;
-//## VR_PATCH END
+        // ## VR_PATCH END
     };
 }
 

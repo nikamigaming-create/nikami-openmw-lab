@@ -46,6 +46,7 @@
 #include "weapon.hpp"
 
 #include "esm4base.hpp"
+#include "esm4activator.hpp"
 #include "esm4creature.hpp"
 #include "esm4npc.hpp"
 #include "light4.hpp"
@@ -76,7 +77,7 @@ namespace MWClass
         Static::registerSelf();
         BodyPart::registerSelf();
 
-        ESM4Named<ESM4::Activator>::registerSelf();
+        ESM4Activator::registerSelf();
         ESM4Named<ESM4::Ammunition>::registerSelf();
         ESM4Named<ESM4::Armor>::registerSelf();
         ESM4Named<ESM4::Book>::registerSelf();

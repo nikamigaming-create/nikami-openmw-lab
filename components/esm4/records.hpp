@@ -15,6 +15,7 @@
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadclfm.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadcont.hpp>
@@ -79,6 +80,9 @@
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadtxst.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/esm4/loadwthr.hpp>
+#include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #endif

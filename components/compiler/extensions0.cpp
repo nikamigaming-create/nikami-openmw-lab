@@ -177,6 +177,12 @@ namespace Compiler
             extensions.registerInstruction("setfactionreaction", "ccl", opcodeSetFactionReaction);
             extensions.registerFunction("getfactionreaction", 'l', "ccX", opcodeGetFactionReaction);
             extensions.registerInstruction("clearinfoactor", "", opcodeClearInfoActor, opcodeClearInfoActorExplicit);
+            extensions.registerInstruction("setstage", "cl", opcodeSetStage);
+            extensions.registerFunction("getstage", 'l', "c", opcodeGetStage);
+            extensions.registerInstruction("startquest", "c", opcodeStartQuest);
+            extensions.registerInstruction("setobjectivedisplayed", "cll", opcodeSetObjectiveDisplayed);
+            extensions.registerInstruction("setobjectivecompleted", "cll", opcodeSetObjectiveCompleted);
+            extensions.registerInstruction("forceactivequest", "c", opcodeForceActiveQuest);
         }
     }
 

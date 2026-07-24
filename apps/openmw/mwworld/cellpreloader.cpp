@@ -288,6 +288,16 @@ namespace MWWorld
         ++mAdded;
     }
 
+    CellPreloader::PreloadState CellPreloader::getPreloadState(const CellStore& cell) const
+    {
+        const auto found = mPreloadCells.find(&cell);
+        if (found == mPreloadCells.end())
+            return PreloadState::NotRequested;
+        if (found->second.mWorkItem != nullptr && found->second.mWorkItem->isDone())
+            return PreloadState::Complete;
+        return PreloadState::Pending;
+    }
+
     void CellPreloader::notifyLoaded(CellStore* cell)
     {
         PreloadMap::iterator found = mPreloadCells.find(cell);

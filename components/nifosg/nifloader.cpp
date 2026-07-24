@@ -1,12 +1,20 @@
 #include "nifloader.hpp"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <cmath>
+#include <cstring>
 #include <initializer_list>
+#include <fstream>
+#include <istream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 
@@ -14,6 +22,7 @@
 #include <osg/Geometry>
 #include <osg/LOD>
 #include <osg/Matrixf>
+#include <osg/Program>
 #include <osg/Sequence>
 #include <osg/Switch>
 #include <osg/TexGen>
@@ -33,6 +42,7 @@
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/serialization/osgyaml.hpp>
+#include <components/vfs/manager.hpp>
 
 // particle
 #include <osgParticle/BoxPlacer>
@@ -43,6 +53,7 @@
 
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
+#include <osg/CullFace>
 #include <osg/FrontFace>
 #include <osg/Material>
 #include <osg/PolygonMode>
@@ -148,6 +159,240 @@ namespace
         return false;
     }
 
+    bool worldViewerEnvEnabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+
+    bool isWorldViewerActorMeshPath(std::string_view filename)
+    {
+        return containsAny(filename,
+            { "meshes/actors/", "meshes\\actors\\", "meshes/characters/", "meshes\\characters\\",
+                "meshes/armor/", "meshes\\armor\\", "meshes/clothes/", "meshes\\clothes\\" });
+    }
+
+    bool worldViewerSkinPartitionFallbackEnabled()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ENABLE_SKIN_PARTITION_FALLBACK");
+    }
+
+    bool worldViewerMeshLoadTelemetryEnabled()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MESH_LOAD_TELEMETRY")
+            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
+            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+    }
+
+    bool worldViewerMaterialTelemetryEnabled()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MATERIAL_TELEMETRY")
+            || worldViewerMeshLoadTelemetryEnabled();
+    }
+
+    bool worldViewerGenerateMissingBSNormalsEnabled()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_GENERATE_MISSING_BS_NORMALS");
+    }
+
+    bool worldViewerQuarantineFo4ActorSubIndexTriShapeEnabled()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_QUARANTINE_FO4_ACTOR_BSSUBINDEXTRISHAPE");
+    }
+
+    bool worldViewerForceFlatNifMaterials()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_NIF_MATERIALS")
+            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_WORLD_MATERIALS");
+    }
+
+    bool worldViewerForceFullbrightNifMaterials()
+    {
+        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_NIF_MATERIALS")
+            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_WORLD_MATERIALS");
+    }
+
+    osg::Vec4f getWorldViewerFlatNifColor(
+        std::string_view filename, std::string_view shapeName = {}, std::string_view shaderMaterialName = {})
+    {
+        if (isWorldViewerActorMeshPath(filename))
+            return osg::Vec4f(0.86f, 0.82f, 0.74f, 1.f);
+
+        std::string key(filename);
+        key += ' ';
+        key += std::string(shapeName);
+        key += ' ';
+        key += std::string(shaderMaterialName);
+        key = Misc::StringUtils::lowerCase(key);
+        const auto has = [&](std::string_view needle) { return key.find(needle) != std::string::npos; };
+
+        if (has("glass") || has("skylight"))
+            return osg::Vec4f(0.58f, 0.72f, 0.82f, 1.f);
+        if (has("grass") || has("plant") || has("shrub") || has("landscape/trees")
+            || has("landscape\\trees") || has("treemesa") || has("treeroot") || has("leaf") || has("vine")
+            || has("groundcover") || has("canopy"))
+            return osg::Vec4f(0.42f, 0.62f, 0.37f, 1.f);
+        if (has("carpet") || has("rug"))
+            return osg::Vec4f(0.58f, 0.33f, 0.28f, 1.f);
+        if (has("metal") || has("brass") || has("gold") || has("beam") || has("trim") || has("bolt")
+            || has("wire") || has("crate") || has("luggybot") || has("rail"))
+            return osg::Vec4f(0.58f, 0.55f, 0.50f, 1.f);
+        if (has("stone") || has("rock") || has("bark") || has("root"))
+            return osg::Vec4f(0.52f, 0.53f, 0.47f, 1.f);
+        if (has("plastic") || has("rubber") || has("matte"))
+            return osg::Vec4f(0.42f, 0.46f, 0.50f, 1.f);
+        if (has("floor") || has("tile") || has("tarmac") || has("landingpad") || has("deck")
+            || has("road") || has("street") || has("sidewalk") || has("concrete"))
+            return osg::Vec4f(0.62f, 0.64f, 0.58f, 1.f);
+        if (has("label") || has("letter") || has("sign") || has("warning") || has("terminal"))
+            return osg::Vec4f(0.70f, 0.62f, 0.42f, 1.f);
+        if (has("screen") || has("glow") || has("light") || has("neon"))
+            return osg::Vec4f(0.48f, 0.57f, 0.62f, 1.f);
+
+        return osg::Vec4f(0.78f, 0.83f, 0.76f, 1.f);
+    }
+
+    void applyWorldViewerFlatStateSet(osg::StateSet* stateSet, const osg::Vec4f& color)
+    {
+        if (stateSet == nullptr)
+            return;
+
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, color);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, color);
+        material->setEmission(osg::Material::FRONT_AND_BACK, color);
+        material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
+
+        stateSet->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateSet->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        for (unsigned int unit = 0; unit < 8; ++unit)
+            stateSet->setTextureMode(unit, GL_TEXTURE_2D, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setRenderingHint(osg::StateSet::DEFAULT_BIN);
+    }
+
+    void applyWorldViewerFlatGeometry(osg::Geometry* geometry, const osg::Vec4f& color)
+    {
+        if (geometry == nullptr)
+            return;
+
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->push_back(color);
+        geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+        geometry->dirtyDisplayList();
+        geometry->dirtyBound();
+    }
+
+    void applyWorldViewerFullbrightStateSet(osg::StateSet* stateSet)
+    {
+        if (stateSet == nullptr)
+            return;
+
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+        material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+        material->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+        material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
+
+        stateSet->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateSet->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        for (unsigned int unit = 0; unit < 8; ++unit)
+        {
+            if (stateSet->getTextureAttribute(unit, osg::StateAttribute::TEXTURE) == nullptr)
+                continue;
+
+            const osg::StateAttribute::GLModeValue mode = unit == 0 ? osg::StateAttribute::ON : osg::StateAttribute::OFF;
+            stateSet->setTextureMode(unit, GL_TEXTURE_2D, mode | osg::StateAttribute::OVERRIDE);
+        }
+    }
+
+    void applyWorldViewerFullbrightGeometry(osg::Geometry* geometry)
+    {
+        if (geometry == nullptr)
+            return;
+
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->push_back(osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+        geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+        geometry->dirtyDisplayList();
+        geometry->dirtyBound();
+    }
+
+    void applyWorldViewerFlatDrawable(osg::Drawable& drawable, std::string_view filename,
+        std::string_view shapeName, std::string_view shaderMaterialName = {})
+    {
+        const bool actorPath = isWorldViewerActorMeshPath(filename);
+        const bool flatMaterials = worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_NIF_MATERIALS")
+            || (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FORCE_FLAT_WORLD_MATERIALS") && !actorPath);
+        const bool fullbrightMaterials = !flatMaterials
+            && (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_NIF_MATERIALS")
+                || (worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_FULLBRIGHT_WORLD_MATERIALS") && !actorPath));
+        if (!flatMaterials && !fullbrightMaterials)
+            return;
+
+        const osg::Vec4f color = getWorldViewerFlatNifColor(filename, shapeName, shaderMaterialName);
+        if (flatMaterials)
+        {
+            applyWorldViewerFlatStateSet(drawable.getOrCreateStateSet(), color);
+            applyWorldViewerFlatGeometry(drawable.asGeometry(), color);
+        }
+        else
+        {
+            applyWorldViewerFullbrightStateSet(drawable.getOrCreateStateSet());
+            applyWorldViewerFullbrightGeometry(drawable.asGeometry());
+        }
+        if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+        {
+            if (flatMaterials)
+                applyWorldViewerFlatGeometry(rig->getSourceGeometry(), color);
+            else
+                applyWorldViewerFullbrightGeometry(rig->getSourceGeometry());
+            if (osg::Geometry* source = rig->getSourceGeometry())
+            {
+                if (flatMaterials)
+                    applyWorldViewerFlatStateSet(source->getOrCreateStateSet(), color);
+                else
+                    applyWorldViewerFullbrightStateSet(source->getOrCreateStateSet());
+            }
+            for (unsigned int i = 0; i < 2; ++i)
+            {
+                osg::Geometry* geometry = rig->getRenderGeometry(i);
+                if (flatMaterials)
+                    applyWorldViewerFlatGeometry(geometry, color);
+                else
+                    applyWorldViewerFullbrightGeometry(geometry);
+                if (geometry != nullptr)
+                {
+                    if (flatMaterials)
+                        applyWorldViewerFlatStateSet(geometry->getOrCreateStateSet(), color);
+                    else
+                        applyWorldViewerFullbrightStateSet(geometry->getOrCreateStateSet());
+                }
+            }
+        }
+
+        static std::atomic<int> logCount{ 0 };
+        const int logIndex = logCount.fetch_add(1);
+        if (logIndex < 120)
+            Log(Debug::Info) << "World viewer nif proof material: mode="
+                             << (flatMaterials ? "flat" : "fullbright")
+                             << " file=\"" << filename << "\""
+                             << " shape=\"" << shapeName << "\""
+                             << " drawableClass=\"" << drawable.className() << "\""
+                             << " actorPath=" << actorPath;
+        else if (logIndex == 120)
+            Log(Debug::Info) << "World viewer nif proof material: further logs suppressed";
+    }
+
     bool isAmbientEmbeddedAnimationPath(std::string_view filename)
     {
         return containsAny(filename,
@@ -171,6 +416,21 @@ namespace
         const std::string name = Misc::StringUtils::lowerCase(geometry.mName);
         return name.find("tail") != std::string::npos || name.find("rootbone") != std::string::npos
             || name.find("bip01 root") != std::string::npos;
+    }
+
+    bool enableExperimentalSkyShaderProperties()
+    {
+        return std::getenv("OPENMW_FNV_ENABLE_SKY_SHADER_PROPERTIES") != nullptr;
+    }
+
+    std::string remapFalloutSkyTexture(std::string_view texture)
+    {
+        const std::string lower = Misc::StringUtils::lowerCase(texture);
+        if (lower == "textures/sky/cloudcloudy.dds" || lower == "textures\\sky\\cloudcloudy.dds")
+            return "textures/sky/wastelandcloudcloudyupper01.dds";
+        if (lower == "textures/sky/cloudclear.dds" || lower == "textures\\sky\\cloudclear.dds")
+            return "textures/sky/nv_wastelandoverheadcloud.dds";
+        return std::string(texture);
     }
 
     bool isActivationOnlyAnimationPath(std::string_view filename)
@@ -270,6 +530,9 @@ namespace
         const bool ambientPath = isAmbientEmbeddedAnimationPath(filename);
         const bool falloutFlagPath = isFalloutFlagPath(filename);
 
+        if (ambientPath && !falloutFlagPath && (sequenceName == "specialidle" || sequenceName == "idle"))
+            return true;
+
         std::string key = sequenceName;
         for (const Nif::ControlledBlock& block : sequence.mControlledBlocks)
         {
@@ -332,6 +595,1027 @@ namespace
         return true;
     }
 
+    osg::Vec4f colorFromString(std::string_view value)
+    {
+        uint32_t hash = 2166136261u;
+        for (char c : value)
+        {
+            hash ^= static_cast<unsigned char>(c);
+            hash *= 16777619u;
+        }
+
+        static const std::array<osg::Vec4f, 10> palette = {
+            osg::Vec4f(0.36f, 0.62f, 0.54f, 1.f),
+            osg::Vec4f(0.66f, 0.54f, 0.31f, 1.f),
+            osg::Vec4f(0.42f, 0.56f, 0.70f, 1.f),
+            osg::Vec4f(0.64f, 0.43f, 0.36f, 1.f),
+            osg::Vec4f(0.52f, 0.62f, 0.34f, 1.f),
+            osg::Vec4f(0.33f, 0.58f, 0.65f, 1.f),
+            osg::Vec4f(0.70f, 0.66f, 0.44f, 1.f),
+            osg::Vec4f(0.45f, 0.49f, 0.54f, 1.f),
+            osg::Vec4f(0.63f, 0.58f, 0.48f, 1.f),
+            osg::Vec4f(0.38f, 0.66f, 0.42f, 1.f),
+        };
+
+        return palette[hash % palette.size()];
+    }
+
+    struct StarfieldExternalMeshData
+    {
+        std::vector<osg::Vec3f> mVertices;
+        std::vector<osg::Vec3f> mNormals;
+        std::vector<osg::Vec2f> mUv1;
+        std::vector<unsigned int> mIndices;
+        std::vector<std::uint32_t> mWeights;
+        float mScale = 0.f;
+        std::uint32_t mVersion = 0;
+        std::uint32_t mWeightCountPerVertex = 0;
+        std::uint32_t mUv1Count = 0;
+        std::uint32_t mUv2Count = 0;
+        std::uint32_t mColorCount = 0;
+        std::uint32_t mNormalCount = 0;
+        std::uint32_t mTangentCount = 0;
+        std::uint32_t mLodCount = 0;
+        std::uint32_t mMeshletCount = 0;
+        std::uint32_t mCullDataCount = 0;
+    };
+
+    template <class T>
+    bool readStarfieldMeshPod(std::istream& stream, T& value)
+    {
+        stream.read(reinterpret_cast<char*>(&value), sizeof(T));
+        return static_cast<bool>(stream);
+    }
+
+    bool skipStarfieldMeshBytes(std::istream& stream, std::uint64_t bytes)
+    {
+        std::array<char, 4096> buffer{};
+        while (bytes > 0)
+        {
+            const std::streamsize chunk = static_cast<std::streamsize>(std::min<std::uint64_t>(bytes, buffer.size()));
+            stream.read(buffer.data(), chunk);
+            if (!stream)
+                return false;
+            bytes -= static_cast<std::uint64_t>(chunk);
+        }
+        return true;
+    }
+
+    bool skipStarfieldMeshArray(std::istream& stream, std::uint32_t count, std::uint32_t elementSize)
+    {
+        constexpr std::uint64_t maxSkipBytes = 512ull * 1024ull * 1024ull;
+        const std::uint64_t bytes = static_cast<std::uint64_t>(count) * elementSize;
+        if (bytes > maxSkipBytes)
+            return false;
+        return skipStarfieldMeshBytes(stream, bytes);
+    }
+
+    float getStarfieldMeshPositionScale()
+    {
+        static const float scale = [] {
+            const char* value = std::getenv("OPENMW_STARFIELD_MESH_POSITION_SCALE");
+            if (!value)
+                return 32.f;
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed) || parsed <= 0.f)
+                return 32.f;
+            return parsed;
+        }();
+        return scale;
+    }
+
+    float unpackStarfieldMeshPosition(std::int16_t value, float scale)
+    {
+        const float positionScale = getStarfieldMeshPositionScale();
+        if (value < 0)
+            return static_cast<float>((value / 32768.0) * scale * positionScale);
+        return static_cast<float>((value / 32767.0) * scale * positionScale);
+    }
+
+    osg::Vec3f unpackStarfieldUdec3Normal(std::uint32_t data)
+    {
+        return osg::Vec3f(
+            static_cast<float>(((data & 1023) / 511.5) - 1.0),
+            static_cast<float>((((data >> 10) & 1023) / 511.5) - 1.0),
+            static_cast<float>((((data >> 20) & 1023) / 511.5) - 1.0));
+    }
+
+    float unpackStarfieldMeshHalf(std::uint16_t value)
+    {
+        std::uint32_t bits = static_cast<std::uint32_t>(value & 0x8000) << 16;
+
+        const std::uint32_t exp16 = (value & 0x7c00) >> 10;
+        std::uint32_t frac16 = value & 0x3ff;
+        if (exp16)
+            bits |= (exp16 + 0x70) << 23;
+        else if (frac16)
+        {
+            std::uint8_t offset = 0;
+            do
+            {
+                ++offset;
+                frac16 <<= 1;
+            } while ((frac16 & 0x400) != 0x400);
+            frac16 &= 0x3ff;
+            bits |= (0x71 - offset) << 23;
+        }
+        bits |= frac16 << 13;
+
+        float result;
+        std::memcpy(&result, &bits, sizeof(float));
+        return result;
+    }
+
+    const Nif::SkinAttach* findStarfieldSkinAttach(const Nif::NiObjectNET* object)
+    {
+        if (object == nullptr)
+            return nullptr;
+
+        for (const Nif::ExtraPtr& extra : object->getExtraList())
+        {
+            if (!extra.empty() && extra->recType == Nif::RC_SkinAttach)
+                return static_cast<const Nif::SkinAttach*>(extra.getPtr());
+        }
+        return nullptr;
+    }
+
+    enum class StarfieldWeightLayout
+    {
+        LowIndexHighHalf,
+        HighIndexLowHalf,
+        LowIndexHighUnorm,
+        HighIndexLowUnorm,
+    };
+
+    const char* getStarfieldWeightLayoutName(StarfieldWeightLayout layout)
+    {
+        switch (layout)
+        {
+            case StarfieldWeightLayout::LowIndexHighHalf:
+                return "low-index/high-half";
+            case StarfieldWeightLayout::HighIndexLowHalf:
+                return "high-index/low-half";
+            case StarfieldWeightLayout::LowIndexHighUnorm:
+                return "low-index/high-unorm";
+            case StarfieldWeightLayout::HighIndexLowUnorm:
+                return "high-index/low-unorm";
+        }
+        return "unknown";
+    }
+
+    std::pair<std::size_t, float> decodeStarfieldWeight(std::uint32_t raw, StarfieldWeightLayout layout)
+    {
+        const std::uint16_t low = static_cast<std::uint16_t>(raw & 0xffffu);
+        const std::uint16_t high = static_cast<std::uint16_t>(raw >> 16);
+        switch (layout)
+        {
+            case StarfieldWeightLayout::LowIndexHighHalf:
+                return { low, unpackStarfieldMeshHalf(high) };
+            case StarfieldWeightLayout::HighIndexLowHalf:
+                return { high, unpackStarfieldMeshHalf(low) };
+            case StarfieldWeightLayout::LowIndexHighUnorm:
+                return { low, static_cast<float>(high) / 65535.f };
+            case StarfieldWeightLayout::HighIndexLowUnorm:
+                return { high, static_cast<float>(low) / 65535.f };
+        }
+        return { 0, 0.f };
+    }
+
+    StarfieldWeightLayout chooseStarfieldWeightLayout(
+        const StarfieldExternalMeshData& mesh, std::size_t boneCount)
+    {
+        constexpr std::array<StarfieldWeightLayout, 4> layouts = {
+            StarfieldWeightLayout::LowIndexHighHalf,
+            StarfieldWeightLayout::HighIndexLowHalf,
+            StarfieldWeightLayout::LowIndexHighUnorm,
+            StarfieldWeightLayout::HighIndexLowUnorm,
+        };
+
+        StarfieldWeightLayout best = layouts.front();
+        double bestScore = -std::numeric_limits<double>::infinity();
+        for (StarfieldWeightLayout layout : layouts)
+        {
+            double score = 0.0;
+            std::size_t offset = 0;
+            const std::size_t sampleVertices = std::min<std::size_t>(mesh.mVertices.size(), 4096);
+            for (std::size_t vertex = 0; vertex < sampleVertices; ++vertex)
+            {
+                float sum = 0.f;
+                bool validVertex = true;
+                for (std::uint32_t slot = 0; slot < mesh.mWeightCountPerVertex; ++slot)
+                {
+                    if (offset >= mesh.mWeights.size())
+                    {
+                        validVertex = false;
+                        break;
+                    }
+                    const auto [bone, weight] = decodeStarfieldWeight(mesh.mWeights[offset++], layout);
+                    if (bone >= boneCount || !std::isfinite(weight) || weight < 0.f || weight > 1.001f)
+                    {
+                        validVertex = false;
+                        continue;
+                    }
+                    sum += weight;
+                    score += weight > 0.f ? 2.0 : 0.1;
+                }
+                if (validVertex)
+                    score += 8.0 - std::min(8.0, std::abs(static_cast<double>(sum) - 1.0) * 8.0);
+                else
+                    score -= 32.0;
+            }
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = layout;
+            }
+        }
+        return best;
+    }
+
+    std::string getStarfieldActorProofTexturePath(std::string_view ddsPath)
+    {
+        std::string path(ddsPath);
+        if (!worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_STARFIELD_ACTOR_PNG_TEXTURES"))
+            return path;
+
+        const std::string lowered = Misc::StringUtils::lowerCase(path);
+        if (lowered.size() >= 4 && lowered.compare(lowered.size() - 4, 4, ".dds") == 0)
+            path.replace(path.size() - 4, 4, ".png");
+        return path;
+    }
+
+    bool isStarfieldActorProofCutout(std::string_view filename)
+    {
+        const std::string path = Misc::StringUtils::lowerCase(filename);
+        return path.find("actors/human/mesh/hairs/") != std::string::npos
+            || path.find("actors/human/mesh/beards/") != std::string::npos
+            || path.find("actors/human/hair/") != std::string::npos
+            || path.find("actors/human/faces/beards/") != std::string::npos
+            || path.find("actors/human/eyebrows/") != std::string::npos
+            || path.find("actors/human/eyelashes/") != std::string::npos
+            || path.find("actors/human/faces/eye_tears") != std::string::npos
+            || path.find("human_male_hair_") != std::string::npos
+            || path.find("human_female_hair_") != std::string::npos
+            || path.find("human_male_beard_") != std::string::npos
+            || path.find("human_female_beard_") != std::string::npos
+            || path.find("human_male_eyebrow") != std::string::npos
+            || path.find("human_female_eyebrow") != std::string::npos
+            || path.find("human_male_eyelashes") != std::string::npos
+            || path.find("human_female_eyelashes") != std::string::npos
+            || path.find("human_male_eye_tears") != std::string::npos
+            || path.find("human_female_eye_tears") != std::string::npos
+            || path.find("actors/human/characterassets/male/eyebrow") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyebrow") != std::string::npos
+            || path.find("actors/human/characterassets/male/eyelashes") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyelashes") != std::string::npos
+            || path.find("actors/human/characterassets/male/eyes_tears") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyes_tears") != std::string::npos;
+    }
+
+    bool isStarfieldActorProofEyeSurface(std::string_view filename)
+    {
+        const std::string path = Misc::StringUtils::lowerCase(filename);
+        return path.find("actors/human/characterassets/male/lefteye") != std::string::npos
+            || path.find("actors/human/characterassets/male/righteye") != std::string::npos
+            || path.find("actors/human/characterassets/female/lefteye") != std::string::npos
+            || path.find("actors/human/characterassets/female/righteye") != std::string::npos
+            || path.find("actors/human/faces/left_eye.mat") != std::string::npos
+            || path.find("actors/human/faces/right_eye.mat") != std::string::npos
+            || path.find("human_male_lefteye") != std::string::npos
+            || path.find("human_male_righteye") != std::string::npos
+            || path.find("human_female_lefteye") != std::string::npos
+            || path.find("human_female_righteye") != std::string::npos;
+    }
+
+    osg::Vec4f getStarfieldActorProofBaseColor(std::string_view filename)
+    {
+        const std::string path = Misc::StringUtils::lowerCase(filename);
+        if (isStarfieldActorProofEyeSurface(path))
+            return osg::Vec4f(0.09f, 0.065f, 0.035f, 1.f);
+        if (path.find("actors/human/characterassets/male/eyelashes") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyelashes") != std::string::npos)
+            return osg::Vec4f(0.055f, 0.04f, 0.025f, 1.f);
+        if (path.find("actors/human/characterassets/male/eyes_tears") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyes_tears") != std::string::npos
+            || path.find("actors/human/faces/eye_tears") != std::string::npos
+            || path.find("_eye_tears") != std::string::npos)
+            return osg::Vec4f(0.9f, 0.95f, 1.f, 0.08f);
+        if (path.find("_tongue") != std::string::npos
+            || path.find("actors/human/faces/teeth/mouth.mat") != std::string::npos)
+            return osg::Vec4f(0.48f, 0.13f, 0.11f, 1.f);
+        if (path.find("actors/human/characterassets/male/teeth") != std::string::npos
+            || path.find("actors/human/characterassets/female/teeth") != std::string::npos
+            || path.find("actors/human/faces/teeth/nnteeth.mat") != std::string::npos
+            || path.find("_teeth") != std::string::npos)
+            return osg::Vec4f(0.88f, 0.82f, 0.68f, 1.f);
+        if (path.find("actors/human/characterassets/male/tongue") != std::string::npos
+            || path.find("actors/human/characterassets/female/tongue") != std::string::npos)
+            return osg::Vec4f(0.48f, 0.13f, 0.11f, 1.f);
+        return osg::Vec4f(0.84f, 0.86f, 0.82f, 1.f);
+    }
+
+    std::string getStarfieldActorProofDiffuse(std::string_view filename)
+    {
+        const std::string path = Misc::StringUtils::lowerCase(filename);
+        if (path.find("actors/human/characterassets/male/malehead.nif") != std::string::npos
+            || path.find("actors/human/faces/male_default.mat") != std::string::npos
+            || path.find("human_male_head") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/chargen/male_default_sk3_color.dds");
+        if (path.find("actors/human/characterassets/female/femalehead.nif") != std::string::npos
+            || path.find("actors/human/faces/female_default.mat") != std::string::npos
+            || path.find("human_female_head") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/chargen/female_default_sk3_color.dds");
+        if (path.find("actors/human/mesh/naked_body/naked_m.nif") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/naked_body/nakedbodym_sk3_color.dds");
+        if (path.find("actors/human/mesh/naked_body/naked_f.nif") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/naked_body/nakedbodyf_sk3_color.dds");
+        if (path.find("actors/human/mesh/nakedhands/") != std::string::npos)
+        {
+            if (path.find("_f.") != std::string::npos || path.find("_f_") != std::string::npos
+                || path.find("hands_3rd_f") != std::string::npos)
+                return getStarfieldActorProofTexturePath("textures/actors/human/hands/defaulthandsf_sk3_color.dds");
+            return getStarfieldActorProofTexturePath("textures/actors/human/hands/defaulthandsm_sk3_color.dds");
+        }
+        if (path.find("actors/human/mesh/beards/") != std::string::npos
+            || path.find("actors/human/faces/beards/") != std::string::npos
+            || path.find("human_male_beard_") != std::string::npos
+            || path.find("human_female_beard_") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/beards/beard_shared_brown_color.dds");
+        if (path.find("actors/human/mesh/hairs/faded_afro/") != std::string::npos
+            || path.find("actors/human/hair/afro_hair") != std::string::npos
+            || path.find("hair_faded_afro") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/hair/afro_hair_shared_brown_color.dds");
+        if (path.find("actors/human/mesh/hairs/") != std::string::npos
+            || path.find("actors/human/hair/") != std::string::npos
+            || path.find("human_male_hair_") != std::string::npos
+            || path.find("human_female_hair_") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/hair/short_hair_shared_brown_color.dds");
+        if (path.find("actors/human/characterassets/male/eyebrow") != std::string::npos
+            || path.find("actors/human/eyebrows/male_") != std::string::npos
+            || path.find("human_male_eyebrow") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/eyebrows/eyebrows_fluffy_brown_color.dds");
+        if (path.find("actors/human/characterassets/female/eyebrow") != std::string::npos
+            || path.find("actors/human/eyebrows/female_") != std::string::npos
+            || path.find("human_female_eyebrow") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/eyebrows/femaleeyebrows01_color.dds");
+        if (path.find("actors/human/characterassets/male/eyelashes") != std::string::npos
+            || path.find("actors/human/eyelashes/male_") != std::string::npos
+            || path.find("human_male_eyelashes") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/eyelashes/malelashes01_color.dds");
+        if (path.find("actors/human/characterassets/female/eyelashes") != std::string::npos
+            || path.find("actors/human/eyelashes/female_") != std::string::npos
+            || path.find("human_female_eyelashes") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/eyelashes/femalelashes01_color.dds");
+        if (path.find("actors/human/characterassets/male/eyes_tears") != std::string::npos
+            || path.find("actors/human/characterassets/female/eyes_tears") != std::string::npos
+            || path.find("actors/human/faces/eye_tears") != std::string::npos
+            || path.find("_eye_tears") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/eyes/eye_tear_color.dds");
+        if (path.find("actors/human/characterassets/male/teeth") != std::string::npos
+            || path.find("actors/human/characterassets/female/teeth") != std::string::npos
+            || path.find("actors/human/faces/teeth/nnteeth.mat") != std::string::npos
+            || path.find("_teeth") != std::string::npos)
+            return getStarfieldActorProofTexturePath("textures/actors/human/faces/teeth/nnteeth_color.dds");
+        if (path.find("clothes/outfit_miner_utilitysuit/") != std::string::npos)
+        {
+            // The installed archive really spells the texture directory "utililtysuit". The NIF material
+            // contracts are Upperbody (shirt and bits), Sleeves, and LowerBody (pants).
+            if (path.find("pants") != std::string::npos || path.find("lowerbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_miner_utililtysuit/outfit_miner_utilitysuit_m/outfit_miner_utilitysuit_pants_m_color.dds");
+            if (path.find("sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_miner_utililtysuit/outfit_miner_utilitysuit_m/outfit_miner_utilitysuit_sleeves_lod0_m_color.dds");
+            if (path.find("shirt") != std::string::npos || path.find("bits") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_miner_utililtysuit/outfit_miner_utilitysuit_m/outfit_miner_utilitysuit_shirt_materials_color.dds");
+        }
+        if (path.find("clothes/outfit_service_uniform_01/") != std::string::npos)
+        {
+            if (path.find("lowerbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_service_uniform_01/outfit_service_uniform_lowerbody_01_color.dds");
+            if (path.find("sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_service_uniform_01/outfit_service_uniform_sleeves_01_color.dds");
+            if (path.find("upperbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_service_uniform_01/outfit_service_uniform_upperbody_01_color.dds");
+        }
+        if (path.find("clothes/outfit_employee_uniform_formal_01/") != std::string::npos)
+        {
+            if (path.find("lowerbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_employee_uniform_formal_01/outfit_employee_uniform_formal_lowerbody_01_color.dds");
+            if (path.find("sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_employee_uniform_formal_01/outfit_employee_uniform_formal_sleeves_01_color.dds");
+            if (path.find("upperbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_employee_uniform_formal_01/outfit_employee_uniform_formal_upperbody_01_color.dds");
+        }
+        if (path.find("clothes/outfit_ucpolice/") != std::string::npos)
+        {
+            if (path.find("helmet") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_ucpolice/outfit_ucsecurity_helmet_mat_color.dds");
+            if (path.find("visor") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_ucpolice/outfit_ucsecurity_visor_mat_color.dds");
+            if (path.find("arms") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_ucpolice/outfit_ucsecurity_arms_mat_color.dds");
+            if (path.find("torso") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_ucpolice/outfit_ucsecurity_torso_mat_color.dds");
+            if (path.find("legsandacc") != std::string::npos || path.find("lowerbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_ucpolice/outfit_ucsecurity_legsandacc_mat_color.dds");
+            return getStarfieldActorProofTexturePath(
+                "textures/clothes/outfit_ucpolice/outfit_ucsecurity_legsandacc_mat_color.dds");
+        }
+        if (path.find("clothes/spacesuit_flightcap_01/") != std::string::npos)
+            return getStarfieldActorProofTexturePath(
+                "textures/clothes/spacesuit_ecliptic/spacesuit_ecliptic_flightcap_color.dds");
+        if (path.find("clothes/outfit_colonist_quarterpaddedvest_01/") != std::string::npos)
+        {
+            if (path.find("hat") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_colonist_quarterpaddedvest_01/outfit_colonist_quarterpaddedvest_01_hat_color.dds");
+            if (path.find("sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_colonist_quarterpaddedvest_01/outfit_colonist_quarterpaddedvest_01_sleeves_color.dds");
+            if (path.find("pants") != std::string::npos || path.find("lowerbody") != std::string::npos)
+            {
+                if (path.find("_f.") != std::string::npos || path.find("_f_") != std::string::npos)
+                    return getStarfieldActorProofTexturePath(
+                        "textures/clothes/outfit_colonist_quarterpaddedvest_01/outfit_colonist_quarterpaddedvest_01_f/outfit_colonist_quarterpaddedvest_01_lowerbody_f_color.dds");
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_colonist_quarterpaddedvest_01/outfit_colonist_quarterpaddedvest_01_m/outfit_colonist_quarterpaddedvest_01_lowerbody_m_color.dds");
+            }
+            if (path.find("upperbody") != std::string::npos || path.find("quarterpaddedvest_01_m.nif") != std::string::npos
+                || path.find("quarterpaddedvest_01_f.nif") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_colonist_quarterpaddedvest_01/outfit_colonist_quarterpaddedvest_01_upperbody_color.dds");
+        }
+        if (path.find("clothes/outfit_utilityoveralls_01/") != std::string::npos)
+        {
+            if (path.find("sso_hat") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/headwear_ssohat_01_color.dds");
+            if (path.find("sso_jacket_01_sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_sso_jacket_sleeves_01_color.dds");
+            if (path.find("sso_jacket_01_upperbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_sso_jacket_upperbody_01_color.dds");
+            if (path.find("sso_jacket_cooling_01_upperbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_sso_jacket_cooling_upperbody_01_color.dds");
+            if (path.find("sleeves") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_mechanic_sleeves_01_color.dds");
+            if (path.find("lowerbody") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_mechanic_lowerbody_01_color.dds");
+            if (path.find("upperbody") != std::string::npos || path.find("tanktop") != std::string::npos)
+                return getStarfieldActorProofTexturePath(
+                    "textures/clothes/outfit_utilityoveralls_01/outfit_utilityoveralls_mechanic_upperbody_01_color.dds");
+        }
+        return {};
+    }
+
+    std::string getStarfieldShaderMaterialName(const Nif::BSTriShape* bsTriShape)
+    {
+        if (bsTriShape == nullptr || bsTriShape->mShaderProperty.empty())
+            return {};
+
+        const Nif::BSShaderProperty* shader = bsTriShape->mShaderProperty.getPtr();
+        if (shader == nullptr)
+            return {};
+
+        return shader->mName;
+    }
+
+    struct StarfieldMaterialBridgeEntry
+    {
+        std::string mDiffuse;
+        std::string mEvidence;
+    };
+
+    std::string normalizeStarfieldMaterialBridgePath(std::string_view value)
+    {
+        std::string normalized(value);
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        normalized = Misc::StringUtils::lowerCase(normalized);
+        while (normalized.starts_with("data/"))
+            normalized.erase(0, 5);
+        return normalized;
+    }
+
+    const std::unordered_map<std::string, StarfieldMaterialBridgeEntry>& getStarfieldMaterialBridge()
+    {
+        static const std::unordered_map<std::string, StarfieldMaterialBridgeEntry> bridge = [] {
+            std::unordered_map<std::string, StarfieldMaterialBridgeEntry> result;
+            const char* path = std::getenv("OPENMW_WORLD_VIEWER_STARFIELD_MATERIAL_MAP");
+            if (path == nullptr || *path == '\0')
+                return result;
+
+            std::ifstream stream(path);
+            if (!stream)
+            {
+                Log(Debug::Warning) << "World viewer: Starfield material bridge unavailable path=\"" << path << "\"";
+                return result;
+            }
+
+            std::string line;
+            while (std::getline(stream, line))
+            {
+                if (line.empty() || line.front() == '#')
+                    continue;
+                const std::size_t materialEnd = line.find('\t');
+                if (materialEnd == std::string::npos)
+                    continue;
+                const std::size_t diffuseEnd = line.find('\t', materialEnd + 1);
+                std::string material = normalizeStarfieldMaterialBridgePath(line.substr(0, materialEnd));
+                std::string diffuse = normalizeStarfieldMaterialBridgePath(line.substr(materialEnd + 1,
+                    diffuseEnd == std::string::npos ? std::string::npos : diffuseEnd - materialEnd - 1));
+                if (!material.starts_with("materials/") || !material.ends_with(".mat")
+                    || !diffuse.starts_with("textures/") || !diffuse.ends_with(".dds"))
+                    continue;
+                std::string evidence;
+                if (diffuseEnd != std::string::npos)
+                    evidence = line.substr(diffuseEnd + 1);
+                result.insert_or_assign(std::move(material),
+                    StarfieldMaterialBridgeEntry{ getStarfieldActorProofTexturePath(diffuse), std::move(evidence) });
+            }
+            Log(Debug::Info) << "World viewer: Starfield material bridge loaded entries=" << result.size();
+            return result;
+        }();
+        return bridge;
+    }
+
+    const StarfieldMaterialBridgeEntry* findStarfieldMaterialBridge(std::string_view shaderMaterialName)
+    {
+        if (shaderMaterialName.empty())
+            return nullptr;
+        const auto& bridge = getStarfieldMaterialBridge();
+        const auto found = bridge.find(normalizeStarfieldMaterialBridgePath(shaderMaterialName));
+        return found == bridge.end() ? nullptr : &found->second;
+    }
+
+    bool isStarfieldMaterialBridgeConfigured()
+    {
+        const char* path = std::getenv("OPENMW_WORLD_VIEWER_STARFIELD_MATERIAL_MAP");
+        return path != nullptr && *path != '\0';
+    }
+
+    osg::Vec4f getStarfieldWorldMaterialColor(std::string_view shaderMaterialName, bool hasDiffuse)
+    {
+        const std::string key = normalizeStarfieldMaterialBridgePath(shaderMaterialName);
+        const auto has = [&](std::string_view value) { return key.find(value) != std::string::npos; };
+
+        if (hasDiffuse)
+        {
+            // The compatibility path has no Starfield PBR shader yet. Keep authored albedo below full white so
+            // grayscale procedural bases do not blow out, but preserve signs/decals whose albedo is already final.
+            osg::Vec4f factor = has("sign") || has("decal") || has("poster") || has("terminal")
+                ? osg::Vec4f(1.f, 1.f, 1.f, 1.f)
+                : osg::Vec4f(0.82f, 0.82f, 0.82f, 1.f);
+            if (has("black"))
+                factor = osg::Vec4f(0.16f, 0.17f, 0.19f, 1.f);
+            else if (has("grey") || has("gray") || has("dark"))
+                factor = osg::Vec4f(0.52f, 0.54f, 0.58f, 1.f);
+            else if (has("blue"))
+                factor = osg::Vec4f(0.38f, 0.58f, 0.92f, 1.f);
+            else if (has("green"))
+                factor = osg::Vec4f(0.42f, 0.76f, 0.48f, 1.f);
+            else if (has("red"))
+                factor = osg::Vec4f(0.92f, 0.34f, 0.29f, 1.f);
+            else if (has("orange"))
+                factor = osg::Vec4f(1.f, 0.58f, 0.24f, 1.f);
+            else if (has("yellow"))
+                factor = osg::Vec4f(0.96f, 0.79f, 0.24f, 1.f);
+            else if (has("brown"))
+                factor = osg::Vec4f(0.60f, 0.42f, 0.28f, 1.f);
+            return factor;
+        }
+
+        // These are bounded categorical fallbacks for compiled procedural layers that expose no color texture.
+        // They are deliberately neutral and materially typed, rather than the previous one-texture-for-everything
+        // guess. Exact layer constants still need BSLODMaterialInstanceDB decoding.
+        if (has("glass") || has("translucent") || has("transparent"))
+            return osg::Vec4f(0.40f, 0.56f, 0.66f, 0.28f);
+        if (has("water"))
+            return osg::Vec4f(0.10f, 0.28f, 0.38f, 0.58f);
+        if (has("glow") || has("lightstrip") || has("streetlamp"))
+        {
+            if (has("orange"))
+                return osg::Vec4f(1.f, 0.38f, 0.08f, 1.f);
+            if (has("red"))
+                return osg::Vec4f(1.f, 0.10f, 0.06f, 1.f);
+            return osg::Vec4f(0.84f, 0.94f, 1.f, 1.f);
+        }
+        if (has("black") || has("pitchblack"))
+            return osg::Vec4f(0.055f, 0.065f, 0.08f, 1.f);
+        if (has("white"))
+            return osg::Vec4f(0.76f, 0.77f, 0.75f, 1.f);
+        if (has("grey") || has("gray") || has("dark"))
+            return osg::Vec4f(0.32f, 0.34f, 0.37f, 1.f);
+        if (has("blue"))
+            return osg::Vec4f(0.12f, 0.27f, 0.48f, 1.f);
+        if (has("green"))
+            return osg::Vec4f(0.12f, 0.34f, 0.18f, 1.f);
+        if (has("red"))
+            return osg::Vec4f(0.52f, 0.09f, 0.07f, 1.f);
+        if (has("orange"))
+            return osg::Vec4f(0.72f, 0.25f, 0.05f, 1.f);
+        if (has("yellow"))
+            return osg::Vec4f(0.72f, 0.54f, 0.08f, 1.f);
+        if (has("brown"))
+            return osg::Vec4f(0.31f, 0.18f, 0.10f, 1.f);
+        if (has("rubber"))
+            return osg::Vec4f(0.10f, 0.11f, 0.12f, 1.f);
+        if (has("chrome") || has("metal") || has("aluminium") || has("aluminum") || has("steel"))
+            return osg::Vec4f(0.38f, 0.40f, 0.43f, 1.f);
+        if (has("plastic"))
+            return osg::Vec4f(0.34f, 0.36f, 0.39f, 1.f);
+        if (has("concrete") || has("tarmac") || has("stone") || has("rock"))
+            return osg::Vec4f(0.45f, 0.44f, 0.41f, 1.f);
+        if (has("wood"))
+            return osg::Vec4f(0.34f, 0.23f, 0.15f, 1.f);
+        if (has("plant") || has("leaf") || has("shrub") || has("vine") || has("grass"))
+            return osg::Vec4f(0.16f, 0.30f, 0.13f, 1.f);
+        if (has("decal") || has("letter") || has("overlay"))
+            return osg::Vec4f(0.14f, 0.15f, 0.16f, 1.f);
+        return osg::Vec4f(0.42f, 0.43f, 0.44f, 1.f);
+    }
+
+    bool isStarfieldWorldMaterialTranslucent(std::string_view shaderMaterialName)
+    {
+        const std::string key = normalizeStarfieldMaterialBridgePath(shaderMaterialName);
+        return key.find("glass") != std::string::npos || key.find("water") != std::string::npos
+            || key.find("translucent") != std::string::npos || key.find("transparent") != std::string::npos
+            || key.find("distortion") != std::string::npos;
+    }
+
+    bool isStarfieldWorldMaterialCutout(
+        std::string_view nifPath, std::string_view shaderMaterialName)
+    {
+        std::string key(nifPath);
+        key += ' ';
+        key += std::string(shaderMaterialName);
+        key = Misc::StringUtils::lowerCase(key);
+        return key.find("plant") != std::string::npos || key.find("shrub") != std::string::npos
+            || key.find("leaf") != std::string::npos || key.find("vine") != std::string::npos
+            || key.find("grass") != std::string::npos || key.find("decal") != std::string::npos;
+    }
+
+    bool isStarfieldWorldMaterialDoubleSided(
+        std::string_view nifPath, std::string_view shaderMaterialName)
+    {
+        std::string key(nifPath);
+        key += ' ';
+        key += std::string(shaderMaterialName);
+        key = Misc::StringUtils::lowerCase(key);
+        return containsAny(key,
+            { "twosided", "two_sided", "glass", "translucent", "leaf", "leaves", "flats", "grass",
+                "shrub", "vine" });
+    }
+
+    std::string getStarfieldWorldProofDiffuse(
+        std::string_view nifPath, std::string_view shapeName, std::string_view shaderMaterialName)
+    {
+        std::string key(nifPath);
+        key += ' ';
+        key += std::string(shapeName);
+        key += ' ';
+        key += std::string(shaderMaterialName);
+        key = Misc::StringUtils::lowerCase(key);
+
+        const bool looksLikeNewAtlantis = key.find("newatlantis") != std::string::npos
+            || key.find("city/newatlantis") != std::string::npos || key.find("city\\newatlantis") != std::string::npos
+            || key.find("na_") != std::string::npos || key.find("/na") != std::string::npos
+            || key.find("\\na") != std::string::npos;
+        const auto has = [&](std::string_view needle) { return key.find(needle) != std::string::npos; };
+        const bool looksLikeProofWorld = looksLikeNewAtlantis
+            || has("architecture/spaceport") || has("architecture\\spaceport")
+            || has("architecture/spacestationkit") || has("architecture\\spacestationkit")
+            || has("architecture/outpost/outpostindustrial") || has("architecture\\outpost\\outpostindustrial")
+            || has("architecture/industrialkit") || has("architecture\\industrialkit")
+            || has("architecture/sciencekit") || has("architecture\\sciencekit")
+            || has("architecture/generic") || has("architecture\\generic")
+            || has("architecture/opmine") || has("architecture\\opmine")
+            || has("architecture/terrabrew") || has("architecture\\terrabrew")
+            || has("starstations/") || has("starstations\\")
+            || has("ships/interior") || has("ships\\interior")
+            || has("effects/ambient") || has("effects\\ambient")
+            || has("setdressing/") || has("setdressing\\")
+            || has("landscape/") || has("landscape\\")
+            || has("materials/common/") || has("materials\\common\\");
+        if (!looksLikeProofWorld)
+            return {};
+
+        const auto texture = [](std::string_view path) { return getStarfieldActorProofTexturePath(path); };
+
+        if (has("black"))
+            return texture("textures/architecture/city/newatlantis/naconcreteprinted02_color.dds");
+        if (key.find("glass") != std::string::npos)
+            return texture("textures/architecture/city/newatlantis/naplasticcirclepattern01_color.dds");
+        if (has("skylight"))
+            return texture("textures/architecture/city/newatlantis/naplasticcirclepattern01_color.dds");
+        if (has("label") || has("letter") || has("warning")
+            || (has("sign") && !has("signage") && !has("terminalsignage")))
+            return texture("textures/architecture/city/newatlantis/natilefloor01_color.dds");
+        if (has("terminalsignage") || has("terminal_pad") || has("terminalpad") || has("terminal"))
+            return texture("textures/architecture/city/newatlantis/naplasticcirclepattern01_color.dds");
+        if (has("signage/") || has("signage\\") || has("na_signage"))
+            return texture("textures/architecture/city/newatlantis/naplasticcirclepattern01_color.dds");
+        if (has("screen") || has("glow") || has("light") || has("neon"))
+            return texture("textures/architecture/city/newatlantis/nametalbrasspattern01_color.dds");
+        if (key.find("grass") != std::string::npos || key.find("astro") != std::string::npos)
+            return texture("textures/architecture/city/newatlantis/nagrassastroturf01_color.dds");
+        if (has("plant") || has("shrub") || has("landscape/trees") || has("landscape\\trees")
+            || has("treemesa") || has("treeroot") || has("leaf") || has("vine")
+            || has("lilypad") || has("groundcover") || has("canopy") || has("flats"))
+            return texture("textures/architecture/city/newatlantis/nagrassastroturf01_color.dds");
+        if (key.find("carpet") != std::string::npos || key.find("rug") != std::string::npos)
+            return texture("textures/architecture/city/newatlantis/nacarpet01b_color.dds");
+        if (has("bark") || has("root"))
+            return texture("textures/architecture/city/newatlantis/nastone01mossy01_color.dds");
+        if (key.find("metal") != std::string::npos || key.find("brass") != std::string::npos
+            || key.find("gold") != std::string::npos || has("beam") || has("trim") || has("bevel")
+            || has("bolt") || has("wire") || has("crate") || has("luggybot"))
+            return texture("textures/architecture/city/newatlantis/nametalbrasspattern01_color.dds");
+        if (key.find("stone") != std::string::npos || has("rock"))
+            return texture("textures/architecture/city/newatlantis/nastone01mossy01_color.dds");
+        if (key.find("plastic") != std::string::npos || has("rubber") || has("matte"))
+            return texture("textures/architecture/city/newatlantis/naplasticcirclepattern01_color.dds");
+        if (key.find("floor") != std::string::npos || key.find("tile") != std::string::npos
+            || has("tarmac") || has("landingpad") || has("deck"))
+            return texture("textures/architecture/city/newatlantis/natilefloor01_color.dds");
+        if (has("panel") || has("paint") || has("ceiling") || has("wall"))
+            return texture("textures/architecture/city/newatlantis/naconcreteprinted02_color.dds");
+        if (has("waterfall") || has("water"))
+            return texture("textures/architecture/city/newatlantis/nascreenpattern01_color.dds");
+        if (key.find("moss") != std::string::npos)
+            return texture("textures/architecture/city/newatlantis/naconcretemossy01_color.dds");
+
+        return texture("textures/architecture/city/newatlantis/naconcreteprinted02_color.dds");
+    }
+
+    bool worldViewerStarfieldProofSkipBlackOccluders()
+    {
+        const char* explicitSetting = std::getenv("OPENMW_WORLD_VIEWER_STARFIELD_SKIP_BLACK_OCCLUDERS");
+        if (explicitSetting != nullptr)
+            return *explicitSetting != '\0' && explicitSetting[0] != '0';
+
+        return worldViewerMeshLoadTelemetryEnabled()
+            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_STARFIELD_ACTOR_PNG_TEXTURES");
+    }
+
+    bool worldViewerStarfieldWorldProofTexturesEnabled()
+    {
+        const char* explicitSetting = std::getenv("OPENMW_WORLD_VIEWER_STARFIELD_WORLD_PROOF_TEXTURES");
+        if (explicitSetting != nullptr)
+            return *explicitSetting != '\0' && explicitSetting[0] != '0';
+
+        return true;
+    }
+
+    bool shouldSkipStarfieldWorldProofGeometry(
+        std::string_view nifPath, std::string_view shapeName, std::string_view shaderMaterialName)
+    {
+        if (!worldViewerStarfieldProofSkipBlackOccluders())
+            return false;
+
+        const std::string lowerNifPath = Misc::StringUtils::lowerCase(std::string(nifPath));
+        if (isWorldViewerActorMeshPath(lowerNifPath))
+            return false;
+
+        std::string key = lowerNifPath;
+        key += ' ';
+        key += Misc::StringUtils::lowerCase(std::string(shapeName));
+        key += ' ';
+        key += Misc::StringUtils::lowerCase(std::string(shaderMaterialName));
+
+        if (isStarfieldMaterialBridgeConfigured()
+            && containsAny(key, { "waterfountain", "waterfall", "waterplaceholder", "materials/water/",
+                   "materials\\water\\" }))
+            return true;
+
+        return containsAny(key,
+            { "loaddoor_viewblocker", "viewblocker", "occlusionplane", "occluder",
+                "fillplane_black", "blackfade", "decalpitchblack", "pitchblack" });
+    }
+
+    std::optional<StarfieldExternalMeshData> readStarfieldExternalMesh(std::istream& stream, std::string& error)
+    {
+        static constexpr std::uint32_t maxIndices = 12'000'000;
+        static constexpr std::uint32_t maxVertices = 4'000'000;
+
+        StarfieldExternalMeshData result;
+        if (!readStarfieldMeshPod(stream, result.mVersion))
+        {
+            error = "missing mesh version";
+            return std::nullopt;
+        }
+        if (result.mVersion > 2)
+        {
+            error = "unsupported mesh version " + std::to_string(result.mVersion);
+            return std::nullopt;
+        }
+
+        std::uint32_t triIndexCount = 0;
+        if (!readStarfieldMeshPod(stream, triIndexCount) || triIndexCount % 3 != 0 || triIndexCount > maxIndices)
+        {
+            error = "invalid triangle index count";
+            return std::nullopt;
+        }
+
+        result.mIndices.reserve(triIndexCount);
+        for (std::uint32_t i = 0; i < triIndexCount; ++i)
+        {
+            std::uint16_t index = 0;
+            if (!readStarfieldMeshPod(stream, index))
+            {
+                error = "truncated triangle indices";
+                return std::nullopt;
+            }
+            result.mIndices.push_back(index);
+        }
+
+        if (!readStarfieldMeshPod(stream, result.mScale) || result.mScale <= 0.f || !std::isfinite(result.mScale))
+        {
+            error = "invalid mesh scale";
+            return std::nullopt;
+        }
+
+        if (!readStarfieldMeshPod(stream, result.mWeightCountPerVertex))
+        {
+            error = "missing weight count";
+            return std::nullopt;
+        }
+
+        std::uint32_t vertexCount = 0;
+        if (!readStarfieldMeshPod(stream, vertexCount) || vertexCount > maxVertices)
+        {
+            error = "invalid vertex count";
+            return std::nullopt;
+        }
+
+        result.mVertices.reserve(vertexCount);
+        for (std::uint32_t i = 0; i < vertexCount; ++i)
+        {
+            std::int16_t x = 0;
+            std::int16_t y = 0;
+            std::int16_t z = 0;
+            if (!readStarfieldMeshPod(stream, x) || !readStarfieldMeshPod(stream, y) || !readStarfieldMeshPod(stream, z))
+            {
+                error = "truncated vertices";
+                return std::nullopt;
+            }
+            result.mVertices.emplace_back(
+                unpackStarfieldMeshPosition(x, result.mScale),
+                unpackStarfieldMeshPosition(y, result.mScale),
+                unpackStarfieldMeshPosition(z, result.mScale));
+        }
+
+        auto readAndSkipArray = [&](std::uint32_t& count, std::uint32_t elementSize, std::string_view label) {
+            if (!readStarfieldMeshPod(stream, count))
+            {
+                error = "missing " + std::string(label) + " count";
+                return false;
+            }
+            if (!skipStarfieldMeshArray(stream, count, elementSize))
+            {
+                error = "invalid/truncated " + std::string(label) + " data";
+                return false;
+            }
+            return true;
+        };
+
+        if (!readStarfieldMeshPod(stream, result.mUv1Count))
+        {
+            error = "missing uv1 count";
+            return std::nullopt;
+        }
+        if (result.mUv1Count > maxVertices)
+        {
+            error = "invalid uv1 count";
+            return std::nullopt;
+        }
+        result.mUv1.reserve(result.mUv1Count);
+        for (std::uint32_t i = 0; i < result.mUv1Count; ++i)
+        {
+            std::uint16_t u = 0;
+            std::uint16_t v = 0;
+            if (!readStarfieldMeshPod(stream, u) || !readStarfieldMeshPod(stream, v))
+            {
+                error = "truncated uv1";
+                return std::nullopt;
+            }
+            result.mUv1.emplace_back(unpackStarfieldMeshHalf(u), 1.f - unpackStarfieldMeshHalf(v));
+        }
+        if (!readAndSkipArray(result.mUv2Count, 4, "uv2"))
+            return std::nullopt;
+        if (!readAndSkipArray(result.mColorCount, 4, "colors"))
+            return std::nullopt;
+
+        if (!readStarfieldMeshPod(stream, result.mNormalCount))
+        {
+            error = "missing normals count";
+            return std::nullopt;
+        }
+        if (result.mNormalCount > maxVertices)
+        {
+            error = "invalid normals count";
+            return std::nullopt;
+        }
+        result.mNormals.reserve(result.mNormalCount);
+        for (std::uint32_t i = 0; i < result.mNormalCount; ++i)
+        {
+            std::uint32_t data = 0;
+            if (!readStarfieldMeshPod(stream, data))
+            {
+                error = "truncated normals";
+                return std::nullopt;
+            }
+            result.mNormals.push_back(unpackStarfieldUdec3Normal(data));
+        }
+
+        if (!readAndSkipArray(result.mTangentCount, 4, "tangents"))
+            return std::nullopt;
+
+        std::uint32_t totalWeights = 0;
+        if (!readStarfieldMeshPod(stream, totalWeights))
+        {
+            error = "missing weights count";
+            return std::nullopt;
+        }
+        const std::uint64_t expectedWeightLimit
+            = std::max<std::uint64_t>(static_cast<std::uint64_t>(vertexCount) * 16ull, 1024ull);
+        if (totalWeights > expectedWeightLimit || totalWeights > maxVertices * 16u)
+        {
+            error = "invalid weights count";
+            return std::nullopt;
+        }
+        result.mWeights.resize(totalWeights);
+        for (std::uint32_t& weight : result.mWeights)
+        {
+            if (!readStarfieldMeshPod(stream, weight))
+            {
+                error = "truncated weights";
+                return std::nullopt;
+            }
+        }
+
+        if (!readStarfieldMeshPod(stream, result.mLodCount))
+        {
+            error = "missing lod count";
+            return std::nullopt;
+        }
+        for (std::uint32_t i = 0; i < result.mLodCount; ++i)
+        {
+            std::uint32_t lodIndexCount = 0;
+            if (!readStarfieldMeshPod(stream, lodIndexCount) || !skipStarfieldMeshArray(stream, lodIndexCount, 2))
+            {
+                error = "invalid/truncated lod data";
+                return std::nullopt;
+            }
+        }
+
+        // Generated Starfield FaceMeshes use the same version-2 vertex/index stream but terminate immediately
+        // after the LOD arrays. Ordinary world and equipment meshes append meshlet and cull-data arrays.
+        // Treat those two acceleration structures as optional trailing data; they are not needed by OSG.
+        if (stream.peek() != std::char_traits<char>::eof())
+        {
+            if (!readAndSkipArray(result.mMeshletCount, 16, "meshlets"))
+                return std::nullopt;
+            if (stream.peek() != std::char_traits<char>::eof()
+                && !readAndSkipArray(result.mCullDataCount, 24, "cull data"))
+                return std::nullopt;
+        }
+
+        if (result.mVertices.empty() || result.mIndices.empty())
+        {
+            error = "empty mesh";
+            return std::nullopt;
+        }
+
+        for (unsigned int index : result.mIndices)
+        {
+            if (index >= result.mVertices.size())
+            {
+                error = "triangle index outside vertex buffer";
+                return std::nullopt;
+            }
+        }
+
+        return result;
+    }
+
     bool isTypeBSGeometry(int type)
     {
         switch (type)
@@ -343,6 +1627,74 @@ namespace
                 return true;
         }
         return false;
+    }
+
+    float bsNormByteToFloat(uint8_t value)
+    {
+        return value / 255.f * 2.f - 1.f;
+    }
+
+    float bsHalfToFloat(uint16_t value)
+    {
+        uint32_t bits = static_cast<uint32_t>(value & 0x8000) << 16;
+
+        const uint32_t exp16 = (value & 0x7c00) >> 10;
+        uint32_t frac16 = value & 0x3ff;
+        if (exp16)
+            bits |= (exp16 + 0x70) << 23;
+        else if (frac16)
+        {
+            uint8_t offset = 0;
+            do
+            {
+                ++offset;
+                frac16 <<= 1;
+            } while ((frac16 & 0x400) != 0x400);
+            frac16 &= 0x3ff;
+            bits |= (0x71 - offset) << 23;
+        }
+        bits |= frac16 << 13;
+
+        float result;
+        std::memcpy(&result, &bits, sizeof(float));
+        return result;
+    }
+
+    void appendBSVertexDataArrays(const std::vector<Nif::BSVertexData>& vertexData, uint16_t flags,
+        std::vector<osg::Vec3f>& vertices, std::vector<osg::Vec3f>& normals, std::vector<osg::Vec4ub>& colors,
+        std::vector<osg::Vec2f>& uvlist)
+    {
+        const bool fullPrec = flags & Nif::BSVertexDesc::VertexAttribute::Full_Precision;
+        const bool hasVertices = flags & Nif::BSVertexDesc::VertexAttribute::Vertex;
+        const bool hasNormals = flags & Nif::BSVertexDesc::VertexAttribute::Normals;
+        const bool hasColors = flags & Nif::BSVertexDesc::VertexAttribute::Vertex_Colors;
+        const bool hasUV = flags & Nif::BSVertexDesc::VertexAttribute::UVs;
+
+        for (const Nif::BSVertexData& elem : vertexData)
+        {
+            if (hasVertices)
+            {
+                if (fullPrec)
+                    vertices.emplace_back(elem.mVertex.x(), elem.mVertex.y(), elem.mVertex.z());
+                else
+                    vertices.emplace_back(bsHalfToFloat(elem.mHalfVertex[0]), bsHalfToFloat(elem.mHalfVertex[1]),
+                        bsHalfToFloat(elem.mHalfVertex[2]));
+            }
+            if (hasNormals)
+                normals.emplace_back(bsNormByteToFloat(elem.mNormal[0]), bsNormByteToFloat(elem.mNormal[1]),
+                    bsNormByteToFloat(elem.mNormal[2]));
+            if (hasColors)
+                colors.emplace_back(elem.mVertColor[0], elem.mVertColor[1], elem.mVertColor[2], elem.mVertColor[3]);
+            if (hasUV)
+                uvlist.emplace_back(bsHalfToFloat(elem.mUV[0]), 1.0f - bsHalfToFloat(elem.mUV[1]));
+        }
+    }
+
+    bool isSkyrimSkinAuxTexture(std::string_view texture)
+    {
+        const std::string lower = Misc::StringUtils::lowerCase(texture);
+        return Misc::StringUtils::ciEndsWith(lower, "_sk.dds") || Misc::StringUtils::ciEndsWith(lower, "_sk.dds\\")
+            || lower.find("_sk.dds") != std::string::npos;
     }
 
     // Collect all properties affecting the given drawable that should be handled on drawable basis rather than on the
@@ -461,6 +1813,26 @@ namespace
             groups.emplace_back("turnleft");
         else if (stem == "mtturnright" || Misc::StringUtils::ciEndsWith(stem, "turnright"))
             groups.emplace_back("turnright");
+        else if (stem == "mtforward")
+        {
+            groups.emplace_back("walkforward");
+            groups.emplace_back("runforward");
+        }
+        else if (stem == "mtbackward")
+        {
+            groups.emplace_back("walkback");
+            groups.emplace_back("runback");
+        }
+        else if (stem == "mtleft")
+        {
+            groups.emplace_back("walkleft");
+            groups.emplace_back("runleft");
+        }
+        else if (stem == "mtright")
+        {
+            groups.emplace_back("walkright");
+            groups.emplace_back("runright");
+        }
         else if (Misc::StringUtils::ciEndsWith(stem, "fastforward"))
             groups.emplace_back("runforward");
         else if (Misc::StringUtils::ciEndsWith(stem, "fastbackward"))
@@ -494,7 +1866,7 @@ namespace
         for (const std::string& group : groups)
             addLoopingTextKeys(textkeys, start, stop, group);
 
-        Log(Debug::Info) << "FNV/ESM4 diag: synthesized Fallout KF text key group(s) for " << filename;
+        Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized Fallout KF text key group(s) for " << filename;
     }
 
     void handleExtraData(const std::string& data, osg::Group* node)
@@ -604,7 +1976,39 @@ namespace NifOsg
         std::vector<std::pair<size_t, osg::ref_ptr<Emitter>>> mEmitterQueue;
         std::unordered_map<const Nif::NiAVObject*, osg::Node*> mNodesByNif;
         std::unordered_map<std::string, osg::Node*> mNodesByName;
+        std::unordered_map<std::string, unsigned int> mBethesdaBoneLodGroups;
         std::vector<const Nif::NiControllerManager*> mControllerManagers;
+
+        void collectBethesdaBoneLodGroups(const Nif::NiAVObject* object)
+        {
+            if (object == nullptr)
+                return;
+
+            for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+                 controller = controller->mNext)
+            {
+                const auto* boneLod = dynamic_cast<const Nif::NiBoneLODController*>(controller.getPtr());
+                if (boneLod == nullptr)
+                    continue;
+
+                for (std::size_t groupIndex = 0; groupIndex < boneLod->mNodeGroups.size(); ++groupIndex)
+                {
+                    for (const auto& node : boneLod->mNodeGroups[groupIndex])
+                    {
+                        if (!node.empty() && !node->mName.empty())
+                            mBethesdaBoneLodGroups[Misc::StringUtils::lowerCase(node->mName)]
+                                = static_cast<unsigned int>(groupIndex);
+                    }
+                }
+            }
+
+            const auto* node = dynamic_cast<const Nif::NiNode*>(object);
+            if (node == nullptr)
+                return;
+            for (const auto& child : node->mChildren)
+                if (!child.empty())
+                    collectBethesdaBoneLodGroups(child.getPtr());
+        }
 
         void loadKf(Nif::FileView nif, SceneUtil::KeyframeHolder& target) const
         {
@@ -708,18 +2112,89 @@ namespace NifOsg
                 if (std::getenv("OPENMW_FNV_KF_BLOCK_AUDIT") != nullptr)
                 {
                     const std::string lowerTarget = Misc::StringUtils::lowerCase(targetName);
-                    if (lowerTarget.find("forearm") != std::string::npos
+                    if (lowerTarget == "bip01" || lowerTarget.find("forearm") != std::string::npos
                         || lowerTarget.find("foretwist") != std::string::npos
                         || lowerTarget.find("hand") != std::string::npos
                         || lowerTarget.find("finger") != std::string::npos
                         || lowerTarget.find("thumb") != std::string::npos
-                        || lowerTarget.find("head") != std::string::npos)
+                        || lowerTarget.find("head") != std::string::npos || lowerTarget == "weapon")
                     {
                         Log(Debug::Info) << "FNV/ESM4 KF BLOCK AUDIT file=" << filename.string()
                                          << " sequence=" << sequence->mName
                                          << " target=\"" << targetName << "\" interpolator="
                                          << block.mInterpolator->recName << " recType="
                                          << block.mInterpolator->recType;
+                        if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                        {
+                            const auto* transform
+                                = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
+                            const auto& value = transform->mDefaultValue;
+                            Log(Debug::Info) << "FNV/ESM4 KF DEFAULT TRANSFORM file=" << filename.string()
+                                             << " sequence=" << sequence->mName << " target=\"" << targetName
+                                             << "\" translation=(" << value.mTranslation.x() << ","
+                                             << value.mTranslation.y() << "," << value.mTranslation.z()
+                                             << ") quaternionXYZW=(" << value.mRotation.x() << ","
+                                             << value.mRotation.y() << "," << value.mRotation.z() << ","
+                                             << value.mRotation.w() << ") scale=" << value.mScale
+                                             << " hasData=" << !transform->mData.empty();
+                        }
+                        else if (block.mInterpolator->recType == Nif::RC_NiBSplineTransformInterpolator
+                            || block.mInterpolator->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+                        {
+                            const auto* transform
+                                = static_cast<const Nif::NiBSplineTransformInterpolator*>(block.mInterpolator.getPtr());
+                            const auto& value = transform->mValue;
+                            Log(Debug::Info) << "FNV/ESM4 KF BSPLINE TRANSFORM file=" << filename.string()
+                                             << " sequence=" << sequence->mName << " target=\"" << targetName
+                                             << "\" translation=(" << value.mTranslation.x() << ","
+                                             << value.mTranslation.y() << "," << value.mTranslation.z()
+                                             << ") quaternionXYZW=(" << value.mRotation.x() << ","
+                                             << value.mRotation.y() << "," << value.mRotation.z() << ","
+                                             << value.mRotation.w() << ") scale=" << value.mScale
+                                             << " translationHandle=" << transform->mTranslationHandle
+                                             << " rotationHandle=" << transform->mRotationHandle
+                                             << " scaleHandle=" << transform->mScaleHandle;
+                            if (block.mInterpolator->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+                            {
+                                const auto* compact = static_cast<const Nif::NiBSplineCompTransformInterpolator*>(
+                                    block.mInterpolator.getPtr());
+                                Log(Debug::Info) << "FNV/ESM4 KF BSPLINE COMPRESSION file=" << filename.string()
+                                                 << " sequence=" << sequence->mName << " target=\"" << targetName
+                                                 << "\" translationOffset=" << compact->mTranslationOffset
+                                                 << " translationHalfRange=" << compact->mTranslationHalfRange
+                                                 << " rotationOffset=" << compact->mRotationOffset
+                                                 << " rotationHalfRange=" << compact->mRotationHalfRange
+                                                 << " scaleOffset=" << compact->mScaleOffset
+                                                 << " scaleHalfRange=" << compact->mScaleHalfRange;
+                                if (lowerTarget == "bip01" && !compact->mSplineData.empty()
+                                    && !compact->mBasisData.empty()
+                                    && compact->mTranslationHandle != std::numeric_limits<uint16_t>::max())
+                                {
+                                    const auto& points = compact->mSplineData->mCompactControlPoints;
+                                    const uint32_t count = compact->mBasisData->mNumControlPoints;
+                                    const auto sample = [&](uint32_t point, uint32_t component) {
+                                        const size_t index = static_cast<size_t>(compact->mTranslationHandle)
+                                            + static_cast<size_t>(point) * 3 + component;
+                                        return index < points.size()
+                                            ? compact->mTranslationOffset
+                                                + compact->mTranslationHalfRange
+                                                    * (static_cast<float>(points[index]) / 32767.f)
+                                            : std::numeric_limits<float>::quiet_NaN();
+                                    };
+                                    if (count > 0)
+                                        Log(Debug::Info)
+                                            << "FNV/ESM4 KF BSPLINE ROOT CONTROL file=" << filename.string()
+                                            << " sequence=" << sequence->mName << " count=" << count
+                                            << " first=(" << sample(0, 0) << "," << sample(0, 1) << ","
+                                            << sample(0, 2) << ")"
+                                            << " second=(" << sample(std::min<uint32_t>(1, count - 1), 0) << ","
+                                            << sample(std::min<uint32_t>(1, count - 1), 1) << ","
+                                            << sample(std::min<uint32_t>(1, count - 1), 2) << ")"
+                                            << " last=(" << sample(count - 1, 0) << "," << sample(count - 1, 1)
+                                            << "," << sample(count - 1, 2) << ")";
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -776,7 +2251,7 @@ namespace NifOsg
                 {
                     ++unsupported;
                     if (unsupported <= 8)
-                        Log(Debug::Info) << "FNV/ESM4 diag: unsupported Fallout KF interpolator target='"
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: unsupported Fallout KF interpolator target='"
                                          << targetName << "' type=" << block.mInterpolator->recType << " name="
                                          << block.mInterpolator->recName << " in " << filename;
                     continue;
@@ -789,7 +2264,7 @@ namespace NifOsg
 
             if (loaded > 0)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: loaded " << loaded
+                Log(Debug::Verbose) << "FNV/ESM4 diag: loaded " << loaded
                                  << " Fallout NiControllerSequence KF controller(s) from " << filename;
             }
             else
@@ -808,18 +2283,18 @@ namespace NifOsg
                            << getStringPaletteValue(block.mStringPalette, block.mNodeNameOffset) << "' seqNode='"
                            << getStringPaletteValue(sequence->mStringPalette, block.mNodeNameOffset) << "'";
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: loaded 0 Fallout NiControllerSequence KF controller(s) from "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: loaded 0 Fallout NiControllerSequence KF controller(s) from "
                                  << filename << " blocks=" << sequence->mControlledBlocks.size() << " sample=["
                                  << sample.str() << "]";
             }
             if (unsupported > 0)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped " << unsupported
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped " << unsupported
                                  << " unsupported Fallout KF interpolator(s) in " << filename;
             }
             if (headAnimTracks > 0)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: loaded " << headAnimTracks
+                Log(Debug::Verbose) << "FNV/ESM4 diag: loaded " << headAnimTracks
                                  << " Fallout HeadAnims track(s) from " << filename;
             }
         }
@@ -851,6 +2326,9 @@ namespace NifOsg
             }
             if (roots.empty())
                 throw Nif::Exception("Found no root nodes", nif.getFilename());
+
+            for (const Nif::NiAVObject* root : roots)
+                collectBethesdaBoneLodGroups(root);
 
             osg::ref_ptr<SceneUtil::TextKeyMapHolder> textkeys(new SceneUtil::TextKeyMapHolder);
 
@@ -1020,7 +2498,7 @@ namespace NifOsg
                     const Nif::NiControllerSequence* sequence = sequencePtr.getPtr();
                     if (!shouldAutoplayEmbeddedSequence(*sequence, filename))
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: left embedded NiControllerSequence '" << sequence->mName
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: left embedded NiControllerSequence '" << sequence->mName
                                          << "' dormant in " << mFilename;
                         continue;
                     }
@@ -1054,7 +2532,7 @@ namespace NifOsg
                                     { "rootbone", "bip01 root", "root bone", "pole", "staff", "flagpole", "marker",
                                         "base" }))
                             {
-                                Log(Debug::Info)
+                                Log(Debug::Verbose)
                                     << "FNV/ESM4 diag: skipped Fallout flag anchor controller '"
                                     << sequence->mName << "' block '" << block.mNodeName << "' in " << mFilename;
                                 continue;
@@ -1064,7 +2542,7 @@ namespace NifOsg
                         osg::Node* node = findControllerSequenceTarget(manager, block);
                         if (!node)
                         {
-                            Log(Debug::Info)
+                            Log(Debug::Verbose)
                                 << "FNV/ESM4 diag: unable to attach NiControllerSequence '" << sequence->mName
                                 << "' block '" << block.mNodeName << "' in " << mFilename;
                             continue;
@@ -1075,7 +2553,7 @@ namespace NifOsg
                             auto* transform = dynamic_cast<NifOsg::MatrixTransform*>(node);
                             if (!transform)
                             {
-                                Log(Debug::Info) << "FNV/ESM4 diag: unable to attach transform NiControllerSequence '"
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: unable to attach transform NiControllerSequence '"
                                                  << sequence->mName << "' block '" << block.mNodeName << "' in "
                                                  << mFilename;
                                 continue;
@@ -1103,7 +2581,7 @@ namespace NifOsg
 
                 if (attached > 0)
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: attached " << attached
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: attached " << attached
                                      << " embedded NiControllerSequence transform controller(s) in " << mFilename;
                 }
             }
@@ -1157,7 +2635,7 @@ namespace NifOsg
             const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
             if (!shouldAutoplayFltAnimationNode(*niFltAnimationNode, filename))
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: left NiFltAnimationNode '" << niFltAnimationNode->mName
+                Log(Debug::Verbose) << "FNV/ESM4 diag: left NiFltAnimationNode '" << niFltAnimationNode->mName
                                  << "' dormant in " << mFilename;
                 return;
             }
@@ -1168,7 +2646,7 @@ namespace NifOsg
                 sequenceNode->setInterval(osg::Sequence::LOOP, 0, -1);
             sequenceNode->setDuration(1.0f, -1);
             sequenceNode->setMode(osg::Sequence::START);
-            Log(Debug::Info) << "FNV/ESM4 diag: activated NiFltAnimationNode '" << niFltAnimationNode->mName << "' in "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: activated NiFltAnimationNode '" << niFltAnimationNode->mName << "' in "
                              << mFilename;
         }
 
@@ -1279,6 +2757,37 @@ namespace NifOsg
             if (args.mRootNode && Misc::StringUtils::ciEqual(nifNode->mName, "Bounding Box"))
                 return nullptr;
 
+            const bool isRootNode = args.mRootNode == nullptr;
+            const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
+            const bool isBethesdaActorSkeleton
+                = mBethVersion >= Nif::NIFFile::BethVersion::BETHVER_SKY
+                && (filename.ends_with("actors/character/characterassets/skeleton.nif")
+                    || filename.ends_with("actors\\character\\characterassets\\skeleton.nif")
+                    || filename.ends_with("actors/character/character assets/skeleton.nif")
+                    || filename.ends_with("actors\\character\\character assets\\skeleton.nif")
+                    || filename.ends_with("actors/character/character assets female/skeleton_female.nif")
+                    || filename.ends_with("actors\\character\\character assets female\\skeleton_female.nif")
+                    || filename.ends_with("actors/character/characterassetsfemale/skeleton_female.nif")
+                    || filename.ends_with("actors\\character\\characterassetsfemale\\skeleton_female.nif")
+                    || filename.ends_with("actors/human/characterassets/skeleton.nif")
+                    || filename.ends_with("actors\\human\\characterassets\\skeleton.nif")
+                    || filename.ends_with("actors/human/characterassets/skeleton_facebones.nif")
+                    || filename.ends_with("actors\\human\\characterassets\\skeleton_facebones.nif")
+                    || filename.ends_with("actors/human/characterassets/female/skeleton.nif")
+                    || filename.ends_with("actors\\human\\characterassets\\female\\skeleton.nif")
+                    || filename.ends_with("actors/human/characterassets/female/skeleton_facebones.nif")
+                    || filename.ends_with("actors\\human\\characterassets\\female\\skeleton_facebones.nif")
+                    || filename.ends_with("actors/robot/characterassets/skeleton.nif")
+                    || filename.ends_with("actors\\robot\\characterassets\\skeleton.nif")
+                    || filename.ends_with("actors/robot/characterassets/mrhandy.nif")
+                    || filename.ends_with("actors\\robot\\characterassets\\mrhandy.nif"));
+            if (!(args.mAnimFlags & Nif::NiNode::AnimFlag_AutoPlay) && isAmbientEmbeddedAnimationPath(filename))
+            {
+                args.mAnimFlags |= Nif::NiNode::AnimFlag_AutoPlay;
+                if (isRootNode)
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: forced ambient controller autoplay for " << mFilename;
+            }
+
             osg::ref_ptr<osg::Group> node = createNode(nifNode);
 
             if (nifNode->recType == Nif::RC_NiBillboardNode)
@@ -1287,6 +2796,9 @@ namespace NifOsg
             }
 
             node->setName(nifNode->mName);
+            const auto boneLod = mBethesdaBoneLodGroups.find(Misc::StringUtils::lowerCase(nifNode->mName));
+            if (boneLod != mBethesdaBoneLodGroups.end())
+                node->setUserValue("bethesdaBoneLodGroup", boneLod->second);
 
             if (parentNode)
                 parentNode->addChild(node);
@@ -1378,7 +2890,7 @@ namespace NifOsg
 
             // We can skip creating meshes for hidden nodes if they don't have a VisController that
             // might make them visible later
-            if (nifNode->isHidden())
+            if (nifNode->isHidden() && !isBethesdaActorSkeleton)
             {
                 bool hasVisController = false;
                 for (Nif::NiTimeControllerPtr ctrl = nifNode->mController; !ctrl.empty(); ctrl = ctrl->mNext)
@@ -1393,6 +2905,14 @@ namespace NifOsg
                                              // animating collision shapes
 
                 node->setNodeMask(Loader::getHiddenNodeMask());
+            }
+            else if (isBethesdaActorSkeleton)
+            {
+                // Skyrim, Fallout 4, and Starfield mark authored actor skeleton nodes hidden because they are
+                // transforms, not editor geometry. OpenMW's base-only cleanup otherwise interprets that flag as
+                // an editor-hidden subtree and prunes most of the rig. Keep these source-authored transforms alive
+                // so separately stored skin parts, and FO4's shipped Mr Handy composite, bind by bone name.
+                node->setDataVariance(osg::Object::DYNAMIC);
             }
 
             if (nifNode->recType == Nif::RC_NiCollisionSwitch && !nifNode->collisionActive())
@@ -1416,12 +2936,11 @@ namespace NifOsg
             if (isGeometry && !args.mSkipMeshes)
             {
                 bool skip = false;
-                const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
                 if (isFalloutHiddenMorphShape(nifNode->mName)
                     && containsAny(filename, { "meshes/characters/", "meshes\\characters\\", "meshes/armor/",
                            "meshes\\armor\\", "characters/", "characters\\", "armor/", "armor\\" }))
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: skipped Fallout hidden morph shape " << nifNode->mName
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: skipped Fallout hidden morph shape " << nifNode->mName
                                      << " in " << mFilename;
                     skip = true;
                 }
@@ -1440,7 +2959,7 @@ namespace NifOsg
                     if (!skip && args.mNifVersion >= Nif::NIFFile::NIFVersion::VER_BGS
                         && isFalloutHiddenMorphShape(nifNode->mName))
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: skipped Fallout hidden morph shape " << nifNode->mName
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: skipped Fallout hidden morph shape " << nifNode->mName
                                          << " in " << mFilename;
                         skip = true;
                     }
@@ -1448,7 +2967,8 @@ namespace NifOsg
                 if (!skip)
                 {
                     if (isNiGeometry)
-                        handleNiGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
+                        handleNiGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags,
+                            args.mNifVersion);
                     else // isBSGeometry
                         handleBSGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
 
@@ -1742,6 +3262,8 @@ namespace NifOsg
             if (stateset)
             {
                 stateset->setTextureAttributeAndModes(texUnit, texture2d, osg::StateAttribute::ON);
+                stateset->setTextureAttributeAndModes(
+                    texUnit, new osg::TexEnv(osg::TexEnv::MODULATE), osg::StateAttribute::ON);
                 osg::ref_ptr<SceneUtil::TextureType> textureType = new SceneUtil::TextureType(name);
                 textureType = shareAttribute(textureType);
                 stateset->setTextureAttributeAndModes(texUnit, textureType, osg::StateAttribute::ON);
@@ -1753,7 +3275,32 @@ namespace NifOsg
         osg::ref_ptr<osg::Texture2D> attachExternalTexture(const std::string& name, const std::string& path, bool wrapS,
             bool wrapT, unsigned int uvSet, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures) const
         {
-            return attachTexture(name, getTextureImage(path), wrapS, wrapT, uvSet, stateset, boundTextures);
+            osg::ref_ptr<osg::Image> image;
+            VFS::Path::Normalized normalizedPath;
+            if (mImageManager)
+            {
+                const std::string loweredPath = Misc::StringUtils::lowerCase(path);
+                if (loweredPath.size() >= 4 && loweredPath.compare(loweredPath.size() - 4, 4, ".png") == 0)
+                    normalizedPath = VFS::Path::toNormalized(path);
+                else
+                    normalizedPath = VFS::Path::toNormalized(
+                        Misc::ResourceHelpers::correctTexturePath(path, mImageManager->getVFS()));
+                image = mImageManager->getImage(normalizedPath);
+            }
+            if (worldViewerMeshLoadTelemetryEnabled())
+            {
+                Log(Debug::Info) << "World viewer texture ledger: file=\"" << mFilename.generic_string()
+                                 << "\" role=\"" << name << "\""
+                                 << " path=\"" << path << "\""
+                                 << " normalized=\"" << normalizedPath.value() << "\""
+                                 << " image=" << (image != nullptr)
+                                 << " width=" << (image != nullptr ? image->s() : 0)
+                                 << " height=" << (image != nullptr ? image->t() : 0)
+                                 << " uvSet=" << uvSet;
+            }
+            if (image == nullptr)
+                return nullptr;
+            return attachTexture(name, image, wrapS, wrapT, uvSet, stateset, boundTextures);
         }
 
         osg::ref_ptr<osg::Texture2D> attachNiSourceTexture(const std::string& name, const Nif::NiSourceTexture* st,
@@ -1844,7 +3391,7 @@ namespace NifOsg
                         = new TextureTransformController(transformCtrl, textureUnit);
                     setupController(transformCtrl, callback, animflags);
                     composite->addController(callback);
-                    Log(Debug::Info) << "FNV/ESM4 diag: attached NiTextureTransformController member="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: attached NiTextureTransformController member="
                                      << transformCtrl->mTransformMember << " slot=" << textureSlot
                                      << " unit=" << textureUnit << " in " << mFilename;
                 }
@@ -2158,7 +3705,7 @@ namespace NifOsg
             const Nif::NiPSysEmitter* emitter = findModernParticleEmitter(modernParticleSystem);
             if (!emitter)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: no NiPSys emitter found in " << mFilename << " node="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: no NiPSys emitter found in " << mFilename << " node="
                                  << nifNode->mName;
                 return false;
             }
@@ -2222,7 +3769,7 @@ namespace NifOsg
                         .mSize = initialSize,
                     });
 
-            Log(Debug::Info) << "FNV/ESM4 diag: built NiPSys particle system in " << mFilename
+            Log(Debug::Verbose) << "FNV/ESM4 diag: built NiPSys particle system in " << mFilename
                              << " node=" << nifNode->mName << " emitter=" << emitter->mName << " quota=" << quota
                              << " frozen=" << partsys->isFrozen();
             return true;
@@ -2327,7 +3874,7 @@ namespace NifOsg
                 else if (!(animflags & Nif::NiNode::ParticleFlag_AutoPlay)
                     && isAmbientEmbeddedAnimationPath(filename))
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: forced ambient particle autoplay in " << mFilename
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: forced ambient particle autoplay in " << mFilename
                                      << " node=" << nifNode->mName;
                 }
 
@@ -2380,7 +3927,11 @@ namespace NifOsg
             if (niGeometry->mData.empty())
                 return;
 
+            const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
             bool hasPartitions = false;
+            std::size_t partitionCount = 0;
+            std::size_t partitionTriangleIndexCount = 0;
+            std::size_t partitionStripCount = 0;
             if (!niGeometry->mSkin.empty())
             {
                 const Nif::NiSkinInstance* skin = niGeometry->mSkin.getPtr();
@@ -2388,10 +3939,10 @@ namespace NifOsg
                 hasPartitions = partitions != nullptr;
                 if (hasPartitions)
                 {
+                    partitionCount = partitions->mPartitions.size();
                     const Nif::BSDismemberSkinInstance* dismemberSkin = nullptr;
                     if (skin->recType == Nif::RC_BSDismemberSkinInstance)
                         dismemberSkin = static_cast<const Nif::BSDismemberSkinInstance*>(skin);
-                    const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
                     const bool logDismemberParts = dismemberSkin != nullptr
                         && (filename.find("meshes/characters/") != std::string::npos
                             || filename.find("meshes/armor/") != std::string::npos
@@ -2404,7 +3955,7 @@ namespace NifOsg
                         {
                             const Nif::BSDismemberSkinInstance::BodyPart& part = dismemberSkin->mParts[partitionIndex];
                             if (logDismemberParts)
-                                Log(Debug::Info) << "FNV/ESM4 diag: Fallout dismember partition index="
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout dismember partition index="
                                                  << partitionIndex << " type=" << part.mType << " flags="
                                                  << part.mFlags << " triangles="
                                                  << partitions->mPartitions[partitionIndex].mTrueTriangles.size() / 3
@@ -2414,7 +3965,7 @@ namespace NifOsg
                             if (isFalloutDismemberCapShape(nifNode->mName)
                                 || isFalloutDismemberCapPartition(part.mType))
                             {
-                                Log(Debug::Info) << "FNV/ESM4 diag: skipped Fallout dismember cap shape "
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped Fallout dismember cap shape "
                                                  << nifNode->mName << " partition type=" << part.mType
                                                  << " flags=" << part.mFlags << " in " << mFilename;
                                 continue;
@@ -2423,6 +3974,8 @@ namespace NifOsg
 
                         const Nif::NiSkinPartition::Partition& partition = partitions->mPartitions[partitionIndex];
                         const std::vector<unsigned short>& trueTriangles = partition.mTrueTriangles;
+                        partitionTriangleIndexCount += trueTriangles.size();
+                        partitionStripCount += partition.mTrueStrips.size();
                         if (!trueTriangles.empty())
                         {
                             geometry->addPrimitiveSet(new osg::DrawElementsUShort(
@@ -2440,41 +3993,56 @@ namespace NifOsg
             }
 
             const Nif::NiGeometryData* niGeometryData = niGeometry->mData.getPtr();
-            if (!hasPartitions)
-            {
+            const auto addRawPrimitiveSets = [&]() -> unsigned int {
+                unsigned int added = 0;
                 if (niGeometry->recType == Nif::RC_NiTriShape || nifNode->recType == Nif::RC_BSLODTriShape)
                 {
                     auto data = static_cast<const Nif::NiTriShapeData*>(niGeometryData);
                     const std::vector<unsigned short>& triangles = data->mTriangles;
-                    if (triangles.empty())
-                        return;
-                    geometry->addPrimitiveSet(
-                        new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLES, triangles.size(), triangles.data()));
+                    if (!triangles.empty())
+                    {
+                        geometry->addPrimitiveSet(new osg::DrawElementsUShort(
+                            osg::PrimitiveSet::TRIANGLES, triangles.size(), triangles.data()));
+                        ++added;
+                    }
                 }
                 else if (niGeometry->recType == Nif::RC_NiTriStrips)
                 {
                     auto data = static_cast<const Nif::NiTriStripsData*>(niGeometryData);
-                    bool hasGeometry = false;
                     for (const std::vector<unsigned short>& strip : data->mStrips)
                     {
                         if (strip.size() < 3)
                             continue;
-                        geometry->addPrimitiveSet(
-                            new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLE_STRIP, strip.size(), strip.data()));
-                        hasGeometry = true;
+                        geometry->addPrimitiveSet(new osg::DrawElementsUShort(
+                            osg::PrimitiveSet::TRIANGLE_STRIP, strip.size(), strip.data()));
+                        ++added;
                     }
-                    if (!hasGeometry)
-                        return;
                 }
                 else if (niGeometry->recType == Nif::RC_NiLines)
                 {
                     auto data = static_cast<const Nif::NiLinesData*>(niGeometryData);
                     const auto& line = data->mLines;
-                    if (line.empty())
-                        return;
-                    geometry->addPrimitiveSet(
-                        new osg::DrawElementsUShort(osg::PrimitiveSet::LINES, line.size(), line.data()));
+                    if (!line.empty())
+                    {
+                        geometry->addPrimitiveSet(
+                            new osg::DrawElementsUShort(osg::PrimitiveSet::LINES, line.size(), line.data()));
+                        ++added;
+                    }
                 }
+                return added;
+            };
+            bool usedRawFallback = false;
+            unsigned int rawFallbackPrimitiveSets = 0;
+            if (hasPartitions && geometry->getNumPrimitiveSets() == 0 && worldViewerSkinPartitionFallbackEnabled()
+                && isWorldViewerActorMeshPath(filename))
+            {
+                rawFallbackPrimitiveSets = addRawPrimitiveSets();
+                usedRawFallback = rawFallbackPrimitiveSets > 0;
+            }
+            if (!hasPartitions)
+            {
+                if (addRawPrimitiveSets() == 0)
+                    return;
             }
 
             const auto& vertices = niGeometryData->mVertices;
@@ -2488,7 +4056,45 @@ namespace NifOsg
             if (!colors.empty())
                 geometry->setColorArray(new osg::Vec4Array(colors.size(), colors.data()), osg::Array::BIND_PER_VERTEX);
 
+            if (worldViewerMeshLoadTelemetryEnabled() && isWorldViewerActorMeshPath(filename))
+            {
+                Log(Debug::Info) << "World viewer nif geometry ledger: file=\"" << mFilename.generic_string()
+                                 << "\" shape=\"" << nifNode->mName << "\""
+                                 << " recType=" << niGeometry->recType
+                                 << " hasSkin=" << !niGeometry->mSkin.empty()
+                                 << " hasPartitions=" << hasPartitions
+                                 << " partitionCount=" << partitionCount
+                                 << " partitionTriangleIndices=" << partitionTriangleIndexCount
+                                 << " partitionStrips=" << partitionStripCount
+                                 << " rawFallback=" << usedRawFallback
+                                 << " rawFallbackPrimitiveSets=" << rawFallbackPrimitiveSets
+                                 << " primitiveSets=" << geometry->getNumPrimitiveSets()
+                                 << " vertices=" << vertices.size()
+                                 << " normals=" << normals.size()
+                                 << " colors=" << colors.size();
+            }
+
             const auto& uvlist = niGeometryData->mUVList;
+            const bool hasLegacySkyShaderProperty = std::any_of(nifNode->mProperties.begin(),
+                nifNode->mProperties.end(), [](const auto& property) {
+                    return !property.empty()
+                        && (property->recType == Nif::RC_SkyShaderProperty
+                            || property->recType == Nif::RC_BSSkyShaderProperty);
+                });
+            const bool hasDedicatedSkyShaderProperty = !niGeometry->mShaderProperty.empty()
+                && (niGeometry->mShaderProperty->recType == Nif::RC_SkyShaderProperty
+                    || niGeometry->mShaderProperty->recType == Nif::RC_BSSkyShaderProperty);
+            const bool hasSkyShaderUv
+                = !uvlist.empty() && (hasLegacySkyShaderProperty || hasDedicatedSkyShaderProperty);
+            if (boundTextures.empty() && hasSkyShaderUv)
+            {
+                // SkyShaderProperty handling is intentionally optional, but FO3/FNV sky
+                // geometry still needs its authored UV0 when SkyManager supplies the live
+                // WTHR texture. Without this array every vertex samples one texel, turning
+                // the cloud dome's vertex-alpha rows into opaque concentric bands.
+                geometry->setTexCoordArray(
+                    0, new osg::Vec2Array(uvlist[0].size(), uvlist[0].data()), osg::Array::BIND_PER_VERTEX);
+            }
             int textureStage = 0;
             for (std::vector<unsigned int>::const_iterator it = boundTextures.begin(); it != boundTextures.end();
                  ++it, ++textureStage)
@@ -2517,20 +4123,22 @@ namespace NifOsg
                 drawableProps.emplace_back(niGeometry->mShaderProperty.getPtr());
             if (!niGeometry->mAlphaProperty.empty())
                 drawableProps.emplace_back(niGeometry->mAlphaProperty.getPtr());
-            applyDrawableProperties(parentNode, drawableProps, composite, !niGeometryData->mColors.empty(), animflags);
+            applyDrawableProperties(
+                parentNode, drawableProps, composite, !niGeometryData->mColors.empty(), animflags, &boundTextures);
         }
 
         void handleNiGeometry(const Nif::NiAVObject* nifNode, const Nif::Parent* parent, osg::Group* parentNode,
             SceneUtil::CompositeStateSetUpdater* composite, const std::vector<unsigned int>& boundTextures,
-            int animflags)
+            int animflags, unsigned int nifVersion)
         {
             assert(isTypeNiGeometry(nifNode->recType));
 
             auto niGeometry = static_cast<const Nif::NiGeometry*>(nifNode);
             const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
-            if (isFalloutFlagHelperGeometry(filename, *niGeometry))
+            const bool falloutNif = nifVersion >= Nif::NIFFile::NIFVersion::VER_BGS;
+            if (falloutNif && isFalloutFlagHelperGeometry(filename, *niGeometry))
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped Fallout flag helper geometry " << nifNode->mName << " in "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped Fallout flag helper geometry " << nifNode->mName << " in "
                                  << mFilename;
                 return;
             }
@@ -2551,7 +4159,7 @@ namespace NifOsg
                 const Nif::NiSkinInstance* skin = niGeometry->mSkin.getPtr();
                 const Nif::NiSkinData* data = skin->mData.getPtr();
                 const Nif::NiAVObjectList& bones = skin->mBones;
-                const bool falloutFlagPath = isFalloutFlagPath(filename);
+                const bool falloutFlagPath = falloutNif && isFalloutFlagPath(filename);
                 if (falloutFlagPath)
                     rig->setFalloutFlagSkinning(true);
                 const bool falloutSkinProbe = filename.find("characters/head/headhuman.nif") != std::string::npos
@@ -2637,7 +4245,7 @@ namespace NifOsg
                     if ((animflags & Nif::NiNode::AnimFlag_AutoPlay) == 0 && isAmbientEmbeddedAnimationPath(filename))
                     {
                         morphctrl->setSource(std::make_shared<SceneUtil::FrameTimeSource>());
-                        Log(Debug::Info) << "FNV/ESM4 diag: forced ambient morph autoplay for " << nifNode->mName
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: forced ambient morph autoplay for " << nifNode->mName
                                          << " in " << mFilename;
                     }
                     morphGeom->setUpdateCallback(morphctrl);
@@ -2648,6 +4256,7 @@ namespace NifOsg
             }
 
             drawable->setName(nifNode->mName);
+            applyWorldViewerFlatDrawable(*drawable, filename, nifNode->mName);
             parentNode->addChild(drawable);
         }
 
@@ -2659,8 +4268,441 @@ namespace NifOsg
 
             auto bsTriShape = static_cast<const Nif::BSTriShape*>(nifNode);
             const std::vector<unsigned short>& triangles = bsTriShape->mTriangles;
-            if (triangles.empty())
+            const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
+            const bool worldViewerBSLedger = worldViewerMeshLoadTelemetryEnabled() && isWorldViewerActorMeshPath(filename);
+            const Nif::NiSkinPartition* niSkinPartitions = nullptr;
+            const Nif::NiSkinInstance* niSkinInstance = nullptr;
+            if (!bsTriShape->mSkin.empty() && bsTriShape->mSkin->recType == Nif::RC_BSDismemberSkinInstance)
+            {
+                const auto* skin = static_cast<const Nif::BSDismemberSkinInstance*>(bsTriShape->mSkin.getPtr());
+                niSkinInstance = skin;
+                niSkinPartitions = skin->getPartitions();
+            }
+            else if (!bsTriShape->mSkin.empty() && bsTriShape->mSkin->recType == Nif::RC_NiSkinInstance)
+            {
+                const auto* skin = static_cast<const Nif::NiSkinInstance*>(bsTriShape->mSkin.getPtr());
+                niSkinInstance = skin;
+                niSkinPartitions = skin->getPartitions();
+            }
+            else if (!bsTriShape->mSkin.empty() && bsTriShape->mSkin->recType == Nif::RC_NiSkinData)
+            {
+                const auto* skinData = static_cast<const Nif::NiSkinData*>(bsTriShape->mSkin.getPtr());
+                if (!skinData->mPartitions.empty())
+                    niSkinPartitions = skinData->mPartitions.getPtr();
+            }
+            if (worldViewerBSLedger)
+            {
+                std::size_t partitionTriangles = 0;
+                std::size_t partitionStrips = 0;
+                std::size_t partitionMappedVertices = 0;
+                if (niSkinPartitions != nullptr)
+                {
+                    for (const Nif::NiSkinPartition::Partition& partition : niSkinPartitions->mPartitions)
+                    {
+                        partitionTriangles += partition.mTrueTriangles.size();
+                        partitionStrips += partition.mTrueStrips.size();
+                        partitionMappedVertices += partition.mVertexMap.size();
+                    }
+                }
+                Log(Debug::Info) << "World viewer bs geometry ledger: file=\"" << mFilename.generic_string()
+                                 << "\" shape=\"" << nifNode->mName << "\""
+                                 << " recName=\"" << bsTriShape->recName << "\""
+                                 << " recType=" << bsTriShape->recType
+                                 << " triangles=" << triangles.size()
+                                 << " vertices=" << bsTriShape->mVertData.size()
+                                 << " dataSize=" << bsTriShape->mDataSize
+                                 << " particleTriangles=" << bsTriShape->mParticleTriangles.size()
+                                 << " particleVerts=" << bsTriShape->mParticleVerts.size()
+                                 << " externalGeometry=" << bsTriShape->mExternalGeometry.size()
+                                 << " niSkinPartitions=" << (niSkinPartitions != nullptr)
+                                 << " partitionCount="
+                                 << (niSkinPartitions != nullptr ? niSkinPartitions->mPartitions.size() : 0)
+                                 << " partitionVertices="
+                                 << (niSkinPartitions != nullptr ? niSkinPartitions->mVertexData.size() : 0)
+                                 << " partitionMappedVertices=" << partitionMappedVertices
+                                 << " partitionTriangles=" << partitionTriangles
+                                 << " partitionStrips=" << partitionStrips
+                                 << " skin=" << !bsTriShape->mSkin.empty()
+                                 << " skinRecType="
+                                 << (!bsTriShape->mSkin.empty() ? bsTriShape->mSkin->recType : 0)
+                                 << " flags=0x" << std::hex << bsTriShape->mVertDesc.mFlags << std::dec;
+            }
+            if (worldViewerQuarantineFo4ActorSubIndexTriShapeEnabled()
+                && bsTriShape->recType == Nif::RC_BSSubIndexTriShape && isWorldViewerActorMeshPath(filename))
+            {
+                Log(Debug::Warning) << "World viewer bs geometry quarantine: file=\"" << mFilename.generic_string()
+                                    << "\" shape=\"" << nifNode->mName << "\""
+                                    << " recName=\"" << bsTriShape->recName << "\""
+                                    << " recType=" << bsTriShape->recType
+                                    << " reason=\"fo4 actor BSSubIndexTriShape attach crash guard\""
+                                    << " triangles=" << triangles.size()
+                                    << " vertices=" << bsTriShape->mVertData.size()
+                                    << " skin=" << !bsTriShape->mSkin.empty()
+                                    << " skinRecType="
+                                    << (!bsTriShape->mSkin.empty() ? bsTriShape->mSkin->recType : 0);
                 return;
+            }
+            if (triangles.empty())
+            {
+                if (bsTriShape->recName == "BSGeometry" && !bsTriShape->mExternalGeometry.empty())
+                {
+                    if (!handleStarfieldExternalGeometry(bsTriShape, parentNode))
+                        handleBSGeometryProxy(bsTriShape, parentNode);
+                }
+                else if (worldViewerSkinPartitionFallbackEnabled() && isWorldViewerActorMeshPath(filename)
+                    && niSkinPartitions != nullptr && !niSkinPartitions->mVertexData.empty())
+                {
+                    osg::ref_ptr<osg::Geometry> geometry(new osg::Geometry);
+
+                    std::size_t partitionPrimitiveSets = 0;
+                    std::size_t remappedPrimitiveSets = 0;
+                    std::size_t invalidPrimitiveSets = 0;
+                    unsigned int maxIndexSeen = 0;
+                    const std::size_t vertexCount = niSkinPartitions->mVertexData.size();
+                    std::vector<unsigned int> fallbackTriangleIndices;
+
+                    auto addPartitionPrimitiveSet
+                        = [&](osg::PrimitiveSet::Mode mode, const std::vector<unsigned short>& source,
+                              const Nif::NiSkinPartition::Partition& partition) {
+                              if (source.empty())
+                                  return;
+
+                              std::vector<unsigned short> remapped;
+                              const std::vector<unsigned short>* indices = &source;
+                              bool needsRemap = false;
+                              bool valid = true;
+                              for (unsigned short index : source)
+                              {
+                                  maxIndexSeen = std::max(maxIndexSeen, static_cast<unsigned int>(index));
+                                  if (index >= vertexCount)
+                                  {
+                                      needsRemap = true;
+                                      break;
+                                  }
+                              }
+
+                              if (needsRemap)
+                              {
+                                  valid = !partition.mVertexMap.empty();
+                                  if (valid)
+                                  {
+                                      remapped.reserve(source.size());
+                                      for (unsigned short index : source)
+                                      {
+                                          if (index >= partition.mVertexMap.size()
+                                              || partition.mVertexMap[index] >= vertexCount)
+                                          {
+                                              valid = false;
+                                              break;
+                                          }
+                                          remapped.push_back(partition.mVertexMap[index]);
+                                          maxIndexSeen = std::max(
+                                              maxIndexSeen, static_cast<unsigned int>(partition.mVertexMap[index]));
+                                      }
+                                  }
+                                  if (valid)
+                                  {
+                                      indices = &remapped;
+                                      ++remappedPrimitiveSets;
+                                  }
+                              }
+
+                              if (!valid)
+                              {
+                                  ++invalidPrimitiveSets;
+                                  return;
+                              }
+
+                              osg::ref_ptr<osg::DrawElementsUShort> draw = new osg::DrawElementsUShort(mode);
+                              draw->reserve(indices->size());
+                              for (unsigned short index : *indices)
+                                  draw->push_back(index);
+                              geometry->addPrimitiveSet(draw);
+                              if (mode == osg::PrimitiveSet::TRIANGLES)
+                              {
+                                  for (std::size_t i = 0; i + 2 < indices->size(); i += 3)
+                                  {
+                                      fallbackTriangleIndices.push_back((*indices)[i]);
+                                      fallbackTriangleIndices.push_back((*indices)[i + 1]);
+                                      fallbackTriangleIndices.push_back((*indices)[i + 2]);
+                                  }
+                              }
+                              else if (mode == osg::PrimitiveSet::TRIANGLE_STRIP)
+                              {
+                                  for (std::size_t i = 2; i < indices->size(); ++i)
+                                  {
+                                      const unsigned int i0 = (*indices)[i - 2];
+                                      const unsigned int i1 = (*indices)[i - 1];
+                                      const unsigned int i2 = (*indices)[i];
+                                      if (i0 == i1 || i1 == i2 || i0 == i2)
+                                          continue;
+                                      if ((i % 2) == 0)
+                                      {
+                                          fallbackTriangleIndices.push_back(i0);
+                                          fallbackTriangleIndices.push_back(i1);
+                                          fallbackTriangleIndices.push_back(i2);
+                                      }
+                                      else
+                                      {
+                                          fallbackTriangleIndices.push_back(i1);
+                                          fallbackTriangleIndices.push_back(i0);
+                                          fallbackTriangleIndices.push_back(i2);
+                                      }
+                                  }
+                              }
+                              ++partitionPrimitiveSets;
+                          };
+
+                    for (const Nif::NiSkinPartition::Partition& partition : niSkinPartitions->mPartitions)
+                    {
+                        addPartitionPrimitiveSet(
+                            osg::PrimitiveSet::TRIANGLES, partition.mTrueTriangles, partition);
+                        for (const std::vector<unsigned short>& strip : partition.mTrueStrips)
+                        {
+                            if (strip.size() < 3)
+                                continue;
+                            addPartitionPrimitiveSet(osg::PrimitiveSet::TRIANGLE_STRIP, strip, partition);
+                        }
+                    }
+
+                    std::vector<osg::Vec3f> vertices;
+                    std::vector<osg::Vec3f> normals;
+                    std::vector<osg::Vec4ub> colors;
+                    std::vector<osg::Vec2f> uvlist;
+                    appendBSVertexDataArrays(
+                        niSkinPartitions->mVertexData, niSkinPartitions->mVertexDesc.mFlags, vertices, normals,
+                        colors, uvlist);
+                    const bool ignoredVertexColors
+                        = !colors.empty() && worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_IGNORE_BS_PARTITION_VERTEX_COLORS");
+                    if (ignoredVertexColors)
+                        colors.clear();
+                    bool usedDynamicVertices = false;
+                    if (vertices.empty() && bsTriShape->recType == Nif::RC_BSDynamicTriShape)
+                    {
+                        const auto* dynamicTriShape = static_cast<const Nif::BSDynamicTriShape*>(bsTriShape);
+                        if (dynamicTriShape->mDynamicData.size() == vertexCount)
+                        {
+                            vertices.reserve(dynamicTriShape->mDynamicData.size());
+                            for (const osg::Vec4f& dynamicVertex : dynamicTriShape->mDynamicData)
+                                vertices.emplace_back(dynamicVertex.x(), dynamicVertex.y(), dynamicVertex.z());
+                            usedDynamicVertices = true;
+                        }
+                    }
+                    bool generatedNormals = false;
+                    if (normals.empty() && worldViewerGenerateMissingBSNormalsEnabled() && !vertices.empty()
+                        && !fallbackTriangleIndices.empty())
+                    {
+                        normals.assign(vertices.size(), osg::Vec3f());
+                        for (std::size_t i = 0; i + 2 < fallbackTriangleIndices.size(); i += 3)
+                        {
+                            const unsigned int i0 = fallbackTriangleIndices[i];
+                            const unsigned int i1 = fallbackTriangleIndices[i + 1];
+                            const unsigned int i2 = fallbackTriangleIndices[i + 2];
+                            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size())
+                                continue;
+                            const osg::Vec3f edge1 = vertices[i1] - vertices[i0];
+                            const osg::Vec3f edge2 = vertices[i2] - vertices[i0];
+                            osg::Vec3f normal = edge1 ^ edge2;
+                            if (normal.length2() <= 1e-10f)
+                                continue;
+                            normals[i0] += normal;
+                            normals[i1] += normal;
+                            normals[i2] += normal;
+                        }
+                        for (osg::Vec3f& normal : normals)
+                        {
+                            if (normal.length2() <= 1e-10f)
+                                normal.set(0.f, 0.f, 1.f);
+                            else
+                                normal.normalize();
+                        }
+                        generatedNormals = true;
+                    }
+
+                    if (!vertices.empty())
+                        geometry->setVertexArray(new osg::Vec3Array(vertices.size(), vertices.data()));
+                    if (!normals.empty())
+                        geometry->setNormalArray(
+                            new osg::Vec3Array(normals.size(), normals.data()), osg::Array::BIND_PER_VERTEX);
+                    if (!colors.empty())
+                        geometry->setColorArray(
+                            new osg::Vec4ubArray(colors.size(), colors.data()), osg::Array::BIND_PER_VERTEX);
+                    if (!uvlist.empty())
+                        geometry->setTexCoordArray(
+                            0, new osg::Vec2Array(uvlist.size(), uvlist.data()), osg::Array::BIND_PER_VERTEX);
+
+                    osg::ref_ptr<osg::Drawable> drawable = geometry;
+                    std::size_t partitionInfluenceAssignments = 0;
+                    std::size_t weightedVertices = 0;
+                    std::size_t skinBoneCount = 0;
+                    if (niSkinInstance != nullptr && !niSkinInstance->mData.empty()
+                        && !niSkinInstance->mBones.empty() && !vertices.empty())
+                    {
+                        const Nif::NiSkinData* skinData = niSkinInstance->mData.getPtr();
+                        const Nif::NiAVObjectList& bones = niSkinInstance->mBones;
+                        std::vector<SceneUtil::RigGeometry::BoneInfo> boneInfo(bones.size());
+                        std::vector<SceneUtil::RigGeometry::BoneWeights> influences(vertices.size());
+                        for (std::size_t boneIndex = 0; boneIndex < bones.size(); ++boneIndex)
+                        {
+                            if (!bones[boneIndex].empty())
+                                boneInfo[boneIndex].mName
+                                    = Misc::StringUtils::lowerCase(bones[boneIndex].getPtr()->mName);
+                            boneInfo[boneIndex].mInvBindMatrix.makeIdentity();
+                            if (boneIndex < skinData->mBones.size())
+                            {
+                                boneInfo[boneIndex].mInvBindMatrix
+                                    = skinData->mBones[boneIndex].mTransform.toMatrix();
+                                boneInfo[boneIndex].mBoundSphere = skinData->mBones[boneIndex].mBoundSphere;
+                            }
+                        }
+
+                        const auto addInfluence = [&](std::size_t vertexIndex, std::size_t boneIndex, float weight) {
+                            if (vertexIndex >= influences.size() || boneIndex >= boneInfo.size() || weight <= 0.f)
+                                return;
+                            SceneUtil::RigGeometry::BoneWeights& vertexWeights = influences[vertexIndex];
+                            const auto existing = std::find_if(vertexWeights.begin(), vertexWeights.end(),
+                                [boneIndex](const auto& value) { return value.first == boneIndex; });
+                            if (existing == vertexWeights.end())
+                                vertexWeights.emplace_back(boneIndex, weight);
+                            else
+                                existing->second = std::max(existing->second, weight);
+                            ++partitionInfluenceAssignments;
+                        };
+
+                        for (const Nif::NiSkinPartition::Partition& partition : niSkinPartitions->mPartitions)
+                        {
+                            const std::size_t partitionVertexCount = partition.mVertexMap.size();
+                            if (partitionVertexCount == 0 || partition.mWeights.empty()
+                                || partition.mBoneIndices.size() != partition.mWeights.size()
+                                || partition.mWeights.size() % partitionVertexCount != 0)
+                                continue;
+                            const std::size_t bonesPerVertex = partition.mWeights.size() / partitionVertexCount;
+                            for (std::size_t localVertex = 0; localVertex < partitionVertexCount; ++localVertex)
+                            {
+                                const std::size_t globalVertex = partition.mVertexMap[localVertex];
+                                for (std::size_t influenceIndex = 0; influenceIndex < bonesPerVertex;
+                                     ++influenceIndex)
+                                {
+                                    const std::size_t flatIndex = localVertex * bonesPerVertex + influenceIndex;
+                                    const std::size_t partitionBone
+                                        = static_cast<unsigned char>(partition.mBoneIndices[flatIndex]);
+                                    if (partitionBone >= partition.mBones.size())
+                                        continue;
+                                    addInfluence(globalVertex, partition.mBones[partitionBone],
+                                        partition.mWeights[flatIndex]);
+                                }
+                            }
+                        }
+
+                        // Older layouts can retain the classic per-bone weights even when their
+                        // draw data moved into NiSkinPartition. Use them only if the partition map
+                        // did not provide influences.
+                        if (partitionInfluenceAssignments == 0)
+                        {
+                            for (std::size_t boneIndex = 0;
+                                 boneIndex < std::min(bones.size(), skinData->mBones.size()); ++boneIndex)
+                            {
+                                for (const auto& [vertexIndex, weight] : skinData->mBones[boneIndex].mWeights)
+                                    addInfluence(vertexIndex, boneIndex, weight);
+                            }
+                        }
+
+                        for (SceneUtil::RigGeometry::BoneWeights& vertexWeights : influences)
+                        {
+                            float total = 0.f;
+                            for (const auto& [boneIndex, weight] : vertexWeights)
+                                total += weight;
+                            if (total <= 0.f)
+                                continue;
+                            for (auto& [boneIndex, weight] : vertexWeights)
+                                weight /= total;
+                            ++weightedVertices;
+                        }
+
+                        if (weightedVertices > 0)
+                        {
+                            osg::ref_ptr<SceneUtil::RigGeometry> rig(new SceneUtil::RigGeometry);
+                            rig->setSourceGeometry(geometry);
+                            rig->setBoneInfo(std::move(boneInfo));
+                            rig->setInfluences(influences);
+                            rig->setTransform(skinData->mTransform.toMatrix());
+                            // The partition path is used by SSE actor pieces and needs the same
+                            // bind-pose diagnostics/fallback selection as other Bethesda rigs.
+                            rig->setFalloutCharacterSkinning(true);
+                            const bool skyrimSourceFrameFacePart
+                                = mBethVersion >= Nif::NIFFile::BethVersion::BETHVER_SKY
+                                && mBethVersion < Nif::NIFFile::BethVersion::BETHVER_FO4
+                                && (containsAny(filename,
+                                        { "/character assets/hair/", "\\character assets\\hair\\",
+                                            "/character assets/beards/", "\\character assets\\beards\\",
+                                            "/character assets/faceparts/", "\\character assets\\faceparts\\",
+                                            "/character assets/mouth/", "\\character assets\\mouth\\" })
+                                    || filename.ends_with("/character assets/eyesmale.nif")
+                                    || filename.ends_with("\\character assets\\eyesmale.nif")
+                                    || filename.ends_with("/character assets/eyesfemale.nif")
+                                    || filename.ends_with("\\character assets\\eyesfemale.nif"));
+                            // These small SSE face children are authored in the actor's source frame, but their
+                            // one/two-bone skin records omit the inverse root bind carried by the body. Applying the
+                            // full head matrix therefore adds the skeleton's 120-unit root twice. Keep these surfaces
+                            // in source space while the base head/body and equipment remain genuinely skinned.
+                            rig->setSourceFrameSkinning(skyrimSourceFrameFacePart);
+                            // SSE actor parts are mounted below the authored skeleton root, whose transform already
+                            // supplies the skin-to-skeleton frame. Applying its inverse again lifts heads, hands, and
+                            // bodies one full character height above their armor. Keep the inverse available only for
+                            // bounded diagnostics of unusual partition assets.
+                            rig->setInverseSkinToSkeletonMatrix(
+                                worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_USE_INVERSE_SSE_SKIN_ROOT"));
+                            if (const Nif::NiAVObject* rootBone = niSkinInstance->mRoot.getPtr())
+                                rig->setRootBone(rootBone->mName);
+                            skinBoneCount = bones.size();
+                            drawable = rig;
+                        }
+                    }
+
+                    if (geometry->getNumPrimitiveSets() != 0 && geometry->getVertexArray() != nullptr)
+                    {
+                        std::vector<const Nif::NiProperty*> drawableProps;
+                        collectDrawableProperties(nifNode, parent, drawableProps);
+                        if (!bsTriShape->mShaderProperty.empty())
+                            drawableProps.emplace_back(bsTriShape->mShaderProperty.getPtr());
+                        if (!bsTriShape->mAlphaProperty.empty())
+                            drawableProps.emplace_back(bsTriShape->mAlphaProperty.getPtr());
+                        applyDrawableProperties(
+                            parentNode, drawableProps, composite, !colors.empty(), animflags, &boundTextures);
+
+                        drawable->setName(nifNode->mName);
+                        applyWorldViewerFlatDrawable(
+                            *drawable, filename, nifNode->mName, getStarfieldShaderMaterialName(bsTriShape));
+                        parentNode->addChild(drawable);
+                    }
+
+                    if (worldViewerBSLedger)
+                    {
+                        Log(Debug::Info)
+                            << "World viewer bs geometry partition-fallback: file=\"" << mFilename.generic_string()
+                            << "\" shape=\"" << nifNode->mName << "\""
+                            << " primitiveSets=" << partitionPrimitiveSets
+                            << " remappedPrimitiveSets=" << remappedPrimitiveSets
+                            << " invalidPrimitiveSets=" << invalidPrimitiveSets
+                            << " vertices=" << vertices.size()
+                            << " normals=" << normals.size()
+                            << " generatedNormals=" << generatedNormals
+                            << " colors=" << colors.size()
+                            << " ignoredVertexColors=" << ignoredVertexColors
+                            << " uvs=" << uvlist.size()
+                            << " maxIndex=" << maxIndexSeen
+                            << " dynamicVertices=" << usedDynamicVertices
+                            << " skinRig=" << (dynamic_cast<SceneUtil::RigGeometry*>(drawable.get()) != nullptr)
+                            << " skinBones=" << skinBoneCount
+                            << " weightedVertices=" << weightedVertices
+                            << " influenceAssignments=" << partitionInfluenceAssignments
+                            << " vertexFlags=0x" << std::hex << niSkinPartitions->mVertexDesc.mFlags << std::dec
+                            << " attached="
+                            << (geometry->getNumPrimitiveSets() != 0 && geometry->getVertexArray() != nullptr);
+                    }
+                }
+                return;
+            }
 
             osg::ref_ptr<osg::Geometry> geometry(new osg::Geometry);
             geometry->addPrimitiveSet(
@@ -2782,10 +4824,483 @@ namespace NifOsg
                 drawableProps.emplace_back(bsTriShape->mShaderProperty.getPtr());
             if (!bsTriShape->mAlphaProperty.empty())
                 drawableProps.emplace_back(bsTriShape->mAlphaProperty.getPtr());
-            applyDrawableProperties(parentNode, drawableProps, composite, !colors.empty(), animflags);
+            applyDrawableProperties(parentNode, drawableProps, composite, !colors.empty(), animflags, &boundTextures);
 
             drawable->setName(nifNode->mName);
+            applyWorldViewerFlatDrawable(
+                *drawable, filename, nifNode->mName, getStarfieldShaderMaterialName(bsTriShape));
             parentNode->addChild(drawable);
+            if (worldViewerBSLedger)
+            {
+                Log(Debug::Info) << "World viewer bs geometry attached: file=\"" << mFilename.generic_string()
+                                 << "\" shape=\"" << nifNode->mName << "\""
+                                 << " primitiveSets=" << geometry->getNumPrimitiveSets()
+                                 << " drawableClass=\"" << drawable->className() << "\""
+                                 << " vertices=" << vertices.size()
+                                 << " normals=" << normals.size()
+                                 << " colors=" << colors.size()
+                                 << " skinRig=" << (dynamic_cast<SceneUtil::RigGeometry*>(drawable.get()) != nullptr);
+            }
+        }
+
+        bool handleStarfieldExternalGeometry(const Nif::BSTriShape* bsTriShape, osg::Group* parentNode)
+        {
+            if (bsTriShape->mExternalGeometry.empty())
+                return false;
+
+            const VFS::Manager* vfs = nullptr;
+            if (mMaterialManager)
+                vfs = mMaterialManager->getVFS();
+            if (!vfs && mImageManager)
+                vfs = mImageManager->getVFS();
+            if (!vfs)
+                return false;
+
+            const auto& meshRef = bsTriShape->mExternalGeometry.front();
+            const std::string nifPath = mFilename.generic_string();
+            const std::string shapeName = bsTriShape->mName.empty() ? bsTriShape->recName : bsTriShape->mName;
+            const std::string shaderMaterialName = getStarfieldShaderMaterialName(bsTriShape);
+            std::string actorProofKey = nifPath + "|" + shapeName + "|" + shaderMaterialName;
+            std::replace(actorProofKey.begin(), actorProofKey.end(), '\\', '/');
+            if (shouldSkipStarfieldWorldProofGeometry(nifPath, shapeName, shaderMaterialName))
+            {
+                static std::atomic<int> skipLogCount{ 0 };
+                const int logIndex = skipLogCount.fetch_add(1);
+                if (logIndex < 160)
+                {
+                    Log(Debug::Info) << "World viewer: Starfield world proof skipped geometry nif=\"" << nifPath
+                                     << "\" shape=\"" << shapeName << "\""
+                                     << " material=\"" << shaderMaterialName << "\""
+                                     << " reason=\"unsupported occluder or Starfield water shader\"";
+                }
+                else if (logIndex == 160)
+                    Log(Debug::Info) << "World viewer: further Starfield skipped geometry logs suppressed";
+                return true;
+            }
+            const osg::Vec4f proofColor = getStarfieldActorProofBaseColor(actorProofKey);
+            std::string meshPath = meshRef.mMeshPath;
+            std::replace(meshPath.begin(), meshPath.end(), '\\', '/');
+            const std::string loweredMeshPath = Misc::StringUtils::lowerCase(meshPath);
+            if (loweredMeshPath.rfind("geometries/", 0) != 0)
+                meshPath.insert(0, "geometries/");
+            if (!Misc::StringUtils::ciEndsWith(meshPath, ".mesh"))
+                meshPath += ".mesh";
+
+            VFS::Path::Normalized normalizedPath(meshPath);
+            Files::IStreamPtr stream = vfs->find(normalizedPath);
+            if (!stream)
+            {
+                logStarfieldMeshFailure(normalizedPath.view(), "not found");
+                return false;
+            }
+
+            std::string error;
+            std::optional<StarfieldExternalMeshData> mesh = readStarfieldExternalMesh(*stream, error);
+            if (!mesh)
+            {
+                logStarfieldMeshFailure(normalizedPath.view(), error);
+                return false;
+            }
+
+            const bool actorSurface = isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(nifPath));
+            const bool wantsExternalSkinning
+                = worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_STARFIELD_EXTERNAL_SKINNING") && actorSurface;
+            const Nif::BSSkinInstance* skin = nullptr;
+            const Nif::SkinAttach* skinAttach = nullptr;
+            if (wantsExternalSkinning && !bsTriShape->mSkin.empty()
+                && bsTriShape->mSkin->recType == Nif::RC_BSSkinInstance)
+            {
+                skin = static_cast<const Nif::BSSkinInstance*>(bsTriShape->mSkin.getPtr());
+                skinAttach = findStarfieldSkinAttach(bsTriShape);
+                if (skinAttach == nullptr && !skin->mRoot.empty())
+                    skinAttach = findStarfieldSkinAttach(skin->mRoot.getPtr());
+            }
+
+            const std::size_t boneCount = skin != nullptr && !skin->mData.empty() ? skin->mData->mBones.size() : 0;
+            const std::size_t expectedWeights
+                = mesh->mVertices.size() * static_cast<std::size_t>(mesh->mWeightCountPerVertex);
+            const bool canSkin = skin != nullptr && skinAttach != nullptr && boneCount > 0
+                && skinAttach->mBones.size() == boneCount && mesh->mWeightCountPerVertex > 0
+                && mesh->mWeights.size() >= expectedWeights;
+            const StarfieldWeightLayout weightLayout = canSkin
+                ? chooseStarfieldWeightLayout(*mesh, boneCount)
+                : StarfieldWeightLayout::LowIndexHighHalf;
+
+            std::vector<osg::Vec3f> renderVertices = mesh->mVertices;
+            if (canSkin)
+            {
+                // Starfield stores actor meshes and skeleton bind transforms in meters, while placed world geometry
+                // is converted to Bethesda world units by OPENMW_STARFIELD_MESH_POSITION_SCALE. Keep the skinned
+                // source in its native meter frame; the actor root wrapper applies the same scale coherently to the
+                // skeleton, its bone translations, and every assembled body part.
+                const float actorScale = getStarfieldMeshPositionScale();
+                for (osg::Vec3f& vertex : renderVertices)
+                    vertex /= actorScale;
+            }
+
+            osg::ref_ptr<osg::Geometry> geometry(new osg::Geometry);
+            geometry->setVertexArray(new osg::Vec3Array(renderVertices.size(), renderVertices.data()));
+            geometry->addPrimitiveSet(new osg::DrawElementsUInt(
+                osg::PrimitiveSet::TRIANGLES, mesh->mIndices.size(), mesh->mIndices.data()));
+            if (mesh->mUv1.size() == mesh->mVertices.size())
+                geometry->setTexCoordArray(0, new osg::Vec2Array(mesh->mUv1.size(), mesh->mUv1.data()));
+
+            osg::ref_ptr<osg::Vec4Array> colors(new osg::Vec4Array);
+            const std::string actorDiffuse = getStarfieldActorProofDiffuse(actorProofKey);
+            const StarfieldMaterialBridgeEntry* authoredMaterial = !actorSurface
+                && worldViewerStarfieldWorldProofTexturesEnabled()
+                ? findStarfieldMaterialBridge(shaderMaterialName)
+                : nullptr;
+            std::string worldDiffuse = authoredMaterial != nullptr
+                ? authoredMaterial->mDiffuse
+                : std::string();
+            if (worldDiffuse.empty() && !actorSurface
+                && worldViewerStarfieldWorldProofTexturesEnabled() && !isStarfieldMaterialBridgeConfigured())
+                worldDiffuse = getStarfieldWorldProofDiffuse(nifPath, shapeName, shaderMaterialName);
+            std::string diffuse = actorSurface ? actorDiffuse : worldDiffuse;
+            if (!diffuse.empty() && !vfs->exists(VFS::Path::Normalized(diffuse)))
+            {
+                static std::atomic<int> missingMappedTextureLogCount{ 0 };
+                const int logIndex = missingMappedTextureLogCount.fetch_add(1);
+                if (logIndex < 80)
+                {
+                    Log(Debug::Warning) << "World viewer: Starfield mapped texture unavailable material=\""
+                                        << shaderMaterialName << "\" diffuse=\"" << diffuse << "\"";
+                }
+                else if (logIndex == 80)
+                    Log(Debug::Warning) << "World viewer: further missing Starfield mapped texture logs suppressed";
+                diffuse.clear();
+                if (authoredMaterial != nullptr)
+                    authoredMaterial = nullptr;
+            }
+            const bool hasDiffuse = !diffuse.empty();
+            const osg::Vec4f surfaceColor = actorSurface
+                ? (hasDiffuse ? osg::Vec4f(1.f, 1.f, 1.f, 1.f) : proofColor)
+                : getStarfieldWorldMaterialColor(shaderMaterialName, hasDiffuse);
+            colors->push_back(surfaceColor);
+            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+
+            if (mesh->mNormals.size() == mesh->mVertices.size())
+                geometry->setNormalArray(new osg::Vec3Array(mesh->mNormals.size(), mesh->mNormals.data()),
+                    osg::Array::BIND_PER_VERTEX);
+            else
+            {
+                osg::ref_ptr<osg::Vec3Array> normals(new osg::Vec3Array);
+                normals->push_back(osg::Vec3f(0.f, 0.f, 1.f));
+                geometry->setNormalArray(normals, osg::Array::BIND_OVERALL);
+            }
+
+            osg::ref_ptr<osg::Material> material(new osg::Material);
+            const osg::Vec4f materialColor = surfaceColor;
+            material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+            material->setDiffuse(osg::Material::FRONT_AND_BACK, materialColor);
+            material->setAmbient(osg::Material::FRONT_AND_BACK, materialColor);
+            material->setEmission(osg::Material::FRONT_AND_BACK, materialColor);
+
+            osg::StateSet* stateset = geometry->getOrCreateStateSet();
+            stateset->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateset->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            const bool translucent = !actorSurface && isStarfieldWorldMaterialTranslucent(shaderMaterialName);
+            const bool doubleSided = actorSurface
+                || (!actorSurface && isStarfieldWorldMaterialDoubleSided(nifPath, shaderMaterialName));
+            if (doubleSided)
+                stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            else
+            {
+                stateset->setMode(GL_CULL_FACE, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->setAttributeAndModes(new osg::CullFace(osg::CullFace::BACK),
+                    osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            }
+            handleDepthFlags(stateset, true, !translucent);
+            if (translucent)
+            {
+                stateset->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                    osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+            }
+            else
+                stateset->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            const bool cutout = actorSurface ? isStarfieldActorProofCutout(actorProofKey)
+                                             : isStarfieldWorldMaterialCutout(nifPath, shaderMaterialName);
+            if (cutout)
+            {
+                stateset->setMode(GL_ALPHA_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->setAttributeAndModes(
+                    new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.35f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->setRenderingHint(osg::StateSet::DEFAULT_BIN);
+            }
+            else
+                stateset->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            if (!diffuse.empty() && mesh->mUv1.size() == mesh->mVertices.size())
+            {
+                std::vector<unsigned int> boundTextures;
+                attachExternalTexture("diffuseMap", diffuse, true, true, 0, stateset, boundTextures);
+                if (!boundTextures.empty())
+                {
+                    stateset->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    stateset->setTextureAttributeAndModes(
+                        0, new osg::TexEnv(actorSurface ? osg::TexEnv::REPLACE : osg::TexEnv::MODULATE),
+                        osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                }
+                if (!actorDiffuse.empty())
+                {
+                    Log(Debug::Info) << "World viewer: Starfield actor proof texture nif=\"" << nifPath << "\""
+                                     << " shape=\"" << shapeName << "\""
+                                     << " material=\"" << shaderMaterialName << "\""
+                                     << " diffuse=\"" << diffuse << "\""
+                                     << " uv1=" << mesh->mUv1.size()
+                                     << " boundTextureUnits=" << boundTextures.size()
+                                     << " alphaCutout=" << cutout;
+                }
+                else
+                {
+                    Log(Debug::Info) << "World viewer: Starfield world proof texture nif=\"" << nifPath << "\""
+                                     << " shape=\"" << shapeName << "\""
+                                     << " material=\"" << shaderMaterialName << "\""
+                                     << " diffuse=\"" << diffuse << "\""
+                                     << " source=\"" << (authoredMaterial != nullptr ? "materialsbeta.cdb" : "heuristic") << "\""
+                                     << " uv1=" << mesh->mUv1.size()
+                                     << " boundTextureUnits=" << boundTextures.size();
+                }
+            }
+            else
+            {
+                for (unsigned int texUnit = 0; texUnit < 8; ++texUnit)
+                    stateset->setTextureMode(texUnit, GL_TEXTURE_2D, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                if (isStarfieldActorProofEyeSurface(actorProofKey))
+                    Log(Debug::Info) << "World viewer: Starfield actor proof eye material fallback nif=" << mFilename
+                                     << " color=(" << proofColor.r() << "," << proofColor.g() << ","
+                                     << proofColor.b() << "," << proofColor.a() << ")";
+                else if (!actorSurface)
+                    Log(Debug::Info) << "World viewer: Starfield world material fallback nif=\"" << nifPath << "\""
+                                     << " shape=\"" << shapeName << "\""
+                                     << " material=\"" << shaderMaterialName << "\""
+                                     << " uv1=" << mesh->mUv1.size()
+                                     << " vertices=" << mesh->mVertices.size()
+                                     << " reason=\"" << (diffuse.empty() ? "no diffuse bridge" : "missing uv") << "\"";
+            }
+
+            osg::ref_ptr<osg::Drawable> drawable = geometry;
+            if (canSkin)
+            {
+                std::vector<SceneUtil::RigGeometry::BoneInfo> boneInfo(boneCount);
+                for (std::size_t bone = 0; bone < boneCount; ++bone)
+                {
+                    // Starfield's shared Skeleton stores its native case-sensitive bone keys (for example C_Head).
+                    // SkinAttach already carries the exact contract names; lower-casing them makes every otherwise
+                    // valid influence miss the live skeleton.
+                    boneInfo[bone].mName = skinAttach->mBones[bone];
+                    boneInfo[bone].mInvBindMatrix = skin->mData->mBones[bone].mTransform.toMatrix();
+                    boneInfo[bone].mBoundSphere = skin->mData->mBones[bone].mBoundSphere;
+                }
+
+                std::vector<SceneUtil::RigGeometry::BoneWeights> influences(renderVertices.size());
+                std::size_t weightedVertices = 0;
+                std::size_t invalidWeights = 0;
+                float minWeightSum = std::numeric_limits<float>::max();
+                float maxWeightSum = 0.f;
+                for (std::size_t vertex = 0; vertex < renderVertices.size(); ++vertex)
+                {
+                    float sum = 0.f;
+                    SceneUtil::RigGeometry::BoneWeights& vertexInfluences = influences[vertex];
+                    for (std::uint32_t slot = 0; slot < mesh->mWeightCountPerVertex; ++slot)
+                    {
+                        const std::size_t weightIndex
+                            = vertex * static_cast<std::size_t>(mesh->mWeightCountPerVertex) + slot;
+                        const auto [bone, weight] = decodeStarfieldWeight(mesh->mWeights[weightIndex], weightLayout);
+                        if (bone >= boneCount || !std::isfinite(weight) || weight < 0.f || weight > 1.001f)
+                        {
+                            ++invalidWeights;
+                            continue;
+                        }
+                        if (weight <= 0.00001f)
+                            continue;
+                        vertexInfluences.emplace_back(bone, weight);
+                        sum += weight;
+                    }
+                    if (sum > 0.00001f)
+                    {
+                        ++weightedVertices;
+                        if (std::abs(sum - 1.f) > 0.001f)
+                        {
+                            for (auto& [bone, weight] : vertexInfluences)
+                                weight /= sum;
+                            sum = 1.f;
+                        }
+                    }
+                    minWeightSum = std::min(minWeightSum, sum);
+                    maxWeightSum = std::max(maxWeightSum, sum);
+                }
+
+                osg::ref_ptr<SceneUtil::RigGeometry> rig = new SceneUtil::RigGeometry;
+                rig->setSourceGeometry(geometry);
+                rig->setBoneInfo(std::move(boneInfo));
+                rig->setInfluences(influences);
+                // ExportScene is a file container, not a bone in the shared live human skeleton. An empty skin root
+                // lets RigGeometry derive the attachment-to-skeleton transform from the actual scene path.
+                rig->setRootBone({});
+                drawable = rig;
+
+                std::ostringstream rawSample;
+                const std::size_t sampleCount = std::min<std::size_t>(mesh->mWeights.size(), 12);
+                for (std::size_t i = 0; i < sampleCount; ++i)
+                {
+                    if (i != 0)
+                        rawSample << ',';
+                    rawSample << "0x" << std::hex << mesh->mWeights[i] << std::dec;
+                }
+                Log(Debug::Info) << "World viewer: Starfield external skin attached nif=\"" << nifPath
+                                 << "\" shape=\"" << shapeName << "\""
+                                 << " bones=" << boneCount
+                                 << " skinAttachBones=" << skinAttach->mBones.size()
+                                 << " weightsPerVertex=" << mesh->mWeightCountPerVertex
+                                 << " weights=" << mesh->mWeights.size()
+                                 << " weightedVertices=" << weightedVertices
+                                 << " invalidWeights=" << invalidWeights
+                                 << " weightSum=(" << minWeightSum << ',' << maxWeightSum << ')'
+                                 << " layout=\"" << getStarfieldWeightLayoutName(weightLayout) << "\""
+                                 << " raw=[" << rawSample.str() << ']';
+            }
+            else if (wantsExternalSkinning)
+            {
+                Log(Debug::Warning) << "World viewer: Starfield external skin unavailable nif=\"" << nifPath
+                                    << "\" shape=\"" << shapeName << "\""
+                                    << " skin=" << (skin != nullptr)
+                                    << " skinAttach=" << (skinAttach != nullptr)
+                                    << " skinAttachBones=" << (skinAttach != nullptr ? skinAttach->mBones.size() : 0)
+                                    << " boneData=" << boneCount
+                                    << " weightsPerVertex=" << mesh->mWeightCountPerVertex
+                                    << " weights=" << mesh->mWeights.size()
+                                    << " expectedWeights=" << expectedWeights;
+            }
+
+            geometry->setName(shapeName);
+            drawable->setName(shapeName);
+            parentNode->addChild(drawable);
+
+            logStarfieldMeshLoaded(normalizedPath.view(), *mesh, meshRef, nifPath, shapeName, shaderMaterialName, diffuse);
+            return true;
+        }
+
+        static void logStarfieldMeshLoaded(std::string_view path, const StarfieldExternalMeshData& mesh,
+            const Nif::BSTriShape::BSGeometryMeshRef& meshRef, std::string_view nifPath, std::string_view shapeName,
+            std::string_view shaderMaterialName, std::string_view diffuse)
+        {
+            static std::atomic<int> meshLogCount{ 0 };
+            const int logIndex = meshLogCount.fetch_add(1);
+            if (logIndex < 80)
+            {
+                Log(Debug::Info) << "World viewer: Starfield mesh loaded path=" << path
+                                 << " nif=\"" << nifPath << "\""
+                                 << " shape=\"" << shapeName << "\""
+                                 << " material=\"" << shaderMaterialName << "\""
+                                 << " diffuse=\"" << diffuse << "\""
+                                 << " vertices=" << mesh.mVertices.size()
+                                 << " indices=" << mesh.mIndices.size()
+                                 << " scale=" << mesh.mScale
+                                 << " positionScale=" << getStarfieldMeshPositionScale()
+                                 << " refVerts=" << meshRef.mVertexCount
+                                 << " refTriIndices=" << meshRef.mTriangleIndexCount
+                                 << " uv1=" << mesh.mUv1Count
+                                 << " normals=" << mesh.mNormalCount
+                                 << " weightsPerVertex=" << mesh.mWeightCountPerVertex
+                                 << " weights=" << mesh.mWeights.size()
+                                 << " lods=" << mesh.mLodCount
+                                 << " meshlets=" << mesh.mMeshletCount;
+            }
+            else if (logIndex == 80)
+                Log(Debug::Info) << "World viewer: further Starfield mesh load logs suppressed";
+        }
+
+        static void logStarfieldMeshFailure(std::string_view path, std::string_view reason)
+        {
+            static std::atomic<int> meshFailureLogCount{ 0 };
+            const int logIndex = meshFailureLogCount.fetch_add(1);
+            if (logIndex < 80)
+                Log(Debug::Warning) << "World viewer: Starfield mesh load failed path=" << path
+                                    << " reason=" << reason;
+            else if (logIndex == 80)
+                Log(Debug::Warning) << "World viewer: further Starfield mesh failure logs suppressed";
+        }
+
+        void handleBSGeometryProxy(const Nif::BSTriShape* bsTriShape, osg::Group* parentNode)
+        {
+            osg::Vec3f minBound(bsTriShape->mBoundMinMax[0], bsTriShape->mBoundMinMax[1], bsTriShape->mBoundMinMax[2]);
+            osg::Vec3f maxBound(bsTriShape->mBoundMinMax[3], bsTriShape->mBoundMinMax[4], bsTriShape->mBoundMinMax[5]);
+
+            const bool hasMinMax = minBound.x() < maxBound.x() && minBound.y() < maxBound.y()
+                && minBound.z() < maxBound.z();
+            if (!hasMinMax)
+            {
+                const osg::Vec3f center = bsTriShape->mBoundingSphere.center();
+                const float radius = std::max(bsTriShape->mBoundingSphere.radius(), 8.f);
+                minBound = center - osg::Vec3f(radius, radius, radius);
+                maxBound = center + osg::Vec3f(radius, radius, radius);
+            }
+
+            osg::ref_ptr<osg::Geometry> geometry(new osg::Geometry);
+            osg::ref_ptr<osg::Vec3Array> vertices(new osg::Vec3Array);
+            vertices->reserve(8);
+            vertices->push_back(osg::Vec3f(minBound.x(), minBound.y(), minBound.z()));
+            vertices->push_back(osg::Vec3f(maxBound.x(), minBound.y(), minBound.z()));
+            vertices->push_back(osg::Vec3f(maxBound.x(), maxBound.y(), minBound.z()));
+            vertices->push_back(osg::Vec3f(minBound.x(), maxBound.y(), minBound.z()));
+            vertices->push_back(osg::Vec3f(minBound.x(), minBound.y(), maxBound.z()));
+            vertices->push_back(osg::Vec3f(maxBound.x(), minBound.y(), maxBound.z()));
+            vertices->push_back(osg::Vec3f(maxBound.x(), maxBound.y(), maxBound.z()));
+            vertices->push_back(osg::Vec3f(minBound.x(), maxBound.y(), maxBound.z()));
+            geometry->setVertexArray(vertices);
+
+            static constexpr std::array<unsigned short, 36> indices = {
+                0, 1, 2, 0, 2, 3, // bottom
+                4, 6, 5, 4, 7, 6, // top
+                0, 4, 5, 0, 5, 1, // front
+                1, 5, 6, 1, 6, 2, // right
+                2, 6, 7, 2, 7, 3, // back
+                3, 7, 4, 3, 4, 0, // left
+            };
+            geometry->addPrimitiveSet(new osg::DrawElementsUShort(
+                osg::PrimitiveSet::TRIANGLES, indices.size(), indices.data()));
+
+            osg::ref_ptr<osg::Vec4Array> colors(new osg::Vec4Array);
+            colors->push_back(osg::Vec4f(0.84f, 0.86f, 0.82f, 1.f));
+            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+
+            osg::ref_ptr<osg::Vec3Array> normals(new osg::Vec3Array);
+            normals->push_back(osg::Vec3f(0.f, 0.f, 1.f));
+            geometry->setNormalArray(normals, osg::Array::BIND_OVERALL);
+
+            osg::ref_ptr<osg::Material> material(new osg::Material);
+            const osg::Vec4f proofColor = colors->front();
+            material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+            material->setDiffuse(osg::Material::FRONT_AND_BACK, proofColor);
+            material->setAmbient(osg::Material::FRONT_AND_BACK, proofColor);
+            material->setEmission(osg::Material::FRONT_AND_BACK, proofColor);
+            osg::StateSet* stateset = geometry->getOrCreateStateSet();
+            stateset->setAttributeAndModes(material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateset->setAttributeAndModes(new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateset->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            for (unsigned int texUnit = 0; texUnit < 8; ++texUnit)
+                stateset->setTextureMode(texUnit, GL_TEXTURE_2D, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            geometry->setName(bsTriShape->mName.empty() ? bsTriShape->recName : bsTriShape->mName);
+            parentNode->addChild(geometry);
+
+            static std::atomic<int> proxyLogCount{ 0 };
+            const int logIndex = proxyLogCount.fetch_add(1);
+            if (logIndex < 80)
+            {
+                const auto& mesh = bsTriShape->mExternalGeometry.front();
+                Log(Debug::Info) << "World viewer: Starfield BSGeometry proxy mesh=geometries/" << mesh.mMeshPath
+                                 << ".mesh verts=" << mesh.mVertexCount
+                                 << " triIndices=" << mesh.mTriangleIndexCount << " nif=" << mFilename;
+            }
+            else if (logIndex == 80)
+                Log(Debug::Info) << "World viewer: further Starfield BSGeometry proxy logs suppressed";
         }
 
         osg::BlendFunc::BlendFuncMode getBlendMode(int mode) const
@@ -3364,6 +5879,9 @@ namespace NifOsg
             const std::string& nodeName, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures) const
         {
             const unsigned int uvSet = 0;
+            const bool worldViewerActorMesh
+                = worldViewerMeshLoadTelemetryEnabled()
+                && isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(mFilename.generic_string()));
 
             for (size_t i = 0; i < textureSet->mTextures.size(); ++i)
             {
@@ -3380,6 +5898,14 @@ namespace NifOsg
                             "normalMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
                     case Nif::BSShaderTextureSet::TextureType::Glow:
+                        if (worldViewerActorMesh && isSkyrimSkinAuxTexture(textureSet->mTextures[i]))
+                        {
+                            Log(Debug::Info) << "World viewer texture ledger: file=\"" << mFilename.generic_string()
+                                             << "\" role=\"skinAuxMap\""
+                                             << " path=\"" << textureSet->mTextures[i] << "\""
+                                             << " skippedAsEmissive=1";
+                            break;
+                        }
                         attachExternalTexture(
                             "emissiveMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
@@ -3584,6 +6110,55 @@ namespace NifOsg
                     handleDepthFlags(stateset, texprop->depthTest(), texprop->depthWrite());
                     break;
                 }
+                case Nif::RC_SkyShaderProperty:
+                {
+                    if (!enableExperimentalSkyShaderProperties())
+                        break;
+
+                    auto texprop = static_cast<const Nif::SkyShaderProperty*>(property);
+                    node->setUserValue("shaderPrefix", std::string("bs/nolighting"));
+                    node->setUserValue("shaderRequired", true);
+                    osg::StateSet* stateset = node->getOrCreateStateSet();
+                    clearBoundTextures(stateset, boundTextures);
+                    if (!texprop->mFilename.empty())
+                    {
+                        const unsigned int uvSet = 0;
+                        const std::string texture = remapFalloutSkyTexture(texprop->mFilename);
+                        attachExternalTexture("diffuseMap", texture, texprop->wrapS(), texprop->wrapT(), uvSet,
+                            stateset, boundTextures);
+                    }
+                    handleTextureControllers(texprop, composite, stateset, animflags);
+                    stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+                    osg::ref_ptr<osg::BlendFunc> blendFunc(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+                    blendFunc = shareAttribute(blendFunc);
+                    stateset->setAttributeAndModes(blendFunc, osg::StateAttribute::ON);
+                    stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
+                    break;
+                }
+                case Nif::RC_BSSkyShaderProperty:
+                {
+                    if (!enableExperimentalSkyShaderProperties())
+                        break;
+
+                    auto texprop = static_cast<const Nif::BSSkyShaderProperty*>(property);
+                    node->setUserValue("shaderPrefix", std::string("bs/nolighting"));
+                    node->setUserValue("shaderRequired", true);
+                    osg::StateSet* stateset = node->getOrCreateStateSet();
+                    clearBoundTextures(stateset, boundTextures);
+                    if (!texprop->mFilename.empty())
+                    {
+                        const unsigned int uvSet = 0;
+                        const std::string texture = remapFalloutSkyTexture(texprop->mFilename);
+                        attachExternalTexture("diffuseMap", texture, true, true, uvSet, stateset, boundTextures);
+                    }
+                    handleTextureControllers(texprop, composite, stateset, animflags);
+                    stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+                    osg::ref_ptr<osg::BlendFunc> blendFunc(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+                    blendFunc = shareAttribute(blendFunc);
+                    stateset->setAttributeAndModes(blendFunc, osg::StateAttribute::ON);
+                    stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
+                    break;
+                }
                 case Nif::RC_BSLightingShaderProperty:
                 {
                     auto texprop = static_cast<const Nif::BSLightingShaderProperty*>(property);
@@ -3722,7 +6297,8 @@ namespace NifOsg
         }
 
         void applyDrawableProperties(osg::Node* node, const std::vector<const Nif::NiProperty*>& properties,
-            SceneUtil::CompositeStateSetUpdater* composite, bool hasVertexColors, int animflags)
+            SceneUtil::CompositeStateSetUpdater* composite, bool hasVertexColors, int animflags,
+            const std::vector<unsigned int>* boundTextures = nullptr)
         {
             // Specular lighting is enabled by default, but there's a quirk...
             bool specEnabled = true;
@@ -3742,6 +6318,16 @@ namespace NifOsg
             auto lightmode = Nif::NiVertexColorProperty::LightMode::LightMode_EmiAmbDif;
             float emissiveMult = 1.f;
             float specStrength = 1.f;
+            int niMaterialProperties = 0;
+            int niVertexColorProperties = 0;
+            int niAlphaProperties = 0;
+            int bsPPLightingProperties = 0;
+            int bsLightingProperties = 0;
+            int bsEffectProperties = 0;
+            int bsLightingType = -1;
+            int bsShaderType = -1;
+            std::string shaderMaterialName;
+            int shaderMaterialType = -1;
 
             for (const Nif::NiProperty* property : properties)
             {
@@ -3757,6 +6343,7 @@ namespace NifOsg
                     }
                     case Nif::RC_NiMaterialProperty:
                     {
+                        ++niMaterialProperties;
                         const Nif::NiMaterialProperty* matprop = static_cast<const Nif::NiMaterialProperty*>(property);
 
                         mat->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(matprop->mDiffuse, matprop->mAlpha));
@@ -3780,6 +6367,7 @@ namespace NifOsg
                     }
                     case Nif::RC_NiVertexColorProperty:
                     {
+                        ++niVertexColorProperties;
                         const Nif::NiVertexColorProperty* vertprop
                             = static_cast<const Nif::NiVertexColorProperty*>(property);
 
@@ -3822,6 +6410,7 @@ namespace NifOsg
                     }
                     case Nif::RC_NiAlphaProperty:
                     {
+                        ++niAlphaProperties;
                         const Nif::NiAlphaProperty* alphaprop = static_cast<const Nif::NiAlphaProperty*>(property);
                         handleAlphaBlending(alphaprop->useAlphaBlending(), alphaprop->sourceBlendMode(),
                             alphaprop->destinationBlendMode(), !alphaprop->noSorter(), hasSortAlpha, *node);
@@ -3831,15 +6420,21 @@ namespace NifOsg
                     }
                     case Nif::RC_BSShaderPPLightingProperty:
                     {
+                        ++bsPPLightingProperties;
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
+                        bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
                         break;
                     }
                     case Nif::RC_BSLightingShaderProperty:
                     {
+                        ++bsLightingProperties;
                         auto shaderprop = static_cast<const Nif::BSLightingShaderProperty*>(property);
+                        bsLightingType = static_cast<int>(shaderprop->mType);
                         if (Bgsm::MaterialFilePtr shaderMat = getShaderMaterial(shaderprop->mName, mMaterialManager))
                         {
+                            shaderMaterialName = shaderprop->mName;
+                            shaderMaterialType = static_cast<int>(shaderMat->mShaderType);
                             handleShaderMaterialDrawableProperties(shaderMat.get(), mat, *node, hasSortAlpha);
                             if (shaderMat->mShaderType == Bgsm::ShaderType::Lighting)
                             {
@@ -3858,14 +6453,31 @@ namespace NifOsg
                         emissiveMult = shaderprop->mEmissiveMult;
                         specStrength = shaderprop->mSpecStrength;
                         specEnabled = shaderprop->specular();
+                        if ((mBethVersion == Nif::NIFFile::BethVersion::BETHVER_SKY
+                                || mBethVersion == Nif::NIFFile::BethVersion::BETHVER_SSE)
+                            && shaderprop->mType
+                                == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_SkinTint)
+                            && isWorldViewerActorMeshPath(
+                                Misc::StringUtils::lowerCase(mFilename.generic_string())))
+                        {
+                            // Skyrim's skin shader uses its gloss/specular data with a dedicated skin-lighting
+                            // model. Feeding those values into OpenMW's generic Blinn-Phong path produces the
+                            // hard white hand and forearm highlights seen on otherwise correctly textured actors.
+                            // Preserve diffuse and normal textures, but use the stable non-specular fallback until
+                            // that dedicated shader is implemented.
+                            specEnabled = false;
+                        }
                         handleDecal(shaderprop->decal(), hasSortAlpha, *node);
                         break;
                     }
                     case Nif::RC_BSEffectShaderProperty:
                     {
+                        ++bsEffectProperties;
                         auto shaderprop = static_cast<const Nif::BSEffectShaderProperty*>(property);
                         if (Bgsm::MaterialFilePtr shaderMat = getShaderMaterial(shaderprop->mName, mMaterialManager))
                         {
+                            shaderMaterialName = shaderprop->mName;
+                            shaderMaterialType = static_cast<int>(shaderMat->mShaderType);
                             handleShaderMaterialDrawableProperties(shaderMat.get(), mat, *node, hasSortAlpha);
                             break;
                         }
@@ -3937,6 +6549,65 @@ namespace NifOsg
 
             if (specStrength != 1.f)
                 node->getOrCreateStateSet()->addUniform(new osg::Uniform("specStrength", specStrength));
+
+            if (worldViewerMaterialTelemetryEnabled()
+                && isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(mFilename.generic_string())))
+            {
+                std::string shaderPrefix;
+                bool shaderRequired = false;
+                node->getUserValue("shaderPrefix", shaderPrefix);
+                node->getUserValue("shaderRequired", shaderRequired);
+                const osg::Vec4f diffuse = mat->getDiffuse(osg::Material::FRONT_AND_BACK);
+                const osg::Vec4f ambient = mat->getAmbient(osg::Material::FRONT_AND_BACK);
+                const osg::Vec4f emission = mat->getEmission(osg::Material::FRONT_AND_BACK);
+                const osg::Vec4f specular = mat->getSpecular(osg::Material::FRONT_AND_BACK);
+                const osg::StateSet* stateset = node->getStateSet();
+                unsigned int stateTextureUnits = 0;
+                const unsigned int textureProbeLimit
+                    = std::max<unsigned int>(8, boundTextures != nullptr ? boundTextures->size() + 2 : 8);
+                if (stateset != nullptr)
+                {
+                    for (unsigned int i = 0; i < textureProbeLimit; ++i)
+                    {
+                        if (stateset->getTextureAttribute(i, osg::StateAttribute::TEXTURE) != nullptr)
+                            ++stateTextureUnits;
+                    }
+                }
+                Log(Debug::Info) << "World viewer material ledger: file=\"" << mFilename.generic_string()
+                                 << "\" node=\"" << node->getName() << "\""
+                                 << " properties=" << properties.size()
+                                 << " niMaterial=" << niMaterialProperties
+                                 << " niVertexColor=" << niVertexColorProperties
+                                 << " niAlpha=" << niAlphaProperties
+                                 << " bsPPLighting=" << bsPPLightingProperties
+                                 << " bsLighting=" << bsLightingProperties
+                                 << " bsEffect=" << bsEffectProperties
+                                 << " bsShaderType=" << bsShaderType
+                                 << " bsLightingType=" << bsLightingType
+                                 << " shaderPrefix=\"" << shaderPrefix << "\""
+                                 << " shaderRequired=" << shaderRequired
+                                 << " shaderMaterialType=" << shaderMaterialType
+                                 << " shaderMaterial=\"" << shaderMaterialName << "\""
+                                 << " hasVertexColors=" << hasVertexColors
+                                 << " colorMode=" << static_cast<int>(mat->getColorMode())
+                                 << " lightMode=" << static_cast<int>(lightmode)
+                                 << " boundTextureSlots=" << (boundTextures != nullptr ? boundTextures->size() : 0)
+                                 << " stateTextureUnits=" << stateTextureUnits
+                                 << " hasSortAlpha=" << hasSortAlpha
+                                 << " hasMatCtrl=" << hasMatCtrl
+                                 << " specEnabled=" << specEnabled
+                                 << " specStrength=" << specStrength
+                                 << " emissiveMult=" << emissiveMult
+                                 << " shininess=" << mat->getShininess(osg::Material::FRONT_AND_BACK)
+                                 << " diffuse=(" << diffuse.r() << "," << diffuse.g() << "," << diffuse.b() << ","
+                                 << diffuse.a() << ")"
+                                 << " ambient=(" << ambient.r() << "," << ambient.g() << "," << ambient.b() << ","
+                                 << ambient.a() << ")"
+                                 << " emission=(" << emission.r() << "," << emission.g() << "," << emission.b() << ","
+                                 << emission.a() << ")"
+                                 << " specular=(" << specular.r() << "," << specular.g() << "," << specular.b() << ","
+                                 << specular.a() << ")";
+            }
 
             if (!mPushedSorter)
             {

@@ -9,6 +9,72 @@ namespace MWWorld
 {
     namespace
     {
+        TEST(MWWorldWeatherTest, samplesRetailFNVHighNoonToDayAfternoonSegment)
+        {
+            FalloutWeatherColorSamples ambient{};
+            ambient[1] = osg::Vec4f(87.f / 255.f, 105.f / 255.f, 138.f / 255.f, 1.f);
+            ambient[4] = osg::Vec4f(99.f / 255.f, 120.f / 255.f, 154.f / 255.f, 1.f);
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            const osg::Vec4f sampled = sampleFalloutWeatherColor(ambient, 14.4118919f, settings);
+
+            EXPECT_NEAR(sampled.r(), 0.369318515f, 0.000001f);
+            EXPECT_NEAR(sampled.g(), 0.4469423f, 0.000001f);
+            EXPECT_NEAR(sampled.b(), 0.578699231f, 0.000001f);
+        }
+
+        TEST(MWWorldWeatherTest, mapsRetailFalloutSunOrbit)
+        {
+            const osg::Vec3f highNoon = falloutSunPosition(0.f);
+            EXPECT_FLOAT_EQ(highNoon.x(), 0.f);
+            EXPECT_FLOAT_EQ(highNoon.y(), -100.f);
+            EXPECT_FLOAT_EQ(highNoon.z(), 800.f);
+
+            // xNVSE retail capture at GameHour 14.4118919.
+            const osg::Vec3f captured = falloutSunPosition(-0.201698895f);
+            EXPECT_NEAR(captured.x(), -161.359116f, 0.0001f);
+            EXPECT_FLOAT_EQ(captured.y(), -100.f);
+            EXPECT_NEAR(captured.z(), 638.640869f, 0.0001f);
+        }
+
+        TEST(MWWorldWeatherTest, mapsSingleRetailFalloutMoonToOpenMWQuadAxis)
+        {
+            const MWRender::MoonState day
+                = falloutMoonState(14.4118919f, MWRender::MoonState::Phase::FirstQuarter, false);
+            EXPECT_NEAR(day.mRotationFromHorizon, -53.82162f, 0.0001f);
+            EXPECT_FLOAT_EQ(day.mRotationFromNorth, 35.f);
+            EXPECT_EQ(day.mPhase, MWRender::MoonState::Phase::FirstQuarter);
+            EXPECT_FLOAT_EQ(day.mShadowBlend, 1.f);
+            EXPECT_FLOAT_EQ(day.mMoonAlpha, 0.f);
+
+            const MWRender::MoonState night
+                = falloutMoonState(23.004034f, MWRender::MoonState::Phase::FirstQuarter, true);
+            EXPECT_NEAR(night.mRotationFromHorizon, 75.06051f, 0.0001f);
+            EXPECT_FLOAT_EQ(night.mMoonAlpha, 1.f);
+        }
+
+        TEST(MWWorldWeatherTest, advancesRetailFalloutMoonPhaseFromClimateData)
+        {
+            // FNV/FO3 default CLMT TNAM ends in 0x83: Masser, no Secunda,
+            // and three game-days per phase. xNVSE observed the runtime
+            // phase global advancing 2,3,4,5,6,7,0 at these boundaries.
+            constexpr std::uint8_t moonInfo = 0x83;
+            EXPECT_EQ(falloutMoonPhase(0, moonInfo), MWRender::MoonState::Phase::Full);
+            EXPECT_EQ(falloutMoonPhase(2, moonInfo), MWRender::MoonState::Phase::Full);
+            EXPECT_EQ(falloutMoonPhase(3, moonInfo), MWRender::MoonState::Phase::WaningGibbous);
+            EXPECT_EQ(falloutMoonPhase(6, moonInfo), MWRender::MoonState::Phase::ThirdQuarter);
+            EXPECT_EQ(falloutMoonPhase(9, moonInfo), MWRender::MoonState::Phase::WaningCrescent);
+            EXPECT_EQ(falloutMoonPhase(12, moonInfo), MWRender::MoonState::Phase::New);
+            EXPECT_EQ(falloutMoonPhase(15, moonInfo), MWRender::MoonState::Phase::WaxingCrescent);
+            EXPECT_EQ(falloutMoonPhase(18, moonInfo), MWRender::MoonState::Phase::FirstQuarter);
+            EXPECT_EQ(falloutMoonPhase(21, moonInfo), MWRender::MoonState::Phase::WaxingGibbous);
+            EXPECT_EQ(falloutMoonPhase(24, moonInfo), MWRender::MoonState::Phase::Full);
+        }
+
         // MASSER PHASES
 
         TEST(MWWorldWeatherTest, masserPhasesFullToWaningGibbousAtCorrectTimes)

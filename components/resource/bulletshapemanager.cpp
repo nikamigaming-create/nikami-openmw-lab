@@ -1,6 +1,8 @@
 #include "bulletshapemanager.hpp"
 
+#include <atomic>
 #include <cstring>
+#include <string_view>
 
 #include <osg/Drawable>
 #include <osg/NodeVisitor>
@@ -25,6 +27,19 @@
 
 namespace Resource
 {
+
+    namespace
+    {
+        bool isStarfieldWorldCollisionCandidate(VFS::Path::NormalizedView name)
+        {
+            const std::string_view path = name.value();
+            return path.find("meshes/actors/") == std::string_view::npos
+                && path.find("meshes/characters/") == std::string_view::npos
+                && path.find("meshes/clothes/") == std::string_view::npos
+                && path.find("meshes/armor/") == std::string_view::npos
+                && path.find("meshes/weapons/") == std::string_view::npos;
+        }
+    }
 
     struct GetTriangleFunctor
     {
@@ -118,7 +133,34 @@ namespace Resource
         if (Misc::getFileExtension(name.value()) == "nif")
         {
             NifBullet::BulletNifLoader loader;
-            shape = loader.load(*mNifFileManager->get(name));
+            const Nif::FileView nif = *mNifFileManager->get(name);
+            shape = loader.load(nif);
+
+            // Starfield moved render triangles into external .mesh streams and its NIFs often no longer expose
+            // legacy BSX/Havok triangles to BulletNifLoader. Reuse the already decoded render template as a
+            // conservative static collision fallback so exterior floors are walkable in the shared OpenMW world.
+            if (nif.getBethVersion() == Nif::NIFFile::BethVersion::BETHVER_STF
+                && isStarfieldWorldCollisionCandidate(name))
+            {
+                osg::ref_ptr<const osg::Node> constNode(mSceneManager->getTemplate(name));
+                osg::ref_ptr<osg::Node> node(const_cast<osg::Node*>(constNode.get()));
+                NodeToShapeVisitor visitor;
+                node->accept(visitor);
+                if (osg::ref_ptr<BulletShape> generated = visitor.getShape())
+                {
+                    generated->mFileName = name;
+                    constNode->getUserValue(Misc::OsgUserValues::sFileHash, generated->mFileHash);
+                    shape = std::move(generated);
+
+                    static std::atomic<int> generatedLogCount{ 0 };
+                    const int logIndex = generatedLogCount.fetch_add(1);
+                    if (logIndex < 40)
+                        Log(Debug::Info) << "World viewer: generated Starfield static collision from external render mesh "
+                                         << name;
+                    else if (logIndex == 40)
+                        Log(Debug::Info) << "World viewer: further generated Starfield collision logs suppressed";
+                }
+            }
         }
         else
         {

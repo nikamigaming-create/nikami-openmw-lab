@@ -413,8 +413,8 @@ namespace ESMTerrain
             auto found = textureIndicesMap.find(texId);
             if (found != textureIndicesMap.end())
                 return blendmaps[found->second]->data();
-            Terrain::LayerInfo info
-                = texId.isZeroOrUnset() ? land->getEsm4DefaultLayerInfo() : getLandTextureLayerInfo(texId);
+            const Terrain::LayerInfo& defaultLayer = land->getEsm4DefaultLayerInfo();
+            Terrain::LayerInfo info = texId.isZeroOrUnset() ? defaultLayer : getLandTextureLayerInfo(texId, &defaultLayer);
             osg::ref_ptr<osg::Image> image(new osg::Image);
             image->allocateImage(blendmapSize, blendmapSize, 1, GL_ALPHA, GL_UNSIGNED_BYTE);
             std::memset(image->data(), 0, image->getTotalDataSize());
@@ -713,19 +713,40 @@ namespace ESMTerrain
         return info;
     }
 
-    Terrain::LayerInfo Storage::getLandTextureLayerInfo(ESM::FormId id)
+    Terrain::LayerInfo Storage::getLandTextureLayerInfo(ESM::FormId id, const Terrain::LayerInfo* defaultLayer)
     {
         if (const ESM4::LandTexture* ltex = getEsm4LandTexture(id))
         {
             if (!ltex->mTextureFile.empty())
-                return getLayerInfo("textures/landscape/" + ltex->mTextureFile); // TES4
+            {
+                const std::string diffuse = "textures/landscape/" + ltex->mTextureFile; // TES4/FO3/FNV
+                if (mVFS != nullptr && mVFS->exists(diffuse))
+                    return getLayerInfo(diffuse);
+
+                Log(Debug::Warning) << "World viewer terrain: missing ESM4 LTEX diffuse " << diffuse
+                                    << " for " << id.toString() << ", using LAND default";
+                if (defaultLayer != nullptr)
+                    return *defaultLayer;
+
+                return getLayerInfo("");
+            }
             if (const ESM4::TextureSet* txst = getEsm4TextureSet(ltex->mTexture))
                 return getTextureSetLayerInfo(*txst); // TES5
             else
                 Log(Debug::Warning) << "TextureSet not found: " << ltex->mTexture.toString();
         }
         else
-            Log(Debug::Warning) << "LandTexture not found: " << id.toString();
+        {
+            static int missingEsm4LtexLogs = 0;
+            if (missingEsm4LtexLogs < 80)
+            {
+                ++missingEsm4LtexLogs;
+                Log(Debug::Warning) << "World viewer terrain: missing ESM4 LTEX " << id.toString()
+                                    << (defaultLayer != nullptr ? ", using LAND default" : ", using empty fallback");
+            }
+            if (defaultLayer != nullptr)
+                return *defaultLayer;
+        }
         return getLayerInfo("");
     }
 

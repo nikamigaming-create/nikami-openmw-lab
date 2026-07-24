@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include <osg/MatrixTransform>
+#include <osg/Transform>
 
 #include <osgUtil/CullVisitor>
 
@@ -57,11 +58,25 @@ namespace SceneUtil
             return result;
         }
 
+        const char* getEsm4RuntimeEnv(const char* name, const char* legacyName)
+        {
+            if (const char* env = std::getenv(name))
+                return env;
+
+            return std::getenv(legacyName);
+        }
+
         std::string_view getFalloutSkinningMode()
         {
-            if (const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE"))
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_SKINNING_MODE", "OPENMW_FNV_SKINNING_MODE"))
                 return env;
-            return "source";
+            return "invBindThenSkeleton";
+        }
+
+        bool hasFalloutSkinningModeOverride()
+        {
+            const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_SKINNING_MODE", "OPENMW_FNV_SKINNING_MODE");
+            return env != nullptr && env[0] != '\0';
         }
 
         bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
@@ -71,22 +86,73 @@ namespace SceneUtil
                 || Misc::StringUtils::ciFind(rootBone, " hand") != std::string_view::npos;
         }
 
-        std::string_view getFalloutSkinningMode(std::string_view name, std::string_view rootBone)
+        bool isFalloutInventoryPaperDollPath(const osg::NodePath& path)
         {
+            for (const osg::Node* node : path)
+            {
+                if (node != nullptr && node->getName() == "FNV Inventory Paper Doll Preview")
+                    return true;
+            }
+            return false;
+        }
+
+        std::string_view getFalloutSkinningMode(
+            std::string_view name, std::string_view rootBone, bool inventoryPaperDoll)
+        {
+            if (inventoryPaperDoll)
+                return "source";
+
             if (isFalloutHandRig(name, rootBone))
             {
-                if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
+                if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_HAND_SKINNING_MODE", "OPENMW_FNV_VR_HAND_SKINNING_MODE"))
                     return env;
+
+                if (hasFalloutSkinningModeOverride())
+                    return getFalloutSkinningMode();
+
+                return getFalloutSkinningMode();
             }
 
-            return getFalloutSkinningMode();
+            if (hasFalloutSkinningModeOverride())
+                return getFalloutSkinningMode();
+
+            return "current";
         }
 
         bool useFalloutSkinToSkelMatrix()
         {
-            if (const char* env = std::getenv("OPENMW_FNV_USE_SKIN_TO_SKEL"))
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_USE_SKIN_TO_SKEL", "OPENMW_FNV_USE_SKIN_TO_SKEL"))
                 return std::string_view(env) != "0";
             return false;
+        }
+
+        osg::Matrixf composeSkinToSkeletonTransform(
+            const osg::Matrixf& skinToSkeleton, const osg::Matrixf& skinTransform, bool inverse)
+        {
+            if (inverse)
+            {
+                osg::Matrixf skeletonToSkin;
+                if (skeletonToSkin.invert(skinToSkeleton))
+                    return skeletonToSkin * skinTransform;
+            }
+            return skinToSkeleton * skinTransform;
+        }
+
+        osg::Matrixf makeFalloutSkinningAccumulator()
+        {
+            return osg::Matrixf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+        }
+
+        void addWeightedFalloutMatrix(osg::Matrixf& result, const osg::Matrixf& matrix, float weight)
+        {
+            const float* source = matrix.ptr();
+            float* destination = result.ptr();
+            for (int i = 0; i < 16; ++i, ++source, ++destination)
+            {
+                if (i % 4 == 3)
+                    continue;
+                *destination += *source * weight;
+            }
         }
 
         osg::Matrixf composeFalloutBoneMatrix(
@@ -158,10 +224,35 @@ namespace SceneUtil
         : Drawable(copy, copyop)
         , mData(copy.mData)
         , mFalloutFlagSkinning(copy.mFalloutFlagSkinning)
+        , mFalloutCharacterSkinning(copy.mFalloutCharacterSkinning)
+        , mSourceFrameSkinning(copy.mSourceFrameSkinning)
+        , mInverseSkinToSkeletonMatrix(copy.mInverseSkinToSkeletonMatrix)
         , mFalloutCharacterRig(copy.mFalloutCharacterRig)
     {
         setSourceGeometry(copy.mSourceGeometry);
         setNumChildrenRequiringUpdateTraversal(1);
+    }
+
+    void RigGeometry::setFalloutFlagSkinning(bool enabled)
+    {
+        mFalloutFlagSkinning = enabled;
+        mFalloutCharacterRigComputed = false;
+    }
+
+    void RigGeometry::setFalloutCharacterSkinning(bool enabled)
+    {
+        mFalloutCharacterSkinning = enabled;
+        mFalloutCharacterRigComputed = false;
+    }
+
+    void RigGeometry::setSourceFrameSkinning(bool enabled)
+    {
+        mSourceFrameSkinning = enabled;
+    }
+
+    void RigGeometry::setInverseSkinToSkeletonMatrix(bool enabled)
+    {
+        mInverseSkinToSkeletonMatrix = enabled;
     }
 
     bool RigGeometry::isFalloutCharacterRig() const
@@ -171,6 +262,26 @@ namespace SceneUtil
 
         if (mData == nullptr)
             return false;
+
+        // Explicitly marked actor rigs have already been classified by the loader/animation
+        // layer. Do not re-reject SSE partition rigs merely because they use "NPC ..." bone
+        // names instead of the older Bip01 convention.
+        if (mFalloutCharacterSkinning)
+        {
+            mFalloutCharacterRig = !mData->mBones.empty();
+            mFalloutCharacterRigComputed = true;
+            return mFalloutCharacterRig;
+        }
+
+        const bool markedFalloutRig = mFalloutFlagSkinning || mFalloutCharacterSkinning;
+        const bool heuristicEnabled
+            = getEsm4RuntimeEnv("OPENMW_ESM4_ENABLE_RIG_HEURISTIC", "OPENMW_FNV_ENABLE_RIG_HEURISTIC") != nullptr;
+        if (!markedFalloutRig && !heuristicEnabled)
+        {
+            mFalloutCharacterRig = false;
+            mFalloutCharacterRigComputed = true;
+            return mFalloutCharacterRig;
+        }
 
         const bool hasBipRoot = mData->mRootBone.empty() || Misc::StringUtils::ciStartsWith(mData->mRootBone, "Bip01")
             || Misc::StringUtils::ciEqual(mData->mRootBone, "Scene Root");
@@ -266,6 +377,190 @@ namespace SceneUtil
         return mGeometry[index].get();
     }
 
+    osg::Geometry* RigGeometry::getLastFrameGeometry() const
+    {
+        return getGeometry(mLastFrameNumber);
+    }
+
+    void RigGeometry::forceNextUpdate()
+    {
+        mLastFrameNumber = 0;
+        dirtyBound();
+    }
+
+    bool RigGeometry::refreshFalloutSkinningForCurrentPose()
+    {
+        if (!mData || !mSourceGeometry || !isFalloutCharacterRig() || mNodes.empty())
+            return false;
+
+        const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+        const osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
+        const osg::Vec4Array* tangentSrc = mSourceTangents;
+        if (positionSrc == nullptr || positionSrc->empty())
+            return false;
+
+        const std::string_view falloutSkinningMode = getFalloutSkinningMode(getName(), mData->mRootBone, false);
+        const bool sourceSkinOnly = falloutSkinningMode == "sourceSkinOnly" && mSkinToSkelMatrix != nullptr;
+        const bool falloutSourceSkinning = mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
+            || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback);
+
+        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        std::vector<Bone*>::const_iterator bone = mNodes.begin();
+        std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
+        for (osg::Matrixf& boneMat : boneMatrices)
+        {
+            if (*bone != nullptr)
+                boneMat = falloutSourceSkinning ? osg::Matrixf()
+                                                : composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode);
+            ++bone;
+            ++boneInfo;
+        }
+
+        osg::Matrixf transform;
+        if (mFalloutFlagSkinning || falloutSourceSkinning)
+            transform.makeIdentity();
+        else if (mSkinToSkelMatrix && (mInverseSkinToSkeletonMatrix || useFalloutSkinToSkelMatrix()))
+            transform = composeSkinToSkeletonTransform(
+                *mSkinToSkelMatrix, mData->mTransform, mInverseSkinToSkeletonMatrix);
+        else
+            transform = mData->mTransform;
+
+        bool refreshed = false;
+        for (osg::ref_ptr<osg::Geometry>& geometry : mGeometry)
+        {
+            if (geometry == nullptr)
+                continue;
+
+            osg::Vec3Array* positionDst = static_cast<osg::Vec3Array*>(geometry->getVertexArray());
+            osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geometry->getNormalArray());
+            osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geometry->getTexCoordArray(7));
+            if (positionDst == nullptr || positionDst->size() < positionSrc->size())
+                continue;
+
+            if (falloutSourceSkinning)
+                copySourceSkinningGeometry(positionSrc, normalSrc, tangentSrc, positionDst, normalDst, tangentDst);
+            else
+            {
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (index >= boneMatrices.size() || mNodes[index] == nullptr)
+                            continue;
+                        addWeightedFalloutMatrix(resultMat, boneMatrices[index], weight);
+                    }
+                    resultMat *= transform;
+
+                    for (unsigned short vertex : vertices)
+                    {
+                        if (vertex >= positionSrc->size() || vertex >= positionDst->size())
+                            continue;
+                        (*positionDst)[vertex] = resultMat.preMult((*positionSrc)[vertex]);
+                        if (normalSrc != nullptr && normalDst != nullptr && vertex < normalSrc->size()
+                            && vertex < normalDst->size())
+                            (*normalDst)[vertex] = osg::Matrixf::transform3x3((*normalSrc)[vertex], resultMat);
+                        if (tangentSrc != nullptr && tangentDst != nullptr && vertex < tangentSrc->size()
+                            && vertex < tangentDst->size())
+                        {
+                            const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
+                            const osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(
+                                osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
+                            (*tangentDst)[vertex] = osg::Vec4f(transformedTangent, srcTangent.w());
+                        }
+                    }
+                }
+            }
+
+            positionDst->dirty();
+            if (normalDst != nullptr)
+                normalDst->dirty();
+            if (tangentDst != nullptr)
+                tangentDst->dirty();
+            geometry->dirtyBound();
+            geometry->osg::Drawable::dirtyGLObjects();
+            refreshed = true;
+        }
+
+        if (refreshed)
+            dirtyBound();
+        return refreshed;
+    }
+
+    bool RigGeometry::computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box)
+    {
+        box.init();
+        if (nv == nullptr || !mData || !mSourceGeometry || !isFalloutCharacterRig())
+            return false;
+
+        nv->pushOntoNodePath(this);
+        struct PopNodePath
+        {
+            osg::NodeVisitor* mVisitor;
+            ~PopNodePath() { mVisitor->popFromNodePath(); }
+        } popNodePath{ nv };
+
+        if (!mSkeleton && !initFromParentSkeleton(nv))
+            return false;
+        if (mSkeleton == nullptr || isFalloutHiddenMorphRig(getName()))
+            return false;
+
+        const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+        if (positionSrc == nullptr || positionSrc->empty())
+            return false;
+
+        mSkeleton->updateBoneMatrices(nv->getTraversalNumber());
+        updateSkinToSkelMatrix(nv->getNodePath());
+
+        const bool falloutInventoryPaperDoll = isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode
+            = getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll);
+        const bool sourceSkinOnly = falloutSkinningMode == "sourceSkinOnly" && mSkinToSkelMatrix != nullptr;
+        const bool falloutSourceSkinning = mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
+            || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback);
+
+        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        std::vector<Bone*>::const_iterator bone = mNodes.begin();
+        std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
+        for (osg::Matrixf& boneMat : boneMatrices)
+        {
+            if (*bone != nullptr)
+                boneMat = falloutSourceSkinning ? osg::Matrixf()
+                                                : composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode);
+            ++bone;
+            ++boneInfo;
+        }
+
+        osg::Matrixf transform;
+        if (mFalloutFlagSkinning || falloutSourceSkinning)
+            transform.makeIdentity();
+        else if (mSkinToSkelMatrix && (mInverseSkinToSkeletonMatrix || useFalloutSkinToSkelMatrix()))
+            transform = composeSkinToSkeletonTransform(
+                *mSkinToSkelMatrix, mData->mTransform, mInverseSkinToSkeletonMatrix);
+        else
+            transform = mData->mTransform;
+
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+            for (const auto& [index, weight] : influences)
+            {
+                if (index >= boneMatrices.size() || mNodes[index] == nullptr)
+                    continue;
+                addWeightedFalloutMatrix(resultMat, boneMatrices[index], weight);
+            }
+
+            resultMat *= transform;
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex < positionSrc->size())
+                    box.expandBy(resultMat.preMult((*positionSrc)[vertex]));
+            }
+        }
+
+        return box.valid();
+    }
+
     bool RigGeometry::initFromParentSkeleton(osg::NodeVisitor* nv)
     {
         const osg::NodePath& path = nv->getNodePath();
@@ -295,21 +590,48 @@ namespace SceneUtil
 
         mNodes.clear();
         std::size_t missingBones = 0;
+        std::size_t missingOptionalClothBones = 0;
+        std::ostringstream missingOptionalClothBoneSample;
+        const char* starfieldExternalSkinningEnv = std::getenv("OPENMW_WORLD_VIEWER_STARFIELD_EXTERNAL_SKINNING");
+        const bool starfieldExternalSkinning
+            = starfieldExternalSkinningEnv != nullptr && std::string_view(starfieldExternalSkinningEnv) != "0";
         for (const BoneInfo& info : mData->mBones)
         {
             mNodes.push_back(mSkeleton->getBone(info.mName));
             if (!mNodes.back())
             {
                 ++missingBones;
-                Log(Debug::Error) << "Error: RigGeometry did not find bone " << info.mName;
+                // Starfield authors secondary hair/clothing simulation against Cloth_* nodes
+                // supplied by runtime cloth systems, not the retail face/body skeleton. Keep
+                // those influences inert for now and report a bounded summary. Missing core
+                // face/body bones remain errors because they indicate a broken actor composition.
+                if (starfieldExternalSkinning
+                    && Misc::StringUtils::ciFind(info.mName, "Cloth_") != std::string_view::npos)
+                {
+                    if (missingOptionalClothBones < 6)
+                    {
+                        if (missingOptionalClothBones != 0)
+                            missingOptionalClothBoneSample << ',';
+                        missingOptionalClothBoneSample << info.mName;
+                    }
+                    ++missingOptionalClothBones;
+                }
+                else
+                    Log(Debug::Error) << "Error: RigGeometry did not find bone " << info.mName;
             }
         }
+
+        if (missingOptionalClothBones != 0)
+            Log(Debug::Verbose) << "World viewer: Starfield rig '" << getName() << "' omitted "
+                                << missingOptionalClothBones
+                                << " optional Cloth_* simulation bone(s); static fallback sample=["
+                                << missingOptionalClothBoneSample.str() << ']';
 
         if (!mLoggedFalloutRigInit && isFalloutCharacterRig())
         {
             mLoggedFalloutRigInit = true;
             setCullingActive(false);
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName() << "' initialized bones="
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName() << "' initialized bones="
                              << mData->mBones.size() << " missing=" << missingBones
                              << " rootBone=" << mData->mRootBone << " influences=" << mData->mInfluences.size();
         }
@@ -331,7 +653,7 @@ namespace SceneUtil
             if (isFalloutCharacterRig() && !mLoggedFalloutCullInitRecovery)
             {
                 mLoggedFalloutCullInitRecovery = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                                  << "' initialized skeleton during cull traversal after update miss";
             }
         }
@@ -374,13 +696,22 @@ namespace SceneUtil
             static std::unordered_set<std::string> loggedRigPaths;
             const std::string key = stream.str();
             if (loggedRigPaths.insert(key).second)
-                Log(Debug::Info) << "FNV/ESM4 draw audit: rig=" << key;
+            {
+                const osg::Matrixf pathToWorld = osg::computeLocalToWorld(path);
+                const osg::Vec3f translation = pathToWorld.getTrans();
+                const osg::Vec3f scale = pathToWorld.getScale();
+                Log(Debug::Info) << "FNV/ESM4 draw audit: rig=" << key
+                                 << " pathWorldT=(" << translation.x() << "," << translation.y() << ","
+                                 << translation.z() << ")"
+                                 << " pathWorldScale=(" << scale.x() << "," << scale.y() << "," << scale.z()
+                                 << ")";
+            }
         }
 
         if (falloutRig && !mLoggedFalloutCullTraversal)
         {
             mLoggedFalloutCullTraversal = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                              << "' reached cull traversal frame=" << traversalNumber
                              << " nodeMask=0x" << std::hex << getNodeMask() << std::dec
                              << " sourcePrimitives="
@@ -409,7 +740,7 @@ namespace SceneUtil
             if (mData->mInfluences.empty())
                 minWeightSum = 0.f;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                              << "' influence summary groups=" << mData->mInfluences.size()
                              << " minWeightSum=" << minWeightSum << " maxWeightSum=" << maxWeightSum
                              << " zeroGroups=" << zeroWeightGroups << " overweightGroups=" << overweightGroups;
@@ -432,13 +763,15 @@ namespace SceneUtil
         osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geom.getNormalArray());
         osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geom.getTexCoordArray(7));
 
-        const std::string_view falloutSkinningMode
-            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
+        const bool falloutInventoryPaperDoll = falloutRig && isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode = falloutRig
+            ? getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll)
+            : std::string_view();
         const bool falloutAutoMode = falloutRig && falloutSkinningMode == "auto";
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
         const bool falloutSourceSkinning = falloutRig
-            && (falloutSkinningMode == "source" || sourceSkinOnly
+            && (mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
                 || (falloutAutoMode && mFalloutUseSourceFallback));
 
         std::vector<osg::Matrixf> boneMatrices(mNodes.size());
@@ -483,7 +816,7 @@ namespace SceneUtil
                     {
                         mLoggedFalloutMatrixChange = true;
                         const std::string& boneName = maxDiffBone < mData->mBones.size() ? mData->mBones[maxDiffBone].mName : "";
-                        Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                                          << "' observed animated bone matrix delta=" << maxDiff
                                          << " boneIndex=" << maxDiffBone << " bone=" << boneName;
                     }
@@ -496,15 +829,17 @@ namespace SceneUtil
             transform.makeIdentity();
         else if (falloutSourceSkinning)
             transform.makeIdentity();
-        else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
-            transform = (*mSkinToSkelMatrix) * mData->mTransform;
+        else if (mSkinToSkelMatrix
+            && (mInverseSkinToSkeletonMatrix || !falloutRig || useFalloutSkinToSkelMatrix()))
+            transform = composeSkinToSkeletonTransform(
+                *mSkinToSkelMatrix, mData->mTransform, mInverseSkinToSkeletonMatrix);
         else
             transform = mData->mTransform;
 
         if (falloutFlagRig && !mLoggedFalloutFlagSkinning)
         {
             mLoggedFalloutFlagSkinning = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout flag RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout flag RigGeometry '" << getName()
                              << "' using animated bone deltas with identity skin root"
                              << " rootBone=" << mData->mRootBone
                              << " bones=" << mData->mBones.size()
@@ -607,7 +942,7 @@ namespace SceneUtil
                 }
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                              << "' skinning mode delta current=" << maxCurrentDelta
                              << " noSkinRoot=" << maxNoSkinRootDelta
                              << " invertedBind=" << maxInvertedBindDelta
@@ -616,13 +951,18 @@ namespace SceneUtil
                              << " bindThenSkeleton=" << maxBindThenSkeletonDelta
                              << " skeletonThenBind=" << maxSkeletonThenBindDelta
                              << " selected=" << falloutSkinningMode
+                             << " inventoryPaperDoll=" << falloutInventoryPaperDoll
                              << " sourceFallback=" << mFalloutUseSourceFallback
+                             << " sourceFrame=" << mSourceFrameSkinning
                              << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
-                             << " useSkinToSkel=" << useFalloutSkinToSkelMatrix();
+                             << " useSkinToSkel=" << useFalloutSkinToSkelMatrix()
+                             << " inverseSkinToSkel=" << mInverseSkinToSkeletonMatrix;
         }
 
         float maxFalloutVertexDelta = 0.f;
         unsigned short maxFalloutVertex = 0;
+        std::size_t invalidBoneInfluences = 0;
+        std::size_t invalidVertexInfluences = 0;
 
         for (const auto& [influences, vertices] : mData->mInfluences)
         {
@@ -630,6 +970,11 @@ namespace SceneUtil
 
             for (const auto& [index, weight] : influences)
             {
+                if (index >= mNodes.size() || index >= boneMatrices.size())
+                {
+                    ++invalidBoneInfluences;
+                    continue;
+                }
                 if (mNodes[index] == nullptr)
                     continue;
                 const float* boneMatPtr = boneMatrices[index].ptr();
@@ -643,6 +988,12 @@ namespace SceneUtil
 
             for (unsigned short vertex : vertices)
             {
+                if (positionSrc == nullptr || positionDst == nullptr || vertex >= positionSrc->size()
+                    || vertex >= positionDst->size())
+                {
+                    ++invalidVertexInfluences;
+                    continue;
+                }
                 (*positionDst)[vertex] = resultMat.preMult((*positionSrc)[vertex]);
                 if (falloutRig && !mLoggedFalloutVertexSkinning)
                 {
@@ -653,10 +1004,12 @@ namespace SceneUtil
                         maxFalloutVertex = vertex;
                     }
                 }
-                if (normalDst)
+                if (normalSrc != nullptr && normalDst != nullptr && vertex < normalSrc->size()
+                    && vertex < normalDst->size())
                     (*normalDst)[vertex] = osg::Matrixf::transform3x3((*normalSrc)[vertex], resultMat);
 
-                if (tangentDst)
+                if (tangentSrc != nullptr && tangentDst != nullptr && vertex < tangentSrc->size()
+                    && vertex < tangentDst->size())
                 {
                     const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
                     osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(
@@ -666,10 +1019,19 @@ namespace SceneUtil
             }
         }
 
+        if (!mLoggedInvalidSkinningData && (invalidBoneInfluences != 0 || invalidVertexInfluences != 0))
+        {
+            mLoggedInvalidSkinningData = true;
+            Log(Debug::Warning) << "RigGeometry '" << getName() << "' ignored invalid skinning data bones="
+                                << invalidBoneInfluences << " vertices=" << invalidVertexInfluences
+                                << " sourceVertices=" << (positionSrc != nullptr ? positionSrc->size() : 0)
+                                << " destinationVertices=" << (positionDst != nullptr ? positionDst->size() : 0);
+        }
+
         if (falloutRig && !mLoggedFalloutVertexSkinning && maxFalloutVertexDelta > 0.001f)
         {
             mLoggedFalloutVertexSkinning = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                              << "' skinned vertices this frame maxVertexSkinDelta=" << maxFalloutVertexDelta
                              << " vertex=" << maxFalloutVertex;
         }
@@ -703,9 +1065,16 @@ namespace SceneUtil
             const osg::Vec3f skinnedCenter = skinnedBox.valid() ? skinnedBox.center() : osg::Vec3f();
             const float sourceDiag = sourceExtent.length();
             const float skinnedDiag = skinnedExtent.length();
+            const float diagonalExpansion
+                = sourceDiag > 0.001f ? skinnedDiag / sourceDiag : (skinnedDiag > 0.001f ? std::numeric_limits<float>::infinity() : 1.f);
             const float centerDelta = (skinnedCenter - sourceCenter).length();
             const float extentRatio = maxFiniteExtentRatio(skinnedExtent, sourceExtent);
-            const float outlierRadius = std::max(64.f, sourceDiag * 1.75f);
+            const float sourceCenterRadius = sourceCenter.length();
+            // Isolated actor-space pieces such as hands and Pip-Boy switches are small meshes located far from the
+            // actor origin. A legitimate articulated pose can move their center several mesh diagonals while still
+            // remaining within the actor's radial envelope.
+            const float outlierRadius
+                = std::max({ 64.f, sourceDiag * 1.75f, sourceCenterRadius * 1.35f });
             std::size_t outlierVertices = 0;
             for (std::size_t i = 0; i < vertexCount; ++i)
             {
@@ -713,9 +1082,16 @@ namespace SceneUtil
                     ++outlierVertices;
             }
 
-            const bool badCenter = centerDelta > std::max(24.f, sourceDiag * 1.25f);
-            const bool badExtent = extentRatio > 3.5f;
-            const bool badDelta = maxVertexDelta > std::max(96.f, sourceDiag * 2.0f);
+            const float centerTravelLimit
+                = std::max({ 24.f, sourceDiag * 1.25f, sourceCenterRadius * 0.9f });
+            const bool badCenter = centerDelta > centerTravelLimit;
+            // A normal animation can rotate a long, thin bind-pose limb from X into Z, producing a very large
+            // component-wise extent ratio even though the complete mesh becomes smaller. Only treat that as a
+            // blow-up when the overall bounding diagonal expands materially as well.
+            const bool badExtent = extentRatio > 3.5f && diagonalExpansion > 1.5f;
+            const float vertexTravelLimit
+                = std::max({ 96.f, sourceDiag * 2.0f, sourceCenterRadius * 1.5f });
+            const bool badDelta = maxVertexDelta > vertexTravelLimit;
             const bool badOutliers = vertexCount > 0 && outlierVertices > std::max<std::size_t>(24, vertexCount / 5);
             const bool bad = badCenter || badExtent || badDelta || badOutliers;
             const char* reason = badCenter   ? "center"
@@ -732,12 +1108,12 @@ namespace SceneUtil
                     mFalloutUseSourceFallback = true;
                     copySourceSkinningGeometry(
                         positionSrc, normalSrc, tangentSrc, positionDst, normalDst, tangentDst);
-                    Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                                      << "' auto skinning fallback=source reason=" << reason;
                 }
             }
 
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                              << "' pose sanity vertices=" << vertexCount
                              << " sourceExtent=(" << sourceExtent.x() << "," << sourceExtent.y() << ","
                              << sourceExtent.z() << ")"
@@ -749,6 +1125,10 @@ namespace SceneUtil
                              << skinnedCenter.z() << ")"
                              << " sourceDiag=" << sourceDiag << " skinnedDiag=" << skinnedDiag
                              << " centerDelta=" << centerDelta << " extentRatio=" << extentRatio
+                             << " diagonalExpansion=" << diagonalExpansion
+                             << " sourceCenterRadius=" << sourceCenterRadius
+                             << " centerTravelLimit=" << centerTravelLimit
+                             << " vertexTravelLimit=" << vertexTravelLimit
                              << " maxVertexDelta=" << maxVertexDelta << " maxVertex=" << maxVertexDeltaIndex
                              << " outlierVertices=" << outlierVertices << " outlierRadius=" << outlierRadius
                              << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
@@ -787,19 +1167,23 @@ namespace SceneUtil
         const bool falloutRig = isFalloutCharacterRig();
         const bool falloutFlagRig = mFalloutFlagSkinning;
         osg::Matrixf transform;
-        const std::string_view falloutSkinningMode
-            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
+        const bool falloutInventoryPaperDoll = falloutRig && isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode = falloutRig
+            ? getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll)
+            : std::string_view();
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
         const bool falloutSourceSkinning = falloutRig
-            && (falloutSkinningMode == "source" || sourceSkinOnly
+            && (mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
                 || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback));
         if (falloutFlagRig)
             transform.makeIdentity();
         else if (falloutSourceSkinning)
             transform.makeIdentity();
-        else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
-            transform = (*mSkinToSkelMatrix) * mData->mTransform;
+        else if (mSkinToSkelMatrix
+            && (mInverseSkinToSkeletonMatrix || !falloutRig || useFalloutSkinToSkelMatrix()))
+            transform = composeSkinToSkeletonTransform(
+                *mSkinToSkelMatrix, mData->mTransform, mInverseSkinToSkeletonMatrix);
         else
             transform = mData->mTransform;
 

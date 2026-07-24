@@ -2,6 +2,9 @@
 
 #include <array>
 #include <cmath>
+#include <initializer_list>
+#include <string>
+#include <string_view>
 
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
@@ -11,7 +14,6 @@
 #include <osg/Material>
 #include <osg/OcclusionQueryNode>
 #include <osg/PositionAttitudeTransform>
-#include <osg/TexEnvCombine>
 #include <osg/TexMat>
 #include <osg/Transform>
 #include <osg/observer_ptr>
@@ -60,18 +62,19 @@ namespace
         osg::ref_ptr<osg::Geometry> geom = new osg::Geometry;
 
         osg::ref_ptr<osg::Vec3Array> verts = new osg::Vec3Array;
-        verts->push_back(osg::Vec3f(-0.5 * scale, -0.5 * scale, 0));
-        verts->push_back(osg::Vec3f(-0.5 * scale, 0.5 * scale, 0));
-        verts->push_back(osg::Vec3f(0.5 * scale, 0.5 * scale, 0));
-        verts->push_back(osg::Vec3f(0.5 * scale, -0.5 * scale, 0));
+        verts->push_back(osg::Vec3f(-0.5f * scale, -0.5f * scale, 0.f));
+        verts->push_back(osg::Vec3f(-0.5f * scale, 0.5f * scale, 0.f));
+        verts->push_back(osg::Vec3f(0.5f * scale, 0.5f * scale, 0.f));
+        verts->push_back(osg::Vec3f(0.5f * scale, -0.5f * scale, 0.f));
 
         geom->setVertexArray(verts);
 
+        // This expects Y-down texture convention
         osg::ref_ptr<osg::Vec2Array> texcoords = new osg::Vec2Array;
-        texcoords->push_back(osg::Vec2f(0, 1));
         texcoords->push_back(osg::Vec2f(0, 0));
-        texcoords->push_back(osg::Vec2f(1, 0));
+        texcoords->push_back(osg::Vec2f(0, 1));
         texcoords->push_back(osg::Vec2f(1, 1));
+        texcoords->push_back(osg::Vec2f(1, 0));
 
         osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
         colors->push_back(osg::Vec4(1.f, 1.f, 1.f, 1.f));
@@ -94,12 +97,20 @@ namespace
         stateset.setRenderBinDetails(renderBin, "RenderBin");
     }
 
-    bool hasFalloutSkyContent(Resource::SceneManager& sceneManager)
+    bool hasNativeBethesdaSkyContent(Resource::SceneManager& sceneManager)
     {
         const VFS::Manager* vfs = sceneManager.getVFS();
         if (vfs != nullptr
             && (vfs->exists(VFS::Path::NormalizedView("meshes/creatures/nvraven/skeleton.nif"))
                 || vfs->exists(VFS::Path::NormalizedView("meshes/clutter/flags/nv_nevadaflag.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("meshes/sky/atmosphere.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("meshes/sky/clouds.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("meshes/sky/stars.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("textures/sky/sun.dds"))
+                || vfs->exists(VFS::Path::NormalizedView("textures/sky/sun_d.dds"))
+                || vfs->exists(VFS::Path::NormalizedView("textures/sky/skymoonfull.dds"))
+                || vfs->exists(VFS::Path::NormalizedView("textures/sky/secunda_full.dds"))
+                || vfs->exists(VFS::Path::NormalizedView("textures/sky/skyrimcloudsupper01.dds"))
                 || vfs->exists(VFS::Path::NormalizedView("falloutnv.esm"))))
             return true;
 
@@ -109,17 +120,56 @@ namespace
 
         for (const std::string& file : world->getContentFiles())
         {
-            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos
+                || file.find("Fallout3.esm") != std::string::npos || file.find("fallout3.esm") != std::string::npos
+                || file.find("Oblivion.esm") != std::string::npos || file.find("oblivion.esm") != std::string::npos
+                || file.find("Skyrim.esm") != std::string::npos || file.find("skyrim.esm") != std::string::npos
+                || file.find("Fallout4.esm") != std::string::npos || file.find("fallout4.esm") != std::string::npos)
                 return true;
         }
 
         return false;
     }
 
+    bool hasSingleFalloutMoonContent(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        return vfs != nullptr
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_full.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wan.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wax.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/skymoonfull.dds"))
+            && !vfs->exists(VFS::Path::NormalizedView("textures/sky/secunda_full.dds"));
+    }
+
     struct DummyComputeBoundCallback : osg::Node::ComputeBoundingSphereCallback
     {
         osg::BoundingSphere computeBound(const osg::Node& node) const override { return osg::BoundingSphere(); }
     };
+
+    VFS::Path::Normalized chooseExistingTexture(
+        const VFS::Manager* vfs, VFS::Path::NormalizedView preferred, VFS::Path::NormalizedView fallback)
+    {
+        if (vfs != nullptr && vfs->exists(preferred))
+            return VFS::Path::Normalized(preferred);
+        return VFS::Path::Normalized(fallback);
+    }
+
+    VFS::Path::Normalized chooseExistingTexture(
+        const VFS::Manager* vfs, std::initializer_list<std::string_view> candidates, std::string_view fallback)
+    {
+        if (vfs != nullptr)
+        {
+            for (std::string_view candidate : candidates)
+            {
+                VFS::Path::Normalized normalized{ std::string(candidate) };
+                if (vfs->exists(normalized))
+                    return normalized;
+            }
+        }
+
+        return VFS::Path::Normalized{ std::string(fallback) };
+    }
 }
 
 namespace MWRender
@@ -213,7 +263,7 @@ namespace MWRender
 
             if (visibleRatio > 0.f)
             {
-                const float fadeThreshold = 0.1;
+                const float fadeThreshold = 0.1f;
                 if (visibleRatio < fadeThreshold)
                 {
                     float fade = 1.f - (fadeThreshold - visibleRatio) / fadeThreshold;
@@ -224,7 +274,7 @@ namespace MWRender
                 }
                 else if (visibleRatio < 1.f)
                 {
-                    const float threshold = 0.6;
+                    const float threshold = 0.6f;
                     visibleRatio = visibleRatio * (1.f - threshold) + threshold;
                 }
             }
@@ -338,8 +388,8 @@ namespace MWRender
 
             forward.normalize();
             sun.normalize();
-            float angleRadians = std::acos(forward * sun);
-            return angleRadians;
+            double angleRadians = std::acos(forward * sun);
+            return static_cast<float>(angleRadians);
         }
 
         osg::ref_ptr<osg::PositionAttitudeTransform> mSunTransform;
@@ -352,92 +402,37 @@ namespace MWRender
 
     struct MoonUpdater : SceneUtil::StateSetUpdater
     {
-        Resource::ImageManager& mImageManager;
-        osg::ref_ptr<osg::Texture2D> mPhaseTex;
-        osg::ref_ptr<osg::Texture2D> mCircleTex;
-        float mTransparency;
-        float mShadowBlend;
-        osg::Vec4f mAtmosphereColor;
-        osg::Vec4f mMoonColor;
-        bool mForceShaders;
+        float mTransparency{ 1.f };
+        float mShadowBlend{ 1.f };
+        osg::Vec4f mAtmosphereColor{ 1.f, 1.f, 1.f, 1.f };
+        osg::Vec4f mMoonColor{ 1.f, 1.f, 1.f, 1.f };
 
-        MoonUpdater(Resource::ImageManager& imageManager, bool forceShaders)
+        MoonUpdater(Resource::ImageManager& imageManager)
             : mImageManager(imageManager)
-            , mPhaseTex()
-            , mCircleTex()
-            , mTransparency(1.0f)
-            , mShadowBlend(1.0f)
-            , mAtmosphereColor(1.0f, 1.0f, 1.0f, 1.0f)
-            , mMoonColor(1.0f, 1.0f, 1.0f, 1.0f)
-            , mForceShaders(forceShaders)
         {
         }
 
         void setDefaults(osg::StateSet* stateset) override
         {
-            if (mForceShaders)
-            {
-                stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Moon)));
-                stateset->setTextureAttributeAndModes(0, mPhaseTex);
-                stateset->setTextureAttributeAndModes(1, mCircleTex);
-                stateset->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                stateset->setTextureMode(1, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                stateset->addUniform(new osg::Uniform("moonBlend", osg::Vec4f{}));
-                stateset->addUniform(new osg::Uniform("atmosphereFade", osg::Vec4f{}));
-                stateset->addUniform(new osg::Uniform("diffuseMap", 0));
-                stateset->addUniform(new osg::Uniform("maskMap", 1));
-                stateset->setAttributeAndModes(
-                    createUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-            }
-            else
-            {
-                stateset->setTextureAttributeAndModes(0, mPhaseTex);
-                osg::ref_ptr<osg::TexEnvCombine> texEnv = new osg::TexEnvCombine;
-                texEnv->setCombine_RGB(osg::TexEnvCombine::MODULATE);
-                texEnv->setSource0_RGB(osg::TexEnvCombine::CONSTANT);
-                texEnv->setSource1_RGB(osg::TexEnvCombine::TEXTURE);
-                texEnv->setConstantColor(osg::Vec4f(1.f, 0.f, 0.f, 1.f)); // mShadowBlend * mMoonColor
-                stateset->setTextureAttributeAndModes(0, texEnv);
-
-                stateset->setTextureAttributeAndModes(1, mCircleTex);
-                osg::ref_ptr<osg::TexEnvCombine> texEnv2 = new osg::TexEnvCombine;
-                texEnv2->setCombine_RGB(osg::TexEnvCombine::ADD);
-                texEnv2->setCombine_Alpha(osg::TexEnvCombine::MODULATE);
-                texEnv2->setSource0_Alpha(osg::TexEnvCombine::TEXTURE);
-                texEnv2->setSource1_Alpha(osg::TexEnvCombine::CONSTANT);
-                texEnv2->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
-                texEnv2->setSource1_RGB(osg::TexEnvCombine::CONSTANT);
-                texEnv2->setConstantColor(osg::Vec4f(0.f, 0.f, 0.f, 1.f)); // mAtmosphereColor.rgb, mTransparency
-                stateset->setTextureAttributeAndModes(1, texEnv2);
-                stateset->setAttributeAndModes(
-                    createUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-            }
+            stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Moon)));
+            stateset->setTextureAttribute(0, mPhaseTex);
+            stateset->setTextureAttribute(1, mCircleTex);
+            stateset->addUniform(new osg::Uniform("moonBlend", osg::Vec4f{}));
+            stateset->addUniform(new osg::Uniform("atmosphereFade", osg::Vec4f{}));
+            stateset->addUniform(new osg::Uniform("diffuseMap", 0));
+            stateset->addUniform(new osg::Uniform("maskMap", 1));
+            stateset->setAttributeAndModes(
+                new osg::BlendFunc(osg::BlendFunc::ONE, osg::BlendFunc::ONE_MINUS_SRC_ALPHA), osg::StateAttribute::ON);
+            stateset->setAttributeAndModes(createUnlitMaterial(), osg::StateAttribute::ON);
         }
 
         void apply(osg::StateSet* stateset, osg::NodeVisitor*) override
         {
-            if (mForceShaders)
-            {
-                stateset->setTextureAttribute(0, mPhaseTex, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                stateset->setTextureAttribute(1, mCircleTex, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-
-                if (auto* uMoonBlend = stateset->getUniform("moonBlend"))
-                    uMoonBlend->set(mMoonColor * mShadowBlend);
-                if (auto* uAtmosphereFade = stateset->getUniform("atmosphereFade"))
-                    uAtmosphereFade->set(
-                        osg::Vec4f(mAtmosphereColor.x(), mAtmosphereColor.y(), mAtmosphereColor.z(), mTransparency));
-            }
-            else
-            {
-                osg::TexEnvCombine* texEnv
-                    = static_cast<osg::TexEnvCombine*>(stateset->getTextureAttribute(0, osg::StateAttribute::TEXENV));
-                texEnv->setConstantColor(mMoonColor * mShadowBlend);
-
-                osg::TexEnvCombine* texEnv2
-                    = static_cast<osg::TexEnvCombine*>(stateset->getTextureAttribute(1, osg::StateAttribute::TEXENV));
-                texEnv2->setConstantColor(
+            if (auto* uMoonBlend = stateset->getUniform("moonBlend"))
+                uMoonBlend->set(mMoonColor * mShadowBlend);
+            if (auto* uAtmosphereFade = stateset->getUniform("atmosphereFade"))
+                uAtmosphereFade->set(
                     osg::Vec4f(mAtmosphereColor.x(), mAtmosphereColor.y(), mAtmosphereColor.z(), mTransparency));
-            }
         }
 
         void setTextures(VFS::Path::NormalizedView phaseTex, VFS::Path::NormalizedView circleTex)
@@ -451,6 +446,11 @@ namespace MWRender
 
             reset();
         }
+
+    private:
+        Resource::ImageManager& mImageManager;
+        osg::ref_ptr<osg::Texture2D> mPhaseTex;
+        osg::ref_ptr<osg::Texture2D> mCircleTex;
     };
 
     class CameraRelativeTransformCullCallback
@@ -499,23 +499,64 @@ namespace MWRender
         mEmissionColor = emissionColor;
     }
 
+    void AtmosphereUpdater::setFalloutAtmosphereZGradient(float minZ, float maxZ)
+    {
+        mFalloutAtmosphereZRange = osg::Vec2f(minZ, maxZ);
+        mUseFalloutAtmosphereZGradient = maxZ - minZ > 0.001f;
+    }
+
+    void AtmosphereUpdater::setFalloutAtmosphereGradientColors(
+        const osg::Vec4f& skyUpperColor, const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor)
+    {
+        mFalloutAtmosphereSkyUpperColor = skyUpperColor;
+        mFalloutAtmosphereSkyLowerColor = skyLowerColor;
+        mFalloutAtmosphereSkyHorizonColor = skyHorizonColor;
+        mHasFalloutAtmosphereGradientColors = true;
+    }
+
     void AtmosphereUpdater::setDefaults(osg::StateSet* stateset)
     {
         stateset->setAttributeAndModes(
             createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Atmosphere)));
+        stateset->addUniform(new osg::Uniform("useFalloutAtmosphereZGradient", 0));
+        stateset->addUniform(new osg::Uniform("falloutAtmosphereZRange", osg::Vec2f(0.f, 1.f)));
+        stateset->addUniform(new osg::Uniform("useFalloutAtmosphereGradientColors", 0));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyUpperColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyLowerColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyHorizonColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
     }
 
     void AtmosphereUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/)
     {
         osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
         mat->setEmission(osg::Material::FRONT_AND_BACK, mEmissionColor);
+        const bool useFalloutAtmosphereGradientColors
+            = mUseFalloutAtmosphereZGradient && mHasFalloutAtmosphereGradientColors;
+        if (osg::Uniform* useFalloutAtmosphereZGradient = stateset->getUniform("useFalloutAtmosphereZGradient"))
+            useFalloutAtmosphereZGradient->set(mUseFalloutAtmosphereZGradient ? 1 : 0);
+        if (osg::Uniform* falloutAtmosphereZRange = stateset->getUniform("falloutAtmosphereZRange"))
+            falloutAtmosphereZRange->set(mFalloutAtmosphereZRange);
+        if (osg::Uniform* useFalloutAtmosphereGradientColorsUniform
+            = stateset->getUniform("useFalloutAtmosphereGradientColors"))
+            useFalloutAtmosphereGradientColorsUniform->set(useFalloutAtmosphereGradientColors ? 1 : 0);
+        if (osg::Uniform* falloutAtmosphereSkyUpperColor
+            = stateset->getUniform("falloutAtmosphereSkyUpperColor"))
+            falloutAtmosphereSkyUpperColor->set(mFalloutAtmosphereSkyUpperColor);
+        if (osg::Uniform* falloutAtmosphereSkyLowerColor
+            = stateset->getUniform("falloutAtmosphereSkyLowerColor"))
+            falloutAtmosphereSkyLowerColor->set(mFalloutAtmosphereSkyLowerColor);
+        if (osg::Uniform* falloutAtmosphereSkyHorizonColor
+            = stateset->getUniform("falloutAtmosphereSkyHorizonColor"))
+            falloutAtmosphereSkyHorizonColor->set(mFalloutAtmosphereSkyHorizonColor);
     }
 
-    AtmosphereNightUpdater::AtmosphereNightUpdater(Resource::ImageManager* imageManager, bool forceShaders)
+    AtmosphereNightUpdater::AtmosphereNightUpdater(Resource::ImageManager* imageManager)
         : mColor(osg::Vec4f(0, 0, 0, 0))
         , mTexture(new osg::Texture2D(imageManager->getWarningImage()))
-        , mForceShaders(forceShaders)
     {
         mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
@@ -528,42 +569,17 @@ namespace MWRender
 
     void AtmosphereNightUpdater::setDefaults(osg::StateSet* stateset)
     {
-        if (mForceShaders)
-        {
-            stateset->addUniform(new osg::Uniform("opacity", 0.f));
-            stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Atmosphere_Night)));
-        }
-        else
-        {
-            osg::ref_ptr<osg::TexEnvCombine> texEnv = new osg::TexEnvCombine;
-            texEnv->setCombine_Alpha(osg::TexEnvCombine::MODULATE);
-            texEnv->setSource0_Alpha(osg::TexEnvCombine::PREVIOUS);
-            texEnv->setSource1_Alpha(osg::TexEnvCombine::CONSTANT);
-            texEnv->setCombine_RGB(osg::TexEnvCombine::REPLACE);
-            texEnv->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
-
-            stateset->setTextureAttributeAndModes(1, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-            stateset->setTextureAttributeAndModes(1, texEnv, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-        }
+        stateset->addUniform(new osg::Uniform("opacity", 0.f));
+        stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Atmosphere_Night)));
     }
 
     void AtmosphereNightUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/)
     {
-        if (mForceShaders)
-        {
-            stateset->getUniform("opacity")->set(mColor.a());
-        }
-        else
-        {
-            osg::TexEnvCombine* texEnv
-                = static_cast<osg::TexEnvCombine*>(stateset->getTextureAttribute(1, osg::StateAttribute::TEXENV));
-            texEnv->setConstantColor(mColor);
-        }
+        stateset->getUniform("opacity")->set(mColor.a());
     }
 
-    CloudUpdater::CloudUpdater(bool forceShaders)
+    CloudUpdater::CloudUpdater()
         : mOpacity(0.f)
-        , mForceShaders(forceShaders)
     {
     }
 
@@ -582,9 +598,16 @@ namespace MWRender
         mOpacity = opacity;
     }
 
+    void CloudUpdater::setFalloutCloudShader(bool enabled)
+    {
+        mFalloutCloudShader = enabled;
+    }
+
     void CloudUpdater::setTextureCoord(float timer)
     {
-        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, -timer, 0.f));
+        // FO3/FNV SKYCLOUDS.vso adds the WTHR accumulator to texture Y.
+        // Morrowind's cloud path historically scrolls in the opposite direction.
+        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, mFalloutCloudShader ? timer : -timer, 0.f));
     }
 
     void CloudUpdater::setDefaults(osg::StateSet* stateset)
@@ -592,33 +615,25 @@ namespace MWRender
         stateset->setAttribute(
             createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
+        // Fallout's SkyShaderProperty performs ordinary source-alpha blending
+        // even when the NIF has no NiAlphaProperty. In particular, alpha.dds
+        // is a DXT5 transparency mask for the clear horizon layers; relying on
+        // OpenGL's default ONE/ZERO blend function turns those meshes into the
+        // opaque concentric bands seen in exterior proofs.
+        osg::ref_ptr<osg::BlendFunc> blendFunc = new osg::BlendFunc;
+        blendFunc->setFunction(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
+        stateset->setAttributeAndModes(
+            blendFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+
         osg::ref_ptr<osg::TexMat> texmat = new osg::TexMat;
         stateset->setTextureAttributeAndModes(0, texmat);
 
-        if (mForceShaders)
-        {
-            stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
-            stateset->addUniform(new osg::Uniform("opacity", 1.f));
-            stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Clouds)));
-        }
-        else
-        {
-            stateset->setTextureAttributeAndModes(1, texmat);
-            // need to set opacity on a separate texture unit, diffuse alpha is used by the vertex colors already
-            osg::ref_ptr<osg::TexEnvCombine> texEnvCombine = new osg::TexEnvCombine;
-            texEnvCombine->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
-            texEnvCombine->setSource0_Alpha(osg::TexEnvCombine::PREVIOUS);
-            texEnvCombine->setSource1_Alpha(osg::TexEnvCombine::CONSTANT);
-            texEnvCombine->setConstantColor(osg::Vec4f(1, 1, 1, 1));
-            texEnvCombine->setCombine_Alpha(osg::TexEnvCombine::MODULATE);
-            texEnvCombine->setCombine_RGB(osg::TexEnvCombine::REPLACE);
-
-            stateset->setTextureAttributeAndModes(1, texEnvCombine);
-
-            stateset->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-            stateset->setTextureMode(1, GL_TEXTURE_2D, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-        }
+        stateset->addUniform(new osg::Uniform("opacity", 1.f));
+        stateset->addUniform(new osg::Uniform("useFalloutCloudShader", mFalloutCloudShader));
+        stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Clouds)));
     }
 
     void CloudUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
@@ -631,18 +646,8 @@ namespace MWRender
         osg::TexMat* texMat = static_cast<osg::TexMat*>(stateset->getTextureAttribute(0, osg::StateAttribute::TEXMAT));
         texMat->setMatrix(mTexMat);
 
-        if (mForceShaders)
-        {
-            stateset->getUniform("opacity")->set(mOpacity);
-        }
-        else
-        {
-            stateset->setTextureAttribute(1, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-
-            osg::TexEnvCombine* texEnv
-                = static_cast<osg::TexEnvCombine*>(stateset->getTextureAttribute(1, osg::StateAttribute::TEXENV));
-            texEnv->setConstantColor(osg::Vec4f(1, 1, 1, mOpacity));
-        }
+        stateset->getUniform("opacity")->set(mOpacity);
+        stateset->getUniform("useFalloutCloudShader")->set(mFalloutCloudShader);
     }
 
     class SkyStereoStatesetUpdater : public SceneUtil::StateSetUpdater
@@ -695,47 +700,6 @@ namespace MWRender
 
     private:
     };
-
-    void ParticleStereoStatesetUpdater::setDefaults(osg::StateSet* stateset)
-    {
-        if (!Stereo::getMultiview())
-            stateset->addUniform(
-                new osg::Uniform(osg::Uniform::FLOAT_MAT4, "projectionMatrix"), osg::StateAttribute::ON | osg::StateAttribute::PROTECTED);
-    }
-
-    void ParticleStereoStatesetUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/)
-    {
-        if (Stereo::getMultiview())
-        {
-            std::array<osg::Matrix, 2> projectionMatrices;
-            auto& sm = Stereo::Manager::instance();
-
-            for (int view : { 0, 1 })
-            {
-                auto projectionMatrix = sm.computeEyeProjection(view, SceneUtil::AutoDepth::isReversed());
-                auto viewOffsetMatrix = sm.computeEyeViewOffset(view);
-                projectionMatrices[view] = viewOffsetMatrix * projectionMatrix;
-            }
-
-            Stereo::setMultiviewMatrices(stateset, projectionMatrices);
-        }
-    }
-    void ParticleStereoStatesetUpdater::applyLeft(osg::StateSet* stateset, osgUtil::CullVisitor* /*cv*/)
-    {
-        auto& sm = Stereo::Manager::instance();
-        auto* projectionMatrixUniform = stateset->getUniform("projectionMatrix");
-        auto projectionMatrix = sm.computeEyeProjection(0, SceneUtil::AutoDepth::isReversed());
-        auto viewOffsetMatrix = sm.computeEyeViewOffset(0);
-        projectionMatrixUniform->set(viewOffsetMatrix * projectionMatrix);
-    }
-    void ParticleStereoStatesetUpdater::applyRight(osg::StateSet* stateset, osgUtil::CullVisitor* /*cv*/)
-    {
-        auto& sm = Stereo::Manager::instance();
-        auto* projectionMatrixUniform = stateset->getUniform("projectionMatrix");
-        auto projectionMatrix = sm.computeEyeProjection(1, SceneUtil::AutoDepth::isReversed());
-        auto viewOffsetMatrix = sm.computeEyeViewOffset(1);
-        projectionMatrixUniform->set(viewOffsetMatrix * projectionMatrix);
-    }
 
     CameraRelativeTransform::CameraRelativeTransform()
     {
@@ -844,27 +808,18 @@ namespace MWRender
     Sun::Sun(osg::Group* parentNode, Resource::SceneManager& sceneManager)
         : CelestialBody(parentNode, 1.0f, 1, Mask_Sun)
         , mUpdater(new SunUpdater)
+        , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
-        if (hasFalloutSkyContent(sceneManager))
-        {
-            setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content";
-            return;
-        }
-
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
 
-        constexpr VFS::Path::NormalizedView image("textures/tx_sun_05.dds");
-        constexpr VFS::Path::NormalizedView flashImage("textures/tx_sun_flash_grey_05.dds");
-
-        if (!sceneManager.getVFS()->exists(image))
-        {
-            setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard; missing Morrowind texture " << image;
-            return;
-        }
+        const VFS::Path::Normalized image = chooseExistingTexture(sceneManager.getVFS(),
+            { "textures/sky/sun.dds", "textures/sky/sun_d.dds", "textures/lensflare/sun01.dds",
+                "textures/sky/soulcairnsun01.dds" },
+            "textures/tx_sun_05.dds");
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled native Bethesda sun billboard using texture " << image.value();
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -872,8 +827,7 @@ namespace MWRender
 
         osg::StateSet* sunStateSet = mGeom->getOrCreateStateSet();
         sunStateSet->setTextureAttributeAndModes(0, sunTex);
-        sunStateSet->setTextureAttributeAndModes(
-            0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
+        sunStateSet->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
         sunStateSet->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
         setAlphaBlendedSkyBillboard(*sunStateSet);
 
@@ -882,14 +836,6 @@ namespace MWRender
         osg::StateSet* stateset = queryNode->getOrCreateStateSet();
         stateset->setRenderBinDetails(RenderBin_OcclusionQuery, "RenderBin");
         stateset->setNestRenderBins(false);
-        // Set up alpha testing on the occlusion testing subgraph, that way we can get the occlusion tested fragments to
-        // match the circular shape of the sun
-        if (!sceneManager.getForceShaders())
-        {
-            osg::ref_ptr<osg::AlphaFunc> alphaFunc = new osg::AlphaFunc;
-            alphaFunc->setFunction(osg::AlphaFunc::GREATER, 0.8);
-            stateset->setAttributeAndModes(alphaFunc);
-        }
         stateset->setTextureAttributeAndModes(0, sunTex);
         stateset->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
         stateset->setAttributeAndModes(createUnlitMaterial());
@@ -904,10 +850,7 @@ namespace MWRender
         mOcclusionQueryVisiblePixels = createOcclusionQueryNode(queryNode, true);
         mOcclusionQueryTotalPixels = createOcclusionQueryNode(queryNode, false);
 
-        if (sceneManager.getVFS()->exists(flashImage))
-            createSunFlash(imageManager);
-        else
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun flash; missing Morrowind texture " << flashImage;
+        createSunFlash(sceneManager);
         createSunGlare();
     }
 
@@ -1011,10 +954,16 @@ namespace MWRender
         return oqn;
     }
 
-    void Sun::createSunFlash(Resource::ImageManager& imageManager)
+    void Sun::createSunFlash(Resource::SceneManager& sceneManager)
     {
-        constexpr VFS::Path::NormalizedView flashImage("textures/tx_sun_flash_grey_05.dds");
-        osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(flashImage));
+        Resource::ImageManager& imageManager = *sceneManager.getImageManager();
+        const VFS::Path::Normalized image = chooseExistingTexture(sceneManager.getVFS(),
+            { "textures/sky/nv_sunglare.dds", "textures/sky/sunglare.dds", "textures/sky/sunglarenonhdr.dds",
+                "textures/sky/sunglare_d.dds", "textures/sky/sunglare.dds", "textures/lensflare/suncolor.dds" },
+            "textures/tx_sun_flash_grey_05.dds");
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled native Bethesda sun glare using texture " << image.value();
+        osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(image));
         tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         tex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
 
@@ -1102,34 +1051,16 @@ namespace MWRender
         : CelestialBody(parentNode, scaleFactor, 2)
         , mType(type)
         , mPhase(MoonState::Phase::Unspecified)
-        , mUpdater(new MoonUpdater(*sceneManager.getImageManager(), sceneManager.getForceShaders()))
+        , mVFS(sceneManager.getVFS())
+        , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
+        , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
-        if (hasFalloutSkyContent(sceneManager))
+        if (mType == Type_Secunda && hasSingleFalloutMoonContent(sceneManager))
         {
             setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
-                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
-                             << " moon billboard for Fallout sky content";
-            return;
+            Log(Debug::Info) << "FNV/ESM4: disabled legacy Secunda billboard; retail Fallout Sky::secundaMoon is null";
         }
-
-        const bool secunda = mType == Moon::Type_Secunda;
-        constexpr VFS::Path::NormalizedView secundaFull("textures/tx_secunda_full.dds");
-        constexpr VFS::Path::NormalizedView secundaCircle("textures/tx_mooncircle_full_s.dds");
-        constexpr VFS::Path::NormalizedView masserFull("textures/tx_masser_full.dds");
-        constexpr VFS::Path::NormalizedView masserCircle("textures/tx_mooncircle_full_m.dds");
-        const bool hasMoonTextures = secunda
-            ? sceneManager.getVFS()->exists(secundaFull) && sceneManager.getVFS()->exists(secundaCircle)
-            : sceneManager.getVFS()->exists(masserFull) && sceneManager.getVFS()->exists(masserCircle);
-        if (hasMoonTextures)
-            setPhase(MoonState::Phase::Full);
-        else
-        {
-            setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
-                             << (secunda ? "Secunda" : "Masser")
-                             << " moon billboard; missing Morrowind moon phase/circle textures";
-        }
+        setPhase(MoonState::Phase::Full);
         setVisible(true);
 
         setAlphaBlendedSkyBillboard(*mGeom->getOrCreateStateSet());
@@ -1221,55 +1152,65 @@ namespace MWRender
 
         mPhase = phase;
 
-        std::string textureName = "textures/tx_";
-
-        if (mType == Moon::Type_Secunda)
-            textureName += "secunda_";
-        else
-            textureName += "masser_";
+        std::string suffix;
 
         switch (mPhase)
         {
             case MoonState::Phase::New:
-                textureName += "new";
+                suffix = "new";
                 break;
             case MoonState::Phase::WaxingCrescent:
-                textureName += "one_wax";
+                suffix = "one_wax";
                 break;
             case MoonState::Phase::FirstQuarter:
-                textureName += "half_wax";
+                suffix = "half_wax";
                 break;
             case MoonState::Phase::WaxingGibbous:
-                textureName += "three_wax";
+                suffix = "three_wax";
                 break;
             case MoonState::Phase::WaningCrescent:
-                textureName += "one_wan";
+                suffix = "one_wan";
                 break;
             case MoonState::Phase::ThirdQuarter:
-                textureName += "half_wan";
+                suffix = "half_wan";
                 break;
             case MoonState::Phase::WaningGibbous:
-                textureName += "three_wan";
+                suffix = "three_wan";
                 break;
             case MoonState::Phase::Full:
-                textureName += "full";
+                suffix = "full";
                 break;
             default:
                 break;
         }
 
-        textureName += ".dds";
-
-        const VFS::Path::Normalized texturePath(std::move(textureName));
+        const std::string moonName = mType == Moon::Type_Secunda ? "secunda_" : "masser_";
+        const std::string fallbackTextureName = "textures/tx_" + moonName + suffix + ".dds";
+        const std::string nativePhaseTextureName = "textures/sky/" + moonName + suffix + ".dds";
+        const VFS::Path::Normalized texturePath = mType == Moon::Type_Secunda
+            ? chooseExistingTexture(mVFS,
+                { nativePhaseTextureName, "textures/sky/skymoonfull.dds", "textures/sky/skysecunda.dds",
+                    "textures/sky/secunda_full.dds" },
+                fallbackTextureName)
+            : chooseExistingTexture(mVFS, { nativePhaseTextureName, "textures/sky/skymasser.dds" },
+                fallbackTextureName);
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled native Bethesda "
+                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
+                             << " moon billboard using texture " << texturePath.value();
 
         if (mType == Moon::Type_Secunda)
         {
-            constexpr VFS::Path::NormalizedView secunda("textures/tx_mooncircle_full_s.dds");
+            const VFS::Path::Normalized secunda = chooseExistingTexture(mVFS,
+                { "textures/sky/secunda_full.dds", "textures/sky/skymoonfull.dds", "textures/sky/skysecunda.dds" },
+                "textures/tx_mooncircle_full_s.dds");
             mUpdater->setTextures(texturePath, secunda);
         }
         else
         {
-            constexpr VFS::Path::NormalizedView masser("textures/tx_mooncircle_full_m.dds");
+            const VFS::Path::Normalized masser = chooseExistingTexture(
+                mVFS, { "textures/sky/masser_full.dds", "textures/sky/skymasser.dds" },
+                "textures/tx_mooncircle_full_m.dds");
             mUpdater->setTextures(texturePath, masser);
         }
     }
@@ -1290,7 +1231,7 @@ namespace MWRender
     void RainShooter::shoot(osgParticle::Particle* particle) const
     {
         particle->setVelocity(mVelocity);
-        particle->setAngle(osg::Vec3f(-mAngle, 0, (Misc::Rng::rollProbability() * 2 - 1) * osg::PI));
+        particle->setAngle(osg::Vec3f(-mAngle, 0.f, 0.f));
     }
 
     void RainShooter::setVelocity(const osg::Vec3f& velocity)
@@ -1339,7 +1280,7 @@ namespace MWRender
                     if (i >= 49 && i <= 64)
                         alpha = 0.f; // bottom-most row
                     else if (i >= 33 && i <= 48)
-                        alpha = 0.25098; // second row
+                        alpha = 0.25098f; // second row
                     else
                         alpha = 1.f;
                     break;

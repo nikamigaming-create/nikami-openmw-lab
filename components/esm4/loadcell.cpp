@@ -121,10 +121,19 @@ void ESM4::Cell::load(ESM4::Reader& reader)
             {
                 if (subHdr.dataSize == 2)
                     reader.get(mCellFlags);
+                else if (subHdr.dataSize == 4)
+                {
+                    std::uint32_t value = 0;
+                    reader.get(value);
+                    mCellFlags = static_cast<std::uint16_t>(value & std::numeric_limits<std::uint16_t>::max());
+                }
                 else
                 {
                     if (subHdr.dataSize != 1)
-                        throw std::runtime_error("CELL unexpected DATA flag size");
+                    {
+                        reader.skipSubRecordData();
+                        break;
+                    }
                     std::uint8_t value = 0;
                     reader.get(value);
                     mCellFlags = value;
@@ -167,16 +176,28 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 break;
             }
             case ESM::fourCC("XGLB"):
-                reader.getFormId(mGlobal);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mGlobal);
+                else
+                    reader.skipSubRecordData();
                 break; // Oblivion only?
             case ESM::fourCC("XCCM"):
-                reader.getFormId(mClimate);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mClimate);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCWT"):
-                reader.getFormId(mWater);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mWater);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCLW"):
-                reader.get(mWaterHeight);
+                if (subHdr.dataSize == sizeof(mWaterHeight))
+                    reader.get(mWaterHeight);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCLL"):
             {
@@ -201,26 +222,49 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 reader.get(mMusicType);
                 break; // Oblivion only?
             case ESM::fourCC("LTMP"):
-                reader.getFormId(mLightingTemplate);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mLightingTemplate);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("LNAM"):
-                reader.get(mLightingTemplateFlags);
+                if (subHdr.dataSize == sizeof(mLightingTemplateFlags))
+                    reader.get(mLightingTemplateFlags);
+                else
+                    reader.skipSubRecordData();
                 break; // seems to always follow LTMP
             case ESM::fourCC("XCMO"):
-                reader.getFormId(mMusic);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mMusic);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCAS"):
-                reader.getFormId(mAcousticSpace);
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mAcousticSpace);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("XCIM"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mImageSpace);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("TVDT"):
+            case ESM::fourCC("XBPS"): // Starfield
+            case ESM::fourCC("XCLA"): // Starfield
+            case ESM::fourCC("XCLD"): // Starfield
             case ESM::fourCC("MHDT"):
+            case ESM::fourCC("XEMP"): // Starfield
             case ESM::fourCC("XCGD"):
+            case ESM::fourCC("XILS"): // Starfield
             case ESM::fourCC("XNAM"):
             case ESM::fourCC("XLCN"):
+            case ESM::fourCC("XTV2"): // Starfield
             case ESM::fourCC("XWCS"):
             case ESM::fourCC("XWCU"):
             case ESM::fourCC("XWCN"):
-            case ESM::fourCC("XCIM"):
             case ESM::fourCC("XEZN"):
             case ESM::fourCC("XWEM"):
             case ESM::fourCC("XILL"):
@@ -239,6 +283,8 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadcell"))
+                    break;
                 throw std::runtime_error("ESM4::CELL::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

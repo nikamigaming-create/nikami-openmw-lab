@@ -87,7 +87,18 @@ end
 
 local wasKBMouseMode = false
 local wasPaused = false
+local lastActiveControllerLayer = ''
 local updateOnce = true
+
+local function activeControllerLayerChanged()
+    local activeLayer = vr._getActiveControllerLayer and vr._getActiveControllerLayer() or ''
+    if activeLayer ~= lastActiveControllerLayer then
+        lastActiveControllerLayer = activeLayer
+        return true
+    end
+    return false
+end
+
 local function onVRFrame()
 
     local KBMouseMode = I.vrinputs.isKBMouseMode()
@@ -104,7 +115,7 @@ local function onVRFrame()
     -- We only want to update the reference poses when the user enters GUI mode. Otherwise, the windows will be actively tracking
     -- them which is weird, uncomfortable, and impractical.
     local isPaused = core.isWorldPaused()
-    if (isPaused and not wasPaused) or common.updateVisibleLayers() then
+    if (isPaused and not wasPaused) or common.updateVisibleLayers() or activeControllerLayerChanged() then
         update()
     end
 

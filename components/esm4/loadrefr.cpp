@@ -33,6 +33,7 @@
 
 void ESM4::Reference::load(ESM4::Reader& reader)
 {
+    const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     mId = reader.hdr().record.getFormId();
     reader.adjustFormId(mId);
     mFlags = reader.hdr().record.flags;
@@ -364,8 +365,21 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadrefr"))
+                    break;
                 throw std::runtime_error("ESM4::REFR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
+    }
+    if (isStarfield)
+    {
+        // Starfield stores exterior placement coordinates in meter-like units. Its 128-unit cells map to the
+        // 4096-unit ESM4 cell used by OpenMW, so placed geometry and door destinations need the same 32x basis
+        // conversion as Starfield's external mesh vertices.
+        constexpr float starfieldWorldScale = 32.f;
+        for (float& value : mPos.pos)
+            value *= starfieldWorldScale;
+        for (float& value : mDoor.destPos.pos)
+            value *= starfieldWorldScale;
     }
     // if (mFormId == 0x0016B74B) // base is TACT vCasinoUltraLuxeRadio in cell ULCasino
     // std::cout << "REFR SCRO " << formIdToString(sid) << std::endl;

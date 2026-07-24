@@ -1,6 +1,7 @@
 #include "debugging.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <fstream>
 #include <iostream>
@@ -478,7 +479,11 @@ namespace Debug
 #if (defined(__APPLE__) || defined(__linux) || defined(__unix) || defined(__posix))
             if (!isatty(fileno(stdin)))
 #endif
-                SDL_ShowSimpleMessageBox(0, (std::string(appName) + ": Fatal error").c_str(), e.what(), nullptr);
+            {
+                const char* suppressFatalDialog = std::getenv("OPENMW_WORLD_VIEWER_SUPPRESS_FATAL_DIALOG");
+                if (suppressFatalDialog == nullptr || suppressFatalDialog[0] == '\0' || suppressFatalDialog[0] == '0')
+                    SDL_ShowSimpleMessageBox(0, (std::string(appName) + ": Fatal error").c_str(), e.what(), nullptr);
+            }
 
             Log(Debug::Error) << "Fatal error: " << e.what();
 

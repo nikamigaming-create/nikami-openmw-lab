@@ -2,12 +2,23 @@
 
 #include <components/debug/debuglog.hpp>
 
+#include <cstdlib>
+
 #include "exception.hpp"
 #include "nifkey.hpp"
 #include "node.hpp"
 
 namespace Nif
 {
+    namespace
+    {
+        bool allowMissingSkinBonesForWorldViewer()
+        {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_ALLOW_MISSING_SKIN_BONES");
+            return value != nullptr && *value != '\0' && value[0] != '0';
+        }
+    }
+
     void NiGeometryData::read(NIFStream* nif)
     {
         if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 114))
@@ -277,10 +288,30 @@ namespace Nif
         if (mBones.size() != mData->mBones.size())
             throw Nif::Exception("Mismatch in NiSkinData bone count", nif.getFilename());
 
-        for (auto& bone : mBones)
+        for (std::size_t boneIndex = 0; boneIndex < mBones.size(); ++boneIndex)
         {
+            auto& bone = mBones[boneIndex];
             if (bone.empty())
+            {
+                if (allowMissingSkinBonesForWorldViewer())
+                {
+                    const osg::Matrixf skinTransform = mData->mBones[boneIndex].mTransform.toMatrix();
+                    Log(Debug::Info) << "World viewer: allowing missing NiSkinInstance bone in " << nif.getFilename()
+                                     << " boneIndex=" << boneIndex
+                                     << " boneCount=" << mBones.size()
+                                     << " weights=" << mData->mBones[boneIndex].mWeights.size()
+                                     << " skinT=(" << skinTransform.getTrans().x() << ","
+                                     << skinTransform.getTrans().y() << "," << skinTransform.getTrans().z() << ")"
+                                     << " row0=(" << skinTransform(0, 0) << "," << skinTransform(0, 1) << ","
+                                     << skinTransform(0, 2) << ")"
+                                     << " row1=(" << skinTransform(1, 0) << "," << skinTransform(1, 1) << ","
+                                     << skinTransform(1, 2) << ")"
+                                     << " row2=(" << skinTransform(2, 0) << "," << skinTransform(2, 1) << ","
+                                     << skinTransform(2, 2) << ")";
+                    continue;
+                }
                 throw Nif::Exception("Oops: Missing bone! Don't know how to handle this.", nif.getFilename());
+            }
             bone->setBone();
         }
     }
@@ -327,10 +358,37 @@ namespace Nif
         if (mBones.size() != mData->mBones.size())
             throw Nif::Exception("Mismatch in BSSkin::BoneData bone count", nif.getFilename());
 
-        for (auto& bone : mBones)
+        for (std::size_t boneIndex = 0; boneIndex < mBones.size(); ++boneIndex)
         {
+            auto& bone = mBones[boneIndex];
             if (bone.empty())
+            {
+                if (allowMissingSkinBonesForWorldViewer())
+                {
+                    const osg::Matrixf skinTransform = mData->mBones[boneIndex].mTransform.toMatrix();
+                    Log(Debug::Info) << "World viewer: allowing missing BSSkin::Instance bone in " << nif.getFilename()
+                                     << " boneIndex=" << boneIndex
+                                     << " boneCount=" << mBones.size()
+                                     << " root=\""
+                                     << (!mRoot.empty() && mRoot.getPtr() != nullptr ? mRoot.getPtr()->mName : std::string())
+                                     << "\""
+                                     << " scaleCount=" << mScales.size()
+                                     << " scale=("
+                                     << (boneIndex < mScales.size() ? mScales[boneIndex].x() : 0.f) << ","
+                                     << (boneIndex < mScales.size() ? mScales[boneIndex].y() : 0.f) << ","
+                                     << (boneIndex < mScales.size() ? mScales[boneIndex].z() : 0.f) << ")"
+                                     << " skinT=(" << skinTransform.getTrans().x() << ","
+                                     << skinTransform.getTrans().y() << "," << skinTransform.getTrans().z() << ")"
+                                     << " row0=(" << skinTransform(0, 0) << "," << skinTransform(0, 1) << ","
+                                     << skinTransform(0, 2) << ")"
+                                     << " row1=(" << skinTransform(1, 0) << "," << skinTransform(1, 1) << ","
+                                     << skinTransform(1, 2) << ")"
+                                     << " row2=(" << skinTransform(2, 0) << "," << skinTransform(2, 1) << ","
+                                     << skinTransform(2, 2) << ")";
+                    continue;
+                }
                 throw Nif::Exception("Oops: Missing bone! Don't know how to handle this.", nif.getFilename());
+            }
             bone->setBone();
         }
     }

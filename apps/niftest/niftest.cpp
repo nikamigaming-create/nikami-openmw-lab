@@ -499,6 +499,12 @@ bool isImportantFNVHumanBone(const std::string& lowerName)
         "bip01 r forearm",
         "bip01 l hand",
         "bip01 r hand",
+        "bip01 l thumb1",
+        "bip01 l thumb11",
+        "bip01 l thumb12",
+        "bip01 r thumb1",
+        "bip01 r thumb11",
+        "bip01 r thumb12",
         "bip01 l finger0",
         "bip01 l finger01",
         "bip01 l finger02",
@@ -529,6 +535,12 @@ bool isImportantFNVHumanBone(const std::string& lowerName)
         "bip01 r finger4",
         "bip01 r finger41",
         "bip01 r finger42",
+        "bip01 l foretwist",
+        "bip01 r foretwist",
+        "bip01 luparmtwistbone",
+        "bip01 ruparmtwistbone",
+        "bip01 lpauldron",
+        "bip01 rpauldron",
         "bip01 l thigh",
         "bip01 r thigh",
         "bip01 l calf",
@@ -1024,7 +1036,8 @@ int runFnvSkinBindAudit(const std::filesystem::path& skeletonPath, const std::fi
 }
 
 int runFnvTransformDump(
-    const std::filesystem::path& skeletonPath, const std::filesystem::path& kfPath, const std::filesystem::path& outPath)
+    const std::filesystem::path& skeletonPath, const std::filesystem::path& kfPath,
+    const std::filesystem::path& outPath, float sampleTime)
 {
     Nif::Reader::setLoadUnsupportedFiles(true);
 
@@ -1037,7 +1050,6 @@ int runFnvTransformDump(
     SceneUtil::KeyframeHolder keyframes;
     NifOsg::Loader::loadKf(*kfFile, keyframes);
 
-    const float sampleTime = 1.2f;
     std::shared_ptr<SceneUtil::ControllerSource> sampleTimeSource
         = std::make_shared<ConstantTransformDumpTimeSource>(sampleTime);
     for (const auto& [name, controller] : keyframes.mKeyframeControllers)
@@ -1134,6 +1146,77 @@ int runFnvTransformDump(
         out << "{\"time\":" << time << ",\"text\":\"" << jsonEscape(text) << "\"}";
     }
     out << "],\n";
+    out << "  \"skeletonControllers\": [";
+    bool firstSkeletonController = true;
+    for (const auto& record : skeletonFile->mRecords)
+    {
+        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
+        if (object == nullptr)
+            continue;
+        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+             controller = controller->mNext)
+        {
+            if (!firstSkeletonController)
+                out << ',';
+            firstSkeletonController = false;
+            out << "{\"node\":\"" << jsonEscape(object->mName) << "\""
+                << ",\"controllerType\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"controllerRecordType\":" << controller->recType
+                << ",\"flags\":" << controller->mFlags;
+            if (const auto* transformController = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr()))
+            {
+                const Nif::NiInterpolator* interpolator = transformController->mInterpolator.getPtr();
+                out << ",\"interpolatorType\":\""
+                    << jsonEscape(interpolator != nullptr ? interpolator->recName : std::string()) << "\"";
+                if (const auto* blend = dynamic_cast<const Nif::NiBlendInterpolator*>(interpolator))
+                {
+                    out << ",\"blendFlags\":" << static_cast<unsigned int>(blend->mFlags)
+                        << ",\"blendManagerControlled\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_ManagerControlled) ? "true" : "false")
+                        << ",\"blendOnlyUseHighestWeight\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_OnlyUseHighestWeight) ? "true" : "false");
+                }
+            }
+            out << "}";
+        }
+    }
+    out << "],\n";
+    out << "  \"boneLodControllers\": [";
+    bool firstBoneLodController = true;
+    for (const auto& record : skeletonFile->mRecords)
+    {
+        const auto* controller = dynamic_cast<const Nif::NiBoneLODController*>(record.get());
+        if (controller == nullptr)
+            continue;
+        if (!firstBoneLodController)
+            out << ',';
+        firstBoneLodController = false;
+        out << "{\"type\":\"" << jsonEscape(controller->recName) << "\""
+            << ",\"activeLod\":" << controller->mLOD
+            << ",\"numNodeGroups\":" << controller->mNumNodeGroups
+            << ",\"groups\":[";
+        bool firstGroup = true;
+        for (std::size_t groupIndex = 0; groupIndex < controller->mNodeGroups.size(); ++groupIndex)
+        {
+            if (!firstGroup)
+                out << ',';
+            firstGroup = false;
+            out << "{\"index\":" << groupIndex << ",\"nodes\":[";
+            bool firstNode = true;
+            for (const auto& node : controller->mNodeGroups[groupIndex])
+            {
+                if (node.empty())
+                    continue;
+                if (!firstNode)
+                    out << ',';
+                firstNode = false;
+                out << "\"" << jsonEscape(node->mName) << "\"";
+            }
+            out << "]}";
+        }
+        out << "]}";
+    }
+    out << "],\n";
     out << "  \"controllerNames\": [";
     bool firstControllerName = true;
     for (const auto& [name, controller] : keyframes.mKeyframeControllers)
@@ -1194,8 +1277,63 @@ int runFnvTransformDump(
                 << ",\"interpolatorId\":\"" << jsonEscape(block.mInterpolatorId) << "\""
                 << ",\"interpolatorType\":" << interpolatorType
                 << ",\"interpolatorName\":\"" << jsonEscape(interpolatorName) << "\""
-                << ",\"loadedAsTransform\":" << (isLoadedFNVTransformInterpolator(interpolatorType) ? "true" : "false")
-                << "}";
+                << ",\"loadedAsTransform\":" << (isLoadedFNVTransformInterpolator(interpolatorType) ? "true" : "false");
+            if (interpolatorType == Nif::RC_NiTransformInterpolator)
+            {
+                const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
+                const osg::Quat& defaultRotation = transform->mDefaultValue.mRotation;
+                const osg::Vec3f& defaultTranslation = transform->mDefaultValue.mTranslation;
+                const bool defaultRotationReasonable = std::isfinite(defaultRotation.x())
+                    && std::isfinite(defaultRotation.y()) && std::isfinite(defaultRotation.z())
+                    && std::isfinite(defaultRotation.w()) && std::abs(defaultRotation.x()) <= 2.f
+                    && std::abs(defaultRotation.y()) <= 2.f && std::abs(defaultRotation.z()) <= 2.f
+                    && std::abs(defaultRotation.w()) <= 2.f;
+                out << ",\"defaultTranslation\":" << formatVec3Json(defaultTranslation)
+                    << ",\"defaultRotationQuat\":" << formatQuatJson(defaultRotation)
+                    << ",\"defaultScale\":" << transform->mDefaultValue.mScale
+                    << ",\"defaultRotationFinite\":"
+                    << (std::isfinite(defaultRotation.x()) && std::isfinite(defaultRotation.y())
+                                && std::isfinite(defaultRotation.z()) && std::isfinite(defaultRotation.w())
+                            ? "true"
+                            : "false")
+                    << ",\"defaultRotationReasonable\":" << (defaultRotationReasonable ? "true" : "false");
+                if (!transform->mData.empty())
+                {
+                    const Nif::NiKeyframeData& data = *transform->mData.getPtr();
+                    float minimumRotationNorm2 = std::numeric_limits<float>::max();
+                    float maximumRotationNorm2 = 0.f;
+                    std::size_t unreasonableRotationKeys = 0;
+                    for (const auto& [time, key] : data.mRotations->mKeys)
+                    {
+                        (void)time;
+                        const osg::Quat& value = key.mValue;
+                        const float norm2 = value.length2();
+                        minimumRotationNorm2 = std::min(minimumRotationNorm2, norm2);
+                        maximumRotationNorm2 = std::max(maximumRotationNorm2, norm2);
+                        if (!std::isfinite(norm2) || norm2 < 0.0001f || norm2 > 4.f)
+                            ++unreasonableRotationKeys;
+                    }
+                    out << ",\"rotationInterpolation\":" << data.mRotations->mInterpolationType
+                        << ",\"rotationKeys\":" << data.mRotations->mKeys.size()
+                        << ",\"rotationFirstTime\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : data.mRotations->mKeys.front().first)
+                        << ",\"rotationLastTime\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : data.mRotations->mKeys.back().first)
+                        << ",\"rotationMinNorm2\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : minimumRotationNorm2)
+                        << ",\"rotationMaxNorm2\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : maximumRotationNorm2)
+                        << ",\"unreasonableRotationKeys\":" << unreasonableRotationKeys
+                        << ",\"xRotationKeys\":" << (data.mXRotations ? data.mXRotations->mKeys.size() : 0)
+                        << ",\"yRotationKeys\":" << (data.mYRotations ? data.mYRotations->mKeys.size() : 0)
+                        << ",\"zRotationKeys\":" << (data.mZRotations ? data.mZRotations->mKeys.size() : 0)
+                        << ",\"translationInterpolation\":" << data.mTranslations->mInterpolationType
+                        << ",\"translationKeys\":" << data.mTranslations->mKeys.size()
+                        << ",\"scaleInterpolation\":" << data.mScales->mInterpolationType
+                        << ",\"scaleKeys\":" << data.mScales->mKeys.size();
+                }
+            }
+            out << "}";
         }
     }
     out << "],\n";
@@ -1544,11 +1682,12 @@ int main(int argc, char** argv)
         }
     }
 
-    if (argc == 5 && std::string_view(argv[1]) == "--fnv-transform-dump")
+    if ((argc == 5 || argc == 6) && std::string_view(argv[1]) == "--fnv-transform-dump")
     {
         try
         {
-            return runFnvTransformDump(argv[2], argv[3], argv[4]);
+            const float sampleTime = argc == 6 ? std::stof(argv[5]) : 1.2f;
+            return runFnvTransformDump(argv[2], argv[3], argv[4], sampleTime);
         }
         catch (const std::exception& e)
         {

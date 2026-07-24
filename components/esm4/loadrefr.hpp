@@ -105,8 +105,11 @@ namespace ESM4
         RadioStationData mRadio;
 
         TeleportDest mDoor;
-        bool mIsLocked;
-        std::int8_t mLockLevel;
+        // XLOC is optional. References without it are ordinary unlocked objects.
+        // Leaving these fields indeterminate made unlocked ESM4 doors randomly
+        // return OpenMW's LockedDoor failure action instead of their XTEL action.
+        bool mIsLocked = false;
+        std::int8_t mLockLevel = 0;
         ESM::FormId mKey;
 
         ESM::FormId mTargetRef;

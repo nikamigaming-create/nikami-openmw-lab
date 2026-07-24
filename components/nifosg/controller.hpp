@@ -130,6 +130,11 @@ namespace NifOsg
         }
 
         bool empty() const { return !mKeys || mKeys->mKeys.empty(); }
+        uint32_t getInterpolationType() const
+        {
+            return mKeys ? mKeys->mInterpolationType : Nif::InterpolationType_Unknown;
+        }
+        size_t getKeyCount() const { return mKeys ? mKeys->mKeys.size() : 0; }
 
     private:
         template <typename ValueType>
@@ -254,15 +259,23 @@ namespace NifOsg
         osg::Callback* getAsCallback() override { return this; }
 
         KfTransform getCurrentTransformation(osg::NodeVisitor* nv) override;
+        KfTransform getCurrentTransformationWithoutFalloutActorBasis(osg::NodeVisitor* nv);
 
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
         void setFalloutActorTransformBasis(
             const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation,
             float bindScale);
+        uint32_t getRotationInterpolationType() const { return mRotations.getInterpolationType(); }
+        size_t getRotationKeyCount() const { return mRotations.getKeyCount(); }
+        uint32_t getTranslationInterpolationType() const { return mTranslations.getInterpolationType(); }
+        size_t getTranslationKeyCount() const { return mTranslations.getKeyCount(); }
+        bool usesBSplineTransform() const { return mBSplineTransform.has_value(); }
 
     private:
         void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
+        void setDefaultTransformChannels(const Nif::NiQuatTransform& transform);
         bool initFromInterpolator(const Nif::NiInterpolator* interp);
+        KfTransform getCurrentTransformation(osg::NodeVisitor* nv, bool applyFalloutActorBasis);
 
         QuaternionInterpolator mRotations;
 
@@ -274,6 +287,9 @@ namespace NifOsg
         FloatInterpolator mScales;
 
         Nif::NiKeyframeData::AxisOrder mAxisOrder{ Nif::NiKeyframeData::AxisOrder::Order_XYZ };
+        bool mHasDefaultTranslation{ false };
+        bool mHasDefaultRotation{ false };
+        bool mHasDefaultScale{ false };
         bool mUseFalloutActorRotationBasis{ false };
         bool mPinFalloutActorBindRotation{ false };
         std::string mFalloutLowerBone;
