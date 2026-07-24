@@ -335,6 +335,10 @@ namespace MWBase
         virtual float getAngleToPlayer(const MWWorld::Ptr& ptr) const = 0;
         virtual MWMechanics::GreetingState getGreetingState(const MWWorld::Ptr& ptr) const = 0;
         virtual bool isTurningToPlayer(const MWWorld::Ptr& ptr) const = 0;
+
+        /// Make the explicit victim, or the nearest active member of faction, respond as if assaulted by the player.
+        /// Kept at the end so existing interface slots remain stable.
+        virtual bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) = 0;
     };
 }
 

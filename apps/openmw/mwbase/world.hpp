@@ -589,6 +589,10 @@ namespace MWBase
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
             const ESM::RefId& lightId = {})
             = 0;
+        virtual void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime)
+            = 0;
 
         /// @see MWWorld::WeatherManager::isInStorm
         virtual bool isInStorm() const = 0;

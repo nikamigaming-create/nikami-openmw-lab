@@ -198,6 +198,55 @@ obs.bind('Activate', function(ref)
     return 0
 end)
 
+obs.bind('StartCombat', function(ref, target)
+    if target == nil then
+        target = ref
+        ref = nil
+    end
+    local actor = resolveObject(ref)
+    local combatTarget = resolveObject(target)
+    if not isInstance(types.Actor, actor) or not isInstance(types.Actor, combatTarget) then
+        return 0
+    end
+    core.obscript.startCombat(actor, combatTarget)
+    return 0
+end)
+
+obs.bind('StopCombat', function(ref)
+    local actor = resolveObject(ref)
+    if not isInstance(types.Actor, actor) then
+        return 0
+    end
+    core.obscript.stopCombat(actor)
+    return 0
+end)
+
+obs.bind('SendAssaultAlarm', function(ref, victim, faction)
+    local requestedVictim
+    if ref == nil or type(ref) == 'string' then
+        requestedVictim = resolveObject(ref)
+        faction = victim
+    else
+        requestedVictim = victim ~= nil and resolveObject(victim) or ref
+    end
+    if not isInstance(types.Actor, requestedVictim) then
+        return 0
+    end
+
+    local factionId = ''
+    if faction ~= nil then
+        if type(faction) ~= 'string' then
+            return 0
+        end
+        factionId = core.obscript.resolveFactionEditorId(faction)
+        if factionId == nil then
+            return 0
+        end
+    end
+    core.obscript.sendAssaultAlarm(requestedVictim, factionId)
+    return 0
+end)
+
 obs.bind('GetItemCount', function(ref, item)
     local object = resolveObject(ref)
     if object == nil or type(item) ~= 'string' then
@@ -219,6 +268,37 @@ obs.bind('GetItemCount', function(ref, item)
     end
     local ok, count = pcall(function() return inventory:countOf(recordId) end)
     return ok and count or 0
+end)
+
+obs.bind('RemoveItem', function(ref, item, count)
+    local object = resolveObject(ref)
+    if object ~= nil and type(item) == 'string'
+        and (isInstance(types.Actor, object) or isInstance(types.Container, object)) then
+        core.sendGlobalEvent('ObScriptRemoveItem', {
+            object = object,
+            item = item,
+            count = count or 1,
+        })
+    end
+    return 0
+end)
+
+obs.bind('EquipItem', function(ref, item)
+    local actor = resolveObject(ref)
+    local recordId = type(item) == 'string' and core.obscript.resolveItemEditorId(item) or nil
+    if isInstance(types.Actor, actor) and recordId ~= nil then
+        actor:sendEvent('ObScriptEquipItem', { recordId = recordId })
+    end
+    return 0
+end)
+
+obs.bind('UnequipItem', function(ref, item)
+    local actor = resolveObject(ref)
+    local recordId = type(item) == 'string' and core.obscript.resolveItemEditorId(item) or nil
+    if isInstance(types.Actor, actor) and recordId ~= nil then
+        actor:sendEvent('ObScriptUnequipItem', { recordId = recordId })
+    end
+    return 0
 end)
 
 obs.bind('GetEquipped', function(ref, item)

@@ -1,6 +1,7 @@
 #include "mechanicsmanagerimp.hpp"
 
 #include <cassert>
+#include <limits>
 #include <vector>
 
 #include <osg/Stats>
@@ -1634,7 +1635,8 @@ namespace MWMechanics
     bool MechanicsManager::actorAttacked(const MWWorld::Ptr& target, const MWWorld::Ptr& attacker)
     {
         const MWWorld::Ptr& player = getPlayer();
-        if (target == player || !attacker.getClass().isActor())
+        if (target.isEmpty() || attacker.isEmpty() || target == player
+            || !target.getClass().isActor() || !attacker.getClass().isActor())
             return false;
 
         if (canCommitCrimeAgainst(target, attacker))
@@ -1717,6 +1719,64 @@ namespace MWMechanics
         }
 
         return true;
+    }
+
+    bool MechanicsManager::sendFalloutAssaultAlarm(
+        const MWWorld::Ptr& requestedVictim, const ESM::RefId& faction)
+    {
+        const MWWorld::Ptr player = getPlayer();
+        if (player.isEmpty() || !player.getClass().isActor())
+            return false;
+
+        MWWorld::Ptr victim = requestedVictim;
+        std::size_t candidates = 0;
+        if (!faction.empty())
+        {
+            const ESM::FormId* factionForm = faction.getIf<ESM::FormId>();
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (factionForm == nullptr || factionForm->isZeroOrUnset() || store == nullptr
+                || store->get<ESM4::Faction>().search(faction) == nullptr)
+                return false;
+
+            std::vector<MWWorld::Ptr> nearbyActors;
+            const float alarmRadius = store->get<ESM::GameSetting>().find("fAlarmRadius")->mValue.getFloat();
+            const osg::Vec3f origin = player.getRefData().getPosition().asVec3();
+            getActorsInRange(origin, alarmRadius, nearbyActors);
+
+            victim = MWWorld::Ptr{};
+            float nearestDistance2 = std::numeric_limits<float>::infinity();
+            for (const MWWorld::Ptr& actor : nearbyActors)
+            {
+                if (actor.isEmpty() || actor == player || !isFalloutNewVegasActor(actor)
+                    || !actor.getRefData().isEnabled() || actor.getClass().getCreatureStats(actor).isDead())
+                    continue;
+                const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(actor);
+                if (!isFalloutActorInFaction(actorFactions, *factionForm))
+                    continue;
+                ++candidates;
+                const float distance2 = (actor.getRefData().getPosition().asVec3() - origin).length2();
+                if (distance2 < nearestDistance2)
+                {
+                    nearestDistance2 = distance2;
+                    victim = actor;
+                }
+            }
+        }
+
+        if (victim.isEmpty() || victim == player || !isFalloutNewVegasActor(victim)
+            || !victim.getRefData().isEnabled() || victim.getClass().getCreatureStats(victim).isDead())
+        {
+            Log(Debug::Warning) << "FNV SendAssaultAlarm rejected: requestedVictim="
+                                << requestedVictim.toString() << " faction=" << faction
+                                << " candidates=" << candidates;
+            return false;
+        }
+
+        const bool handled = actorAttacked(victim, player);
+        Log(handled ? Debug::Info : Debug::Warning)
+            << "FNV SendAssaultAlarm: victim=" << victim.toString() << " faction=" << faction
+            << " candidates=" << candidates << " handled=" << handled;
+        return handled;
     }
 
     bool MechanicsManager::canCommitCrimeAgainst(const MWWorld::Ptr& target, const MWWorld::Ptr& attacker)

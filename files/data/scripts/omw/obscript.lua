@@ -43,6 +43,32 @@ return {
                     .. tostring(data.item))
             end
         end,
+        ObScriptRemoveItem = function(data)
+            if data.object == nil or not data.object:isValid() then
+                print('[obscript] RemoveItem: target is no longer valid')
+                return
+            end
+            local recordId = core.obscript.resolveItemEditorId(data.item)
+            if recordId == nil then
+                print('[obscript] RemoveItem: unknown item editor id: ' .. tostring(data.item))
+                return
+            end
+            local inventory
+            if types.Actor.objectIsInstance(data.object) then
+                inventory = types.Actor.inventory(data.object)
+            elseif types.Container.objectIsInstance(data.object) then
+                inventory = types.Container.inventory(data.object)
+            else
+                print('[obscript] RemoveItem: target has no inventory: ' .. tostring(data.object))
+                return
+            end
+            local item = inventory:find(recordId)
+            if item == nil then
+                return
+            end
+            local count = math.max(1, math.floor(tonumber(data.count) or 1))
+            item:remove(math.min(count, item.count))
+        end,
         ObScriptSetStage = function(data)
             core.obscript.setQuestStage(data.quest, data.stage)
         end,

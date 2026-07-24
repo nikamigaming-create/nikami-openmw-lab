@@ -618,6 +618,24 @@ namespace MWLua
         });
     }
 
+    void LuaManager::actorStartedCombat(const MWWorld::Ptr& actor, const MWWorld::Ptr& target)
+    {
+        if (actor.isEmpty() || target.isEmpty())
+            return;
+
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table data = view.newTable();
+            data["target"] = LObject(target);
+            sendLocalEvent(actor, "CombatStarted", data);
+        });
+    }
+
+    void LuaManager::actorEndedCombat(const MWWorld::Ptr& actor)
+    {
+        if (!actor.isEmpty())
+            sendLocalEvent(actor, "CombatEnded");
+    }
+
     void LuaManager::objectAddedToScene(const MWWorld::Ptr& ptr)
     {
         mObjectLists.objectAddedToScene(ptr); // assigns generated RefNum if it is not set yet.

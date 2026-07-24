@@ -601,6 +601,11 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> victimFactions,
         std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept;
 
+    /// Match an actor against the exact faction selected by SendAssaultAlarm. Rank is irrelevant, but zero/unset
+    /// faction ids never match.
+    [[nodiscard]] bool isFalloutActorInFaction(
+        std::span<const ESM4::ActorFaction> actorFactions, ESM::FormId faction) noexcept;
+
     /// Apply Fallout's categorical aggression contract: 0 never initiates, 1 attacks enemies, 2 attacks enemies and
     /// neutrals, and 3 attacks anyone. Invalid aggression or an unknown required reaction fails closed.
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(
@@ -797,6 +802,11 @@ namespace MWMechanics
     /// eligibility input and never supplies the cadence.
     [[nodiscard]] bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept;
+
+    /// Mirror the physical Flat "Use" binding into the native FNV weapon controller only while ordinary gameplay
+    /// owns input. This keeps Pip-Boy dismissal, disabled controls, holstered weapons, and V.A.T.S. from firing.
+    [[nodiscard]] bool shouldApplyFalloutPlayerUseInput(FalloutVatsPhase vatsPhase, bool controlsEnabled,
+        bool fightingEnabled, bool guiMode, bool weaponDrawn, bool useDown) noexcept;
 
     /// Select the authored KF event that delivers a non-V.A.T.S. attack. Melee clips author Hit; hand-thrown and
     /// placed explosive clips author Release; non-hitscan gun/launcher clips author Hit. Automatic and hitscan

@@ -231,6 +231,9 @@ namespace MWRender
         void spawnEffect(VFS::Path::NormalizedView model, std::string_view texture, const osg::Vec3f& worldPosition,
             float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
             const ESM4::Light* light = nullptr, bool isExterior = false);
+        void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime);
 
         /// Clear all savegame-specific data
         void clear();

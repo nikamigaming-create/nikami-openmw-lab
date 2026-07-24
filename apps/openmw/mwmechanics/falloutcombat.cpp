@@ -84,6 +84,16 @@ namespace MWMechanics
             || reaction == ESM4::Faction::GroupCombatReaction::Friend;
     }
 
+    bool isFalloutActorInFaction(
+        std::span<const ESM4::ActorFaction> actorFactions, ESM::FormId faction) noexcept
+    {
+        if (faction.isZeroOrUnset())
+            return false;
+        return std::ranges::any_of(actorFactions, [faction](const ESM4::ActorFaction& membership) {
+            return ESM::FormId::fromUint32(membership.faction) == faction;
+        });
+    }
+
     namespace
     {
         bool setFalloutFactionReactions(ESM4::Faction& first, ESM4::Faction& second,
@@ -1234,6 +1244,13 @@ namespace MWMechanics
 
         state.mCooldown += cadence.mSecondsPerShot;
         return true;
+    }
+
+    bool shouldApplyFalloutPlayerUseInput(FalloutVatsPhase vatsPhase, bool controlsEnabled,
+        bool fightingEnabled, bool guiMode, bool weaponDrawn, bool useDown) noexcept
+    {
+        return vatsPhase == FalloutVatsPhase::Inactive && controlsEnabled && fightingEnabled
+            && !guiMode && weaponDrawn && useDown;
     }
 
     FalloutAttackDeliveryEvent getFalloutAttackDeliveryEvent(

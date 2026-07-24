@@ -31,6 +31,32 @@
 #include "reader.hpp"
 //#include "writer.hpp"
 
+namespace
+{
+    void loadDecalData(ESM4::Reader& reader, ESM4::DecalData& decal)
+    {
+        if (reader.subRecordHeader().dataSize != 36)
+            throw std::runtime_error("ESM4::TextureSet::load - unsupported Fallout New Vegas DODT layout");
+
+        reader.get(decal.mMinWidth);
+        reader.get(decal.mMaxWidth);
+        reader.get(decal.mMinHeight);
+        reader.get(decal.mMaxHeight);
+        reader.get(decal.mDepth);
+        reader.get(decal.mShininess);
+        reader.get(decal.mParallaxScale);
+        reader.get(decal.mParallaxPasses);
+        reader.get(decal.mFlags);
+        std::uint16_t unused = 0;
+        reader.get(unused);
+        for (std::uint8_t& channel : decal.mColor)
+            reader.get(channel);
+        std::uint8_t unusedColorByte = 0;
+        reader.get(unusedColorByte);
+        decal.mPresent = true;
+    }
+}
+
 void ESM4::TextureSet::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
@@ -91,6 +117,8 @@ void ESM4::TextureSet::load(ESM4::Reader& reader)
                 reader.getZString(mMaterial);
                 break;
             case ESM::fourCC("DODT"): // Decal data
+                loadDecalData(reader, mDecal);
+                break;
             case ESM::fourCC("OBND"): // object bounds
             case ESM::fourCC("OPDS"): // Object placement defaults, FO76
                 reader.skipSubRecordData();

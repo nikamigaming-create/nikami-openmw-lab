@@ -52,6 +52,7 @@
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwrender/animation.hpp"
@@ -106,6 +107,37 @@ namespace MWInput
 
     void ActionManager::update(float dt)
     {
+        if (isFalloutContent() && !VR::getVR())
+        {
+            MWBase::InputManager* input = MWBase::Environment::get().getInputManager();
+            MWBase::WindowManager* window = MWBase::Environment::get().getWindowManager();
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            if (input != nullptr && window != nullptr && !player.isEmpty())
+            {
+                MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+                const bool controls = input->getControlSwitch("playercontrols");
+                const bool fighting = input->getControlSwitch("playerfighting");
+                const bool gui = window->isGuiMode();
+                const bool useDown = mBindingsManager->actionIsActive(A_Use);
+                const bool armed = stats.getDrawState() == MWMechanics::DrawState::Weapon;
+                const bool attack = MWMechanics::shouldApplyFalloutPlayerUseInput(
+                    mFalloutVats.getPhase(), controls, fighting, gui, armed, useDown);
+
+                // The native Flat input path must reach the same CharacterController used by AI and V.A.T.S.
+                // Built-in Lua mirrors this state, but relying on a deferred script frame alone allowed a click
+                // that dismissed the Pip-Boy to disappear before ordinary weapon mechanics ever observed it.
+                stats.setAttackingOrSpell(attack);
+                if (useDown != mFalloutPlayerUseDown)
+                {
+                    Log(Debug::Info) << "FNV player use input: down=" << useDown << " attack=" << attack
+                                     << " gui=" << gui << " controls=" << controls
+                                     << " fighting=" << fighting << " armed=" << armed
+                                     << " vatsPhase=" << static_cast<unsigned int>(mFalloutVats.getPhase());
+                    mFalloutPlayerUseDown = useDown;
+                }
+            }
+        }
+
         if (mBindingsManager->actionIsActive(A_MoveForward) || mBindingsManager->actionIsActive(A_MoveBackward)
             || mBindingsManager->actionIsActive(A_MoveLeft) || mBindingsManager->actionIsActive(A_MoveRight)
             || mBindingsManager->actionIsActive(A_Jump) || mBindingsManager->actionIsActive(A_Sneak)

@@ -55,6 +55,15 @@ namespace
         EXPECT_FALSE(MWMechanics::shouldFalloutActorDefendVictim(noFaction, victim, std::nullopt));
     }
 
+    TEST(FalloutCombatTest, MatchesExactFactionForScriptedAssaultAlarm)
+    {
+        const std::array factions{ membership(0x01104c6e), membership(0x0116311a) };
+        EXPECT_TRUE(MWMechanics::isFalloutActorInFaction(factions, id(0x01104c6e)));
+        EXPECT_TRUE(MWMechanics::isFalloutActorInFaction(factions, id(0x0116311a)));
+        EXPECT_FALSE(MWMechanics::isFalloutActorInFaction(factions, id(0x0113f89b)));
+        EXPECT_FALSE(MWMechanics::isFalloutActorInFaction(factions, ESM::FormId{}));
+    }
+
     TEST(FalloutCombatTest, AppliesCategoricalAggressionWithoutMorrowindFightBiases)
     {
         using Reaction = ESM4::Faction::GroupCombatReaction;
@@ -702,6 +711,28 @@ namespace
         EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 1.f));
         EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, false, true, *cadence, 0.f));
         EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+    }
+
+    TEST(FalloutCombatTest, FlatPlayerUseReachesWeaponOnlyDuringOrdinaryArmedGameplay)
+    {
+        using Phase = MWMechanics::FalloutVatsPhase;
+        EXPECT_TRUE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, true, true));
+
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, true, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, false, true, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, false, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, false, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, true, false));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Targeting, true, true, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Executing, true, true, false, true, true));
     }
 
     TEST(FalloutCombatTest, SelectsAuthoredDeliveryKeysOnlyForNonAutomaticEventRoutedAttacks)

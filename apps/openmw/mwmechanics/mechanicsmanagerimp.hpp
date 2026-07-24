@@ -255,6 +255,7 @@ namespace MWMechanics
         float getAngleToPlayer(const MWWorld::Ptr& ptr) const override;
         GreetingState getGreetingState(const MWWorld::Ptr& ptr) const override;
         bool isTurningToPlayer(const MWWorld::Ptr& ptr) const override;
+        bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) override;
 
     private:
         bool canCommitCrimeAgainst(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker);

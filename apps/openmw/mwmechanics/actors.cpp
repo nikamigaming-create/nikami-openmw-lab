@@ -1618,6 +1618,32 @@ namespace MWMechanics
             && iter->second->getCharacterController().playFalloutDialogueAnimation(animationId);
     }
 
+    void Actors::updateCombatEvents(Actor& actor) const
+    {
+        const MWWorld::Ptr& actorPtr = actor.getPtr();
+        std::vector<MWWorld::Ptr> targets;
+        actorPtr.getClass().getCreatureStats(actorPtr).getAiSequence().getCombatTargets(targets);
+
+        std::set<int> currentTargetIds;
+        for (const MWWorld::Ptr& target : targets)
+        {
+            if (target.isEmpty() || !target.getClass().isActor())
+                continue;
+
+            const int targetId = target.getClass().getCreatureStats(target).getActorId();
+            if (targetId < 0 || !currentTargetIds.insert(targetId).second)
+                continue;
+
+            if (actor.hasObservedCombatState() && !actor.getObservedCombatTargets().contains(targetId))
+                MWBase::Environment::get().getLuaManager()->actorStartedCombat(actorPtr, target);
+        }
+
+        if (actor.hasObservedCombatState() && !actor.getObservedCombatTargets().empty() && currentTargetIds.empty())
+            MWBase::Environment::get().getLuaManager()->actorEndedCombat(actorPtr);
+
+        actor.setObservedCombatTargets(std::move(currentTargetIds));
+    }
+
     void Actors::update(float duration, bool paused)
     {
         const MWWorld::Ptr player = getPlayer();
@@ -1775,6 +1801,8 @@ namespace MWMechanics
                     if (luaControls != nullptr && isConscious(actor.getPtr()))
                         updateLuaControls(actor.getPtr(), isPlayer, *luaControls);
                 }
+
+                updateCombatEvents(actor);
             }
 
             if (Settings::game().mNPCsAvoidCollisions)
