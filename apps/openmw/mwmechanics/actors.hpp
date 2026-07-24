@@ -204,6 +204,7 @@ namespace MWMechanics
         void calculateRestoration(const MWWorld::Ptr& ptr, float duration) const;
 
         void updateCrimePursuit(const MWWorld::Ptr& ptr, float duration, SidingCache& cachedAllies) const;
+        void updateCombatEvents(Actor& actor) const;
 
         void killDeadActors();
 

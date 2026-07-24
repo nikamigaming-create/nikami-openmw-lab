@@ -179,6 +179,10 @@ namespace
                 end, 'actor')
                 obs.on('OnTriggerEnter', function() log[#log + 1] = 'enter:other' end, 'other')
                 obs.on('OnTriggerLeave', function() log[#log + 1] = 'leave:any' end)
+                obs.on('OnStartCombat', function() log[#log + 1] = 'combat:any' end)
+                obs.on('OnStartCombat', function() log[#log + 1] = 'combat:player' end, 'player')
+                obs.on('OnStartCombat', function() log[#log + 1] = 'combat:other' end, 'other')
+                obs.on('OnCombatEnd', function() log[#log + 1] = 'combat:end' end)
                 obs.resolveRecordId = function(value)
                     if value == 'WeaponEditor' then return 'weapon-form' end
                     if type(value) == 'table' then return value.recordId end
@@ -192,6 +196,8 @@ namespace
                 script.engineHandlers.onActivated('actor')
                 script.engineHandlers.onTriggerEnter('actor')
                 script.engineHandlers.onTriggerLeave('actor')
+                events.CombatStarted({ target = 'player' })
+                events.CombatEnded()
                 return #log
             end,
         }
@@ -756,7 +762,7 @@ namespace
         sol::table s = script();
         mLua.protectedCall([&](LuaUtil::LuaView& view) {
             sol::table log = view.sol().create_table();
-            EXPECT_EQ(LuaUtil::call(s["filteredGameplayEvents"], log).get<int>(), 9);
+            EXPECT_EQ(LuaUtil::call(s["filteredGameplayEvents"], log).get<int>(), 12);
             EXPECT_EQ(log[1].get<std::string>(), "death:any");
             EXPECT_EQ(log[2].get<std::string>(), "death:any");
             EXPECT_EQ(log[3].get<std::string>(), "death:player");
@@ -766,6 +772,9 @@ namespace
             EXPECT_EQ(log[7].get<std::string>(), "activate:actor");
             EXPECT_EQ(log[8].get<std::string>(), "enter:actor");
             EXPECT_EQ(log[9].get<std::string>(), "leave:any");
+            EXPECT_EQ(log[10].get<std::string>(), "combat:any");
+            EXPECT_EQ(log[11].get<std::string>(), "combat:player");
+            EXPECT_EQ(log[12].get<std::string>(), "combat:end");
         });
     }
 

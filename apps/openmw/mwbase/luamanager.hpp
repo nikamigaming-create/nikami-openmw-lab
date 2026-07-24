@@ -85,6 +85,8 @@ namespace MWBase
             const MWWorld::Ptr& ammo, int attackType, float attackStrength, float damage, bool isHealth,
             const osg::Vec3f& hitPos, bool successful, MWMechanics::DamageSourceType)
             = 0;
+        virtual void actorStartedCombat(const MWWorld::Ptr&, const MWWorld::Ptr&) {}
+        virtual void actorEndedCombat(const MWWorld::Ptr&) {}
         virtual void exteriorCreated(MWWorld::CellStore& cell) = 0;
         virtual void actorDied(const MWWorld::Ptr& actor) = 0;
         virtual void questUpdated(const ESM::RefId& questId, int stage) = 0;

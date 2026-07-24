@@ -50,6 +50,8 @@ local supportedEvents = {
     ['ondeath'] = true,
     ['onhit'] = true,
     ['onhitwith'] = true,
+    ['onstartcombat'] = true,
+    ['oncombatend'] = true,
 }
 
 local function scriptEntry(name)
@@ -395,6 +397,14 @@ function obs.makeLocalScript()
                 if h then fireAll(entry, h, data and data.attacker) end
                 h = entry.handlers["onhitwith"]
                 if h then fireAll(entry, h, data and data.weapon) end
+            end,
+            CombatStarted = function(data)
+                local h = entry.handlers["onstartcombat"]
+                if h then fireAll(entry, h, data and data.target) end
+            end,
+            CombatEnded = function()
+                local h = entry.handlers["oncombatend"]
+                if h then fireAll(entry, h) end
             end,
         },
     }

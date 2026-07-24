@@ -115,6 +115,8 @@ namespace MWLua
         void onHit(const MWWorld::Ptr& attacker, const MWWorld::Ptr& victim, const MWWorld::Ptr& weapon,
             const MWWorld::Ptr& ammo, int attackType, float attackStrength, float damage, bool isHealth,
             const osg::Vec3f& hitPos, bool successful, MWMechanics::DamageSourceType sourceType) override;
+        void actorStartedCombat(const MWWorld::Ptr& actor, const MWWorld::Ptr& target) override;
+        void actorEndedCombat(const MWWorld::Ptr& actor) override;
         void exteriorCreated(MWWorld::CellStore& cell) override
         {
             mEngineEvents.addToQueue(EngineEvents::OnNewExterior{ cell });
