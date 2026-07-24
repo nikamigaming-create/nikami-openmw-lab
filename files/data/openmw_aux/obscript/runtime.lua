@@ -33,7 +33,7 @@ obs._globalOverrides = {}
 obs._memberOverrides = {}
 obs._bindings = {}     -- command name (lower) -> function
 obs._unknown = {}      -- command name (lower) -> call count (coverage telemetry)
-obs._log = nil         -- optional function(msg) for stub logging
+obs._log = nil         -- optional function(command, script) for first-use stub logging
 obs._current = nil     -- script currently registering/executing
 
 local function scriptEntry(name)
@@ -77,17 +77,22 @@ function obs.b(x)
     return x and true or false
 end
 
+local function recordUnknown(name)
+    local key = name:lower()
+    obs._unknown[key] = (obs._unknown[key] or 0) + 1
+    if obs._unknown[key] == 1 and obs._log then
+        obs._log(name, obs._current and obs._current.name or "__no_active_script")
+    end
+    return 0
+end
+
 local function dispatch(name, ...)
     local key = name:lower()
     local fn = obs._bindings[key]
     if fn then
         return fn(...) or 0
     end
-    obs._unknown[key] = (obs._unknown[key] or 0) + 1
-    if obs._log then
-        obs._log("unimplemented: " .. name)
-    end
-    return 0
+    return recordUnknown(name)
 end
 
 -- free function call: SetStage(...), ShowMessage(...)
@@ -120,8 +125,7 @@ function obs.v(name)
         return obs._globals[key]
     end
     -- unknown: report once as coverage telemetry, evaluate as 0 (vanilla-ish)
-    obs._unknown[key] = (obs._unknown[key] or 0) + 1
-    return 0
+    return recordUnknown(name)
 end
 
 -- cross-script variable read: Quest.var / Ref.var
@@ -279,68 +283,82 @@ function obs.makeLocalScript()
         return {} -- script registered no blocks
     end
 
+    local engineHandlers = {
+        onActive = function()
+            local h = entry.handlers["onload"]
+            if h then fireAll(entry, h) end
+        end,
+        onUpdate = function(dt)
+            obs._dt = dt
+            -- Global events requested in the previous frame have now
+            -- reached the authoritative engine state.
+            obs._globalOverrides = {}
+            obs._memberOverrides = {}
+            local h = entry.handlers["gamemode"]
+            if h then fireAll(entry, h) end
+        end,
+        onReset = function()
+            local h = entry.handlers["onreset"]
+            if h then fireAll(entry, h) end
+        end,
+        onSave = function()
+            local locals = {}
+            for k, v in pairs(entry.locals) do
+                locals[k] = v
+            end
+            return { locals = locals, destroyed = obs._destroyed }
+        end,
+        onLoad = function(data)
+            if data and data.locals then
+                -- Generated handlers close over the original locals table,
+                -- so restore it in place rather than replacing it.
+                for key in pairs(entry.locals) do
+                    rawset(entry.locals, key, nil)
+                end
+                for key, value in pairs(data.locals) do
+                    rawset(entry.locals, key, value)
+                end
+            end
+            obs._destroyed = data and data.destroyed or nil
+        end,
+    }
+
+    -- The engine uses the presence of this handler to decide whether native
+    -- activation must be buffered for retail OnActivate/OnOpen semantics.
+    -- Do not register it for scripts that have no authored activation block.
+    if entry.handlers["onactivate"] or entry.handlers["onopen"] then
+        engineHandlers.onActivated = function(actor)
+            -- Opening a container counts as activation, so OnOpen blocks
+            -- are dispatched from here as well.
+            obs._actionRef = actor
+            local h = entry.handlers["onactivate"]
+            if h then fireAll(entry, h, actor) end
+            h = entry.handlers["onopen"]
+            if h then fireAll(entry, h, actor) end
+            obs._actionRef = nil
+        end
+    end
+
+    if entry.handlers["ontriggerenter"] then
+        engineHandlers.onTriggerEnter = function(actor)
+            obs._actionRef = actor
+            local h = entry.handlers["ontriggerenter"]
+            if h then fireAll(entry, h, actor) end
+            obs._actionRef = nil
+        end
+    end
+
+    if entry.handlers["ontriggerleave"] then
+        engineHandlers.onTriggerLeave = function(actor)
+            obs._actionRef = actor
+            local h = entry.handlers["ontriggerleave"]
+            if h then fireAll(entry, h, actor) end
+            obs._actionRef = nil
+        end
+    end
+
     return {
-        engineHandlers = {
-            onActive = function()
-                local h = entry.handlers["onload"]
-                if h then fireAll(entry, h) end
-            end,
-            onUpdate = function(dt)
-                obs._dt = dt
-                -- Global events requested in the previous frame have now
-                -- reached the authoritative engine state.
-                obs._globalOverrides = {}
-                obs._memberOverrides = {}
-                local h = entry.handlers["gamemode"]
-                if h then fireAll(entry, h) end
-            end,
-            onActivated = function(actor)
-                -- Opening a container counts as activation, so OnOpen blocks
-                -- are dispatched from here as well.
-                obs._actionRef = actor
-                local h = entry.handlers["onactivate"]
-                if h then fireAll(entry, h, actor) end
-                h = entry.handlers["onopen"]
-                if h then fireAll(entry, h, actor) end
-                obs._actionRef = nil
-            end,
-            onTriggerEnter = function(actor)
-                obs._actionRef = actor
-                local h = entry.handlers["ontriggerenter"]
-                if h then fireAll(entry, h, actor) end
-                obs._actionRef = nil
-            end,
-            onTriggerLeave = function(actor)
-                obs._actionRef = actor
-                local h = entry.handlers["ontriggerleave"]
-                if h then fireAll(entry, h, actor) end
-                obs._actionRef = nil
-            end,
-            onReset = function()
-                local h = entry.handlers["onreset"]
-                if h then fireAll(entry, h) end
-            end,
-            onSave = function()
-                local locals = {}
-                for k, v in pairs(entry.locals) do
-                    locals[k] = v
-                end
-                return { locals = locals, destroyed = obs._destroyed }
-            end,
-            onLoad = function(data)
-                if data and data.locals then
-                    -- Generated handlers close over the original locals table,
-                    -- so restore it in place rather than replacing it.
-                    for key in pairs(entry.locals) do
-                        rawset(entry.locals, key, nil)
-                    end
-                    for key, value in pairs(data.locals) do
-                        rawset(entry.locals, key, value)
-                    end
-                end
-                obs._destroyed = data and data.destroyed or nil
-            end,
-        },
+        engineHandlers = engineHandlers,
         eventHandlers = {
             Died = function(data)
                 local h = entry.handlers["ondeath"]

@@ -43,6 +43,7 @@ namespace MWInput
 
     private:
         void handleGuiArrowKey(int action);
+        bool isFalloutContent() const;
 
         BindingsManager* mBindingsManager;
         osg::ref_ptr<osgViewer::Viewer> mViewer;

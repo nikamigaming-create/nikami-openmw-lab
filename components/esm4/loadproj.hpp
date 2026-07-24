@@ -14,6 +14,14 @@ namespace ESM4
 
     struct Projectile
     {
+        enum Type : std::uint16_t
+        {
+            Missile = 1,
+            Lobber = 2,
+            Beam = 4,
+            Flame = 8,
+        };
+
         enum Flags : std::uint16_t
         {
             Hitscan = 1u << 0,

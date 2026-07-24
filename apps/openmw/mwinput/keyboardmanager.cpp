@@ -46,7 +46,20 @@ namespace MWInput
                     || (arg.keysym.sym >= 0 && arg.keysym.sym <= 255 && std::isprint(arg.keysym.sym))));
         if (kc != MyGUI::KeyCode::None && !mBindingsManager->isDetectingBindingState())
         {
-            if (MWBase::Environment::get().getWindowManager()->injectKeyPress(kc, 0, arg.repeat))
+            const MWGui::GuiMode mode = MWBase::Environment::get().getWindowManager()->getMode();
+            if (!arg.repeat && mode == MWGui::GM_Inventory
+                && mBindingsManager->getKeyBinding(A_Map) == arg.keysym.scancode)
+            {
+                MWBase::Environment::get().getInputManager()->executeAction(A_Map);
+                consumed = true;
+            }
+            else if (!arg.repeat && mode == MWGui::GM_Inventory
+                && mBindingsManager->getKeyBinding(A_Inventory) == arg.keysym.scancode)
+            {
+                MWBase::Environment::get().getWindowManager()->removeGuiMode(MWGui::GM_Inventory);
+                consumed = true;
+            }
+            else if (MWBase::Environment::get().getWindowManager()->injectKeyPress(kc, 0, arg.repeat))
                 consumed = true;
             mBindingsManager->setPlayerControlsEnabled(!consumed);
         }

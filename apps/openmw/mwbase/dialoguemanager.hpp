@@ -18,6 +18,7 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
+    struct FormId;
     class RefId;
 }
 
@@ -71,6 +72,8 @@ namespace MWBase
         virtual void goodbye() = 0;
 
         virtual bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) = 0;
+        virtual bool say(
+            const MWWorld::Ptr& actor, const MWWorld::Ptr& listener, const ESM::FormId& topic) = 0;
 
         virtual void keywordSelected(std::string_view keyword, ResponseCallback* callback) = 0;
         virtual void goodbyeSelected() = 0;

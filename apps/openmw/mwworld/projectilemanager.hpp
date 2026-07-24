@@ -1,7 +1,11 @@
 #ifndef OPENMW_MWWORLD_PROJECTILEMANAGER_H
 #define OPENMW_MWWORLD_PROJECTILEMANAGER_H
 
+#include <cstdint>
+#include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 #include <osg/PositionAttitudeTransform>
 #include <osg/ref_ptr>
@@ -10,6 +14,7 @@
 #include <components/vfs/pathutil.hpp>
 
 #include "../mwbase/soundmanager.hpp"
+#include "../mwmechanics/falloutcombat.hpp"
 
 #include "ptr.hpp"
 
@@ -21,6 +26,11 @@ namespace MWPhysics
 namespace Loading
 {
     class Listener;
+}
+
+namespace ESM4
+{
+    struct Projectile;
 }
 
 namespace osg
@@ -55,6 +65,20 @@ namespace MWWorld
 
         void launchProjectile(const MWWorld::Ptr& actor, const MWWorld::ConstPtr& projectile, const osg::Vec3f& pos,
             const osg::Quat& orient, const MWWorld::Ptr& bow, float speed, float attackStrength);
+
+        bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& pos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact);
+        bool launchFalloutHitscanTracer(
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination);
+
+        /// Count queued V.A.T.S. projectiles that must resolve before the cinematic transaction can finish.
+        /// Persistent mines/remote explosives are excluded because their authored lifetime is open-ended.
+        std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor);
+
+        /// Arm the detonation state for every settled, remotely triggered Fallout explosive placed by actor.
+        /// Returns the number of charges accepted by the authored PROJ Detonates contract.
+        unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor);
 
         void updateCasters();
 
@@ -123,14 +147,48 @@ namespace MWWorld
             float mAttackStrength;
         };
 
+        struct FalloutProjectileState : public State
+        {
+            ESM::FormId mProjectile;
+            osg::Vec3f mVelocity;
+            osg::Vec3f mRotationVelocity;
+            osg::Vec3f mPreviousPosition;
+            float mGravity = 0.f;
+            float mMaximumRange = 0.f;
+            float mDistanceTravelled = 0.f;
+            float mElapsedTime = 0.f;
+            std::uint8_t mBounceCount = 0;
+            bool mRotates = false;
+            bool mSettled = false;
+            bool mDetonate = false;
+            bool mArmed = false;
+            MWMechanics::FalloutProjectileImpactContract mImpact;
+        };
+
+        struct FalloutHitscanTracerState : public State
+        {
+            osg::Vec3f mOrigin;
+            osg::Vec3f mDestination;
+            float mElapsedTime = 0.f;
+            float mLifetime = 0.f;
+        };
+
         std::vector<MagicBoltState> mMagicBolts;
         std::vector<ProjectileState> mProjectiles;
+        std::vector<FalloutProjectileState> mFalloutProjectiles;
+        std::vector<FalloutHitscanTracerState> mFalloutHitscanTracers;
 
         void cleanupProjectile(ProjectileState& state);
+        void cleanupFalloutProjectile(FalloutProjectileState& state);
+        void cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state);
         void cleanupMagicBolt(MagicBoltState& state);
         void periodicCleanup(float dt);
 
         void moveProjectiles(float dt);
+        void moveFalloutProjectiles(float dt);
+        void moveFalloutHitscanTracers(float dt);
+        bool bounceFalloutProjectile(FalloutProjectileState& state, const ESM4::Projectile& projectile,
+            const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
         void moveMagicBolts(float dt);
 
         void createModel(State& state, VFS::Path::NormalizedView model, const osg::Vec3f& pos, const osg::Quat& orient,

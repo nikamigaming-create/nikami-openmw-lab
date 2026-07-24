@@ -7,7 +7,7 @@
 */
 #include "loadmesg.hpp"
 
-#include <stdexcept>
+#include <utility>
 
 #include "reader.hpp"
 
@@ -30,9 +30,21 @@ void ESM4::Message::load(ESM4::Reader& reader)
             case ESM::fourCC("FULL"):
                 reader.getLocalizedString(mFullName);
                 break;
+            case ESM::fourCC("INAM"):
+                if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.getFormId(mIcon);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("DNAM"):
-                if (subHdr.dataSize == sizeof(mData))
-                    reader.get(mData);
+                if (subHdr.dataSize == sizeof(mMessageFlags))
+                    reader.get(mMessageFlags);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("TNAM"):
+                if (subHdr.dataSize == sizeof(mDisplayTime))
+                    reader.get(mDisplayTime);
                 else
                     reader.skipSubRecordData();
                 break;
@@ -43,10 +55,9 @@ void ESM4::Message::load(ESM4::Reader& reader)
                 mButtons.push_back(std::move(button));
                 break;
             }
-            // Fallout 3/New Vegas' INAM is a four-byte display/icon field.
-            // It is preserved as raw source data by the loader boundary but
-            // has no effect on the native OpenMW message presentation.
-            case ESM::fourCC("INAM"):
+            // Conditions are retained by the source plugin but the native
+            // message presenter currently consumes only the authored text.
+            case ESM::fourCC("CTDA"):
                 reader.skipSubRecordData();
                 break;
             default:

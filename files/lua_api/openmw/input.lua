@@ -137,6 +137,7 @@
 -- (DEPRECATED, use actions with matching keys)
 -- @type ACTION
 -- @field [parent=#ACTION] #number GameMenu
+-- @field [parent=#ACTION] #number Map
 -- @field [parent=#ACTION] #number Screenshot
 -- @field [parent=#ACTION] #number Inventory
 -- @field [parent=#ACTION] #number Console

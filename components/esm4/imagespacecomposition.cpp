@@ -1,5 +1,8 @@
 #include "imagespacecomposition.hpp"
 
+#include "loadcell.hpp"
+#include "loadwrld.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -106,6 +109,7 @@ ESM4::ComposedImageSpace ESM4::composeImageSpace(
             continue;
         const float strength = std::max(0.f, contribution.mStrength);
         const ImageSpaceModifier& modifier = *contribution.mModifier;
+        result.mBlurRadius += evaluate(modifier.mBlurRadius, contribution.mTime, 0.f) * strength;
         for (std::size_t channel = 0; channel < ImageSpaceModifier::sMultiplyAddChannelCount; ++channel)
         {
             multiplierDelta[channel]
@@ -156,5 +160,22 @@ ESM4::ComposedImageSpace ESM4::composeImageSpace(
     result.mTraits[ImageSpace::Trait_CinematicTintGreen] = result.mTint[1];
     result.mTraits[ImageSpace::Trait_CinematicTintBlue] = result.mTint[2];
     result.mTraits[ImageSpace::Trait_CinematicTintStrength] = result.mTint[3];
+    result.mBlurRadius = std::max(0.f, result.mBlurRadius);
     return result;
+}
+
+float ESM4::normalizeImageSpaceModifierTime(float elapsedSeconds, float durationSeconds)
+{
+    if (!std::isfinite(elapsedSeconds) || !std::isfinite(durationSeconds) || durationSeconds <= 0.f)
+        return 0.f;
+    return std::clamp(elapsedSeconds / durationSeconds, 0.f, 1.f);
+}
+
+ESM::FormId ESM4::resolveCellImageSpace(const Cell& cell, const World* parentWorld)
+{
+    if (!cell.mImageSpace.isZeroOrUnset())
+        return cell.mImageSpace;
+    if (cell.isExterior() && parentWorld != nullptr)
+        return parentWorld->mImageSpace;
+    return {};
 }

@@ -264,6 +264,10 @@ namespace MWGui
         void notifyInputActionBound() override;
 
         void addVisitedLocation(const std::string& name, int x, int y) override;
+        void refreshFalloutMapMarkers() override;
+        bool focusFalloutMapMarker(ESM::FormId marker, float zoom) override;
+        bool requestFalloutFastTravel(ESM::FormId marker) override;
+        void confirmFalloutFastTravel() override;
 
         /// Hides dialog and schedules dialog to be deleted.
         void removeDialog(std::unique_ptr<Layout>&& dialog) override;
@@ -413,6 +417,7 @@ namespace MWGui
         bool isWindowVisible(std::string_view windowId) const override;
         std::vector<std::string_view> getAllWindowIds() const override;
         std::vector<std::string_view> getAllowedWindowIds(GuiMode mode) const override;
+        const std::map<MWGui::GuiMode, std::string_view>& guiModeToName() const override;
 
     private:
         unsigned int mOldUpdateMask;

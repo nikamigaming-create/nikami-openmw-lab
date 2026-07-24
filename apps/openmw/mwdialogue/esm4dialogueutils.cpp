@@ -1,11 +1,16 @@
 #include "esm4dialogueutils.hpp"
 
+#include <algorithm>
+#include <mutex>
+#include <unordered_map>
+
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
@@ -19,10 +24,34 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/ptr.hpp"
 
 namespace MWDialogue
 {
+    namespace
+    {
+        std::mutex sDialogueExpressionMutex;
+        std::unordered_map<const void*, Esm4DialogueExpression> sDialogueExpressions;
+    }
+
+    void setEsm4DialogueExpression(const void* actorRef, std::uint32_t type, std::int32_t value)
+    {
+        if (actorRef == nullptr)
+            return;
+        std::lock_guard lock(sDialogueExpressionMutex);
+        sDialogueExpressions[actorRef]
+            = { type, std::clamp(static_cast<float>(value) / 100.f, 0.f, 1.f) };
+    }
+
+    std::optional<Esm4DialogueExpression> getEsm4DialogueExpression(const void* actorRef)
+    {
+        std::lock_guard lock(sDialogueExpressionMutex);
+        const auto found = sDialogueExpressions.find(actorRef);
+        return found == sDialogueExpressions.end() ? std::nullopt : std::optional(found->second);
+    }
+
     std::optional<bool> evaluateEsm4ActorDialogueCondition(
         const ESM4::TargetCondition& condition, const MWWorld::Ptr& actor, bool isPlayer)
     {
@@ -109,6 +138,20 @@ namespace MWDialogue
             case ESM4::FUN_GetDead:
                 actual = actor.getClass().getCreatureStats(actor).isDead() ? 1.f : 0.f;
                 break;
+            case ESM4::FUN_GetDestroyed:
+                actual = actor.getRefData().isDestroyed() ? 1.f : 0.f;
+                break;
+            case ESM4::FUN_GetMapMarkerVisible:
+            {
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                const ESM::RefNum marker = actor.getCellRef().getRefNum();
+                if (!marker.isSet())
+                    return std::nullopt;
+                actual = static_cast<float>(world->getFalloutMapMarkerState(marker));
+                break;
+            }
             case ESM4::FUN_GetLevel:
                 actual = static_cast<float>(actor.getClass().getCreatureStats(actor).getLevel());
                 break;
@@ -131,6 +174,50 @@ namespace MWDialogue
                     return std::nullopt;
                 }
                 break;
+            case ESM4::FUN_HasPerk:
+            {
+                if (!isPlayer)
+                    return std::nullopt;
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                actual = world->getFalloutPlayerRuntimeState().hasPerk(parameter) ? 1.f : 0.f;
+                break;
+            }
+            case ESM4::FUN_GetReputation:
+            case ESM4::FUN_GetReputationPct:
+            case ESM4::FUN_GetReputationThreshold:
+            {
+                if (!isPlayer)
+                    return std::nullopt;
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                if (world == nullptr)
+                    return std::nullopt;
+                const ESM4::Reputation* reputation
+                    = world->getStore().get<ESM4::Reputation>().search(ESM::RefId(parameter));
+                if (reputation == nullptr || condition.param2 > 2)
+                    return std::nullopt;
+                if (condition.functionIndex == ESM4::FUN_GetReputationThreshold)
+                {
+                    const std::optional<int> threshold
+                        = world->getFalloutPlayerRuntimeState().getReputationThreshold(
+                            parameter, reputation->mMaximum, condition.param2);
+                    if (!threshold)
+                        return std::nullopt;
+                    actual = static_cast<float>(*threshold);
+                    break;
+                }
+                if (condition.param2 > 1)
+                    return std::nullopt;
+                const std::optional<MWWorld::FalloutReputationValue> value
+                    = world->getFalloutPlayerRuntimeState().getReputation(parameter);
+                if (!value)
+                    return std::nullopt;
+                actual = condition.param2 == 0 ? value->mInfamy : value->mFame;
+                if (condition.functionIndex == ESM4::FUN_GetReputationPct)
+                    actual = std::clamp(actual / reputation->mMaximum, 0.f, 1.f);
+                break;
+            }
             case ESM4::FUN_GetEquipped:
                 if (actorRef != nullptr)
                 {

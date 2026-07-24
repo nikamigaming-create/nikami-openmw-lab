@@ -99,12 +99,13 @@ namespace MWGui
         , mChanged(true)
         , mMinFullWidth(mMainWidget->getSize().width)
     {
-
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats body begin";
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
         MyGUI::Widget* attributeView = getWidget("AttributeView");
         MyGUI::IntCoord coord{ 0, 0, 204, 18 };
         const MyGUI::Align alignment = MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch;
         const bool falloutContent = isFalloutStatsContent();
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats attributes begin fallout=" << falloutContent;
         for (const ESM::Attribute& attribute : store.get<ESM::Attribute>())
         {
             const std::string displayName = falloutContent ? falloutAttributeLabel(attribute) : attribute.mName;
@@ -126,6 +127,7 @@ namespace MWGui
             value->setNeedMouseFocus(false);
             mAttributeWidgets.emplace(attribute.mId, value);
         }
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats attributes complete";
 
         getWidget(mSkillView, "SkillView");
         getWidget(mLeftPane, "LeftPane");
@@ -136,6 +138,7 @@ namespace MWGui
             mSkillValues.emplace(skill.mId, MWMechanics::SkillValue());
             mSkillWidgetMap.emplace(skill.mId, std::make_pair<MyGUI::TextBox*, MyGUI::TextBox*>(nullptr, nullptr));
         }
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats skills complete";
 
         MyGUI::Window* t = mMainWidget->castType<MyGUI::Window>();
         t->eventWindowChangeCoord += MyGUI::newDelegate(this, &StatsWindow::onWindowResize);

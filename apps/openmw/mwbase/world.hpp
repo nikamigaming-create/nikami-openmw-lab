@@ -4,6 +4,7 @@
 #include "rotationflags.hpp"
 
 #include <array>
+#include <cstdint>
 #include <deque>
 #include <set>
 #include <span>
@@ -78,6 +79,7 @@ namespace MWRender
 
 namespace MWMechanics
 {
+    struct FalloutProjectileImpactContract;
     struct Movement;
 }
 
@@ -639,6 +641,21 @@ namespace MWBase
 
         virtual void setActorActive(const MWWorld::Ptr& ptr, bool value) = 0;
 
+        // Keep FNV extensions at the end so downstream objects compiled against
+        // the pre-extension interface retain their existing virtual-table slots.
+        virtual std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const = 0;
+        virtual bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) = 0;
+        virtual bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) = 0;
+        virtual bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact)
+            = 0;
+        virtual std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) = 0;
+        virtual unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) = 0;
+        virtual bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) = 0;
+        virtual bool launchFalloutHitscanTracer(
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
+            = 0;
     };
 }
 

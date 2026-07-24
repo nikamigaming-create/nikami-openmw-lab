@@ -46,6 +46,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 #include "../mwclass/fnvfurnitureplacement.hpp"
 #include "../mwclass/fnvfurniturelifecycle.hpp"
 
@@ -60,6 +61,7 @@
 
 #include "../mwworld/actionteleport.hpp"
 
+#include "actorfacing.hpp"
 #include "cellpreloader.hpp"
 #include "cellstore.hpp"
 #include "cellvisitors.hpp"
@@ -77,15 +79,22 @@ namespace
     osg::Quat makeActorOsgQuat(const MWWorld::Ptr& ptr)
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
-        float yaw = position.rot[2];
-        if (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
+        bool tes4Npc = false;
+        bool falloutActor = false;
+        if (ptr.getType() == ESM::REC_NPC_4)
         {
-            // TES3 actors and the imported Fallout/TES4-family actor skeletons use different local forward axes.
-            // Retail transform telemetry requires a quarter-turn relative to the TES3 actor convention. Keep the
-            // gameplay yaw unchanged and convert only the rendered/physics model basis here.
-            yaw += osg::PI_2;
+            const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
+            tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
+            falloutActor = npc != nullptr && npc->mBase != nullptr
+                && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
         }
-        return osg::Quat(yaw, osg::Vec3(0, 0, -1));
+        else if (ptr.getType() == ESM::REC_CREA4)
+        {
+            const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
+            falloutActor = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
+        }
+        return osg::Quat(
+            MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutActor), osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -849,16 +858,22 @@ namespace
     {
         for (MWWorld::Ptr& ptr : mToInsert)
         {
-            if (!ptr.mRef->isDeleted() && ptr.getRefData().isEnabled())
+            if (ptr.isEmpty())
             {
-                try
-                {
+                Log(Debug::Warning) << "FNV/ESM4 cell insertion skipped an unresolved empty reference";
+                if (mLoadingListener != nullptr)
+                    mLoadingListener->increaseProgress(1);
+                continue;
+            }
+
+            try
+            {
+                if (!ptr.mRef->isDeleted() && ptr.getRefData().isEnabled())
                     addObject(ptr);
-                }
-                catch (const std::exception& e)
-                {
-                    Log(Debug::Error) << "failed to render '" << ptr.getCellRef().getRefId() << "': " << e.what();
-                }
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Error) << "failed to insert '" << ptr.getCellRef().getRefId() << "': " << e.what();
             }
 
             if (mLoadingListener != nullptr)

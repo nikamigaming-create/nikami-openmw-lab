@@ -160,6 +160,11 @@ namespace MWMechanics
         /// Remove all packages.
         void clear();
 
+        /// Remove every package and discard the transient state owned by the
+        /// current package. Unlike clear(), this also forgets pathing/wander
+        /// progress and the last-package bookkeeping.
+        void reset();
+
         ///< Add \a package to the front of the sequence
         /** Suspends current package
             @param actor The actor that owns this AiSequence **/

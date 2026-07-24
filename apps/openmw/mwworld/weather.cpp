@@ -36,6 +36,7 @@
 
 #include "cellstore.hpp"
 #include "esmstore.hpp"
+#include "fnvweather.hpp"
 #include "globalvariablename.hpp"
 #include "player.hpp"
 
@@ -180,72 +181,15 @@ namespace MWWorld
             return result;
         }
 
-        struct FalloutWeatherTimeBlend
-        {
-            ESM4::Weather::Time mPrimary = ESM4::Weather::Time_Day;
-            ESM4::Weather::Time mSecondary = ESM4::Weather::Time_Day;
-            float mPrimaryStrength = 1.f;
-        };
-
-        FalloutWeatherTimeBlend getFalloutWeatherTimeBlend(
+        MWWorld::FalloutWeatherTimeBlend getFalloutWeatherTimeBlend(
             float gameHour, const TimeOfDaySettings& timeSettings, float daytimeColorExtension)
         {
-            // FalloutNV.exe 0x63F27E..0x63F510 plus the installed JIP selector patch. The executable uses strict
-            // interiors for all four transition ranges; exact 08:00, 12:00 and 18:00 therefore hit its Day fallback.
-            const float nightEnd = timeSettings.mNightEnd - daytimeColorExtension;
-            const float dayStart = timeSettings.mDayStart;
-            constexpr float highNoon = 12.f;
-            const float dayEnd = timeSettings.mDayEnd;
-            const float nightStart = timeSettings.mNightStart + daytimeColorExtension;
-
-            if (gameHour <= nightEnd || gameHour >= nightStart)
-                return { ESM4::Weather::Time_Night, ESM4::Weather::Time_Night, 1.f };
-
-            if (gameHour > nightEnd && gameHour < dayStart)
-            {
-                const float midpoint = (nightEnd + dayStart) * 0.5f;
-                const float halfDuration = (dayStart - nightEnd) * 0.5f;
-                if (halfDuration <= 0.f)
-                    return {};
-                if (gameHour < midpoint)
-                    return { ESM4::Weather::Time_Sunrise, ESM4::Weather::Time_Night,
-                        std::clamp((gameHour - nightEnd) / halfDuration, 0.f, 1.f) };
-                return { ESM4::Weather::Time_Sunrise, ESM4::Weather::Time_Day,
-                    std::clamp((dayStart - gameHour) / halfDuration, 0.f, 1.f) };
-            }
-
-            if (gameHour > dayStart && gameHour < highNoon)
-            {
-                const float duration = highNoon - dayStart;
-                return { ESM4::Weather::Time_HighNoon, ESM4::Weather::Time_Day,
-                    duration > 0.f ? std::clamp((gameHour - dayStart) / duration, 0.f, 1.f) : 0.f };
-            }
-
-            if (gameHour > highNoon && gameHour < dayEnd)
-            {
-                const float duration = dayEnd - highNoon;
-                return { ESM4::Weather::Time_Day, ESM4::Weather::Time_HighNoon,
-                    duration > 0.f ? std::clamp((gameHour - highNoon) / duration, 0.f, 1.f) : 1.f };
-            }
-
-            if (gameHour > dayEnd && gameHour < nightStart)
-            {
-                const float midpoint = (dayEnd + nightStart) * 0.5f;
-                const float halfDuration = (nightStart - dayEnd) * 0.5f;
-                if (halfDuration <= 0.f)
-                    return {};
-                if (gameHour < midpoint)
-                    return { ESM4::Weather::Time_Sunset, ESM4::Weather::Time_Day,
-                        std::clamp((gameHour - dayEnd) / halfDuration, 0.f, 1.f) };
-                return { ESM4::Weather::Time_Sunset, ESM4::Weather::Time_Night,
-                    std::clamp((nightStart - gameHour) / halfDuration, 0.f, 1.f) };
-            }
-
-            return { ESM4::Weather::Time_Day, ESM4::Weather::Time_Day, 1.f };
+            return MWWorld::getFalloutWeatherTimeBlend(gameHour, timeSettings.mNightEnd, timeSettings.mDayStart,
+                timeSettings.mDayEnd, timeSettings.mNightStart, daytimeColorExtension);
         }
 
         float getFalloutWeatherTimeStrength(
-            const FalloutWeatherTimeBlend& blend, ESM4::Weather::Time time)
+            const MWWorld::FalloutWeatherTimeBlend& blend, ESM4::Weather::Time time)
         {
             float result = 0.f;
             if (blend.mPrimary == time)
@@ -1343,7 +1287,10 @@ namespace MWWorld
                 ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
                 : nullptr;
             if (base == nullptr)
+            {
+                mRendering.getPostProcessor()->clearFalloutImageSpace();
                 return;
+            }
 
             std::vector<ESM4::ImageSpaceModifierContribution> modifiers;
             if (includeWeatherModifiers)
@@ -1401,7 +1348,8 @@ namespace MWWorld
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrast],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness]),
                 osg::Vec4f(composed.mTint[0], composed.mTint[1], composed.mTint[2], composed.mTint[3]),
-                osg::Vec4f(composed.mFade[0], composed.mFade[1], composed.mFade[2], composed.mFade[3]));
+                osg::Vec4f(composed.mFade[0], composed.mFade[1], composed.mFade[2], composed.mFade[3]),
+                composed.mBlurRadius);
 
             if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr
                 || std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr)
@@ -1431,12 +1379,12 @@ namespace MWWorld
 
         if (!isExterior)
         {
+            mRendering.getPostProcessor()->clearFalloutImageSpace();
             mRendering.setSkyEnabled(false);
             stopSounds();
             mWindSpeed = 0.f;
             mCurrentWindSpeed = 0.f;
             mNextWindSpeed = 0.f;
-            applyFalloutImageSpace(false);
             return;
         }
 

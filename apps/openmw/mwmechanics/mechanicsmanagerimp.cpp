@@ -815,6 +815,43 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && mActors.prepareFalloutVatsRangedAttack(actor);
+    }
+
+    bool MechanicsManager::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && mActors.consumeFalloutVatsRangedAttackRelease(actor);
+    }
+
+    bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor,
+        const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
+        const FalloutVatsQueuedAction& action, bool targetHit)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, action, targetHit);
+    }
+
+    bool MechanicsManager::executeFalloutProjectileImpact(const MWWorld::Ptr& actor,
+        const MWWorld::Ptr& target, const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return !actor.isEmpty() && !target.isEmpty() && actor.getClass().isActor()
+            && target.getClass().isActor()
+            && mActors.executeFalloutProjectileImpact(
+                actor, target, segmentStart, hitPosition, impact);
+    }
+
+    bool MechanicsManager::executeFalloutExplosion(const MWWorld::Ptr& actor,
+        const osg::Vec3f& position, const FalloutProjectileImpactContract& impact)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && mActors.executeFalloutExplosion(actor, position, impact);
+    }
+
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {
@@ -1819,6 +1856,12 @@ namespace MWMechanics
     void MechanicsManager::stopCombat(const MWWorld::Ptr& actor)
     {
         mActors.stopCombat(actor);
+    }
+
+    bool MechanicsManager::playFalloutDialogueAnimation(
+        const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)
+    {
+        return !ptr.isEmpty() && mActors.playFalloutDialogueAnimation(ptr, animationId);
     }
 
     void MechanicsManager::getObjectsInRange(

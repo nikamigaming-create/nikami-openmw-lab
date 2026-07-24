@@ -212,6 +212,7 @@ add_component_dir (esm4
     loadacti
     loadalch
     loadaloc
+    loadamef
     loadammo
     loadanio
     loadappa
@@ -232,7 +233,9 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+    loadexpl
     loadfact
+    loadrepu
     loadflor
     loadflst
     loadfurn
@@ -245,6 +248,8 @@ add_component_dir (esm4
     loadidle
     loadidlm
     loadimod
+    loadipct
+    loadipds
     loadinfo
     loadingr
     loadkeym
@@ -255,6 +260,7 @@ add_component_dir (esm4
     loadlvlc
     loadlvli
     loadlvln
+    loadmgef
     loadmato
     loadmesg
     loadmisc
@@ -287,6 +293,7 @@ add_component_dir (esm4
     loadslgm
     loadsndr
     loadsoun
+    loadspel
     loadstat
     loadtact
     loadterm

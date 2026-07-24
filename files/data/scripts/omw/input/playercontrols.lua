@@ -198,6 +198,9 @@ end))
 
 input.registerTriggerHandler('Journal', async:callback(function()
     if not uiAllowed() then return end
+    -- FNV routes this trigger to its DATA / QUESTS pane in ActionManager.
+    -- Do not also open the Morrowind book journal after the native handler.
+    if core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm') then return end
 
     if I.UI.getMode() == I.UI.MODE.Journal then
         I.UI.removeMode(I.UI.MODE.Journal)

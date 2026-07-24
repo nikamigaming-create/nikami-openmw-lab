@@ -18,6 +18,7 @@
 #include <components/vfs/recursivedirectoryiterator.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -27,6 +28,8 @@
 #include "../mwworld/weather.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+
+#include "../mwdialogue/esm4dialogueutils.hpp"
 
 #include "constants.hpp"
 #include "ffmpegdecoder.hpp"
@@ -412,7 +415,8 @@ namespace MWSound
     }
 
     void SoundManager::saySequence(
-        const MWWorld::ConstPtr& ptr, std::span<const VFS::Path::Normalized> filenames)
+        const MWWorld::ConstPtr& ptr, std::span<const VFS::Path::Normalized> filenames,
+        std::span<const MWBase::FalloutDialogueVoiceMetadata> metadata)
     {
         stopSay(ptr);
         if (!mOutput->isInitialized() || filenames.empty())
@@ -421,6 +425,12 @@ namespace MWSound
         ActorSaySequence& sequence = mSaySequences[ptr.mRef];
         sequence.mCell = ptr.mCell;
         sequence.mVoices.replace(filenames);
+        sequence.mMetadata.clear();
+        for (std::size_t i = 0; i < filenames.size(); ++i)
+        {
+            sequence.mMetadata.push_back(
+                i < metadata.size() ? metadata[i] : MWBase::FalloutDialogueVoiceMetadata{});
+        }
         startNextSaySequence(ptr);
     }
 
@@ -432,6 +442,27 @@ namespace MWSound
 
         while (const VFS::Path::Normalized* voice = found->second.mVoices.beginNext())
         {
+            MWBase::FalloutDialogueVoiceMetadata metadata;
+            if (!found->second.mMetadata.empty())
+            {
+                metadata = std::move(found->second.mMetadata.front());
+                found->second.mMetadata.pop_front();
+            }
+            if ((metadata.mFlags & 0x01) != 0)
+            {
+                MWDialogue::setEsm4DialogueExpression(
+                    ptr.mRef, metadata.mEmotionType, metadata.mEmotionValue);
+            }
+            if (!metadata.mSpeakerAnimation.empty())
+            {
+                MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                    ptr, metadata.mSpeakerAnimation);
+            }
+            if (!metadata.mListenerAnimation.empty())
+            {
+                MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                    MWBase::Environment::get().getWorld()->getPlayerPtr(), metadata.mListenerAnimation);
+            }
             if (startSay(ptr, *voice, false))
                 return true;
             found->second.mVoices.finishCurrent();

@@ -1,6 +1,7 @@
 #ifndef GAME_SOUND_SOUNDMANAGER_H
 #define GAME_SOUND_SOUNDMANAGER_H
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <span>
@@ -91,6 +92,7 @@ namespace MWSound
         {
             const MWWorld::CellStore* mCell = nullptr;
             SaySequence mVoices;
+            std::deque<MWBase::FalloutDialogueVoiceMetadata> mMetadata;
         };
 
         typedef std::map<const MWWorld::LiveCellRefBase*, ActorSaySequence> SaySequenceMap;
@@ -203,7 +205,8 @@ namespace MWSound
         /// \param filename name of a sound file in the VFS
 
         void saySequence(
-            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames) override;
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames,
+            std::span<const MWBase::FalloutDialogueVoiceMetadata> metadata = {}) override;
         ///< Replace the actor's speech with an authored sequence of voice files.
 
         void say(VFS::Path::NormalizedView filename) override;

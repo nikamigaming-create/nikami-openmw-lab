@@ -20,6 +20,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testfnvterminalruntime.cpp
     mwworld/testfnvplayerstate.cpp
     mwworld/testfnvplayerruntimestate.cpp
+    mwworld/testfnvweather.cpp
+    mwworld/testfnvfasttravel.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp

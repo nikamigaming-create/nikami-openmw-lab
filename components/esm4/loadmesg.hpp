@@ -31,7 +31,9 @@ namespace ESM4
         std::string mEditorId;
         std::string mDescription;
         std::string mFullName;
-        std::uint32_t mData = 0;
+        ESM::FormId mIcon{};
+        std::uint32_t mMessageFlags = 0;
+        std::uint32_t mDisplayTime = 0;
         std::vector<std::string> mButtons;
 
         void load(ESM4::Reader& reader);

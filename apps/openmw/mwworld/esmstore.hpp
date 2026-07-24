@@ -87,6 +87,7 @@ namespace ESM4
     struct ActorCreature;
     struct AnimObject;
     struct Ammunition;
+    struct AmmoEffect;
     struct AIPackage;
     struct Armor;
     struct ArmorAddon;
@@ -103,16 +104,20 @@ namespace ESM4
     struct DialogInfo;
     struct Door;
     struct Eyes;
+    struct Explosion;
     struct Faction;
     struct Flora;
     struct FormIdList;
     struct Furniture;
+    struct GameSetting;
     struct GlobalVariable;
     struct Hair;
     struct HeadPart;
     struct IdleAnimation;
     struct IdleMarker;
     struct Ingredient;
+    struct ImpactData;
+    struct ImpactDataSet;
     struct ItemMod;
     struct Key;
     struct Land;
@@ -122,6 +127,7 @@ namespace ESM4
     struct LevelledNpc;
     struct Light;
     struct MiscItem;
+    struct MagicEffect;
     struct Message;
     struct MovableStatic;
     struct Npc;
@@ -136,9 +142,11 @@ namespace ESM4
     struct RecipeCategory;
     struct Region;
     struct Reference;
+    struct Reputation;
     struct Script;
     struct Sound;
     struct SoundReference;
+    struct Spell;
     struct Static;
     struct StaticCollection;
     struct Terminal;
@@ -210,7 +218,9 @@ namespace MWWorld
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
-            Store<ESM4::Message>>;
+            Store<ESM4::Message>, Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Reputation>,
+            Store<ESM4::ImpactData>, Store<ESM4::ImpactDataSet>>;
 
     private:
         template <typename T>

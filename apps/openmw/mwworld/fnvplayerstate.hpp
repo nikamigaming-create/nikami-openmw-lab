@@ -107,6 +107,69 @@ namespace MWWorld
         std::optional<FalloutActorValueComponents> getActorValueComponents(std::uint32_t actorValue) const;
     };
 
+    // Runtime-owned subset of the native-save player state contract. Keeping
+    // these value types here lets the live actor-value, perk, reputation, and
+    // map-marker state share one representation without requiring the legacy
+    // retail .fos importer.
+    struct FalloutSavePlayerHeaderState
+    {
+        enum class ActorValueModifierKind : std::uint8_t
+        {
+            Permanent,
+            Damage,
+            Temporary,
+        };
+
+        struct ActorValueModifier
+        {
+            std::uint8_t mActorValue = 0;
+            float mModifier = 0.f;
+            ActorValueModifierKind mKind = ActorValueModifierKind::Permanent;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const ActorValueModifier&) const = default;
+        };
+
+        struct PerkRank
+        {
+            ESM::FormId mPerk;
+            std::uint8_t mRankByte = 0;
+            bool mAlternate = false;
+            std::uint64_t mSourceOffset = 0;
+
+            bool operator==(const PerkRank&) const = default;
+        };
+    };
+
+    // Weather reconstruction consumes only this scene-state subset. The
+    // definitions remain independent of the retired native .fos importer.
+    struct FalloutSaveLoadPlan
+    {
+        struct SceneState
+        {
+            ESM::FormId mCurrentWeather;
+            std::optional<ESM::FormId> mTransitionWeather;
+            ESM::FormId mDefaultWeather;
+            std::optional<ESM::FormId> mOverrideWeather;
+            float mGameHour = 0.f;
+            float mLastUpdateHour = 0.f;
+            float mWeatherPercent = 0.f;
+            float mFogPower = 0.f;
+            std::uint32_t mFlags = 0;
+            std::uint32_t mSkyMode = 0;
+            std::uint64_t mPayloadOffset = 0;
+            std::uint64_t mPayloadBytes = 0;
+        };
+    };
+
+    struct FalloutExteriorPlayerPlacement
+    {
+        ESM::FormId mWorldspaceRecord;
+        ESM::FormId mCellRecord;
+        int mCellX = 0;
+        int mCellY = 0;
+    };
+
     struct FalloutPlayerStateResolution
     {
         std::optional<FalloutPlayerState> mState;

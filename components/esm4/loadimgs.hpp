@@ -16,6 +16,14 @@ namespace ESM4
     {
         static constexpr std::size_t sTraitCount = 33;
 
+        enum CinematicFlag : std::uint8_t
+        {
+            Cinematic_Saturation = 1 << 0,
+            Cinematic_Contrast = 1 << 1,
+            Cinematic_Tint = 1 << 2,
+            Cinematic_Brightness = 1 << 3,
+        };
+
         enum Trait : std::size_t
         {
             Trait_EyeAdaptSpeed,
@@ -68,6 +76,8 @@ namespace ESM4
         std::uint32_t mFlags = 0;
         std::string mEditorId;
         std::array<float, sTraitCount> mTraits{};
+        std::uint8_t mCinematicFlags = 0;
+        bool mHasCinematicFlags = false;
         // TES5/FO4 split image-space records. Keep the authored values distinct from
         // Fallout 3/New Vegas' monolithic DNAM trait array.
         std::array<float, 9> mHdr{};

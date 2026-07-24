@@ -27,6 +27,8 @@ namespace ESM
 namespace MWMechanics
 {
     enum class GreetingState;
+    struct FalloutProjectileImpactContract;
+    struct FalloutVatsQueuedAction;
 }
 
 namespace MWWorld
@@ -114,6 +116,12 @@ namespace MWBase
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
 
+        virtual bool playFalloutDialogueAnimation(
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)
+        {
+            return false;
+        }
+
         enum OffenseType
         {
             OT_Theft, // Taking items owned by an NPC or a faction you are not a member of
@@ -168,6 +176,24 @@ namespace MWBase
 
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
         ///< Forces an object to refresh its animation state.
+
+        virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
+        virtual bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr&) { return false; }
+        virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
+        {
+            return false;
+        }
+        virtual bool executeFalloutProjectileImpact(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const osg::Vec3f&, const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
+        virtual bool executeFalloutExplosion(const MWWorld::Ptr&, const osg::Vec3f&,
+            const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
 
         virtual bool playAnimationGroup(
             const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number = 1, bool scripted = false)

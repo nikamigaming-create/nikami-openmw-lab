@@ -1,11 +1,18 @@
 #include "projectilemanager.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
 
 #include <osg/PositionAttitudeTransform>
+#include <osg/BlendFunc>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/LineWidth>
 
 #include <components/debug/debuglog.hpp>
 
@@ -13,9 +20,12 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadench.hpp>
+#include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/projectilestate.hpp>
+
+#include <components/esm4/loadproj.hpp>
 
 #include <components/esm/quaternion.hpp>
 #include <components/esm/vector3.hpp>
@@ -35,12 +45,14 @@
 #include <components/settings/values.hpp>
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/manualref.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -385,9 +397,187 @@ namespace MWWorld
         mProjectiles.push_back(std::move(state));
     }
 
+    bool ProjectileManager::launchFalloutProjectile(const Ptr& actor, ESM::FormId projectileId,
+        const osg::Vec3f& pos, const osg::Vec3f& requestedDirection,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::Projectile* projectile
+            = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
+        osg::Vec3f direction = requestedDirection;
+        if (projectile == nullptr || !projectile->mData.present || projectile->mModel.empty()
+            || !std::isfinite(projectile->mData.speed) || projectile->mData.speed <= 0.f
+            || !std::isfinite(projectile->mData.range) || projectile->mData.range <= 0.f
+            || !std::isfinite(projectile->mData.gravity) || projectile->mData.gravity < 0.f
+            || direction.normalize() == 0.f)
+            return false;
+        const bool hasExplosion = (projectile->mData.flags & ESM4::Projectile::Explosion) != 0;
+        if (hasExplosion != !impact.mExplosion.isZeroOrUnset()
+            || (hasExplosion && impact.mExplosion != projectile->mData.explosion)
+            || !std::isfinite(impact.mExplosionDamageMultiplier)
+            || impact.mExplosionDamageMultiplier < 0.f || !std::isfinite(impact.mProjectileSkill)
+            || impact.mProjectileSkill < 0.f)
+            return false;
+
+        FalloutProjectileState state;
+        state.mCaster = actor.getCellRef().getRefNum();
+        state.mCasterHandle = actor;
+        state.mProjectile = projectileId;
+        state.mVelocity = direction * projectile->mData.speed;
+        state.mRotationVelocity = osg::Vec3f(projectile->mData.rotationX,
+            projectile->mData.rotationY, projectile->mData.rotationZ);
+        state.mPreviousPosition = pos;
+        state.mGravity = projectile->mData.gravity;
+        state.mMaximumRange = projectile->mData.range;
+        state.mDistanceTravelled = 0.f;
+        state.mElapsedTime = 0.f;
+        state.mBounceCount = 0;
+        state.mRotates = (projectile->mData.flags & ESM4::Projectile::Rotates) != 0;
+        state.mSettled = false;
+        state.mDetonate = false;
+        state.mArmed = false;
+        state.mImpact = impact;
+        state.mToDelete = false;
+
+        osg::Quat orient;
+        orient.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
+        const VFS::Path::Normalized model
+            = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel));
+        createModel(state, model, pos, orient, false, false, osg::Vec4(0.f, 0.f, 0.f, 0.f));
+        state.mProjectileId
+            = mPhysics->addProjectile(actor, pos, model, projectile->mData.type == ESM4::Projectile::Lobber);
+        mFalloutProjectiles.push_back(std::move(state));
+
+        Log(Debug::Info) << "FNV moving projectile launched: actor=" << actor.toString()
+                         << " projectile=" << ESM::RefId::formIdRefId(projectileId)
+                         << " speed=" << projectile->mData.speed << " gravity=" << projectile->mData.gravity
+                         << " range=" << projectile->mData.range << " rawDamage=" << impact.mRawDamage;
+        return true;
+    }
+
+    bool ProjectileManager::launchFalloutHitscanTracer(
+        ESM::FormId projectileId, const osg::Vec3f& origin, const osg::Vec3f& destination)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::Projectile* projectile
+            = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
+        osg::Vec3f direction = destination - origin;
+        const float distance = direction.length();
+        if (projectile == nullptr || !std::isfinite(distance) || distance <= 0.f || direction.normalize() == 0.f)
+            return false;
+
+        FalloutHitscanTracerState state;
+        state.mProjectileId = -1;
+        state.mOrigin = origin;
+        state.mDestination = destination;
+        state.mElapsedTime = 0.f;
+        // Keep an authored hitscan round visible for several frames without
+        // changing its instantaneous gameplay hit resolution.
+        state.mLifetime = std::clamp(distance / 30000.f, 0.055f, 0.12f);
+        state.mToDelete = false;
+
+        osg::Quat orientation;
+        orientation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
+        // Hitscan PROJ records are allowed to omit a world model: the impact is instantaneous and the visible
+        // streak is presentation owned by the firing weapon. Requiring MODL here silently suppressed the generated
+        // tracer for ordinary firearms even though the shot, damage, muzzle flash and impact had all succeeded.
+        state.mNode = new osg::PositionAttitudeTransform;
+        state.mNode->setNodeMask(MWRender::Mask_Effect);
+        state.mNode->setPosition(origin);
+        state.mNode->setAttitude(orientation);
+        state.mNode->addCullCallback(new SceneUtil::LightListCallback);
+        mParent->addChild(state.mNode);
+        state.mEffectAnimationTime = std::make_shared<MWRender::EffectAnimationTime>();
+
+        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+        vertices->push_back(osg::Vec3f(0.f, -42.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, 8.f, 0.f));
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->push_back(osg::Vec4f(2.4f, 1.05f, 0.25f, 0.95f));
+        osg::ref_ptr<osg::Geometry> streak = new osg::Geometry;
+        streak->setVertexArray(vertices);
+        streak->setColorArray(colors, osg::Array::BIND_OVERALL);
+        streak->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, 2));
+        osg::StateSet* stateSet = streak->getOrCreateStateSet();
+        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+        stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE), osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::LineWidth(3.f), osg::StateAttribute::ON);
+        stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+        osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+        geode->addDrawable(streak);
+        state.mNode->addChild(geode);
+
+        mFalloutHitscanTracers.push_back(std::move(state));
+        Log(Debug::Info) << "FNV hitscan tracer launched: projectile="
+                         << ESM::RefId::formIdRefId(projectileId) << " origin=" << origin
+                         << " destination=" << destination << " distance=" << distance
+                         << " authoredModel=" << projectile->mModel;
+        return true;
+    }
+
+    std::size_t ProjectileManager::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty())
+            return 0;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return 0;
+
+        std::size_t count = 0;
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete || !state.mImpact.mVatsAction || state.getCaster() != actor)
+                continue;
+            const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(state.mProjectile);
+            if (projectile == nullptr || !projectile->mData.present)
+                continue;
+            const bool openEnded = (projectile->mData.flags & ESM4::Projectile::Detonates) != 0
+                || ((projectile->mData.flags & ESM4::Projectile::AlternateTrigger) != 0
+                    && projectile->mData.alternateProximity > 0.f);
+            if (!openEnded)
+                ++count;
+        }
+        return count;
+    }
+
+    unsigned int ProjectileManager::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || actor.isEmpty() || !actor.getClass().isActor())
+            return 0;
+
+        unsigned int count = 0;
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete || state.mDetonate || state.getCaster() != actor)
+                continue;
+            const ESM4::Projectile* projectile
+                = store->get<ESM4::Projectile>().search(state.mProjectile);
+            if (projectile == nullptr
+                || !MWMechanics::isFalloutRemoteDetonationCandidate(
+                    *projectile, state.mSettled, state.mImpact.mExplosion))
+                continue;
+            state.mDetonate = true;
+            ++count;
+            Log(Debug::Info) << "FNV placed explosive remotely triggered: actor=" << actor.toString()
+                             << " projectile=" << ESM::RefId::formIdRefId(state.mProjectile)
+                             << " explosion=" << ESM::RefId::formIdRefId(state.mImpact.mExplosion)
+                             << " position=" << state.mNode->getPosition()
+                             << " elapsed=" << state.mElapsedTime;
+        }
+        return count;
+    }
+
     void ProjectileManager::updateCasters()
     {
         for (auto& state : mProjectiles)
+        {
+            state.mCasterHandle = state.getCaster();
+            mPhysics->setCaster(state.mProjectileId, state.mCasterHandle);
+        }
+
+        for (auto& state : mFalloutProjectiles)
         {
             state.mCasterHandle = state.getCaster();
             mPhysics->setCaster(state.mProjectileId, state.mCasterHandle);
@@ -413,7 +603,27 @@ namespace MWWorld
     {
         periodicCleanup(dt);
         moveProjectiles(dt);
+        moveFalloutProjectiles(dt);
+        moveFalloutHitscanTracers(dt);
         moveMagicBolts(dt);
+    }
+
+    void ProjectileManager::moveFalloutHitscanTracers(float duration)
+    {
+        for (FalloutHitscanTracerState& state : mFalloutHitscanTracers)
+        {
+            if (state.mToDelete)
+                continue;
+            state.mElapsedTime += duration;
+            if (state.mElapsedTime >= state.mLifetime)
+            {
+                state.mToDelete = true;
+                continue;
+            }
+            const float progress = std::clamp(state.mElapsedTime / state.mLifetime, 0.f, 1.f);
+            state.mNode->setPosition(state.mOrigin + (state.mDestination - state.mOrigin) * progress);
+            update(state, duration);
+        }
     }
 
     void ProjectileManager::periodicCleanup(float dt)
@@ -433,6 +643,12 @@ namespace MWWorld
             {
                 if (isCleanable(projectileState))
                     cleanupProjectile(projectileState);
+            }
+
+            for (auto& projectileState : mFalloutProjectiles)
+            {
+                if (isCleanable(projectileState))
+                    projectileState.mToDelete = true;
             }
 
             for (auto& magicBoltState : mMagicBolts)
@@ -528,6 +744,178 @@ namespace MWWorld
         }
     }
 
+    void ProjectileManager::moveFalloutProjectiles(float duration)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+        MWBase::SoundManager* sound = MWBase::Environment::get().getSoundManager();
+        if (store == nullptr || mechanics == nullptr || sound == nullptr)
+            return;
+        const ESM::GameSetting* minesDelaySetting = store->get<ESM::GameSetting>().search("fMinesDelayMin");
+        const ESM::GameSetting* exteriorRadiusSetting
+            = store->get<ESM::GameSetting>().search("fMineExteriorRadiusMult");
+        const float minesDelayMin = minesDelaySetting != nullptr
+            ? minesDelaySetting->mValue.getFloat()
+            : std::numeric_limits<float>::quiet_NaN();
+        const float exteriorRadiusMultiplier = exteriorRadiusSetting != nullptr
+            ? exteriorRadiusSetting->mValue.getFloat()
+            : std::numeric_limits<float>::quiet_NaN();
+
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete)
+                continue;
+            const ESM4::Projectile* authored = store->get<ESM4::Projectile>().search(state.mProjectile);
+            if (authored == nullptr || !authored->mData.present)
+            {
+                state.mToDelete = true;
+                continue;
+            }
+            state.mElapsedTime += duration;
+            const MWWorld::Ptr caster = state.getCaster();
+            if ((authored->mData.flags & ESM4::Projectile::Explosion) != 0)
+            {
+                const bool exterior = !caster.isEmpty() && caster.isInCell() && caster.getCell()->isExterior();
+                MWMechanics::FalloutProjectileTriggerFailure triggerFailure
+                    = MWMechanics::FalloutProjectileTriggerFailure::None;
+                const std::optional<MWMechanics::FalloutProjectileTrigger> trigger
+                    = MWMechanics::buildFalloutProjectileTrigger(*authored, state.mImpact.mProjectileSkill,
+                        minesDelayMin, exteriorRadiusMultiplier, exterior, triggerFailure);
+                if (!trigger)
+                {
+                    Log(Debug::Error) << "FNV projectile trigger rejected: projectile="
+                                      << ESM::RefId::formIdRefId(state.mProjectile) << " reason="
+                                      << MWMechanics::getFalloutProjectileTriggerFailureName(triggerFailure);
+                    state.mToDelete = true;
+                    continue;
+                }
+                if (trigger->mMode == MWMechanics::FalloutProjectileTriggerMode::Timed
+                    && state.mElapsedTime >= trigger->mDelay)
+                    state.mDetonate = true;
+                else if (trigger->mMode == MWMechanics::FalloutProjectileTriggerMode::Proximity && state.mSettled
+                    && state.mElapsedTime >= trigger->mDelay)
+                {
+                    if (!state.mArmed)
+                    {
+                        state.mArmed = true;
+                        if (!authored->mData.countdownSound.isZeroOrUnset())
+                        {
+                            sound->playSound3D(state.mNode->getPosition(),
+                                ESM::RefId::formIdRefId(authored->mData.countdownSound), 1.f, 1.f);
+                        }
+                        Log(Debug::Info) << "FNV proximity explosive armed: projectile="
+                                         << ESM::RefId::formIdRefId(state.mProjectile) << " delay="
+                                         << trigger->mDelay << " radius=" << trigger->mProximityRadius
+                                         << " elapsed=" << state.mElapsedTime;
+                    }
+
+                    if (!caster.isEmpty())
+                    {
+                        std::vector<MWWorld::Ptr> nearby;
+                        mechanics->getActorsInRange(state.mNode->getPosition(), trigger->mProximityRadius, nearby);
+                        for (const MWWorld::Ptr& candidate : nearby)
+                        {
+                            if (candidate.isEmpty() || candidate == caster || !candidate.getClass().isActor()
+                                || candidate.getClass().getCreatureStats(candidate).isDead())
+                                continue;
+                            const bool hostile = candidate.getClass().getCreatureStats(candidate)
+                                                     .getAiSequence()
+                                                     .isInCombat(caster)
+                                || mechanics->isAggressive(candidate, caster);
+                            if (!hostile)
+                                continue;
+                            state.mDetonate = true;
+                            Log(Debug::Info) << "FNV proximity explosive triggered: projectile="
+                                             << ESM::RefId::formIdRefId(state.mProjectile)
+                                             << " source=" << caster.toString()
+                                             << " target=" << candidate.toString()
+                                             << " radius=" << trigger->mProximityRadius
+                                             << " elapsed=" << state.mElapsedTime;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (state.mDetonate || state.mSettled)
+                continue;
+            MWPhysics::Projectile* projectile = mPhysics->getProjectile(state.mProjectileId);
+            if (!projectile->isActive())
+                continue;
+
+            state.mVelocity -= osg::Vec3f(0.f, 0.f,
+                Constants::GravityConst * Constants::UnitsPerMeter * 0.1f * state.mGravity * duration);
+            projectile->setVelocity(state.mVelocity);
+
+            if (state.mRotates)
+            {
+                const osg::Quat rotation(state.mRotationVelocity.x() * duration, osg::Vec3f(1.f, 0.f, 0.f),
+                    state.mRotationVelocity.y() * duration, osg::Vec3f(0.f, 1.f, 0.f),
+                    state.mRotationVelocity.z() * duration, osg::Vec3f(0.f, 0.f, 1.f));
+                state.mNode->setAttitude(state.mNode->getAttitude() * rotation);
+            }
+            else if (state.mVelocity.length2() > 0.f)
+            {
+                osg::Quat orient;
+                orient.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), state.mVelocity);
+                state.mNode->setAttitude(orient);
+            }
+            update(state, duration);
+
+            // Package targeting controls aim, not collision; any actor in the flight path remains solid.
+            projectile->setValidTargets({});
+        }
+    }
+
+    bool ProjectileManager::bounceFalloutProjectile(FalloutProjectileState& state,
+        const ESM4::Projectile& projectile, const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal)
+    {
+        MWMechanics::FalloutProjectileBounceFailure failure
+            = MWMechanics::FalloutProjectileBounceFailure::None;
+        const std::optional<osg::Vec3f> reflected = MWMechanics::resolveFalloutProjectileBounce(
+            state.mVelocity, hitNormal, projectile.mData.bounciness, failure);
+        if (!reflected)
+        {
+            Log(Debug::Error) << "FNV lobber bounce rejected: projectile="
+                              << ESM::RefId::formIdRefId(state.mProjectile)
+                              << " reason=" << MWMechanics::getFalloutProjectileBounceFailureName(failure);
+            return false;
+        }
+
+        ++state.mBounceCount;
+        constexpr float settleSpeed = 15.f;
+        constexpr std::uint8_t maximumBounces = 24;
+        osg::Vec3f normal = hitNormal;
+        normal.normalize();
+        if (reflected->length() <= settleSpeed || state.mBounceCount >= maximumBounces)
+        {
+            state.mVelocity.set(0.f, 0.f, 0.f);
+            state.mPreviousPosition = hitPosition;
+            state.mNode->setPosition(hitPosition);
+            state.mSettled = true;
+            Log(Debug::Info) << "FNV lobber settled: projectile="
+                             << ESM::RefId::formIdRefId(state.mProjectile)
+                             << " bounces=" << static_cast<unsigned int>(state.mBounceCount)
+                             << " elapsed=" << state.mElapsedTime;
+            return true;
+        }
+
+        const osg::Vec3f restartPosition = hitPosition + normal * 2.f;
+        const VFS::Path::Normalized model
+            = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile.mModel));
+        mPhysics->removeProjectile(state.mProjectileId);
+        state.mProjectileId = mPhysics->addProjectile(state.getCaster(), restartPosition, model, true);
+        state.mVelocity = *reflected;
+        state.mPreviousPosition = restartPosition;
+        state.mNode->setPosition(restartPosition);
+        mPhysics->getProjectile(state.mProjectileId)->setVelocity(state.mVelocity);
+        Log(Debug::Info) << "FNV lobber bounced: projectile=" << ESM::RefId::formIdRefId(state.mProjectile)
+                         << " bounciness=" << projectile.mData.bounciness
+                         << " speed=" << state.mVelocity.length()
+                         << " bounces=" << static_cast<unsigned int>(state.mBounceCount)
+                         << " elapsed=" << state.mElapsedTime;
+        return true;
+    }
+
     void ProjectileManager::processHits()
     {
         for (auto& projectileState : mProjectiles)
@@ -568,6 +956,234 @@ namespace MWWorld
 
             MWMechanics::projectileHit(
                 caster, target, bow, projectileRef.getPtr(), hitPosition, projectileState.mAttackStrength);
+            projectileState.mToDelete = true;
+        }
+        for (FalloutProjectileState& projectileState : mFalloutProjectiles)
+        {
+            if (projectileState.mToDelete)
+                continue;
+
+            MWPhysics::Projectile* projectile = mPhysics->getProjectile(projectileState.mProjectileId);
+            const osg::Vec3f position = projectile->getSimulationPosition();
+            projectileState.mNode->setPosition(position);
+            if (projectileState.mDetonate)
+            {
+                const MWWorld::Ptr caster = projectileState.getCaster();
+                if (caster.isEmpty()
+                    || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                        caster, position, projectileState.mImpact))
+                {
+                    Log(Debug::Error) << "FNV timed projectile explosion rejected: caster="
+                                      << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                      << " projectile=" << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                      << " explosion="
+                                      << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
+                }
+                projectileState.mToDelete = true;
+                continue;
+            }
+            if (projectileState.mSettled)
+                continue;
+            const ESM4::Projectile* authoredProjectile
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(
+                    projectileState.mProjectile);
+            projectileState.mDistanceTravelled += (position - projectileState.mPreviousPosition).length();
+            const bool projectileActive = projectile->isActive();
+            if (MWMechanics::shouldResolveFalloutProjectileRangeExpiry(
+                    projectileActive, projectileState.mDistanceTravelled, projectileState.mMaximumRange))
+            {
+                const std::optional<ESM::FormId> queuedTarget = authoredProjectile != nullptr
+                    ? MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(
+                        *authoredProjectile, projectileState.mImpact)
+                    : std::nullopt;
+                if (queuedTarget)
+                {
+                    MWBase::World* world = MWBase::Environment::get().getWorld();
+                    MWWorld::Ptr candidate
+                        = world != nullptr ? world->searchPtr(ESM::RefId(*queuedTarget), true, false) : MWWorld::Ptr();
+                    if (candidate.isEmpty() && world != nullptr)
+                    {
+                        std::vector<MWWorld::Ptr> nearby;
+                        MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                            position, projectileState.mMaximumRange, nearby);
+                        const auto activeTarget = std::ranges::find_if(nearby, [&](const MWWorld::Ptr& actor) {
+                            return !actor.isEmpty() && actor.getClass().isActor()
+                                && actor.getCellRef().getRefNum() == *queuedTarget;
+                        });
+                        if (activeTarget != nearby.end())
+                            candidate = *activeTarget;
+                    }
+
+                    if (!candidate.isEmpty() && candidate.getClass().isActor())
+                    {
+                        osg::Vec3f resolvedHitPosition = world->getActorHeadTransform(candidate).getTrans();
+                        const MWMechanics::FalloutVatsQueuedAction& action
+                            = *projectileState.mImpact.mVatsAction;
+                        if (MWRender::Animation* animation = world->getAnimation(candidate))
+                        {
+                            if (const osg::Node* targetNode = animation->getNode(action.mTargetNode))
+                            {
+                                const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                                if (!paths.empty())
+                                    resolvedHitPosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                            }
+                        }
+                        projectileState.mNode->setPosition(resolvedHitPosition);
+
+                        const MWWorld::Ptr caster = projectileState.getCaster();
+                        const bool applied = !caster.isEmpty()
+                            && MWBase::Environment::get().getMechanicsManager()->executeFalloutProjectileImpact(
+                                caster, candidate, projectileState.mPreviousPosition, resolvedHitPosition,
+                                projectileState.mImpact);
+                        if (!applied)
+                        {
+                            Log(Debug::Error) << "FNV moving projectile VATS range impact rejected: caster="
+                                              << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                              << " target=" << candidate.toString() << " projectile="
+                                              << ESM::RefId::formIdRefId(projectileState.mProjectile);
+                        }
+
+                        const bool detonateOnImpact
+                            = (authoredProjectile->mData.flags & ESM4::Projectile::Explosion) != 0
+                            && (authoredProjectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0
+                            && (authoredProjectile->mData.flags & ESM4::Projectile::Detonates) == 0
+                            && !projectileState.mImpact.mExplosion.isZeroOrUnset();
+                        if (detonateOnImpact
+                            && (caster.isEmpty()
+                                || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                                    caster, resolvedHitPosition, projectileState.mImpact)))
+                        {
+                            Log(Debug::Error) << "FNV moving projectile VATS range explosion rejected: caster="
+                                              << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                              << " projectile="
+                                              << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                              << " explosion="
+                                              << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
+                        }
+
+                        Log(Debug::Info) << "FNV moving projectile VATS range resolution: projectile="
+                                         << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                         << " target=" << candidate.toString()
+                                         << " range=" << projectileState.mMaximumRange
+                                         << " travelled=" << projectileState.mDistanceTravelled
+                                         << " resolvedHitPosition=" << resolvedHitPosition;
+                    }
+                    else
+                    {
+                        Log(Debug::Warning) << "FNV moving projectile VATS range target unavailable: projectile="
+                                            << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                            << " target=" << ESM::RefId::formIdRefId(*queuedTarget);
+                    }
+                }
+                projectileState.mToDelete = true;
+                continue;
+            }
+
+            if (projectileActive)
+            {
+                projectileState.mPreviousPosition = position;
+                continue;
+            }
+
+            const MWWorld::Ptr target = projectile->getTarget();
+            const MWWorld::Ptr caster = projectileState.getCaster();
+            const osg::Vec3f physicalHitPosition = Misc::Convert::toOsg(projectile->getHitPosition());
+            if (projectile->getHitWater())
+                mRendering->emitWaterRipple(physicalHitPosition);
+
+            const bool persistentLobber = authoredProjectile != nullptr
+                && MWMechanics::doesFalloutProjectileRemainAfterImpact(*authoredProjectile);
+            if (persistentLobber)
+            {
+                const osg::Vec3f hitNormal = Misc::Convert::toOsg(projectile->getHitNormal());
+                if (!bounceFalloutProjectile(projectileState, *authoredProjectile, physicalHitPosition, hitNormal))
+                    projectileState.mToDelete = true;
+                continue;
+            }
+
+            MWWorld::Ptr resolvedTarget = target;
+            osg::Vec3f resolvedHitPosition = physicalHitPosition;
+            const bool terminalDirectImpact = authoredProjectile != nullptr && !persistentLobber;
+            const std::optional<ESM::FormId> queuedTarget = terminalDirectImpact
+                ? MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(projectileState.mImpact)
+                : std::nullopt;
+            if (queuedTarget)
+            {
+                MWBase::World* world = MWBase::Environment::get().getWorld();
+                MWWorld::Ptr candidate
+                    = world != nullptr ? world->searchPtr(ESM::RefId(*queuedTarget), true, false) : MWWorld::Ptr();
+                if (candidate.isEmpty() && world != nullptr)
+                {
+                    std::vector<MWWorld::Ptr> nearby;
+                    MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                        physicalHitPosition, projectileState.mMaximumRange, nearby);
+                    const auto activeTarget = std::ranges::find_if(nearby, [&](const MWWorld::Ptr& actor) {
+                        return !actor.isEmpty() && actor.getClass().isActor()
+                            && actor.getCellRef().getRefNum() == *queuedTarget;
+                    });
+                    if (activeTarget != nearby.end())
+                        candidate = *activeTarget;
+                }
+                if (!candidate.isEmpty() && candidate.getClass().isActor())
+                {
+                    resolvedTarget = candidate;
+                    resolvedHitPosition = world->getActorHeadTransform(candidate).getTrans();
+                    const MWMechanics::FalloutVatsQueuedAction& action = *projectileState.mImpact.mVatsAction;
+                    if (MWRender::Animation* animation = world->getAnimation(candidate))
+                    {
+                        if (const osg::Node* targetNode = animation->getNode(action.mTargetNode))
+                        {
+                            const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                            if (!paths.empty())
+                                resolvedHitPosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                        }
+                    }
+                    projectileState.mNode->setPosition(resolvedHitPosition);
+                    Log(Debug::Info) << "FNV moving projectile VATS resolution: projectile="
+                                     << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                     << " queuedTarget=" << candidate.toString() << " physicalTarget="
+                                     << (target.isEmpty() ? std::string("scenery") : target.toString())
+                                     << " physicalHitPosition=" << physicalHitPosition
+                                     << " resolvedHitPosition=" << resolvedHitPosition
+                                     << " redirected=" << (target != candidate);
+                }
+                else
+                {
+                    Log(Debug::Warning) << "FNV moving projectile VATS target unavailable: projectile="
+                                        << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                        << " target=" << ESM::RefId::formIdRefId(*queuedTarget);
+                }
+            }
+
+            if (!caster.isEmpty() && !resolvedTarget.isEmpty() && resolvedTarget.getClass().isActor())
+            {
+                const bool applied = MWBase::Environment::get().getMechanicsManager()
+                                         ->executeFalloutProjectileImpact(caster, resolvedTarget,
+                                             projectileState.mPreviousPosition, resolvedHitPosition,
+                                             projectileState.mImpact);
+                if (!applied)
+                    Log(Debug::Error) << "FNV moving projectile impact rejected: caster=" << caster.toString()
+                                      << " target=" << resolvedTarget.toString() << " projectile="
+                                      << ESM::RefId::formIdRefId(projectileState.mProjectile);
+            }
+            const bool detonateOnImpact = authoredProjectile != nullptr
+                && (authoredProjectile->mData.flags & ESM4::Projectile::Explosion) != 0
+                && (authoredProjectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0
+                && (authoredProjectile->mData.flags & ESM4::Projectile::Detonates) == 0
+                && !projectileState.mImpact.mExplosion.isZeroOrUnset();
+            if (detonateOnImpact)
+            {
+                if (caster.isEmpty()
+                    || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                        caster, resolvedHitPosition, projectileState.mImpact))
+                {
+                    Log(Debug::Error) << "FNV moving projectile explosion rejected: caster="
+                                      << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                      << " projectile=" << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                      << " explosion="
+                                      << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
+                }
+            }
             projectileState.mToDelete = true;
         }
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
@@ -619,6 +1235,16 @@ namespace MWWorld
             if (projectileState.mToDelete)
                 cleanupProjectile(projectileState);
         }
+        for (FalloutProjectileState& projectileState : mFalloutProjectiles)
+        {
+            if (projectileState.mToDelete)
+                cleanupFalloutProjectile(projectileState);
+        }
+        for (FalloutHitscanTracerState& tracer : mFalloutHitscanTracers)
+        {
+            if (tracer.mToDelete)
+                cleanupFalloutHitscanTracer(tracer);
+        }
 
         for (auto& magicBoltState : mMagicBolts)
         {
@@ -628,6 +1254,13 @@ namespace MWWorld
         mProjectiles.erase(std::remove_if(mProjectiles.begin(), mProjectiles.end(),
                                [](const State& state) { return state.mToDelete; }),
             mProjectiles.end());
+        mFalloutProjectiles.erase(std::remove_if(mFalloutProjectiles.begin(), mFalloutProjectiles.end(),
+                                      [](const State& state) { return state.mToDelete; }),
+            mFalloutProjectiles.end());
+        mFalloutHitscanTracers.erase(
+            std::remove_if(mFalloutHitscanTracers.begin(), mFalloutHitscanTracers.end(),
+                [](const State& state) { return state.mToDelete; }),
+            mFalloutHitscanTracers.end());
         mMagicBolts.erase(
             std::remove_if(mMagicBolts.begin(), mMagicBolts.end(), [](const State& state) { return state.mToDelete; }),
             mMagicBolts.end());
@@ -637,6 +1270,19 @@ namespace MWWorld
     {
         mParent->removeChild(state.mNode);
         mPhysics->removeProjectile(state.mProjectileId);
+        state.mToDelete = true;
+    }
+
+    void ProjectileManager::cleanupFalloutProjectile(ProjectileManager::FalloutProjectileState& state)
+    {
+        mParent->removeChild(state.mNode);
+        mPhysics->removeProjectile(state.mProjectileId);
+        state.mToDelete = true;
+    }
+
+    void ProjectileManager::cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state)
+    {
+        mParent->removeChild(state.mNode);
         state.mToDelete = true;
     }
 
@@ -656,6 +1302,14 @@ namespace MWWorld
         for (auto& mProjectile : mProjectiles)
             cleanupProjectile(mProjectile);
         mProjectiles.clear();
+
+        for (FalloutProjectileState& projectile : mFalloutProjectiles)
+            cleanupFalloutProjectile(projectile);
+        mFalloutProjectiles.clear();
+
+        for (FalloutHitscanTracerState& tracer : mFalloutHitscanTracers)
+            cleanupFalloutHitscanTracer(tracer);
+        mFalloutHitscanTracers.clear();
 
         for (auto& mMagicBolt : mMagicBolts)
             cleanupMagicBolt(mMagicBolt);

@@ -2134,6 +2134,55 @@ namespace MWMechanics
             iter->second->getCharacterController().forceStateUpdate();
     }
 
+    bool Actors::playFalloutDialogueAnimation(
+        const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const
+    {
+        const auto iter = mIndex.find(ptr.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().playFalloutDialogueAnimation(animationId);
+    }
+
+    bool Actors::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().prepareFalloutVatsRangedAttack();
+    }
+
+    bool Actors::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().consumeFalloutVatsRangedAttackRelease();
+    }
+
+    bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutVatsRangedHit(
+                target, targetPoint, action, targetHit);
+    }
+
+    bool Actors::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutProjectileImpact(
+                target, segmentStart, hitPosition, impact);
+    }
+
+    bool Actors::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutExplosion(position, impact);
+    }
+
     bool Actors::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted) const
     {

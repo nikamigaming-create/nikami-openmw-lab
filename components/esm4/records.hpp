@@ -5,6 +5,7 @@
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadaloc.hpp>
+#include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadanio.hpp>
 #include <components/esm4/loadappa.hpp>
@@ -25,6 +26,7 @@
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
@@ -38,6 +40,8 @@
 #include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadipct.hpp>
+#include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadkeym.hpp>
@@ -48,6 +52,7 @@
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadmisc.hpp>
@@ -70,6 +75,7 @@
 #include <components/esm4/loadrcct.hpp>
 #include <components/esm4/loadrcpe.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadregn.hpp>
 #include <components/esm4/loadroad.hpp>
 #include <components/esm4/loadsbsp.hpp>
@@ -80,6 +86,7 @@
 #include <components/esm4/loadslgm.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadterm.hpp>

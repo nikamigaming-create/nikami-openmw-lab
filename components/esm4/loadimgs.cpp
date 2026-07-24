@@ -34,6 +34,26 @@ namespace
         imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintGreen] = imageSpace.mTint[2];
         imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintBlue] = imageSpace.mTint[3];
     }
+
+    void applyFalloutCinematicFlags(ESM4::ImageSpace& imageSpace)
+    {
+        if (!imageSpace.mHasCinematicFlags)
+            return;
+
+        // Fallout 3/New Vegas stores values for all four cinematic controls even when their
+        // corresponding GECK checkbox is disabled. Disabled controls are shader identities.
+        if ((imageSpace.mCinematicFlags & ESM4::ImageSpace::Cinematic_Saturation) == 0)
+            imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.f;
+        if ((imageSpace.mCinematicFlags & ESM4::ImageSpace::Cinematic_Contrast) == 0)
+        {
+            imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance] = 0.f;
+            imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrast] = 1.f;
+        }
+        if ((imageSpace.mCinematicFlags & ESM4::ImageSpace::Cinematic_Tint) == 0)
+            imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength] = 0.f;
+        if ((imageSpace.mCinematicFlags & ESM4::ImageSpace::Cinematic_Brightness) == 0)
+            imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness] = 1.f;
+    }
 }
 
 void ESM4::ImageSpace::load(Reader& reader)
@@ -56,7 +76,10 @@ void ESM4::ImageSpace::load(Reader& reader)
                     reader.get(raw.data(), raw.size());
                 constexpr std::size_t legacyTraitCount = sTraitCount - 1;
                 constexpr std::size_t legacyTraitBytes = legacyTraitCount * sizeof(float);
-                if (reader.formVersion() < 14 && raw.size() >= legacyTraitBytes)
+                constexpr std::size_t cinematicFlagsOffset = sizeof(mTraits) + 4 * sizeof(std::uint32_t);
+                constexpr std::size_t modernPayloadBytes = cinematicFlagsOffset + sizeof(std::uint32_t);
+                if (reader.formVersion() < 14 && raw.size() >= legacyTraitBytes
+                    && raw.size() < modernPayloadBytes)
                 {
                     // Older Fallout image spaces omit Skin Dimmer. Migrate their 32 authored traits into the
                     // 33-slot runtime layout instead of treating the first trailing flag word as Tint Strength.
@@ -71,6 +94,15 @@ void ESM4::ImageSpace::load(Reader& reader)
                 {
                     // Fallout 3/New Vegas store the base image-space traits in one DNAM.
                     std::memcpy(mTraits.data(), raw.data(), sizeof(mTraits));
+                    // Form version 13 added the GECK enable flags after four reserved dwords.
+                    // Use the size as the compatibility gate because Reader already handed us
+                    // the exact DNAM payload and older records legitimately omit this tail.
+                    if (raw.size() > cinematicFlagsOffset)
+                    {
+                        mCinematicFlags = raw[cinematicFlagsOffset];
+                        mHasCinematicFlags = true;
+                        applyFalloutCinematicFlags(*this);
+                    }
                 }
                 else
                 {

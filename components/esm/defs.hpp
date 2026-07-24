@@ -154,6 +154,7 @@ namespace ESM
         REC_ACTI4 = esm4Recname(ESM4::REC_ACTI), // Activator
         REC_ADDN4 = esm4Recname(ESM4::REC_ADDN), // Addon Node
         REC_ALCH4 = esm4Recname(ESM4::REC_ALCH), // Potion
+        REC_AMEF4 = esm4Recname(ESM4::REC_AMEF), // Ammo Effect
         REC_AMMO4 = esm4Recname(ESM4::REC_AMMO), // Ammo
         REC_ANIO4 = esm4Recname(ESM4::REC_ANIO), // Animated Object
         REC_APPA4 = esm4Recname(ESM4::REC_APPA), // Apparatus (probably unused)
@@ -248,6 +249,7 @@ namespace ESM
         REC_RCCT4 = esm4Recname(ESM4::REC_RCCT), // Recipe Category
         REC_RCPE4 = esm4Recname(ESM4::REC_RCPE), // Recipe
         REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
+        REC_REPU4 = esm4Recname(ESM4::REC_REPU), // Reputation (Fallout: New Vegas)
         REC_REGN4 = esm4Recname(ESM4::REC_REGN), // Region (Audio/Weather)
         REC_RELA4 = esm4Recname(ESM4::REC_RELA), // Relationship
         REC_REVB4 = esm4Recname(ESM4::REC_REVB), // Reverb Parameters

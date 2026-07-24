@@ -43,6 +43,7 @@ namespace ESM4
         std::string mSunGlareTexture;
         std::string mNightSkyModel;
         Timing mTiming;
+        bool mHasTiming = false;
 
         void load(Reader& reader);
 

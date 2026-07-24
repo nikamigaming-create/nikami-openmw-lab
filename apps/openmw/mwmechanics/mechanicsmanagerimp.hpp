@@ -110,6 +110,9 @@ namespace MWMechanics
 
         void stopCombat(const MWWorld::Ptr& ptr) override;
 
+        bool playFalloutDialogueAnimation(
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) override;
+
         /**
          * @note victim may be empty
          * @param arg Depends on \a type, e.g. for Theft, the value of the item that was stolen.
@@ -137,6 +140,15 @@ namespace MWMechanics
         bool sleepInBed(const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) override;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
+        bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) override;
+        bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) override;
+        bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) override;
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+            const FalloutProjectileImpactContract& impact) override;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) override;
 
         /// Attempt to play an animation group
         /// @return Success or error

@@ -157,7 +157,9 @@ namespace MWGui
 
         getWidget(mCrosshair, "Crosshair");
 
+        Log(Debug::Info) << "FNV/ESM4 UI init: HUD local map begin";
         LocalMapBase::init(mMinimap, mCompass);
+        Log(Debug::Info) << "FNV/ESM4 UI init: HUD local map complete";
 
         if (falloutContent && isVr)
         {
@@ -228,6 +230,7 @@ namespace MWGui
         mMainWidget->eventMouseLostFocus += MyGUI::newDelegate(this, &HUD::onWorldMouseLostFocus);
 
         mSpellIcons = std::make_unique<SpellIcons>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: HUD body complete";
     }
 
     HUD::~HUD()

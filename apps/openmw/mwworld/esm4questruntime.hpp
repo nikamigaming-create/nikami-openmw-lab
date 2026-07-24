@@ -2,11 +2,13 @@
 #define OPENMW_MWWORLD_ESM4QUESTRUNTIME_H
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <components/esm/formid.hpp>
@@ -37,6 +39,16 @@ namespace MWWorld
 
     struct ESM4QuestState
     {
+        struct EnemyRelation
+        {
+            ESM::FormId mFirst;
+            ESM::FormId mSecond;
+            bool mFirstTreatsSecondAsNeutral = false;
+            bool mSecondTreatsFirstAsNeutral = false;
+
+            bool operator==(const EnemyRelation&) const = default;
+        };
+
         enum Flag : std::uint8_t
         {
             Flag_Running = 0x01,
@@ -59,6 +71,8 @@ namespace MWWorld
         std::map<std::int16_t, bool> mStageDone;
         std::map<std::int32_t, std::uint8_t> mObjectiveStatus;
         std::map<std::string, float, std::less<>> mVariables;
+        std::vector<std::pair<ESM::FormId, ESM::FormId>> mAllies;
+        std::vector<EnemyRelation> mEnemies;
     };
 
     // An intentionally narrow reading of a Bethesda-style opening script. The
@@ -92,8 +106,35 @@ namespace MWWorld
         std::map<std::uint8_t, std::uint8_t> mStageTransitions;
     };
 
+    enum class ESM4QuestReferenceCommand : std::uint8_t
+    {
+        Enable,
+        Disable,
+        Unlock,
+        Kill,
+        ResetAi,
+        EvaluatePackage,
+    };
+
     class ESM4QuestRuntime
     {
+    public:
+        using ReferenceCommandHandler = std::function<bool(ESM4QuestReferenceCommand, ESM::FormId)>;
+        using MessageHandler = std::function<bool(ESM::FormId)>;
+        using SayToHandler = std::function<bool(ESM::FormId, ESM::FormId, ESM::FormId)>;
+        using SetAllyHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
+        using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
+        using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
+        using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using RemoveItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
+        using RewardXpHandler = std::function<bool(int)>;
+        using AddReputationHandler = std::function<bool(ESM::FormId, bool, int)>;
+        using SetDestroyedHandler = std::function<bool(ESM::FormId, bool)>;
+        using ShowMapHandler = std::function<bool(ESM::FormId, bool)>;
+        using EnableFastTravelHandler = std::function<bool(bool, bool, bool)>;
+
+    private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
 
         const ESMStore* mStore = nullptr;
@@ -210,15 +251,97 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mReferenceScriptEditorIds;
         std::unordered_map<std::string, bool> mAmbiguousReferenceScriptEditorIds;
 
+        std::unordered_map<std::string, ESM::FormId> mReferenceIds;
+        std::unordered_map<std::string, ESM::FormId> mFactionIds;
+        ReferenceCommandHandler mReferenceCommandHandler;
+        MessageHandler mMessageHandler;
+        SayToHandler mSayToHandler;
+        SetAllyHandler mSetAllyHandler;
+        SetEnemyHandler mSetEnemyHandler;
+        ItemCountHandler mItemCountHandler;
+        AddItemHandler mAddItemHandler;
+        RemoveItemHandler mRemoveItemHandler;
+        ActorDeadHandler mActorDeadHandler;
+        RewardXpHandler mRewardXpHandler;
+        AddReputationHandler mAddReputationHandler;
+        SetDestroyedHandler mSetDestroyedHandler;
+        ShowMapHandler mShowMapHandler;
+        EnableFastTravelHandler mEnableFastTravelHandler;
+
         enum class CompiledQuestCommandType : std::uint8_t
         {
+            If,
+            ElseIf,
+            Else,
+            EndIf,
             StartQuest,
             StopQuest,
             CompleteQuest,
             SetStage,
             SetObjectiveCompleted,
             SetObjectiveDisplayed,
+            CompleteAllObjectives,
             ForceActiveQuest,
+            SetVariable,
+            SetVariableFromItemCount,
+            SetAlly,
+            SetEnemy,
+            Enable,
+            Disable,
+            Unlock,
+            Kill,
+            ResetAi,
+            AddItem,
+            RemoveItem,
+            EvaluatePackage,
+            ShowMessage,
+            SayTo,
+            RewardXp,
+            AddReputation,
+            SetDestroyed,
+            ShowMap,
+            EnableFastTravel,
+        };
+
+        enum class CompiledConditionValueType : std::uint8_t
+        {
+            QuestVariable,
+            GetStage,
+            GetStageDone,
+            GetObjectiveCompleted,
+            GetObjectiveDisplayed,
+            GetDead,
+            GetQuestRunning,
+            GetQuestCompleted,
+        };
+
+        enum class CompiledConditionTokenType : std::uint8_t
+        {
+            Value,
+            Number,
+            Equal,
+            NotEqual,
+            Less,
+            LessEqual,
+            Greater,
+            GreaterEqual,
+            LogicalAnd,
+            LogicalOr,
+        };
+
+        struct CompiledConditionToken
+        {
+            CompiledConditionTokenType mType = CompiledConditionTokenType::Value;
+            CompiledConditionValueType mValueType = CompiledConditionValueType::QuestVariable;
+            ESM::FormId mQuest{};
+            std::string mVariable;
+            std::int32_t mStage = 0;
+            float mNumber = 0.f;
+        };
+
+        struct CompiledQuestCondition
+        {
+            std::vector<CompiledConditionToken> mPostfix;
         };
 
         struct CompiledQuestCommand
@@ -228,11 +351,25 @@ namespace MWWorld
             std::int32_t mObjective = 0;
             bool mValue = false;
             std::uint8_t mStage = 0;
+            ESM::FormId mTarget{};
+            ESM::FormId mTopic{};
+            std::string mVariable;
+            float mNumber = 0.f;
+            bool mSecondaryValue = false;
+            std::optional<CompiledQuestCondition> mCondition;
+        };
+
+        struct CompiledConditionalFrame
+        {
+            bool mParentActive = false;
+            bool mBranchTaken = false;
+            bool mActive = false;
         };
 
         struct CompiledStageScript
         {
             bool mUseSourceFallback = false;
+            bool mHasLiveCondition = false;
             std::vector<CompiledQuestCommand> mCommands;
             std::vector<std::uint16_t> mUnsupportedOpcodes;
         };
@@ -254,12 +391,24 @@ namespace MWWorld
             std::string mNotification;
         };
 
+        struct PendingExternalEffect
+        {
+            CompiledQuestCommandType mType = CompiledQuestCommandType::EvaluatePackage;
+            ESM::FormId mTarget{};
+            ESM::FormId mListener{};
+            ESM::FormId mTopic{};
+            bool mValue = false;
+            bool mSecondaryValue = false;
+            std::int32_t mCount = 0;
+        };
+
         struct CompiledStageWorkingState
         {
             QuestStateMap mStates;
             std::optional<ESM::FormId> mActiveQuest;
             std::vector<CompiledStageKey> mStack;
             std::vector<PendingStageEffect> mEffects;
+            std::vector<PendingExternalEffect> mExternalEffects;
         };
 
         const ESM4::Quest* resolveQuest(std::string_view id) const;
@@ -281,12 +430,17 @@ namespace MWWorld
         bool isStateDirty(ESM::FormId id, const ESM4QuestState& state) const;
         bool prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const;
         bool stageContainsCompiledSetStage(const ESM4::QuestStage& stage) const;
+        bool stageContainsCompiledLiveCondition(const ESM4::QuestStage& stage) const;
         bool areCompiledStageConditionsPure(const std::vector<ESM4::TargetCondition>& conditions) const;
         bool preflightPureCompiledStage(
             ESM::FormId id, std::uint8_t stage, std::vector<CompiledStageKey>& stack) const;
         bool executePureCompiledStage(ESM::FormId id, std::uint8_t stage, CompiledStageWorkingState& working);
         bool executePureCompiledCommand(
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
+        std::optional<bool> evaluateCompiledCondition(
+            const CompiledQuestCondition& condition, const QuestStateMap& states) const;
+        bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
+            std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
         const ESM4::ImageSpaceModifier* resolveImageSpaceModifier(std::string_view id) const;
@@ -299,6 +453,10 @@ namespace MWWorld
             std::optional<ESM::FormId> ownerReference = {}, std::string_view actionReference = {});
         static std::vector<ESM4AuthoredGameModeTimer> compileAuthoredGameModeTimers(
             std::string_view source, std::string_view questEditorId);
+        void flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects);
+        ESM::FormId resolveReference(std::string_view id);
+        ESM::FormId resolveFaction(std::string_view id);
+        bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:
         // Parses the profile-local [OpenNV Compatibility] command map.  Each
@@ -310,6 +468,35 @@ namespace MWWorld
         void initialize(const ESMStore& store, const Globals* globals = nullptr);
         void clear();
         void update(float duration, bool paused);
+        void setReferenceCommandHandler(ReferenceCommandHandler handler)
+        {
+            mReferenceCommandHandler = std::move(handler);
+        }
+        void setMessageHandler(MessageHandler handler) { mMessageHandler = std::move(handler); }
+        void setSayToHandler(SayToHandler handler) { mSayToHandler = std::move(handler); }
+        void setSetAllyHandler(SetAllyHandler handler) { mSetAllyHandler = std::move(handler); }
+        void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
+        void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
+        void setAddItemHandler(AddItemHandler handler) { mAddItemHandler = std::move(handler); }
+        void setRemoveItemHandler(RemoveItemHandler handler) { mRemoveItemHandler = std::move(handler); }
+        void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
+        void setRewardXpHandler(RewardXpHandler handler) { mRewardXpHandler = std::move(handler); }
+        void setAddReputationHandler(AddReputationHandler handler)
+        {
+            mAddReputationHandler = std::move(handler);
+        }
+        void setSetDestroyedHandler(SetDestroyedHandler handler)
+        {
+            mSetDestroyedHandler = std::move(handler);
+        }
+        void setShowMapHandler(ShowMapHandler handler)
+        {
+            mShowMapHandler = std::move(handler);
+        }
+        void setEnableFastTravelHandler(EnableFastTravelHandler handler)
+        {
+            mEnableFastTravelHandler = std::move(handler);
+        }
 
         bool startQuest(std::string_view id);
         bool startQuest(ESM::FormId id);
@@ -354,6 +541,7 @@ namespace MWWorld
         std::optional<float> getQuestVariable(std::string_view id, std::string_view variable) const;
         std::vector<std::string> getStartGameEnabledQuestEditorIds() const;
         std::optional<ESM4AuthoredStartPlacement> findAuthoredStartPlacement() const;
+        bool playImageSpaceModifier(ESM::FormId modifier, float strength);
         std::vector<ESM4::ImageSpaceModifierRuntimeState> getActiveImageSpaceModifiers() const;
         std::optional<ESM::FormId> getActiveQuest() const { return mActiveQuest; }
         const std::vector<std::string>& getUnsupportedStageCommands() const { return mUnsupportedStageCommands; }

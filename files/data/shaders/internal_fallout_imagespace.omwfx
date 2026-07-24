@@ -18,6 +18,45 @@ uniform_vec4 uFalloutFade {
     static = false;
 }
 
+uniform_float uFalloutBlurRadius {
+    default = 0.0;
+    min = 0.0;
+    static = false;
+}
+
+render_target RT_FalloutImageSource {
+    width = 256;
+    height = 256;
+    internal_format = rgb;
+    source_type = unsigned_byte;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+render_target RT_FalloutImageBlurX {
+    width = 256;
+    height = 256;
+    internal_format = rgb;
+    source_type = unsigned_byte;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
+render_target RT_FalloutImageBlur {
+    width = 256;
+    height = 256;
+    internal_format = rgb;
+    source_type = unsigned_byte;
+    source_format = rgb;
+    mipmaps = false;
+    min_filter = linear;
+    mag_filter = linear;
+}
+
 render_target RT_FalloutBright {
     width_ratio = 0.25;
     height_ratio = 0.25;
@@ -49,6 +88,55 @@ render_target RT_FalloutBloom {
     mipmaps = false;
     min_filter = linear;
     mag_filter = linear;
+}
+
+fragment image_source(target=RT_FalloutImageSource) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        // Fallout_default.ini fixes the ordinary image-space blur texture to 256 square pixels.
+        // ISBLUR.pso from retail shader package 13 applies the kernel used by the following two passes.
+        omw_FragColor = omw_GetLastShader(omw_TexCoord);
+    }
+}
+
+fragment image_blur_x(target=RT_FalloutImageBlurX, rt1=RT_FalloutImageSource) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec2 stepUv = vec2(uFalloutBlurRadius / (9.0 * 256.0), 0.0);
+        vec3 color = omw_Texture2D(RT_FalloutImageSource, omw_TexCoord - 4.0 * stepUv).rgb * 0.025;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord - 3.0 * stepUv).rgb * 0.05;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord - 2.0 * stepUv).rgb * 0.075;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord - stepUv).rgb * 0.15;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord).rgb * 0.3;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord + stepUv).rgb * 0.15;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord + 2.0 * stepUv).rgb * 0.075;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord + 3.0 * stepUv).rgb * 0.05;
+        color += omw_Texture2D(RT_FalloutImageSource, omw_TexCoord + 4.0 * stepUv).rgb * 0.025;
+        omw_FragColor = vec4(color, 1.0);
+    }
+}
+
+fragment image_blur_y(target=RT_FalloutImageBlur, rt1=RT_FalloutImageBlurX) {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec2 stepUv = vec2(0.0, uFalloutBlurRadius / (9.0 * 256.0));
+        vec3 color = omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord - 4.0 * stepUv).rgb * 0.025;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord - 3.0 * stepUv).rgb * 0.05;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord - 2.0 * stepUv).rgb * 0.075;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord - stepUv).rgb * 0.15;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord).rgb * 0.3;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord + stepUv).rgb * 0.15;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord + 2.0 * stepUv).rgb * 0.075;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord + 3.0 * stepUv).rgb * 0.05;
+        color += omw_Texture2D(RT_FalloutImageBlurX, omw_TexCoord + 4.0 * stepUv).rgb * 0.025;
+        omw_FragColor = vec4(color, 1.0);
+    }
 }
 
 fragment bright(target=RT_FalloutBright) {
@@ -98,12 +186,14 @@ fragment blur_y(target=RT_FalloutBloom, rt1=RT_FalloutBlurX) {
     }
 }
 
-fragment final(rt1=RT_FalloutBloom) {
+fragment final(rt1=RT_FalloutBloom, rt2=RT_FalloutImageBlur) {
     omw_In vec2 omw_TexCoord;
 
     void main()
     {
         vec4 source = omw_GetLastShader(omw_TexCoord);
+        if (uFalloutBlurRadius > 0.0)
+            source.rgb = omw_Texture2D(RT_FalloutImageBlur, omw_TexCoord).rgb;
         vec3 color = source.rgb;
 
         // ISHDRBLENDINSHADER*.pso normalizes retail's HDR source before this
@@ -133,7 +223,7 @@ technique {
     description = "Internal Fallout 3/New Vegas image-space cinematic stage";
     version = "1.0";
     author = "OpenMW Fallout compatibility overlay";
-    passes = bright, blur_x, blur_y, final;
+    passes = image_source, image_blur_x, image_blur_y, bright, blur_x, blur_y, final;
     flags = hidden;
     hdr = true;
 }

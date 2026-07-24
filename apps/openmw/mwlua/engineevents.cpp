@@ -66,8 +66,16 @@ namespace MWLua
             MWWorld::Ptr actor = getPtr(event.mActor);
             if (actor.isEmpty() || obj.isEmpty())
                 return;
+            LocalScripts* scripts = getLocalScripts(obj);
+            if (scripts != nullptr && scripts->hasActivationHandlers())
+            {
+                // Retail OnActivate/OnOpen scripts own whether the native action
+                // proceeds. The global standard-action handler buffers here;
+                // an authored Activate command releases it exactly once.
+                obj.getRefData().onActivate();
+            }
             mGlobalScripts.onActivate(GObject(obj), GObject(actor));
-            if (auto* scripts = getLocalScripts(obj))
+            if (scripts != nullptr)
                 scripts->onActivated(LObject(actor));
         }
 

@@ -32,6 +32,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/debug/debuglog.hpp>
@@ -3369,6 +3370,59 @@ namespace MWMechanics
         else
             mAnimation->play(
                 groupname, priority, blendMask, autodisable, speedmult, start, stop, startpoint, loops, loopfallback);
+    }
+
+    bool CharacterController::playFalloutDialogueAnimation(const ESM::RefId& animationId)
+    {
+        if (mAnimation == nullptr || animationId.empty())
+            return false;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::IdleAnimation* idle
+            = store != nullptr ? store->get<ESM4::IdleAnimation>().search(animationId) : nullptr;
+        if (idle == nullptr)
+            return false;
+
+        const std::string actionGroup = Misc::StringUtils::lowerCase(idle->mEditorId);
+        if (actionGroup.empty() || !mAnimation->hasAnimation(actionGroup))
+            return false;
+
+        mAnimation->play(
+            actionGroup, Priority_Scripted, MWRender::BlendMask_All, true, 1.f, "start", "stop", 0.f, 0);
+        Log(Debug::Info) << "FNV/ESM4 dialogue: playing authored gesture action actor="
+                         << mPtr.getCellRef().getRefId() << " animation=" << animationId
+                         << " editor=" << idle->mEditorId << " group=" << actionGroup;
+        return mAnimation->isPlaying(actionGroup);
+    }
+
+    bool CharacterController::prepareFalloutVatsRangedAttack()
+    {
+        Log(Debug::Error) << "FNV VATS ranged preparation is unavailable until the matched 0.51 weapon runtime is active"
+                          << " actor=" << mPtr.toString();
+        return false;
+    }
+
+    bool CharacterController::consumeFalloutVatsRangedAttackRelease()
+    {
+        return false;
+    }
+
+    bool CharacterController::executeFalloutVatsRangedHit(const MWWorld::Ptr&, const osg::Vec3f&,
+        const FalloutVatsQueuedAction&, bool)
+    {
+        return false;
+    }
+
+    bool CharacterController::executeFalloutProjectileImpact(const MWWorld::Ptr&, const osg::Vec3f&,
+        const osg::Vec3f&, const FalloutProjectileImpactContract&)
+    {
+        return false;
+    }
+
+    bool CharacterController::executeFalloutExplosion(
+        const osg::Vec3f&, const FalloutProjectileImpactContract&)
+    {
+        return false;
     }
 
     bool CharacterController::playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted)

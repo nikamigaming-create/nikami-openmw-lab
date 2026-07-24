@@ -13,6 +13,11 @@ local types = require('openmw.types')
 
 local obs = require('openmw_aux.obscript.runtime')
 
+-- Runtime stubs keep a script alive so one missing command does not take down
+-- the whole cell, but they must never be silent. The C++ package deduplicates
+-- these reports globally and retains the first script that exercised each gap.
+obs._log = core.obscript.reportUnsupportedCommand
+
 local function isInstance(typeApi, object)
     if object == nil or typeApi == nil or typeApi.objectIsInstance == nil then
         return false
@@ -103,6 +108,21 @@ obs.bind('GetActionRef', function()
     return obs._actionRef or 0
 end)
 
+obs.bind('MenuMode', function()
+    return core.obscript.isMenuMode() and 1 or 0
+end)
+
+obs.bind('GetButtonPressed', function()
+    return core.obscript.getButtonPressed()
+end)
+
+obs.bind('ShowMessage', function(message)
+    if type(message) == 'string' then
+        core.obscript.showMessage(message)
+    end
+    return 0
+end)
+
 local function setEnabled(ref, enabled)
     if ref == nil or type(ref) ~= 'string' then
         core.sendGlobalEvent('ObScriptSetEnabled', { object = resolveObject(ref), enabled = enabled })
@@ -158,6 +178,24 @@ obs.bind('GetDead', function(ref)
         return 0
     end
     return types.Actor.isDead(actor) and 1 or 0
+end)
+
+obs.bind('GetUnconscious', function(ref)
+    local actor = resolveObject(ref)
+    if not isInstance(types.Actor, actor) then
+        return 0
+    end
+    return core.obscript.getUnconscious(actor) and 1 or 0
+end)
+
+obs.bind('Activate', function(ref)
+    local object = resolveObject(ref)
+    local actor = obs._actionRef or nearby.players[1]
+    if object == nil or actor == nil then
+        return 0
+    end
+    core.obscript.activate(object, actor)
+    return 0
 end)
 
 obs.bind('GetItemCount', function(ref, item)
@@ -248,6 +286,19 @@ obs.bind('PlayGroup', function(ref, group, mode)
         animation.playQueued(self.object, group, { loops = 0 })
     end)
     return 0
+end)
+
+obs.bind('IsAnimPlaying', function(ref, group)
+    if group == nil then
+        group = ref
+        ref = nil
+    end
+    local object = resolveObject(ref)
+    if object == nil or type(group) ~= 'string' then
+        return 0
+    end
+    local ok, playing = pcall(animation.isPlaying, object, group)
+    return ok and playing and 1 or 0
 end)
 
 obs.bind('SetDestroyed', function(ref, value)

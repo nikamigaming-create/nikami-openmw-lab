@@ -264,6 +264,7 @@ namespace MWLua
         api["ACTION"] = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, MWInput::Actions>(lua,
             {
                 { "GameMenu", MWInput::A_GameMenu },
+                { "Map", MWInput::A_Map },
                 { "Screenshot", MWInput::A_Screenshot },
                 { "Inventory", MWInput::A_Inventory },
                 { "Console", MWInput::A_Console },

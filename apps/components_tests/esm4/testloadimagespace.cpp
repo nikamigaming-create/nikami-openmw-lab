@@ -1,6 +1,9 @@
 #include <components/esm4/imagespacecomposition.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadipds.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
@@ -8,12 +11,18 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
+
+#ifndef OPENMW_PROJECT_SOURCE_DIR
+#define OPENMW_PROJECT_SOURCE_DIR "."
+#endif
 
 namespace
 {
@@ -75,6 +84,35 @@ namespace
         EXPECT_TRUE(reader->getRecordHeader());
         reader->getRecordData();
         return reader;
+    }
+
+    TEST(Esm4ImpactDataSetTest, shouldAcceptTruncatedRetailMaterialTable)
+    {
+        std::string payload;
+        std::string data;
+        appendPod(data, std::uint32_t{ 0x00112233 });
+        appendPod(data, std::uint32_t{ 0x00445566 });
+        appendSubRecord(payload, "DATA", data);
+
+        auto reader = makeReader("IPDS", 0x1234, payload);
+        ESM4::ImpactDataSet impactDataSet;
+        ASSERT_NO_THROW(impactDataSet.load(*reader));
+        EXPECT_EQ(impactDataSet.mImpacts[ESM4::ImpactDataSet::Stone], ESM::FormId::fromUint32(0x00112233));
+        EXPECT_EQ(impactDataSet.mImpacts[ESM4::ImpactDataSet::Dirt], ESM::FormId::fromUint32(0x00445566));
+        EXPECT_TRUE(impactDataSet.mImpacts[ESM4::ImpactDataSet::Grass].isZeroOrUnset());
+    }
+
+    TEST(Esm4ImpactDataSetTest, shouldRejectMalformedMaterialTable)
+    {
+        for (const std::size_t size : { std::size_t{ 0 }, std::size_t{ 1 },
+                 (ESM4::ImpactDataSet::MaterialCount + 1) * sizeof(std::uint32_t) })
+        {
+            std::string payload;
+            appendSubRecord(payload, "DATA", std::string(size, '\0'));
+            auto reader = makeReader("IPDS", 0x1234, payload);
+            ESM4::ImpactDataSet impactDataSet;
+            EXPECT_THROW(impactDataSet.load(*reader), std::runtime_error);
+        }
     }
 
     TEST(Esm4ImageSpaceTest, shouldParseRetailFNVBaseTraits)
@@ -141,6 +179,37 @@ namespace
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintGreen], 0.709803939f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintBlue], 0.274509817f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.4f);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldKeepDisabledRetailFNVPostControlsAtShaderIdentity)
+    {
+        std::string payload;
+        std::array<std::uint8_t, 152> data{};
+        const float disabledSaturation = 0.f;
+        const float disabledContrast = 3.f;
+        const float disabledBrightness = 0.25f;
+        const float disabledTintStrength = 1.f;
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicSaturation * sizeof(float),
+            &disabledSaturation, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicContrast * sizeof(float),
+            &disabledContrast, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicBrightness * sizeof(float),
+            &disabledBrightness, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicTintStrength * sizeof(float),
+            &disabledTintStrength, sizeof(float));
+        data[148] = 0;
+        appendSubRecord(payload, "DNAM", data);
+
+        auto reader = makeReader("IMGS", 0x1507a, payload);
+        ESM4::ImageSpace imageSpace;
+        imageSpace.load(*reader);
+
+        EXPECT_TRUE(imageSpace.mHasCinematicFlags);
+        EXPECT_EQ(imageSpace.mCinematicFlags, 0);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.f);
     }
 
     TEST(Esm4ImageSpaceTest, shouldKeepTes5SplitFieldsOutOfFalloutDnamTraits)
@@ -260,5 +329,162 @@ namespace
         EXPECT_NEAR(result.mTint[1], 0.660198152f, 1e-6f);
         EXPECT_NEAR(result.mTint[2], 0.0276841652f, 1e-6f);
         EXPECT_NEAR(result.mTint[3], 0.392156869f, 1e-6f);
+    }
+    TEST(Esm4ImageSpaceTest, shouldComposeRetailFragExplosionModifierOverAuthoredDuration)
+    {
+        ESM4::ImageSpace base;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance] = 0.2f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicContrast] = 1.1f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness] = 1.f;
+
+        ESM4::ImageSpaceModifier frag;
+        frag.mDuration = 1.5f;
+        frag.mBlurRadius = { { 0.f, 0.f }, { 0.04f, 1.f }, { 0.74f, 0.f }, { 1.f, 0.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicContrast]
+            = { { 0.f, 1.f }, { 0.04f, 2.f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicContrastAverageLuminance]
+            = { { 0.f, 1.f }, { 0.04f, 0.7f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicBrightness]
+            = { { 0.f, 1.f }, { 0.04f, 2.f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+
+        const float peakTime = ESM4::normalizeImageSpaceModifierTime(0.06f, frag.mDuration);
+        EXPECT_NEAR(peakTime, 0.04f, 1e-6f);
+        const ESM4::ComposedImageSpace peak = ESM4::composeImageSpace(base, { { &frag, peakTime, 1.f } });
+        EXPECT_FLOAT_EQ(peak.mBlurRadius, 1.f);
+        EXPECT_FLOAT_EQ(peak.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 2.2f);
+        EXPECT_FLOAT_EQ(
+            peak.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance], 0.14f);
+        EXPECT_FLOAT_EQ(peak.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 2.f);
+
+        const float endTime = ESM4::normalizeImageSpaceModifierTime(frag.mDuration, frag.mDuration);
+        const ESM4::ComposedImageSpace end = ESM4::composeImageSpace(base, { { &frag, endTime, 1.f } });
+        EXPECT_FLOAT_EQ(end.mBlurRadius, 0.f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 1.1f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance], 0.2f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.f);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldNotRenormalizeOpenMwLdrSceneByRetailTargetLuminance)
+    {
+        const std::filesystem::path shaderPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
+            / "shaders" / "internal_fallout_imagespace.omwfx";
+        std::ifstream stream(shaderPath);
+        ASSERT_TRUE(stream) << shaderPath;
+        const std::string shader{ std::istreambuf_iterator<char>{ stream }, std::istreambuf_iterator<char>{} };
+
+        // The post-process intercept is RGBA8. The retail target-luminance
+        // denominator belongs to its HDR source and must not scale this LDR
+        // scene contribution; it remains available for authored bloom.
+        EXPECT_NE(shader.find("vec3 color = source.rgb;"), std::string::npos);
+        EXPECT_EQ(shader.find("color = max(color /"), std::string::npos);
+        EXPECT_EQ(shader.find("color /= "), std::string::npos);
+        EXPECT_NE(shader.find("* (uFalloutHdr.x / hdrDenominator)"), std::string::npos);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldUseRetailFNVImageSpaceBlurSurfaceAndKernel)
+    {
+        const std::filesystem::path shaderPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
+            / "shaders" / "internal_fallout_imagespace.omwfx";
+        std::ifstream stream(shaderPath);
+        ASSERT_TRUE(stream) << shaderPath;
+        const std::string shader{ std::istreambuf_iterator<char>{ stream }, std::istreambuf_iterator<char>{} };
+
+        EXPECT_NE(shader.find("uniform_float uFalloutBlurRadius"), std::string::npos);
+        EXPECT_NE(shader.find("width = 256;"), std::string::npos);
+        EXPECT_NE(shader.find("height = 256;"), std::string::npos);
+        EXPECT_NE(shader.find("uFalloutBlurRadius / (9.0 * 256.0)"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.025"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.05"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.075"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.15"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.3"), std::string::npos);
+        EXPECT_NE(shader.find("if (uFalloutBlurRadius > 0.0)"), std::string::npos);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldPreferAuthoredInteriorCellImageSpace)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell interior;
+        interior.mCellFlags = ESM4::CELL_Interior;
+        interior.mImageSpace = ESM::FormId::fromUint32(0x0001507a);
+
+        EXPECT_EQ(ESM4::resolveCellImageSpace(interior, &world), interior.mImageSpace);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldInheritWorldImageSpaceOnlyForExteriorCells)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell exterior;
+
+        EXPECT_EQ(ESM4::resolveCellImageSpace(exterior, &world), world.mImageSpace);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldNotCarryExteriorImageSpaceIntoInteriorWithoutXcim)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell interior;
+        interior.mCellFlags = ESM4::CELL_Interior;
+
+        EXPECT_TRUE(ESM4::resolveCellImageSpace(interior, &world).isZeroOrUnset());
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldClearStaleFalloutImageSpaceWhenNoBaseIsActive)
+    {
+        const std::filesystem::path postProcessorPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "apps"
+            / "openmw" / "mwrender" / "postprocessor.cpp";
+        std::ifstream postProcessorStream(postProcessorPath);
+        ASSERT_TRUE(postProcessorStream) << postProcessorPath;
+        const std::string postProcessorSource{ std::istreambuf_iterator<char>{ postProcessorStream },
+            std::istreambuf_iterator<char>{} };
+
+        const std::size_t clearStart
+            = postProcessorSource.find("void PostProcessor::clearFalloutImageSpace()");
+        ASSERT_NE(clearStart, std::string::npos);
+        const std::size_t clearEnd = postProcessorSource.find("void PostProcessor::traverse", clearStart);
+        ASSERT_NE(clearEnd, std::string::npos);
+        const std::string_view clearBody(postProcessorSource.data() + clearStart, clearEnd - clearStart);
+        EXPECT_NE(clearBody.find("if (!mFalloutImageSpaceTechnique)"), std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutHdr\", osg::Vec4f(1.f, 0.f, 1.f, 0.f))"),
+            std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutCinematic\", osg::Vec4f(1.f, 0.f, 1.f, 1.f))"),
+            std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutTint\", osg::Vec4f(1.f, 1.f, 1.f, 0.f))"),
+            std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutFade\", osg::Vec4f(0.f, 0.f, 0.f, 0.f))"),
+            std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutBlurRadius\", 0.f)"), std::string_view::npos);
+
+        const std::filesystem::path weatherPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "apps"
+            / "openmw" / "mwworld" / "weather.cpp";
+        std::ifstream weatherStream(weatherPath);
+        ASSERT_TRUE(weatherStream) << weatherPath;
+        const std::string weatherSource{ std::istreambuf_iterator<char>{ weatherStream },
+            std::istreambuf_iterator<char>{} };
+        constexpr std::string_view clearCall = "mRendering.getPostProcessor()->clearFalloutImageSpace();";
+
+        const std::size_t applyStart = weatherSource.find("const auto applyFalloutImageSpace");
+        ASSERT_NE(applyStart, std::string::npos);
+        const std::size_t interiorStart = weatherSource.find("if (!isExterior)", applyStart);
+        ASSERT_NE(interiorStart, std::string::npos);
+        const std::size_t interiorReturn = weatherSource.find("return;", interiorStart);
+        ASSERT_NE(interiorReturn, std::string::npos);
+        const std::size_t interiorClear = weatherSource.find(clearCall, interiorStart);
+        ASSERT_NE(interiorClear, std::string::npos);
+        EXPECT_LT(interiorClear, interiorReturn);
+        const std::string_view interiorBody(
+            weatherSource.data() + interiorStart, interiorReturn - interiorStart);
+        EXPECT_EQ(interiorBody.find("applyFalloutImageSpace();"), std::string_view::npos);
+
+        const std::size_t missingBaseStart = weatherSource.find("if (base == nullptr)", applyStart);
+        ASSERT_NE(missingBaseStart, std::string::npos);
+        const std::size_t missingBaseReturn = weatherSource.find("return;", missingBaseStart);
+        ASSERT_NE(missingBaseReturn, std::string::npos);
+        const std::size_t missingBaseClear = weatherSource.find(clearCall, missingBaseStart);
+        ASSERT_NE(missingBaseClear, std::string::npos);
+        EXPECT_LT(missingBaseClear, missingBaseReturn);
     }
 }
