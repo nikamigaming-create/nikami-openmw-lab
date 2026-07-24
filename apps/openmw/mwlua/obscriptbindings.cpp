@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <sol/state_view.hpp>
 #include <sol/table.hpp>
@@ -20,6 +21,7 @@
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
@@ -30,6 +32,7 @@
 #include <components/misc/strings/lower.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
@@ -147,6 +150,51 @@ namespace MWLua
                 return res;
             }();
             return resolve(index, editorId);
+        };
+
+        api["isMenuMode"] = [] {
+            return MWBase::Environment::get().getWindowManager()->isGuiMode();
+        };
+        api["getButtonPressed"] = [] {
+            return MWBase::Environment::get().getWindowManager()->readPressedButton();
+        };
+        api["showMessage"] = [](std::string_view editorId) {
+            using MessageIndex = std::map<std::string, const ESM4::Message*>;
+            static const MessageIndex index = [] {
+                MessageIndex result;
+                const MWWorld::Store<ESM4::Message>& messages
+                    = MWBase::Environment::get().getESMStore()->get<ESM4::Message>();
+                for (std::size_t i = 0; i < messages.getSize(); ++i)
+                {
+                    const ESM4::Message& message = *messages.at(i);
+                    if (!message.mEditorId.empty())
+                        result.emplace(Misc::StringUtils::lowerCase(message.mEditorId), &message);
+                }
+                return result;
+            }();
+
+            const auto found = index.find(Misc::StringUtils::lowerCase(editorId));
+            if (found == index.end())
+                return false;
+            const ESM4::Message& message = *found->second;
+            std::vector<std::string> buttons;
+            buttons.reserve(message.mButtons.size());
+            for (const ESM4::MessageButton& button : message.mButtons)
+            {
+                if (!button.mConditions.empty())
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 ObScript ShowMessage rejected conditioned button: message="
+                                        << message.mEditorId << " button=" << button.mText;
+                    return false;
+                }
+                buttons.push_back(button.mText);
+            }
+            MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+            if (buttons.empty())
+                windowManager->messageBox(message.mDescription);
+            else
+                windowManager->interactiveMessageBox(message.mDescription, buttons);
+            return true;
         };
 
         api["hasQuest"] = [](std::string_view id) {

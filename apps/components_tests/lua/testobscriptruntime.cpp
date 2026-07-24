@@ -223,6 +223,14 @@ namespace
                     obs.m('player', 'GetDistance', 'PlacedRef')
             end,
 
+            menuAnimationAndMessage = function()
+                return obs.f('MenuMode'),
+                    obs.f('GetButtonPressed'),
+                    obs.f('ShowMessage', 'VCG04Message'),
+                    obs.f('IsAnimPlaying', 'Left'),
+                    obs.m('PlacedRef', 'IsAnimPlaying', 'Right')
+            end,
+
             questQueries = function()
                 return {
                     stage = obs.f('GetStage', 'VMQ01'),
@@ -409,6 +417,12 @@ namespace
                 failQuest = mutation('failQuest'),
                 setQuestVariable = mutation('setQuestVariable'),
                 setGlobalVariable = mutation('setGlobalVariable'),
+                isMenuMode = function() return true end,
+                getButtonPressed = function() return -1 end,
+                showMessage = function(message)
+                    mutations[#mutations + 1] = { name = 'showMessage', args = { message } }
+                    return true
+                end,
             },
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
@@ -420,6 +434,9 @@ namespace
         }
         local animation = {
             clearAnimationQueue = function() end,
+            isPlaying = function(obj, group)
+                return (obj == own and group == 'Left') or (obj == placed and group == 'Right')
+            end,
             playQueued = function(_, group, options)
                 animations[#animations + 1] = {
                     group = group,
@@ -684,6 +701,36 @@ namespace
             EXPECT_EQ(std::get<5>(values), 0);
             EXPECT_DOUBLE_EQ(std::get<6>(values), 5.0);
             EXPECT_DOUBLE_EQ(std::get<7>(values), 4.0);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, MenuAnimationAndMessageBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-menu-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["menuAnimationAndMessage"])
+                                    .get<std::tuple<int, int, int, int, int>>();
+            EXPECT_EQ(std::get<0>(values), 1);
+            EXPECT_EQ(std::get<1>(values), -1);
+            EXPECT_EQ(std::get<2>(values), 0);
+            EXPECT_EQ(std::get<3>(values), 1);
+            EXPECT_EQ(std::get<4>(values), 1);
+
+            sol::table mutations = factory["mutations"];
+            ASSERT_EQ(mutations.size(), 1);
+            EXPECT_EQ(mutations[1].get<sol::table>()["name"].get<std::string>(), "showMessage");
+            EXPECT_EQ(mutations[1].get<sol::table>()["args"].get<sol::table>()[1].get<std::string>(),
+                "VCG04Message");
         });
     }
 
