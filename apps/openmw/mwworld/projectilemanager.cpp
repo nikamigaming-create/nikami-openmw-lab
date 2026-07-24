@@ -466,8 +466,7 @@ namespace MWWorld
             = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
         osg::Vec3f direction = destination - origin;
         const float distance = direction.length();
-        if (projectile == nullptr || projectile->mModel.empty() || !std::isfinite(distance)
-            || distance <= 0.f || direction.normalize() == 0.f)
+        if (projectile == nullptr || !std::isfinite(distance) || distance <= 0.f || direction.normalize() == 0.f)
             return false;
 
         FalloutHitscanTracerState state;
@@ -483,8 +482,16 @@ namespace MWWorld
 
         osg::Quat orientation;
         orientation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
-        createModel(state, Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel)),
-            origin, orientation, false, false, osg::Vec4());
+        // Hitscan PROJ records are allowed to omit a world model: the impact is instantaneous and the visible
+        // streak is presentation owned by the firing weapon. Requiring MODL here silently suppressed the generated
+        // tracer for ordinary firearms even though the shot, damage, muzzle flash and impact had all succeeded.
+        state.mNode = new osg::PositionAttitudeTransform;
+        state.mNode->setNodeMask(MWRender::Mask_Effect);
+        state.mNode->setPosition(origin);
+        state.mNode->setAttitude(orientation);
+        state.mNode->addCullCallback(new SceneUtil::LightListCallback);
+        mParent->addChild(state.mNode);
+        state.mEffectAnimationTime = std::make_shared<MWRender::EffectAnimationTime>();
 
         osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
         vertices->push_back(osg::Vec3f(0.f, -42.f, 0.f));
@@ -508,7 +515,8 @@ namespace MWWorld
         mFalloutHitscanTracers.push_back(std::move(state));
         Log(Debug::Info) << "FNV hitscan tracer launched: projectile="
                          << ESM::RefId::formIdRefId(projectileId) << " origin=" << origin
-                         << " destination=" << destination << " distance=" << distance;
+                         << " destination=" << destination << " distance=" << distance
+                         << " authoredModel=" << projectile->mModel;
         return true;
     }
 
