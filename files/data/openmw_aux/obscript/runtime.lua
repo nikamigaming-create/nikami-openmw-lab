@@ -36,6 +36,22 @@ obs._unknown = {}      -- command name (lower) -> call count (coverage telemetry
 obs._log = nil         -- optional function(command, script) for first-use stub logging
 obs._current = nil     -- script currently registering/executing
 
+-- Canonical event support table used by runtime diagnostics and the generated
+-- official-corpus coverage report. An entry belongs here only when
+-- makeLocalScript wires it to an authoritative engine event below.
+local supportedEvents = {
+    ['gamemode'] = true,
+    ['onactivate'] = true,
+    ['onopen'] = true,
+    ['onload'] = true,
+    ['onreset'] = true,
+    ['ontriggerenter'] = true,
+    ['ontriggerleave'] = true,
+    ['ondeath'] = true,
+    ['onhit'] = true,
+    ['onhitwith'] = true,
+}
+
 local function scriptEntry(name)
     local key = name:lower()
     local entry = obs._scripts[key]
@@ -184,6 +200,14 @@ end
 -- install an engine binding: obs.bind("SetStage", function(quest, stage) ... end)
 function obs.bind(name, fn)
     obs._bindings[name:lower()] = fn
+end
+
+function obs.isCommandSupported(name)
+    return type(name) == 'string' and obs._bindings[name:lower()] ~= nil
+end
+
+function obs.isEventSupported(name)
+    return type(name) == 'string' and supportedEvents[name:lower()] == true
 end
 
 -- resolve a reference handle (string editor id, or already-resolved object)
