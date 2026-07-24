@@ -3,12 +3,14 @@
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/esm4creature.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
 
@@ -29,17 +31,23 @@ namespace MWDialogue
 
         const auto* actorRef
             = actor.getType() == ESM4::Npc::sRecordId ? actor.get<ESM4::Npc>() : nullptr;
+        const auto* creatureRef
+            = actor.getType() == ESM4::Creature::sRecordId ? actor.get<ESM4::Creature>() : nullptr;
         const ESM4::Npc* base = actorRef != nullptr ? actorRef->mBase : nullptr;
+        const ESM4::Creature* creatureBase = creatureRef != nullptr ? creatureRef->mBase : nullptr;
         const ESM4::Npc* traits = actorRef != nullptr ? MWClass::ESM4Npc::getTraitsRecord(actor) : nullptr;
         const ESM4::Npc* factions
             = actorRef != nullptr ? MWClass::ESM4Npc::getFactionsRecord(actor) : nullptr;
         const ESM4::Npc* stats = actorRef != nullptr ? MWClass::ESM4Npc::getStatsRecord(actor) : nullptr;
+        const ESM4::Creature* creatureFactions
+            = creatureRef != nullptr ? MWClass::ESM4Creature::getFactionsRecord(actor) : nullptr;
         const ESM::FormId parameter = ESM::FormId::fromUint32(condition.param1);
         float actual = 0.f;
         switch (condition.functionIndex)
         {
             case ESM4::FUN_GetIsID:
                 actual = (base != nullptr && base->mId == parameter)
+                        || (creatureBase != nullptr && creatureBase->mId == parameter)
                         || actor.getCellRef().getRefId() == ESM::RefId(parameter)
                         || (isPlayer && (parameter.mIndex == 0x7 || parameter.mIndex == 0x14))
                     ? 1.f
@@ -60,7 +68,8 @@ namespace MWDialogue
             case ESM4::FUN_GetIsSex:
                 if (actorRef != nullptr)
                     actual = static_cast<std::uint32_t>(MWClass::ESM4Npc::isFemale(actor)) == condition.param1 ? 1.f : 0.f;
-                else if (const auto* npc = actor.get<ESM::NPC>())
+                else if (const auto* npc
+                    = actor.getType() == ESM::NPC::sRecordId ? actor.get<ESM::NPC>() : nullptr)
                     actual = static_cast<std::uint32_t>((npc->mBase->mFlags & ESM::NPC::Female) != 0)
                             == condition.param1
                         ? 1.f
@@ -72,6 +81,13 @@ namespace MWDialogue
                     actual = -1.f;
                 if (factions != nullptr)
                     for (const ESM4::ActorFaction& faction : factions->mFactions)
+                        if (ESM::FormId::fromUint32(faction.faction) == parameter)
+                        {
+                            actual = condition.functionIndex == ESM4::FUN_GetInFaction ? 1.f : faction.rank;
+                            break;
+                        }
+                if (creatureFactions != nullptr)
+                    for (const ESM4::ActorFaction& faction : creatureFactions->mFactions)
                         if (ESM::FormId::fromUint32(faction.faction) == parameter)
                         {
                             actual = condition.functionIndex == ESM4::FUN_GetInFaction ? 1.f : faction.rank;

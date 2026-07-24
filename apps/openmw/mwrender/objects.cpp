@@ -172,7 +172,7 @@ namespace MWRender
         {
         public:
             WorldViewerActorProxyAnimation(const MWWorld::Ptr& ptr, Resource::ResourceSystem* resourceSystem,
-                std::string_view model, bool creature)
+                std::string_view model, bool creature, bool hidden = false)
                 : Animation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
                 , mCreature(creature)
                 , mAnimate(envEnabled("OPENMW_WORLD_VIEWER_ESM4_ACTOR_PROXY_ANIMATE"))
@@ -184,6 +184,7 @@ namespace MWRender
                 mPoseRoot = new osg::MatrixTransform;
                 mPoseRoot->setName("World Viewer ESM4 Actor Proxy Pose Root");
                 osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+                geode->setNodeMask(hidden ? 0 : ~osg::Node::NodeMask(0));
                 osg::StateSet* stateSet = geode->getOrCreateStateSet();
                 osg::ref_ptr<osg::Material> material = new osg::Material;
                 material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
@@ -468,7 +469,11 @@ namespace MWRender
                 }
 
                 osg::ref_ptr<Animation> anim(
-                    new WorldViewerActorProxyAnimation(ptr, mResourceSystem, npcModel, false));
+                    new WorldViewerActorProxyAnimation(ptr, mResourceSystem, npcModel, false, true));
+                // Animation construction creates/initializes the object root
+                // and can restore its actor mask. Apply focus hiding after
+                // construction so non-target debug proxies remain invisible.
+                ptr.getRefData().getBaseNode()->setNodeMask(0);
                 mObjects.emplace(ptr.mRef, anim);
                 return;
             }

@@ -777,6 +777,8 @@ namespace SceneUtil
         const bool falloutSourceSkinning = falloutRig
             && (mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
                 || (falloutAutoMode && mFalloutUseSourceFallback));
+        const bool falloutNearestBindFallback = falloutRig
+            && std::getenv("OPENMW_WORLD_VIEWER_FO4_MISSING_BONE_NEAREST_BIND") != nullptr;
 
         std::vector<osg::Matrixf> boneMatrices(mNodes.size());
         std::vector<Bone*>::const_iterator bone = mNodes.begin();
@@ -791,6 +793,51 @@ namespace SceneUtil
             }
             ++bone;
             ++boneInfo;
+        }
+
+        if (falloutNearestBindFallback)
+        {
+            std::vector<osg::Vec3f> bindPositions(mData->mBones.size());
+            std::vector<bool> validBindPositions(mData->mBones.size(), false);
+            for (std::size_t i = 0; i < mData->mBones.size(); ++i)
+            {
+                osg::Matrixf bindMatrix;
+                if (bindMatrix.invert(mData->mBones[i].mInvBindMatrix))
+                {
+                    bindPositions[i] = bindMatrix.getTrans();
+                    validBindPositions[i] = true;
+                }
+            }
+
+            for (std::size_t missing = 0; missing < mNodes.size(); ++missing)
+            {
+                if (mNodes[missing] != nullptr || !validBindPositions[missing])
+                    continue;
+
+                std::size_t nearest = mNodes.size();
+                float nearestDistance2 = std::numeric_limits<float>::max();
+                for (std::size_t candidate = 0; candidate < mNodes.size(); ++candidate)
+                {
+                    if (mNodes[candidate] == nullptr || !validBindPositions[candidate])
+                        continue;
+                    const float distance2 = (bindPositions[missing] - bindPositions[candidate]).length2();
+                    if (distance2 < nearestDistance2)
+                    {
+                        nearest = candidate;
+                        nearestDistance2 = distance2;
+                    }
+                }
+
+                if (nearest != mNodes.size())
+                {
+                    boneMatrices[missing] = boneMatrices[nearest];
+                    if (!mLoggedFalloutInfluenceSummary)
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: data-driven missing skin bone fallback "
+                                            << mData->mBones[missing].mName << " -> "
+                                            << mData->mBones[nearest].mName << " bindDistance="
+                                            << std::sqrt(nearestDistance2);
+                }
+            }
         }
 
         if (falloutRig)
@@ -1025,7 +1072,7 @@ namespace SceneUtil
                     ++invalidBoneInfluences;
                     continue;
                 }
-                if (mNodes[index] == nullptr)
+                if (mNodes[index] == nullptr && !falloutNearestBindFallback)
                     continue;
                 const float* boneMatPtr = boneMatrices[index].ptr();
                 float* resultMatPtr = resultMat.ptr();

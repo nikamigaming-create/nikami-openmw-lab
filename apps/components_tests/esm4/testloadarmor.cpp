@@ -49,10 +49,11 @@ namespace
         return result;
     }
 
-    std::unique_ptr<ESM4::Reader> makeFnvReader(std::string_view recordType, std::string payload)
+    std::unique_ptr<ESM4::Reader> makeArmorReader(
+        float version, std::string_view recordType, std::string payload)
     {
         std::string hedr;
-        appendPod(hedr, 1.34f);
+        appendPod(hedr, version);
         appendPod(hedr, std::int32_t{ 2 });
         appendPod(hedr, std::uint32_t{ 0x800 });
         std::string headerPayload;
@@ -79,6 +80,11 @@ namespace
         EXPECT_TRUE(reader->getRecordHeader());
         reader->getRecordData();
         return reader;
+    }
+
+    std::unique_ptr<ESM4::Reader> makeFnvReader(std::string_view recordType, std::string payload)
+    {
+        return makeArmorReader(1.34f, recordType, std::move(payload));
     }
 
     TEST(Esm4ArmorTest, shouldDecodeFnvArmorAddonBipedAndWorldModelsWithoutOrderHeuristics)
@@ -119,5 +125,21 @@ namespace
         ESM4::ArmorAddon addon;
         EXPECT_EQ(addon.mBodyTemplate.bodyPart, 0u);
         EXPECT_EQ(addon.mBodyTemplate.flags, 0u);
+    }
+
+    TEST(Esm4ArmorTest, shouldKeepFo4BipedModelWhenModlContainsAdditionalRace)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("TestFo4BodyAddon"));
+        appendSubRecord(payload, "MOD2", zString("Actors/Character/CharacterAssets/MaleBody.nif"));
+        appendSubRecord(payload, "MODL", std::uint32_t{ 0x13746 });
+
+        auto reader = makeArmorReader(1.0f, "ARMA", std::move(payload));
+        ESM4::ArmorAddon addon;
+        addon.load(*reader);
+
+        EXPECT_EQ(addon.mModelMale, "Actors/Character/CharacterAssets/MaleBody.nif");
+        ASSERT_EQ(addon.mRaces.size(), 1u);
+        EXPECT_EQ(addon.mRaces.front(), ESM::FormId::fromUint32(0x02013746));
     }
 }

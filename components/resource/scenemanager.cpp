@@ -1384,7 +1384,8 @@ namespace Resource
 
             // NPC skeleton files can not be optimized because of keyframes added in post
             // (most of them are usually named like 'xbase_anim.nif' anyway, but not all of them :( )
-            if (basename.starts_with("base_anim") || basename.starts_with("skin"))
+            if (basename.starts_with("base_anim") || basename.starts_with("skin")
+                || basename.starts_with("skeleton"))
                 return false;
         }
 

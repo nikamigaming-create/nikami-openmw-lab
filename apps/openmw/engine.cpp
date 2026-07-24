@@ -18,8 +18,10 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <span>
 #include <stdexcept>
@@ -33,15 +35,22 @@
 #include <vector>
 
 #include <osgDB/ReaderWriter>
+#include <osgDB/ReadFile>
 #include <osgDB/Registry>
+#include <osg/AlphaFunc>
 #include <osg/BlendFunc>
 #include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/Geode>
 #include <osg/Geometry>
+#include <osg/Group>
 #include <osg/Image>
+#include <osg/LightSource>
+#include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/NodeCallback>
 #include <osg/NodeVisitor>
+#include <osg/Program>
 #include <osg/StateSet>
 #include <osg/Texture2D>
 #include <osgViewer/ViewerEventHandlers>
@@ -81,6 +90,8 @@
 #include <components/resource/scenemanager.hpp>
 #include <components/resource/stats.hpp>
 
+#include <components/sceneutil/lightmanager.hpp>
+
 #include <components/compiler/extensions0.hpp>
 
 #include <components/esm/position.hpp>
@@ -91,17 +102,23 @@
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarma.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadhair.hpp>
+#include <components/esm4/loadhdpt.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -167,6 +184,7 @@
 #include "mwrender/characterpreview.hpp"
 #include "mwrender/animation.hpp"
 #include "mwrender/esm4npcanimation.hpp"
+#include "mwrender/falloutweaponanimation.hpp"
 #include "mwrender/vismask.hpp"
 
 #include "mwclass/classes.hpp"
@@ -188,6 +206,84 @@
 
 namespace
 {
+    class ProofForegroundStateVisitor final : public osg::NodeVisitor
+    {
+    public:
+        ProofForegroundStateVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const bool previousHair = mInHair;
+            mInHair = mInHair || isHairName(node.getName());
+            applyState(node.getOrCreateStateSet());
+            applyHairState(node.getOrCreateStateSet());
+            traverse(node);
+            mInHair = previousHair;
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            const bool previousHair = mInHair;
+            mInHair = mInHair || isHairName(geode.getName());
+            applyState(geode.getOrCreateStateSet());
+            applyHairState(geode.getOrCreateStateSet());
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                if (osg::Drawable* drawable = geode.getDrawable(i))
+                {
+                    applyState(drawable->getOrCreateStateSet());
+                    applyHairState(drawable->getOrCreateStateSet());
+                }
+            }
+            traverse(geode);
+            mInHair = previousHair;
+        }
+
+    private:
+        bool mInHair = false;
+
+        static bool isHairName(const std::string& name)
+        {
+            return name.find("_HR_") != std::string::npos || name.find("Hair") != std::string::npos;
+        }
+
+        static void applyState(osg::StateSet* stateSet)
+        {
+            constexpr unsigned int protectedOverride
+                = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
+            // The foreground camera already clears depth before drawing. Keep
+            // depth testing enabled inside that isolated pass so rear-facing
+            // head, mouth-cavity, hair, and clothing triangles cannot paint
+            // over the visible character surface.
+            stateSet->setMode(GL_DEPTH_TEST, protectedOverride);
+            stateSet->setAttributeAndModes(new SceneUtil::AutoDepth(osg::Depth::LEQUAL), protectedOverride);
+            stateSet->setRenderBinDetails(
+                10000, "RenderBin", osg::StateSet::OVERRIDE_PROTECTED_RENDERBIN_DETAILS);
+            stateSet->setNestRenderBins(false);
+        }
+
+        static void applyHairState(osg::StateSet* stateSet)
+        {
+            constexpr unsigned int protectedOverride
+                = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
+            stateSet->setMode(GL_BLEND, protectedOverride);
+            stateSet->setMode(GL_ALPHA_TEST, protectedOverride);
+            stateSet->setAttributeAndModes(
+                new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA),
+                protectedOverride);
+            stateSet->setAttributeAndModes(new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.35f), protectedOverride);
+        }
+    };
+
+    void forceProofForegroundState(osg::Node& node)
+    {
+        ProofForegroundStateVisitor visitor;
+        node.accept(visitor);
+    }
+
     void checkSDLError(int ret)
     {
         if (ret != 0)
@@ -2147,9 +2243,55 @@ namespace
     {
         std::string mSemantic;
         std::string mPath;
+        std::string mContentHash;
+        std::string mFormat;
+        std::string mSourceKind;
         unsigned int mUnit = 0;
+        unsigned int mStage = 0;
         int mWidth = 0;
         int mHeight = 0;
+        bool mComplete = false;
+    };
+
+    constexpr std::uint32_t sFalloutProofNoSourceSlot = std::numeric_limits<std::uint32_t>::max();
+    constexpr std::size_t sFalloutProofAppearanceMaximumNodes = 8192;
+    constexpr std::size_t sFalloutProofAppearanceMaximumCandidates = 128;
+    constexpr std::size_t sFalloutProofAppearanceMaximumParts = 48;
+    constexpr std::size_t sFalloutProofAppearanceMaximumJsonBytes = 23000;
+    constexpr std::size_t sFalloutProofTextureMaximumCanonicalBytes = 64u * 1024u * 1024u;
+
+    struct FalloutProofAppearanceSource
+    {
+        std::string mRole;
+        std::string mModel;
+        std::uint32_t mSourceForm = 0;
+        std::uint32_t mSourceSlot = sFalloutProofNoSourceSlot;
+        bool mRequired = false;
+        bool mReached = false;
+        bool mEmitted = false;
+    };
+
+    struct FalloutProofAppearanceIdentity
+    {
+        std::string mRole;
+        std::uint32_t mSourceForm = 0;
+        std::uint32_t mSourceSlot = sFalloutProofNoSourceSlot;
+    };
+
+    struct FalloutProofAppearancePart
+    {
+        std::string mRole;
+        std::uint32_t mSourceForm = 0;
+        std::uint32_t mSourceSlot = sFalloutProofNoSourceSlot;
+        std::uint32_t mOrdinal = 0;
+        bool mRequired = false;
+        bool mAttached = false;
+        bool mDrawable = false;
+        bool mVisible = false;
+        std::uint32_t mAlphaBits = std::bit_cast<std::uint32_t>(1.f);
+        std::vector<FalloutProofSkinTexture> mTextures;
+        std::string mStableKey;
+        std::string mDeterministicKey;
     };
 
     struct FalloutProofSkinRoleSummary
@@ -2177,6 +2319,11 @@ namespace
         std::vector<std::string> mObservedOwners;
         std::array<FalloutProofSkinRoleSummary, static_cast<std::size_t>(FalloutProofSkinRole::Count)> mRoles;
         std::vector<std::string> mFailures;
+        bool mAppearanceComplete = false;
+        bool mAppearanceTruncated = false;
+        unsigned int mAppearanceVisitedNodes = 0;
+        unsigned int mAppearanceCandidateCount = 0;
+        std::vector<FalloutProofAppearancePart> mAppearanceParts;
     };
 
     std::string normalizeFalloutProofTexturePath(std::string value, bool lower)
@@ -2185,6 +2332,283 @@ namespace
         if (lower)
             Misc::StringUtils::lowerCaseInPlace(value);
         return value;
+    }
+
+    std::string normalizeFalloutProofAssetPath(std::string value)
+    {
+        value = normalizeFalloutProofTexturePath(std::move(value), true);
+        while (value.rfind("./", 0) == 0)
+            value.erase(0, 2);
+        while (!value.empty() && value.front() == '/')
+            value.erase(value.begin());
+        if (value.rfind("data/", 0) == 0)
+            value.erase(0, 5);
+        const std::size_t embeddedTextures = value.find("/textures/");
+        if (embeddedTextures != std::string::npos)
+            value.erase(0, embeddedTextures + 1);
+        if (!value.empty() && value.rfind("textures/", 0) != 0 && value.rfind("runtime/", 0) != 0
+            && value.find('.') != std::string::npos)
+            value.insert(0, "textures/");
+        return value;
+    }
+
+    std::string normalizeFalloutProofModelPath(std::string_view value)
+    {
+        if (value.empty())
+            return {};
+        std::string normalized = normalizeFalloutProofTexturePath(
+            VFS::Path::toNormalized(value).value(), true);
+        while (normalized.rfind("./", 0) == 0)
+            normalized.erase(0, 2);
+        while (!normalized.empty() && normalized.front() == '/')
+            normalized.erase(normalized.begin());
+        if (normalized.rfind("data/", 0) == 0)
+            normalized.erase(0, 5);
+        if (normalized.rfind("meshes/", 0) != 0)
+            normalized.insert(0, "meshes/");
+        return normalized;
+    }
+
+    std::uint32_t appendFalloutProofFnv1a32(
+        std::uint32_t hash, const unsigned char* bytes, std::size_t size)
+    {
+        if (bytes == nullptr)
+            return hash;
+        for (std::size_t index = 0; index < size; ++index)
+        {
+            hash ^= bytes[index];
+            hash *= 16777619u;
+        }
+        return hash;
+    }
+
+    std::string formatFalloutProofFnv1a32(std::uint32_t hash)
+    {
+        std::ostringstream out;
+        out << "d3d9-fnv1a32:" << std::hex << std::setw(8) << std::setfill('0') << hash;
+        return out.str();
+    }
+
+    bool observeFalloutProofTexture(const osg::Image& image, FalloutProofSkinTexture& binding)
+    {
+        if (!image.valid() || image.s() <= 0 || image.t() <= 0 || image.r() != 1)
+            return false;
+
+        const GLenum pixelFormat = image.getPixelFormat();
+        const GLenum dataType = image.getDataType();
+        std::uint32_t d3dFormat = 0;
+        unsigned int compressedBlockBytes = 0;
+        enum class Conversion
+        {
+            Direct,
+            Rgba8ToBgra8,
+            Rgb8ToBgra8,
+            Bgr8ToBgra8,
+        };
+        Conversion conversion = Conversion::Direct;
+
+        if (pixelFormat == GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+            || pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+            || pixelFormat == GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
+            || pixelFormat == GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT)
+        {
+            d3dFormat = 827611204u; // D3DFMT_DXT1
+            compressedBlockBytes = 8;
+        }
+        else if (pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT3_EXT
+            || pixelFormat == GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT)
+        {
+            d3dFormat = 861165636u; // D3DFMT_DXT3
+            compressedBlockBytes = 16;
+        }
+        else if (pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+            || pixelFormat == GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT)
+        {
+            d3dFormat = 894720068u; // D3DFMT_DXT5
+            compressedBlockBytes = 16;
+        }
+        else if (pixelFormat == GL_BGRA && dataType == GL_UNSIGNED_BYTE)
+            d3dFormat = 21u; // D3DFMT_A8R8G8B8
+        else if (pixelFormat == GL_RGBA && dataType == GL_UNSIGNED_BYTE)
+        {
+            d3dFormat = 21u;
+            conversion = Conversion::Rgba8ToBgra8;
+        }
+        else if (pixelFormat == GL_BGR && dataType == GL_UNSIGNED_BYTE)
+        {
+            d3dFormat = 22u; // D3DFMT_X8R8G8B8
+            conversion = Conversion::Bgr8ToBgra8;
+        }
+        else if (pixelFormat == GL_RGB && dataType == GL_UNSIGNED_BYTE)
+        {
+            d3dFormat = 22u;
+            conversion = Conversion::Rgb8ToBgra8;
+        }
+        else if (pixelFormat == GL_ALPHA && dataType == GL_UNSIGNED_BYTE)
+            d3dFormat = 28u; // D3DFMT_A8
+        else if (pixelFormat == GL_LUMINANCE && dataType == GL_UNSIGNED_BYTE)
+            d3dFormat = 50u; // D3DFMT_L8
+        else if (pixelFormat == GL_LUMINANCE_ALPHA && dataType == GL_UNSIGNED_BYTE)
+            d3dFormat = 51u; // D3DFMT_A8L8
+        else if (pixelFormat == GL_RGBA && dataType == GL_FLOAT)
+            d3dFormat = 116u; // D3DFMT_A32B32G32R32F
+        else if (pixelFormat == GL_RGBA && dataType == GL_HALF_FLOAT)
+            d3dFormat = 113u; // D3DFMT_A16B16G16R16F
+        else
+            return false;
+
+        const std::size_t totalBytes = image.getTotalSizeInBytesIncludingMipmaps();
+        if (totalBytes == 0 || totalBytes > sFalloutProofTextureMaximumCanonicalBytes)
+            return false;
+
+        std::uint32_t hash = 2166136261u;
+        std::size_t canonicalBytes = 0;
+        const unsigned int levels = image.getNumMipmapLevels();
+        for (unsigned int level = 0; level < levels; ++level)
+        {
+            const int width = std::max(1, image.s() >> level);
+            const int height = std::max(1, image.t() >> level);
+            const std::size_t offset = image.getMipmapOffset(level);
+            if (offset >= totalBytes)
+                return false;
+            const unsigned char* source = image.getMipmapData(level);
+            if (source == nullptr)
+                return false;
+
+            if (compressedBlockBytes != 0)
+            {
+                const std::size_t size = static_cast<std::size_t>((width + 3) / 4)
+                    * static_cast<std::size_t>((height + 3) / 4) * compressedBlockBytes;
+                if (offset + size > totalBytes
+                    || canonicalBytes + size > sFalloutProofTextureMaximumCanonicalBytes)
+                    return false;
+                hash = appendFalloutProofFnv1a32(hash, source, size);
+                canonicalBytes += size;
+                continue;
+            }
+
+            unsigned int sourcePixelBytes = 0;
+            unsigned int canonicalPixelBytes = 0;
+            switch (conversion)
+            {
+                case Conversion::Rgba8ToBgra8:
+                    sourcePixelBytes = canonicalPixelBytes = 4;
+                    break;
+                case Conversion::Rgb8ToBgra8:
+                case Conversion::Bgr8ToBgra8:
+                    sourcePixelBytes = 3;
+                    canonicalPixelBytes = 4;
+                    break;
+                case Conversion::Direct:
+                    sourcePixelBytes = osg::Image::computePixelSizeInBits(pixelFormat, dataType) / 8;
+                    canonicalPixelBytes = sourcePixelBytes;
+                    break;
+            }
+            if (sourcePixelBytes == 0 || canonicalPixelBytes == 0)
+                return false;
+            const std::size_t sourceRowBytes = static_cast<std::size_t>(width) * sourcePixelBytes;
+            const std::size_t canonicalRowBytes = static_cast<std::size_t>(width) * canonicalPixelBytes;
+            const std::size_t levelBytes = canonicalRowBytes * static_cast<std::size_t>(height);
+            if (canonicalBytes + levelBytes > sFalloutProofTextureMaximumCanonicalBytes)
+                return false;
+            const std::size_t nextOffset = level + 1 < levels
+                ? image.getMipmapOffset(level + 1) : totalBytes;
+            if (nextOffset < offset || nextOffset - offset < sourceRowBytes * static_cast<std::size_t>(height))
+                return false;
+
+            for (int row = 0; row < height; ++row)
+            {
+                const unsigned char* sourceRow = source + static_cast<std::size_t>(row) * sourceRowBytes;
+                if (conversion == Conversion::Direct)
+                    hash = appendFalloutProofFnv1a32(hash, sourceRow, sourceRowBytes);
+                else
+                {
+                    for (int column = 0; column < width; ++column)
+                    {
+                        const unsigned char* pixel
+                            = sourceRow + static_cast<std::size_t>(column) * sourcePixelBytes;
+                        std::array<unsigned char, 4> canonical{};
+                        if (conversion == Conversion::Rgba8ToBgra8)
+                            canonical = { pixel[2], pixel[1], pixel[0], pixel[3] };
+                        else if (conversion == Conversion::Rgb8ToBgra8)
+                            canonical = { pixel[2], pixel[1], pixel[0], 255 };
+                        else
+                            canonical = { pixel[0], pixel[1], pixel[2], 255 };
+                        hash = appendFalloutProofFnv1a32(hash, canonical.data(), canonical.size());
+                    }
+                }
+            }
+            canonicalBytes += levelBytes;
+        }
+
+        binding.mWidth = image.s();
+        binding.mHeight = image.t();
+        binding.mFormat = "d3d9:" + std::to_string(d3dFormat);
+        binding.mContentHash = formatFalloutProofFnv1a32(hash);
+        return true;
+    }
+
+    std::string falloutProofAppearanceSourceKind(std::string_view path)
+    {
+        const std::string normalized = normalizeFalloutProofAssetPath(std::string(path));
+        if (normalized.rfind("runtime/fallout/neutral-facegen", 0) == 0
+            || normalized.rfind("runtime/falloutnv/neutral-", 0) == 0)
+            return "neutral";
+        if (normalized.find("/facemods/") != std::string::npos
+            || normalized.find("/bodymods/") != std::string::npos
+            || normalized.find("facegen") != std::string::npos
+            || normalized.rfind("runtime/falloutnv/", 0) == 0)
+            return "generated";
+        if (normalized.rfind("runtime/", 0) == 0)
+            return "runtime";
+        return "authored";
+    }
+
+    std::optional<std::pair<unsigned int, std::string>> falloutProofAppearanceTextureSemantic(
+        std::string_view role, bool skinSurface, std::string_view textureType)
+    {
+        const std::string type = Misc::StringUtils::lowerCase(textureType);
+        if (skinSurface)
+        {
+            if (type == "diffusemap")
+                return std::pair(0u, std::string("baseColor"));
+            if (type == "normalmap")
+                return std::pair(1u, std::string("normal"));
+            if (type == "facegenmap0")
+                return std::pair(2u, std::string("faceGenDetail"));
+            if (type == "facegenmap1")
+                return std::pair(3u, std::string("bodyColor"));
+            if (type == "skinauxmap")
+                return std::pair(4u, std::string("skinScatter"));
+            if (type == "glossmap")
+                return std::pair(5u, std::string("environmentMask"));
+            return std::nullopt;
+        }
+
+        std::string prefix = "actor";
+        if (Misc::StringUtils::ciEqual(role, "equipment"))
+            prefix = "gear";
+        else if (Misc::StringUtils::ciEqual(role, "weapon"))
+            prefix = "weapon";
+        else if (Misc::StringUtils::ciEqual(role, "hair"))
+            prefix = "hair";
+        else if (Misc::StringUtils::ciEqual(role, "eyes"))
+            prefix = "eye";
+        else if (Misc::StringUtils::ciEqual(role, "headPart"))
+            prefix = "headPart";
+        if (type == "diffusemap")
+            return std::pair(0u, prefix + "Color");
+        if (type == "normalmap")
+            return std::pair(1u, prefix + "Normal");
+        if (type == "emissivemap")
+            return std::pair(2u, prefix + "Glow");
+        if (type == "detailmap" || type == "parallaxmap")
+            return std::pair(3u, prefix + "Parallax");
+        if (type == "envmap")
+            return std::pair(4u, prefix + "Environment");
+        if (type == "glossmap")
+            return std::pair(5u, prefix + "EnvironmentMask");
+        return std::nullopt;
     }
 
     bool isFalloutProofFaceGenSemantic(std::string_view semantic, unsigned int index)
@@ -2253,51 +2677,353 @@ namespace
         return FalloutProofSkinRole::ExposedEquipment;
     }
 
+    unsigned int falloutProofAppearanceRoleRank(std::string_view role)
+    {
+        if (role == "face")
+            return 0;
+        if (role == "leftHand")
+            return 1;
+        if (role == "rightHand")
+            return 2;
+        if (role == "exposedBody")
+            return 3;
+        if (role == "hair")
+            return 4;
+        if (role == "eyes")
+            return 5;
+        if (role == "weapon")
+            return 6;
+        if (role == "equipment")
+            return 7;
+        if (role == "headPart")
+            return 8;
+        return 9;
+    }
+
+    std::uint32_t falloutProofAppearanceSlot(std::uint32_t flags)
+    {
+        return flags == 0 ? sFalloutProofNoSourceSlot
+                          : static_cast<std::uint32_t>(std::countr_zero(flags));
+    }
+
+    void addFalloutProofAppearanceSource(std::vector<FalloutProofAppearanceSource>& sources,
+        std::string role, std::uint32_t sourceForm, std::uint32_t sourceSlot,
+        std::string_view model, bool required)
+    {
+        if (model.empty())
+            return;
+        FalloutProofAppearanceSource source;
+        source.mRole = std::move(role);
+        source.mSourceForm = sourceForm;
+        source.mSourceSlot = sourceSlot;
+        source.mModel = normalizeFalloutProofModelPath(model);
+        source.mRequired = required;
+        const auto duplicate = std::find_if(sources.begin(), sources.end(), [&](const auto& candidate) {
+            return std::tie(candidate.mRole, candidate.mSourceForm, candidate.mSourceSlot, candidate.mModel)
+                == std::tie(source.mRole, source.mSourceForm, source.mSourceSlot, source.mModel);
+        });
+        if (duplicate == sources.end())
+            sources.push_back(std::move(source));
+        else
+            duplicate->mRequired = duplicate->mRequired || required;
+    }
+
+    template <class T>
+    const T* searchFalloutProofRecord(const MWWorld::ESMStore& store, ESM::FormId id)
+    {
+        if (const T* record = store.get<T>().search(id))
+            return record;
+        if (!id.hasContentFile() || id.mContentFile == 0)
+            return nullptr;
+        id.mContentFile = 0;
+        return store.get<T>().search(id);
+    }
+
+    bool falloutProofArmorAddonRaceCompatible(
+        const ESM4::ArmorAddon& addon, const ESM4::Race& race)
+    {
+        return (addon.mRacePrimary.isZeroOrUnset() && addon.mRaces.empty())
+            || addon.mRacePrimary == race.mId
+            || std::find(addon.mRaces.begin(), addon.mRaces.end(), race.mId) != addon.mRaces.end();
+    }
+
+    std::string_view falloutProofArmorAddonModel(
+        const ESM4::ArmorAddon& addon, bool female)
+    {
+        return female && !addon.mModelFemale.empty() ? std::string_view(addon.mModelFemale)
+                                                      : std::string_view(addon.mModelMale);
+    }
+
+    std::vector<FalloutProofAppearanceSource> buildFalloutProofAppearanceSources(const MWWorld::Ptr& actor)
+    {
+        std::vector<FalloutProofAppearanceSource> result;
+        if (actor.isEmpty() || actor.getType() != ESM4::Npc::sRecordId)
+            return result;
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(actor);
+        const ESM4::Race* race = MWClass::ESM4Npc::getRace(actor);
+        if (traits == nullptr || race == nullptr || !traits->mIsFONV)
+            return result;
+
+        const bool female = MWClass::ESM4Npc::isFemale(actor);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        std::uint32_t coveredSlots = 0;
+        std::set<std::string> attachedEquipmentModels;
+        const auto addEquipmentSource = [&](ESM::FormId sourceForm, std::uint32_t sourceFlags,
+                                            std::string_view model) {
+            if (model.empty() || !Misc::StringUtils::ciEndsWith(model, ".nif"))
+                return;
+            coveredSlots |= sourceFlags;
+            const std::string canonicalModel = normalizeFalloutProofModelPath(model);
+            if (!attachedEquipmentModels.insert(canonicalModel).second)
+                return;
+            addFalloutProofAppearanceSource(result, "equipment", sourceForm.toUint32(),
+                falloutProofAppearanceSlot(sourceFlags), model, true);
+        };
+
+        std::vector<const ESM4::ArmorAddon*> armorAddons;
+        std::set<ESM::FormId> seenArmorAddons;
+        for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(actor))
+        {
+            if (armor == nullptr)
+                continue;
+            addEquipmentSource(
+                armor->mId, armor->mArmorFlags, MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+            if (store == nullptr)
+                continue;
+            std::vector<ESM::FormId> addonIds = armor->mAddOns;
+            if (!armor->mBipedModelList.isZeroOrUnset())
+            {
+                if (const ESM4::FormIdList* list
+                    = searchFalloutProofRecord<ESM4::FormIdList>(*store, armor->mBipedModelList))
+                    addonIds.insert(addonIds.end(), list->mObjects.begin(), list->mObjects.end());
+            }
+            for (const ESM::FormId addonId : addonIds)
+            {
+                if (addonId.isZeroOrUnset() || !seenArmorAddons.insert(addonId).second)
+                    continue;
+                const ESM4::ArmorAddon* addon
+                    = searchFalloutProofRecord<ESM4::ArmorAddon>(*store, addonId);
+                if (addon != nullptr && falloutProofArmorAddonRaceCompatible(*addon, *race))
+                    armorAddons.push_back(addon);
+            }
+        }
+        for (const ESM4::ArmorAddon* addon : armorAddons)
+            addEquipmentSource(addon->mId, addon->mBodyTemplate.bodyPart,
+                falloutProofArmorAddonModel(*addon, female));
+        for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(actor))
+        {
+            if (clothing != nullptr)
+                addEquipmentSource(clothing->mId, clothing->mClothingFlags,
+                    MWClass::ESM4Npc::chooseEquipmentModel(clothing, female));
+        }
+
+        const std::vector<ESM4::Race::BodyPart>& bodyParts
+            = female ? race->mBodyPartsFemale : race->mBodyPartsMale;
+        for (std::size_t index = 0; index < bodyParts.size(); ++index)
+        {
+            const ESM4::Race::BodyPart& bodyPart = bodyParts[index];
+            if (bodyPart.mesh.empty() || !Misc::StringUtils::ciEndsWith(bodyPart.mesh, ".nif"))
+                continue;
+            std::string role = "actor";
+            std::uint32_t slot = sFalloutProofNoSourceSlot;
+            std::uint32_t flag = 0;
+            if (index == 0)
+            {
+                role = "exposedBody";
+                slot = 2;
+                flag = ESM4::Armor::FO3_UpperBody;
+            }
+            else if (index == 1)
+            {
+                role = "leftHand";
+                slot = 3;
+                flag = ESM4::Armor::FO3_LeftHand;
+            }
+            else if (index == 2)
+            {
+                role = "rightHand";
+                slot = 4;
+                flag = ESM4::Armor::FO3_RightHand;
+            }
+            if (flag == 0 || (coveredSlots & flag) == 0)
+                addFalloutProofAppearanceSource(
+                    result, std::move(role), race->mId.toUint32(), slot, bodyPart.mesh, true);
+        }
+
+        const std::vector<ESM4::Race::BodyPart>& headParts
+            = female ? race->mHeadPartsFemale : race->mHeadParts;
+        for (std::size_t index = 0; index < headParts.size(); ++index)
+        {
+            const ESM4::Race::BodyPart& headPart = headParts[index];
+            if (headPart.mesh.empty() || !Misc::StringUtils::ciEndsWith(headPart.mesh, ".nif"))
+                continue;
+            if (index == 0)
+                addFalloutProofAppearanceSource(
+                    result, "face", traits->mId.toUint32(), 0, headPart.mesh, true);
+            else if (index == 6 || index == 7)
+                addFalloutProofAppearanceSource(result, "eyes",
+                    traits->mEyes.isZeroOrUnset() ? traits->mId.toUint32() : traits->mEyes.toUint32(),
+                    0, headPart.mesh, true);
+            else
+                addFalloutProofAppearanceSource(
+                    result, "headPart", traits->mId.toUint32(), 0, headPart.mesh, true);
+        }
+
+        if (store != nullptr)
+        {
+            bool selectedHairHeadPart = false;
+            std::set<ESM::FormId> visitedHeadParts;
+            std::function<void(ESM::FormId)> addHeadPart = [&](ESM::FormId partId) {
+                if (partId.isZeroOrUnset())
+                    return;
+                if (!visitedHeadParts.insert(partId).second)
+                    return;
+                const ESM4::HeadPart* headPart
+                    = searchFalloutProofRecord<ESM4::HeadPart>(*store, partId);
+                if (headPart == nullptr)
+                    return;
+                std::string role = "headPart";
+                std::uint32_t slot = 0;
+                if (headPart->mType == ESM4::HeadPart::Type_Hair)
+                {
+                    role = "hair";
+                    slot = 1;
+                    selectedHairHeadPart = Misc::StringUtils::ciEndsWith(headPart->mModel, ".nif");
+                }
+                else if (headPart->mType == ESM4::HeadPart::Type_Eyes
+                    || headPart->mType == ESM4::HeadPart::Type_LeftEye)
+                    role = "eyes";
+                else if (headPart->mType == ESM4::HeadPart::Type_Face)
+                    role = "face";
+                addFalloutProofAppearanceSource(
+                    result, std::move(role), partId.toUint32(), slot, headPart->mModel, true);
+                for (const ESM::FormId extraPartId : headPart->mExtraParts)
+                    addHeadPart(extraPartId);
+            };
+            for (const ESM::FormId partId : traits->mHeadParts)
+                addHeadPart(partId);
+            if (!selectedHairHeadPart && !traits->mHair.isZeroOrUnset())
+            {
+                if (const ESM4::Hair* hair
+                    = searchFalloutProofRecord<ESM4::Hair>(*store, traits->mHair))
+                    addFalloutProofAppearanceSource(
+                        result, "hair", traits->mHair.toUint32(), 1, hair->mModel, true);
+            }
+        }
+
+        if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actor))
+            addFalloutProofAppearanceSource(
+                result, "weapon", weapon->mId.toUint32(), 5, weapon->mModel, true);
+
+        std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+            return std::tie(left.mRole, left.mSourceForm, left.mSourceSlot, left.mModel)
+                < std::tie(right.mRole, right.mSourceForm, right.mSourceSlot, right.mModel);
+        });
+        return result;
+    }
+
     class FalloutProofSkinStateVisitor final : public osg::NodeVisitor
     {
     public:
-        explicit FalloutProofSkinStateVisitor(std::string expectedOwner)
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
+        FalloutProofSkinStateVisitor(std::string expectedOwner,
+            std::vector<FalloutProofAppearanceSource> sources, bool collectAppearance)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
             , mExpectedOwner(std::move(expectedOwner))
+            , mSources(std::move(sources))
+            , mCollectAppearance(collectAppearance)
         {
+            setNodeMaskOverride(~0u);
             setTraversalMask(~0u);
+            mAppearanceComplete = collectAppearance;
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (++mVisitedNodes > sFalloutProofAppearanceMaximumNodes)
+            {
+                mAppearanceTruncated = true;
+                return;
+            }
+            if (mCollectAppearance)
+            {
+                FalloutProofAppearanceIdentity identity;
+                bool metadataPresent = false;
+                if (readAttachmentIdentity(node, identity, metadataPresent))
+                {
+                    if (FalloutProofAppearanceSource* source
+                        = resolveSource(identity, attachmentModelFromNode(node)))
+                        source->mReached = true;
+                }
+                else if (metadataPresent)
+                    mAppearanceComplete = false;
+            }
+            traverse(node);
         }
 
         void apply(osg::Drawable& drawable) override
         {
-            ++mResult.mVisibleDrawables;
+            bool visiblePath = drawable.getNodeMask() != 0;
+            for (const osg::Node* node : getNodePath())
+            {
+                if (node != nullptr && node->getNodeMask() == 0)
+                {
+                    visiblePath = false;
+                    break;
+                }
+            }
+            if (visiblePath)
+                ++mResult.mVisibleDrawables;
+
+            const osg::Geometry* renderGeometry = dynamic_cast<const osg::Geometry*>(&drawable);
+            if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+                renderGeometry = rig->getLastFrameGeometry();
+            if (renderGeometry == nullptr)
+                return;
+            if (++mCandidateCount > sFalloutProofAppearanceMaximumCandidates)
+            {
+                mAppearanceTruncated = true;
+                return;
+            }
 
             std::vector<const osg::StateSet*> stateSets;
-            stateSets.reserve(getNodePath().size() + 1);
+            stateSets.reserve(getNodePath().size() + 2);
             bool skinShader = false;
+            bool actorLocalFaceGen = false;
             for (const osg::Node* node : getNodePath())
             {
                 if (node == nullptr)
                     continue;
                 if (const osg::StateSet* stateSet = node->getStateSet())
+                {
                     stateSets.push_back(stateSet);
+                    actorLocalFaceGen = actorLocalFaceGen
+                        || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
+                }
                 gatherOwner(*node);
                 std::string shaderPrefix;
                 if (node->getUserValue("shaderPrefix", shaderPrefix)
                     && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
                     skinShader = true;
             }
-
             if (const osg::StateSet* stateSet = drawable.getStateSet())
+            {
                 stateSets.push_back(stateSet);
+                actorLocalFaceGen = actorLocalFaceGen
+                    || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
+            }
             gatherOwner(drawable);
             std::string drawableShaderPrefix;
             if (drawable.getUserValue("shaderPrefix", drawableShaderPrefix)
                 && Misc::StringUtils::ciEqual(drawableShaderPrefix, "bs/skin"))
                 skinShader = true;
-
-            const osg::Geometry* renderGeometry = dynamic_cast<const osg::Geometry*>(&drawable);
-            if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
-                renderGeometry = rig->getLastFrameGeometry();
-            if (renderGeometry != nullptr && renderGeometry != &drawable)
+            if (renderGeometry != &drawable)
             {
                 if (const osg::StateSet* stateSet = renderGeometry->getStateSet())
+                {
                     stateSets.push_back(stateSet);
+                    actorLocalFaceGen = actorLocalFaceGen
+                        || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
+                }
                 gatherOwner(*renderGeometry);
                 std::string shaderPrefix;
                 if (renderGeometry->getUserValue("shaderPrefix", shaderPrefix)
@@ -2306,43 +3032,29 @@ namespace
             }
 
             unsigned int textureUnits = 0;
-            bool localFaceGenSemantic = false;
-            bool actorLocalFaceGen = false;
             for (const osg::StateSet* stateSet : stateSets)
-            {
-                if (stateSet == nullptr)
-                    continue;
-                textureUnits = std::max(textureUnits, stateSet->getNumTextureAttributeLists());
-                actorLocalFaceGen = actorLocalFaceGen
-                    || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
-                for (unsigned int unit = 0; unit < stateSet->getNumTextureAttributeLists(); ++unit)
-                {
-                    const auto* pair
-                        = stateSet->getTextureAttributePair(unit, SceneUtil::TextureType::AttributeType);
-                    const auto* type = pair == nullptr ? nullptr
-                        : dynamic_cast<const SceneUtil::TextureType*>(pair->first.get());
-                    localFaceGenSemantic = localFaceGenSemantic || (type != nullptr
-                        && (isFalloutProofFaceGenSemantic(type->getName(), 0)
-                            || isFalloutProofFaceGenSemantic(type->getName(), 1)));
-                }
-            }
+                if (stateSet != nullptr)
+                    textureUnits = std::max(textureUnits, stateSet->getNumTextureAttributeLists());
 
             std::vector<FalloutProofSkinTexture> textures;
             textures.reserve(textureUnits);
             bool hasFaceGen0 = false;
             bool hasFaceGen1 = false;
+            bool localFaceGenSemantic = false;
             for (unsigned int unit = 0; unit < textureUnits; ++unit)
             {
                 const EffectiveAttribute textureAttribute
-                    = resolveEffectiveAttribute(stateSets, unit, osg::StateAttribute::TEXTURE);
+                    = resolveEffectiveTextureAttribute(stateSets, unit, osg::StateAttribute::TEXTURE);
                 const EffectiveAttribute typeAttribute
-                    = resolveEffectiveAttribute(stateSets, unit, SceneUtil::TextureType::AttributeType);
-                const auto* texture
-                    = dynamic_cast<const osg::Texture2D*>(textureAttribute.mAttribute);
-                const auto* type
-                    = dynamic_cast<const SceneUtil::TextureType*>(typeAttribute.mAttribute);
+                    = resolveEffectiveTextureAttribute(stateSets, unit, SceneUtil::TextureType::AttributeType);
+                const auto* texture = textureAttribute.enabled()
+                    ? dynamic_cast<const osg::Texture2D*>(textureAttribute.mAttribute) : nullptr;
+                const auto* type = typeAttribute.enabled()
+                    ? dynamic_cast<const SceneUtil::TextureType*>(typeAttribute.mAttribute) : nullptr;
                 if (texture == nullptr && type == nullptr)
                     continue;
+                if (mCollectAppearance && (texture == nullptr || type == nullptr))
+                    mAppearanceComplete = false;
 
                 FalloutProofSkinTexture binding;
                 binding.mUnit = unit;
@@ -2351,43 +3063,149 @@ namespace
                 const osg::Image* image = texture != nullptr ? texture->getImage() : nullptr;
                 if (image != nullptr)
                 {
-                    binding.mPath = normalizeFalloutProofTexturePath(image->getFileName(), false);
-                    binding.mWidth = image->s();
-                    binding.mHeight = image->t();
+                    binding.mPath = normalizeFalloutProofAssetPath(image->getFileName());
+                    if (mCollectAppearance)
+                        binding.mComplete = !binding.mPath.empty()
+                            && observeFalloutProofTexture(*image, binding);
+                    else
+                    {
+                        binding.mWidth = image->s();
+                        binding.mHeight = image->t();
+                    }
                 }
                 else if (texture != nullptr)
                 {
-                    binding.mPath = normalizeFalloutProofTexturePath(texture->getName(), false);
+                    binding.mPath = normalizeFalloutProofAssetPath(texture->getName());
                     binding.mWidth = texture->getTextureWidth();
                     binding.mHeight = texture->getTextureHeight();
                 }
-                hasFaceGen0 = hasFaceGen0
-                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 0));
-                hasFaceGen1 = hasFaceGen1
-                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 1));
+                if (mCollectAppearance && !binding.mComplete)
+                    mAppearanceComplete = false;
+                if (type != nullptr)
+                {
+                    hasFaceGen0 = hasFaceGen0 || isFalloutProofFaceGenSemantic(type->getName(), 0);
+                    hasFaceGen1 = hasFaceGen1 || isFalloutProofFaceGenSemantic(type->getName(), 1);
+                    localFaceGenSemantic = localFaceGenSemantic || hasFaceGen0 || hasFaceGen1;
+                }
                 textures.push_back(std::move(binding));
             }
 
             const bool skinDrawable
                 = skinShader || actorLocalFaceGen || localFaceGenSemantic || hasFaceGen0 || hasFaceGen1;
-            if (!skinDrawable)
+            if (skinDrawable && visiblePath)
+            {
+                ++mResult.mVisibleSkinDrawables;
+                const FalloutProofSkinRole role
+                    = classifyFalloutProofSkinRole(getNodePath(), drawable, renderGeometry, textures);
+                FalloutProofSkinRoleSummary& summary = mResult.mRoles[static_cast<std::size_t>(role)];
+                ++summary.mDrawables;
+                if (!hasFaceGen0)
+                    ++summary.mMissingFaceGen0;
+                if (!hasFaceGen1)
+                    ++summary.mMissingFaceGen1;
+                for (const FalloutProofSkinTexture& texture : textures)
+                {
+                    if (isFalloutProofNeutralFaceGenPath(texture.mPath))
+                        ++summary.mNeutralFaceGenBindings;
+                    summary.mTextures.push_back(texture);
+                }
+            }
+
+            if (!mCollectAppearance)
                 return;
 
-            ++mResult.mVisibleSkinDrawables;
-            const FalloutProofSkinRole role
-                = classifyFalloutProofSkinRole(getNodePath(), drawable, renderGeometry, textures);
-            FalloutProofSkinRoleSummary& summary = mResult.mRoles[static_cast<std::size_t>(role)];
-            ++summary.mDrawables;
-            if (!hasFaceGen0)
-                ++summary.mMissingFaceGen0;
-            if (!hasFaceGen1)
-                ++summary.mMissingFaceGen1;
-            for (const FalloutProofSkinTexture& texture : textures)
+            FalloutProofAppearancePart part;
+            const std::string attachmentModel = findAttachmentModel();
+            const std::string descriptor = buildDescriptor(drawable, renderGeometry, attachmentModel);
+            FalloutProofAppearanceIdentity identity;
+            bool metadataPresent = false;
+            const bool identityValid = findAttachmentIdentity(identity, metadataPresent);
+            FalloutProofAppearanceSource* source
+                = identityValid ? resolveSource(identity, attachmentModel) : nullptr;
+            if (identityValid)
             {
-                if (isFalloutProofNeutralFaceGenPath(texture.mPath))
-                    ++summary.mNeutralFaceGenBindings;
-                summary.mTextures.push_back(texture);
+                part.mRole = identity.mRole;
+                part.mSourceForm = identity.mSourceForm;
+                part.mSourceSlot = identity.mSourceSlot;
+                if (source != nullptr)
+                {
+                    source->mReached = true;
+                    source->mEmitted = true;
+                }
             }
+            else
+            {
+                part.mRole = "actor";
+                part.mSourceForm = 0;
+                part.mSourceSlot = sFalloutProofNoSourceSlot;
+                mAppearanceComplete = false;
+            }
+
+            float effectiveAlpha = 1.f;
+            const EffectiveAttribute materialAttribute
+                = resolveEffectiveAttribute(stateSets, osg::StateAttribute::MATERIAL);
+            if (materialAttribute.enabled())
+            {
+                const auto* material = dynamic_cast<const osg::Material*>(materialAttribute.mAttribute);
+                if (material == nullptr)
+                {
+                    effectiveAlpha = 0.f;
+                    mAppearanceComplete = false;
+                }
+                else
+                    effectiveAlpha *= material->getDiffuse(osg::Material::FRONT_AND_BACK).a();
+            }
+            if (!std::isfinite(effectiveAlpha))
+            {
+                effectiveAlpha = 0.f;
+                mAppearanceComplete = false;
+            }
+            effectiveAlpha = std::clamp(effectiveAlpha, 0.f, 1.f);
+            part.mAlphaBits = std::bit_cast<std::uint32_t>(effectiveAlpha);
+            const osg::Array* vertices = renderGeometry->getVertexArray();
+            part.mAttached = true;
+            part.mDrawable = vertices != nullptr && vertices->getNumElements() != 0
+                && renderGeometry->getNumPrimitiveSets() != 0;
+            part.mVisible = part.mDrawable && visiblePath && effectiveAlpha > 0.f;
+            part.mRequired = part.mVisible;
+
+            for (FalloutProofSkinTexture binding : textures)
+            {
+                if (!binding.mComplete)
+                    continue;
+                const auto semantic
+                    = falloutProofAppearanceTextureSemantic(part.mRole, skinDrawable, binding.mSemantic);
+                if (!semantic)
+                {
+                    mAppearanceComplete = false;
+                    continue;
+                }
+                binding.mStage = semantic->first;
+                binding.mSemantic = semantic->second;
+                binding.mSourceKind = falloutProofAppearanceSourceKind(binding.mPath);
+                if (binding.mSourceKind == "neutral")
+                    mAppearanceComplete = false;
+                part.mTextures.push_back(std::move(binding));
+            }
+            std::sort(part.mTextures.begin(), part.mTextures.end(), [](const auto& left, const auto& right) {
+                return std::tie(left.mStage, left.mSemantic, left.mPath)
+                    < std::tie(right.mStage, right.mSemantic, right.mPath);
+            });
+            const auto duplicateBinding = std::adjacent_find(
+                part.mTextures.begin(), part.mTextures.end(), [](const auto& left, const auto& right) {
+                    return std::tie(left.mStage, left.mSemantic) == std::tie(right.mStage, right.mSemantic);
+                });
+            if (duplicateBinding != part.mTextures.end())
+                mAppearanceComplete = false;
+            if (part.mVisible && skinDrawable
+                && std::none_of(part.mTextures.begin(), part.mTextures.end(), [](const auto& binding) {
+                    return binding.mSemantic == "bodyColor";
+                }))
+                mAppearanceComplete = false;
+
+            part.mStableKey = buildStableKey(part, descriptor, *renderGeometry);
+            part.mDeterministicKey = buildDeterministicKey(part);
+            mAppearanceParts.push_back(std::move(part));
         }
 
         FalloutProofSkinState finish(FalloutProofSkinState result)
@@ -2441,6 +3259,46 @@ namespace
             if (neutralNonHead)
                 result.mFailures.emplace_back("neutral-facegen-visible-nonhead");
             result.mPass = result.mFailures.empty();
+
+            for (const FalloutProofAppearanceSource& source : mSources)
+            {
+                if (source.mEmitted)
+                    continue;
+                FalloutProofAppearancePart part;
+                part.mRole = source.mRole;
+                part.mSourceForm = source.mSourceForm;
+                part.mSourceSlot = source.mSourceSlot;
+                part.mRequired = source.mRequired;
+                part.mAttached = source.mReached;
+                part.mStableKey = std::to_string(falloutProofAppearanceRoleRank(part.mRole)) + '|'
+                    + part.mRole + '|' + std::to_string(part.mSourceForm) + '|'
+                    + std::to_string(part.mSourceSlot) + "|missing|" + source.mModel;
+                part.mDeterministicKey = buildDeterministicKey(part);
+                mAppearanceParts.push_back(std::move(part));
+                if (source.mRequired)
+                    mAppearanceComplete = false;
+            }
+            std::sort(mAppearanceParts.begin(), mAppearanceParts.end(), [](const auto& left, const auto& right) {
+                return std::tie(left.mStableKey, left.mDeterministicKey)
+                    < std::tie(right.mStableKey, right.mDeterministicKey);
+            });
+            if (std::adjacent_find(mAppearanceParts.begin(), mAppearanceParts.end(), [](const auto& left,
+                    const auto& right) {
+                    return std::tie(left.mStableKey, left.mDeterministicKey)
+                        == std::tie(right.mStableKey, right.mDeterministicKey);
+                }) != mAppearanceParts.end())
+                mAppearanceComplete = false;
+            std::map<std::tuple<std::string, std::uint32_t, std::uint32_t>, std::uint32_t> ordinals;
+            for (FalloutProofAppearancePart& part : mAppearanceParts)
+                part.mOrdinal = ordinals[{ part.mRole, part.mSourceForm, part.mSourceSlot }]++;
+
+            result.mAppearanceVisitedNodes = static_cast<unsigned int>(mVisitedNodes);
+            result.mAppearanceCandidateCount = static_cast<unsigned int>(mCandidateCount);
+            result.mAppearanceTruncated = mAppearanceTruncated
+                || mAppearanceParts.size() > sFalloutProofAppearanceMaximumParts;
+            result.mAppearanceParts = std::move(mAppearanceParts);
+            result.mAppearanceComplete = mAppearanceComplete && !result.mAppearanceTruncated
+                && !result.mAppearanceParts.empty();
             return result;
         }
 
@@ -2449,9 +3307,17 @@ namespace
         {
             const osg::StateAttribute* mAttribute = nullptr;
             osg::StateAttribute::OverrideValue mFlags{};
+
+            bool enabled() const
+            {
+                // RefAttributePair::second is an OverrideValue, not a GLModeValue. Ordinary
+                // enabled attributes therefore carry OFF (zero) here; ON is only meaningful
+                // to the modes half of setAttributeAndModes/setTextureAttributeAndModes.
+                return mAttribute != nullptr;
+            }
         };
 
-        static EffectiveAttribute resolveEffectiveAttribute(const std::vector<const osg::StateSet*>& stateSets,
+        static EffectiveAttribute resolveEffectiveTextureAttribute(const std::vector<const osg::StateSet*>& stateSets,
             unsigned int unit, osg::StateAttribute::Type type)
         {
             EffectiveAttribute result;
@@ -2463,6 +3329,8 @@ namespace
                     = stateSet->getTextureAttributePair(unit, type);
                 if (candidate == nullptr || candidate->first == nullptr)
                     continue;
+                if ((candidate->second & osg::StateAttribute::INHERIT) != 0)
+                    continue;
                 if (result.mAttribute != nullptr
                     && (result.mFlags & osg::StateAttribute::OVERRIDE) != 0
                     && (candidate->second & osg::StateAttribute::PROTECTED) == 0)
@@ -2473,6 +3341,185 @@ namespace
             return result;
         }
 
+        static EffectiveAttribute resolveEffectiveAttribute(const std::vector<const osg::StateSet*>& stateSets,
+            osg::StateAttribute::Type type)
+        {
+            EffectiveAttribute result;
+            for (const osg::StateSet* stateSet : stateSets)
+            {
+                if (stateSet == nullptr)
+                    continue;
+                const osg::StateSet::RefAttributePair* candidate = stateSet->getAttributePair(type);
+                if (candidate == nullptr || candidate->first == nullptr)
+                    continue;
+                if ((candidate->second & osg::StateAttribute::INHERIT) != 0)
+                    continue;
+                if (result.mAttribute != nullptr
+                    && (result.mFlags & osg::StateAttribute::OVERRIDE) != 0
+                    && (candidate->second & osg::StateAttribute::PROTECTED) == 0)
+                    continue;
+                result.mAttribute = candidate->first.get();
+                result.mFlags = candidate->second;
+            }
+            return result;
+        }
+
+        static bool validAppearanceRole(std::string_view role)
+        {
+            return role == "face" || role == "leftHand" || role == "rightHand"
+                || role == "exposedBody" || role == "hair" || role == "eyes"
+                || role == "weapon" || role == "equipment" || role == "headPart"
+                || role == "actor";
+        }
+
+        static bool readAttachmentIdentity(const osg::Object& object,
+            FalloutProofAppearanceIdentity& identity, bool& metadataPresent)
+        {
+            std::string role;
+            std::uint32_t sourceForm = 0;
+            std::uint32_t sourceSlot = sFalloutProofNoSourceSlot;
+            const bool hasRole = object.getUserValue("OpenMW.FalloutAppearanceRole", role);
+            const bool hasForm
+                = object.getUserValue("OpenMW.FalloutAppearanceSourceForm", sourceForm);
+            const bool hasSlot
+                = object.getUserValue("OpenMW.FalloutAppearanceSourceSlot", sourceSlot);
+            metadataPresent = hasRole || hasForm || hasSlot;
+            if (!hasRole || !hasForm || !hasSlot || !validAppearanceRole(role)
+                || sourceForm == 0 || sourceSlot == sFalloutProofNoSourceSlot)
+                return false;
+            identity.mRole = std::move(role);
+            identity.mSourceForm = sourceForm;
+            identity.mSourceSlot = sourceSlot;
+            return true;
+        }
+
+        bool findAttachmentIdentity(
+            FalloutProofAppearanceIdentity& identity, bool& metadataPresent) const
+        {
+            metadataPresent = false;
+            for (auto iterator = getNodePath().rbegin(); iterator != getNodePath().rend(); ++iterator)
+            {
+                const osg::Node* node = *iterator;
+                if (node == nullptr)
+                    continue;
+                bool localPresent = false;
+                if (readAttachmentIdentity(*node, identity, localPresent))
+                {
+                    metadataPresent = true;
+                    return true;
+                }
+                if (localPresent)
+                {
+                    metadataPresent = true;
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        static std::string attachmentModelFromNode(const osg::Node& node)
+        {
+            constexpr std::string_view prefix = "FNV Part ";
+            if (!Misc::StringUtils::ciStartsWith(node.getName(), prefix))
+                return {};
+            return normalizeFalloutProofModelPath(
+                std::string_view(node.getName()).substr(prefix.size()));
+        }
+
+        std::string findAttachmentModel() const
+        {
+            for (auto iterator = getNodePath().rbegin(); iterator != getNodePath().rend(); ++iterator)
+            {
+                const osg::Node* node = *iterator;
+                if (node == nullptr)
+                    continue;
+                const std::string model = attachmentModelFromNode(*node);
+                if (!model.empty())
+                    return model;
+            }
+            return {};
+        }
+
+        FalloutProofAppearanceSource* resolveSource(
+            const FalloutProofAppearanceIdentity& identity, std::string_view model)
+        {
+            if (model.empty() || identity.mSourceForm == 0
+                || identity.mSourceSlot == sFalloutProofNoSourceSlot)
+                return nullptr;
+            FalloutProofAppearanceSource* result = nullptr;
+            for (FalloutProofAppearanceSource& source : mSources)
+            {
+                if (source.mRole != identity.mRole || source.mSourceForm != identity.mSourceForm
+                    || source.mSourceSlot != identity.mSourceSlot || source.mModel != model)
+                    continue;
+                if (result != nullptr)
+                {
+                    mAppearanceComplete = false;
+                    return nullptr;
+                }
+                result = &source;
+            }
+            return result;
+        }
+
+        std::string buildDescriptor(const osg::Drawable& drawable, const osg::Geometry* renderGeometry,
+            std::string_view attachmentModel) const
+        {
+            std::string descriptor(attachmentModel);
+            for (const osg::Node* node : getNodePath())
+            {
+                if (node == nullptr || node->getName().empty())
+                    continue;
+                descriptor.push_back('/');
+                descriptor += normalizeFalloutProofTexturePath(node->getName(), true);
+            }
+            if (!drawable.getName().empty())
+            {
+                descriptor.push_back('/');
+                descriptor += normalizeFalloutProofTexturePath(drawable.getName(), true);
+            }
+            if (renderGeometry != nullptr && renderGeometry != &drawable && !renderGeometry->getName().empty())
+            {
+                descriptor.push_back('/');
+                descriptor += normalizeFalloutProofTexturePath(renderGeometry->getName(), true);
+            }
+            return descriptor;
+        }
+
+        static std::uint32_t geometryHash(const osg::Geometry& geometry)
+        {
+            const osg::Array* vertices = geometry.getVertexArray();
+            if (vertices == nullptr || vertices->getDataPointer() == nullptr)
+                return 2166136261u;
+            return appendFalloutProofFnv1a32(2166136261u,
+                static_cast<const unsigned char*>(vertices->getDataPointer()), vertices->getTotalDataSize());
+        }
+
+        static std::string buildStableKey(const FalloutProofAppearancePart& part,
+            std::string_view descriptor, const osg::Geometry& geometry)
+        {
+            std::ostringstream out;
+            out << falloutProofAppearanceRoleRank(part.mRole) << '|' << part.mRole << '|'
+                << std::hex << std::setw(8) << std::setfill('0') << part.mSourceForm << '|'
+                << std::setw(8) << part.mSourceSlot << '|' << descriptor << '|'
+                << std::setw(8) << geometryHash(geometry);
+            for (const FalloutProofSkinTexture& binding : part.mTextures)
+                out << '|' << binding.mStage << ':' << binding.mSemantic << ':' << binding.mPath
+                    << ':' << binding.mSourceKind;
+            return out.str();
+        }
+
+        static std::string buildDeterministicKey(const FalloutProofAppearancePart& part)
+        {
+            std::ostringstream out;
+            out << part.mAlphaBits << '|' << part.mRequired << part.mAttached << part.mDrawable << part.mVisible;
+            for (const FalloutProofSkinTexture& binding : part.mTextures)
+                out << '|' << binding.mStage << ':' << binding.mSemantic << ':' << binding.mPath
+                    << ':' << binding.mContentHash << ':' << binding.mWidth << 'x' << binding.mHeight
+                    << ':' << binding.mFormat << ':' << binding.mSourceKind;
+            return out.str();
+        }
+
         void gatherOwner(const osg::Object& object)
         {
             std::string owner;
@@ -2481,12 +3528,19 @@ namespace
         }
 
         std::string mExpectedOwner;
+        std::vector<FalloutProofAppearanceSource> mSources;
+        std::size_t mVisitedNodes = 0;
+        std::size_t mCandidateCount = 0;
+        bool mAppearanceComplete = false;
+        bool mAppearanceTruncated = false;
+        bool mCollectAppearance = false;
         FalloutProofSkinState mResult;
         std::vector<std::string> mObservedOwners;
+        std::vector<FalloutProofAppearancePart> mAppearanceParts;
     };
 
-    FalloutProofSkinState inspectFalloutProofSkinState(
-        const MWWorld::Ptr& actor, std::size_t actorIndex, unsigned int frameNumber)
+    FalloutProofSkinState inspectFalloutProofSkinState(const MWWorld::Ptr& actor,
+        std::size_t actorIndex, unsigned int frameNumber, bool collectAppearance)
     {
         FalloutProofSkinState result;
         result.mSampleFrame = frameNumber;
@@ -2494,6 +3548,7 @@ namespace
         if (actor.isEmpty() || actor.getType() != ESM4::Npc::sRecordId)
         {
             result.mFailures.emplace_back("staged-fnv-npc-unavailable");
+            result.mAppearanceComplete = false;
             return result;
         }
 
@@ -2501,6 +3556,7 @@ namespace
         if (traits == nullptr || !traits->mIsFONV)
         {
             result.mFailures.emplace_back("staged-actor-not-fnv-npc");
+            result.mAppearanceComplete = false;
             return result;
         }
 
@@ -2512,10 +3568,14 @@ namespace
         if (root == nullptr)
         {
             result.mFailures.emplace_back("actor-root-missing");
+            result.mAppearanceComplete = false;
             return result;
         }
 
-        FalloutProofSkinStateVisitor visitor(traits->mEditorId);
+        FalloutProofSkinStateVisitor visitor(traits->mEditorId,
+            collectAppearance ? buildFalloutProofAppearanceSources(actor)
+                              : std::vector<FalloutProofAppearanceSource>{},
+            collectAppearance);
         root->accept(visitor);
         return visitor.finish(std::move(result));
     }
@@ -2586,6 +3646,89 @@ namespace
             if (index != 0)
                 out << ',';
             writeProofJsonString(out, state.mFailures[index]);
+        }
+        out << "]}";
+    }
+
+    void writeFalloutProofAppearanceJson(std::ostream& out, const FalloutProofSkinState& state)
+    {
+        const auto writeSourceForm = [](std::ostream& stream, std::uint32_t form) {
+            std::ostringstream value;
+            value << "FormId:0x" << std::hex << std::setw(8) << std::setfill('0') << form;
+            writeProofJsonString(stream, value.str());
+        };
+        const auto serializePart = [&](const FalloutProofAppearancePart& part) {
+            std::ostringstream item;
+            item << "{\"role\":";
+            writeProofJsonString(item, part.mRole);
+            item << ",\"sourceFormId\":";
+            writeSourceForm(item, part.mSourceForm);
+            item << ",\"sourceSlot\":" << part.mSourceSlot
+                 << ",\"ordinal\":" << part.mOrdinal
+                 << ",\"required\":" << (part.mRequired ? "true" : "false")
+                 << ",\"attached\":" << (part.mAttached ? "true" : "false")
+                 << ",\"drawable\":" << (part.mDrawable ? "true" : "false")
+                 << ",\"visible\":" << (part.mVisible ? "true" : "false")
+                 << ",\"alphaBits\":" << part.mAlphaBits << ",\"textureBindings\":[";
+            for (std::size_t index = 0; index < part.mTextures.size(); ++index)
+            {
+                if (index != 0)
+                    item << ',';
+                const FalloutProofSkinTexture& binding = part.mTextures[index];
+                item << "{\"semantic\":";
+                writeProofJsonString(item, binding.mSemantic);
+                item << ",\"path\":";
+                writeProofJsonString(item, binding.mPath);
+                item << ",\"contentHash\":";
+                writeProofJsonString(item, binding.mContentHash);
+                item << ",\"width\":" << binding.mWidth << ",\"height\":" << binding.mHeight
+                     << ",\"format\":";
+                writeProofJsonString(item, binding.mFormat);
+                item << ",\"sourceKind\":";
+                writeProofJsonString(item, binding.mSourceKind);
+                item << ",\"stage\":" << binding.mStage << '}';
+            }
+            item << "]}";
+            return item.str();
+        };
+
+        std::vector<std::string> serialized;
+        serialized.reserve(std::min(state.mAppearanceParts.size(), sFalloutProofAppearanceMaximumParts));
+        const std::streampos position = out.tellp();
+        const std::size_t currentBytes
+            = position >= std::streampos(0) ? static_cast<std::size_t>(position) : 0;
+        constexpr std::size_t reservedTailBytes = 4096;
+        const std::size_t transportBudget = OMW::FNVSidecar::PayloadBytes > currentBytes + reservedTailBytes
+            ? OMW::FNVSidecar::PayloadBytes - currentBytes - reservedTailBytes : 0;
+        const std::size_t renderPartsBudget = std::min(sFalloutProofAppearanceMaximumJsonBytes,
+            transportBudget > 512 ? transportBudget - 512 : std::size_t(0));
+        std::size_t serializedBytes = 0;
+        for (const FalloutProofAppearancePart& part : state.mAppearanceParts)
+        {
+            if (serialized.size() >= sFalloutProofAppearanceMaximumParts)
+                break;
+            std::string value = serializePart(part);
+            const std::size_t added = value.size() + (serialized.empty() ? 0 : 1);
+            if (!serialized.empty() && serializedBytes + added > renderPartsBudget)
+                break;
+            serializedBytes += added;
+            serialized.push_back(std::move(value));
+        }
+        const bool truncated = state.mAppearanceTruncated
+            || serialized.size() != state.mAppearanceParts.size();
+        const bool complete = state.mAppearanceComplete && !truncated;
+        out << "{\"schema\":\"nikami-fnv-sidecar-appearance/v1\""
+            << ",\"samplePhase\":\"post-render\",\"cameraIndependent\":true"
+            << ",\"complete\":" << (complete ? "true" : "false")
+            << ",\"truncated\":" << (truncated ? "true" : "false")
+            << ",\"visitedNodes\":" << state.mAppearanceVisitedNodes
+            << ",\"candidateCount\":" << state.mAppearanceCandidateCount
+            << ",\"renderParts\":[";
+        for (std::size_t index = 0; index < serialized.size(); ++index)
+        {
+            if (index != 0)
+                out << ',';
+            out << serialized[index];
         }
         out << "]}";
     }
@@ -4442,6 +5585,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::size_t proofActorPoseIndex = 0;
     static int proofActorPoseNextFrame = -1;
     static bool proofActorPoseRestoringNativeState = false;
+    static bool proofActorMechanicsActionPending = false;
+    static int proofActorMechanicsActionTriggerFrame = -1;
+    static std::string proofActorMechanicsExpectedGroup;
     static bool proofActorPoseCycleComplete = false;
     static bool proofActorPoseInventoryLogged = false;
     static std::unordered_map<std::string, unsigned int> proofActorNativeGroupMasks;
@@ -4465,6 +5611,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofSidecarPeerErrorLogged = false;
     static FalloutProofSkinState proofActorSkinState;
     static std::string proofActorSkinStateLastLogKey;
+    static std::string proofActorAppearanceLastLogKey;
     static int proofActorBatchCompleteFrame = -1;
     static bool proofActorBatchCompletionLogged = false;
     static bool proofActorBatchQuitRequested = false;
@@ -5672,6 +6819,275 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     else
         proofWorldReadyFrames = 0;
 
+    // Local world-viewer proof hook. This deliberately accepts only an explicit process
+    // environment variable and remains inert in normal OpenMW sessions. osgDB supplies
+    // the format plug-in (for example osgdb_dae) while the node is rendered by OpenMW's
+    // normal OpenSceneGraph light root alongside cells, props, and actors.
+    static bool proofExtraSceneAttempted = false;
+    static osg::ref_ptr<osg::MatrixTransform> proofExtraScene;
+    if (proofWorldReady && mWorld != nullptr && !proofExtraSceneAttempted)
+    {
+        const char* extraScenePath = std::getenv("OPENMW_WORLD_VIEWER_EXTRA_SCENE");
+        if (extraScenePath != nullptr && *extraScenePath != '\0')
+        {
+            proofExtraSceneAttempted = true;
+            osg::ref_ptr<osg::Group> sceneGroup = new osg::Group;
+            std::istringstream scenePaths(extraScenePath);
+            std::string scenePath;
+            while (std::getline(scenePaths, scenePath, ';'))
+            {
+                if (scenePath.empty())
+                    continue;
+                osg::ref_ptr<osg::Node> sceneNode = osgDB::readRefNodeFile(scenePath);
+                if (sceneNode == nullptr)
+                    Log(Debug::Error) << "World viewer extra scene: failed to load path=" << scenePath;
+                else
+                {
+                    if (sceneGroup->getNumChildren() > 0
+                        && proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_SCENE_FOREGROUND_AFTER_FIRST"))
+                    {
+                        forceProofForegroundState(*sceneNode);
+                    }
+                    sceneGroup->addChild(sceneNode);
+                }
+            }
+            osg::ref_ptr<osg::Node> node = sceneGroup;
+            if (sceneGroup->getNumChildren() == 0)
+            {
+                Log(Debug::Error) << "World viewer extra scene: failed to load path=" << extraScenePath;
+            }
+            else
+            {
+                const float scale = readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_SCALE", 1.f);
+                const osg::Vec3f offset(
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_X", 0.f),
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_Y", 0.f),
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_Z", 0.f));
+                const osg::Quat rotation(
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_X", 0.f)),
+                    osg::Vec3f(1.f, 0.f, 0.f),
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_Y", 0.f)),
+                    osg::Vec3f(0.f, 1.f, 0.f),
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_Z", 0.f)),
+                    osg::Vec3f(0.f, 0.f, 1.f));
+
+                proofExtraScene = new osg::MatrixTransform;
+                proofExtraScene->setName("OpenMW local modern-asset proof scene");
+                proofExtraScene->setMatrix(osg::Matrixf::scale(scale, scale, scale)
+                    * osg::Matrixf::rotate(rotation) * osg::Matrixf::translate(offset));
+                proofExtraScene->addChild(node);
+
+                if (proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_SCENE_FULLBRIGHT"))
+                {
+                    osg::ref_ptr<osg::Material> material = new osg::Material;
+                    const osg::Vec4f colour(0.72f, 0.64f, 0.46f, 1.f);
+                    material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+                    material->setDiffuse(osg::Material::FRONT_AND_BACK, colour);
+                    material->setAmbient(osg::Material::FRONT_AND_BACK, colour);
+                    material->setEmission(osg::Material::FRONT_AND_BACK, colour);
+                    material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 1.f));
+                    material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
+
+                    osg::StateSet* stateSet = proofExtraScene->getOrCreateStateSet();
+                    stateSet->setAttributeAndModes(
+                        material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    stateSet->setAttributeAndModes(
+                        new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                }
+                else if (proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_SCENE_TEXTURE_LIGHT"))
+                {
+                    osg::StateSet* stateSet = proofExtraScene->getOrCreateStateSet();
+                    stateSet->setAttributeAndModes(
+                        new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                }
+                else if (proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_SCENE_PROOF_LIGHT"))
+                {
+                    osg::StateSet* stateSet = proofExtraScene->getOrCreateStateSet();
+                    if (!proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_SCENE_PRESERVE_MATERIALS"))
+                    {
+                        osg::ref_ptr<osg::Material> material = new osg::Material;
+                        const osg::Vec4f diffuse(0.8f, 0.8f, 0.8f, 1.f);
+                        material->setColorMode(osg::Material::OFF);
+                        material->setDiffuse(osg::Material::FRONT_AND_BACK, diffuse);
+                        material->setAmbient(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(0.78f, 0.78f, 0.78f, 1.f));
+                        material->setEmission(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(0.02f, 0.02f, 0.02f, 1.f));
+                        material->setSpecular(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(0.02f, 0.02f, 0.02f, 1.f));
+                        material->setShininess(osg::Material::FRONT_AND_BACK, 4.f);
+                        stateSet->setAttributeAndModes(
+                            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    }
+                    stateSet->setAttributeAndModes(
+                        new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_LIGHTING, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    stateSet->setMode(
+                        GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+
+                    osg::ref_ptr<osg::Light> light = new osg::Light;
+                    light->setLightNum(7);
+                    light->setPosition(osg::Vec4f(-0.35f, -0.55f, 1.f, 0.f));
+                    light->setAmbient(osg::Vec4f(0.7f, 0.7f, 0.7f, 1.f));
+                    light->setDiffuse(osg::Vec4f(0.55f, 0.55f, 0.55f, 1.f));
+                    light->setSpecular(osg::Vec4f(0.28f, 0.28f, 0.28f, 1.f));
+                    osg::ref_ptr<osg::LightSource> lightSource = new osg::LightSource;
+                    lightSource->setLight(light);
+                    lightSource->setLocalStateSetModes(osg::StateAttribute::ON);
+                    proofExtraScene->removeChild(node);
+                    lightSource->addChild(node);
+                    proofExtraScene->addChild(lightSource);
+                }
+                mWorld->getRenderingManager()->getLightRoot()->addChild(proofExtraScene);
+
+                osg::ComputeBoundsVisitor boundsVisitor;
+                proofExtraScene->accept(boundsVisitor);
+                const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+                Log(Debug::Info) << "World viewer extra scene: loaded path=" << extraScenePath
+                                 << " scale=" << scale << " offset=(" << offset.x() << "," << offset.y()
+                                 << "," << offset.z() << ") boundsMin=(" << bounds.xMin() << ","
+                                 << bounds.yMin() << "," << bounds.zMin() << ") boundsMax=("
+                                 << bounds.xMax() << "," << bounds.yMax() << "," << bounds.zMax() << ")";
+            }
+        }
+    }
+
+    // Optional foreground path for exported characters. It shares the active
+    // world camera and transform with the room, but is drawn in the final bin
+    // without depth testing so cell geometry cannot hide the people being
+    // validated. This remains inert unless the explicit path is set.
+    static bool proofExtraForegroundSceneAttempted = false;
+    static osg::ref_ptr<osg::Camera> proofExtraForegroundCamera;
+    if (proofWorldReady && mViewer != nullptr && !proofExtraForegroundSceneAttempted)
+    {
+        const char* foregroundScenePath = std::getenv("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_SCENE");
+        if (foregroundScenePath != nullptr && *foregroundScenePath != '\0')
+        {
+            proofExtraForegroundSceneAttempted = true;
+            osg::ref_ptr<osg::Node> foregroundNode = osgDB::readRefNodeFile(foregroundScenePath);
+            if (foregroundNode == nullptr)
+            {
+                Log(Debug::Error) << "World viewer extra foreground scene: failed to load path="
+                                  << foregroundScenePath;
+            }
+            else
+            {
+                const float sceneScale = readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_SCALE", 1.f);
+                const float scale = readProofFloat(
+                    "OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_SCALE", sceneScale);
+                const osg::Vec3f offset(
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_X",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_X", 0.f)),
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_Y",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_Y", 0.f)),
+                    readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_Z",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_Z", 0.f)));
+                const osg::Quat rotation(
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_ROT_X",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_X", 0.f))),
+                    osg::Vec3f(1.f, 0.f, 0.f),
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_ROT_Y",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_Y", 0.f))),
+                    osg::Vec3f(0.f, 1.f, 0.f),
+                    osg::DegreesToRadians(readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_ROT_Z",
+                        readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_ROT_Z", 0.f))),
+                    osg::Vec3f(0.f, 0.f, 1.f));
+
+                osg::ref_ptr<osg::MatrixTransform> foregroundTransform = new osg::MatrixTransform;
+                foregroundTransform->setName("OpenMW local modern-asset proof foreground scene");
+                foregroundTransform->setMatrix(osg::Matrixf::scale(scale, scale, scale)
+                    * osg::Matrixf::rotate(rotation) * osg::Matrixf::translate(offset));
+                foregroundTransform->addChild(foregroundNode);
+
+                osg::StateSet* stateSet = foregroundTransform->getOrCreateStateSet();
+                stateSet->setAttributeAndModes(
+                    new osg::Program, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                const bool foregroundLight
+                    = proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_PROOF_LIGHT");
+                stateSet->setMode(GL_LIGHTING,
+                    (foregroundLight ? osg::StateAttribute::ON : osg::StateAttribute::OFF)
+                        | osg::StateAttribute::OVERRIDE);
+                stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                if (foregroundLight)
+                {
+                    if (!proofEnvEnabled("OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_PRESERVE_MATERIALS"))
+                    {
+                        osg::ref_ptr<osg::Material> material = new osg::Material;
+                        material->setColorMode(osg::Material::OFF);
+                        material->setAmbient(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(0.78f, 0.78f, 0.78f, 1.f));
+                        material->setDiffuse(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+                        material->setSpecular(
+                            osg::Material::FRONT_AND_BACK, osg::Vec4f(0.035f, 0.035f, 0.035f, 1.f));
+                        material->setShininess(osg::Material::FRONT_AND_BACK, 6.f);
+                        stateSet->setAttributeAndModes(
+                            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                    }
+                }
+                forceProofForegroundState(*foregroundTransform);
+
+                proofExtraForegroundCamera = new osg::Camera;
+                proofExtraForegroundCamera->setName("OpenMW local modern-asset proof foreground camera");
+                proofExtraForegroundCamera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+                proofExtraForegroundCamera->setProjectionMatrix(mViewer->getCamera()->getProjectionMatrix());
+                proofExtraForegroundCamera->setViewMatrix(mViewer->getCamera()->getViewMatrix());
+                proofExtraForegroundCamera->setViewport(mViewer->getCamera()->getViewport());
+                proofExtraForegroundCamera->setRenderOrder(osg::Camera::POST_RENDER, 100);
+                proofExtraForegroundCamera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER);
+                proofExtraForegroundCamera->setClearMask(GL_DEPTH_BUFFER_BIT);
+                SceneUtil::setCameraClearDepth(proofExtraForegroundCamera);
+                proofExtraForegroundCamera->setAllowEventFocus(false);
+                proofExtraForegroundCamera->setNodeMask(~0u);
+                proofExtraForegroundCamera->setCullMask(~0u);
+                if (foregroundLight)
+                {
+                    osg::ref_ptr<osg::Light> light = new osg::Light;
+                    light->setLightNum(6);
+                    light->setPosition(osg::Vec4f(-0.35f, -0.55f, 1.f, 0.f));
+                    light->setAmbient(osg::Vec4f(0.52f, 0.52f, 0.52f, 1.f));
+                    light->setDiffuse(osg::Vec4f(0.88f, 0.86f, 0.82f, 1.f));
+                    light->setSpecular(osg::Vec4f(0.16f, 0.16f, 0.16f, 1.f));
+                    osg::ref_ptr<osg::LightSource> lightSource = new osg::LightSource;
+                    lightSource->setName("OpenMW local modern-asset proof foreground light");
+                    lightSource->setLight(light);
+                    lightSource->setLocalStateSetModes(osg::StateAttribute::ON);
+                    lightSource->addChild(foregroundTransform);
+                    proofExtraForegroundCamera->addChild(lightSource);
+                }
+                else
+                    proofExtraForegroundCamera->addChild(foregroundTransform);
+                if (osg::Group* sceneRoot
+                    = mViewer->getSceneData() != nullptr ? mViewer->getSceneData()->asGroup() : nullptr)
+                    sceneRoot->addChild(proofExtraForegroundCamera);
+
+                osg::ComputeBoundsVisitor boundsVisitor;
+                foregroundTransform->accept(boundsVisitor);
+                const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+                Log(Debug::Info) << "World viewer extra foreground scene: loaded path="
+                                 << foregroundScenePath << " scale=" << scale << " offset=("
+                                 << offset.x() << "," << offset.y() << "," << offset.z()
+                                 << ") boundsMin=(" << bounds.xMin() << "," << bounds.yMin() << ","
+                                 << bounds.zMin() << ") boundsMax=(" << bounds.xMax() << ","
+                                 << bounds.yMax() << "," << bounds.zMax() << ")";
+            }
+        }
+    }
+
     if (proofWorldReady && mWorld != nullptr && std::getenv("OPENMW_FNV_RETAIL_PROJECTION_REPLAY") != nullptr)
     {
         const osg::Matrixf retailProjection = makeFalloutRetailProjectionMatrix();
@@ -5694,8 +7110,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     if (proofEnvEnabled("OPENMW_PROOF_HIDE_WORLD_OCCLUDERS"))
     {
         static bool proofWorldOccludersHidden = false;
-        const uint32_t occluderMask
+        uint32_t occluderMask
             = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Groundcover;
+        const bool outdoorClear = proofEnvEnabled("OPENMW_WORLD_VIEWER_PROOF_OUTDOOR_CLEAR");
+        if (outdoorClear)
+            occluderMask |= MWRender::Mask_Terrain;
         const uint32_t mask = mViewer->getCamera()->getCullMask() & ~occluderMask;
         mViewer->getCamera()->setCullMask(mask);
         mViewer->getCamera()->setCullMaskLeft(mask);
@@ -5703,7 +7122,22 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         if (!proofWorldOccludersHidden)
         {
             proofWorldOccludersHidden = true;
-            Log(Debug::Info) << "FNV/ESM4 proof: hidden static/object/groundcover occluders while preserving terrain, sky, lighting, and actors";
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden static/object/groundcover"
+                             << (outdoorClear ? "/terrain" : "")
+                             << " occluders while preserving sky, lighting, and actors";
+        }
+    }
+
+    if (proofEnvEnabled("OPENMW_WORLD_VIEWER_PROOF_OUTDOOR_CLEAR") && mViewer != nullptr
+        && mViewer->getCamera() != nullptr)
+    {
+        const osg::Vec4f outdoorClear(0.38f, 0.58f, 0.82f, 1.f);
+        mViewer->getCamera()->setClearColor(outdoorClear);
+        for (unsigned int i = 0; i < mViewer->getNumSlaves(); ++i)
+        {
+            const auto& slave = mViewer->getSlave(i);
+            if (slave._camera != nullptr)
+                slave._camera->setClearColor(outdoorClear);
         }
     }
 
@@ -6661,6 +8095,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorPoseIndex = 0;
         proofActorPoseNextFrame = -1;
         proofActorPoseRestoringNativeState = false;
+        proofActorMechanicsActionPending = false;
+        proofActorMechanicsActionTriggerFrame = -1;
+        proofActorMechanicsExpectedGroup.clear();
         proofActorActivePoseGroups = proofActorPoseAllAvailable
             ? std::vector<std::string>()
             : proofActorPoseGroups;
@@ -6889,7 +8326,21 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     proofActorSnappedToRenderGround = snapProofActorToRenderGround(*mWorld, proofActor,
                         proofSayActor, proofActorRenderGroundFreshBoundsLatched);
                     if (proofActorSnappedToRenderGround)
+                    {
                         proofActorSnappedFrame = static_cast<int>(frameNumber);
+                        // Grounding is part of the staged transform contract.
+                        // Keep the pin at the measured render-ground result so
+                        // the next frame does not restore the pre-snap height.
+                        if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR"))
+                        {
+                            proofPinnedStagedActor = proofActor;
+                            const ESM::Position& grounded = proofActor.getRefData().getPosition();
+                            proofPinnedStagedActorPosition.set(
+                                grounded.pos[0], grounded.pos[1], grounded.pos[2]);
+                            proofPinnedStagedActorRotation.set(
+                                grounded.rot[0], grounded.rot[1], grounded.rot[2]);
+                        }
+                    }
                 }
                 catch (const std::exception& e)
                 {
@@ -6908,7 +8359,106 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " frame=" << frameNumber;
             }
             if (!proofActor.isEmpty())
+            {
                 logProofActorRenderBounds(proofActor, proofSayActor, "post-stage-snap");
+                static bool proofActorForegroundApplied = false;
+                if (!proofActorForegroundApplied
+                    && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_FOREGROUND")
+                    && proofActor.getRefData().getBaseNode() != nullptr)
+                {
+                    osg::Node* actorNode = proofActor.getRefData().getBaseNode();
+                    std::size_t preservedAncestors = 0;
+                    for (const osg::NodePath& path : actorNode->getParentalNodePaths())
+                    {
+                        for (osg::Node* ancestor : path)
+                        {
+                            if (ancestor == nullptr)
+                                continue;
+                            ancestor->setNodeMask(ancestor->getNodeMask() | MWRender::Mask_Actor);
+                            ++preservedAncestors;
+                        }
+                    }
+
+                    osg::StateSet* stateSet = actorNode->getOrCreateStateSet();
+                    stateSet->setMode(
+                        GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                    stateSet->setRenderBinDetails(
+                        1000, "RenderBin", osg::StateSet::OVERRIDE_PROTECTED_RENDERBIN_DETAILS);
+
+                    // The ESM4 actor branch is nested under the classic object hierarchy.  The proof camera
+                    // deliberately masks that hierarchy to remove the legacy shell, so replay the exact actor
+                    // node once in a post-render camera with a fresh depth buffer.  It retains the main camera's
+                    // view/projection and therefore stays registered in the imported Remastered room.
+                    osg::Group* sceneRoot = mViewer != nullptr && mViewer->getSceneData() != nullptr
+                        ? mViewer->getSceneData()->asGroup()
+                        : nullptr;
+                    if (sceneRoot != nullptr)
+                    {
+                        osg::ref_ptr<osg::Camera> foregroundCamera = new osg::Camera;
+                        foregroundCamera->setName("OpenMW local modern-asset actor foreground camera");
+                        foregroundCamera->setReferenceFrame(osg::Transform::RELATIVE_RF);
+                        foregroundCamera->setRenderOrder(osg::Camera::POST_RENDER, 10);
+                        foregroundCamera->setClearMask(GL_DEPTH_BUFFER_BIT);
+                        foregroundCamera->setAllowEventFocus(false);
+                        foregroundCamera->setNodeMask(MWRender::Mask_Scene);
+                        foregroundCamera->setCullMask(~0u);
+                        osg::Group* foregroundActorRoot = foregroundCamera.get();
+                        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_FOREGROUND_LIGHT"))
+                        {
+                            osg::ref_ptr<osg::Light> light = new osg::Light;
+                            light->setLightNum(6);
+                            light->setPosition(osg::Vec4f(-0.35f, -0.55f, 1.f, 0.f));
+                            light->setAmbient(osg::Vec4f(0.46f, 0.46f, 0.46f, 1.f));
+                            light->setDiffuse(osg::Vec4f(0.92f, 0.9f, 0.86f, 1.f));
+                            light->setSpecular(osg::Vec4f(0.16f, 0.16f, 0.16f, 1.f));
+
+                            osg::ref_ptr<osg::LightSource> lightSource = new osg::LightSource;
+                            lightSource->setName("OpenMW local modern-asset actor foreground light");
+                            lightSource->setLight(light);
+                            lightSource->setLocalStateSetModes(osg::StateAttribute::ON);
+                            foregroundCamera->addChild(lightSource);
+                            foregroundActorRoot = lightSource.get();
+                        }
+                        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_FOREGROUND_ALL"))
+                        {
+                            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                            {
+                                if (cellstore == nullptr)
+                                    continue;
+                                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                                    if (ptr.isEmpty() || !ptr.getClass().isActor()
+                                        || ptr.getRefData().getBaseNode() == nullptr)
+                                        return true;
+                                    osg::Node* candidate = ptr.getRefData().getBaseNode();
+                                    for (const osg::NodePath& candidatePath : candidate->getParentalNodePaths())
+                                    {
+                                        for (osg::Node* ancestor : candidatePath)
+                                        {
+                                            if (ancestor != nullptr)
+                                                ancestor->setNodeMask(
+                                                    ancestor->getNodeMask() | MWRender::Mask_Actor);
+                                        }
+                                    }
+                                    osg::StateSet* candidateState = candidate->getOrCreateStateSet();
+                                    candidateState->setMode(GL_DEPTH_TEST,
+                                        osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                                    candidateState->setRenderBinDetails(1000, "RenderBin",
+                                        osg::StateSet::OVERRIDE_PROTECTED_RENDERBIN_DETAILS);
+                                    foregroundActorRoot->addChild(candidate);
+                                    return true;
+                                });
+                            }
+                        }
+                        else
+                            foregroundActorRoot->addChild(actorNode);
+                        sceneRoot->addChild(foregroundCamera);
+                    }
+                    proofActorForegroundApplied = true;
+                    Log(Debug::Info) << "FNV/ESM4 proof: forced target actor into foreground render bin"
+                                     << " target=\"" << proofSayActor << "\" preservedAncestors="
+                                     << preservedAncestors << " ptr=" << proofActor.toString();
+                }
+            }
             if (proofActorBatchActive && !proofActor.isEmpty())
                 proofActorBatchPrevious = proofActor;
 
@@ -7349,12 +8899,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             frontDistance = 220.f;
                     }
                     const float actorYaw = actorPos.rot[2];
-                    // Fallout creature skeletons that do not expose a usable
-                    // face/head axis are authored facing the opposite planar
-                    // direction from the humanoid actor convention.  Prefer
-                    // geometry-derived face axes; only invert the fallback.
-                    const bool falloutCreatureFacingFallback
-                        = !useFaceAxisCamera && proofActor.getType() == ESM::REC_CREA4;
+                    const bool correctedSecuritronFallback = [&] {
+                        if (proofActor.getType() != ESM::REC_CREA4)
+                            return false;
+                        std::string model
+                            = Misc::StringUtils::lowerCase(std::string(proofActor.getClass().getModel(proofActor)));
+                        std::replace(model.begin(), model.end(), '\\', '/');
+                        return model.find("/nvsecuritron/") != std::string::npos;
+                    }();
+                    // Securitron roots are normalized to actor +Y at assembly time. Other FNV creature families
+                    // retain the older proof fallback until their authored forward axes are measured independently.
+                    const bool falloutCreatureFacingFallback = !useFaceAxisCamera
+                        && proofActor.getType() == ESM::REC_CREA4 && !correctedSecuritronFallback;
                     const float frontSign
                         = (std::getenv("OPENMW_PROOF_ACTOR_VIEW_FALLOUT_FRONT") != nullptr
                               || falloutCreatureFacingFallback)
@@ -7376,6 +8932,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         const std::size_t orbitIndex = std::min(
                             proofScreenshotFrameIndex, proofActorViewOrbitDegrees.size() - 1);
                         orbitDegrees = proofActorViewOrbitDegrees[orbitIndex];
+                    }
+                    const float orbitDegreesPerFrame
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES_PER_FRAME", 0.f);
+                    const int orbitStartFrameEnv
+                        = getProofFrame("OPENMW_PROOF_ACTOR_VIEW_ORBIT_START_FRAME");
+                    const int orbitStartFrame = orbitStartFrameEnv >= 0 ? orbitStartFrameEnv : 0;
+                    if (std::abs(orbitDegreesPerFrame) > 1e-6f
+                        && static_cast<int>(frameNumber) >= orbitStartFrame)
+                    {
+                        orbitDegrees += (static_cast<int>(frameNumber) - orbitStartFrame)
+                            * orbitDegreesPerFrame;
                     }
                     if (std::abs(orbitDegrees) > 1e-3f)
                     {
@@ -8126,6 +9693,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             out << ",\"skinState\":";
             writeFalloutProofSkinStateJson(out, payloadSkinState);
+            out << ",\"appearance\":";
+            writeFalloutProofAppearanceJson(out, payloadSkinState);
 
             osg::Camera* camera = mViewer != nullptr ? mViewer->getCamera() : nullptr;
             out << ",\"camera\":{\"available\":" << (camera != nullptr ? "true" : "false");
@@ -8657,6 +10226,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             proofActorPoseNextFrame = static_cast<int>(frameNumber) + startDelay;
         }
 
+        if (proofActorMechanicsActionPending
+            && static_cast<int>(frameNumber) > proofActorMechanicsActionTriggerFrame)
+        {
+            proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious).setAttackingOrSpell(false);
+            const bool playing = animation != nullptr && !proofActorMechanicsExpectedGroup.empty()
+                && animation->isPlaying(proofActorMechanicsExpectedGroup);
+            if (playing)
+                ++proofActorPosePlayed;
+            else
+                ++proofActorPoseSkipped;
+            Log(playing ? Debug::Info : Debug::Error)
+                << "FNV/ESM4 actor mechanics action gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
+                << " semantic=primary group=\"" << proofActorMechanicsExpectedGroup
+                << "\" control=attackingOrSpell directGroupInjection=0 exact=1 gate=production-character-controller status="
+                << (playing ? "pass" : "fail");
+            proofActorMechanicsActionPending = false;
+            proofActorMechanicsActionTriggerFrame = -1;
+            proofActorMechanicsExpectedGroup.clear();
+            ++proofActorPoseIndex;
+            const int holdFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int holdFrames = holdFramesEnv >= 1 ? holdFramesEnv : 12;
+            proofActorPoseNextFrame = static_cast<int>(frameNumber) + holdFrames;
+        }
+
         if (proofActorPoseInventoryLogged && !proofActorPoseCycleComplete && proofActorPoseNextFrame >= 0
             && frameNumber >= static_cast<unsigned int>(proofActorPoseNextFrame))
         {
@@ -8665,41 +10259,116 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (proofActorPoseIndex < proofActorActivePoseGroups.size())
             {
                 const std::string& group = proofActorActivePoseGroups[proofActorPoseIndex];
-                const bool available = animation != nullptr && animation->hasAnimation(group);
-                const unsigned int controllerMask
-                    = available ? animation->getAnimationGroupControllerMask(group) : 0;
-                const auto nativeActive = proofActorNativeGroupMasks.find(group);
-                const unsigned int activeMask
-                    = nativeActive != proofActorNativeGroupMasks.end() ? nativeActive->second : 0;
-                const float groupStart = available ? animation->getStartTime(group) : -1.f;
-                const float groupStop = available ? animation->getTextKeyTime(group + ": stop") : -1.f;
-                const bool nonPlayableSpan = available && (groupStart < 0.f || groupStop < 0.f
-                    || groupStop <= groupStart + std::numeric_limits<float>::epsilon());
-                const unsigned int npcStandaloneMask = (1u << MWRender::BoneGroup_LowerBody)
-                    | (1u << MWRender::BoneGroup_Torso);
-                const bool compositeOnly = available
-                    && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
-                    && (nonPlayableSpan || (activeMask != 0 && (activeMask & npcStandaloneMask) != npcStandaloneMask)
-                        || (controllerMask & npcStandaloneMask) != npcStandaloneMask);
-                const bool played = available && !compositeOnly
-                    && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
-                if (played)
-                    ++proofActorPosePlayed;
-                else if (compositeOnly)
-                    ++proofActorPoseDeferred;
+                if (group == "mechanics-primary")
+                {
+                    const ESM4::Weapon* weapon = proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                        ? MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious)
+                        : nullptr;
+                    const std::uint8_t animationType = weapon != nullptr ? weapon->mData.animationType : 0;
+                    const std::uint8_t reloadAnimation = weapon != nullptr ? weapon->mData.reloadAnim : 0;
+                    const std::optional<MWRender::FonvWeaponActionSource> source
+                        = MWRender::getFonvWeaponActionSource(animationType, reloadAnimation,
+                            MWRender::FonvWeaponAction::PrimaryAttack);
+                    MWMechanics::CreatureStats& actorStats
+                        = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+                    const MWMechanics::DrawState drawState = actorStats.getDrawState();
+                    const bool available = source && animation != nullptr
+                        && animation->hasAnimation(source->mSemanticGroup);
+                    const bool transitionPlaying = animation != nullptr
+                        && (animation->isPlaying("equip") || animation->isPlaying("unequip"));
+                    const bool eligible = available && drawState == MWMechanics::DrawState::Weapon
+                        && !transitionPlaying;
+                    if (eligible)
+                    {
+                        proofActorMechanicsExpectedGroup = source->mSemanticGroup;
+                        actorStats.setAttackingOrSpell(true);
+                        proofActorMechanicsActionPending = true;
+                        proofActorMechanicsActionTriggerFrame = static_cast<int>(frameNumber);
+                        proofActorPoseNextFrame = static_cast<int>(frameNumber) + 1;
+                        Log(Debug::Info)
+                            << "FNV/ESM4 actor mechanics action gate: actorIndex=" << proofActorBatchIndex
+                            << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex="
+                            << proofActorPoseIndex << " semantic=primary group=\""
+                            << proofActorMechanicsExpectedGroup
+                            << "\" animationType=" << static_cast<unsigned int>(animationType)
+                            << " control=attackingOrSpell directGroupInjection=0 exact=1 status=pending";
+                    }
+                    else if (available && weapon == nullptr && drawState != MWMechanics::DrawState::Weapon)
+                    {
+                        // Diagnostic input only: this is the same state transition as drawing fists. The production
+                        // CharacterController must select and play H2H equip/attack actions on following frames.
+                        actorStats.setDrawState(MWMechanics::DrawState::Weapon);
+                        mMechanicsManager->forceStateUpdate(proofActorBatchPrevious);
+                        proofActorPoseNextFrame = static_cast<int>(frameNumber) + 1;
+                        Log(Debug::Info)
+                            << "FNV/ESM4 actor mechanics action gate: actorIndex=" << proofActorBatchIndex
+                            << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex="
+                            << proofActorPoseIndex << " semantic=primary group=\"" << source->mSemanticGroup
+                            << "\" wait=unarmed-draw-transition control=drawState directGroupInjection=0 exact=1 status=pending";
+                    }
+                    else if (available && drawState == MWMechanics::DrawState::Weapon && transitionPlaying)
+                    {
+                        proofActorPoseNextFrame = static_cast<int>(frameNumber) + 1;
+                        Log(Debug::Info)
+                            << "FNV/ESM4 actor mechanics action gate: actorIndex=" << proofActorBatchIndex
+                            << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex="
+                            << proofActorPoseIndex << " semantic=primary group=\"" << source->mSemanticGroup
+                            << "\" wait=authored-equip-transition directGroupInjection=0 exact=1 status=pending";
+                    }
+                    else
+                    {
+                        ++proofActorPoseSkipped;
+                        Log(Debug::Error)
+                            << "FNV/ESM4 actor mechanics action gate: actorIndex=" << proofActorBatchIndex
+                            << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex="
+                            << proofActorPoseIndex << " semantic=primary group=\""
+                            << (source ? source->mSemanticGroup : std::string_view()) << "\" weapon="
+                            << (weapon != nullptr) << " drawState=" << static_cast<unsigned int>(drawState)
+                            << " available=" << available
+                            << " control=attackingOrSpell directGroupInjection=0 exact=1 status=fail";
+                        ++proofActorPoseIndex;
+                        proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
+                    }
+                }
                 else
-                    ++proofActorPoseSkipped;
-                const bool accepted = played || compositeOnly;
-                Log(accepted ? Debug::Info : Debug::Warning)
-                     << "FNV/ESM4 actor pose transport gate: actorIndex=" << proofActorBatchIndex << " target=\""
-                     << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
-                     << " group=\"" << group << "\" resolvedGroup=\"" << group
-                     << "\" available=" << available << " played=" << played << " controllerMask=0x" << std::hex
-                     << controllerMask << " activeMask=0x" << activeMask << std::dec << " start=" << groupStart
-                     << " stop=" << groupStop << " role=" << (compositeOnly ? "composite-only" : "standalone")
-                     << " exact=1 gate=transport-only status=" << (accepted ? "pass" : "fail");
-                ++proofActorPoseIndex;
-                proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
+                {
+                    const bool available = animation != nullptr && animation->hasAnimation(group);
+                    const unsigned int controllerMask
+                        = available ? animation->getAnimationGroupControllerMask(group) : 0;
+                    const auto nativeActive = proofActorNativeGroupMasks.find(group);
+                    const unsigned int activeMask
+                        = nativeActive != proofActorNativeGroupMasks.end() ? nativeActive->second : 0;
+                    const float groupStart = available ? animation->getStartTime(group) : -1.f;
+                    const float groupStop = available ? animation->getTextKeyTime(group + ": stop") : -1.f;
+                    const bool nonPlayableSpan = available && (groupStart < 0.f || groupStop < 0.f
+                        || groupStop <= groupStart + std::numeric_limits<float>::epsilon());
+                    const unsigned int npcStandaloneMask = (1u << MWRender::BoneGroup_LowerBody)
+                        | (1u << MWRender::BoneGroup_Torso);
+                    const bool compositeOnly = available
+                        && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                        && (nonPlayableSpan
+                            || (activeMask != 0 && (activeMask & npcStandaloneMask) != npcStandaloneMask)
+                            || (controllerMask & npcStandaloneMask) != npcStandaloneMask);
+                    const bool played = available && !compositeOnly
+                        && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
+                    if (played)
+                        ++proofActorPosePlayed;
+                    else if (compositeOnly)
+                        ++proofActorPoseDeferred;
+                    else
+                        ++proofActorPoseSkipped;
+                    const bool accepted = played || compositeOnly;
+                    Log(accepted ? Debug::Info : Debug::Warning)
+                        << "FNV/ESM4 actor pose transport gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                        << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
+                        << " group=\"" << group << "\" resolvedGroup=\"" << group
+                        << "\" available=" << available << " played=" << played << " controllerMask=0x" << std::hex
+                        << controllerMask << " activeMask=0x" << activeMask << std::dec << " start=" << groupStart
+                        << " stop=" << groupStop << " role=" << (compositeOnly ? "composite-only" : "standalone")
+                        << " exact=1 gate=transport-only status=" << (accepted ? "pass" : "fail");
+                    ++proofActorPoseIndex;
+                    proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
+                }
             }
             else if (!proofActorPoseRestoringNativeState)
             {
@@ -8899,6 +10568,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
     const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
+    const bool fnvInteractionActorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_ACTOR_ONLY");
+    const auto fnvInteractionActorRef = [] {
+        const char* value = std::getenv("OPENMW_FNV_INTERACTION_ACTOR_REF");
+        if (value == nullptr || *value == '\0')
+            return std::uint32_t{ 0x1104c80 };
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(value, &end, 0);
+        return end != value && *end == '\0' && parsed <= std::numeric_limits<std::uint32_t>::max()
+            ? static_cast<std::uint32_t>(parsed)
+            : std::uint32_t{ 0x1104c80 };
+    }();
     if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning && mWorld != nullptr
         && mWindowManager != nullptr)
     {
@@ -9037,10 +10717,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             const int level = player.getClass().getCreatureStats(player).getLevel();
-            fnvInteractionActor = findActiveRef(0x1104c80);
+            fnvInteractionActor = findActiveRef(fnvInteractionActorRef);
             if (fnvInteractionActor.isEmpty())
             {
-                finishInteraction(false, "Easy Pete authored reference is not active outside Goodsprings");
+                finishInteraction(false, "requested actor reference is not active");
             }
             else
             {
@@ -9051,12 +10731,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                           .getCreatureStats(fnvInteractionActor)
                                           .getAiSequence()
                                           .isInCombat();
-                const int activeCopies = countActiveRef(0x1104c80);
+                const int activeCopies = countActiveRef(fnvInteractionActorRef);
                 fnvInteractionActorSettledPosition = actorPosition;
-                fnvInteractionActorPass
-                    = level == 1 && activeCopies == 1 && chairDistance <= 192.f && !inCombat;
+                fnvInteractionActorPass = fnvInteractionActorOnly
+                    ? activeCopies == 1 && !inCombat
+                    : level == 1 && activeCopies == 1 && chairDistance <= 192.f && !inCombat;
                 Log(fnvInteractionActorPass ? Debug::Info : Debug::Error)
-                    << "FNV interaction audit: actor settle level=" << level << " refCopies=" << activeCopies
+                    << "FNV interaction audit: actor settle ref=FormId:0x" << std::hex
+                    << fnvInteractionActorRef << std::dec << " level=" << level << " refCopies=" << activeCopies
                     << " pos=(" << actorPosition.x() << "," << actorPosition.y() << "," << actorPosition.z()
                     << ") retailChairDistance=" << chairDistance << " inCombat=" << (inCombat ? 1 : 0)
                     << " result=" << (fnvInteractionActorPass ? "pass" : "fail");
@@ -9068,14 +10750,22 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else if (fnvInteractionPhase == 8 && phaseFrames >= 8)
         {
-            if (!activateInteractionTarget(fnvInteractionActor, "easy-pete-dialogue"))
-                finishInteraction(false, "Easy Pete activation returned a null action");
+            const std::string_view label = fnvInteractionActorOnly ? "requested-actor-dialogue" : "easy-pete-dialogue";
+            if (!activateInteractionTarget(fnvInteractionActor, label))
+                finishInteraction(false, "actor activation returned a null action");
             else
                 advanceInteraction(1);
         }
         else if (fnvInteractionPhase == 1)
         {
             const bool dialogueOpen = mWindowManager->containsMode(MWGui::GM_Dialogue);
+            if (fnvInteractionActorOnly && dialogueOpen)
+            {
+                fnvInteractionDialoguePass = true;
+                finishInteraction(true, "requested actor dialogue opened");
+            }
+            else
+            {
             const bool voiceActive = mSoundManager != nullptr && mSoundManager->sayActive(fnvInteractionActor);
             fnvInteractionGreetingAudioSeen = fnvInteractionGreetingAudioSeen || voiceActive;
             if (dialogueOpen && fnvInteractionGreetingAudioSeen && !voiceActive && phaseFrames >= 5)
@@ -9098,6 +10788,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             else if (phaseSeconds > phaseTimeoutSeconds)
                 finishInteraction(false, "Easy Pete greeting GUI or authored voice did not complete");
+            }
         }
         else if (fnvInteractionPhase == 2)
         {
@@ -10164,6 +11855,24 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
+    const int proofVideoCaptureStartFrame = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_START_FRAME");
+    const int proofVideoCaptureEndFrame = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_END_FRAME");
+    const int proofVideoCaptureStepEnv = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_FRAME_STEP");
+    const int proofVideoCaptureStep = proofVideoCaptureStepEnv >= 1 ? proofVideoCaptureStepEnv : 1;
+    if (proofVideoCaptureStartFrame >= 0 && proofVideoCaptureEndFrame >= proofVideoCaptureStartFrame
+        && static_cast<int>(frameNumber) >= proofVideoCaptureStartFrame
+        && static_cast<int>(frameNumber) <= proofVideoCaptureEndFrame
+        && (static_cast<int>(frameNumber) - proofVideoCaptureStartFrame) % proofVideoCaptureStep == 0
+        && mScreenCaptureHandler != nullptr)
+    {
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
+        if (static_cast<int>(frameNumber) == proofVideoCaptureStartFrame)
+            Log(Debug::Info) << "FNV/ESM4 proof video: capture started frame=" << frameNumber
+                             << " endFrame=" << proofVideoCaptureEndFrame
+                             << " step=" << proofVideoCaptureStep;
+    }
+
     if (deferProofLuaWorker)
     {
         worldViewerTrace(frameNumber, "lua-worker-deferred-allow.begin");
@@ -10175,6 +11884,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     mViewer->renderingTraversals();
     worldViewerTrace(frameNumber, "rendering-traversals.end");
 
+    static bool proofVideoCaptureQuitRequested = false;
+    const int proofVideoCaptureExitDelayFrames
+        = std::max(2, readProofInt("OPENMW_PROOF_VIDEO_CAPTURE_EXIT_DELAY_FRAMES", 2));
+    if (!proofVideoCaptureQuitRequested && proofVideoCaptureStartFrame >= 0
+        && proofVideoCaptureEndFrame >= proofVideoCaptureStartFrame
+        && static_cast<int>(frameNumber) >= proofVideoCaptureEndFrame + proofVideoCaptureExitDelayFrames)
+    {
+        proofVideoCaptureQuitRequested = true;
+        Log(Debug::Info) << "FNV/ESM4 proof video: native frames flushed; exiting cleanly frame="
+                         << frameNumber << " drainFrames=" << proofVideoCaptureExitDelayFrames;
+        mStateManager->requestQuit();
+    }
+
     if (proofActorStagedForCamera && !proofActorBatchPrevious.isEmpty()
         && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
     {
@@ -10182,8 +11904,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         if (traits != nullptr && traits->mIsFONV)
         {
             worldViewerTrace(frameNumber, "actor-skin-state.begin");
+            const bool collectAppearance = proofSidecarEnabled
+                || proofEnvEnabled("OPENMW_FNV_PROOF_APPEARANCE_TELEMETRY");
             FalloutProofSkinState sampledSkinState
-                = inspectFalloutProofSkinState(proofActorBatchPrevious, proofActorBatchIndex, frameNumber);
+                = inspectFalloutProofSkinState(
+                    proofActorBatchPrevious, proofActorBatchIndex, frameNumber, collectAppearance);
             proofActorSkinState = sampledSkinState;
 
             FalloutProofSkinState stableSample = sampledSkinState;
@@ -10198,6 +11923,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 writeFalloutProofSkinStateJson(payload, sampledSkinState);
                 Log(sampledSkinState.mPass ? Debug::Info : Debug::Warning)
                     << "FNV/ESM4 actor skin state gate: " << payload.str();
+            }
+            if (collectAppearance)
+            {
+                std::ostringstream appearanceStableKey;
+                appearanceStableKey << (proofSidecarEnabled ? proofSidecarGeneration : 0) << '|';
+                writeFalloutProofAppearanceJson(appearanceStableKey, stableSample);
+                if (proofActorAppearanceLastLogKey != appearanceStableKey.str())
+                {
+                    proofActorAppearanceLastLogKey = appearanceStableKey.str();
+                    std::ostringstream payload;
+                    writeFalloutProofAppearanceJson(payload, sampledSkinState);
+                    Log(sampledSkinState.mAppearanceComplete ? Debug::Info : Debug::Warning)
+                        << "FNV/ESM4 actor appearance gate: " << payload.str();
+                }
             }
             worldViewerTrace(frameNumber, "actor-skin-state.end");
         }
@@ -11050,7 +12789,11 @@ void OMW::Engine::go()
 
     // Start the main rendering loop
     MWWorld::DateTimeManager& timeManager = *mWorld->getTimeManager();
-    Misc::FrameRateLimiter frameRateLimiter = Misc::makeFrameRateLimiter(mEnvironment.getFrameRateLimit());
+    const float proofFrameRateLimit
+        = readProofFloat("OPENMW_PROOF_FRAME_RATE_LIMIT", mEnvironment.getFrameRateLimit());
+    Misc::FrameRateLimiter frameRateLimiter = Misc::makeFrameRateLimiter(proofFrameRateLimit);
+    if (proofFrameRateLimit > 0.f && std::getenv("OPENMW_PROOF_FRAME_RATE_LIMIT") != nullptr)
+        Log(Debug::Info) << "FNV/ESM4 proof: frame rate limited to " << proofFrameRateLimit << " FPS";
     const std::chrono::steady_clock::duration maxSimulationInterval(std::chrono::milliseconds(200));
     while (!mViewer->done() && !mStateManager->hasQuitRequest())
     {

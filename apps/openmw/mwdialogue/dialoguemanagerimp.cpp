@@ -20,6 +20,7 @@
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -70,6 +71,7 @@
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/esm4creature.hpp"
 #include "../mwclass/fnvaipackage.hpp"
 
 #include "filter.hpp"
@@ -192,10 +194,14 @@ namespace MWDialogue
 
         if (!info.mSpeaker.isZeroOrUnset())
         {
-            const auto* actorRef
-                = mActor.getType() == ESM4::Npc::sRecordId ? mActor.get<ESM4::Npc>() : nullptr;
-            const ESM4::Npc* base = actorRef != nullptr ? actorRef->mBase : nullptr;
-            if (base == nullptr || base->mId != info.mSpeaker)
+            ESM::FormId baseId;
+            if (const auto* actorRef
+                = mActor.getType() == ESM4::Npc::sRecordId ? mActor.get<ESM4::Npc>() : nullptr)
+                baseId = actorRef->mBase != nullptr ? actorRef->mBase->mId : ESM::FormId{};
+            else if (const auto* actorRef
+                = mActor.getType() == ESM4::Creature::sRecordId ? mActor.get<ESM4::Creature>() : nullptr)
+                baseId = actorRef->mBase != nullptr ? actorRef->mBase->mId : ESM::FormId{};
+            if (baseId.isZeroOrUnset() || baseId != info.mSpeaker)
                 return false;
         }
         return true;
@@ -203,15 +209,26 @@ namespace MWDialogue
 
     int DialogueManager::getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const
     {
-        const ESM4::Npc* base = mActor.get<ESM4::Npc>()->mBase;
-        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mActor);
+        const ESM4::Npc* base = nullptr;
+        const ESM4::Npc* traits = nullptr;
+        const ESM4::Creature* creatureBase = nullptr;
+        if (mActor.getType() == ESM4::Npc::sRecordId)
+        {
+            base = mActor.get<ESM4::Npc>()->mBase;
+            traits = MWClass::ESM4Npc::getTraitsRecord(mActor);
+        }
+        else if (mActor.getType() == ESM4::Creature::sRecordId)
+            creatureBase = mActor.get<ESM4::Creature>()->mBase;
         int affinity = 0;
-        if (base != nullptr && !info.mSpeaker.isZeroOrUnset() && info.mSpeaker == base->mId)
+        const ESM::FormId baseId = base != nullptr ? base->mId
+            : creatureBase != nullptr                    ? creatureBase->mId
+                                                        : ESM::FormId{};
+        if (!baseId.isZeroOrUnset() && !info.mSpeaker.isZeroOrUnset() && info.mSpeaker == baseId)
             affinity += 10000;
         for (const ESM4::TargetCondition& condition : info.mTargetConditions)
         {
             const ESM::FormId parameter = ESM::FormId::fromUint32(condition.param1);
-            if (condition.functionIndex == ESM4::FUN_GetIsID && base != nullptr && parameter == base->mId)
+            if (condition.functionIndex == ESM4::FUN_GetIsID && !baseId.isZeroOrUnset() && parameter == baseId)
                 affinity += 10000;
             else if (condition.functionIndex == ESM4::FUN_GetIsRace && traits != nullptr
                 && parameter == traits->mRace)
@@ -591,7 +608,8 @@ namespace MWDialogue
 
         mActorKnownTopics.clear();
 
-        mEsm4Dialogue = actor.getType() == ESM4::Npc::sRecordId;
+        mEsm4Dialogue = actor.getType() == ESM4::Npc::sRecordId
+            || actor.getType() == ESM4::Creature::sRecordId;
         mLastEsm4Topic = {};
         mEsm4TopicIds.clear();
         mEsm4ChoiceSelections.clear();

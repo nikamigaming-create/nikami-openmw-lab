@@ -2573,10 +2573,37 @@ namespace MWWorld
         facedObject = rayToObject.mHitObject;
         if (facedObject.isEmpty() && rayToObject.mHitRefnum.isSet())
             facedObject = MWBase::Environment::get().getWorldModel()->getPtr(rayToObject.mHitRefnum);
+
+        // Animated actors are normally selected through their rendered triangles. Some native ESM4 creatures,
+        // however, assemble their visible body from separately skinned NIF parts. Until those parts have produced
+        // valid cull-time geometry, the rendering ray can miss an actor that already has a perfectly usable physics
+        // body. Fall back to that body only for actors, leaving detailed object/door selection unchanged.
+        if (facedObject.isEmpty() && !MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            const osg::Vec3f rayOrigin(mRendering->getCamera()->getPosition());
+            const osg::Vec3f rayDirection
+                = mRendering->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+            const MWPhysics::RayCastingResult actorHit = mPhysics->castRay(rayOrigin,
+                rayOrigin + rayDirection * maxDistance, { getPlayerPtr() }, {}, MWPhysics::CollisionType_Actor);
+            if (actorHit.mHit && !actorHit.mHitObject.isEmpty())
+            {
+                facedObject = actorHit.mHitObject;
+                mDistanceToFacedObject
+                    = std::max(0.f, (actorHit.mHitPos - rayOrigin).length() - camDist);
+                if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+                    Log(Debug::Info) << "FNV interaction audit: faced object source=physics-actor target="
+                                     << facedObject.toString() << " distance=" << mDistanceToFacedObject;
+                return facedObject;
+            }
+        }
+
         if (rayToObject.mHit)
             mDistanceToFacedObject = (rayToObject.mRatio * maxDistance) - camDist;
         else
             mDistanceToFacedObject = -1;
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr && !facedObject.isEmpty())
+            Log(Debug::Info) << "FNV interaction audit: faced object source=render target="
+                             << facedObject.toString() << " distance=" << mDistanceToFacedObject;
         return facedObject;
     }
 

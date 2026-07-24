@@ -1256,7 +1256,8 @@ namespace MWGui
                 activeWindow->setActiveControllerWindow(true);
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
+                Log(Debug::Info) << "FNV/ESM4 proof: Pip-Boy input activated pane index=" << activeIndex
+                                 << " gamepadCursorAllowed=" << activeWindow->isGamepadCursorAllowed();
             }
             MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
                 mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());

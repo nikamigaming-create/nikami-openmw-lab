@@ -6415,7 +6415,8 @@ namespace NifOsg
         }
 
         void handleShaderMaterialNodeProperties(
-            const Bgsm::MaterialFile* material, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures) const
+            const Bgsm::MaterialFile* material, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures,
+            bool hairTintShader = false) const
         {
             const unsigned int uvSet = 0;
             const bool wrapS = material->wrapS();
@@ -6423,6 +6424,7 @@ namespace NifOsg
             if (material->mShaderType == Bgsm::ShaderType::Lighting)
             {
                 const Bgsm::BGSMFile* bgsm = static_cast<const Bgsm::BGSMFile*>(material);
+                const bool hairMaterial = hairTintShader || bgsm->mHair;
 
                 if (!bgsm->mDiffuseMap.empty())
                     attachExternalTexture(
@@ -6430,6 +6432,17 @@ namespace NifOsg
 
                 if (!bgsm->mNormalMap.empty())
                     attachExternalTexture("normalMap", bgsm->mNormalMap, wrapS, wrapT, uvSet, stateset, boundTextures);
+
+                if (hairMaterial && !bgsm->mGrayscaleMap.empty())
+                {
+                    // A BGSM override is authoritative over the NIF texture set. For a HairTint shader its
+                    // authored grayscale slot contains the same palette lookup consumed by CLFM remapping.
+                    attachExternalTexture(
+                        "hairPaletteMap", bgsm->mGrayscaleMap, wrapS, wrapT, uvSet, stateset, boundTextures);
+                    Log(Debug::Verbose) << "FO4 HairTint BGSM palette: diffuse=\"" << bgsm->mDiffuseMap
+                                        << "\" palette=\"" << bgsm->mGrayscaleMap << "\" hair=" << bgsm->mHair
+                                        << " grayscaleToPalette=" << material->mGrayscaleToPaletteColor;
+                }
 
                 if (bgsm->mGlowMapEnabled && !bgsm->mGlowMap.empty())
                     attachExternalTexture("emissiveMap", bgsm->mGlowMap, wrapS, wrapT, uvSet, stateset, boundTextures);
@@ -6556,7 +6569,7 @@ namespace NifOsg
 
         void handleTextureSet(const Nif::BSShaderTextureSet* textureSet, bool wrapS, bool wrapT, float envMapScale,
             const std::string& nodeName, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures,
-            bool skinShader) const
+            bool skinShader, bool hairTintShader = false) const
         {
             const unsigned int uvSet = 0;
             const bool worldViewerActorMesh
@@ -6593,12 +6606,22 @@ namespace NifOsg
                             "emissiveMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
                     case Nif::BSShaderTextureSet::TextureType::Environment:
-                        attachExternalTexture(
-                            "envMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
-                        if (envMapScale <= 0.f)
-                            envMapScale = 1.f;
-                        stateset->addUniform(new osg::Uniform(
-                            "envMapColor", osg::Vec4f(envMapScale, envMapScale, envMapScale, 1.f)));
+                        if (hairTintShader)
+                        {
+                            // FO4 HairTint uses this stage as a 2D colour lookup table, not a reflection map.
+                            // Diffuse grayscale selects X and the CLFM remapping index selects Y.
+                            attachExternalTexture("hairPaletteMap", textureSet->mTextures[i], wrapS, wrapT, uvSet,
+                                stateset, boundTextures);
+                        }
+                        else
+                        {
+                            attachExternalTexture(
+                                "envMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
+                            if (envMapScale <= 0.f)
+                                envMapScale = 1.f;
+                            stateset->addUniform(new osg::Uniform(
+                                "envMapColor", osg::Vec4f(envMapScale, envMapScale, envMapScale, 1.f)));
+                        }
                         break;
                     case Nif::BSShaderTextureSet::TextureType::EnvironmentMask:
                         attachExternalTexture(
@@ -6875,13 +6898,17 @@ namespace NifOsg
                     clearBoundTextures(stateset, boundTextures);
                     if (Bgsm::MaterialFilePtr material = getShaderMaterial(texprop->mName, mMaterialManager))
                     {
-                        handleShaderMaterialNodeProperties(material.get(), stateset, boundTextures);
+                        handleShaderMaterialNodeProperties(material.get(), stateset, boundTextures,
+                            texprop->mType
+                                == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_HairTint));
                         break;
                     }
                     if (!texprop->mTextureSet.empty())
                         handleTextureSet(texprop->mTextureSet.getPtr(), texprop->wrapS(), texprop->wrapT(),
                             texprop->mEnvMapScale,
-                            node->getName(), stateset, boundTextures, false);
+                            node->getName(), stateset, boundTextures, false,
+                            texprop->mType
+                                == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_HairTint));
                     handleTextureControllers(texprop, composite, stateset, animflags);
                     if (texprop->doubleSided())
                         stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
@@ -7174,14 +7201,16 @@ namespace NifOsg
                         specEnabled = shaderprop->specular();
                         if ((mBethVersion == Nif::NIFFile::BethVersion::BETHVER_SKY
                                 || mBethVersion == Nif::NIFFile::BethVersion::BETHVER_SSE)
-                            && shaderprop->mType
-                                == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_SkinTint)
+                            && (shaderprop->mType
+                                    == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_SkinTint)
+                                || shaderprop->mType
+                                    == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_FaceTint))
                             && isWorldViewerActorMeshPath(
                                 Misc::StringUtils::lowerCase(mFilename.generic_string())))
                         {
-                            // Skyrim's skin shader uses its gloss/specular data with a dedicated skin-lighting
-                            // model. Feeding those values into OpenMW's generic Blinn-Phong path produces the
-                            // hard white hand and forearm highlights seen on otherwise correctly textured actors.
+                            // Skyrim's face- and skin-tint shaders use their gloss/specular data with a dedicated
+                            // skin-lighting model. Feeding those values into OpenMW's generic Blinn-Phong path
+                            // produces hard white highlights on otherwise correctly textured actors.
                             // Preserve diffuse and normal textures, but use the stable non-specular fallback until
                             // that dedicated shader is implemented.
                             specEnabled = false;

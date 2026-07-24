@@ -303,7 +303,14 @@ namespace MWClass
     static int getLevel(const ESM4::Npc& npc)
     {
         if (npc.mIsFONV)
-            return positiveOrDefault(npc.mBaseConfig.fo3.levelOrMult, 1);
+        {
+            const bool playerLevelMultiplier = (npc.mBaseConfig.fo3.flags & ESM4::Npc::FO3_PCLevelMult) != 0;
+            int playerLevel = ESM4Impl::sDefaultLevel;
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (playerLevelMultiplier && world != nullptr && !world->getPlayerPtr().isEmpty())
+                playerLevel = world->getPlayerPtr().getClass().getCreatureStats(world->getPlayerPtr()).getLevel();
+            return ESM4Impl::calculateFnvActorLevel(npc.mBaseConfig.fo3, playerLevelMultiplier, playerLevel);
+        }
         if (npc.mIsFO4)
             return positiveOrDefault(npc.mBaseConfig.fo4.levelOrMult, 1);
         if (npc.mIsTES4)

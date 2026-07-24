@@ -32,6 +32,10 @@ varying vec2 envMapUV;
 uniform vec4 envMapColor;
 #endif
 
+#if @hairPaletteMap
+uniform sampler2D hairPaletteMap;
+#endif
+
 #if @glossMap
 uniform sampler2D glossMap;
 varying vec2 glossMapUV;
@@ -51,6 +55,8 @@ uniform float specStrength;
 uniform bool useTreeAnim;
 uniform float distortionStrength;
 uniform int falloutSlsMode;
+uniform bool falloutHairPaletteMode;
+uniform float falloutHairColorIndex;
 
 #include "lib/core/fragment.h.glsl"
 #include "lib/light/lighting.glsl"
@@ -66,6 +72,8 @@ vec3 falloutEnvMapEffect(vec3 viewNormal)
 {
     vec3 envEffect = vec3(0.0);
 #if @envMap
+    if (falloutHairPaletteMode)
+        return envEffect;
     vec2 envTexCoordGen = envMapUV;
 #if @normalMap
     vec3 viewVec = normalize(passViewPos);
@@ -118,6 +126,12 @@ void main()
 {
 #if @diffuseMap
     gl_FragData[0] = texture2D(diffuseMap, diffuseMapUV);
+
+#if @hairPaletteMap
+    if (falloutHairPaletteMode)
+        gl_FragData[0].rgb = texture2D(hairPaletteMap,
+            vec2(clamp(gl_FragData[0].r, 0.0, 1.0), clamp(falloutHairColorIndex, 0.0, 1.0))).rgb;
+#endif
 
 #if defined(DISTORTION) && DISTORTION
     vec2 screenCoords = gl_FragCoord.xy / (screenRes * @distorionRTRatio);

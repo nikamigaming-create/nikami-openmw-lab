@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/actor.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -59,6 +60,24 @@ namespace MWClass
 
         // We don't handle ESM4 player stats yet, so for resolving levelled object we use an arbitrary number.
         constexpr int sDefaultLevel = 5;
+
+        inline int calculateFnvActorLevel(
+            const ESM4::ACBS_FO3& config, bool playerLevelMultiplier, int playerLevel)
+        {
+            if (!playerLevelMultiplier)
+            {
+                const int fixedLevel = config.levelOrMult < 0 ? -config.levelOrMult : config.levelOrMult;
+                return std::max(1, fixedLevel);
+            }
+
+            const int multiplier = std::max(0, static_cast<int>(config.levelOrMult));
+            int level = std::max(1, (std::max(1, playerLevel) * multiplier) / 1000);
+            if (config.calcMinlevel != 0)
+                level = std::max(level, static_cast<int>(config.calcMinlevel));
+            if (config.calcMaxlevel != 0)
+                level = std::min(level, static_cast<int>(config.calcMaxlevel));
+            return level;
+        }
 
         template <class Record>
         struct InventoryIcon

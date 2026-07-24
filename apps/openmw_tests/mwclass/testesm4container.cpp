@@ -24,6 +24,7 @@
 #include "apps/openmw/mwbase/luamanager.hpp"
 
 #include "apps/openmw/mwclass/classes.hpp"
+#include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 
@@ -47,6 +48,24 @@
 
 namespace
 {
+    TEST(FnvActorLevelTest, FixedLevelUsesAuthoredValue)
+    {
+        ESM4::ACBS_FO3 config{};
+        config.levelOrMult = 14;
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, false, 50), 14);
+    }
+
+    TEST(FnvActorLevelTest, PlayerMultiplierUsesThousandthsAndAuthoredBounds)
+    {
+        ESM4::ACBS_FO3 config{};
+        config.levelOrMult = 1500;
+        config.calcMinlevel = 8;
+        config.calcMaxlevel = 20;
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 4), 8);
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 10), 15);
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 30), 20);
+    }
+
     constexpr std::uint32_t sSaloonContainerRef = 0x0110873e;
     constexpr std::uint32_t sSaloonContainerBase = 0x01103b17;
     constexpr std::uint32_t sSaloonBottleBase = 0x01103b1e;

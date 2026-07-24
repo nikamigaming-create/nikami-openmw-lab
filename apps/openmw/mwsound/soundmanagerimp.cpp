@@ -9,6 +9,7 @@
 #include <osg/Matrixf>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm4/loadwthr.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/settings/values.hpp>
@@ -23,6 +24,7 @@
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/weather.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 
@@ -972,9 +974,29 @@ namespace MWSound
         if (mCurrentRegionSound && mOutput->isSoundPlaying(mCurrentRegionSound))
             return;
 
-        ESM::RefId next = mRegionSoundSelector.getNextRandom(duration, cell->getRegion());
+        ESM::RefId next;
+        const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
+        if (cell->isEsm4() && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
+        {
+            std::uint32_t weatherClassification = 1;
+            const ESM::RefId& weatherId = world->getCurrentWeather().mId;
+            if (const ESM4::Weather* weather = store->get<ESM4::Weather>().search(weatherId))
+                weatherClassification = weather->mData.classification;
+            next = mRegionSoundSelector.getNextRandom(duration, cell->getEsm4().mRegions, weatherClassification);
+        }
+        else
+            next = mRegionSoundSelector.getNextRandom(duration, cell->getRegion());
         if (!next.empty())
+        {
             mCurrentRegionSound = playSound(next, 1.0f, 1.0f);
+            if (cell->isEsm4() && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
+            {
+                if (mCurrentRegionSound != nullptr)
+                    Log(Debug::Info) << "FNV/ESM4 sound: region ambience playback started sound=" << next;
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 sound: region ambience playback failed sound=" << next;
+            }
+        }
     }
 
     void SoundManager::updateWaterSound()

@@ -3539,6 +3539,32 @@ namespace MWRender
         return wrapper;
     }
 
+    osg::ref_ptr<osg::Group> correctFalloutCreatureForwardAxis(
+        osg::ref_ptr<osg::Group> objectRoot, const MWWorld::Ptr& ptr)
+    {
+        if (objectRoot == nullptr || ptr.getType() != ESM4::Creature::sRecordId)
+            return objectRoot;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        if (ref == nullptr || ref->mBase == nullptr || !ref->mBase->mIsFONV)
+            return objectRoot;
+
+        std::string model = Misc::StringUtils::lowerCase(std::string(ptr.getClass().getModel(ptr)));
+        std::replace(model.begin(), model.end(), '\\', '/');
+        if (model.find("/nvsecuritron/") == std::string::npos)
+            return objectRoot;
+
+        // The FNV securitron skeleton's authored screen/front points along -X while OpenMW actor movement and
+        // facing use +Y. The gameplay controller therefore turned correctly while Victor's rendered body looked
+        // a quarter-turn away from its target. Keep actor/world yaw authoritative and correct only this known
+        // authored visual assembly. Other creature families retain their native axes until measured independently.
+        osg::ref_ptr<osg::MatrixTransform> wrapper = new osg::MatrixTransform;
+        wrapper->setName("FNV Securitron Forward Axis");
+        wrapper->setMatrix(osg::Matrixf::rotate(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)));
+        wrapper->addChild(objectRoot);
+        return wrapper;
+    }
+
 
     float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
@@ -7337,6 +7363,16 @@ namespace MWRender
         }
 
         if (osg::ref_ptr<osg::Group> correctedRoot = wrapFalloutActorRootIfRequested(mObjectRoot, mPtr))
+        {
+            if (correctedRoot.get() != mObjectRoot.get())
+            {
+                mInsert->removeChild(mObjectRoot);
+                mObjectRoot = correctedRoot;
+                mInsert->addChild(mObjectRoot);
+            }
+        }
+
+        if (osg::ref_ptr<osg::Group> correctedRoot = correctFalloutCreatureForwardAxis(mObjectRoot, mPtr))
         {
             if (correctedRoot.get() != mObjectRoot.get())
             {

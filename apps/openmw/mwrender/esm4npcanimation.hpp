@@ -61,6 +61,8 @@ namespace MWRender
         bool mFo4ProceduralPoseInitialized = false;
         std::string mFo4ProceduralGroup;
         bool mFo4ProceduralAdvancedLogged = false;
+        float mSkyrimAuthoredAnimationElapsed = 0.f;
+        bool mSkyrimAuthoredAnimationLogged = false;
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
         osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
@@ -74,7 +76,8 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
-            std::string_view preferredBone = {});
+            std::string_view preferredBone = {}, const float* colorRemappingIndex = nullptr,
+            bool applyTes4RigidHeadBasis = true);
         osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
             std::string* authoredParent = nullptr);
 

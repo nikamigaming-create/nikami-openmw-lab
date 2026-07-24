@@ -105,4 +105,34 @@ namespace
         EXPECT_TRUE(region.mWeather[1].mEntries[0].mGlobal.isZeroOrUnset());
         EXPECT_EQ(region.mWeather[1].mEntries[1].mGlobal, ESM::FormId::fromUint32(0x02000077));
     }
+
+    TEST(Esm4RegionTest, shouldPreserveSoundBlockPriorityChanceAndAdjustedReferences)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", std::string_view("GSSoundRegion\0", 14));
+
+        ESM4::Region::RegionData soundData{ ESM4::Region::RDAT_Sound, 0, 75, 0 };
+        appendSubRecord(payload, "RDAT", soundData);
+        appendSubRecord(payload, "RDSD",
+            std::array<std::uint32_t, 6>{ 0x123456, 1, 1'000'000, 0x123457, 2, 125'000 });
+
+        ESM4::Region::RegionData mapData{ ESM4::Region::RDAT_Map, 0, 5, 0 };
+        appendSubRecord(payload, "RDAT", mapData);
+        appendSubRecord(payload, "RDMP", std::string_view("Goodsprings\0", 12));
+
+        auto reader = makeReader(std::move(payload), 2);
+        ESM4::Region region;
+        region.load(*reader);
+
+        ASSERT_EQ(region.mSoundBlocks.size(), 1);
+        EXPECT_EQ(region.mSoundBlocks[0].mData.priority, 75);
+        ASSERT_EQ(region.mSoundBlocks[0].mEntries.size(), 2);
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[0].mSound, ESM::FormId::fromUint32(0x02123456));
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[0].mFlags, 1u);
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[0].mChance, 1'000'000u);
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[1].mSound, ESM::FormId::fromUint32(0x02123457));
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[1].mFlags, 2u);
+        EXPECT_EQ(region.mSoundBlocks[0].mEntries[1].mChance, 125'000u);
+        ASSERT_EQ(region.mSounds.size(), 2);
+    }
 }

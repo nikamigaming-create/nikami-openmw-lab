@@ -291,7 +291,8 @@ namespace Shader
     // shader defines. Normal maps and normal height maps both get sent to the shader as a normal map, so the latter
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
-        "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1" };
+        "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1",
+        "hairPaletteMap" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))

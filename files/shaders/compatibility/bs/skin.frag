@@ -145,10 +145,12 @@ vec3 falloutSkinLighting(vec3 viewPos, vec3 viewNormal, vec3 scatterColor)
         usedPointLight = true;
     }
 
-    // c1.xyz is the ambient term. OpenMW's scene ambient is its direct
-    // equivalent; point-light ambient and generic Phong specular do not exist
-    // in the retail SKIN2002 bytecode.
-    light += gl_FrontMaterial.ambient.rgb * gl_LightModel.ambient.xyz;
+    // c1.xyz is already the complete AmbientColor in retail SKIN2002. The
+    // bytecode adds it directly after directional and attenuated point light;
+    // it never multiplies c1 by a material ambient term. Multiplying here a
+    // second time suppresses the cool ambient contribution and leaves exposed
+    // skin incorrectly dark and warm.
+    light += gl_LightModel.ambient.xyz;
     return max(light, vec3(0.0));
 }
 

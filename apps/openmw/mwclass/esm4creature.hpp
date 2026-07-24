@@ -112,6 +112,10 @@ namespace MWClass
         float getRunSpeed(const MWWorld::Ptr& ptr) const override;
         float getSwimSpeed(const MWWorld::Ptr& ptr) const override;
         float getSkill(const MWWorld::Ptr& ptr, ESM::RefId id) const override;
+        int getServices(const MWWorld::ConstPtr& ptr) const override;
+        int getBaseGold(const MWWorld::ConstPtr& ptr) const override;
+        std::unique_ptr<MWWorld::Action> activate(
+            const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         bool isPersistent(const MWWorld::ConstPtr& ptr) const override;
         bool canFly(const MWWorld::ConstPtr& ptr) const override;
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;

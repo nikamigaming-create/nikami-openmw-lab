@@ -34,6 +34,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
+#include <components/misc/rng.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -46,6 +47,9 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/actionopen.hpp"
+#include "../mwworld/actiontalk.hpp"
+#include "../mwworld/failedaction.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwgui/tooltips.hpp"
@@ -118,7 +122,8 @@ namespace MWClass
         }
 
         static bool resolveLevelledItem(const MWWorld::ESMStore& store, const ESM::RefId& listId, int actorLevel,
-            int depth, std::set<ESM::RefId>& path, PlannedItems& result, std::string_view& failure)
+            int depth, std::set<ESM::RefId>& path, PlannedItems& result, std::string_view& failure,
+            Misc::Rng::Generator* prng = nullptr)
         {
             if (depth > sMaxLevelledItemDepth)
             {
@@ -144,8 +149,13 @@ namespace MWClass
             }
             if (list->chanceNone() != 0)
             {
-                failure = "chance-none-requires-rng";
-                return false;
+                if (prng == nullptr)
+                {
+                    failure = "chance-none-requires-rng";
+                    return false;
+                }
+                if (Misc::Rng::roll0to99(*prng) < list->chanceNone())
+                    return true;
             }
             if (!list->mChanceGlobal.isZeroOrUnset())
             {
@@ -202,8 +212,14 @@ namespace MWClass
 
             if (!list->useAll() && eligible.size() > 1)
             {
-                failure = "ambiguous-random-selection";
-                return false;
+                if (prng == nullptr)
+                {
+                    failure = "ambiguous-random-selection";
+                    return false;
+                }
+                const ESM4::LVLO* selected
+                    = eligible[static_cast<std::size_t>(Misc::Rng::rollDice(static_cast<int>(eligible.size()), *prng))];
+                eligible.assign(1, selected);
             }
             if (eligible.empty())
                 return true;
@@ -224,7 +240,7 @@ namespace MWClass
                 const int recordType = store.find(itemId);
                 if (recordType == ESM::REC_LVLI4)
                 {
-                    if (!resolveLevelledItem(store, itemId, actorLevel, depth + 1, path, child, failure))
+                    if (!resolveLevelledItem(store, itemId, actorLevel, depth + 1, path, child, failure, prng))
                     {
                         resolved = false;
                         break;
@@ -424,12 +440,25 @@ namespace MWClass
         void fill(
             const ESM4::Creature& creature, const ESM4::Creature* statsProvider, const MWWorld::ESMStore& store)
         {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            Misc::Rng::Generator* prng = world != nullptr ? &world->getPrng() : nullptr;
             std::optional<int> fixedActorLevel;
             std::string_view actorLevelFailure;
             if (statsProvider == nullptr || !statsProvider->mIsFONV)
                 actorLevelFailure = "missing-fnv-stats-provider";
             else if ((statsProvider->mBaseConfig.fo3.flags & ESM4::Creature::FO3_PCLevelMult) != 0)
-                actorLevelFailure = "pc-level-multiplier-is-unimplemented";
+            {
+                if (world == nullptr || world->getPlayerPtr().isEmpty()
+                    || statsProvider->mBaseConfig.fo3.levelOrMult <= 0)
+                    actorLevelFailure = "pc-level-multiplier-requires-live-player";
+                else
+                {
+                    const int playerLevel = std::max(1,
+                        world->getPlayerPtr().getClass().getCreatureStats(world->getPlayerPtr()).getLevel());
+                    fixedActorLevel = ESM4Impl::calculateFnvActorLevel(
+                        statsProvider->mBaseConfig.fo3, true, playerLevel);
+                }
+            }
             else if (statsProvider->mBaseConfig.fo3.levelOrMult <= 0)
                 actorLevelFailure = "invalid-fixed-actor-level";
             else
@@ -473,7 +502,7 @@ namespace MWClass
                     }
 
                     std::set<ESM::RefId> path;
-                    if (!resolveLevelledItem(store, itemId, *fixedActorLevel, 1, path, plan, failure))
+                    if (!resolveLevelledItem(store, itemId, *fixedActorLevel, 1, path, plan, failure, prng))
                     {
                         Log(Debug::Warning) << "Ignoring non-deterministic LVLI fixed FNV creature inventory item "
                                             << itemId << " in " << ownerId << " reason=" << failure;
@@ -593,7 +622,13 @@ namespace MWClass
 
     static int getLevel(const ESM4::Creature& creature)
     {
-        return positiveOrDefault(creature.mBaseConfig.fo3.levelOrMult, 1);
+        const bool playerLevelMultiplier
+            = (creature.mBaseConfig.fo3.flags & ESM4::Creature::FO3_PCLevelMult) != 0;
+        int playerLevel = ESM4Impl::sDefaultLevel;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (playerLevelMultiplier && world != nullptr && !world->getPlayerPtr().isEmpty())
+            playerLevel = world->getPlayerPtr().getClass().getCreatureStats(world->getPlayerPtr()).getLevel();
+        return ESM4Impl::calculateFnvActorLevel(creature.mBaseConfig.fo3, playerLevelMultiplier, playerLevel);
     }
 
     static float getSpeedMultiplier(const ESM4::Creature& creature)
@@ -1605,6 +1640,34 @@ namespace MWClass
         (void)ptr;
         (void)id;
         return 50.f;
+    }
+
+    int ESM4Creature::getServices(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout service menus are driven by dialogue/package data, not the
+        // Morrowind creature-service bitmask used by the shared dialogue UI.
+        (void)ptr;
+        return 0;
+    }
+
+    int ESM4Creature::getBaseGold(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout caps live in actor inventories. The shared dialogue window
+        // still restocks a Morrowind-style gold pool when it opens.
+        (void)ptr;
+        return 0;
+    }
+
+    std::unique_ptr<MWWorld::Action> ESM4Creature::activate(
+        const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
+    {
+        (void)actor;
+        const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (stats.isDead())
+            return std::make_unique<MWWorld::ActionOpen>(ptr);
+        if (stats.getKnockedDown())
+            return std::make_unique<MWWorld::FailedAction>();
+        return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 
     bool ESM4Creature::isPersistent(const MWWorld::ConstPtr& ptr) const
