@@ -55,6 +55,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "esm4base.hpp"
@@ -263,6 +264,40 @@ namespace MWClass
 
         sequence.clear();
         data.mFnvAiSequenceInitialised = false;
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
+    }
+
+    bool resetFnvAiState(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return false;
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+            return resetFnvCreatureAiState(ptr);
+        if (ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+
+        // CreatureStats access creates the per-reference custom data when the
+        // actor has not been simulated yet.
+        ptr.getClass().getCreatureStats(ptr);
+        MWWorld::CustomData* customData = ptr.getRefData().getCustomData();
+        if (customData == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = customData->asESM4NpcCustomData();
+        if (data.mTraits == nullptr || !data.mTraits->mIsFONV)
+            return false;
+
+        // ResetAI is deliberately stronger than EVP: retail clears combat,
+        // pursuit, pathing/package progress, and current furniture behavior,
+        // then evaluates the actor's authored package list from scratch.
+        data.mCreatureStats.getAiSequence().reset();
+        data.mMovement = {};
+        data.mFnvAiSequenceInitialised = false;
+        data.mFnvSandboxPackageNeedsReevaluation = false;
+        data.mFnvSandboxSaveFallback.reset();
+        data.mFurnitureState = FalloutFurnitureState::None;
+        data.mFurniturePlacement = {};
         ptr.getClass().getCreatureStats(ptr);
         return true;
     }
@@ -1885,6 +1920,20 @@ namespace MWClass
         const ESM4NpcCustomData& data = getCustomData(ptr);
         const ESM4::Npc* statsRecord = chooseStatsRecord(data);
         const float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
+        if (statsRecord != nullptr && statsRecord->mIsFONV)
+        {
+            const ESM::GameSetting* setting = MWBase::Environment::get()
+                                                  .getESMStore()
+                                                  ->get<ESM::GameSetting>()
+                                                  .search(ESM::RefId::stringRefId("fMoveBaseSpeed"));
+            const float baseSpeed
+                = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const float playerScale = world != nullptr && ptr == world->getPlayerPtr()
+                ? MWWorld::getFalloutPlayerSpeedScale()
+                : 1.f;
+            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed) * playerScale;
+        }
 
         return std::max(1.f, data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified()) * 2.5f
             * multiplier;
@@ -1892,6 +1941,17 @@ namespace MWClass
 
     float ESM4Npc::getRunSpeed(const MWWorld::Ptr& ptr) const
     {
+        const ESM4::Npc* statsRecord = chooseStatsRecord(getCustomData(ptr));
+        if (statsRecord != nullptr && statsRecord->mIsFONV)
+        {
+            const ESM::GameSetting* setting = MWBase::Environment::get()
+                                                  .getESMStore()
+                                                  ->get<ESM::GameSetting>()
+                                                  .search(ESM::RefId::stringRefId("fMoveRunMult"));
+            const float multiplier
+                = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveRunMultiplier;
+            return MWWorld::getFalloutRunSpeed(getWalkSpeed(ptr), multiplier);
+        }
         return getWalkSpeed(ptr) * 1.65f;
     }
 

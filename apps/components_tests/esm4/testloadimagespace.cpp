@@ -2,6 +2,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/esm4/reader.hpp>
 
@@ -85,21 +86,55 @@ namespace
         return reader;
     }
 
+    TEST(Esm4ImpactDataSetTest, shouldAcceptTruncatedRetailMaterialTable)
+    {
+        std::string payload;
+        std::string data;
+        appendPod(data, std::uint32_t{ 0x00112233 });
+        appendPod(data, std::uint32_t{ 0x00445566 });
+        appendSubRecord(payload, "DATA", data);
+
+        auto reader = makeReader("IPDS", 0x1234, payload);
+        ESM4::ImpactDataSet impactDataSet;
+        ASSERT_NO_THROW(impactDataSet.load(*reader));
+        EXPECT_EQ(impactDataSet.mImpacts[ESM4::ImpactDataSet::Stone], ESM::FormId::fromUint32(0x00112233));
+        EXPECT_EQ(impactDataSet.mImpacts[ESM4::ImpactDataSet::Dirt], ESM::FormId::fromUint32(0x00445566));
+        EXPECT_TRUE(impactDataSet.mImpacts[ESM4::ImpactDataSet::Grass].isZeroOrUnset());
+    }
+
+    TEST(Esm4ImpactDataSetTest, shouldRejectMalformedMaterialTable)
+    {
+        for (const std::size_t size : { std::size_t{ 0 }, std::size_t{ 1 },
+                 (ESM4::ImpactDataSet::MaterialCount + 1) * sizeof(std::uint32_t) })
+        {
+            std::string payload;
+            appendSubRecord(payload, "DATA", std::string(size, '\0'));
+            auto reader = makeReader("IPDS", 0x1234, payload);
+            ESM4::ImpactDataSet impactDataSet;
+            EXPECT_THROW(impactDataSet.load(*reader), std::runtime_error);
+        }
+    }
+
     TEST(Esm4ImageSpaceTest, shouldParseRetailFNVBaseTraits)
     {
         std::string payload;
         appendSubRecord(payload, "EDID", std::string_view("NVDefaultExterior\0", 18));
-        std::array<float, 38> data{};
-        data[ESM4::ImageSpace::Trait_TargetLuminance] = 1.4f;
-        data[ESM4::ImageSpace::Trait_SunlightDimmer] = 1.1f;
-        data[ESM4::ImageSpace::Trait_SkinDimmer] = 0.55f;
-        data[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.1f;
-        data[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance] = 0.2f;
-        data[ESM4::ImageSpace::Trait_CinematicContrast] = 1.1f;
-        data[ESM4::ImageSpace::Trait_CinematicBrightness] = 1.f;
-        data[ESM4::ImageSpace::Trait_CinematicTintRed] = 0.984313726f;
-        data[ESM4::ImageSpace::Trait_CinematicTintGreen] = 0.568627477f;
-        data[ESM4::ImageSpace::Trait_CinematicTintStrength] = 0.330000013f;
+        std::array<std::uint8_t, 152> data{};
+        const auto setTrait = [&](ESM4::ImageSpace::Trait trait, float value) {
+            std::memcpy(data.data() + static_cast<std::size_t>(trait) * sizeof(float), &value, sizeof(value));
+        };
+        setTrait(ESM4::ImageSpace::Trait_TargetLuminance, 1.4f);
+        setTrait(ESM4::ImageSpace::Trait_SunlightDimmer, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_SkinDimmer, 0.55f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicSaturation, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance, 0.2f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicContrast, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicBrightness, 1.f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintRed, 0.984313726f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintGreen, 0.568627477f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintStrength, 0.330000013f);
+        data[148] = ESM4::ImageSpace::Cinematic_Saturation | ESM4::ImageSpace::Cinematic_Contrast
+            | ESM4::ImageSpace::Cinematic_Tint | ESM4::ImageSpace::Cinematic_Brightness;
         appendSubRecord(payload, "DNAM", data);
 
         auto reader = makeReader("IMGS", 0x8809d, payload, 2);
@@ -111,6 +146,37 @@ namespace
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_TargetLuminance], 1.4f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_SkinDimmer], 0.55f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.330000013f);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldKeepDisabledRetailFNVPostControlsAtShaderIdentity)
+    {
+        std::string payload;
+        std::array<std::uint8_t, 152> data{};
+        const float disabledSaturation = 0.f;
+        const float disabledContrast = 3.f;
+        const float disabledBrightness = 0.25f;
+        const float disabledTintStrength = 1.f;
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicSaturation * sizeof(float),
+            &disabledSaturation, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicContrast * sizeof(float),
+            &disabledContrast, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicBrightness * sizeof(float),
+            &disabledBrightness, sizeof(float));
+        std::memcpy(data.data() + ESM4::ImageSpace::Trait_CinematicTintStrength * sizeof(float),
+            &disabledTintStrength, sizeof(float));
+        data[148] = 0;
+        appendSubRecord(payload, "DNAM", data);
+
+        auto reader = makeReader("IMGS", 0x1507a, payload);
+        ESM4::ImageSpace imageSpace;
+        imageSpace.load(*reader);
+
+        EXPECT_TRUE(imageSpace.mHasCinematicFlags);
+        EXPECT_EQ(imageSpace.mCinematicFlags, 0);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.f);
     }
 
     TEST(Esm4ImageSpaceTest, shouldKeepTes5SplitFieldsOutOfFalloutDnamTraits)
@@ -374,12 +440,12 @@ namespace
         ASSERT_NE(interiorStart, std::string::npos);
         const std::size_t interiorReturn = weatherSource.find("return;", interiorStart);
         ASSERT_NE(interiorReturn, std::string::npos);
-        const std::size_t interiorApply = weatherSource.find("applyFalloutImageSpace();", interiorStart);
-        ASSERT_NE(interiorApply, std::string::npos);
-        EXPECT_LT(interiorApply, interiorReturn);
+        const std::size_t interiorClear = weatherSource.find(clearCall, interiorStart);
+        ASSERT_NE(interiorClear, std::string::npos);
+        EXPECT_LT(interiorClear, interiorReturn);
         const std::string_view interiorBody(
             weatherSource.data() + interiorStart, interiorReturn - interiorStart);
-        EXPECT_EQ(interiorBody.find(clearCall), std::string_view::npos);
+        EXPECT_EQ(interiorBody.find("applyFalloutImageSpace();"), std::string_view::npos);
 
         const std::size_t missingBaseStart = weatherSource.find("if (base == nullptr)", applyStart);
         ASSERT_NE(missingBaseStart, std::string::npos);

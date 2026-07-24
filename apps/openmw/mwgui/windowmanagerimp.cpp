@@ -79,6 +79,7 @@
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/player.hpp"
 
@@ -437,22 +438,27 @@ namespace MWGui
 
         mLocalMapRender = std::make_unique<MWRender::LocalMap>(mViewer->getSceneData()->asGroup());
         auto map = std::make_unique<MapWindow>(mCustomMarkers, mDragAndDrop.get(), mLocalMapRender.get(), mWorkQueue);
+        Log(Debug::Info) << "FNV/ESM4 UI init: map constructed";
         mMap = map.get();
         mWindows.push_back(std::move(map));
         mMap->renderGlobalMap();
+        Log(Debug::Info) << "FNV/ESM4 UI init: global map rendered";
         trackWindow(mMap, makeMapWindowSettingValues());
 
         auto statsWindow = std::make_unique<StatsWindow>(mDragAndDrop.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats constructed";
         mStatsWindow = statsWindow.get();
         mWindows.push_back(std::move(statsWindow));
         trackWindow(mStatsWindow, makeStatsWindowSettingValues());
 
         auto inventoryWindow = std::make_unique<InventoryWindow>(
             *mDragAndDrop, *mItemTransfer, mViewer->getSceneData()->asGroup(), mResourceSystem);
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory constructed";
         mInventoryWindow = inventoryWindow.get();
         mWindows.push_back(std::move(inventoryWindow));
 
         auto spellWindow = std::make_unique<SpellWindow>(mDragAndDrop.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: spell window constructed";
         mSpellWindow = spellWindow.get();
         mWindows.push_back(std::move(spellWindow));
         trackWindow(mSpellWindow, makeSpellsWindowSettingValues());
@@ -461,12 +467,14 @@ namespace MWGui
         mGuiModeStates[GM_None] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
 
         auto tradeWindow = std::make_unique<TradeWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: trade constructed";
         mTradeWindow = tradeWindow.get();
         mWindows.push_back(std::move(tradeWindow));
         trackWindow(mTradeWindow, makeBarterWindowSettingValues());
         mGuiModeStates[GM_Barter] = GuiModeState({ mInventoryWindow, mTradeWindow });
 
         auto console = std::make_unique<Console>(w, h, mConsoleOnlyScripts, mCfgMgr);
+        Log(Debug::Info) << "FNV/ESM4 UI init: console constructed";
         mConsole = console.get();
         mWindows.push_back(std::move(console));
         trackWindow(mConsole, makeConsoleWindowSettingValues());
@@ -474,21 +482,26 @@ namespace MWGui
         constexpr VFS::Path::NormalizedView menubookOptionsOverTexture("textures/tx_menubook_options_over.dds");
         const bool questList = mResourceSystem->getVFS()->exists(menubookOptionsOverTexture);
         auto journal = JournalWindow::create(JournalViewModel::create(), questList, mEncoding);
+        Log(Debug::Info) << "FNV/ESM4 UI init: journal constructed";
         mGuiModeStates[GM_Journal] = GuiModeState(journal.get());
         mWindows.push_back(std::move(journal));
 
         mMessageBoxManager = std::make_unique<MessageBoxManager>(
             mStore->get<ESM::GameSetting>().find("fMessageTimePerChar")->mValue.getFloat());
+        Log(Debug::Info) << "FNV/ESM4 UI init: message boxes constructed";
 
         auto spellBuyingWindow = std::make_unique<SpellBuyingWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: spell buying constructed";
         mGuiModeStates[GM_SpellBuying] = GuiModeState(spellBuyingWindow.get());
         mWindows.push_back(std::move(spellBuyingWindow));
 
         auto travelWindow = std::make_unique<TravelWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: travel constructed";
         mGuiModeStates[GM_Travel] = GuiModeState(travelWindow.get());
         mWindows.push_back(std::move(travelWindow));
 
         auto dialogueWindow = std::make_unique<DialogueWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: dialogue constructed";
         mDialogueWindow = dialogueWindow.get();
         mWindows.push_back(std::move(dialogueWindow));
         trackWindow(mDialogueWindow, makeDialogueWindowSettingValues());
@@ -496,88 +509,108 @@ namespace MWGui
         mTradeWindow->eventTradeDone += MyGUI::newDelegate(mDialogueWindow, &DialogueWindow::onTradeComplete);
 
         auto containerWindow = std::make_unique<ContainerWindow>(*mDragAndDrop, *mItemTransfer);
+        Log(Debug::Info) << "FNV/ESM4 UI init: container constructed";
         mContainerWindow = containerWindow.get();
         mWindows.push_back(std::move(containerWindow));
         trackWindow(mContainerWindow, makeContainerWindowSettingValues());
         mGuiModeStates[GM_Container] = GuiModeState({ mContainerWindow, mInventoryWindow });
 
         auto hud = std::make_unique<HUD>(mCustomMarkers, mDragAndDrop.get(), mLocalMapRender.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: HUD constructed";
         mHud = hud.get();
         mWindows.push_back(std::move(hud));
 
         mToolTips = std::make_unique<ToolTips>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: tooltips constructed";
 
         auto scrollWindow = std::make_unique<ScrollWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: scroll constructed";
         mScrollWindow = scrollWindow.get();
         mWindows.push_back(std::move(scrollWindow));
         mGuiModeStates[GM_Scroll] = GuiModeState(mScrollWindow);
 
         auto bookWindow = std::make_unique<BookWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: book constructed";
         mBookWindow = bookWindow.get();
         mWindows.push_back(std::move(bookWindow));
         mGuiModeStates[GM_Book] = GuiModeState(mBookWindow);
 
         auto countDialog = std::make_unique<CountDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: count dialog constructed";
         mCountDialog = countDialog.get();
         mWindows.push_back(std::move(countDialog));
 
         auto settingsWindow = std::make_unique<SettingsWindow>(mCfgMgr);
+        Log(Debug::Info) << "FNV/ESM4 UI init: settings constructed";
         mSettingsWindow = settingsWindow.get();
         mWindows.push_back(std::move(settingsWindow));
         trackWindow(mSettingsWindow, makeSettingsWindowSettingValues());
 
         auto confirmationDialog = std::make_unique<ConfirmationDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: confirmation constructed";
         mConfirmationDialog = confirmationDialog.get();
         mWindows.push_back(std::move(confirmationDialog));
 
         auto alchemyWindow = std::make_unique<AlchemyWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: alchemy constructed";
         trackWindow(alchemyWindow.get(), makeAlchemyWindowSettingValues());
         mGuiModeStates[GM_Alchemy] = GuiModeState(alchemyWindow.get());
         mWindows.push_back(std::move(alchemyWindow));
 
         auto quickKeysMenu = std::make_unique<QuickKeysMenu>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: quick keys constructed";
         mQuickKeysMenu = quickKeysMenu.get();
         mWindows.push_back(std::move(quickKeysMenu));
         mGuiModeStates[GM_QuickKeysMenu] = GuiModeState(mQuickKeysMenu);
 
         auto levelupDialog = std::make_unique<LevelupDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: levelup constructed";
         mGuiModeStates[GM_Levelup] = GuiModeState(levelupDialog.get());
         mWindows.push_back(std::move(levelupDialog));
 
         auto waitDialog = std::make_unique<WaitDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: wait constructed";
         mWaitDialog = waitDialog.get();
         mWindows.push_back(std::move(waitDialog));
         mGuiModeStates[GM_Rest] = GuiModeState({ mWaitDialog->getProgressBar(), mWaitDialog });
 
         auto spellCreationDialog = std::make_unique<SpellCreationDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: spell creation constructed";
         mGuiModeStates[GM_SpellCreation] = GuiModeState(spellCreationDialog.get());
         mWindows.push_back(std::move(spellCreationDialog));
 
         auto enchantingDialog = std::make_unique<EnchantingDialog>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: enchanting constructed";
         mGuiModeStates[GM_Enchanting] = GuiModeState(enchantingDialog.get());
         mWindows.push_back(std::move(enchantingDialog));
 
         auto trainingWindow = std::make_unique<TrainingWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: training constructed";
         mGuiModeStates[GM_Training] = GuiModeState({ trainingWindow->getProgressBar(), trainingWindow.get() });
         mWindows.push_back(std::move(trainingWindow));
 
         auto merchantRepair = std::make_unique<MerchantRepair>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: merchant repair constructed";
         mGuiModeStates[GM_MerchantRepair] = GuiModeState(merchantRepair.get());
         mWindows.push_back(std::move(merchantRepair));
 
         auto repair = std::make_unique<Repair>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: repair constructed";
         mGuiModeStates[GM_Repair] = GuiModeState(repair.get());
         mWindows.push_back(std::move(repair));
 
         mSoulgemDialog = std::make_unique<SoulgemDialog>(mMessageBoxManager.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: soulgem constructed";
 
         auto companionWindow
             = std::make_unique<CompanionWindow>(*mDragAndDrop, *mItemTransfer, mMessageBoxManager.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: companion constructed";
         trackWindow(companionWindow.get(), makeCompanionWindowSettingValues());
         mGuiModeStates[GM_Companion] = GuiModeState({ mInventoryWindow, companionWindow.get() });
         mWindows.push_back(std::move(companionWindow));
 
         auto jailScreen = std::make_unique<JailScreen>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: jail constructed";
         mJailScreen = jailScreen.get();
         mWindows.push_back(std::move(jailScreen));
         mGuiModeStates[GM_Jail] = GuiModeState(mJailScreen);
@@ -590,6 +623,7 @@ namespace MWGui
             mWindows.push_back(std::move(werewolfFader));
         }
         auto blindnessFader = std::make_unique<ScreenFader>("black");
+        Log(Debug::Info) << "FNV/ESM4 UI init: blindness fader constructed";
         mBlindnessFader = blindnessFader.get();
         mWindows.push_back(std::move(blindnessFader));
 
@@ -603,28 +637,34 @@ namespace MWGui
             hitFaderCoord = MyGUI::FloatCoord(0.2, 0.25, 0.6, 0.5);
         }
         auto hitFader = std::make_unique<ScreenFader>(hitFaderTexture, hitFaderLayout, hitFaderCoord);
+        Log(Debug::Info) << "FNV/ESM4 UI init: hit fader constructed";
         mHitFader = hitFader.get();
         mWindows.push_back(std::move(hitFader));
 
         auto screenFader = std::make_unique<ScreenFader>("black");
+        Log(Debug::Info) << "FNV/ESM4 UI init: screen fader constructed";
         mScreenFader = screenFader.get();
         mWindows.push_back(std::move(screenFader));
 
         auto debugWindow = std::make_unique<DebugWindow>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: debug constructed";
         mDebugWindow = debugWindow.get();
         mWindows.push_back(std::move(debugWindow));
         trackWindow(mDebugWindow, makeDebugWindowSettingValues());
 
         auto postProcessorHud = std::make_unique<PostProcessorHud>(mCfgMgr);
+        Log(Debug::Info) << "FNV/ESM4 UI init: postprocessor constructed";
         mPostProcessorHud = postProcessorHud.get();
         mWindows.push_back(std::move(postProcessorHud));
         trackWindow(mPostProcessorHud, makePostprocessorWindowSettingValues());
 
         auto controllerButtonsOverlay = std::make_unique<ControllerButtonsOverlay>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: controller overlay constructed";
         mControllerButtonsOverlay = controllerButtonsOverlay.get();
         mWindows.push_back(std::move(controllerButtonsOverlay));
 
         auto inventoryTabsOverlay = std::make_unique<InventoryTabsOverlay>();
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory tabs overlay constructed";
         mInventoryTabsOverlay = inventoryTabsOverlay.get();
         mWindows.push_back(std::move(inventoryTabsOverlay));
 
@@ -637,6 +677,7 @@ namespace MWGui
         mHud->setVisible(true);
 
         mCharGen = std::make_unique<CharacterCreation>(mViewer->getSceneData()->asGroup(), mResourceSystem);
+        Log(Debug::Info) << "FNV/ESM4 UI init: character creation constructed";
 
 //## VR_PATCH BEGIN
         auto vrMetaMenu = std::make_unique<MWVR::VrMetaMenu>(w, h);
@@ -649,14 +690,20 @@ namespace MWGui
         mWindows.emplace_back(std::move(radialMenu));
         mGuiModeStates[GM_RadialMenu] = GuiModeState(mRadialMenu);
 //## VR_PATCH END
+        Log(Debug::Info) << "FNV/ESM4 UI init: update pinned begin";
         updatePinnedWindows();
+        Log(Debug::Info) << "FNV/ESM4 UI init: update pinned complete";
 
         // Set up visibility
+        Log(Debug::Info) << "FNV/ESM4 UI init: update visible begin";
         updateVisible();
+        Log(Debug::Info) << "FNV/ESM4 UI init: update visible complete";
 
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats listeners begin";
         mStatsWatcher->addListener(mHud);
         mStatsWatcher->addListener(mStatsWindow);
         mStatsWatcher->addListener(mCharGen.get());
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats listeners complete";
 
         for (auto& window : mWindows)
         {
@@ -880,12 +927,13 @@ namespace MWGui
             else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
             {
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
-                eff = GW_Map | GW_Inventory | GW_Magic | GW_Stats;
+                constexpr int falloutPaneMasks[4] = { GW_Map, GW_Inventory, GW_Magic, GW_Stats };
+                eff = falloutPaneMasks[activeIndex];
                 static bool loggedPipBoySurface = false;
                 if (!loggedPipBoySurface)
                 {
                     Log(Debug::Info)
-                        << "FNV/ESM4 proof: Fallout inventory mode opens all native panes map=1 items=1 aid=1 data=1";
+                        << "FNV/ESM4 proof: Fallout inventory mode shows only the selected retail pane";
                     loggedPipBoySurface = true;
                 }
                 Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
@@ -914,8 +962,8 @@ namespace MWGui
             {
                 const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
                 const int margin = 24;
-                const int top = std::min(std::max(88, viewSize.height / 8), 128);
-                const int bottom = 36;
+                const int top = VR::getVR() ? std::min(std::max(88, viewSize.height / 8), 128) : 52;
+                const int bottom = VR::getVR() ? 36 : 16;
                 const int gap = 8;
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
                 const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
@@ -982,6 +1030,9 @@ namespace MWGui
                     }
                 }
 
+                if (activeIndex == 0 && mMap != nullptr)
+                    mMap->fitFalloutWorldMapOnce();
+
                 if (WindowBase* activeWindow = windows[activeIndex])
                 {
                     if (activeWindow->mMainWidget != nullptr)
@@ -1001,6 +1052,8 @@ namespace MWGui
         {
             mInventoryTabsOverlay->setVisible(true);
             mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
+            if (mInventoryTabsOverlay->mMainWidget != nullptr)
+                MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
         }
         else if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
             && getMode() == GM_Inventory && VR::getVR() && mInventoryTabsOverlay != nullptr)
@@ -2386,7 +2439,9 @@ namespace MWGui
         if (mRestAllowed == false
             && MWBase::Environment::get().getWorld()->getGlobalFloat(MWWorld::Globals::sCharGenState) == -1)
             mRestAllowed = true;
-        return mRestAllowed;
+        const MWWorld::FalloutPlayerRuntimeState& falloutState
+            = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+        return mRestAllowed && (!falloutState.isInitialized() || falloutState.isWaitEnabled());
     }
 
     bool WindowManager::getPlayerSleeping()
@@ -2402,6 +2457,27 @@ namespace MWGui
     void WindowManager::addVisitedLocation(const std::string& name, int x, int y)
     {
         mMap->addVisitedLocation(name, x, y);
+    }
+
+    void WindowManager::refreshFalloutMapMarkers()
+    {
+        mMap->refreshFalloutMapMarkers();
+    }
+
+    bool WindowManager::focusFalloutMapMarker(ESM::FormId marker, float zoom)
+    {
+        return mMap != nullptr && mMap->focusFalloutMapMarker(marker, zoom);
+    }
+
+    bool WindowManager::requestFalloutFastTravel(ESM::FormId marker)
+    {
+        return mMap != nullptr && mMap->requestFalloutFastTravel(marker);
+    }
+
+    void WindowManager::confirmFalloutFastTravel()
+    {
+        if (mConfirmationDialog != nullptr)
+            mConfirmationDialog->confirm();
     }
 
     const Translation::Storage& WindowManager::getTranslationDataStorage() const
@@ -3381,6 +3457,8 @@ namespace MWGui
         {
             mInventoryTabsOverlay->setVisible(true);
             mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
+            if (mInventoryTabsOverlay->mMainWidget != nullptr)
+                MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
         }
         else
             mInventoryTabsOverlay->setVisible(false);

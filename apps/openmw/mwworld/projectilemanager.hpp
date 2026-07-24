@@ -65,6 +65,8 @@ namespace MWWorld
         bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
             const osg::Vec3f& pos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact);
+        bool launchFalloutHitscanTracer(
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination);
 
         /// Count queued V.A.T.S. projectiles that must resolve before the cinematic transaction can finish.
         /// Persistent mines/remote explosives are excluded because their authored lifetime is open-ended.
@@ -162,17 +164,28 @@ namespace MWWorld
             MWMechanics::FalloutProjectileImpactContract mImpact;
         };
 
+        struct FalloutHitscanTracerState : public State
+        {
+            osg::Vec3f mOrigin;
+            osg::Vec3f mDestination;
+            float mElapsedTime = 0.f;
+            float mLifetime = 0.f;
+        };
+
         std::vector<MagicBoltState> mMagicBolts;
         std::vector<ProjectileState> mProjectiles;
         std::vector<FalloutProjectileState> mFalloutProjectiles;
+        std::vector<FalloutHitscanTracerState> mFalloutHitscanTracers;
 
         void cleanupProjectile(ProjectileState& state);
         void cleanupFalloutProjectile(FalloutProjectileState& state);
+        void cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state);
         void cleanupMagicBolt(MagicBoltState& state);
         void periodicCleanup(float dt);
 
         void moveProjectiles(float dt);
         void moveFalloutProjectiles(float dt);
+        void moveFalloutHitscanTracers(float dt);
         bool bounceFalloutProjectile(FalloutProjectileState& state, const ESM4::Projectile& projectile,
             const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
         void moveMagicBolts(float dt);

@@ -8198,6 +8198,9 @@ namespace MWRender
             throw std::runtime_error("native first-person profile requires an FNV NPC");
         if (!std::isfinite(state.mFieldOfView) || state.mFieldOfView <= 0.f || state.mFieldOfView >= 180.f)
             throw std::runtime_error("native first-person profile received an invalid FOV");
+        if (state.mSaveWornArmorModels.empty())
+            throw std::runtime_error(
+                "native first-person profile requires an equipped upper-body Arms partition");
 
         const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
         std::string aimOverlay = equippedWeapon != nullptr

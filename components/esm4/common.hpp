@@ -135,6 +135,7 @@ namespace ESM4
         REC_RCCT = fourCC("RCCT"), // Recipe Category
         REC_RCPE = fourCC("RCPE"), // Recipe
         REC_REFR = fourCC("REFR"), // Object Reference
+        REC_REPU = fourCC("REPU"), // Reputation (Fallout: New Vegas)
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship
         REC_REVB = fourCC("REVB"), // Reverb Parameters
@@ -208,6 +209,7 @@ namespace ESM4
         Rec_IgnoreObj = 0x00100000, // (ACTI) Ignore Object Interaction
                                     //   Ignore Object Interaction Sets Dangerous Automatically
         Rec_Marker = 0x00800000, // Is Marker
+        Rec_Destroyed = 0x00800000, // (REFR/ACHR/ACRE, Fallout) Destroyed/non-functional
         Rec_Obstacle = 0x02000000, // (ACTI) Obstacle / (REFR) No AI Acquire
         Rec_NavMFilter = 0x04000000, // NavMesh Gen - Filter
         Rec_NavMBBox = 0x08000000, // NavMesh Gen - Bounding Box

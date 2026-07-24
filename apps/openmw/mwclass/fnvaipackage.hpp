@@ -40,8 +40,14 @@ namespace MWClass
     // the runtime contract behind the GECK EvaluatePackage/evp command.
     bool requestFnvAiPackageEvaluation(const MWWorld::Ptr& ptr);
 
+    // Clear every current behavior (including combat, pursuit, pathing, and
+    // furniture use) before re-evaluating the authored package list. This is
+    // the stronger runtime contract behind the GECK ResetAI command.
+    bool resetFnvAiState(const MWWorld::Ptr& ptr);
+
     // Creature-side implementation used by the actor-generic entry point.
     bool requestFnvCreatureAiPackageEvaluation(const MWWorld::Ptr& ptr);
+    bool resetFnvCreatureAiState(const MWWorld::Ptr& ptr);
 }
 
 #endif

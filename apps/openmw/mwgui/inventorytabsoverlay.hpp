@@ -6,6 +6,7 @@
 namespace MyGUI
 {
     class Button;
+    struct MouseButton;
 }
 
 namespace MWGui
@@ -21,7 +22,7 @@ namespace MWGui
     private:
         std::vector<MyGUI::Button*> mTabs;
 
-        void onTabClicked(MyGUI::Widget* sender);
+        void onTabPressed(MyGUI::Widget* sender, int left, int top, MyGUI::MouseButton button);
     };
 }
 

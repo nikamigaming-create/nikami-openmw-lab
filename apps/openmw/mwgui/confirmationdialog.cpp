@@ -54,6 +54,11 @@ namespace MWGui
         center();
     }
 
+    void ConfirmationDialog::confirm()
+    {
+        onOkButtonClicked(mOkButton);
+    }
+
     bool ConfirmationDialog::exit()
     {
         setVisible(false);

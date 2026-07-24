@@ -255,31 +255,55 @@ namespace
         EXPECT_THAT(fixture.resolve().mError, HasSubstr("flags or mode"));
     }
 
-    TEST(FNVWeatherModel, UsesOnlyTheCapturedHighNoonToDayIntervalIncludingItsBoundaries)
+    TEST(FNVWeatherModel, UsesRetailColorSelectorAcrossTheEntireDay)
     {
         WeatherFixture fixture;
         auto& samples = fixture.mCurrent.mColors[ESM4::Weather::Color_Ambient];
+        samples[ESM4::Weather::Time_Night] = { 1, 2, 3, 0xff };
+        samples[ESM4::Weather::Time_Sunrise] = { 51, 52, 53, 0xff };
         samples[ESM4::Weather::Time_HighNoon] = { 10, 20, 30, 0xff };
         samples[ESM4::Weather::Time_Day] = { 110, 120, 130, 0x00 };
+        samples[ESM4::Weather::Time_Sunset] = { 201, 202, 203, 0xff };
 
         fixture.mScene.mGameHour = 12.f;
         MWWorld::FalloutWeatherModelResolution atHighNoon = fixture.resolve();
         ASSERT_TRUE(atHighNoon) << atHighNoon.mError;
-        EXPECT_FLOAT_EQ(atHighNoon.mModel->mHighNoonToDayFactor, 0.f);
-        expectColor(atHighNoon.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 10.f / 255.f,
-            20.f / 255.f, 30.f / 255.f);
+        EXPECT_EQ(atHighNoon.mModel->mTimeBlend.mPrimary, ESM4::Weather::Time_Day);
+        expectColor(atHighNoon.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 110.f / 255.f,
+            120.f / 255.f, 130.f / 255.f);
 
         fixture.mScene.mGameHour = 18.f;
         MWWorld::FalloutWeatherModelResolution atDay = fixture.resolve();
         ASSERT_TRUE(atDay) << atDay.mError;
-        EXPECT_FLOAT_EQ(atDay.mModel->mHighNoonToDayFactor, 1.f);
+        EXPECT_EQ(atDay.mModel->mTimeBlend.mPrimary, ESM4::Weather::Time_Day);
         expectColor(atDay.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 110.f / 255.f, 120.f / 255.f,
             130.f / 255.f);
 
-        fixture.mScene.mGameHour = std::nextafter(12.f, 0.f);
-        EXPECT_THAT(fixture.resolve().mError, HasSubstr("outside the captured"));
-        fixture.mScene.mGameHour = std::nextafter(18.f, 24.f);
-        EXPECT_THAT(fixture.resolve().mError, HasSubstr("outside the captured"));
+        for (float hour : { 0.f, 2.f, 5.5f, 6.f, 7.f, 8.f, 10.f, 12.f, 15.f, 18.f, 19.f, 20.f, 23.99f })
+        {
+            fixture.mScene.mGameHour = hour;
+            EXPECT_TRUE(fixture.resolve()) << "hour " << hour;
+        }
+
+        fixture.mScene.mGameHour = 2.f;
+        const auto atNight = fixture.resolve();
+        ASSERT_TRUE(atNight);
+        EXPECT_EQ(atNight.mModel->mTimeBlend.mPrimary, ESM4::Weather::Time_Night);
+        expectColor(atNight.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 1.f / 255.f, 2.f / 255.f,
+            3.f / 255.f);
+
+        fixture.mScene.mGameHour = 7.f;
+        const auto atSunrise = fixture.resolve();
+        ASSERT_TRUE(atSunrise);
+        EXPECT_EQ(atSunrise.mModel->mTimeBlend.mPrimary, ESM4::Weather::Time_Sunrise);
+
+        fixture.mScene.mGameHour = 19.f;
+        const auto atSunset = fixture.resolve();
+        ASSERT_TRUE(atSunset);
+        EXPECT_EQ(atSunset.mModel->mTimeBlend.mPrimary, ESM4::Weather::Time_Sunset);
+
+        fixture.mScene.mGameHour = 24.f;
+        EXPECT_THAT(fixture.resolve().mError, HasSubstr("game hour must be"));
     }
 
     TEST(FNVWeatherModel, ReproducesTheSave330AfternoonColorAnchorsWithoutTes3Clear)
@@ -305,7 +329,9 @@ namespace
         EXPECT_EQ(model.mCurrent.mFogDistance, fixture.mCurrent.mFogDistance);
         EXPECT_EQ(model.mCurrent.mData.windSpeed, 50);
         EXPECT_EQ(model.mCurrent.mData.sunGlare, 54);
-        EXPECT_NEAR(model.mHighNoonToDayFactor, 0.3691670f, 1e-7f);
+        EXPECT_EQ(model.mTimeBlend.mPrimary, ESM4::Weather::Time_Day);
+        EXPECT_EQ(model.mTimeBlend.mSecondary, ESM4::Weather::Time_HighNoon);
+        EXPECT_NEAR(model.mTimeBlend.mPrimaryStrength, 0.3691670f, 1e-7f);
         expectColor(model.mCurrentColors[ESM4::Weather::Color_SkyUpper], 0.25050324f, 0.32790846f,
             0.58878428f);
         expectColor(model.mCurrentColors[ESM4::Weather::Color_Fog], 0.5882353f, 0.65882355f, 0.74509805f);

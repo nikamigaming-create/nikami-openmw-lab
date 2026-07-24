@@ -360,6 +360,17 @@ namespace MWRender
                                      "model; profile=disabled";
                 return std::nullopt;
             }
+            // The standalone hand meshes end at the wrists.  Retail only makes them
+            // continuous by composing them with the Arms partition from an equipped
+            // upper-body ARMO model.  Building a profile without that partition
+            // produces the detached floating fists seen on an unequipped Player.
+            if (state.mSaveWornArmorModels.empty())
+            {
+                Log(Debug::Warning)
+                    << "FNV first-person equipped profile: no equipped upper-body Arms partition; "
+                       "profile=disabled reason=prevent-detached-hands";
+                return std::nullopt;
+            }
             state.mPipBoyGlove
                 = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
             const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(visualPtr);
@@ -1694,6 +1705,14 @@ namespace MWRender
                                               << liveArmor.size() << " reason=" << error.what();
                         }
                     }
+                    else
+                    {
+                        mFalloutPlayerFirstPersonAnimation = nullptr;
+                        mFalloutPlayerFirstPersonAlignmentLogged = false;
+                        Log(Debug::Info)
+                            << "FNV first-person equipment bridge: rebuilt=0 armor=" << liveArmor.size()
+                            << " profile=hidden reason=no-connected-upper-body-arms";
+                    }
                 }
 
                 const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
@@ -2462,8 +2481,10 @@ namespace MWRender
         }
         else
         {
+            Log(Debug::Info) << "FNV/ESM4 render player: legacy tracking animation begin";
             mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
                 NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
+            Log(Debug::Info) << "FNV/ESM4 render player: legacy tracking animation complete";
         }
 //## VR_PATCH END
 
@@ -2483,11 +2504,14 @@ namespace MWRender
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
+            Log(Debug::Info) << "FNV/ESM4 render player: saved worn visual application begin count="
+                             << mFalloutSaveWornVisualItems.size();
             const std::optional<ESM4NpcAnimation::FirstPersonState> firstPersonProfile
                 = falloutFlatProfile
                 ? applyFalloutSaveWornPlayerVisuals(
                     mFalloutSaveWornVisualItems, visualPtr, mFirstPersonFieldOfView, mResourceSystem)
                 : std::nullopt;
+            Log(Debug::Info) << "FNV/ESM4 render player: saved worn visual application complete";
             if (falloutFlatProfile)
             {
                 mFalloutPlayerFirstPersonWornSignature
@@ -2511,8 +2535,10 @@ namespace MWRender
                              << osg::RadiansToDegrees(playerVisualYawOffset) << " axis=(0,0,-1)"
                              << " parent=" << player.getRefData().getBaseNode()->getName();
 
+            Log(Debug::Info) << "FNV/ESM4 render player: native visual animation begin";
             mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(
                 visualPtr, osg::ref_ptr<osg::Group>(mFalloutPlayerVisualBasis), mResourceSystem);
+            Log(Debug::Info) << "FNV/ESM4 render player: native visual animation complete";
             if (firstPersonProfile)
             {
                 mFalloutPlayerFirstPersonBasis = new osg::MatrixTransform;

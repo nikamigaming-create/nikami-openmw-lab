@@ -71,6 +71,7 @@ namespace MWDialogue
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
         std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4ResultReferenceIds;
+        mutable std::unordered_map<ESM::FormId, std::vector<const ESM4::DialogInfo*>> mEsm4InfosByTopic;
 
         int mOriginalDisposition;
         int mCurrentDisposition;
@@ -89,7 +90,7 @@ namespace MWDialogue
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
         void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
             const ESM4::DialogInfo* retainedInfo = nullptr);
-        const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
+        const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic, bool requireActorAffinity = false) const;
         const ESM4::DialogInfo* resolveEsm4Selection(const Esm4DialogueSelection& selection) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
@@ -130,6 +131,7 @@ namespace MWDialogue
         bool checkServiceRefused(ResponseCallback* callback, ServiceType service = ServiceType::Any) override;
 
         bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) override;
+        bool say(const MWWorld::Ptr& actor, const MWWorld::Ptr& listener, const ESM::FormId& topic) override;
 
         // calbacks for the GUI
         void keywordSelected(std::string_view keyword, ResponseCallback* callback) override;

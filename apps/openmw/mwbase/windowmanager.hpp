@@ -17,6 +17,7 @@
 
 namespace ESM
 {
+    struct FormId;
     class RefId;
 }
 
@@ -427,6 +428,13 @@ namespace MWBase
         virtual std::vector<std::string_view> getAllWindowIds() const = 0;
         virtual std::vector<std::string_view> getAllowedWindowIds(MWGui::GuiMode mode) const = 0;
         virtual const std::map<MWGui::GuiMode, std::string_view>& guiModeToName() const = 0;
+
+        // Keep FNV extensions at the end so downstream objects compiled against
+        // the pre-extension interface retain their existing virtual-table slots.
+        virtual void refreshFalloutMapMarkers() = 0;
+        virtual bool focusFalloutMapMarker(ESM::FormId marker, float zoom) = 0;
+        virtual bool requestFalloutFastTravel(ESM::FormId marker) = 0;
+        virtual void confirmFalloutFastTravel() = 0;
     };
 }
 

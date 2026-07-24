@@ -4404,6 +4404,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ACTIVATE_FRAME");
     static const int proofFalloutReloadFrame = getProofFrame("OPENMW_FNV_PROOF_RELOAD_FRAME");
     static const int proofFalloutWeaponAuditFrame = getProofFrame("OPENMW_FNV_PROOF_WEAPON_AUDIT_FRAME");
+    static const int proofFalloutFastTravelDiscoverFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_DISCOVER_FRAME");
+    static const int proofFalloutFastTravelSelectFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_SELECT_FRAME");
+    static const int proofFalloutFastTravelConfirmFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_CONFIRM_FRAME");
+    static const std::vector<std::string> proofFalloutTourLocations
+        = readWorldViewerStringList("OPENMW_FNV_PROOF_TOUR_LOCATIONS");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
     static std::vector<std::string> proofActorBatchTargets
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
@@ -4433,6 +4441,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofFalloutQuickKeyActivated = false;
     static bool proofFalloutReloaded = false;
     static bool proofFalloutWeaponAudited = false;
+    static bool proofFalloutFastTravelDiscovered = false;
+    static bool proofFalloutFastTravelSelected = false;
+    static bool proofFalloutFastTravelConfirmed = false;
+    static int proofFalloutTourPhase = proofFalloutTourLocations.empty() ? -1 : 0;
+    static std::size_t proofFalloutTourIndex = 0;
+    static unsigned proofFalloutTourPhaseFrame = 0;
+    static float proofFalloutTourLookYaw = 0.f;
+    static float proofFalloutTourLookPitch = 0.f;
+    static MWWorld::Ptr proofFalloutTourActor;
     static bool proofSayQueued = false;
     static bool proofDialogueTopicQueued = false;
     static bool proofTimedScript1Executed = false;
@@ -5382,6 +5399,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             Log(Debug::Info) << "Playable session: stabilized nearby actors by disabling autonomous AI"
                              << " previousActive=" << wasActive
                              << " currentActive=" << mMechanicsManager->isAIActive();
+        }
+
+        // Apply scripted tour walking before the mechanics tick consumes player controls.
+        if (proofFalloutTourPhase >= 0 && mWorld != nullptr
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            constexpr unsigned tourWalkFrames = 120;
+            const unsigned tourPhaseElapsed = frameNumber - proofFalloutTourPhaseFrame;
+            const float forward
+                = proofFalloutTourPhase == 6 && tourPhaseElapsed < tourWalkFrames ? 0.65f : 0.f;
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
         }
 
         // update mechanics
@@ -9084,6 +9131,299 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     executeProofTimedScript(proofTimedScript1Frame, "OPENMW_PROOF_TIMED_SCRIPT_1", proofTimedScript1Executed);
     executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
 
+    const auto proofFalloutFastTravelMarker = [&]() -> std::optional<ESM::FormId> {
+        const char* markerText = std::getenv("OPENMW_FNV_PROOF_FAST_TRAVEL_MARKER");
+        if (markerText == nullptr || *markerText == '\0')
+            return std::nullopt;
+        try
+        {
+            const ESM::RefId marker = ESM::RefId::deserializeText(markerText);
+            if (const ESM::FormId* formId = marker.getIf<ESM::FormId>())
+                return *formId;
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV fast-travel proof: invalid marker \"" << markerText
+                              << "\": " << error.what();
+        }
+        return std::nullopt;
+    };
+    if (!proofFalloutFastTravelDiscovered && proofFalloutFastTravelDiscoverFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelDiscoverFrame) && proofRunning
+        && proofWorldReady && mWorld != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelDiscovered = marker && mWorld->showFalloutMapMarker(*marker, true);
+        Log(proofFalloutFastTravelDiscovered ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: discover result=" << (proofFalloutFastTravelDiscovered ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelSelected && proofFalloutFastTravelSelectFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelSelectFrame) && proofRunning
+        && proofWorldReady && mWindowManager != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelSelected = marker && mWindowManager->requestFalloutFastTravel(*marker);
+        Log(proofFalloutFastTravelSelected ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: select result=" << (proofFalloutFastTravelSelected ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelConfirmed && proofFalloutFastTravelConfirmFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelConfirmFrame) && proofRunning
+        && proofWorldReady && proofFalloutFastTravelSelected && mWindowManager != nullptr)
+    {
+        mWindowManager->confirmFalloutFastTravel();
+        proofFalloutFastTravelConfirmed = true;
+        Log(Debug::Info) << "FNV fast-travel proof: confirmed frame=" << frameNumber;
+    }
+
+    if (proofFalloutTourPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
+        && mWindowManager != nullptr && mMechanicsManager != nullptr)
+    {
+        constexpr int overviewFrames = 120;
+        constexpr int mapFrames = 90;
+        constexpr int confirmationFrames = 15;
+        constexpr int minimumReadyFrames = 45;
+        constexpr int walkFrames = 120;
+        constexpr int lookFrames = 240;
+        constexpr int readyTimeoutFrames = 600;
+
+        const auto findTourMarker = [&](std::string_view name) -> const ESM4::Reference* {
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker != nullptr && marker->mIsMapMarker
+                    && Misc::StringUtils::ciEqual(marker->mFullName, name))
+                    return marker;
+            }
+            return nullptr;
+        };
+        const auto currentTourMarker = [&]() -> const ESM4::Reference* {
+            return proofFalloutTourIndex < proofFalloutTourLocations.size()
+                ? findTourMarker(proofFalloutTourLocations[proofFalloutTourIndex])
+                : nullptr;
+        };
+        const auto beginPhase = [&](int phase) {
+            proofFalloutTourPhase = phase;
+            proofFalloutTourPhaseFrame = frameNumber;
+        };
+        const auto setTourMovement = [&](float forward) {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
+        };
+
+        const unsigned elapsed = frameNumber - proofFalloutTourPhaseFrame;
+        if (proofFalloutTourPhase == 0)
+        {
+            std::size_t discovered = 0;
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker != nullptr && marker->mIsMapMarker && !marker->mFullName.empty()
+                    && mWorld->showFalloutMapMarker(marker->mId, true, false))
+                    ++discovered;
+            }
+            if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+            mWindowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV dirty-dozen tour: revealed authored map markers=" << discovered
+                             << " requestedStops=" << proofFalloutTourLocations.size()
+                             << " frame=" << frameNumber;
+            beginPhase(1);
+        }
+        else if (proofFalloutTourPhase == 1 && elapsed >= overviewFrames)
+        {
+            beginPhase(2);
+        }
+        else if (proofFalloutTourPhase == 2)
+        {
+            setTourMovement(0.f);
+            proofFalloutTourActor = MWWorld::Ptr();
+            const ESM4::Reference* marker = currentTourMarker();
+            if (marker == nullptr)
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: missing authored map marker \""
+                                  << proofFalloutTourLocations[proofFalloutTourIndex] << "\"";
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+            else
+            {
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                if (!mWindowManager->focusFalloutMapMarker(marker->mId, 1.6f))
+                {
+                    Log(Debug::Error) << "FNV dirty-dozen tour: could not focus authored marker "
+                                      << marker->mId;
+                    mStateManager->requestQuit();
+                    proofFalloutTourPhase = -1;
+                }
+                else
+                {
+                    Log(Debug::Info) << "FNV dirty-dozen tour: map stop=" << (proofFalloutTourIndex + 1)
+                                     << "/" << proofFalloutTourLocations.size() << " name=\""
+                                     << marker->mFullName << "\" marker=" << marker->mId
+                                     << " frame=" << frameNumber;
+                    beginPhase(3);
+                }
+            }
+        }
+        else if (proofFalloutTourPhase == 3 && elapsed >= mapFrames)
+        {
+            const ESM4::Reference* marker = currentTourMarker();
+            if (marker == nullptr || !mWindowManager->requestFalloutFastTravel(marker->mId))
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: could not select stop="
+                                  << (proofFalloutTourIndex + 1);
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+            else
+                beginPhase(4);
+        }
+        else if (proofFalloutTourPhase == 4 && elapsed >= confirmationFrames)
+        {
+            mWindowManager->confirmFalloutFastTravel();
+            Log(Debug::Info) << "FNV dirty-dozen tour: confirmed stop=" << (proofFalloutTourIndex + 1)
+                             << " frame=" << frameNumber;
+            beginPhase(5);
+        }
+        else if (proofFalloutTourPhase == 5)
+        {
+            const ESM4::Reference* marker = currentTourMarker();
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+            const float dx = marker != nullptr ? playerPosition.x() - marker->mPos.pos[0] : 1e9f;
+            const float dy = marker != nullptr ? playerPosition.y() - marker->mPos.pos[1] : 1e9f;
+            std::vector<MWWorld::Ptr> nearbyActors;
+            mMechanicsManager->getActorsInRange(playerPosition, 8192.f, nearbyActors);
+            const std::size_t livingSceneActors = static_cast<std::size_t>(
+                std::count_if(nearbyActors.begin(), nearbyActors.end(), [&](const MWWorld::Ptr& actor) {
+                    return actor != player && !actor.isEmpty() && actor.getCellRef().getCount() > 0;
+                }));
+            const bool arrived = marker != nullptr && dx * dx + dy * dy <= 8192.f * 8192.f;
+            if (elapsed >= minimumReadyFrames && arrived && livingSceneActors > 0)
+            {
+                MWWorld::Ptr closestActor;
+                float closestDistanceSquared = std::numeric_limits<float>::max();
+                for (const MWWorld::Ptr& actor : nearbyActors)
+                {
+                    if (actor == player || actor.isEmpty() || actor.getCellRef().getCount() <= 0)
+                        continue;
+                    const osg::Vec3f delta
+                        = actor.getRefData().getPosition().asVec3() - playerPosition;
+                    const float distanceSquared = delta.length2();
+                    if (distanceSquared < closestDistanceSquared)
+                    {
+                        closestDistanceSquared = distanceSquared;
+                        closestActor = actor;
+                    }
+                }
+
+                std::string focusedActor;
+                if (!closestActor.isEmpty())
+                {
+                    proofFalloutTourActor = closestActor;
+                    focusedActor = std::string(closestActor.getClass().getName(closestActor));
+                    if (MWRender::Camera* camera = mWorld->getCamera())
+                    {
+                        const osg::Vec3d cameraPosition = camera->getPosition();
+                        osg::Vec3d actorCenter = closestActor.getRefData().getPosition().asVec3();
+                        actorCenter.z() += 96.0;
+                        const osg::Vec3d delta = actorCenter - cameraPosition;
+                        const double horizontal
+                            = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                        proofFalloutTourLookYaw
+                            = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+                        proofFalloutTourLookPitch
+                            = static_cast<float>(std::atan2(delta.z(), horizontal));
+                        camera->setYaw(proofFalloutTourLookYaw, true);
+                        camera->setPitch(proofFalloutTourLookPitch, true);
+                        camera->updateCamera();
+                    }
+                }
+                Log(Debug::Info) << "FNV dirty-dozen tour: ready stop=" << (proofFalloutTourIndex + 1)
+                                 << " name=\"" << marker->mFullName << "\" actors=" << livingSceneActors
+                                 << " focusedActor=\"" << focusedActor << "\" focusedDistance="
+                                 << std::sqrt(closestDistanceSquared)
+                                 << " player=(" << playerPosition.x() << "," << playerPosition.y() << ","
+                                 << playerPosition.z() << ") frame=" << frameNumber;
+                beginPhase(6);
+            }
+            else if (elapsed >= readyTimeoutFrames)
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: readiness failed stop="
+                                  << (proofFalloutTourIndex + 1) << " arrived=" << (arrived ? 1 : 0)
+                                  << " actors=" << livingSceneActors << " frame=" << frameNumber;
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+        }
+        else if (proofFalloutTourPhase == 6)
+        {
+            setTourMovement(elapsed < walkFrames ? 0.65f : 0.f);
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                if (elapsed <= walkFrames && !proofFalloutTourActor.isEmpty()
+                    && proofFalloutTourActor.getCellRef().getCount() > 0)
+                {
+                    const osg::Vec3d cameraPosition = camera->getPosition();
+                    osg::Vec3d actorCenter = proofFalloutTourActor.getRefData().getPosition().asVec3();
+                    actorCenter.z() += 96.0;
+                    const osg::Vec3d delta = actorCenter - cameraPosition;
+                    const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                    proofFalloutTourLookYaw = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+                    proofFalloutTourLookPitch = static_cast<float>(std::atan2(delta.z(), horizontal));
+                }
+                const float lookProgress = elapsed <= walkFrames
+                    ? 0.f
+                    : std::min(1.f, static_cast<float>(elapsed - walkFrames)
+                            / static_cast<float>(lookFrames - walkFrames));
+                camera->setYaw(proofFalloutTourLookYaw + lookProgress * 0.28f, true);
+                camera->setPitch(proofFalloutTourLookPitch, true);
+                camera->updateCamera();
+            }
+            if (elapsed >= lookFrames)
+            {
+                setTourMovement(0.f);
+                Log(Debug::Info) << "FNV dirty-dozen tour: viewed stop=" << (proofFalloutTourIndex + 1)
+                                 << " frame=" << frameNumber;
+                ++proofFalloutTourIndex;
+                if (proofFalloutTourIndex >= proofFalloutTourLocations.size())
+                {
+                    Log(Debug::Info) << "FNV dirty-dozen tour: result=pass stops="
+                                     << proofFalloutTourLocations.size() << " frame=" << frameNumber;
+                    mStateManager->requestQuit();
+                    proofFalloutTourPhase = -1;
+                }
+                else
+                    beginPhase(2);
+            }
+        }
+    }
+
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
     const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
     if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning
@@ -11584,11 +11924,12 @@ void OMW::Engine::prepareEngine()
                              << 100 * static_cast<double>(result.second) / result.first << "%)";
     }
 
-    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua permanent storage begin";
+    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua permanent storage begin";
     mLuaManager->loadPermanentStorage(mCfgMgr.getUserConfigPath());
-    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua init begin";
+    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua permanent storage complete";
+    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua init begin";
     mLuaManager->init();
-    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua init complete";
+    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua init complete";
 
     // starts a separate lua thread if "lua num threads" > 0
     mLuaWorker = std::make_unique<MWLua::Worker>(*mLuaManager);

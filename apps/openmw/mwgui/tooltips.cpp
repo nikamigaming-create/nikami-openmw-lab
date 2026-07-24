@@ -394,7 +394,7 @@ namespace MWGui
         MyGUI::IntSize tooltipSize;
 
         const MWWorld::Class& object = mFocusObject.getClass();
-        if (!object.hasToolTip(mFocusObject))
+        if (mFocusObject.getRefData().isDestroyed() || !object.hasToolTip(mFocusObject))
         {
             mDynamicToolTipBox->setVisible(false);
         }

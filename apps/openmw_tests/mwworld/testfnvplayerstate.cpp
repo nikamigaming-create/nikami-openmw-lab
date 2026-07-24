@@ -1165,6 +1165,25 @@ namespace
             ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 1>{ { { standardAmmoId, 2 } } }));
     }
 
+    TEST(FalloutPlayerStateTest, MissingOptionalSavedPerkCarriersMeanNoSavedPerkDeltas)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(form(7, 1)));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, form(7, 1), form(0x14, 1));
+        ASSERT_TRUE(player) << player.mError;
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerCharacterListsState.reset();
+        save.mPlayerCharacterFinalState.reset();
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = resolveSavePlan(save, &*player.mState, content);
+
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_TRUE(resolution.mPlan->mPlayer.mPerks.empty());
+    }
+
     TEST(FalloutPlayerStateTest, resolvesInventoryHotkeyAndSelectedAmmoExtras)
     {
         // Exercise both payload-bearing extra types on one saved weapon stack.
@@ -1188,6 +1207,10 @@ namespace
         ammo.mAmmo.emplace().mResolvedFormId = 0x00004241u;
         ammo.mAmmoCount.emplace().mValue = 7;
         extend.mExtraData.push_back(std::move(ammo));
+        ESM4::FONVSavePlayerInventoryExtraData cannotWear;
+        cannotWear.mType.mValue = ESM4::sFONVExtraCannotWearType;
+        cannotWear.mType.mRange = { 3120, 1 };
+        extend.mExtraData.push_back(std::move(cannotWear));
         save.mPlayerProcessInventoryData->mInventoryEntries[25].mExtendData.push_back(std::move(extend));
 
         const MWWorld::FalloutSaveLoadPlanResolution resolution

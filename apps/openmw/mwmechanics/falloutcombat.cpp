@@ -84,6 +84,44 @@ namespace MWMechanics
             || reaction == ESM4::Faction::GroupCombatReaction::Friend;
     }
 
+    namespace
+    {
+        bool setFalloutFactionReactions(ESM4::Faction& first, ESM4::Faction& second,
+            ESM4::Faction::GroupCombatReaction firstToSecond,
+            ESM4::Faction::GroupCombatReaction secondToFirst)
+        {
+            if (first.mId.isZeroOrUnset() || second.mId.isZeroOrUnset() || first.mId == second.mId)
+                return false;
+            const auto setReaction
+                = [](ESM4::Faction& source, ESM::FormId target, ESM4::Faction::GroupCombatReaction reaction) {
+                      const auto relation = std::find_if(source.mRelations.begin(), source.mRelations.end(),
+                          [target](const ESM4::Faction::Relation& value) { return value.mFaction == target; });
+                      if (relation == source.mRelations.end())
+                          source.mRelations.push_back({ target, 0, reaction });
+                      else
+                          relation->mGroupCombatReaction = reaction;
+                  };
+            setReaction(first, second.mId, firstToSecond);
+            setReaction(second, first.mId, secondToFirst);
+            return true;
+        }
+    }
+
+    bool setFalloutFactionsAllied(ESM4::Faction& first, ESM4::Faction& second)
+    {
+        return setFalloutFactionReactions(first, second, ESM4::Faction::GroupCombatReaction::Ally,
+            ESM4::Faction::GroupCombatReaction::Ally);
+    }
+
+    bool setFalloutFactionsEnemy(ESM4::Faction& first, ESM4::Faction& second,
+        bool firstTreatsSecondAsNeutral, bool secondTreatsFirstAsNeutral)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        return setFalloutFactionReactions(first, second,
+            firstTreatsSecondAsNeutral ? Reaction::Neutral : Reaction::Enemy,
+            secondTreatsFirstAsNeutral ? Reaction::Neutral : Reaction::Enemy);
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)

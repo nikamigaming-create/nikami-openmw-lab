@@ -253,9 +253,33 @@ namespace MWInput
                     MWBase::Environment::get().getWindowManager()->cycleWeapon(true);
                 break;
             case A_Inventory:
-            case A_Journal:
             case A_QuickKeysMenu:
                 // Handled in Lua
+                break;
+            case A_Journal:
+                if (isFalloutContent())
+                {
+                    if (windowManager->containsMode(MWGui::GM_Inventory))
+                        windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
+                    {
+                        windowManager->pushGuiMode(MWGui::GM_Inventory);
+                        windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 2);
+                    }
+                }
+                // Non-Fallout journal input remains handled by Lua.
+                break;
+            case A_Map:
+                if (isFalloutContent())
+                {
+                    if (windowManager->containsMode(MWGui::GM_Inventory))
+                        windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
+                    {
+                        windowManager->pushGuiMode(MWGui::GM_Inventory);
+                        windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                    }
+                }
                 break;
         }
     }

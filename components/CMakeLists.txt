@@ -237,6 +237,7 @@ add_component_dir (esm4
     loadeyes
     loadexpl
     loadfact
+    loadrepu
     loadflor
     loadflst
     loadfurn
@@ -249,6 +250,8 @@ add_component_dir (esm4
     loadidle
     loadidlm
     loadimod
+    loadipct
+    loadipds
     loadinfo
     loadingr
     loadkeym
@@ -260,6 +263,7 @@ add_component_dir (esm4
     loadlvli
     loadlvln
     loadmgef
+    loadmesg
     loadmato
     loadmisc
     loadmset

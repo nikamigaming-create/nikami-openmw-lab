@@ -6,9 +6,13 @@
 namespace MWWorld
 {
     /// Convert gameplay yaw to the model/physics basis used by an imported actor.
-    [[nodiscard]] inline float getActorModelYaw(float gameplayYaw, bool tes4Npc) noexcept
+    [[nodiscard]] inline float getActorModelYaw(float gameplayYaw, bool tes4Npc, bool falloutActor) noexcept
     {
-        return gameplayYaw + (tes4Npc ? osg::PI_2f : 0.f);
+        if (tes4Npc)
+            return gameplayYaw + osg::PI_2f;
+        if (falloutActor)
+            return gameplayYaw - osg::PI_2f;
+        return gameplayYaw;
     }
 }
 

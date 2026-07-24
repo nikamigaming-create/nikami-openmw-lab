@@ -40,6 +40,8 @@
 #include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadipct.hpp>
+#include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadkeym.hpp>
@@ -51,6 +53,7 @@
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
 #include <components/esm4/loadmgef.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmset.hpp>
@@ -72,6 +75,7 @@
 #include <components/esm4/loadrcct.hpp>
 #include <components/esm4/loadrcpe.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadregn.hpp>
 #include <components/esm4/loadroad.hpp>
 #include <components/esm4/loadsbsp.hpp>

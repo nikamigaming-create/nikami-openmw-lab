@@ -55,6 +55,7 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/worldmodel.hpp"
 #include "../mwworld/failedaction.hpp"
@@ -620,6 +621,27 @@ namespace MWClass
             return false;
 
         sequence.clear();
+        data->mFnvAiSequenceInitialised = false;
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
+    }
+
+    bool resetFnvCreatureAiState(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        if (creature == nullptr || !creature->mIsFONV)
+            return false;
+
+        ptr.getClass().getCreatureStats(ptr);
+        auto* data = dynamic_cast<ESM4CreatureCustomData*>(ptr.getRefData().getCustomData());
+        if (data == nullptr)
+            return false;
+
+        data->mCreatureStats.getAiSequence().reset();
+        data->mMovement = {};
         data->mFnvAiSequenceInitialised = false;
         ptr.getClass().getCreatureStats(ptr);
         return true;
@@ -2095,6 +2117,16 @@ namespace MWClass
     {
         ESM4CreatureCustomData& data = getCustomData(ptr);
         const ESM4::Creature* creature = data.mTemplates.mStats;
+        if (creature != nullptr && creature->mIsFONV)
+        {
+            const ESM::GameSetting* setting = MWBase::Environment::get()
+                                                  .getESMStore()
+                                                  ->get<ESM::GameSetting>()
+                                                  .search(ESM::RefId::stringRefId("fMoveBaseSpeed"));
+            const float baseSpeed
+                = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
+            return MWWorld::getFalloutWalkSpeed(getSpeedMultiplier(*creature), baseSpeed);
+        }
         return std::max(1.f,
                    data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified())
             * 2.5f * (creature != nullptr ? getSpeedMultiplier(*creature) : 1.f);
@@ -2102,6 +2134,18 @@ namespace MWClass
 
     float ESM4Creature::getRunSpeed(const MWWorld::Ptr& ptr) const
     {
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        const ESM4::Creature* creature = data.mTemplates.mStats;
+        if (creature != nullptr && creature->mIsFONV)
+        {
+            const ESM::GameSetting* setting = MWBase::Environment::get()
+                                                  .getESMStore()
+                                                  ->get<ESM::GameSetting>()
+                                                  .search(ESM::RefId::stringRefId("fMoveRunMult"));
+            const float multiplier
+                = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveRunMultiplier;
+            return MWWorld::getFalloutRunSpeed(getWalkSpeed(ptr), multiplier);
+        }
         return getWalkSpeed(ptr) * 1.65f;
     }
 

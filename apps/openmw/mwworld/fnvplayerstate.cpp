@@ -716,12 +716,22 @@ namespace MWWorld
             }
             return {};
         };
-        if (!save.mPlayerCharacterListsState || !save.mPlayerCharacterFinalState)
-            return loadFailure("FNV save does not expose canonical Player perk lists");
-        if (const std::string error = appendPerks(save.mPlayerCharacterListsState->mPerks, false); !error.empty())
-            return loadFailure(error);
-        if (const std::string error = appendPerks(save.mPlayerCharacterFinalState->mPerksAD4, true); !error.empty())
-            return loadFailure(error);
+        if (save.mPlayerCharacterListsState)
+        {
+            if (const std::string error = appendPerks(save.mPlayerCharacterListsState->mPerks, false);
+                !error.empty())
+            {
+                return loadFailure(error);
+            }
+        }
+        if (save.mPlayerCharacterFinalState)
+        {
+            if (const std::string error = appendPerks(save.mPlayerCharacterFinalState->mPerksAD4, true);
+                !error.empty())
+            {
+                return loadFailure(error);
+            }
+        }
 
         std::map<ESM::FormId, std::int64_t> inventoryTotals;
         std::map<ESM::FormId, std::int64_t> conditionedTotals;
@@ -779,6 +789,11 @@ namespace MWWorld
                             if (wornOffset)
                                 return loadFailure("FNV save Player inventory stack has duplicate ExtraWorn state");
                             wornOffset = extra.mType.mRange.mOffset;
+                            break;
+                        case ESM4::sFONVExtraCannotWearType:
+                            // Canonical inventory-stack metadata with no payload. It controls retail UI/equip
+                            // eligibility but does not alter the saved stack count, condition, hotkey, ammo, or worn
+                            // state restored by this load plan.
                             break;
                         case ESM4::sFONVExtraHotkeyType:
                             if (hotkey || !extra.mHotkey || extra.mHotkey->mValue >= assignedHotkeys.size())

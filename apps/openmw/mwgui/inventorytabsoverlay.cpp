@@ -5,27 +5,11 @@
 #include <MyGUI_Widget.h>
 #include <MyGUI_Window.h>
 
-#include <algorithm>
+#include <components/debug/debuglog.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-
-namespace
-{
-    void setClickThroughExceptTabs(MyGUI::Widget* widget, const std::vector<MyGUI::Button*>& tabs)
-    {
-        if (std::find(tabs.begin(), tabs.end(), widget) != tabs.end())
-        {
-            widget->setNeedMouseFocus(true);
-            return;
-        }
-
-        widget->setNeedMouseFocus(false);
-        for (size_t i = 0; i < widget->getChildCount(); ++i)
-            setClickThroughExceptTabs(widget->getChildAt(i), tabs);
-    }
-}
 
 namespace MWGui
 {
@@ -38,7 +22,9 @@ namespace MWGui
         for (const char* id : kTabIds)
         {
             getWidget(tab, id);
-            tab->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryTabsOverlay::onTabClicked);
+            // Switch on press. Waiting for MyGUI's synthetic click can lose the event when changing panes also
+            // changes the window stack under the pointer.
+            tab->eventMouseButtonPressed += MyGUI::newDelegate(this, &InventoryTabsOverlay::onTabPressed);
             mTabs.push_back(tab);
         }
 
@@ -51,7 +37,9 @@ namespace MWGui
         image->setImageTexture(
             MWBase::Environment::get().getInputManager()->getControllerAxisIcon(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
 
-        setClickThroughExceptTabs(mMainWidget, mTabs);
+        // The overlay is only the height of the top strip. Keep its container focusable so MyGUI can
+        // route presses to the child tab buttons; disabling focus on the parent also starves its children.
+        mMainWidget->setNeedMouseFocus(true);
     }
 
     int InventoryTabsOverlay::getHeight()
@@ -60,15 +48,17 @@ namespace MWGui
         return window->getHeight();
     }
 
-    void InventoryTabsOverlay::onTabClicked(MyGUI::Widget* sender)
+    void InventoryTabsOverlay::onTabPressed(
+        MyGUI::Widget* sender, int /*left*/, int /*top*/, MyGUI::MouseButton button)
     {
-        if (!MWBase::Environment::get().getWindowManager()->getJournalAllowed())
+        if (button != MyGUI::MouseButton::Left)
             return;
 
         for (int i = 0; i < static_cast<int>(mTabs.size()); i++)
         {
             if (mTabs[i] == sender)
             {
+                Log(Debug::Info) << "FNV/ESM4 input: Pip-Boy tab pressed index=" << i;
                 MWBase::Environment::get().getWindowManager()->setActiveControllerWindow(GM_Inventory, i);
                 setTab(i);
                 break;
@@ -81,4 +71,5 @@ namespace MWGui
         for (int i = 0; i < static_cast<int>(mTabs.size()); i++)
             mTabs[i]->setStateSelected(i == index);
     }
+
 }

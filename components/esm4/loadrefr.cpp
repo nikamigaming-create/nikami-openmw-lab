@@ -39,7 +39,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
     mFlags = reader.hdr().record.flags;
     mParent = reader.currCell();
 
-    ESM::FormId mid;
     ESM::FormId sid;
 
     while (reader.getSubRecordHeader())
@@ -200,13 +199,15 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 // std::cout << "REFR " << mEditorId << " XRTM : " << formIdToString(marker) << std::endl;// FIXME
                 break;
             }
-            case ESM::fourCC("TNAM"): // reader.get(mMapMarker); break;
+            case ESM::fourCC("TNAM"):
             {
-                if (subHdr.dataSize != sizeof(mMapMarker))
-                    // reader.skipSubRecordData(); // FIXME: FO3
-                    reader.getFormId(mid);
+                if (subHdr.dataSize != 2)
+                    reader.skipSubRecordData();
                 else
-                    reader.get(mMapMarker); // TES4
+                {
+                    reader.get(mMapMarkerType);
+                    reader.skipSubRecordData(1);
+                }
 
                 break;
             }
@@ -215,9 +216,10 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 break; // all have mBaseObj 0x00000010 "MapMarker"
             case ESM::fourCC("FNAM"):
             {
-                // std::cout << "REFR " << ESM::printName(subHdr.typeId) << " skipping..."
-                // << subHdr.dataSize << std::endl;
-                reader.skipSubRecordData();
+                if (subHdr.dataSize == sizeof(mMapMarkerFlags))
+                    reader.get(mMapMarkerFlags);
+                else
+                    reader.skipSubRecordData();
                 break;
             }
             case ESM::fourCC("XTRG"): // formId

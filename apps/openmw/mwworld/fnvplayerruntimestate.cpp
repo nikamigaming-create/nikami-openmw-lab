@@ -85,6 +85,11 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks.clear();
+        mReputations.clear();
+        mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -133,6 +138,11 @@ namespace MWWorld
         mDamageModifiers = damage;
         mTemporaryModifiers = temporary;
         mPerks.assign(perks.begin(), perks.end());
+        mReputations.clear();
+        mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -147,6 +157,11 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks.clear();
+        mReputations.clear();
+        mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mVatsActive = false;
     }
 
@@ -162,7 +177,9 @@ namespace MWWorld
             return std::ranges::any_of(values, [](float value) { return value != 0.f; });
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
-            || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty());
+            || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
+            || !mReputations.empty() || !mMapMarkerStates.empty() || !mFastTravelEnabled
+            || !mWaitEnabled || mFastTravelKeepOnCellChange);
     }
 
     std::optional<FalloutRuntimeActorValue> FalloutPlayerRuntimeState::getBaseActorValue(
@@ -253,6 +270,136 @@ namespace MWWorld
         return found->mRankByte;
     }
 
+    std::optional<FalloutReputationValue> FalloutPlayerRuntimeState::getReputation(
+        ESM::FormId reputation) const
+    {
+        if (!mBase || reputation.isZeroOrUnset())
+            return std::nullopt;
+        const auto found = mReputations.find(reputation);
+        return found == mReputations.end() ? FalloutReputationValue{} : found->second;
+    }
+
+    bool FalloutPlayerRuntimeState::addReputationBump(
+        ESM::FormId reputation, bool fame, float maximum, int bump)
+    {
+        static constexpr std::array<float, 5> sBumpPoints{ 1.f, 2.f, 4.f, 7.f, 12.f };
+        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
+            || bump < 1 || bump > static_cast<int>(sBumpPoints.size()))
+            return false;
+
+        FalloutReputationValue value = mReputations[reputation];
+        float& axis = fame ? value.mFame : value.mInfamy;
+        axis = std::clamp(axis + sBumpPoints[static_cast<std::size_t>(bump - 1)], 0.f, maximum);
+        if (value == FalloutReputationValue{})
+            mReputations.erase(reputation);
+        else
+            mReputations[reputation] = value;
+        return true;
+    }
+
+    std::optional<std::uint8_t> FalloutPlayerRuntimeState::getMapMarkerState(ESM::FormId marker) const
+    {
+        if (!mBase || marker.isZeroOrUnset())
+            return std::nullopt;
+        const auto found = mMapMarkerStates.find(marker);
+        return found == mMapMarkerStates.end() ? std::nullopt : std::optional(found->second);
+    }
+
+    bool FalloutPlayerRuntimeState::setMapMarkerState(ESM::FormId marker, std::uint8_t state)
+    {
+        if (!mBase || marker.isZeroOrUnset() || state > 2)
+            return false;
+        mMapMarkerStates[marker] = state;
+        return true;
+    }
+
+    bool FalloutPlayerRuntimeState::setScriptedFastTravel(
+        bool canFastTravel, bool canWait, bool keepOnCellChange)
+    {
+        if (!mBase)
+            return false;
+
+        // Retail ignores a transient disable while a persistent scripted block is already active. Enabling always
+        // clears the block and also enables waiting, regardless of the authored canWait argument.
+        if (!canFastTravel && mFastTravelKeepOnCellChange && !keepOnCellChange)
+            return true;
+        mFastTravelEnabled = canFastTravel;
+        mWaitEnabled = canFastTravel || canWait;
+        mFastTravelKeepOnCellChange = keepOnCellChange;
+        return true;
+    }
+
+    void FalloutPlayerRuntimeState::notifyCellChanged()
+    {
+        if (!mFastTravelKeepOnCellChange)
+            mFastTravelEnabled = true;
+    }
+
+    std::optional<int> FalloutPlayerRuntimeState::getReputationThreshold(
+        ESM::FormId reputation, float maximum, std::uint32_t axis) const
+    {
+        const std::optional<FalloutReputationValue> value = getReputation(reputation);
+        if (!value || !std::isfinite(maximum) || maximum <= 0.f || axis > 2)
+            return std::nullopt;
+        const auto level = [maximum](float points) {
+            if (points >= maximum)
+                return 3;
+            if (points >= maximum * 0.5f)
+                return 2;
+            if (points >= maximum * 0.15f)
+                return 1;
+            return 0;
+        };
+        const int fame = level(value->mFame);
+        const int infamy = level(value->mInfamy);
+        if (fame == 0 && infamy == 0)
+            return 1;
+
+        int category = -1;
+        int threshold = 0;
+        if (infamy == 0)
+        {
+            category = 1;
+            threshold = fame + 3; // Accepted, Liked, Idolized.
+        }
+        else if (fame == 0)
+        {
+            category = 2;
+            threshold = infamy + 3; // Shunned, Hated, Vilified.
+        }
+        else if (fame == infamy)
+        {
+            category = 0;
+            threshold = fame + 2; // Mixed, Unpredictable, Wild Child.
+        }
+        else if (fame == 2 && infamy == 1)
+        {
+            category = 1;
+            threshold = 2; // Smiling Troublemaker.
+        }
+        else if (fame == 3 && infamy == 1)
+        {
+            category = 1;
+            threshold = 3; // Good Natured Rascal.
+        }
+        else if (fame == 1 && infamy == 2)
+        {
+            category = 2;
+            threshold = 2; // Sneering Punk.
+        }
+        else if (fame == 1 && infamy == 3)
+        {
+            category = 2;
+            threshold = 3; // Merciful Thug.
+        }
+        else
+        {
+            category = 0;
+            threshold = 2; // Dark Hero or Soft-Hearted Devil.
+        }
+        return axis == static_cast<std::uint32_t>(category) ? threshold : 0;
+    }
+
     FalloutActorValueMutationResult FalloutPlayerRuntimeState::setCurrentActorValue(
         std::uint32_t actorValue, float value)
     {
@@ -323,6 +470,22 @@ namespace MWWorld
             writer.writeHNT("PRNK", perk.mRankByte);
             writer.writeHNT("PALT", static_cast<std::uint8_t>(perk.mAlternate));
         }
+        writer.writeHNT("RCNT", static_cast<std::uint32_t>(mReputations.size()));
+        for (const auto& [reputation, value] : mReputations)
+        {
+            writer.writeFormId(reputation, true, "RPID");
+            writer.writeHNT("RINF", value.mInfamy);
+            writer.writeHNT("RFAM", value.mFame);
+        }
+        writer.writeHNT("MCNT", static_cast<std::uint32_t>(mMapMarkerStates.size()));
+        for (const auto& [marker, state] : mMapMarkerStates)
+        {
+            writer.writeFormId(marker, true, "MPID");
+            writer.writeHNT("MPST", state);
+        }
+        writer.writeHNT("FTEN", static_cast<std::uint8_t>(mFastTravelEnabled));
+        writer.writeHNT("WTEN", static_cast<std::uint8_t>(mWaitEnabled));
+        writer.writeHNT("FTKP", static_cast<std::uint8_t>(mFastTravelKeepOnCellChange));
         writer.endRecord(ESM::REC_FPLR);
     }
 
@@ -333,7 +496,7 @@ namespace MWWorld
 
         std::uint32_t version = 0;
         reader.getHNT(version, "VERS");
-        if (version != 1 && version != 2 && version != SaveVersion)
+        if (version < 1 || version > SaveVersion)
             invalidSave("unsupported version " + std::to_string(version));
 
         ESM::FormId player = reader.getFormId(true, "FORM");
@@ -377,6 +540,57 @@ namespace MWWorld
                     perks.push_back({ perk, rank, alternate != 0, 0 });
             }
         }
+        std::map<ESM::FormId, FalloutReputationValue> reputations;
+        if (version >= 4)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "RCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId reputation = reader.getFormId(true, "RPID");
+                const bool contentAvailable = reader.applyContentFileMapping(reputation);
+                FalloutReputationValue value;
+                reader.getHNT(value.mInfamy, "RINF");
+                reader.getHNT(value.mFame, "RFAM");
+                if (!std::isfinite(value.mInfamy) || !std::isfinite(value.mFame)
+                    || value.mInfamy < 0.f || value.mFame < 0.f)
+                    invalidSave("invalid reputation value");
+                if (contentAvailable && (reputation.isZeroOrUnset()
+                    || !reputations.emplace(reputation, value).second))
+                    invalidSave("invalid or duplicate reputation identity");
+            }
+        }
+        std::map<ESM::FormId, std::uint8_t> mapMarkerStates;
+        if (version >= 5)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "MCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId marker = reader.getFormId(true, "MPID");
+                const bool markerContentAvailable = reader.applyContentFileMapping(marker);
+                std::uint8_t state = 0;
+                reader.getHNT(state, "MPST");
+                if (state > 2)
+                    invalidSave("invalid map marker state");
+                if (markerContentAvailable && (marker.isZeroOrUnset()
+                    || !mapMarkerStates.emplace(marker, state).second))
+                    invalidSave("invalid or duplicate map marker identity");
+            }
+        }
+        std::uint8_t fastTravelEnabled = 1;
+        std::uint8_t waitEnabled = 1;
+        std::uint8_t fastTravelKeepOnCellChange = 0;
+        if (version >= 6)
+        {
+            reader.getHNT(fastTravelEnabled, "FTEN");
+            reader.getHNT(waitEnabled, "WTEN");
+            reader.getHNT(fastTravelKeepOnCellChange, "FTKP");
+            if (fastTravelEnabled > 1 || waitEnabled > 1 || fastTravelKeepOnCellChange > 1)
+                invalidSave("invalid EnableFastTravel state");
+            if (fastTravelEnabled != 0 && waitEnabled == 0)
+                invalidSave("fast travel cannot be enabled while waiting is disabled");
+        }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
@@ -401,5 +615,10 @@ namespace MWWorld
         mDamageModifiers = {};
         mTemporaryModifiers = {};
         mPerks = std::move(perks);
+        mReputations = std::move(reputations);
+        mMapMarkerStates = std::move(mapMarkerStates);
+        mFastTravelEnabled = fastTravelEnabled != 0;
+        mWaitEnabled = waitEnabled != 0;
+        mFastTravelKeepOnCellChange = fastTravelKeepOnCellChange != 0;
     }
 }

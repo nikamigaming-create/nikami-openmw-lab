@@ -79,14 +79,21 @@ namespace
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
         bool tes4Npc = false;
+        bool falloutActor = false;
         if (ptr.getType() == ESM::REC_NPC_4)
         {
             const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
             tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
+            falloutActor = npc != nullptr && npc->mBase != nullptr
+                && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
         }
-        // TES4 NPC meshes retain the legacy quarter-turn conversion. FO3/FNV NPCs and CREA4 rigs author their
-        // visual front on the same local +Y axis used by CharacterController and the movement solver.
-        return osg::Quat(MWWorld::getActorModelYaw(position.rot[2], tes4Npc), osg::Vec3(0, 0, -1));
+        else if (ptr.getType() == ESM::REC_CREA4)
+        {
+            const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
+            falloutActor = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
+        }
+        return osg::Quat(
+            MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutActor), osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -866,16 +873,22 @@ namespace
     {
         for (MWWorld::Ptr& ptr : mToInsert)
         {
-            if (!ptr.mRef->isDeleted() && ptr.getRefData().isEnabled())
+            if (ptr.isEmpty())
             {
-                try
-                {
+                Log(Debug::Warning) << "FNV/ESM4 cell insertion skipped an unresolved empty reference";
+                if (mLoadingListener != nullptr)
+                    mLoadingListener->increaseProgress(1);
+                continue;
+            }
+
+            try
+            {
+                if (!ptr.mRef->isDeleted() && ptr.getRefData().isEnabled())
                     addObject(ptr);
-                }
-                catch (const std::exception& e)
-                {
-                    Log(Debug::Error) << "failed to render '" << ptr.getCellRef().getRefId() << "': " << e.what();
-                }
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Error) << "failed to insert '" << ptr.getCellRef().getRefId() << "': " << e.what();
             }
 
             if (mLoadingListener != nullptr)

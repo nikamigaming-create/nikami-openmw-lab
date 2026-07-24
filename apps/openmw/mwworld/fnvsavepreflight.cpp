@@ -360,16 +360,19 @@ namespace MWWorld
             = resolveFalloutSaveLoadPlan(save, player, formLists, ammunition, currentContentFiles);
         if (!plan)
             return failure("FNV save load-plan resolution failed: " + plan.mError);
+        Log(Debug::Info) << "Native FNV save preflight stage complete: load-plan";
 
         FalloutExteriorPlayerPlacementResolution placement
             = resolveFalloutExteriorPlayerPlacement(worlds, cells, plan.mPlan->mTransform);
         if (!placement)
             return failure("FNV save Player-placement resolution failed: " + placement.mError);
+        Log(Debug::Info) << "Native FNV save preflight stage complete: placement";
 
         FalloutWeatherModelResolution weatherModel
             = resolveFalloutWeatherModel(worlds, climates, weather, *placement.mPlacement, plan.mPlan->mScene);
         if (!weatherModel)
             return failure("FNV save weather resolution failed: " + weatherModel.mError);
+        Log(Debug::Info) << "Native FNV save preflight stage complete: weather";
 
         FalloutNativePlayerRecordIdentities identities;
         identities.mBaseNpc = records.mBaseNpc->mId;

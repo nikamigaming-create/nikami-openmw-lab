@@ -997,6 +997,7 @@ namespace
         switch (result.mType.mValue)
         {
             case ESM4::sFONVExtraWornType:
+            case ESM4::sFONVExtraCannotWearType:
                 break;
             case ESM4::sFONVExtraCountType:
                 result.mCount = readDelimitedField<std::int16_t>(cursor, data,
@@ -1688,10 +1689,11 @@ namespace
         result.mForm02C
             = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player ActorMover Form02C RefID", true);
         result.mContentFlags = readPlayerProcessU8(cursor, data, "player ActorMover content flags");
-        if (result.mContentFlags.mValue != 0x08)
+        if ((result.mContentFlags.mValue & ~0x08u) != 0)
             throw ESM4::FONVSaveError(result.mContentFlags.mRange.mOffset,
                 "unsupported player ActorMover content-flag branch");
-        result.mDetailedPathHandler = parsePlayerDetailedActorPathHandler(cursor, data, formIds);
+        if ((result.mContentFlags.mValue & 0x08u) != 0)
+            result.mDetailedPathHandler = parsePlayerDetailedActorPathHandler(cursor, data, formIds);
         result.mPlayerMover = parsePlayerMoverState(cursor, data);
         result.mRange = range(begin, cursor.position());
         result.mRaw = copyRange(data, begin, cursor.position());
@@ -1716,7 +1718,10 @@ namespace
         result.mActorMover = parsePlayerActorMoverState(cursor, data, formIds);
         result.mByt1C0 = readPlayerProcessU8(cursor, data, "player ChangedCharacter Byt1C0");
         result.mByt1C1 = readPlayerProcessU8(cursor, data, "player ChangedCharacter Byt1C1");
-        if (cursor.position() - begin != ESM4::sFONVPlayerChangedCharacterStateBytes)
+        const std::size_t expectedBytes = result.mActorMover.mDetailedPathHandler
+            ? ESM4::sFONVPlayerChangedCharacterStateBytes
+            : ESM4::sFONVPlayerChangedCharacterBaseStateBytes;
+        if (cursor.position() - begin != expectedBytes)
             throw ESM4::FONVSaveError(begin, "canonical player ChangedCharacter state has an unexpected size");
         result.mRange = range(begin, cursor.position());
         result.mRaw = copyRange(data, begin, cursor.position());

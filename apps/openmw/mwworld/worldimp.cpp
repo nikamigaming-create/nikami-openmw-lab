@@ -1,5 +1,6 @@
 #include "worldimp.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -35,6 +36,9 @@
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -64,6 +68,7 @@
 #include <components/files/conversion.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 
+#include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -93,6 +98,7 @@
 #include "../mwscript/globalscripts.hpp"
 
 #include "../mwclass/door.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 
 #include "../mwphysics/actor.hpp"
 #include "../mwphysics/collisiontype.hpp"
@@ -111,6 +117,7 @@
 
 #include "contentloader.hpp"
 #include "esmloader.hpp"
+#include "fnvfasttravel.hpp"
 
 // ## VR_PATCH BEGIN
 #include "../mwvr/vrgui.hpp"
@@ -763,6 +770,230 @@ namespace MWWorld
         , mPlayerInJail(false)
         , mSpellPreloadTimer(0.f)
     {
+        mESM4QuestRuntime.setReferenceCommandHandler(
+            [this](ESM4QuestReferenceCommand command, ESM::FormId referenceId) {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty())
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 quest: stage reference is not available id="
+                                        << ESM::RefId(referenceId).serializeText();
+                    return false;
+                }
+
+                switch (command)
+                {
+                    case ESM4QuestReferenceCommand::Enable:
+                        enable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::Disable:
+                        disable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::Unlock:
+                        if (target.getCellRef().isLocked())
+                            target.getCellRef().unlock();
+                        break;
+                    case ESM4QuestReferenceCommand::Kill:
+                    {
+                        if (!target.getClass().isActor())
+                            return false;
+                        MWMechanics::CreatureStats& stats = target.getClass().getCreatureStats(target);
+                        if (!stats.isDead())
+                        {
+                            auto health = stats.getHealth();
+                            health.setCurrent(0.f);
+                            stats.setHealth(health);
+                        }
+                        if (!stats.isDead())
+                            return false;
+                        break;
+                    }
+                    case ESM4QuestReferenceCommand::ResetAi:
+                        if (!MWClass::resetFnvAiState(target))
+                            return false;
+                        break;
+                    case ESM4QuestReferenceCommand::EvaluatePackage:
+                        if (!MWClass::requestFnvAiPackageEvaluation(target))
+                            return false;
+                        break;
+                }
+                Log(Debug::Info) << "FNV/ESM4 quest: executed stage reference command="
+                                 << static_cast<unsigned int>(command)
+                                 << " id=" << target.getCellRef().getRefId();
+                return true;
+            });
+        mESM4QuestRuntime.setSetDestroyedHandler([this](ESM::FormId referenceId, bool destroyed) {
+            const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+            if (target.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 quest: SetDestroyed reference is not available id="
+                                    << ESM::RefId(referenceId).serializeText();
+                return false;
+            }
+            target.getRefData().setDestroyed(destroyed);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetDestroyed id=" << target.getCellRef().getRefId()
+                             << " destroyed=" << destroyed;
+            return target.getRefData().isDestroyed() == destroyed;
+        });
+        mESM4QuestRuntime.setShowMapHandler(
+            [this](ESM::FormId markerId, bool canTravel) {
+                return showFalloutMapMarker(markerId, canTravel);
+            });
+        mESM4QuestRuntime.setEnableFastTravelHandler(
+            [this](bool canFastTravel, bool canWait, bool keepOnCellChange) {
+                const bool applied = mFalloutPlayerRuntimeState.setScriptedFastTravel(
+                    canFastTravel, canWait, keepOnCellChange);
+                if (applied)
+                    Log(Debug::Info) << "FNV/ESM4 quest: EnableFastTravel canFastTravel=" << canFastTravel
+                                     << " canWait=" << canWait
+                                     << " keepOnCellChange=" << keepOnCellChange;
+                return applied;
+            });
+        mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
+            try
+            {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty() || !target.getClass().isActor())
+                    return std::nullopt;
+                return target.getClass().getCreatureStats(target).isDead();
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
+        mESM4QuestRuntime.setRewardXpHandler([this](int amount) {
+            if (amount <= 0)
+                return false;
+            return mFalloutPlayerRuntimeState.modCurrentActorValue(
+                       FalloutPlayerRuntimeState::ExperienceActorValue, static_cast<float>(amount))
+                == FalloutActorValueMutationResult::Applied;
+        });
+        mESM4QuestRuntime.setAddReputationHandler(
+            [this](ESM::FormId reputationId, bool fame, int bump) {
+                const ESM4::Reputation* reputation
+                    = mStore.get<ESM4::Reputation>().search(ESM::RefId(reputationId));
+                if (reputation == nullptr
+                    || !mFalloutPlayerRuntimeState.addReputationBump(
+                        reputationId, fame, reputation->mMaximum, bump))
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: AddReputation reputation="
+                                 << ESM::RefId(reputationId).serializeText()
+                                 << " fame=" << fame << " bump=" << bump;
+                return true;
+            });
+        mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
+            const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
+            MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();
+            if (message == nullptr || message->mDescription.empty() || windowManager == nullptr)
+                return false;
+            windowManager->scheduleMessageBox(message->mDescription, MWGui::ShowInDialogueMode_Never);
+            Log(Debug::Info) << "FNV/ESM4 quest: queued authored message editor=" << message->mEditorId
+                             << " id=" << ESM::RefId(messageId).serializeText();
+            return true;
+        });
+        mESM4QuestRuntime.setSayToHandler([this](ESM::FormId speakerId, ESM::FormId listenerId, ESM::FormId topicId) {
+            const Ptr speaker = searchPtr(ESM::RefId(speakerId), false, false);
+            const Ptr listener = listenerId.mIndex == 0x7 || listenerId.mIndex == 0x14
+                ? getPlayerPtr()
+                : searchPtr(ESM::RefId(listenerId), false, false);
+            MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
+            if (speaker.isEmpty() || listener.isEmpty() || dialogueManager == nullptr)
+                return false;
+            return dialogueManager->say(speaker, listener, topicId);
+        });
+        mESM4QuestRuntime.setSetAllyHandler([this](ESM::FormId firstId, ESM::FormId secondId) {
+            const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+            const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+            if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                return false;
+
+            ESM4::Faction first = *firstSource;
+            ESM4::Faction second = *secondSource;
+            if (!MWMechanics::setFalloutFactionsAllied(first, second))
+                return false;
+            mStore.overrideRecord(first);
+            mStore.overrideRecord(second);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetAlly factions=" << ESM::RefId(firstId).serializeText() << ","
+                             << ESM::RefId(secondId).serializeText();
+            return true;
+        });
+        mESM4QuestRuntime.setSetEnemyHandler(
+            [this](ESM::FormId firstId, ESM::FormId secondId, bool firstNeutral, bool secondNeutral) {
+                const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+                const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+                if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                    return false;
+
+                ESM4::Faction first = *firstSource;
+                ESM4::Faction second = *secondSource;
+                if (!MWMechanics::setFalloutFactionsEnemy(first, second, firstNeutral, secondNeutral))
+                    return false;
+                mStore.overrideRecord(first);
+                mStore.overrideRecord(second);
+                Log(Debug::Info) << "FNV/ESM4 quest: SetEnemy factions="
+                                 << ESM::RefId(firstId).serializeText() << ","
+                                 << ESM::RefId(secondId).serializeText()
+                                 << " firstNeutral=" << firstNeutral << " secondNeutral=" << secondNeutral;
+                return true;
+            });
+        mESM4QuestRuntime.setItemCountHandler([this](ESM::FormId ownerId, ESM::FormId itemId) -> std::optional<int> {
+            if ((ownerId.mIndex != 0x7 && ownerId.mIndex != 0x14) || itemId.isZeroOrUnset())
+                return std::nullopt;
+            try
+            {
+                const Ptr player = getPlayerPtr();
+                if (player.isEmpty())
+                    return std::nullopt;
+                return player.getClass().getContainerStore(player).count(ESM::RefId(itemId));
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
+        mESM4QuestRuntime.setAddItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
+            if (itemId.isZeroOrUnset() || count <= 0)
+                return false;
+            try
+            {
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
+                    return false;
+                owner.getClass().getContainerStore(owner).add(ESM::RefId(itemId), count, false);
+                Log(Debug::Info) << "FNV/ESM4 quest: AddItem owner=" << ESM::RefId(ownerId).serializeText()
+                                 << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        });
+        mESM4QuestRuntime.setRemoveItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
+            if (itemId.isZeroOrUnset() || count <= 0)
+                return false;
+            try
+            {
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
+                    return false;
+                ContainerStore& store = owner.getClass().getContainerStore(owner);
+                const ESM::RefId item(itemId);
+                if (store.count(item) < count || store.remove(item, count, false, false) != count)
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: RemoveItem owner=" << ESM::RefId(ownerId).serializeText()
+                                 << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,
@@ -1211,6 +1442,181 @@ namespace MWWorld
     int World::countSavedGameCells() const
     {
         return mWorldModel.countSavedGameRecords();
+    }
+
+    std::uint8_t World::getFalloutMapMarkerState(ESM::FormId marker) const
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker)
+            return 0;
+        if (const std::optional<std::uint8_t> state = mFalloutPlayerRuntimeState.getMapMarkerState(marker))
+            return *state;
+        if ((reference->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0)
+            return 2;
+        return (reference->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0 ? 1 : 0;
+    }
+
+    bool World::showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker || reference->mFullName.empty())
+            return false;
+        const std::uint8_t requested = canTravel ? 2 : std::max<std::uint8_t>(1, getFalloutMapMarkerState(marker));
+        if (!mFalloutPlayerRuntimeState.setMapMarkerState(marker, requested))
+            return false;
+        if (refreshUi)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+        }
+        Log(Debug::Info) << "FNV/ESM4 map: ShowMap id=" << ESM::RefId(marker).serializeText()
+                         << " name=\"" << reference->mFullName << "\" state="
+                         << static_cast<unsigned int>(requested);
+        return getFalloutMapMarkerState(marker) == requested;
+    }
+
+    bool World::fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        const ESM4::Cell* destinationCell
+            = reference == nullptr ? nullptr : mStore.get<ESM4::Cell>().search(reference->mParent);
+        const ESM4::World* destinationWorld
+            = destinationCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(destinationCell->mParent);
+
+        const MWWorld::Cell* playerCell
+            = getPlayerPtr().getCell() == nullptr ? nullptr : getPlayerPtr().getCell()->getCell();
+        const ESM4::Cell* currentCell
+            = playerCell != nullptr && playerCell->isEsm4() ? &playerCell->getEsm4() : nullptr;
+        const ESM4::World* currentWorld
+            = currentCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(currentCell->mParent);
+
+        FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, destinationCell,
+            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld,
+            mFalloutPlayerRuntimeState.isFastTravelEnabled(), mPlayer->enemiesNearby());
+        if (!resolution)
+        {
+            error = std::move(resolution.mError);
+            Log(Debug::Warning) << "FNV/ESM4 map: fast travel rejected marker="
+                                << ESM::RefId(marker).serializeText() << " reason=\"" << error << "\"";
+            return false;
+        }
+
+        const FalloutFastTravelDestination& destination = *resolution.mDestination;
+        setPlayerTraveling(true);
+        // Use the normal gameplay teleport path so the player render node,
+        // camera, physics state, and followers all move with the cell change.
+        // Calling changeToCell directly only moved the world-side player
+        // state, leaving the rendered camera behind at the departure point.
+        ActionTeleport(destination.mCell, destination.mPosition, true).execute(getPlayerPtr());
+        Log(Debug::Info) << "FNV/ESM4 map: fast travel complete marker="
+                         << ESM::RefId(marker).serializeText() << " cell=" << destination.mCell << " pos=("
+                         << destination.mPosition.pos[0] << ", " << destination.mPosition.pos[1] << ", "
+                         << destination.mPosition.pos[2] << ")";
+        error.clear();
+        return true;
+    }
+
+    void World::discoverFalloutMapMarkersNearPlayer()
+    {
+        const MWWorld::Ptr player = getPlayerPtr();
+        if (!player.isInCell() || player.getCell()->getCell() == nullptr || !player.getCell()->getCell()->isExterior())
+            return;
+
+        const ESM::RefId playerWorldspace = player.getCell()->getCell()->getWorldSpace();
+        const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+        constexpr float revealDistance = 4000.f;
+        constexpr float revealDistanceSquared = revealDistance * revealDistance;
+        std::size_t discovered = 0;
+        std::size_t markerCount = 0;
+        std::size_t resolvedExteriorCount = 0;
+        std::size_t sameWorldspaceCount = 0;
+        const ESM4::Reference* nearestMarker = nullptr;
+        float nearestDistanceSquared = std::numeric_limits<float>::max();
+
+        const auto& references = mStore.get<ESM4::Reference>();
+        if (!mFalloutMapMarkersUnlockedForSession
+            && std::getenv("OPENMW_FNV_UNLOCK_ALL_MAP_MARKERS") != nullptr)
+        {
+            std::size_t unlocked = 0;
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                    continue;
+                const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+                if (markerCell == nullptr || !markerCell->isExterior()
+                    || markerCell->mParent != playerWorldspace)
+                    continue;
+                if (mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+                    ++unlocked;
+            }
+            mFalloutMapMarkersUnlockedForSession = true;
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: unlocked all authored exterior markers for local session count="
+                             << unlocked << " worldspace=" << playerWorldspace;
+        }
+        const bool auditAllMarkers = !mFalloutMapMarkerAuditLogged
+            && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT_ALL") != nullptr;
+        for (std::size_t index = 0; index < references.getSize(); ++index)
+        {
+            const ESM4::Reference* marker = references.at(index);
+            if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                continue;
+            ++markerCount;
+
+            const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+            if (markerCell == nullptr || !markerCell->isExterior())
+                continue;
+            ++resolvedExteriorCount;
+            if (markerCell->mParent != playerWorldspace)
+                continue;
+            ++sameWorldspaceCount;
+
+            const float distanceSquared = (marker->mPos.asVec3() - playerPosition).length2();
+            if (auditAllMarkers)
+            {
+                Log(Debug::Info) << "FNV/ESM4 map audit marker: id="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" cell=" << ESM::RefId(marker->mParent).serializeText() << " pos=("
+                                 << marker->mPos.pos[0] << ", " << marker->mPos.pos[1] << ", "
+                                 << marker->mPos.pos[2] << ")";
+            }
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestMarker = marker;
+                nearestDistanceSquared = distanceSquared;
+            }
+            if (getFalloutMapMarkerState(marker->mId) != 2 && distanceSquared <= revealDistanceSquared
+                && mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+            {
+                ++discovered;
+                Log(Debug::Info) << "FNV/ESM4 map: discovered marker="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" distance=" << std::sqrt(distanceSquared);
+            }
+        }
+
+        if (!mFalloutMapMarkerAuditLogged && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT") != nullptr)
+        {
+            mFalloutMapMarkerAuditLogged = true;
+            Log(Debug::Info) << "FNV/ESM4 map audit: markers=" << markerCount
+                             << " resolvedExterior=" << resolvedExteriorCount
+                             << " sameWorldspace=" << sameWorldspaceCount << " playerWorldspace="
+                             << playerWorldspace << " nearest="
+                             << (nearestMarker == nullptr ? "<none>" : nearestMarker->mFullName) << " nearestId="
+                             << (nearestMarker == nullptr ? "<none>"
+                                                         : ESM::RefId(nearestMarker->mId).serializeText())
+                             << " distance="
+                             << (nearestMarker == nullptr ? -1.f : std::sqrt(nearestDistanceSquared));
+        }
+
+        if (discovered != 0)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: proximity discovery published " << discovered << " marker(s)";
+        }
     }
 
     void World::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -1759,6 +2165,8 @@ namespace MWWorld
         removeContainerScripts(getPlayerPtr());
         mWorldScene->changeToInteriorCell(cellName, position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
     }
 
     void World::changeToCell(
@@ -1783,6 +2191,8 @@ namespace MWWorld
         else
             mWorldScene->changeToInteriorCell(destinationCell->getNameId(), position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
     }
 
     float World::getMaxActivationDistance() const
@@ -2505,6 +2915,16 @@ namespace MWWorld
         updateNavigator();
 
         mPlayer->update();
+
+        if (!paused)
+        {
+            mFalloutMapMarkerDiscoveryTimer -= duration;
+            if (mFalloutMapMarkerDiscoveryTimer <= 0.f)
+            {
+                mFalloutMapMarkerDiscoveryTimer = 0.25f;
+                discoverFalloutMapMarkersNearPlayer();
+            }
+        }
 
         mPhysics->debugDraw();
 
@@ -4068,6 +4488,13 @@ namespace MWWorld
     {
         return mProjectileManager != nullptr
             && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
+    bool World::launchFalloutHitscanTracer(
+        ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutHitscanTracer(projectile, origin, destination);
     }
 
     std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)

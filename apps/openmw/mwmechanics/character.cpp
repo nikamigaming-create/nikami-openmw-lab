@@ -38,6 +38,8 @@
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadidle.hpp>
+#include <components/esm4/loadipct.hpp>
+#include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadsndr.hpp>
@@ -2063,8 +2065,15 @@ namespace MWMechanics
                 if (weapon != inventory.end())
                 {
                     mWeapon = *weapon;
-                    if (mWeapon.getType() == ESM4::Weapon::sRecordId)
+                    if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
                         mFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
+                    else if (mWeapon.isEmpty())
+                    {
+                        Log(Debug::Warning)
+                            << "FNV/ESM4 character controller ignored an equipped slot with an empty object"
+                            << " actor=" << mPtr.toString() << " weaponType=" << mWeaponType;
+                        mWeaponType = ESM::Weapon::None;
+                    }
                 }
                 if (mWeaponType != ESM::Weapon::None)
                 {
@@ -2611,12 +2620,17 @@ namespace MWMechanics
         {
             if (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutAttackDelivery.isPending())
             {
-                Log(Debug::Error) << "FNV combat authored attack key was not observed: actor=" << mPtr.toString()
-                                  << " weapon=" << ESM::RefId::formIdRefId(mFalloutAttackDelivery.mWeapon)
-                                  << " animationType="
-                                  << static_cast<unsigned int>(mFalloutAttackDelivery.mAnimationType)
-                                  << " group=" << mFalloutAttackDelivery.mAnimationGroup;
+                const FalloutAttackDelivery pending = mFalloutAttackDelivery;
                 mFalloutAttackDelivery = {};
+                const bool delivered = isFalloutMeleeAnimationType(pending.mAnimationType)
+                    ? strikeFalloutMelee(pending.mAnimationType)
+                    : fireFalloutWeapon();
+                Log(delivered ? Debug::Warning : Debug::Error)
+                    << "FNV combat completed authored attack without delivery key: actor=" << mPtr.toString()
+                    << " weapon=" << ESM::RefId::formIdRefId(pending.mWeapon)
+                    << " animationType=" << static_cast<unsigned int>(pending.mAnimationType)
+                    << " group=" << pending.mAnimationGroup
+                    << " completionFallback=" << (delivered ? "pass" : "fail");
             }
             if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
             {
@@ -3145,6 +3159,41 @@ namespace MWMechanics
         if (rayCasting == nullptr)
             return fail("missing-ray-caster");
 
+        const auto presentImpact = [&](const MWPhysics::RayCastingResult& hit) {
+            if (mFalloutWeapon->mImpactDataSet.isZeroOrUnset())
+                return false;
+            const ESM4::ImpactDataSet* dataSet
+                = store->get<ESM4::ImpactDataSet>().search(mFalloutWeapon->mImpactDataSet);
+            if (dataSet == nullptr)
+                return false;
+            const std::size_t material = !hit.mHitObject.isEmpty() && hit.mHitObject.getClass().isActor()
+                ? ESM4::ImpactDataSet::Organic
+                : ESM4::ImpactDataSet::Stone;
+            const ESM::FormId impactId = dataSet->mImpacts[material];
+            const ESM4::ImpactData* impact = store->get<ESM4::ImpactData>().search(impactId);
+            if (impact == nullptr)
+                return false;
+            if (!impact->mModel.empty())
+            {
+                world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
+                                       VFS::Path::Normalized(impact->mModel)),
+                    "", hit.mHitPos + hit.mHitNormal * 0.5f, 1.f, false, false);
+            }
+            if (!impact->mSound.isZeroOrUnset())
+            {
+                MWBase::Environment::get().getSoundManager()->playSound3D(
+                    hit.mHitPos, ESM::RefId::formIdRefId(impact->mSound), 1.f, 1.f);
+            }
+            Log(Debug::Info) << "FNV combat authored impact: weapon="
+                             << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                             << " dataSet=" << ESM::RefId::formIdRefId(dataSet->mId)
+                             << " impact=" << ESM::RefId::formIdRefId(impact->mId)
+                             << " material=" << material << " model=" << impact->mModel
+                             << " sound=" << ESM::RefId::formIdRefId(impact->mSound)
+                             << " position=" << hit.mHitPos;
+            return true;
+        };
+
         const float weaponLimbDamageMultiplier
             = vatsAction != nullptr ? vatsAction->mLimbDamageMultiplier : mFalloutWeapon->mData.limbDamageMult;
         const std::optional<float> playerLimbDamageMultiplier
@@ -3340,11 +3389,13 @@ namespace MWMechanics
         const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
         unsigned int rayHits = 0;
         unsigned int actorRayHits = 0;
+        unsigned int renderedActorFallbackHits = 0;
         const float damagePerProjectile
             = rangedDamage->mDamage / static_cast<float>(contract->mProjectileCount);
         bool vatsCriticalConsumed = false;
         unsigned int criticalProjectiles = 0;
         unsigned int movingProjectiles = 0;
+        unsigned int hitscanTracers = 0;
         std::vector<osg::Vec3f> impactExplosionPositions;
         for (const osg::Vec3f& rayDirection : rayDirections)
         {
@@ -3413,10 +3464,33 @@ namespace MWMechanics
                 // at the first world or actor contact.
                 result = rayCasting->castRay(origin, destination, { mPtr }, {},
                     MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+                MWPhysics::RayCastingResult renderedHit;
+                if (world->castRenderingRay(
+                        renderedHit, origin, destination, false, false, renderingRayIgnore)
+                    && !renderedHit.mHitObject.isEmpty() && renderedHit.mHitObject.getClass().isActor())
+                {
+                    const float renderedDistance = (renderedHit.mHitPos - origin).length2();
+                    const float physicalDistance
+                        = result.mHit ? (result.mHitPos - origin).length2() : std::numeric_limits<float>::infinity();
+                    // Imported Fallout actors can have visible skinned geometry outside their coarse Bullet
+                    // capsule. Accept the visible actor only when no nearer physical world/door collision blocks
+                    // the ray; this preserves cover while making ordinary crosshair shots hit what is rendered.
+                    if (!result.mHit || renderedDistance <= physicalDistance + 1.f)
+                    {
+                        result = std::move(renderedHit);
+                        ++renderedActorFallbackHits;
+                    }
+                }
             }
+            const osg::Vec3f tracerDestination = result.mHit
+                ? result.mHitPos
+                : origin + rayDirection * std::min(contract->mProjectileRange, 5000.f);
+            if (world->launchFalloutHitscanTracer(contract->mProjectile, origin, tracerDestination))
+                ++hitscanTracers;
             if (!result.mHit)
                 continue;
             ++rayHits;
+            presentImpact(result);
             if (projectileHasExplosion
                 && (projectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0)
                 impactExplosionPositions.push_back(result.mHitPos);
@@ -3574,6 +3648,7 @@ namespace MWMechanics
 
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
                          << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                         << " origin=" << origin << " aimDirection=" << direction
                          << " consumable=" << consumableRefId << " consumableKind="
                          << (contract->mConsumesWeapon ? "weapon" : "ammo")
                          << " consumableBefore=" << consumableBefore << " consumableAfter=" << consumableAfter
@@ -3609,9 +3684,12 @@ namespace MWMechanics
                          << " maximumPelletDeviation=" << (2.f * medianShotSpread)
                          << " ammoEffects=" << ammoEffects.size()
                          << " authoredHitscan=" << contract->mAuthoredHitscan
-                         << " movingProjectiles=" << movingProjectiles << " rayHits=" << rayHits
+                         << " movingProjectiles=" << movingProjectiles
+                         << " hitscanTracers=" << hitscanTracers << " rayHits=" << rayHits
                          << " impactExplosions=" << impactExplosionPositions.size()
-                         << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
+                         << " actorRayHits=" << actorRayHits
+                         << " renderedActorFallbackHits=" << renderedActorFallbackHits
+                         << " actorsHit=" << actorImpacts.size()
                          << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
                          << " vatsHealthDamageMultiplier="
                          << (vatsAction != nullptr ? vatsAction->mHealthDamageMultiplier : 1.f)

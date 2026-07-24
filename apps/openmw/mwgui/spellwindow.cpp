@@ -9,6 +9,7 @@
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -56,6 +57,7 @@ namespace MWGui
         , mFalloutQuestList(nullptr)
         , mUpdateTimer(0.0f)
     {
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window body begin";
         mSpellIcons = std::make_unique<SpellIcons>();
 
         getWidget(mDeleteButton, "DeleteSpellButton");
@@ -64,6 +66,7 @@ namespace MWGui
         getWidget(mEffectBox, "EffectsBox");
         getWidget(mFilterEdit, "FilterEdit");
         getWidget(mFalloutQuestList, "FalloutQuestList");
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window widgets ready";
 
         mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
         mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
@@ -71,6 +74,7 @@ namespace MWGui
         mFalloutQuestList->eventItemSelected += MyGUI::newDelegate(this, &SpellWindow::onFalloutQuestSelected);
 
         setCoord(498, 300, 302, 300);
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window coordinates ready";
 
         // Adjust the spell filtering widget size because of MyGUI limitations.
         int filterWidth = mSpellView->getSize().width - mDeleteButton->getSize().width - 3;
@@ -83,6 +87,7 @@ namespace MWGui
             mControllerButtons.mB = "#{Interface:Back}";
             mControllerButtons.mR3 = "#{Interface:Info}";
         }
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window body complete";
     }
 
     void SpellWindow::onPinToggled()

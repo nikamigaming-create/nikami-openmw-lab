@@ -439,6 +439,8 @@ namespace MWScript
 
     void InterpreterContext::executeActivation(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor)
     {
+        if (ptr.getRefData().isDestroyed())
+            return;
         // MWScripted activations don't go through Lua because 1-frame delay can brake mwscripts.
 #if 0
         MWBase::Environment::get().getLuaManager()->objectActivated(ptr, actor);

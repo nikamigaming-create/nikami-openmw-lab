@@ -162,7 +162,6 @@ namespace MWGui
         for (ItemModel::ModelIndex i = 0; i < static_cast<int>(mModel->getItemCount()); ++i)
         {
             const ItemStack& item = mModel->getItem(i);
-
             const int width = mFalloutListLayout ? std::max(1, mScrollView->getWidth() - 18) : 42;
             const int height = mFalloutListLayout ? 36 : 42;
             ItemWidget* itemWidget = dragArea->createWidget<ItemWidget>(

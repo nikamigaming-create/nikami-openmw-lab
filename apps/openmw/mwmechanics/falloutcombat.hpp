@@ -586,6 +586,15 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction);
 
+    /// Apply FNV SetAlly's symmetric group-combat relationship. Existing directional disposition modifiers are
+    /// preserved and existing relation rows are updated rather than duplicated.
+    [[nodiscard]] bool setFalloutFactionsAllied(ESM4::Faction& first, ESM4::Faction& second);
+
+    /// Apply FNV SetEnemy's directional flags. A false flag means Enemy (the command default); a true flag means
+    /// Neutral. Existing directional disposition modifiers are preserved and relation rows are not duplicated.
+    [[nodiscard]] bool setFalloutFactionsEnemy(ESM4::Faction& first, ESM4::Faction& second,
+        bool firstTreatsSecondAsNeutral = false, bool secondTreatsFirstAsNeutral = false);
+
     /// Decide whether an actor joins combat when a nearby faction ally is attacked. Shared faction membership is
     /// authoritative even when no explicit FACT relation is authored; explicit Ally/Friend relations also defend.
     [[nodiscard]] bool shouldFalloutActorDefendVictim(std::span<const ESM4::ActorFaction> actorFactions,

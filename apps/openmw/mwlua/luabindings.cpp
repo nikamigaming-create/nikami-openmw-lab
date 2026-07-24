@@ -1,5 +1,6 @@
 #include "luabindings.hpp"
 
+#include <components/debug/debuglog.hpp>
 #include <components/lua/asyncpackage.hpp>
 #include <components/lua/utilpackage.hpp>
 
@@ -47,13 +48,21 @@ namespace MWLua
 
     std::map<std::string, sol::object> initGlobalPackages(const Context& context)
     {
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: object bindings begin";
         initObjectBindingsForGlobalScripts(context);
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: object bindings complete";
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: cell bindings begin";
         initCellBindingsForGlobalScripts(context);
-        return {
-            { "openmw.core", initCorePackage(context) },
-            { "openmw.types", initTypesPackage(context) },
-            { "openmw.world", initWorldPackage(context) },
-        };
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: cell bindings complete";
+        std::map<std::string, sol::object> packages;
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: core begin";
+        packages.emplace("openmw.core", initCorePackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: types begin";
+        packages.emplace("openmw.types", initTypesPackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: world begin";
+        packages.emplace("openmw.world", initWorldPackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: complete";
+        return packages;
     }
 
     std::map<std::string, sol::object> initLocalPackages(const Context& context)

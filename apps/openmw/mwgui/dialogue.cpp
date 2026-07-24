@@ -549,11 +549,15 @@ namespace MWGui
         }
 
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mGoodbyeButton);
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: key focus ready";
 
         setTitle(mPtr.getClass().getName(mPtr));
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: title ready";
 
         updateTopics();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: initial topics ready";
         updateTopicsPane(); // force update for new services
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane ready";
 
         if (Settings::gui().mControllerMenus && !sameActor)
         {
@@ -564,7 +568,9 @@ namespace MWGui
         }
 
         updateDisposition();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: disposition ready";
         restock();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: restock ready";
     }
 
     void DialogueWindow::restock()
@@ -618,6 +624,7 @@ namespace MWGui
 
     void DialogueWindow::updateTopicsPane()
     {
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane begin";
         std::string focusedTopic;
         if (Settings::gui().mControllerMenus && mControllerFocus < static_cast<int>(mTopicsList->getItemCount()))
             focusedTopic = mTopicsList->getItemNameAt(mControllerFocus);
@@ -629,6 +636,7 @@ namespace MWGui
         mKeywordSearch.clear();
 
         int services = mPtr.getClass().getServices(mPtr);
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: services=" << services;
 
         bool travel = (mPtr.getType() == ESM::NPC::sRecordId && !mPtr.get<ESM::NPC>()->mBase->getTransport().empty())
             || (mPtr.getType() == ESM::Creature::sRecordId
@@ -636,33 +644,37 @@ namespace MWGui
 
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
+        const auto addServiceItem = [&](std::string_view id) {
+            if (const ESM::GameSetting* setting = gmst.search(id))
+                mTopicsList->addItem(setting->mValue.getString());
+        };
 
         if (mPtr.getType() == ESM::NPC::sRecordId)
-            mTopicsList->addItem(gmst.find("sPersuasion")->mValue.getString());
+            addServiceItem("sPersuasion");
 
         if (services & ESM::NPC::AllItems)
-            mTopicsList->addItem(gmst.find("sBarter")->mValue.getString());
+            addServiceItem("sBarter");
 
         if (services & ESM::NPC::Spells)
-            mTopicsList->addItem(gmst.find("sSpells")->mValue.getString());
+            addServiceItem("sSpells");
 
         if (travel)
-            mTopicsList->addItem(gmst.find("sTravel")->mValue.getString());
+            addServiceItem("sTravel");
 
         if (services & ESM::NPC::Spellmaking)
-            mTopicsList->addItem(gmst.find("sSpellmakingMenuTitle")->mValue.getString());
+            addServiceItem("sSpellmakingMenuTitle");
 
         if (services & ESM::NPC::Enchanting)
-            mTopicsList->addItem(gmst.find("sEnchanting")->mValue.getString());
+            addServiceItem("sEnchanting");
 
         if (services & ESM::NPC::Training)
-            mTopicsList->addItem(gmst.find("sServiceTrainingTitle")->mValue.getString());
+            addServiceItem("sServiceTrainingTitle");
 
         if (services & ESM::NPC::Repair)
-            mTopicsList->addItem(gmst.find("sRepair")->mValue.getString());
+            addServiceItem("sRepair");
 
         if (isCompanion())
-            mTopicsList->addItem(gmst.find("sCompanionShare")->mValue.getString());
+            addServiceItem("sCompanionShare");
 
         if (mTopicsList->getItemCount() > 0)
             mTopicsList->addSeparator();
@@ -682,10 +694,13 @@ namespace MWGui
         }
 
         redrawTopicsList();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topic list redrawn count=" << mTopicsList->getItemCount();
         updateHistory();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: history updated";
 
         if (Settings::gui().mControllerMenus)
             setControllerFocus(mControllerFocus, true);
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane end";
     }
 
     void DialogueWindow::updateHistory(bool scrollbar)
