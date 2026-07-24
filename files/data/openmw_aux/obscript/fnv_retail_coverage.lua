@@ -6,7 +6,7 @@ return {
     totalLines = 165335,
     classifiedCommands = 166,
     classifiedEvents = 23,
-    requiredGaps = 14,
+    requiredGaps = 13,
     commands = {
         { name = "disable", calls = 2488, scripts = 862, category = "Object placement, enable state, cells", status = "implemented" },
         { name = "showmessage", calls = 1472, scripts = 563, category = "Messages, menus, HUD", status = "implemented" },
@@ -103,7 +103,7 @@ return {
         { name = "removeperk", calls = 204, scripts = 40, category = "Player-specific state and controls", status = "unsupported-explicit" },
         { name = "pms", calls = 160, scripts = 39, category = "Audio/imagespace/visual effects", status = "unsupported-explicit" },
         { name = "resurrect", calls = 484, scripts = 39, category = "Actor stats, factions, life state", status = "unsupported-explicit" },
-        { name = "sendassaultalarm", calls = 80, scripts = 38, category = "Actor stats, factions, life state", status = "required-gap" },
+        { name = "sendassaultalarm", calls = 80, scripts = 38, category = "Actor stats, factions, life state", status = "implemented" },
         { name = "getdetected", calls = 97, scripts = 35, category = "Actor stats, factions, life state", status = "unsupported-explicit" },
         { name = "addreputation", calls = 50, scripts = 32, category = "Player-specific state and controls", status = "unsupported-explicit" },
         { name = "getactorvalue", calls = 118, scripts = 31, category = "Actor values (SPECIAL/skills/derived)", status = "unsupported-explicit" },

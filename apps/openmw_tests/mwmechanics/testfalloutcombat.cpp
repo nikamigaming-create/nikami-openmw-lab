@@ -55,6 +55,15 @@ namespace
         EXPECT_FALSE(MWMechanics::shouldFalloutActorDefendVictim(noFaction, victim, std::nullopt));
     }
 
+    TEST(FalloutCombatTest, MatchesExactFactionForScriptedAssaultAlarm)
+    {
+        const std::array factions{ membership(0x01104c6e), membership(0x0116311a) };
+        EXPECT_TRUE(MWMechanics::isFalloutActorInFaction(factions, id(0x01104c6e)));
+        EXPECT_TRUE(MWMechanics::isFalloutActorInFaction(factions, id(0x0116311a)));
+        EXPECT_FALSE(MWMechanics::isFalloutActorInFaction(factions, id(0x0113f89b)));
+        EXPECT_FALSE(MWMechanics::isFalloutActorInFaction(factions, ESM::FormId{}));
+    }
+
     TEST(FalloutCombatTest, AppliesCategoricalAggressionWithoutMorrowindFightBiases)
     {
         using Reaction = ESM4::Faction::GroupCombatReaction;

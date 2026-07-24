@@ -349,6 +349,13 @@ namespace
                 return #mutations
             end,
 
+            assaultAlarmMutations = function(mutations)
+                obs.f('SendAssaultAlarm')
+                obs.f('SendAssaultAlarm', 'player', 'GoodspringsFaction')
+                obs.m('PlacedRef', 'SendAssaultAlarm', 'PlacedRef')
+                return #mutations
+            end,
+
             corpusCoverage = function()
                 local corpus = require('openmw_aux.obscript.fnv_retail_coverage')
                 local mismatches = {}
@@ -481,6 +488,12 @@ namespace
                     }
                     return items[editorId:lower()]
                 end,
+                resolveFactionEditorId = function(editorId)
+                    if editorId:lower() == 'goodspringsfaction' then
+                        return 'faction:goodsprings'
+                    end
+                    return nil
+                end,
                 hasQuest = function(quest)
                     return quest:lower() == 'vmq01' or quest:lower() == 'vfreeformgoodsprings'
                 end,
@@ -538,6 +551,7 @@ namespace
                 activate = mutation('activate'),
                 startCombat = mutation('startCombat'),
                 stopCombat = mutation('stopCombat'),
+                sendAssaultAlarm = mutation('sendAssaultAlarm'),
             },
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
@@ -894,6 +908,42 @@ namespace
             sol::table implicitStop = mutations[4];
             EXPECT_EQ(implicitStop["name"].get<std::string>(), "stopCombat");
             EXPECT_EQ(implicitStop["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "self");
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, AssaultAlarmBindingPreservesVictimAndFactionForms)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-assault-alarm-test", extraPackages);
+            EXPECT_EQ(LuaUtil::call(s["assaultAlarmMutations"], factory["mutations"]).get<int>(), 3);
+
+            sol::table mutations = factory["mutations"];
+            sol::table implicitVictim = mutations[1];
+            EXPECT_EQ(implicitVictim["name"].get<std::string>(), "sendAssaultAlarm");
+            EXPECT_EQ(
+                implicitVictim["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "self");
+            EXPECT_EQ(implicitVictim["args"].get<sol::table>()[2].get<std::string>(), "");
+
+            sol::table factionAlarm = mutations[2];
+            EXPECT_EQ(factionAlarm["name"].get<std::string>(), "sendAssaultAlarm");
+            EXPECT_EQ(factionAlarm["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "player");
+            EXPECT_EQ(factionAlarm["args"].get<sol::table>()[2].get<std::string>(), "faction:goodsprings");
+
+            sol::table explicitVictim = mutations[3];
+            EXPECT_EQ(explicitVictim["name"].get<std::string>(), "sendAssaultAlarm");
+            EXPECT_EQ(
+                explicitVictim["args"].get<sol::table>()[1].get<sol::table>()["id"].get<std::string>(), "placed");
+            EXPECT_EQ(explicitVictim["args"].get<sol::table>()[2].get<std::string>(), "");
         });
     }
 

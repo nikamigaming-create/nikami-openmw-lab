@@ -21,6 +21,7 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadmisc.hpp>
@@ -153,6 +154,22 @@ namespace MWLua
                     const ESM4::Reference& ref = *refs.at(i);
                     if (!ref.mEditorId.empty())
                         res.emplace(Misc::StringUtils::lowerCase(ref.mEditorId), ESM::RefId(ref.mId));
+                }
+                return res;
+            }();
+            return resolve(index, editorId);
+        };
+
+        api["resolveFactionEditorId"] = [resolve](std::string_view editorId) {
+            static const EditorIdIndex index = [] {
+                EditorIdIndex res;
+                const MWWorld::Store<ESM4::Faction>& factions
+                    = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+                for (std::size_t i = 0; i < factions.getSize(); ++i)
+                {
+                    const ESM4::Faction& faction = *factions.at(i);
+                    if (!faction.mEditorId.empty())
+                        res.emplace(Misc::StringUtils::lowerCase(faction.mEditorId), ESM::RefId(faction.mId));
                 }
                 return res;
             }();
@@ -302,6 +319,43 @@ namespace MWLua
                     Log(Debug::Info) << "FNV/ESM4 ObScript StopCombat: actor=" << delayedActor.toString();
                 },
                 "ObScriptStopCombat");
+            return true;
+        };
+        api["sendAssaultAlarm"] = [context](const Object& requestedVictim, std::string_view serializedFaction) {
+            const MWWorld::Ptr& victimPtr = requestedVictim.ptrOrEmpty();
+            ESM::RefId faction;
+            if (!serializedFaction.empty())
+            {
+                try
+                {
+                    faction = ESM::RefId::deserializeText(serializedFaction);
+                }
+                catch (const std::exception&)
+                {
+                    return false;
+                }
+            }
+            if (victimPtr.isEmpty() && faction.empty())
+                return false;
+
+            context.mLuaManager->addAction(
+                [victim = Object(victimPtr), faction] {
+                    const MWWorld::Ptr& delayedVictim = victim.ptrOrEmpty();
+                    if (delayedVictim.isEmpty() && faction.empty())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript SendAssaultAlarm skipped stale victim: "
+                                            << victim.id().toString();
+                        return;
+                    }
+                    MWBase::MechanicsManager* mechanics
+                        = MWBase::Environment::get().getMechanicsManager();
+                    if (mechanics == nullptr || !mechanics->sendFalloutAssaultAlarm(delayedVictim, faction))
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript SendAssaultAlarm rejected: victim="
+                                            << victim.id().toString() << " faction=" << faction;
+                    }
+                },
+                "ObScriptSendAssaultAlarm");
             return true;
         };
         api["activate"] = [context](const Object& object, const Object& actor) {

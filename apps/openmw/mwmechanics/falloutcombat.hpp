@@ -601,6 +601,11 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> victimFactions,
         std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept;
 
+    /// Match an actor against the exact faction selected by SendAssaultAlarm. Rank is irrelevant, but zero/unset
+    /// faction ids never match.
+    [[nodiscard]] bool isFalloutActorInFaction(
+        std::span<const ESM4::ActorFaction> actorFactions, ESM::FormId faction) noexcept;
+
     /// Apply Fallout's categorical aggression contract: 0 never initiates, 1 attacks enemies, 2 attacks enemies and
     /// neutrals, and 3 attacks anyone. Invalid aggression or an unknown required reaction fails closed.
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(

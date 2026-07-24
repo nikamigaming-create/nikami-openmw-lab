@@ -221,6 +221,32 @@ obs.bind('StopCombat', function(ref)
     return 0
 end)
 
+obs.bind('SendAssaultAlarm', function(ref, victim, faction)
+    local requestedVictim
+    if ref == nil or type(ref) == 'string' then
+        requestedVictim = resolveObject(ref)
+        faction = victim
+    else
+        requestedVictim = victim ~= nil and resolveObject(victim) or ref
+    end
+    if not isInstance(types.Actor, requestedVictim) then
+        return 0
+    end
+
+    local factionId = ''
+    if faction ~= nil then
+        if type(faction) ~= 'string' then
+            return 0
+        end
+        factionId = core.obscript.resolveFactionEditorId(faction)
+        if factionId == nil then
+            return 0
+        end
+    end
+    core.obscript.sendAssaultAlarm(requestedVictim, factionId)
+    return 0
+end)
+
 obs.bind('GetItemCount', function(ref, item)
     local object = resolveObject(ref)
     if object == nil or type(item) ~= 'string' then
