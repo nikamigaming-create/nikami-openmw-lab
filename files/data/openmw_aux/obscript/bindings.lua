@@ -281,11 +281,11 @@ obs.bind('PlayGroup', function(ref, group, mode)
     if object ~= self.object or type(group) ~= 'string' then
         return 0
     end
-    pcall(function()
+    local ok = pcall(function()
         animation.clearAnimationQueue(self.object, false)
         animation.playQueued(self.object, group, { loops = 0 })
     end)
-    return 0
+    return ok and 1 or 0
 end)
 
 obs.bind('IsAnimPlaying', function(ref, group)
@@ -308,7 +308,13 @@ obs.bind('SetDestroyed', function(ref, value)
     end
     local object = resolveObject(ref)
     if object == self.object then
-        obs._destroyed = tonumber(value) or 0
+        local destroyed = (tonumber(value) or 0) ~= 0
+        if core.obscript.setDestroyed(object, destroyed) then
+            -- The engine mutation is queued because local scripts can run on
+            -- a worker. Preserve same-block GetDestroyed semantics until the
+            -- authoritative RefData flag is applied on the main thread.
+            obs._destroyed = destroyed and 1 or 0
+        end
     end
     return 0
 end)
@@ -316,7 +322,10 @@ end)
 obs.bind('GetDestroyed', function(ref)
     local object = resolveObject(ref)
     if object == self.object then
-        return obs._destroyed or 0
+        if obs._destroyed ~= nil then
+            return obs._destroyed
+        end
+        return core.obscript.isDestroyed(object) and 1 or 0
     end
     return 0
 end)

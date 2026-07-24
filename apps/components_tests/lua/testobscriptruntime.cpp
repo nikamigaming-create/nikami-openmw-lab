@@ -437,6 +437,15 @@ namespace
                     return true
                 end,
                 getUnconscious = function(object) return object.unconscious end,
+                isDestroyed = function(object) return object.destroyed or false end,
+                setDestroyed = function(object, destroyed)
+                    object.destroyed = destroyed
+                    mutations[#mutations + 1] = {
+                        name = 'setDestroyed',
+                        args = { object, destroyed },
+                    }
+                    return true
+                end,
                 activate = mutation('activate'),
             },
             sendGlobalEvent = function(name, data)
@@ -891,6 +900,14 @@ namespace
             EXPECT_EQ(std::get<10>(values), 0);
             EXPECT_EQ(std::get<11>(values), 0);
             EXPECT_EQ(std::get<12>(values), "NVFreshBarrelCactusFruit");
+            sol::table mutations = factory["mutations"];
+            ASSERT_EQ(mutations.size(), 4);
+            for (int i = 1; i <= 4; ++i)
+                EXPECT_EQ(mutations[i].get<sol::table>()["name"].get<std::string>(), "setDestroyed");
+            EXPECT_TRUE(mutations[1].get<sol::table>()["args"].get<sol::table>()[2].get<bool>());
+            EXPECT_FALSE(mutations[2].get<sol::table>()["args"].get<sol::table>()[2].get<bool>());
+            EXPECT_FALSE(mutations[3].get<sol::table>()["args"].get<sol::table>()[2].get<bool>());
+            EXPECT_TRUE(mutations[4].get<sol::table>()["args"].get<sol::table>()[2].get<bool>());
         });
     }
 
