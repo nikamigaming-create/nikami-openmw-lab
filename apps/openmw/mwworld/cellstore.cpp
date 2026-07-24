@@ -1250,9 +1250,28 @@ namespace MWWorld
     {
         if (mState == State_Loaded)
         {
-            static const int iMonthsToRespawn
-                = mStore.get<ESM::GameSetting>().find("iMonthsToRespawn")->mValue.getInteger();
-            if (MWBase::Environment::get().getWorld()->getTimeStamp() - mLastRespawn > 24 * 30 * iMonthsToRespawn)
+            int respawnHours = 0;
+            if (mStore.isFalloutNewVegas())
+            {
+                const ESM::GameSetting* setting
+                    = mStore.get<ESM::GameSetting>().search(ESM::RefId::stringRefId("iHoursToRespawnCell"));
+                if (setting == nullptr)
+                    throw std::runtime_error(
+                        "Fallout runtime setting 'iHoursToRespawnCell' is unavailable; refusing to use the "
+                        "Morrowind iMonthsToRespawn rule");
+                respawnHours = setting->mValue.getInteger();
+            }
+            else
+            {
+                const int monthsToRespawn
+                    = mStore.get<ESM::GameSetting>().find("iMonthsToRespawn")->mValue.getInteger();
+                respawnHours = 24 * 30 * monthsToRespawn;
+            }
+
+            if (respawnHours <= 0)
+                throw std::runtime_error("Cell respawn interval must be greater than zero hours");
+
+            if (MWBase::Environment::get().getWorld()->getTimeStamp() - mLastRespawn > respawnHours)
             {
                 mLastRespawn = MWBase::Environment::get().getWorld()->getTimeStamp();
                 for (CellRefList<ESM::Container>::List::iterator it(get<ESM::Container>().mList.begin());

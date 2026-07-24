@@ -1,6 +1,10 @@
 #include "worldimp.hpp"
 
 #include <charconv>
+#include <limits>
+#include <optional>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -26,6 +30,7 @@
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -103,6 +108,7 @@
 
 #include "contentloader.hpp"
 #include "esmloader.hpp"
+#include "fnvplayerstate.hpp"
 
 //## VR_PATCH BEGIN
 #include <components/vr/session.hpp>
@@ -165,6 +171,76 @@ namespace MWWorld
             };
         }
 
+        std::vector<std::pair<std::string_view, ESM::Variant>> generateFalloutNewVegasCompatibilityGameSettings()
+        {
+            // OpenMW still constructs an ESM3 compatibility carrier around the native FNV Player.
+            // These values only satisfy that carrier; they are not Fallout gameplay tuning data.
+            return {
+                { "fSwimHeightScale", ESM::Variant(0.9f) },
+                { "fStromWindSpeed", ESM::Variant(0.7f) },
+                { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fUnarmoredBase1", ESM::Variant(0.1f) },
+                { "fUnarmoredBase2", ESM::Variant(0.065f) },
+                { "fMessageTimePerChar", ESM::Variant(0.1f) },
+                { "sDefaultCellname", ESM::Variant("Wasteland") },
+            };
+        }
+
+        std::vector<std::pair<std::string_view, ESM::Variant>> generateFalloutNewVegasCompiledGameSettings()
+        {
+            // These are FalloutNV.exe 1.4.0.525 compiled defaults, not authored GMST records in the official masters.
+            // Values and raw little-endian bytes were captured through the isolated retail setting collection:
+            //   iHoursToRespawnCell    48 00 00 00
+            //   iActivatePickLength    96 00 00 00
+            //   fActorSwimBreathBase   00 00 20 41
+            //   fActorSwimBreathMult   00 00 00 3f
+            //   fActorSwimBreathDamage cd cc 4c 3e
+            //   fVanityModeAutoDelay   00 00 f0 42
+            //   fJumpHeightMin         00 00 80 42
+            //   fJumpMoveBase          00 00 00 00
+            //   fJumpMoveMult          9a 99 99 3e
+            //   fJumpSwimmingMult      00 00 00 40
+            //   fJumpDoubleMult        00 00 00 3f
+            return {
+                { "iHoursToRespawnCell", ESM::Variant(72) },
+                { "iActivatePickLength", ESM::Variant(150) },
+                { "fActorSwimBreathBase", ESM::Variant(10.f) },
+                { "fActorSwimBreathMult", ESM::Variant(0.5f) },
+                { "fActorSwimBreathDamage", ESM::Variant(0.2f) },
+                { "fVanityModeAutoDelay", ESM::Variant(120.f) },
+                { "fJumpHeightMin", ESM::Variant(64.f) },
+                { "fJumpMoveBase", ESM::Variant(0.f) },
+                { "fJumpMoveMult", ESM::Variant(0.3f) },
+                { "fJumpSwimmingMult", ESM::Variant(2.f) },
+                { "fJumpDoubleMult", ESM::Variant(0.5f) },
+            };
+        }
+
+        std::optional<ESM::Variant> bridgeFalloutGameSettingValue(const ESM4::GameSetting::Data& value)
+        {
+            return std::visit(
+                [](const auto& item) -> std::optional<ESM::Variant> {
+                    using T = std::decay_t<decltype(item)>;
+                    if constexpr (std::is_same_v<T, std::monostate>)
+                        return std::nullopt;
+                    else if constexpr (std::is_same_v<T, bool>)
+                        return ESM::Variant(static_cast<std::int32_t>(item));
+                    else if constexpr (std::is_same_v<T, float>)
+                        return ESM::Variant(item);
+                    else if constexpr (std::is_same_v<T, std::int32_t>)
+                        return ESM::Variant(item);
+                    else if constexpr (std::is_same_v<T, std::string>)
+                        return ESM::Variant(item);
+                    else
+                    {
+                        if (item <= static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                            return ESM::Variant(static_cast<std::int32_t>(item));
+                        return std::nullopt;
+                    }
+                },
+                value);
+        }
+
         std::vector<std::pair<GlobalVariableName, ESM::Variant>> generateDefaultGlobals()
         {
             return {
@@ -176,9 +252,12 @@ namespace MWWorld
                 { Globals::sGameHour, ESM::Variant(0) },
                 { Globals::sTimeScale, ESM::Variant(30.f) },
                 { Globals::sDay, ESM::Variant(1) },
+                { Globals::sMonth, ESM::Variant(0) },
                 { Globals::sYear, ESM::Variant(1) },
+                { Globals::sCharGenState, ESM::Variant(-1) },
                 { Globals::sPCRace, ESM::Variant(0) },
                 { Globals::sPCHasCrimeGold, ESM::Variant(0) },
+                { Globals::sPCHasGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldTurnIn, ESM::Variant(0) },
                 { Globals::sPCHasTurnIn, ESM::Variant(0) },
@@ -291,6 +370,7 @@ namespace MWWorld
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
 
+        ensureNeededRecords();
         fillGlobalVariables();
 
         mStore.setUp();
@@ -554,17 +634,56 @@ namespace MWWorld
 
     void World::ensureNeededRecords()
     {
-        for (const auto& [id, value] : generateDefaultGameSettings())
+        const auto insertMissingGameSettings = [this](const auto& settings)
         {
-            if (mStore.get<ESM::GameSetting>().search(id) == nullptr)
+            for (const auto& [id, value] : settings)
             {
-                ESM::GameSetting record;
-                record.mId = ESM::RefId::stringRefId(id);
-                record.mValue = value;
-                record.mRecordFlags = 0;
-                mStore.insertStatic(record);
+                if (mStore.get<ESM::GameSetting>().search(id) == nullptr)
+                {
+                    ESM::GameSetting record;
+                    record.mId = ESM::RefId::stringRefId(id);
+                    record.mValue = value;
+                    record.mRecordFlags = 0;
+                    mStore.insertStatic(record);
+                }
             }
+        };
+
+        const bool isFalloutNewVegas = mStore.isFalloutNewVegas();
+        if (isFalloutNewVegas)
+        {
+            std::size_t bridged = 0;
+            std::size_t unrepresentable = 0;
+            for (const ESM4::GameSetting& source : mStore.get<ESM4::GameSetting>())
+            {
+                if (source.mEditorId.empty()
+                    || mStore.get<ESM::GameSetting>().search(source.mEditorId) != nullptr)
+                    continue;
+
+                const std::optional<ESM::Variant> value = bridgeFalloutGameSettingValue(source.mData);
+                if (!value)
+                {
+                    ++unrepresentable;
+                    continue;
+                }
+
+                ESM::GameSetting record;
+                record.mId = ESM::RefId::stringRefId(source.mEditorId);
+                record.mValue = *value;
+                record.mRecordFlags = source.mFlags;
+                mStore.insertStatic(record);
+                ++bridged;
+            }
+            Log(Debug::Info) << "FNV/ESM4: bridged " << bridged << " native game settings; skipped "
+                             << unrepresentable << " values not representable by the ESM3 carrier";
         }
+
+        if (isFalloutNewVegas)
+            insertMissingGameSettings(generateFalloutNewVegasCompiledGameSettings());
+
+        insertMissingGameSettings(generateDefaultGameSettings());
+        if (isFalloutNewVegas)
+            insertMissingGameSettings(generateFalloutNewVegasCompatibilityGameSettings());
 
         for (const auto& [name, value] : generateDefaultGlobals())
         {
@@ -1007,6 +1126,13 @@ namespace MWWorld
     {
         if (mActivationDistanceOverride >= 0)
             return static_cast<float>(mActivationDistanceOverride);
+
+        if (mStore.isFalloutNewVegas())
+        {
+            const int distance
+                = mStore.get<ESM::GameSetting>().find("iActivatePickLength")->mValue.getInteger();
+            return static_cast<float>(distance);
+        }
 
         static const int iMaxActivateDist
             = mStore.get<ESM::GameSetting>().find("iMaxActivateDist")->mValue.getInteger();

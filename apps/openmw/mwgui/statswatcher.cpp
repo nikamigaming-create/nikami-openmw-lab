@@ -67,30 +67,44 @@ namespace MWGui
 
         if (timeToDrown != mWatchedTimeToStartDrowning)
         {
-            static const float fHoldBreathTime = MWBase::Environment::get()
-                                                     .getESMStore()
-                                                     ->get<ESM::GameSetting>()
-                                                     .find("fHoldBreathTime")
-                                                     ->mValue.getFloat();
-
-            mWatchedTimeToStartDrowning = timeToDrown;
-
-            if (timeToDrown >= fHoldBreathTime || timeToDrown == -1.0) // -1.0 is a special value during initialization
+            if (store->isFalloutNewVegas())
+            {
+                // The FNV HUD breath meter requires BaseProcess dive-breath state from the save/runtime actor bridge.
+                // Keep it hidden instead of presenting a TES3-derived value as native state.
+                mWatchedTimeToStartDrowning = timeToDrown;
                 winMgr->setDrowningBarVisibility(false);
+            }
             else
             {
-                winMgr->setDrowningBarVisibility(true);
-                winMgr->setDrowningTimeLeft(stats.getTimeToStartDrowning(), fHoldBreathTime);
+                static const float fHoldBreathTime = MWBase::Environment::get()
+                                                         .getESMStore()
+                                                         ->get<ESM::GameSetting>()
+                                                         .find("fHoldBreathTime")
+                                                         ->mValue.getFloat();
+
+                mWatchedTimeToStartDrowning = timeToDrown;
+
+                if (timeToDrown >= fHoldBreathTime
+                    || timeToDrown == -1.0) // -1.0 is a special value during initialization
+                    winMgr->setDrowningBarVisibility(false);
+                else
+                {
+                    winMgr->setDrowningBarVisibility(true);
+                    winMgr->setDrowningTimeLeft(stats.getTimeToStartDrowning(), fHoldBreathTime);
+                }
             }
         }
 
-        for (const ESM::Skill& skill : store->get<ESM::Skill>())
+        if (!store->isFalloutNewVegas())
         {
-            const auto& value = stats.getSkill(skill.mId);
-            if (value != mWatchedSkills[skill.mId] || mWatchedStatsEmpty)
+            for (const ESM::Skill& skill : store->get<ESM::Skill>())
             {
-                mWatchedSkills[skill.mId] = value;
-                setValue(skill.mId, value);
+                const auto& value = stats.getSkill(skill.mId);
+                if (value != mWatchedSkills[skill.mId] || mWatchedStatsEmpty)
+                {
+                    mWatchedSkills[skill.mId] = value;
+                    setValue(skill.mId, value);
+                }
             }
         }
 
@@ -123,17 +137,20 @@ namespace MWGui
                 const ESM::Class* cls = store->get<ESM::Class>().find(watchedRecord->mClass);
                 setValue("class", cls->mName);
 
-                size_t size = cls->mData.mSkills.size();
-                std::vector<ESM::RefId> majorSkills(size);
-                std::vector<ESM::RefId> minorSkills(size);
-
-                for (size_t i = 0; i < size; ++i)
+                if (!store->isFalloutNewVegas())
                 {
-                    minorSkills[i] = ESM::Skill::indexToRefId(cls->mData.mSkills[i][0]);
-                    majorSkills[i] = ESM::Skill::indexToRefId(cls->mData.mSkills[i][1]);
-                }
+                    size_t size = cls->mData.mSkills.size();
+                    std::vector<ESM::RefId> majorSkills(size);
+                    std::vector<ESM::RefId> minorSkills(size);
 
-                configureSkills(majorSkills, minorSkills);
+                    for (size_t i = 0; i < size; ++i)
+                    {
+                        minorSkills[i] = ESM::Skill::indexToRefId(cls->mData.mSkills[i][0]);
+                        majorSkills[i] = ESM::Skill::indexToRefId(cls->mData.mSkills[i][1]);
+                    }
+
+                    configureSkills(majorSkills, minorSkills);
+                }
             }
         }
 

@@ -13,6 +13,13 @@
 bool MWMechanics::AiBreathe::execute(
     const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
 {
+    if (MWBase::Environment::get().getESMStore()->isFalloutNewVegas())
+    {
+        // FNV's current breath and maximum breath are native actor-process/save state. This TES3 package must not
+        // infer them from fHoldBreathTime while that native state is explicitly uncovered.
+        return true;
+    }
+
     static const float fHoldBreathTime
         = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>().find("fHoldBreathTime")->mValue.getFloat();
 

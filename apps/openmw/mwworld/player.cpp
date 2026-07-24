@@ -499,12 +499,21 @@ namespace MWWorld
         bool swimming = world->isSwimming(player);
         bool flying = world->isFlying(player);
 
-        static const float i1stPersonSneakDelta
-            = store.get<ESM::GameSetting>().find("i1stPersonSneakDelta")->mValue.getFloat();
-        if (sneaking && !swimming && !flying)
-            rendering->getCamera()->setSneakOffset(i1stPersonSneakDelta);
-        else
+        if (store.isFalloutNewVegas())
+        {
+            // FNV has no i1stPersonSneakDelta GMST. Its crouch camera height comes from native actor/controller state,
+            // which belongs to the animation/runtime-state slice; never retry the TES3 lookup once per frame.
             rendering->getCamera()->setSneakOffset(0.f);
+        }
+        else
+        {
+            static const float i1stPersonSneakDelta
+                = store.get<ESM::GameSetting>().find("i1stPersonSneakDelta")->mValue.getFloat();
+            if (sneaking && !swimming && !flying)
+                rendering->getCamera()->setSneakOffset(i1stPersonSneakDelta);
+            else
+                rendering->getCamera()->setSneakOffset(0.f);
+        }
 
         int blind = 0;
         const auto& magicEffects = playerClass.getCreatureStats(player).getMagicEffects();

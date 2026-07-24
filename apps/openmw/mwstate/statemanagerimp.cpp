@@ -1,6 +1,8 @@
 #include "statemanagerimp.hpp"
 
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 
 #include <SDL_clipboard.h>
 
@@ -10,6 +12,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadclas.hpp>
+#include <components/esm4/fonvsavegame.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -38,6 +41,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerstate.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/scene.hpp"
 #include "../mwworld/worldmodel.hpp"
@@ -465,6 +469,52 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
 
         Log(Debug::Info) << "Reading save file " << filepath.filename();
 
+        if (Misc::StringUtils::ciEqual(Files::pathToUnicodeString(filepath.extension()), ".fos"))
+        {
+            MWBase::World& world = *MWBase::Environment::get().getWorld();
+            MWWorld::ESMStore& store = world.getStore();
+            if (!store.isFalloutNewVegas())
+                throw std::runtime_error("Cannot load an FNV .fos without exactly identified Fallout New Vegas content");
+
+            const ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(filepath);
+            const std::optional<MWWorld::FalloutPlayerState>& nativePlayerState = store.getFalloutPlayerState();
+            const MWWorld::FalloutSaveLoadPlanResolution loadPlan = MWWorld::resolveFalloutSaveLoadPlan(
+                save, nativePlayerState ? &*nativePlayerState : nullptr, world.getContentFiles());
+            if (!loadPlan)
+                throw std::runtime_error("Cannot resolve native FNV .fos Player state: " + loadPlan.mError);
+
+            const MWWorld::FalloutSaveLoadPlan& plan = *loadPlan.mPlan;
+            const MWWorld::FalloutExteriorPlayerPlacementResolution placement
+                = MWWorld::resolveFalloutExteriorPlayerPlacement(
+                    store.get<ESM4::World>(), store.get<ESM4::Cell>(), plan.mTransform);
+            if (!placement)
+                throw std::runtime_error("Cannot resolve native FNV .fos Player placement: " + placement.mError);
+
+            Log(Debug::Info) << "FNV .fos preflight resolved exact native Player reference="
+                             << plan.mPlayer.mReferenceRecord << " base=" << plan.mPlayer.mBaseRecord
+                             << " changeFlags=0x" << std::hex << plan.mPlayer.mReferenceChangeFlags << std::dec
+                             << " payload=" << plan.mPlayer.mReferencePayloadOffset << "+"
+                             << plan.mPlayer.mReferencePayloadBytes << " name=" << plan.mPlayer.mName
+                             << " level=" << plan.mPlayer.mLevel
+                             << " location-label=" << plan.mPlayer.mLocationLabel
+                             << " worldspace=" << placement.mPlacement->mWorldspaceRecord
+                             << " cell=" << placement.mPlacement->mCellRecord
+                             << " grid=(" << placement.mPlacement->mCellX << "," << placement.mPlacement->mCellY
+                             << ") position=(" << plan.mTransform.mPosition[0] << ","
+                             << plan.mTransform.mPosition[1] << "," << plan.mTransform.mPosition[2] << ")";
+
+            std::ostringstream blockers;
+            for (std::size_t index = 0; index < plan.mUncoveredState.size(); ++index)
+            {
+                if (index != 0)
+                    blockers << ", ";
+                blockers << plan.mUncoveredState[index];
+            }
+            throw std::runtime_error("FNV .fos preflight resolved the winning native Player FormID 0x00000007, but "
+                                     "applied no state because required resume domains remain uncovered: "
+                + blockers.str());
+        }
+
         ESM::ESMReader reader;
         reader.open(filepath);
 
@@ -586,8 +636,11 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                     break;
 
                 default:
-
-                    // ignore invalid records
+                    if (MWBase::Environment::get().getWorld()->getStore().isFalloutNewVegas())
+                    {
+                        throw std::runtime_error(
+                            "Unsupported Fallout save record would be discarded: " + n.toString());
+                    }
                     Log(Debug::Warning) << "Warning: Ignoring unknown record: " << n.toStringView();
                     reader.skipRecord();
             }

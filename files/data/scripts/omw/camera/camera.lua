@@ -37,6 +37,7 @@ local pov_auto_switch = require('scripts.omw.camera.first_person_auto_switch')
 local move360 = require('scripts.omw.camera.move360')
 
 local MODE = camera.MODE
+local isFalloutNewVegas = core.contentFiles.has('FalloutNV.esm')
 
 local previewIfStandStill = false
 local showCrosshairInThirdPerson = false
@@ -109,7 +110,7 @@ local function updatePOV(dt)
 end
 
 local idleTimer = 0
-local vanityDelay = core.getGMST('fVanityDelay')
+local vanityDelay = core.getGMST(isFalloutNewVegas and 'fVanityModeAutoDelay' or 'fVanityDelay')
 
 local function updateVanity(dt)
     local vanityAllowed = Player.getControlSwitch(self, Player.CONTROL_SWITCH.VanityMode)
@@ -212,8 +213,13 @@ local function onFrame(dt)
         primaryMode = mode
     end
     if mode ~= MODE.Static then
-        local paralysis = Actor.activeEffects(self):getEffect(core.magic.EFFECT_TYPE.Paralyze)
-        local paralyzed = not debug.isGodMode() and paralysis.magnitude > 0
+        -- The OpenMW magic-effect IDs exposed here are TES3 indices. Fallout paralysis is native actor state and must
+        -- not be queried as Morrowind effect 45. The FNV actor-state bridge will replace this conservative false value.
+        local paralyzed = false
+        if not isFalloutNewVegas then
+            local paralysis = Actor.activeEffects(self):getEffect(core.magic.EFFECT_TYPE.Paralyze)
+            paralyzed = not debug.isGodMode() and paralysis.magnitude > 0
+        end
         if not next(noModeControl) and not paralyzed then
             updatePOV(dt)
             updateVanity(dt)

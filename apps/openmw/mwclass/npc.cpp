@@ -5,6 +5,8 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -104,6 +106,20 @@ namespace
         if (is_even(i))
             return static_cast<int>(i);
         return static_cast<int>(i) + 1;
+    }
+
+    const MWWorld::FalloutPlayerState& getFalloutPlayerState(const MWWorld::ESMStore& store)
+    {
+        const std::optional<MWWorld::FalloutPlayerState>& state = store.getFalloutPlayerState();
+        if (!state)
+            throw std::runtime_error("Native FNV Player state is unavailable");
+        return *state;
+    }
+
+    float getFalloutWalkSpeed(const MWWorld::ESMStore& store)
+    {
+        const float baseSpeed = store.get<ESM::GameSetting>().find("fMoveBaseSpeed")->mValue.getFloat();
+        return baseSpeed * 0.01f * getFalloutPlayerState(store).mStatsConfig.speedMultiplier;
     }
 
     void autoCalculateAttributes(const ESM::NPC* npc, MWMechanics::CreatureStats& creatureStats)
@@ -434,6 +450,15 @@ namespace MWClass
     std::string_view Npc::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
+        if (!ref->mBase->mModel.empty())
+        {
+            constexpr std::string_view prefix = "meshes/";
+            std::string_view model = ref->mBase->mModel;
+            if (model.size() > prefix.size() && VFS::Path::pathEqual(prefix, model.substr(0, prefix.size())))
+                return model.substr(prefix.size());
+            return model;
+        }
+
         std::string_view model = Settings::models().mBaseanim.get();
         const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
         if (race->mData.mFlags & ESM::Race::Beast)
@@ -447,6 +472,8 @@ namespace MWClass
     VFS::Path::Normalized Npc::getCorrectedModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
+        if (!ref->mBase->mModel.empty())
+            return Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(ref->mBase->mModel));
 
         const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
         if (race->mData.mFlags & ESM::Race::Beast)
@@ -961,6 +988,21 @@ namespace MWClass
         if (stats.isParalyzed() || stats.getKnockedDown() || stats.isDead())
             return 0.f;
 
+        const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
+        if (esmStore->isFalloutNewVegas())
+        {
+            if (getNormalizedEncumbrance(ptr) > 1.f)
+                return 0.f;
+
+            float moveSpeed = getFalloutWalkSpeed(*esmStore);
+            const bool sneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
+            if (sneaking)
+                moveSpeed *= esmStore->get<ESM::GameSetting>().find("fMoveSneakMult")->mValue.getFloat();
+            else if (MWBase::Environment::get().getMechanicsManager()->isRunning(ptr))
+                moveSpeed *= esmStore->get<ESM::GameSetting>().find("fMoveRunMult")->mValue.getFloat();
+            return moveSpeed;
+        }
+
         const MWBase::World* world = MWBase::Environment::get().getWorld();
         const GMST& gmst = getGmst();
 
@@ -998,6 +1040,7 @@ namespace MWClass
 
     float Npc::getJump(const MWWorld::Ptr& ptr) const
     {
+        const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
         if (normalizedEncumbrance > 1.0f)
             return 0.f;
@@ -1005,6 +1048,16 @@ namespace MWClass
         const MWMechanics::NpcStats& stats = getNpcStats(ptr);
         if (stats.isParalyzed() || stats.getKnockedDown() || stats.isDead())
             return 0.f;
+
+        if (esmStore->isFalloutNewVegas())
+        {
+            // Retail's fJumpHeightMin is a height, while OpenMW's movement solver consumes initial vertical velocity.
+            // Convert the exact 64-unit retail height using the same gravity that solver applies. Native perk, cripple,
+            // and live actor-value modifiers remain part of the actor-state slice.
+            const float height
+                = esmStore->get<ESM::GameSetting>().find("fJumpHeightMin")->mValue.getFloat();
+            return std::sqrt(2.f * Constants::GravityConst * Constants::UnitsPerMeter * height);
+        }
 
         const GMST& gmst = getGmst();
         const MWMechanics::MagicEffects& mageffects = stats.getMagicEffects();
@@ -1093,12 +1146,21 @@ namespace MWClass
 
     float Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
+        const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
+        if (esmStore->isFalloutNewVegas())
+        {
+            if (ptr != MWMechanics::getPlayer())
+                return 0.f;
+
+            const auto& gameSettings = esmStore->get<ESM::GameSetting>();
+            const float base = gameSettings.find("fAVDCarryWeightsBase")->mValue.getFloat();
+            const float multiplier = gameSettings.find("fAVDCarryWeightMult")->mValue.getFloat();
+            return base + getFalloutPlayerState(*esmStore).getSpecial(MWWorld::FalloutSpecial::Strength) * multiplier;
+        }
+
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
-        static const float fEncumbranceStrMult = MWBase::Environment::get()
-                                                     .getESMStore()
-                                                     ->get<ESM::GameSetting>()
-                                                     .find("fEncumbranceStrMult")
-                                                     ->mValue.getFloat();
+        static const float fEncumbranceStrMult
+            = esmStore->get<ESM::GameSetting>().find("fEncumbranceStrMult")->mValue.getFloat();
         return stats.getAttribute(ESM::Attribute::Strength).getModified() * fEncumbranceStrMult;
     }
 
@@ -1116,6 +1178,14 @@ namespace MWClass
 
     float Npc::getArmorRating(const MWWorld::Ptr& ptr, bool useLuaInterfaceIfAvailable) const
     {
+        if (MWBase::Environment::get().getESMStore()->isFalloutNewVegas())
+        {
+            // Fallout uses native DT/DR from the actor's equipped ESM4 armor and live save state. Until that native
+            // inventory path is populated, zero is the only honest value; never run the TES3 Shield/unarmored formula
+            // or its Lua interface for the FNV player proxy.
+            return 0.f;
+        }
+
         if (useLuaInterfaceIfAvailable && ptr == MWMechanics::getPlayer())
         {
             auto res = MWLua::LocalScripts::callPlayerInterface<float>("Combat", "getArmorRating");
@@ -1460,6 +1530,15 @@ namespace MWClass
 
     float Npc::getWalkSpeed(const MWWorld::Ptr& ptr) const
     {
+        const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
+        if (esmStore->isFalloutNewVegas())
+        {
+            float walkSpeed = getFalloutWalkSpeed(*esmStore);
+            if (MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr))
+                walkSpeed *= esmStore->get<ESM::GameSetting>().find("fMoveSneakMult")->mValue.getFloat();
+            return walkSpeed;
+        }
+
         const GMST& gmst = getGmst();
         const MWMechanics::NpcStats& stats = getNpcStats(ptr);
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
@@ -1478,6 +1557,14 @@ namespace MWClass
 
     float Npc::getRunSpeed(const MWWorld::Ptr& ptr) const
     {
+        const MWWorld::ESMStore* esmStore = MWBase::Environment::get().getESMStore();
+        if (esmStore->isFalloutNewVegas())
+        {
+            const float runMultiplier
+                = esmStore->get<ESM::GameSetting>().find("fMoveRunMult")->mValue.getFloat();
+            return getFalloutWalkSpeed(*esmStore) * runMultiplier;
+        }
+
         const GMST& gmst = getGmst();
         return getWalkSpeed(ptr)
             * (0.01f * getSkill(ptr, ESM::Skill::Athletics) * gmst.fAthleticsRunBonus->mValue.getFloat()
@@ -1486,6 +1573,13 @@ namespace MWClass
 
     float Npc::getSwimSpeed(const MWWorld::Ptr& ptr) const
     {
+        if (MWBase::Environment::get().getESMStore()->isFalloutNewVegas())
+        {
+            // FNV does not use the TES3 swim/athletics GMST bundle. Keep native base/run movement semantics here
+            // until the live swimming actor values and crippled-limb modifiers are available from the save bridge.
+            return getMaxSpeed(ptr);
+        }
+
         const MWMechanics::MagicEffects& effects = getNpcStats(ptr).getMagicEffects();
         const bool running = MWBase::Environment::get().getMechanicsManager()->isRunning(ptr);
         return getSwimSpeedImpl(ptr, getGmst(), effects, running ? getRunSpeed(ptr) : getWalkSpeed(ptr));

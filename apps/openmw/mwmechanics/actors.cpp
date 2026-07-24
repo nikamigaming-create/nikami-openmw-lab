@@ -960,6 +960,14 @@ namespace MWMechanics
 
     static void updateDrowning(const MWWorld::Ptr& ptr, float duration, bool isKnockedOut, bool isPlayer)
     {
+        if (MWBase::Environment::get().getESMStore()->isFalloutNewVegas())
+        {
+            // Retail FNV stores current dive breath in BaseProcess and computes the maximum from AV15 HealRate.
+            // Neither value is in the base NPC record, and the FOS change-form payload that owns them is not decoded
+            // yet. Do not substitute TES3 fHoldBreathTime, WaterBreathing MGEF, damage, or the "drown" sound.
+            return;
+        }
+
         const auto& actorClass = ptr.getClass();
         NpcStats& stats = actorClass.getNpcStats(ptr);
 

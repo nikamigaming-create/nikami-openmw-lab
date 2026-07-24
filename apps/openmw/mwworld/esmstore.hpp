@@ -2,7 +2,9 @@
 #define OPENMW_MWWORLD_ESMSTORE_H
 
 #include <filesystem>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
@@ -12,6 +14,7 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/misc/tuplemeta.hpp>
 
+#include "fnvplayerstate.hpp"
 #include "store.hpp"
 
 namespace Loading
@@ -82,12 +85,14 @@ namespace ESM4
     struct ArmorAddon;
     struct Book;
     struct Cell;
+    struct Class;
     struct Clothing;
     struct Container;
     struct Creature;
     struct Door;
     struct Flora;
     struct Furniture;
+    struct GameSetting;
     struct Hair;
     struct HeadPart;
     struct Ingredient;
@@ -150,7 +155,10 @@ namespace MWWorld
             Store<ESM4::LevelledNpc>, Store<ESM4::Light>, Store<ESM4::MiscItem>, Store<ESM4::MovableStatic>,
             Store<ESM4::Npc>, Store<ESM4::Outfit>, Store<ESM4::Potion>, Store<ESM4::Race>, Store<ESM4::Reference>,
             Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>, Store<ESM4::StaticCollection>,
-            Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::World>>;
+            Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::World>,
+
+            // Append new stores to preserve the existing type ordinals used by save/runtime state.
+            Store<ESM4::GameSetting>, Store<ESM4::Class>>;
 
     private:
         template <typename T>
@@ -192,9 +200,14 @@ namespace MWWorld
         std::vector<LuaContent> mLuaContent;
 
         bool mIsSetUpDone = false;
+        std::optional<FalloutPlayerState> mFalloutPlayerState;
+        std::optional<std::uint32_t> mFalloutNewVegasMasterIndex;
 
     public:
         void addOMWScripts(std::filesystem::path filePath) { mLuaContent.push_back(std::move(filePath)); }
+
+        const std::optional<FalloutPlayerState>& getFalloutPlayerState() const { return mFalloutPlayerState; }
+        bool isFalloutNewVegas() const { return mFalloutNewVegasMasterIndex.has_value(); }
         ESM::LuaScriptsCfg getLuaScriptsCfg() const;
 
         /// \todo replace with SharedIterator<StoreBase>

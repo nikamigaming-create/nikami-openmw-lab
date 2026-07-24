@@ -11,12 +11,16 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadgmst.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
 #include <components/esmloader/load.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/lua/configuration.hpp>
 #include <components/misc/algorithm.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include "../mwmechanics/spelllist.hpp"
 
@@ -89,6 +93,58 @@ namespace
         if (it != races.end())
             return it->mId;
         throw std::runtime_error("List of NPC races is empty!");
+    }
+
+    void ensureFalloutNewVegasCompatibilityRecords(MWWorld::Store<ESM::Class>& classes,
+        MWWorld::Store<ESM::Race>& races, MWWorld::Store<ESM::NPC>& npcs,
+        const MWWorld::Store<ESM4::Class>& nativeClasses, const MWWorld::Store<ESM4::Race>& nativeRaces,
+        const MWWorld::FalloutPlayerState& playerState)
+    {
+        const ESM::RefId classId(playerState.mClass);
+        const ESM::RefId raceId(playerState.mRace);
+        const ESM4::Class* nativeClass = nativeClasses.search(classId);
+        if (nativeClass == nullptr)
+            throw std::runtime_error("Cannot build FNV Player carrier: native CLAS is unresolved");
+        const ESM4::Race* nativeRace = nativeRaces.search(raceId);
+        if (nativeRace == nullptr)
+            throw std::runtime_error("Cannot build FNV Player carrier: native RACE is unresolved");
+
+        if (classes.searchStatic(classId) == nullptr)
+        {
+            ESM::Class carrier;
+            carrier.mId = classId;
+            carrier.blank();
+            carrier.mName = nativeClass->mFullName;
+            carrier.mDescription = nativeClass->mDesc;
+            classes.insertStatic(carrier);
+        }
+
+        if (races.searchStatic(raceId) == nullptr)
+        {
+            ESM::Race carrier;
+            carrier.mId = raceId;
+            carrier.blank();
+            carrier.mName = nativeRace->mFullName;
+            carrier.mDescription = nativeRace->mDesc;
+            carrier.mData.mMaleHeight = nativeRace->mHeightMale;
+            carrier.mData.mFemaleHeight = nativeRace->mHeightFemale;
+            carrier.mData.mMaleWeight = nativeRace->mWeightMale;
+            carrier.mData.mFemaleWeight = nativeRace->mWeightFemale;
+            carrier.mData.mFlags = (nativeRace->mRaceFlags & 1u) != 0 ? ESM::Race::Playable : 0;
+            races.insertStatic(carrier);
+        }
+
+        const ESM::RefId playerId = ESM::RefId::stringRefId("Player");
+        if (npcs.searchStatic(playerId) == nullptr)
+        {
+            ESM::NPC player;
+            player.mId = playerId;
+            player.blank();
+            player.mRace = raceId;
+            player.mClass = classId;
+            MWWorld::seedFalloutPlayerProxy(player, playerState);
+            npcs.insertStatic(player);
+        }
     }
 
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
@@ -470,6 +526,16 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+        if (Misc::StringUtils::ciEqual(reader.getFileName().filename().string(), "FalloutNV.esm"))
+        {
+            const std::uint32_t masterIndex = reader.getModIndex();
+            if (mFalloutNewVegasMasterIndex && *mFalloutNewVegasMasterIndex != masterIndex)
+                throw std::runtime_error("FalloutNV.esm was loaded at more than one content index");
+            mFalloutNewVegasMasterIndex = masterIndex;
+            Log(Debug::Info) << "FNV/ESM4: authoritative master=" << reader.getFileName().filename().string()
+                             << " loadOrderIndex=" << masterIndex;
+        }
+
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
         auto visitorRec = [this, listener](ESM4::Reader& r) {
@@ -602,6 +668,32 @@ namespace MWWorld
     void ESMStore::validate()
     {
         auto& npcs = getWritable<ESM::NPC>();
+        const auto& esm4Npcs = getWritable<ESM4::Npc>();
+        Log(Debug::Info) << "FNV/ESM4: NPC store size before compatibility validation=" << esm4Npcs.getSize();
+        if (mFalloutNewVegasMasterIndex)
+        {
+            const ESM::FormId normalizedPlayerId{ 7, static_cast<std::int32_t>(*mFalloutNewVegasMasterIndex) };
+            const ESM::FormId normalizedPlayerReferenceId{
+                0x14, static_cast<std::int32_t>(*mFalloutNewVegasMasterIndex)
+            };
+            FalloutPlayerStateResolution resolution = resolveFalloutPlayerIdentity(esm4Npcs,
+                getWritable<ESM4::ActorCharacter>(), normalizedPlayerId, normalizedPlayerReferenceId);
+            if (!resolution)
+                throw std::runtime_error("Cannot resolve native FNV Player state: " + resolution.mError);
+            mFalloutPlayerState = std::move(resolution.mState);
+            ensureFalloutNewVegasCompatibilityRecords(getWritable<ESM::Class>(), getWritable<ESM::Race>(), npcs,
+                getWritable<ESM4::Class>(), getWritable<ESM4::Race>(), *mFalloutPlayerState);
+            rebuildIdsIndex();
+            mStoreImp->mStaticIds = mStoreImp->mIds;
+            Log(Debug::Info) << "FNV/ESM4: resolved native Player reference="
+                             << mFalloutPlayerState->mReferenceRecord
+                             << " base=" << mFalloutPlayerState->mBaseRecord
+                             << " health=" << mFalloutPlayerState->mHealth
+                             << " model=" << mFalloutPlayerState->mModel;
+        }
+        else
+            mFalloutPlayerState.reset();
+
         std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
             getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
 
@@ -637,6 +729,8 @@ namespace MWWorld
     {
         auto& npcs = getWritable<ESM::NPC>();
         auto player = npcs.find(ESM::RefId::stringRefId("Player"));
+        if (player == nullptr)
+            throw std::runtime_error("Missing ESM3 Player compatibility record after content validation");
         npcs.insert(*player);
     }
 
