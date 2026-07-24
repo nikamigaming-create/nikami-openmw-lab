@@ -1,6 +1,7 @@
 #include "obscriptbindings.hpp"
 
 #include <cstdint>
+#include <exception>
 #include <map>
 #include <memory>
 #include <optional>
@@ -202,25 +203,73 @@ namespace MWLua
             return true;
         };
         api["getUnconscious"] = [](const Object& object) {
-            const MWWorld::Ptr& ptr = object.ptrOrEmpty();
-            if (ptr.isEmpty() || !ptr.getClass().isActor())
+            try
+            {
+                const MWWorld::Ptr& ptr = object.ptrOrEmpty();
+                if (ptr.isEmpty() || !ptr.getClass().isActor())
+                    return false;
+                return ptr.getClass().getCreatureStats(ptr).getKnockedDown();
+            }
+            catch (const std::exception& error)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 ObScript GetUnconscious skipped stale reference: object="
+                                    << object.id().toString() << " error=" << error.what();
                 return false;
-            return ptr.getClass().getCreatureStats(ptr).getKnockedDown();
+            }
+        };
+        api["isDestroyed"] = [](const Object& object) {
+            try
+            {
+                const MWWorld::Ptr& ptr = object.ptrOrEmpty();
+                return !ptr.isEmpty() && ptr.getRefData().isDestroyed();
+            }
+            catch (const std::exception& error)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 ObScript GetDestroyed skipped stale reference: object="
+                                    << object.id().toString() << " error=" << error.what();
+                return false;
+            }
+        };
+        api["setDestroyed"] = [context](const Object& object, bool destroyed) {
+            const MWWorld::Ptr& ptr = object.ptrOrEmpty();
+            if (ptr.isEmpty())
+                return false;
+
+            context.mLuaManager->addAction(
+                [object = Object(ptr), destroyed] {
+                    const MWWorld::Ptr& delayedObject = object.ptrOrEmpty();
+                    if (delayedObject.isEmpty())
+                        return;
+                    delayedObject.getRefData().setDestroyed(destroyed);
+                    Log(Debug::Info) << "FNV/ESM4 ObScript SetDestroyed: object="
+                                     << delayedObject.toString() << " destroyed=" << destroyed;
+                },
+                "ObScriptSetDestroyed");
+            return true;
         };
         api["activate"] = [context](const Object& object, const Object& actor) {
             const MWWorld::Ptr& objectPtr = object.ptrOrEmpty();
             const MWWorld::Ptr& actorPtr = actor.ptrOrEmpty();
-            if (objectPtr.isEmpty() || actorPtr.isEmpty() || objectPtr.getRefData().isDestroyed())
-                return false;
-            if (!objectPtr.getRefData().activateByScript() && objectPtr.getContainerStore() == nullptr)
+            if (objectPtr.isEmpty() || actorPtr.isEmpty())
                 return false;
 
             context.mLuaManager->addAction(
                 [object = Object(objectPtr), actor = Object(actorPtr)] {
                     const MWWorld::Ptr& delayedObject = object.ptrOrEmpty();
                     const MWWorld::Ptr& delayedActor = actor.ptrOrEmpty();
-                    if (delayedObject.isEmpty() || delayedActor.isEmpty()
-                        || delayedObject.getRefData().isDestroyed())
+                    if (delayedObject.isEmpty() || delayedActor.isEmpty())
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 ObScript Activate skipped stale reference: object="
+                                            << object.id().toString() << " actor=" << actor.id().toString();
+                        return;
+                    }
+                    if (delayedObject.getRefData().isDestroyed())
+                        return;
+                    // ObScript handlers can run on the Lua worker while cells
+                    // are being unloaded. Class/container access must remain
+                    // on the main thread after SafePtr has been revalidated.
+                    if (!delayedObject.getRefData().activateByScript()
+                        && delayedObject.getContainerStore() == nullptr)
                         return;
                     std::unique_ptr<MWWorld::Action> action
                         = delayedObject.getClass().activate(delayedObject, delayedActor);
