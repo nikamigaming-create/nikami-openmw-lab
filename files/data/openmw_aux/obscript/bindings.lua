@@ -221,6 +221,37 @@ obs.bind('GetItemCount', function(ref, item)
     return ok and count or 0
 end)
 
+obs.bind('RemoveItem', function(ref, item, count)
+    local object = resolveObject(ref)
+    if object ~= nil and type(item) == 'string'
+        and (isInstance(types.Actor, object) or isInstance(types.Container, object)) then
+        core.sendGlobalEvent('ObScriptRemoveItem', {
+            object = object,
+            item = item,
+            count = count or 1,
+        })
+    end
+    return 0
+end)
+
+obs.bind('EquipItem', function(ref, item)
+    local actor = resolveObject(ref)
+    local recordId = type(item) == 'string' and core.obscript.resolveItemEditorId(item) or nil
+    if isInstance(types.Actor, actor) and recordId ~= nil then
+        actor:sendEvent('ObScriptEquipItem', { recordId = recordId })
+    end
+    return 0
+end)
+
+obs.bind('UnequipItem', function(ref, item)
+    local actor = resolveObject(ref)
+    local recordId = type(item) == 'string' and core.obscript.resolveItemEditorId(item) or nil
+    if isInstance(types.Actor, actor) and recordId ~= nil then
+        actor:sendEvent('ObScriptUnequipItem', { recordId = recordId })
+    end
+    return 0
+end)
+
 obs.bind('GetEquipped', function(ref, item)
     local actor = resolveObject(ref)
     if not isInstance(types.Actor, actor) or type(item) ~= 'string' then

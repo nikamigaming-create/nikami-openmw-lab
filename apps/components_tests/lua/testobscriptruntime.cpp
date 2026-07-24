@@ -32,6 +32,8 @@ namespace
     TestingOpenMW::VFSTestFile retailCoverageFile(readDataFile("openmw_aux/obscript/fnv_retail_coverage.lua"));
     constexpr VFS::Path::NormalizedView globalBindingsPath("scripts/omw/obscript.lua");
     TestingOpenMW::VFSTestFile globalBindingsFile(readDataFile("scripts/omw/obscript.lua"));
+    constexpr VFS::Path::NormalizedView actorControllerPath("scripts/omw/mechanics/actorcontroller.lua");
+    TestingOpenMW::VFSTestFile actorControllerFile(readDataFile("scripts/omw/mechanics/actorcontroller.lua"));
 
     // The driver simulates what transpiled scripts and the engine host do:
     // register handlers, install bindings, read/write variables, fire events.
@@ -329,6 +331,16 @@ namespace
                     isPlayer
             end,
 
+            inventoryMutations = function(events)
+                obs.m('player', 'RemoveItem', 'AmmoItem', 3)
+                obs.m('player', 'EquipItem', 'AmmoItem')
+                obs.m('PlacedRef', 'UnequipItem', 'AmmoItem')
+                return events[#events].name, events[#events].data.item,
+                    events[#events].data.count,
+                    nearby.players[1].sentEvents[1].name,
+                    nearby.players[1].sentEvents[1].data.recordId
+            end,
+
             corpusCoverage = function()
                 local corpus = require('openmw_aux.obscript.fnv_retail_coverage')
                 local mismatches = {}
@@ -397,6 +409,19 @@ namespace
                 unconscious = unconscious or false,
             }
             obj.isValid = function() return true end
+            obj.sentEvents = {}
+            obj.sendEvent = function(_, name, data)
+                obj.sentEvents[#obj.sentEvents + 1] = { name = name, data = data }
+            end
+            obj.equipment = {}
+            obj.ammo = {
+                recordId = 'record:ammo',
+                count = obj.itemCount,
+                remove = function(item, count)
+                    obj.removed = count
+                    item.count = item.count - count
+                end,
+            }
             return obj
         end
 
@@ -424,6 +449,12 @@ namespace
                 countOf = function(_, recordId)
                     if recordId == 'record:ammo' then return obj.itemCount end
                     return 0
+                end,
+                find = function(_, recordId)
+                    if recordId == 'record:ammo' and obj.ammo.count > 0 then
+                        return obj.ammo
+                    end
+                    return nil
                 end,
             }
         end
@@ -524,11 +555,17 @@ namespace
                 isDead = function(obj) return obj.dead end,
                 inventory = inventory,
                 getEquipment = function(obj)
-                    if obj.player then
-                        return { [0] = { recordId = 'record:ammo' } }
+                    if next(obj.equipment) ~= nil then
+                        return obj.equipment
+                    elseif obj.player then
+                        return { [0] = obj.ammo }
                     end
                     return {}
                 end,
+                setEquipment = function(obj, equipment)
+                    obj.equipment = equipment
+                end,
+                EQUIPMENT_SLOT = { CarriedRight = 16 },
             },
             Container = {
                 objectIsInstance = function(obj) return obj.kind == 'container' end,
@@ -556,6 +593,12 @@ namespace
             events = events,
             animations = animations,
             mutations = mutations,
+            objects = {
+                own = own,
+                placed = placed,
+                player = player,
+                crate = crate,
+            },
         }
         )X");
 
@@ -566,6 +609,7 @@ namespace
             { bindingsPath, &bindingsFile },
             { retailCoveragePath, &retailCoverageFile },
             { globalBindingsPath, &globalBindingsFile },
+            { actorControllerPath, &actorControllerFile },
             { driverPath, &driverFile },
             { bindingsDriverPath, &bindingsDriverFile },
             { bindingsFactoryPath, &bindingsFactoryFile },
@@ -777,6 +821,35 @@ namespace
         });
     }
 
+    TEST_F(ObScriptRuntimeTest, InventoryMutationBindingsDispatchAuthoritativeTargets)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-inventory-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["inventoryMutations"], factory["events"])
+                                    .get<std::tuple<std::string, std::string, int, std::string, std::string>>();
+            EXPECT_EQ(std::get<0>(values), "ObScriptRemoveItem");
+            EXPECT_EQ(std::get<1>(values), "AmmoItem");
+            EXPECT_EQ(std::get<2>(values), 3);
+            EXPECT_EQ(std::get<3>(values), "ObScriptEquipItem");
+            EXPECT_EQ(std::get<4>(values), "record:ammo");
+
+            sol::table objects = factory["objects"];
+            sol::table placedEvents = objects["placed"].get<sol::table>()["sentEvents"];
+            ASSERT_EQ(placedEvents.size(), 1);
+            EXPECT_EQ(placedEvents[1].get<sol::table>()["name"].get<std::string>(), "ObScriptUnequipItem");
+        });
+    }
+
     TEST_F(ObScriptRuntimeTest, RetailCorpusCoverageMatchesRuntimeBindings)
     {
         mLua.protectedCall([&](LuaUtil::LuaView&) {
@@ -945,6 +1018,60 @@ namespace
                 mutations[2].get<sol::table>()["name"].get<std::string>(), "setObjectiveDisplayed");
             EXPECT_EQ(mutations[3].get<sol::table>()["name"].get<std::string>(), "setQuestVariable");
             EXPECT_EQ(mutations[4].get<sol::table>()["name"].get<std::string>(), "setGlobalVariable");
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, GlobalRemoveItemMutatesTheRequestedInventoryStack)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.types", packages["openmw.types"] },
+                { "openmw.world", packages["openmw.world"] },
+            };
+            sol::table script = mLua.runInNewSandbox(
+                VFS::Path::Normalized(globalBindingsPath), "obscript-global-remove-item-test", extraPackages);
+            sol::table data = view.sol().create_table();
+            sol::table objects = factory["objects"];
+            data["object"] = objects["player"];
+            data["item"] = "AmmoItem";
+            data["count"] = 3;
+            LuaUtil::call(script["eventHandlers"].get<sol::table>()["ObScriptRemoveItem"], data);
+
+            sol::table player = objects["player"];
+            EXPECT_EQ(player["removed"].get<int>(), 3);
+            EXPECT_EQ(player["ammo"].get<sol::table>()["count"].get<int>(), 9);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, ActorControllerEquipsAndUnequipsTheResolvedInventoryItem)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            sol::table objects = factory["objects"];
+            packages["openmw.self"] = objects["player"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table script = mLua.runInNewSandbox(
+                VFS::Path::Normalized(actorControllerPath), "obscript-actor-equip-test", extraPackages);
+            sol::table handlers = script["eventHandlers"];
+            sol::table data = view.sol().create_table();
+            data["recordId"] = "record:ammo";
+            LuaUtil::call(handlers["ObScriptEquipItem"], data);
+
+            sol::table player = objects["player"];
+            sol::table equipment = player["equipment"];
+            EXPECT_EQ(equipment[16].get<sol::table>()["recordId"].get<std::string>(), "record:ammo");
+
+            LuaUtil::call(handlers["ObScriptUnequipItem"], data);
+            equipment = player["equipment"];
+            EXPECT_FALSE(equipment[16].valid());
         });
     }
 
