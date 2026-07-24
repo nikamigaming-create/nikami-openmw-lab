@@ -1,5 +1,7 @@
 #include "inventoryitemmodel.hpp"
 
+#include <components/debug/debuglog.hpp>
+
 #include <sstream>
 
 #include "../mwmechanics/actorutil.hpp"
@@ -113,6 +115,14 @@ namespace MWGui
         for (MWWorld::ContainerStoreIterator it = store.begin(); it != store.end(); ++it)
         {
             MWWorld::Ptr item = *it;
+            if (item.isEmpty())
+            {
+                Log(Debug::Warning)
+                    << "FNV/ESM4 inventory model skipped an unresolved empty save item";
+                continue;
+            }
+            if (item.getCellRef().getCount() <= 0)
+                continue;
 
             if (!item.getClass().showsInInventory(item))
                 continue;

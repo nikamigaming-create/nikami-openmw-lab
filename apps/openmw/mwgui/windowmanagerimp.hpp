@@ -278,6 +278,7 @@ namespace MWGui
 
         void addVisitedLocation(const std::string& name, int x, int y) override;
         void refreshFalloutMapMarkers() override;
+        bool focusFalloutMapMarker(ESM::FormId marker, float zoom) override;
         bool requestFalloutFastTravel(ESM::FormId marker) override;
         void confirmFalloutFastTravel() override;
 

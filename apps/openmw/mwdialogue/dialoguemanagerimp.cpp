@@ -145,6 +145,7 @@ namespace MWDialogue
         mEsm4AddedTopics.clear();
         mEsm4VoicePaths.clear();
         mEsm4ResultReferenceIds.clear();
+        mEsm4InfosByTopic.clear();
     }
 
     bool DialogueManager::matchesEsm4Info(const ESM4::DialogInfo& info) const
@@ -263,28 +264,49 @@ namespace MWDialogue
         return affinity;
     }
 
-    const ESM4::DialogInfo* DialogueManager::selectEsm4Info(ESM::FormId topic) const
+    const ESM4::DialogInfo* DialogueManager::selectEsm4Info(
+        ESM::FormId topic, bool requireActorAffinity) const
     {
-        const ESM4::DialogInfo* selected = nullptr;
-        const auto& infos = MWBase::Environment::get().getESMStore()->get<ESM4::DialogInfo>();
-        for (const ESM4::DialogInfo& info : infos)
+        if (mEsm4InfosByTopic.empty())
         {
-            if (info.mTopic != topic || !matchesEsm4Info(info))
-                continue;
-            if ((info.mInfoFlags & ESM4::INFO_SayOnce) != 0 && mEsm4SaidInfos.contains(info.mId))
-                continue;
-            // The ESM4 store preserves physical topic-child order. Fallout
-            // uses that order as response priority when multiple INFOs pass;
-            // FormID order is unrelated and reverses real topics such as
-            // Chet's reputation-specific barter response and its fallback.
-            // Actor affinity remains an explicit override for shared/generic
-            // responses. Equal-affinity candidates retain authored order.
-            const int affinity = getEsm4InfoActorAffinity(info);
-            const int selectedAffinity = selected == nullptr ? -1 : getEsm4InfoActorAffinity(*selected);
-            if (selected == nullptr || affinity > selectedAffinity)
-                selected = &info;
+            const auto& infos = MWBase::Environment::get().getESMStore()->get<ESM4::DialogInfo>();
+            mEsm4InfosByTopic.reserve(infos.getSize());
+            for (const ESM4::DialogInfo& info : infos)
+                mEsm4InfosByTopic[info.mTopic].push_back(&info);
         }
-        return selected;
+
+        const auto topicInfos = mEsm4InfosByTopic.find(topic);
+        if (topicInfos == mEsm4InfosByTopic.end())
+            return nullptr;
+
+        // Fallout evaluates INFO children in authored order and stops at the
+        // first passing response. Prefer actor-specific children without
+        // evaluating their conditions: the previous "best match" scan ran
+        // conditions for every GREETING in the game, resolving references in
+        // unrelated cells and eventually exhausting the runtime.
+        std::vector<std::pair<const ESM4::DialogInfo*, int>> candidates;
+        candidates.reserve(topicInfos->second.size());
+        for (const ESM4::DialogInfo* candidate : topicInfos->second)
+        {
+            if (candidate == nullptr)
+                continue;
+            const int affinity = getEsm4InfoActorAffinity(*candidate);
+            if (requireActorAffinity && affinity == 0)
+                continue;
+            candidates.emplace_back(candidate, affinity);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(),
+            [](const auto& left, const auto& right) { return left.second > right.second; });
+
+        for (const auto& [candidate, affinity] : candidates)
+        {
+            static_cast<void>(affinity);
+            if ((candidate->mInfoFlags & ESM4::INFO_SayOnce) != 0 && mEsm4SaidInfos.contains(candidate->mId))
+                continue;
+            if (matchesEsm4Info(*candidate))
+                return candidate;
+        }
+        return nullptr;
     }
 
     const ESM4::DialogInfo* DialogueManager::resolveEsm4Selection(
@@ -301,17 +323,21 @@ namespace MWDialogue
 
     void DialogueManager::updateEsm4Topics()
     {
+        Log(Debug::Info) << "FNV/ESM4 dialogue: rebuilding exposed topics count=" << mEsm4AddedTopics.size();
         mEsm4Picker.clearTopics();
         const auto& dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
-        for (const ESM4::Dialogue& dialogue : dialogues)
+        for (ESM::FormId topic : mEsm4AddedTopics)
         {
+            const ESM4::Dialogue* dialoguePtr = dialogues.search(ESM::RefId(topic));
+            if (dialoguePtr == nullptr)
+                continue;
+            const ESM4::Dialogue& dialogue = *dialoguePtr;
             if (dialogue.mDialType != 0 || (dialogue.mDialFlags & 0x02) == 0
                 || Misc::StringUtils::ciEqual(dialogue.mEditorId, "GREETING")
                 || Misc::StringUtils::ciEqual(dialogue.mEditorId, "GOODBYE"))
                 continue;
             const ESM4::DialogInfo* info = selectEsm4Info(dialogue.mId);
-            if (info == nullptr
-                || (getEsm4InfoActorAffinity(*info) == 0 && !mEsm4AddedTopics.contains(dialogue.mId)))
+            if (info == nullptr)
                 continue;
             const std::string_view title = getEsm4DialoguePrompt(dialogue, *info);
             if (!title.empty())
@@ -329,6 +355,7 @@ namespace MWDialogue
                                         << " info=" << ESM::RefId(info->mId);
             }
         }
+        Log(Debug::Info) << "FNV/ESM4 dialogue: exposed topic rebuild complete";
     }
 
     std::string DialogueManager::resolveEsm4Voice(
@@ -816,9 +843,12 @@ namespace MWDialogue
                 return false;
 
             executeEsm4Topic(greeting->mId, callback, true);
+            Log(Debug::Info) << "FNV/ESM4 dialogue: greeting execution returned";
             creatureStats.talkedToPlayer();
             mTalkedTo = true;
+            Log(Debug::Info) << "FNV/ESM4 dialogue: updating topics after greeting";
             updateEsm4Topics();
+            Log(Debug::Info) << "FNV/ESM4 dialogue: startDialogue complete";
             return true;
         }
 

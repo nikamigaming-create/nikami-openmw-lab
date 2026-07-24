@@ -37,10 +37,11 @@ namespace
             mCurrentCell.mParent = ESM::RefId(mCurrentWorld.mId);
         }
 
-        MWWorld::FalloutFastTravelResolution resolve(std::uint8_t state = 2, bool enemies = false) const
+        MWWorld::FalloutFastTravelResolution resolve(
+            std::uint8_t state = 2, bool enemies = false, bool scriptedEnabled = true) const
         {
             return MWWorld::resolveFalloutFastTravelDestination(&mMarker, &mDestinationCell, &mDestinationWorld,
-                state, &mCurrentCell, &mCurrentWorld, enemies);
+                state, &mCurrentCell, &mCurrentWorld, scriptedEnabled, enemies);
         }
     };
 
@@ -80,11 +81,19 @@ namespace
         EXPECT_FALSE(fixture.resolve());
     }
 
+    TEST(FalloutFastTravel, RejectsRetailScriptedFastTravelBlock)
+    {
+        Fixture fixture;
+        const MWWorld::FalloutFastTravelResolution resolution = fixture.resolve(2, false, false);
+        EXPECT_FALSE(resolution);
+        EXPECT_EQ(resolution.mError, "Fast travel is currently unavailable from this location.");
+    }
+
     TEST(FalloutFastTravel, RejectsMissingOrMismatchedAuthoredDestination)
     {
         Fixture fixture;
         EXPECT_FALSE(MWWorld::resolveFalloutFastTravelDestination(&fixture.mMarker, nullptr,
-            &fixture.mDestinationWorld, 2, &fixture.mCurrentCell, &fixture.mCurrentWorld, false));
+            &fixture.mDestinationWorld, 2, &fixture.mCurrentCell, &fixture.mCurrentWorld, true, false));
 
         fixture.mDestinationCell.mId = ESM::RefId(ESM::FormId{ 0x9999, 1 });
         EXPECT_FALSE(fixture.resolve());

@@ -87,6 +87,9 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -137,6 +140,9 @@ namespace MWWorld
         mPerks.assign(perks.begin(), perks.end());
         mReputations.clear();
         mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -153,6 +159,9 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
+        mFastTravelEnabled = true;
+        mWaitEnabled = true;
+        mFastTravelKeepOnCellChange = false;
         mVatsActive = false;
     }
 
@@ -169,7 +178,8 @@ namespace MWWorld
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
             || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
-            || !mReputations.empty() || !mMapMarkerStates.empty());
+            || !mReputations.empty() || !mMapMarkerStates.empty() || !mFastTravelEnabled
+            || !mWaitEnabled || mFastTravelKeepOnCellChange);
     }
 
     std::optional<FalloutRuntimeActorValue> FalloutPlayerRuntimeState::getBaseActorValue(
@@ -301,6 +311,28 @@ namespace MWWorld
             return false;
         mMapMarkerStates[marker] = state;
         return true;
+    }
+
+    bool FalloutPlayerRuntimeState::setScriptedFastTravel(
+        bool canFastTravel, bool canWait, bool keepOnCellChange)
+    {
+        if (!mBase)
+            return false;
+
+        // Retail ignores a transient disable while a persistent scripted block is already active. Enabling always
+        // clears the block and also enables waiting, regardless of the authored canWait argument.
+        if (!canFastTravel && mFastTravelKeepOnCellChange && !keepOnCellChange)
+            return true;
+        mFastTravelEnabled = canFastTravel;
+        mWaitEnabled = canFastTravel || canWait;
+        mFastTravelKeepOnCellChange = keepOnCellChange;
+        return true;
+    }
+
+    void FalloutPlayerRuntimeState::notifyCellChanged()
+    {
+        if (!mFastTravelKeepOnCellChange)
+            mFastTravelEnabled = true;
     }
 
     std::optional<int> FalloutPlayerRuntimeState::getReputationThreshold(
@@ -451,6 +483,9 @@ namespace MWWorld
             writer.writeFormId(marker, true, "MPID");
             writer.writeHNT("MPST", state);
         }
+        writer.writeHNT("FTEN", static_cast<std::uint8_t>(mFastTravelEnabled));
+        writer.writeHNT("WTEN", static_cast<std::uint8_t>(mWaitEnabled));
+        writer.writeHNT("FTKP", static_cast<std::uint8_t>(mFastTravelKeepOnCellChange));
         writer.endRecord(ESM::REC_FPLR);
     }
 
@@ -543,6 +578,19 @@ namespace MWWorld
                     invalidSave("invalid or duplicate map marker identity");
             }
         }
+        std::uint8_t fastTravelEnabled = 1;
+        std::uint8_t waitEnabled = 1;
+        std::uint8_t fastTravelKeepOnCellChange = 0;
+        if (version >= 6)
+        {
+            reader.getHNT(fastTravelEnabled, "FTEN");
+            reader.getHNT(waitEnabled, "WTEN");
+            reader.getHNT(fastTravelKeepOnCellChange, "FTKP");
+            if (fastTravelEnabled > 1 || waitEnabled > 1 || fastTravelKeepOnCellChange > 1)
+                invalidSave("invalid EnableFastTravel state");
+            if (fastTravelEnabled != 0 && waitEnabled == 0)
+                invalidSave("fast travel cannot be enabled while waiting is disabled");
+        }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
@@ -569,5 +617,8 @@ namespace MWWorld
         mPerks = std::move(perks);
         mReputations = std::move(reputations);
         mMapMarkerStates = std::move(mapMarkerStates);
+        mFastTravelEnabled = fastTravelEnabled != 0;
+        mWaitEnabled = waitEnabled != 0;
+        mFastTravelKeepOnCellChange = fastTravelKeepOnCellChange != 0;
     }
 }

@@ -3573,31 +3573,6 @@ namespace MWRender
         return addSingleAnimSource(model, baseModel, false, {}, semanticGroup) != nullptr;
     }
 
-    osg::ref_ptr<osg::Group> correctFalloutCreatureForwardAxis(
-        osg::ref_ptr<osg::Group> objectRoot, const MWWorld::Ptr& ptr)
-    {
-        if (objectRoot == nullptr || ptr.getType() != ESM4::Creature::sRecordId)
-            return objectRoot;
-
-        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
-        if (ref == nullptr || ref->mBase == nullptr || !ref->mBase->mIsFONV)
-            return objectRoot;
-
-        std::string model = Misc::StringUtils::lowerCase(std::string(ptr.getClass().getModel(ptr)));
-        std::replace(model.begin(), model.end(), '\\', '/');
-        if (model.find("/nvsecuritron/") == std::string::npos)
-            return objectRoot;
-
-        // The FNV securitron skeleton's screen/front points along -X while OpenMW movement and facing use +Y.
-        // Keep gameplay yaw authoritative and correct only this measured visual assembly.
-        osg::ref_ptr<osg::MatrixTransform> wrapper = new osg::MatrixTransform;
-        wrapper->setName("FNV Securitron Forward Axis");
-        wrapper->setMatrix(osg::Matrixf::rotate(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)));
-        wrapper->addChild(objectRoot);
-        return wrapper;
-    }
-
-
     float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
         if (std::getenv("OPENMW_FNV_DISABLE_IDLE_SEED") != nullptr)
@@ -7468,16 +7443,6 @@ namespace MWRender
         }
 
         if (osg::ref_ptr<osg::Group> correctedRoot = wrapFalloutActorRootIfRequested(mObjectRoot, mPtr))
-        {
-            if (correctedRoot.get() != mObjectRoot.get())
-            {
-                mInsert->removeChild(mObjectRoot);
-                mObjectRoot = correctedRoot;
-                mInsert->addChild(mObjectRoot);
-            }
-        }
-
-        if (osg::ref_ptr<osg::Group> correctedRoot = correctFalloutCreatureForwardAxis(mObjectRoot, mPtr))
         {
             if (correctedRoot.get() != mObjectRoot.get())
             {

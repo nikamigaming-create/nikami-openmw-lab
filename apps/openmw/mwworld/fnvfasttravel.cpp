@@ -8,12 +8,15 @@ namespace MWWorld
 {
     FalloutFastTravelResolution resolveFalloutFastTravelDestination(const ESM4::Reference* marker,
         const ESM4::Cell* destinationCell, const ESM4::World* destinationWorld, std::uint8_t markerState,
-        const ESM4::Cell* currentCell, const ESM4::World* currentWorld, bool enemiesNearby)
+        const ESM4::Cell* currentCell, const ESM4::World* currentWorld, bool scriptedFastTravelEnabled,
+        bool enemiesNearby)
     {
         if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
             return { std::nullopt, "That location is not a valid map marker." };
         if (markerState != 2)
             return { std::nullopt, "You have not discovered that location." };
+        if (!scriptedFastTravelEnabled)
+            return { std::nullopt, "Fast travel is currently unavailable from this location." };
         if (enemiesNearby)
             return { std::nullopt, "You cannot fast travel when enemies are nearby." };
         if (currentCell != nullptr && (currentCell->mCellFlags & ESM4::CELL_NoTravel) != 0)

@@ -245,7 +245,7 @@ namespace
         return result;
     }
 
-    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 97;
+    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 99;
 
     std::vector<std::uint8_t> makePlayerProcessInventoryData(std::optional<float> referenceScale = std::nullopt,
         std::optional<std::uint32_t> actorExtraDataCount = std::nullopt,
@@ -312,7 +312,7 @@ namespace
         appendU32(result, 3);
         appendDelimiter(result);
         appendPackedCount(result, 1);
-        appendPackedCount(result, 2);
+        appendPackedCount(result, 3);
         appendU8(result, ESM4::sFONVExtraCountType);
         appendDelimiter(result);
         appendU16(result, 2);
@@ -320,6 +320,8 @@ namespace
         appendU8(result, ESM4::sFONVExtraHealthType);
         appendDelimiter(result);
         appendF32(result, 25.f);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraCannotWearType);
         appendDelimiter(result);
 
         if (!referenceScale.has_value() && !actorExtraDataCount.has_value()
@@ -557,7 +559,7 @@ namespace
         return result;
     }
 
-    std::vector<std::uint8_t> makePlayerChangedCharacterState()
+    std::vector<std::uint8_t> makePlayerChangedCharacterState(bool detailedActorPath = true)
     {
         std::vector<std::uint8_t> result;
         const auto appendDelimitedU8 = [&](std::uint8_t value) {
@@ -630,25 +632,29 @@ namespace
         appendDelimitedU8(2);
         appendDelimitedU8(0);
         appendDelimitedReferenceId(result, 0);
-        appendDelimitedU8(0x08);
+        appendDelimitedU8(detailedActorPath ? 0x08 : 0x00);
 
-        for (std::size_t i = 0; i < 5; ++i)
-            appendProcessVector3(result, static_cast<float>(i), static_cast<float>(i + 1), static_cast<float>(i + 2));
-        for (std::uint32_t i = 0; i < 20; ++i)
-            appendDelimitedU32(i);
-        appendDelimitedU32(10);
-        appendDelimitedU32(20);
-        for (std::uint32_t i = 0; i < 4; ++i)
-            appendDelimitedU32(30 + i);
-        for (const std::uint8_t value : { 1, 1, 0, 0, 0, 0, 0 })
-            appendDelimitedU8(value);
-        appendDelimitedU8(0);
-        appendDelimitedU8(0);
-        appendDelimitedU32(0);
-        appendProcessVector3(result, -1.f, -2.f, -3.f);
-        appendDelimitedU32(0);
-        appendDelimitedReferenceId(result, 0x400014u);
-        appendPackedCount(result, 0);
+        if (detailedActorPath)
+        {
+            for (std::size_t i = 0; i < 5; ++i)
+                appendProcessVector3(
+                    result, static_cast<float>(i), static_cast<float>(i + 1), static_cast<float>(i + 2));
+            for (std::uint32_t i = 0; i < 20; ++i)
+                appendDelimitedU32(i);
+            appendDelimitedU32(10);
+            appendDelimitedU32(20);
+            for (std::uint32_t i = 0; i < 4; ++i)
+                appendDelimitedU32(30 + i);
+            for (const std::uint8_t value : { 1, 1, 0, 0, 0, 0, 0 })
+                appendDelimitedU8(value);
+            appendDelimitedU8(0);
+            appendDelimitedU8(0);
+            appendDelimitedU32(0);
+            appendProcessVector3(result, -1.f, -2.f, -3.f);
+            appendDelimitedU32(0);
+            appendDelimitedReferenceId(result, 0x400014u);
+            appendPackedCount(result, 0);
+        }
 
         appendProcessVector3(result, 308.f, 0.f, 0.f);
         appendDelimitedU32(576);
@@ -657,7 +663,9 @@ namespace
         appendDelimitedU8(0);
         appendDelimitedU8(0);
 
-        if (result.size() != ESM4::sFONVPlayerChangedCharacterStateBytes)
+        const std::size_t expectedSize = detailedActorPath ? ESM4::sFONVPlayerChangedCharacterStateBytes
+                                                          : ESM4::sFONVPlayerChangedCharacterBaseStateBytes;
+        if (result.size() != expectedSize)
             throw std::logic_error("synthetic player ChangedCharacter state has the wrong size");
         return result;
     }
@@ -1000,7 +1008,8 @@ namespace
         std::size_t playerCharacterFinalStateBytes = ESM4::sFONVPlayerCharacterFinalStateBytes,
         std::optional<float> playerReferenceScale = std::nullopt,
         std::optional<std::uint32_t> playerActorExtraDataCount = std::nullopt,
-        std::span<const std::uint8_t> playerActorExtraData = {}, bool includeGlobalVariables = false)
+        std::span<const std::uint8_t> playerActorExtraData = {}, bool includeGlobalVariables = false,
+        bool playerDetailedActorPath = true)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -1102,10 +1111,11 @@ namespace
         changedPayload1.insert(changedPayload1.end(), playerMobileObjectProcessState.begin(),
             playerMobileObjectProcessState.begin()
                 + static_cast<std::ptrdiff_t>(actualPlayerMobileObjectProcessStateBytes));
-        const std::vector<std::uint8_t> playerChangedCharacterState = makePlayerChangedCharacterState();
+        const std::vector<std::uint8_t> playerChangedCharacterState
+            = makePlayerChangedCharacterState(playerDetailedActorPath);
         const std::size_t actualPlayerChangedCharacterStateBytes
             = actualPlayerMobileObjectProcessStateBytes == sSyntheticPlayerMobileObjectProcessStateBytes
-            ? playerChangedCharacterStateBytes
+            ? std::min(playerChangedCharacterStateBytes, playerChangedCharacterState.size())
             : 0;
         if (actualPlayerChangedCharacterStateBytes > playerChangedCharacterState.size())
             throw std::logic_error("synthetic player ChangedCharacter byte count is too large");
@@ -1114,7 +1124,7 @@ namespace
                 + static_cast<std::ptrdiff_t>(actualPlayerChangedCharacterStateBytes));
         const std::vector<std::uint8_t> playerCharacterAnimationState = makePlayerCharacterAnimationState();
         const std::size_t actualPlayerCharacterAnimationStateBytes
-            = actualPlayerChangedCharacterStateBytes == ESM4::sFONVPlayerChangedCharacterStateBytes
+            = actualPlayerChangedCharacterStateBytes == playerChangedCharacterState.size()
             ? playerCharacterAnimationStateBytes
             : 0;
         if (actualPlayerCharacterAnimationStateBytes > playerCharacterAnimationState.size())
@@ -1262,7 +1272,7 @@ namespace
 
     SaveBytes makeSaveWithPlayerProcessInventory(std::optional<float> referenceScale,
         std::optional<std::uint32_t> actorExtraDataCount = std::nullopt,
-        std::span<const std::uint8_t> actorExtraData = {})
+        std::span<const std::uint8_t> actorExtraData = {}, bool detailedActorPath = true)
     {
         constexpr std::array masters = { std::string_view("FalloutNV.esm") };
         return makeSave(true, 2, 1, masters, true, "Courier", false,
@@ -1270,7 +1280,8 @@ namespace
             sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
             sSyntheticPlayerCharacterAnimationStateBytes, ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
             ESM4::sFONVPlayerCharacterListsStateBytes, ESM4::sFONVPlayerCharacterMagicTargetStateBytes,
-            ESM4::sFONVPlayerCharacterFinalStateBytes, referenceScale, actorExtraDataCount, actorExtraData);
+            ESM4::sFONVPlayerCharacterFinalStateBytes, referenceScale, actorExtraDataCount, actorExtraData, false,
+            detailedActorPath);
     }
 
     SaveBytes makeSaveWithQuestChange()
@@ -1754,11 +1765,14 @@ namespace
         EXPECT_FALSE(worn.mCount.has_value());
         EXPECT_FALSE(worn.mHealth.has_value());
         ASSERT_EQ(processInventory.mInventoryEntries[2].mExtendData.size(), 1u);
-        ASSERT_EQ(processInventory.mInventoryEntries[2].mExtendData[0].mExtraData.size(), 2u);
+        ASSERT_EQ(processInventory.mInventoryEntries[2].mExtendData[0].mExtraData.size(), 3u);
         const auto& count = processInventory.mInventoryEntries[2].mExtendData[0].mExtraData[0];
         EXPECT_EQ(count.mType.mValue, ESM4::sFONVExtraCountType);
         ASSERT_TRUE(count.mCount.has_value());
         EXPECT_EQ(count.mCount->mValue, 2);
+        const auto& cannotWear = processInventory.mInventoryEntries[2].mExtendData[0].mExtraData[2];
+        EXPECT_EQ(cannotWear.mType.mValue, ESM4::sFONVExtraCannotWearType);
+        EXPECT_EQ(cannotWear.mRange.mSize, 2u);
         EXPECT_EQ(processInventory.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin
                     + sSyntheticPlayerProcessInventoryDataBytes,
@@ -1846,11 +1860,12 @@ namespace
             ESM4::sFONVPlayerReferenceFormId);
         EXPECT_EQ(characterState.mActorMover.mPathingLocation.mNavMesh_Cell_Worldspace[2].mResolvedFormId,
             0x000da726u);
-        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler.mRange,
+        ASSERT_TRUE(characterState.mActorMover.mDetailedPathHandler.has_value());
+        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler->mRange,
             (ESM4::FONVSaveRange{ source.mPlayerChangedCharacterStateBegin + 236, 242 }));
-        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler.mList058Count.mValue, 0u);
-        EXPECT_TRUE(characterState.mActorMover.mDetailedPathHandler.mList058.empty());
-        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler.mForm0D8.mResolvedFormId,
+        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler->mList058Count.mValue, 0u);
+        EXPECT_TRUE(characterState.mActorMover.mDetailedPathHandler->mList058.empty());
+        EXPECT_EQ(characterState.mActorMover.mDetailedPathHandler->mForm0D8.mResolvedFormId,
             ESM4::sFONVPlayerReferenceFormId);
         EXPECT_EQ(characterState.mActorMover.mPlayerMover.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerChangedCharacterStateBegin + 478, 28 }));
@@ -2372,7 +2387,7 @@ namespace
         EXPECT_FLOAT_EQ(processInventory.mReferenceScale->mValue, 1.f);
         EXPECT_EQ(processInventory.mActorExtraDataCount.mValue, 6u);
         ASSERT_EQ(processInventory.mActorExtraData.size(), 6u);
-        EXPECT_EQ(processInventory.mRange.mSize, 157u);
+        EXPECT_EQ(processInventory.mRange.mSize, 159u);
         EXPECT_EQ(processInventory.mInventoryEntries.size(), 3u);
 
         const std::size_t actorExtrasBegin = source.mPlayerProcessInventoryBegin + 9;
@@ -2435,6 +2450,32 @@ namespace
         EXPECT_EQ(sayTo.mSayToTopicInfo->mResolvedFormId, 0xff000117u);
         ASSERT_TRUE(sayTo.mSayToUnknown.has_value());
         EXPECT_EQ(sayTo.mSayToUnknown->mValue, 0x42u);
+    }
+
+    TEST(FONVSaveGame, ParsesPlayerActorMoverWithoutDetailedPathHandler)
+    {
+        const SaveBytes source = makeSaveWithPlayerProcessInventory(std::nullopt, std::nullopt, {}, false);
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+
+        ASSERT_TRUE(save.mPlayerChangedCharacterState.has_value());
+        const ESM4::FONVSavePlayerChangedCharacterState& state = *save.mPlayerChangedCharacterState;
+        EXPECT_EQ(state.mRange.mSize, ESM4::sFONVPlayerChangedCharacterBaseStateBytes);
+        EXPECT_EQ(state.mActorMover.mContentFlags.mValue, 0u);
+        EXPECT_FALSE(state.mActorMover.mDetailedPathHandler.has_value());
+        EXPECT_FLOAT_EQ(state.mActorMover.mPlayerMover.mCoords.mComponents[0].mValue, 308.f);
+        ASSERT_TRUE(save.mPlayerCharacterAnimationState.has_value());
+    }
+
+    TEST(FONVSaveGame, ParsesOptionalCurrentExternalFixture)
+    {
+        const char* fixture = std::getenv("OPENMW_FNV_SAVE_CURRENT_FIXTURE");
+        if (fixture == nullptr || *fixture == '\0')
+            GTEST_SKIP() << "Set OPENMW_FNV_SAVE_CURRENT_FIXTURE to a read-only native FNV save";
+
+        const std::filesystem::path path = std::filesystem::u8path(fixture);
+        const std::vector<std::uint8_t> bytes = readFixtureBytes(path);
+        const ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(path);
+        EXPECT_EQ(save.mStructurallyAccountedRange.mSize, bytes.size());
     }
 
     TEST(FONVSaveGame, RejectsNonFiniteSave213PackageStartPosition)
@@ -3569,7 +3610,8 @@ namespace
         EXPECT_EQ(actorMover.mContentFlags.mValue, 0x08u);
         EXPECT_EQ(actorMover.mContentFlags.mRange, (ESM4::FONVSaveRange{ 501421, 1 }));
 
-        const auto& detailed = actorMover.mDetailedPathHandler;
+        ASSERT_TRUE(actorMover.mDetailedPathHandler.has_value());
+        const auto& detailed = *actorMover.mDetailedPathHandler;
         EXPECT_EQ(detailed.mRange, (ESM4::FONVSaveRange{ 501423, 242 }));
         EXPECT_EQ(detailed.mRaw.size(), 242u);
         EXPECT_EQ(sha256Hex(detailed.mRaw),

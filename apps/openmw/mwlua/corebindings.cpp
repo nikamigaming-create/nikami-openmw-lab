@@ -97,28 +97,38 @@ namespace MWLua
         };
         addCoreTimeBindings(api, context);
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: magic begin";
         api["magic"]
             = context.cachePackage("openmw_core_magic", [context]() { return initCoreMagicBindings(context); });
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: stats begin";
         api["stats"]
             = context.cachePackage("openmw_core_stats", [context]() { return initCoreStatsBindings(context); });
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: mwscripts begin";
         api["mwscripts"]
             = context.cachePackage("openmw_core_mwscripts", [context]() { return initCoreMwScriptBindings(context); });
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: land begin";
         api["land"] = context.cachePackage("openmw_core_land", [context]() { return initCoreLandBindings(context); });
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: weather begin";
         api["weather"]
             = context.cachePackage("openmw_core_weather", [context]() { return initCoreWeatherBindings(context); });
 
+        Log(Debug::Info) << "FNV/ESM4 Lua core: factions begin";
         api["factions"]
             = context.cachePackage("openmw_core_factions", [context]() { return initCoreFactionBindings(context); });
+        Log(Debug::Info) << "FNV/ESM4 Lua core: regions begin";
         api["regions"]
             = context.cachePackage("openmw_core_regions", [context]() { return initCoreRegionBindings(context); });
+        Log(Debug::Info) << "FNV/ESM4 Lua core: dialogue begin";
         api["dialogue"]
             = context.cachePackage("openmw_core_dialogue", [context]() { return initCoreDialogueBindings(context); });
+        Log(Debug::Info) << "FNV/ESM4 Lua core: obscript begin";
         api["obscript"]
             = context.cachePackage("openmw_core_obscript", [context]() { return initCoreObScriptBindings(context); });
+        Log(Debug::Info) << "FNV/ESM4 Lua core: l10n begin";
         api["l10n"] = context.cachePackage("openmw_core_l10n",
             [lua]() { return LuaUtil::initL10nLoader(lua, MWBase::Environment::get().getL10nManager()); });
         const MWWorld::Store<ESM::GameSetting>* gmstStore

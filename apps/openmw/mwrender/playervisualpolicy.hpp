@@ -8,13 +8,14 @@
 #include <vector>
 
 #include <components/esm/formid.hpp>
+#include <osg/Math>
 
 namespace MWRender
 {
     inline constexpr float getFalloutFlatPlayerVisualYawOffset()
     {
-        // FO3/FNV NPC meshes already share the gameplay-forward basis. Only TES4 NPC rigs need a quarter-turn.
-        return 0.f;
+        // Imported Fallout rigs author forward on local +X while gameplay movement uses local +Y.
+        return -osg::PI_2f;
     }
 
     inline std::vector<ESM::FormId> canonicalizeFalloutWornVisualSignature(

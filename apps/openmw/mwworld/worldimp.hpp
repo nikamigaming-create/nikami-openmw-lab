@@ -145,6 +145,7 @@ namespace MWWorld
         bool mIdsRebuilt{};
         float mFalloutMapMarkerDiscoveryTimer = 0.f;
         bool mFalloutMapMarkerAuditLogged = false;
+        bool mFalloutMapMarkersUnlockedForSession = false;
 
         // not implemented
         World(const World&) = delete;
@@ -272,7 +273,7 @@ namespace MWWorld
             return mFalloutPlayerRuntimeState;
         }
         std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const override;
-        bool showFalloutMapMarker(ESM::FormId marker, bool canTravel) override;
+        bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) override;
         bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) override;
 
         const std::vector<int>& getESMVersions() const override;
@@ -612,6 +613,8 @@ namespace MWWorld
         bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact) override;
+        bool launchFalloutHitscanTracer(
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination) override;
         std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) override;
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
         bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;

@@ -137,17 +137,27 @@ namespace MWLua
             Context menuContext = globalContext;
             menuContext.mType = Context::Menu;
 
+            Log(Debug::Info) << "FNV/ESM4 Lua init: common packages begin";
             for (const auto& [name, package] : initCommonPackages(globalContext))
                 mLua.addCommonPackage(name, package);
+            Log(Debug::Info) << "FNV/ESM4 Lua init: common packages complete";
+            Log(Debug::Info) << "FNV/ESM4 Lua init: global packages begin";
             for (const auto& [name, package] : initGlobalPackages(globalContext))
                 mGlobalScripts.addPackage(name, package);
+            Log(Debug::Info) << "FNV/ESM4 Lua init: global packages complete";
+            Log(Debug::Info) << "FNV/ESM4 Lua init: menu packages begin";
             for (const auto& [name, package] : initMenuPackages(menuContext))
                 mMenuScripts.addPackage(name, package);
+            Log(Debug::Info) << "FNV/ESM4 Lua init: menu packages complete";
 
+            Log(Debug::Info) << "FNV/ESM4 Lua init: local packages begin";
             mLocalPackages = initLocalPackages(localContext);
+            Log(Debug::Info) << "FNV/ESM4 Lua init: local packages complete";
 
+            Log(Debug::Info) << "FNV/ESM4 Lua init: player packages begin";
             mPlayerPackages = initPlayerPackages(localContext);
             mPlayerPackages.insert(mLocalPackages.begin(), mLocalPackages.end());
+            Log(Debug::Info) << "FNV/ESM4 Lua init: player packages complete";
 
             LuaUtil::LuaStorage::initLuaBindings(view);
             mGlobalScripts.addPackage("openmw.storage", LuaUtil::LuaStorage::initGlobalPackage(view, &mGlobalStorage));
@@ -160,7 +170,9 @@ namespace MWLua
             mPlayerStorage.setActive(true);
             mGlobalStorage.setActive(false);
 
+            Log(Debug::Info) << "FNV/ESM4 Lua init: configuration begin";
             initConfiguration();
+            Log(Debug::Info) << "FNV/ESM4 Lua init: configuration complete";
             mInitialized = true;
             mMenuScripts.addAutoStartedScripts();
         });

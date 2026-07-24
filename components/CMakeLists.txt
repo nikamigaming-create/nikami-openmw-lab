@@ -250,6 +250,8 @@ add_component_dir (esm4
     loadidle
     loadidlm
     loadimod
+    loadipct
+    loadipds
     loadinfo
     loadingr
     loadkeym

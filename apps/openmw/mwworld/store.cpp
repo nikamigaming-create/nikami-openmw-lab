@@ -1409,6 +1409,8 @@ template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
 template class MWWorld::TypedDynamicStore<ESM4::IdleAnimation>;
 template class MWWorld::TypedDynamicStore<ESM4::IdleMarker>;
 template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
+template class MWWorld::TypedDynamicStore<ESM4::ImpactData>;
+template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
 template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
 template class MWWorld::TypedDynamicStore<ESM4::Key>;
 template class MWWorld::TypedDynamicStore<ESM4::Land>;

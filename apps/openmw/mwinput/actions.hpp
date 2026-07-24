@@ -8,6 +8,7 @@ namespace MWInput
         // Action IDs are used in the configuration file input_v3.xml
 
         A_GameMenu = 0,
+        A_Map = 1, // Open the Fallout map pane directly
 
         A_Screenshot = 2, // Take a screenshot
 

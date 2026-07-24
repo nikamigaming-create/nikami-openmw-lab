@@ -121,6 +121,58 @@ namespace MWWorld
         return { value.r * byteToFloat, value.g * byteToFloat, value.b * byteToFloat, 1.f };
     }
 
+    FalloutWeatherTimeBlend getFalloutWeatherTimeBlend(float gameHour, float nightEnd, float dayStart,
+        float dayEnd, float nightStart, float daytimeColorExtension)
+    {
+        nightEnd -= daytimeColorExtension;
+        nightStart += daytimeColorExtension;
+
+        if (gameHour <= nightEnd || gameHour >= nightStart)
+            return { ESM4::Weather::Time_Night, ESM4::Weather::Time_Night, 1.f };
+
+        if (gameHour > nightEnd && gameHour < dayStart)
+        {
+            const float midpoint = (nightEnd + dayStart) * 0.5f;
+            const float halfDuration = (dayStart - nightEnd) * 0.5f;
+            if (halfDuration <= 0.f)
+                return {};
+            if (gameHour < midpoint)
+                return { ESM4::Weather::Time_Sunrise, ESM4::Weather::Time_Night,
+                    std::clamp((gameHour - nightEnd) / halfDuration, 0.f, 1.f) };
+            return { ESM4::Weather::Time_Sunrise, ESM4::Weather::Time_Day,
+                std::clamp((dayStart - gameHour) / halfDuration, 0.f, 1.f) };
+        }
+
+        if (gameHour > dayStart && gameHour < sHighNoon)
+        {
+            const float duration = sHighNoon - dayStart;
+            return { ESM4::Weather::Time_HighNoon, ESM4::Weather::Time_Day,
+                duration > 0.f ? std::clamp((gameHour - dayStart) / duration, 0.f, 1.f) : 0.f };
+        }
+
+        if (gameHour > sHighNoon && gameHour < dayEnd)
+        {
+            const float duration = dayEnd - sHighNoon;
+            return { ESM4::Weather::Time_Day, ESM4::Weather::Time_HighNoon,
+                duration > 0.f ? std::clamp((gameHour - sHighNoon) / duration, 0.f, 1.f) : 1.f };
+        }
+
+        if (gameHour > dayEnd && gameHour < nightStart)
+        {
+            const float midpoint = (dayEnd + nightStart) * 0.5f;
+            const float halfDuration = (nightStart - dayEnd) * 0.5f;
+            if (halfDuration <= 0.f)
+                return {};
+            if (gameHour < midpoint)
+                return { ESM4::Weather::Time_Sunset, ESM4::Weather::Time_Day,
+                    std::clamp((gameHour - dayEnd) / halfDuration, 0.f, 1.f) };
+            return { ESM4::Weather::Time_Sunset, ESM4::Weather::Time_Night,
+                std::clamp((nightStart - gameHour) / halfDuration, 0.f, 1.f) };
+        }
+
+        return { ESM4::Weather::Time_Day, ESM4::Weather::Time_Day, 1.f };
+    }
+
     FalloutWeatherModelResolution resolveFalloutWeatherModel(const Store<ESM4::World>& worlds,
         const Store<ESM4::Climate>& climates, const Store<ESM4::Weather>& weather,
         const FalloutExteriorPlayerPlacement& placement, const FalloutSaveLoadPlan::SceneState& scene)
@@ -159,10 +211,13 @@ namespace MWWorld
         if (scene.mFlags != sCapturedSkyFlags || scene.mSkyMode != sCapturedSkyMode)
             return failure("FNV saved sky flags or mode are outside the captured Save330 slice");
 
-        const float sunsetBegin = climate->mTiming.mSunsetBegin * sClimateTimeScale;
-        if (scene.mGameHour < sHighNoon || scene.mGameHour > sunsetBegin)
-            return failure("FNV game hour is outside the captured high-noon-to-day interval");
-        const float factor = (scene.mGameHour - sHighNoon) / (sunsetBegin - sHighNoon);
+        if (scene.mGameHour < 0.f || scene.mGameHour >= 24.f)
+            return failure("FNV saved game hour must be in [0, 24)");
+        constexpr float retailDaytimeColorExtension = 0.5f;
+        const FalloutWeatherTimeBlend timeBlend = getFalloutWeatherTimeBlend(scene.mGameHour,
+            climate->mTiming.mSunriseBegin * sClimateTimeScale, climate->mTiming.mSunriseEnd * sClimateTimeScale,
+            climate->mTiming.mSunsetBegin * sClimateTimeScale, climate->mTiming.mSunsetEnd * sClimateTimeScale,
+            retailDaytimeColorExtension);
 
         const auto resolveWeather = [&](ESM::FormId id) -> const ESM4::Weather* {
             if (id.isZeroOrUnset())
@@ -191,18 +246,18 @@ namespace MWWorld
                   return entry.mWeather == current->mId;
               });
         model.mGameHour = scene.mGameHour;
-        model.mHighNoonToDayFactor = factor;
+        model.mTimeBlend = timeBlend;
         for (std::size_t row = 0; row < model.mCurrentColors.size(); ++row)
         {
             model.mCurrentColors[row]
-                = interpolate(model.mCurrent.mColorTable.mColors[row][ESM4::Weather::Time_HighNoon],
-                    model.mCurrent.mColorTable.mColors[row][ESM4::Weather::Time_Day], factor);
+                = interpolate(model.mCurrent.mColorTable.mColors[row][timeBlend.mSecondary],
+                    model.mCurrent.mColorTable.mColors[row][timeBlend.mPrimary], timeBlend.mPrimaryStrength);
         }
         for (std::size_t layer = 0; layer < model.mCurrentCloudColors.size(); ++layer)
         {
             model.mCurrentCloudColors[layer]
-                = interpolate(model.mCurrent.mColorTable.mCloudColors[layer][ESM4::Weather::Time_HighNoon],
-                    model.mCurrent.mColorTable.mCloudColors[layer][ESM4::Weather::Time_Day], factor);
+                = interpolate(model.mCurrent.mColorTable.mCloudColors[layer][timeBlend.mSecondary],
+                    model.mCurrent.mColorTable.mCloudColors[layer][timeBlend.mPrimary], timeBlend.mPrimaryStrength);
         }
 
         return { std::move(model), {} };

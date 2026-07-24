@@ -18,18 +18,28 @@ namespace MWGui
         friend bool operator==(const FalloutMapImagePosition&, const FalloutMapImagePosition&) = default;
     };
 
-    inline FalloutMapImagePosition projectFalloutWorldMapPosition(float worldX, float worldY, float zoom = 1.f)
+    struct FalloutWorldMapGeometry
     {
-        constexpr float minCellX = -20.f;
-        constexpr float maxCellX = 16.f;
-        constexpr float minCellY = -16.f;
-        constexpr float maxCellY = 16.f;
-        constexpr float mapSize = 1024.f;
+        float mNorthWestCellX = 0.f;
+        float mNorthWestCellY = 0.f;
+        float mSouthEastCellX = 0.f;
+        float mSouthEastCellY = 0.f;
+        float mWidth = 0.f;
+        float mHeight = 0.f;
+    };
+
+    inline FalloutMapImagePosition projectFalloutWorldMapPosition(
+        float worldX, float worldY, const FalloutWorldMapGeometry& map, float zoom = 1.f)
+    {
         const float cellX = worldX / static_cast<float>(Constants::CellSizeInUnits);
         const float cellY = worldY / static_cast<float>(Constants::CellSizeInUnits);
+        const float cellWidth = map.mSouthEastCellX - map.mNorthWestCellX;
+        const float cellHeight = map.mNorthWestCellY - map.mSouthEastCellY;
+        if (cellWidth <= 0.f || cellHeight <= 0.f || map.mWidth <= 0.f || map.mHeight <= 0.f)
+            return {};
         return {
-            std::clamp((cellX - minCellX) / (maxCellX - minCellX), 0.f, 1.f) * mapSize * zoom,
-            std::clamp((maxCellY - cellY) / (maxCellY - minCellY), 0.f, 1.f) * mapSize * zoom,
+            std::clamp((cellX - map.mNorthWestCellX) / cellWidth, 0.f, 1.f) * map.mWidth * zoom,
+            std::clamp((map.mNorthWestCellY - cellY) / cellHeight, 0.f, 1.f) * map.mHeight * zoom,
         };
     }
 

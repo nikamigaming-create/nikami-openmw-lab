@@ -1,5 +1,6 @@
 #include "projectilemanager.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -8,6 +9,10 @@
 #include <sstream>
 
 #include <osg/PositionAttitudeTransform>
+#include <osg/BlendFunc>
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/LineWidth>
 
 #include <components/debug/debuglog.hpp>
 
@@ -453,6 +458,60 @@ namespace MWWorld
         return true;
     }
 
+    bool ProjectileManager::launchFalloutHitscanTracer(
+        ESM::FormId projectileId, const osg::Vec3f& origin, const osg::Vec3f& destination)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::Projectile* projectile
+            = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
+        osg::Vec3f direction = destination - origin;
+        const float distance = direction.length();
+        if (projectile == nullptr || projectile->mModel.empty() || !std::isfinite(distance)
+            || distance <= 0.f || direction.normalize() == 0.f)
+            return false;
+
+        FalloutHitscanTracerState state;
+        state.mActorId = -1;
+        state.mProjectileId = -1;
+        state.mOrigin = origin;
+        state.mDestination = destination;
+        state.mElapsedTime = 0.f;
+        // Keep an authored hitscan round visible for several frames without
+        // changing its instantaneous gameplay hit resolution.
+        state.mLifetime = std::clamp(distance / 30000.f, 0.055f, 0.12f);
+        state.mToDelete = false;
+
+        osg::Quat orientation;
+        orientation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
+        createModel(state, Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel)),
+            origin, orientation, false, false, osg::Vec4());
+
+        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+        vertices->push_back(osg::Vec3f(0.f, -42.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, 8.f, 0.f));
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->push_back(osg::Vec4f(2.4f, 1.05f, 0.25f, 0.95f));
+        osg::ref_ptr<osg::Geometry> streak = new osg::Geometry;
+        streak->setVertexArray(vertices);
+        streak->setColorArray(colors, osg::Array::BIND_OVERALL);
+        streak->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, 2));
+        osg::StateSet* stateSet = streak->getOrCreateStateSet();
+        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+        stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE), osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::LineWidth(3.f), osg::StateAttribute::ON);
+        stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+        osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+        geode->addDrawable(streak);
+        state.mNode->addChild(geode);
+
+        mFalloutHitscanTracers.push_back(std::move(state));
+        Log(Debug::Info) << "FNV hitscan tracer launched: projectile="
+                         << ESM::RefId::formIdRefId(projectileId) << " origin=" << origin
+                         << " destination=" << destination << " distance=" << distance;
+        return true;
+    }
+
     std::size_t ProjectileManager::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
     {
         if (actor.isEmpty())
@@ -537,7 +596,26 @@ namespace MWWorld
         periodicCleanup(dt);
         moveProjectiles(dt);
         moveFalloutProjectiles(dt);
+        moveFalloutHitscanTracers(dt);
         moveMagicBolts(dt);
+    }
+
+    void ProjectileManager::moveFalloutHitscanTracers(float duration)
+    {
+        for (FalloutHitscanTracerState& state : mFalloutHitscanTracers)
+        {
+            if (state.mToDelete)
+                continue;
+            state.mElapsedTime += duration;
+            if (state.mElapsedTime >= state.mLifetime)
+            {
+                state.mToDelete = true;
+                continue;
+            }
+            const float progress = std::clamp(state.mElapsedTime / state.mLifetime, 0.f, 1.f);
+            state.mNode->setPosition(state.mOrigin + (state.mDestination - state.mOrigin) * progress);
+            update(state, duration);
+        }
     }
 
     void ProjectileManager::periodicCleanup(float dt)
@@ -1183,6 +1261,11 @@ namespace MWWorld
             if (projectileState.mToDelete)
                 cleanupFalloutProjectile(projectileState);
         }
+        for (FalloutHitscanTracerState& tracer : mFalloutHitscanTracers)
+        {
+            if (tracer.mToDelete)
+                cleanupFalloutHitscanTracer(tracer);
+        }
 
         for (auto& magicBoltState : mMagicBolts)
         {
@@ -1195,6 +1278,10 @@ namespace MWWorld
         mFalloutProjectiles.erase(std::remove_if(mFalloutProjectiles.begin(), mFalloutProjectiles.end(),
                                       [](const State& state) { return state.mToDelete; }),
             mFalloutProjectiles.end());
+        mFalloutHitscanTracers.erase(
+            std::remove_if(mFalloutHitscanTracers.begin(), mFalloutHitscanTracers.end(),
+                [](const State& state) { return state.mToDelete; }),
+            mFalloutHitscanTracers.end());
         mMagicBolts.erase(
             std::remove_if(mMagicBolts.begin(), mMagicBolts.end(), [](const State& state) { return state.mToDelete; }),
             mMagicBolts.end());
@@ -1211,6 +1298,12 @@ namespace MWWorld
     {
         mParent->removeChild(state.mNode);
         mPhysics->removeProjectile(state.mProjectileId);
+        state.mToDelete = true;
+    }
+
+    void ProjectileManager::cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state)
+    {
+        mParent->removeChild(state.mNode);
         state.mToDelete = true;
     }
 
@@ -1234,6 +1327,10 @@ namespace MWWorld
         for (FalloutProjectileState& projectile : mFalloutProjectiles)
             cleanupFalloutProjectile(projectile);
         mFalloutProjectiles.clear();
+
+        for (FalloutHitscanTracerState& tracer : mFalloutHitscanTracers)
+            cleanupFalloutHitscanTracer(tracer);
+        mFalloutHitscanTracers.clear();
 
         for (auto& mMagicBolt : mMagicBolts)
             cleanupMagicBolt(mMagicBolt);

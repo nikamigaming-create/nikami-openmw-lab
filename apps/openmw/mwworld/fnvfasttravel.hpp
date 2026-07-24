@@ -33,7 +33,8 @@ namespace MWWorld
 
     FalloutFastTravelResolution resolveFalloutFastTravelDestination(const ESM4::Reference* marker,
         const ESM4::Cell* destinationCell, const ESM4::World* destinationWorld, std::uint8_t markerState,
-        const ESM4::Cell* currentCell, const ESM4::World* currentWorld, bool enemiesNearby);
+        const ESM4::Cell* currentCell, const ESM4::World* currentWorld, bool scriptedFastTravelEnabled,
+        bool enemiesNearby);
 }
 
 #endif

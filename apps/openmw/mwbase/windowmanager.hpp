@@ -432,6 +432,7 @@ namespace MWBase
         // Keep FNV extensions at the end so downstream objects compiled against
         // the pre-extension interface retain their existing virtual-table slots.
         virtual void refreshFalloutMapMarkers() = 0;
+        virtual bool focusFalloutMapMarker(ESM::FormId marker, float zoom) = 0;
         virtual bool requestFalloutFastTravel(ESM::FormId marker) = 0;
         virtual void confirmFalloutFastTravel() = 0;
     };

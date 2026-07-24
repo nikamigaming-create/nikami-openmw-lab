@@ -20,6 +20,7 @@
 #include <components/esm3/globalmap.hpp>
 #include <components/esm/util.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/debug/debuglog.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
@@ -74,7 +75,29 @@ namespace
     {
         const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
         return Misc::ResourceHelpers::correctTexturePath(
-            "textures\\interface\\worldmap\\wasteland_nv_1024_no_map.png", vfs);
+            "textures\\interface\\worldmap\\wasteland_nv_2048_no_map.dds", vfs);
+    }
+
+    std::optional<MWGui::FalloutWorldMapGeometry> getFalloutWorldMapGeometry()
+    {
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return std::nullopt;
+
+        const auto& worlds = world->getStore().get<ESM4::World>();
+        for (std::size_t index = 0; index < worlds.getSize(); ++index)
+        {
+            const ESM4::World* record = worlds.at(index);
+            if (record == nullptr || record->mEditorId != "WastelandNV" || record->mMap.width == 0
+                || record->mMap.height == 0 || record->mMap.NWcellX >= record->mMap.SEcellX
+                || record->mMap.NWcellY <= record->mMap.SEcellY)
+                continue;
+            return MWGui::FalloutWorldMapGeometry{ static_cast<float>(record->mMap.NWcellX),
+                static_cast<float>(record->mMap.NWcellY), static_cast<float>(record->mMap.SEcellX),
+                static_cast<float>(record->mMap.SEcellY), static_cast<float>(record->mMap.width),
+                static_cast<float>(record->mMap.height) };
+        }
+        return std::nullopt;
     }
 
     const char* getFalloutMapModeLabel(bool global)
@@ -923,14 +946,23 @@ namespace MWGui
             mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
             mGlobalMapImage->setImageTexture(mapTexture);
             mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
-            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+            if (!geometry)
+                throw std::runtime_error("Fallout WastelandNV has no authored MNAM world-map geometry");
+            const int mapWidth = static_cast<int>(geometry->mWidth);
+            const int mapHeight = static_cast<int>(geometry->mHeight);
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
             mGlobalMapOverlay->setVisible(false);
             mGlobalMapOverlay->setImageTexture({});
-            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
-            mGlobalMapImage->setSize(1024, 1024);
-            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
+            mGlobalMapImage->setSize(mapWidth, mapHeight);
+            mGlobalMapOverlay->setSize(mapWidth, mapHeight);
+            mGlobalMap->setCanvasSize(mapWidth, mapHeight);
             mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
-            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture;
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture << " authoredMNAM="
+                             << mapWidth << "x" << mapHeight << " cellsNW=(" << geometry->mNorthWestCellX << ","
+                             << geometry->mNorthWestCellY << ") cellsSE=(" << geometry->mSouthEastCellX << ","
+                             << geometry->mSouthEastCellY << ")";
         }
         else
             mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
@@ -1053,9 +1085,15 @@ namespace MWGui
         if (Settings::map().mGlobal)
         {
             const float currentGlobalZoom = mGlobalMapZoom;
-            const float currentMinGlobalMapZoom
-                = std::min(float(mGlobalMap->getWidth()) / float(mGlobalMapRender->getWidth()),
-                    float(mGlobalMap->getHeight()) / float(mGlobalMapRender->getHeight()));
+            float sourceWidth = static_cast<float>(mGlobalMapRender->getWidth());
+            float sourceHeight = static_cast<float>(mGlobalMapRender->getHeight());
+            if (const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry())
+            {
+                sourceWidth = geometry->mWidth;
+                sourceHeight = geometry->mHeight;
+            }
+            const float currentMinGlobalMapZoom = std::min(
+                float(mGlobalMap->getWidth()) / sourceWidth, float(mGlobalMap->getHeight()) / sourceHeight);
 
             mGlobalMapZoom *= speedDiff;
 
@@ -1119,12 +1157,34 @@ namespace MWGui
     {
         if (isFalloutContentLoaded())
         {
-            mGlobalMapZoom = 1.f;
-            mGlobalMap->setCanvasSize(1024, 1024);
-            mGlobalMapImage->setSize(1024, 1024);
-            mGlobalMapOverlay->setSize(1024, 1024);
-            mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(496, 496));
-            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            // FNV uses the authored Mojave texture directly. Never composite OpenMW's generated exploration/local
+            // map layer over it.
+            mLocalMap->setVisible(false);
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+            if (!geometry)
+                return;
+            const MyGUI::IntSize size(
+                static_cast<int>(geometry->mWidth * mGlobalMapZoom),
+                static_cast<int>(geometry->mHeight * mGlobalMapZoom));
+            mGlobalMap->setCanvasSize(size);
+            mGlobalMapImage->setSize(size);
+            mGlobalMapOverlay->setSize(size);
+            for (const auto& [id, widget] : mFalloutMapMarkers)
+            {
+                const ESM4::Reference* marker
+                    = MWBase::Environment::get().getWorld()->getStore().get<ESM4::Reference>().search(id);
+                if (marker == nullptr)
+                    continue;
+                float imageX = 0.f;
+                float imageY = 0.f;
+                worldPosToGlobalMapImageSpace(marker->mPos.pos[0], marker->mPos.pos[1], imageX, imageY);
+                widget->setPosition(
+                    MyGUI::IntPoint(static_cast<int>(imageX) - widget->getWidth() / 2,
+                        static_cast<int>(imageY) - widget->getHeight() / 2));
+            }
+            globalMapUpdatePlayer();
             return;
         }
 
@@ -1239,15 +1299,19 @@ namespace MWGui
                 static_cast<int>(imageY) - markerSize / 2, markerSize, markerSize),
             MyGUI::Align::Default);
         const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
-        markerWidget->setImageTexture(
-            Misc::ResourceHelpers::correctTexturePath(getFalloutMapMarkerIcon(marker.mMapMarkerType), vfs));
+        const std::string texture
+            = Misc::ResourceHelpers::correctTexturePath(getFalloutMapMarkerIcon(marker.mMapMarkerType), vfs);
+        markerWidget->setImageTexture(texture);
         markerWidget->setUserString("Caption_TextOneLine", marker.mFullName);
         markerWidget->setUserString("ToolTipType", "Layout");
         markerWidget->setUserString("ToolTipLayout", "TextToolTipOneLine");
         markerWidget->setNeedMouseFocus(true);
         markerWidget->setUserData(marker.mId);
-        markerWidget->setColour(
-            MyGUI::Colour::parse(MyGUI::LanguageManager::getInstance().replaceTags("#{fontcolour=normal}")));
+        // DDS map icons carry their own retail colour. Tinting them with the Morrowind font colour can make
+        // them effectively black against the Mojave map.
+        markerWidget->setColour(MyGUI::Colour::White);
+        markerWidget->setAlpha(1.f);
+        markerWidget->setVisible(true);
         markerWidget->setDepth(Global_MarkerLayer);
         markerWidget->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
         markerWidget->eventMouseButtonPressed += MyGUI::newDelegate(this, &MapWindow::onDragStart);
@@ -1414,7 +1478,14 @@ namespace MWGui
     {
         if (isFalloutContentLoaded())
         {
-            const FalloutMapImagePosition image = projectFalloutWorldMapPosition(x, y, mGlobalMapZoom);
+            const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+            if (!geometry)
+            {
+                imageX = 0.f;
+                imageY = 0.f;
+                return;
+            }
+            const FalloutMapImagePosition image = projectFalloutWorldMapPosition(x, y, *geometry, mGlobalMapZoom);
             imageX = image.mX;
             imageY = image.mY;
 
@@ -1509,9 +1580,58 @@ namespace MWGui
     void MapWindow::onOpen()
     {
         ensureGlobalMapLoaded();
+        if (isFalloutContentLoaded() && Settings::map().mGlobal)
+        {
+            mLocalMap->setVisible(false);
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+        }
         refreshFalloutMapMarkers();
 
         globalMapUpdatePlayer();
+    }
+
+    void MapWindow::fitFalloutWorldMapOnce()
+    {
+        if (mFalloutInitialMapFitApplied || !isFalloutContentLoaded() || !Settings::map().mGlobal)
+            return;
+        const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+        if (!geometry)
+            return;
+        mGlobalMapZoom = std::min(static_cast<float>(mGlobalMap->getWidth()) / geometry->mWidth,
+            static_cast<float>(mGlobalMap->getHeight()) / geometry->mHeight);
+        mFalloutInitialMapFitApplied = true;
+        updateGlobalMap();
+        const MyGUI::IntSize canvas = mGlobalMap->getCanvasSize();
+        mGlobalMap->setViewOffset(MyGUI::IntPoint((mGlobalMap->getWidth() - canvas.width) / 2,
+            (mGlobalMap->getHeight() - canvas.height) / 2));
+        Log(Debug::Info) << "FNV/ESM4 map: fitted authored world map zoom=" << mGlobalMapZoom
+                         << " viewport=" << mGlobalMap->getWidth() << "x" << mGlobalMap->getHeight()
+                         << " canvas=" << canvas.width << "x" << canvas.height;
+    }
+
+    bool MapWindow::focusFalloutMapMarker(ESM::FormId marker, float zoom)
+    {
+        const auto selected = mFalloutMapMarkers.find(marker);
+        const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+        if (selected == mFalloutMapMarkers.end() || !geometry)
+            return false;
+
+        const float fitZoom = std::min(static_cast<float>(mGlobalMap->getWidth()) / geometry->mWidth,
+            static_cast<float>(mGlobalMap->getHeight()) / geometry->mHeight);
+        mGlobalMapZoom = std::clamp(zoom, fitZoom, 4.f);
+        updateGlobalMap();
+        for (const auto& [id, widget] : mFalloutMapMarkers)
+            widget->setColour(id == marker ? MyGUI::Colour(0.35f, 1.f, 0.35f, 1.f) : MyGUI::Colour::White);
+
+        const MyGUI::IntPoint center
+            = selected->second->getPosition()
+            + MyGUI::IntPoint(selected->second->getWidth() / 2, selected->second->getHeight() / 2);
+        mGlobalMap->setViewOffset(MyGUI::IntPoint(
+            mGlobalMap->getWidth() / 2 - center.left, mGlobalMap->getHeight() / 2 - center.top));
+        Log(Debug::Info) << "FNV/ESM4 map: focused marker=" << marker << " zoom=" << mGlobalMapZoom
+                         << " center=(" << center.left << "," << center.top << ")";
+        return true;
     }
 
     void MapWindow::globalMapUpdatePlayer()
@@ -1535,7 +1655,11 @@ namespace MWGui
     {
         if (isFalloutContentLoaded() && Settings::map().mGlobal)
         {
-            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            MyGUI::IntSize viewsize = mGlobalMap->getSize();
+            MyGUI::IntPoint pos = mPlayerArrowGlobal->getPosition() + MyGUI::IntPoint{ 16, 16 };
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(
+                static_cast<int>(viewsize.width * 0.5f - pos.left),
+                static_cast<int>(viewsize.height * 0.5f - pos.top)));
             return;
         }
 
@@ -1586,16 +1710,23 @@ namespace MWGui
             mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
             mGlobalMapImage->setImageTexture(mapTexture);
             mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
-            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            const std::optional<FalloutWorldMapGeometry> geometry = getFalloutWorldMapGeometry();
+            if (!geometry)
+                throw std::runtime_error("Fallout WastelandNV has no authored MNAM world-map geometry");
+            const int mapWidth = static_cast<int>(geometry->mWidth);
+            const int mapHeight = static_cast<int>(geometry->mHeight);
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
             mGlobalMapOverlay->setVisible(false);
             mGlobalMapOverlay->setImageTexture({});
-            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
-            mGlobalMapImage->setSize(1024, 1024);
-            mGlobalMapOverlay->setSize(1024, 1024);
-            mGlobalMap->setCanvasSize(1024, 1024);
-            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
+            mGlobalMapImage->setSize(
+                static_cast<int>(geometry->mWidth * mGlobalMapZoom),
+                static_cast<int>(geometry->mHeight * mGlobalMapZoom));
+            mGlobalMapOverlay->setSize(mGlobalMapImage->getSize());
+            mGlobalMap->setCanvasSize(mGlobalMapImage->getSize());
             mGlobalMap->getParent()->_updateChilds();
-            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture refreshed " << mapTexture;
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture refreshed " << mapTexture
+                             << " zoom=" << mGlobalMapZoom;
             return;
         }
 

@@ -815,10 +815,13 @@ namespace MWRender
         , mSizeX(sizeX)
         , mSizeY(sizeY)
     {
+        Log(Debug::Info) << "FNV/ESM4 UI init: character preview body begin characterEmpty="
+                         << mCharacter.isEmpty() << " type=" << mCharacter.getTypeDescription();
         mTextureStateSet = new osg::StateSet;
         mTextureStateSet->setAttribute(new osg::BlendFunc(osg::BlendFunc::ONE, osg::BlendFunc::ONE_MINUS_SRC_ALPHA));
 
         mRTTNode = new CharacterPreviewRTTNode(sizeX, sizeY);
+        Log(Debug::Info) << "FNV/ESM4 UI init: character preview RTT ready";
         mRTTNode->setNodeMask(Mask_RenderToTexture);
 
         osg::ref_ptr<SceneUtil::LightManager> lightManager = new SceneUtil::LightManager(SceneUtil::LightSettings{
@@ -939,6 +942,7 @@ namespace MWRender
         mParent->addChild(mRTTNode);
 
         mCharacter.mCell = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 UI init: character preview body complete";
     }
 
     CharacterPreview::~CharacterPreview()

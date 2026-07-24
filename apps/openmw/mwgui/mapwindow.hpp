@@ -241,6 +241,8 @@ namespace MWGui
         virtual ~MapWindow();
 
         void setCellName(const std::string& cellName);
+        void fitFalloutWorldMapOnce();
+        bool focusFalloutMapMarker(ESM::FormId marker, float zoom);
 
         void setAlpha(float alpha) override;
         void setVisible(bool visible) override;
@@ -328,6 +330,7 @@ namespace MWGui
         MyGUI::Button* mEventBoxLocal;
 
         float mGlobalMapZoom = 1.0f;
+        bool mFalloutInitialMapFitApplied = false;
         std::unique_ptr<MWRender::GlobalMap> mGlobalMapRender;
 
         struct MapMarkerType

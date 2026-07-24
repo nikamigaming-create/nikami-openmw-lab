@@ -19,7 +19,10 @@
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -504,6 +507,12 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
     {
         Log(Debug::Info) << "Preflighting native FNV save file " << filepath.filename();
         ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(filepath);
+        Log(Debug::Info) << "Native FNV save structural parse complete: masters=" << save.mMasters.size()
+                         << " changedForms=" << save.mChangedForms.mEntries.size()
+                         << " inventoryEntries="
+                         << (save.mPlayerProcessInventoryData
+                                 ? save.mPlayerProcessInventoryData->mInventoryEntries.size()
+                                 : 0);
         const MWBase::World& world = *MWBase::Environment::get().getWorld();
         if (const char* trace = std::getenv("OPENMW_FNV_VATS_TRACE"); trace != nullptr && *trace != '\0')
         {
@@ -801,6 +810,109 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             Log(Debug::Info) << "Native FNV save Player equipped ExtraWorn: form=" << record
                              << " slot=" << slots.front() << " name=" << found->getClass().getName(*found);
         }
+        std::optional<ESM::FormId> localPreferredWeaponVisual;
+        if (std::getenv("OPENMW_FNV_PREFER_USABLE_10MM") != nullptr)
+        {
+            Log(Debug::Info) << "Native FNV local play preference: resolving owned 10mm pistol";
+            const ESM4::Weapon* preferredWeapon = nullptr;
+            for (const ESM4::Weapon& weapon : mutableWorld.getStore().get<ESM4::Weapon>())
+            {
+                if (weapon.mEditorId == "Weap10mmPistol")
+                {
+                    preferredWeapon = &weapon;
+                    break;
+                }
+            }
+            if (preferredWeapon == nullptr)
+            {
+                Log(Debug::Warning)
+                    << "Native FNV local play preference skipped: Weap10mmPistol is unavailable";
+            }
+            else
+            {
+                const auto& ammoStore = mutableWorld.getStore().get<ESM4::Ammunition>();
+                std::vector<ESM::FormId> ammoCandidates;
+                if (ammoStore.search(preferredWeapon->mAmmo) != nullptr)
+                    ammoCandidates.push_back(preferredWeapon->mAmmo);
+                else if (const ESM4::FormIdList* list
+                    = mutableWorld.getStore().get<ESM4::FormIdList>().search(preferredWeapon->mAmmo))
+                    ammoCandidates = list->mObjects;
+
+                const ESM4::Ammunition* preferredAmmo = nullptr;
+                for (ESM::FormId candidate : ammoCandidates)
+                {
+                    const ESM4::Ammunition* ammo = ammoStore.search(candidate);
+                    if (ammo != nullptr
+                        && savedInventory.count(ESM::RefId::formIdRefId(candidate)) > 0)
+                    {
+                        preferredAmmo = ammo;
+                        break;
+                    }
+                }
+                if (preferredAmmo == nullptr)
+                {
+                    Log(Debug::Warning)
+                        << "Native FNV local play preference skipped: no owned ammo in authored WEAP/FLST order";
+                }
+                else
+                {
+                    const ESM::RefId weaponId = ESM::RefId::formIdRefId(preferredWeapon->mId);
+                    const ESM::RefId ammoId = ESM::RefId::formIdRefId(preferredAmmo->mId);
+                    auto findOwnedWeapon = [&]() {
+                        MWWorld::ContainerStoreIterator found = savedInventory.end();
+                        for (MWWorld::ContainerStoreIterator item = savedInventory.begin();
+                             item != savedInventory.end(); ++item)
+                        {
+                            if (item->getCellRef().getRefId() == weaponId
+                                && item->getCellRef().getCount(false) > 0)
+                            {
+                                found = item;
+                                break;
+                            }
+                        }
+                        return found;
+                    };
+                    const int ownedAmmo = savedInventory.count(ammoId);
+                    if (findOwnedWeapon() == savedInventory.end() || ownedAmmo <= 0)
+                    {
+                        Log(Debug::Warning)
+                            << "Native FNV local play preference skipped: loaded save ownership weapon="
+                            << weaponId << " ammo=" << ammoId << " ammoCount=" << ownedAmmo;
+                    }
+                    else
+                    {
+                        const int capacity
+                            = std::max<int>(preferredWeapon->mData.clipSize, preferredWeapon->mData.ammoUse);
+                        const int loaded = std::min(capacity, ownedAmmo);
+                        if (loaded < preferredWeapon->mData.ammoUse
+                            || savedInventory.remove(ammoId, loaded) != loaded)
+                        {
+                            Log(Debug::Warning)
+                                << "Native FNV local play preference skipped: could not load magazine atomically";
+                        }
+                        else
+                        {
+                            // Removing the ammo stack can invalidate container iterators, so reacquire the pistol.
+                            MWWorld::ContainerStoreIterator preferredItem = findOwnedWeapon();
+                            if (preferredItem == savedInventory.end())
+                                Log(Debug::Warning)
+                                    << "Native FNV local play preference skipped: pistol disappeared while loading";
+                            else
+                            {
+                                savedInventory.setFalloutAmmoSelection(weaponId, ammoId);
+                                savedInventory.setFalloutLoadedAmmo(weaponId, loaded);
+                                savedInventory.equip(MWWorld::InventoryStore::Slot_CarriedRight, preferredItem);
+                                localPreferredWeaponVisual = preferredWeapon->mId;
+                                Log(Debug::Info)
+                                    << "Native FNV local play preference equipped owned 10mm pistol: weapon="
+                                    << weaponId << " ammo=" << ammoId << " loaded=" << loaded
+                                    << " reserve=" << savedInventory.count(ammoId) << " status=pass";
+                            }
+                        }
+                    }
+                }
+            }
+        }
         playerStats.setDrawState(context.mPlan.mPlayer.mWeaponDrawn
                 ? MWMechanics::DrawState::Weapon
                 : MWMechanics::DrawState::Nothing);
@@ -823,10 +935,19 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         {
             const MWWorld::FalloutSavePlayerHeaderState::WornVisualItem& item
                 = context.mPlan.mPlayer.mWornVisualItems[ordinal];
+            if (localPreferredWeaponVisual
+                && mutableWorld.getStore().get<ESM4::Weapon>().search(item.mRecord) != nullptr)
+                continue;
             wornVisualItems.push_back(item.mRecord);
             Log(Debug::Info) << "Native FNV save ExtraWorn visual: ordinal=" << ordinal + 1
                              << " form=" << ESM::RefId(item.mRecord)
                              << " sourceOffset=" << item.mSourceOffset;
+        }
+        if (localPreferredWeaponVisual)
+        {
+            wornVisualItems.push_back(*localPreferredWeaponVisual);
+            Log(Debug::Info) << "Native FNV local play preference replaced stale worn weapon visual with "
+                             << ESM::RefId(*localPreferredWeaponVisual);
         }
         mutableWorld.getRenderingManager()->setFalloutSaveWornVisualItems(std::move(wornVisualItems));
         mutableWorld.getRenderingManager()->setFirstPersonFieldOfView(savedFirstPersonFov);

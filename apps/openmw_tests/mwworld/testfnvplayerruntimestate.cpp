@@ -55,6 +55,12 @@ namespace
             writer.writeHNT("RCNT", std::uint32_t{ 0 });
         if (version >= 5)
             writer.writeHNT("MCNT", std::uint32_t{ 0 });
+        if (version >= 6)
+        {
+            writer.writeHNT("FTEN", std::uint8_t{ 1 });
+            writer.writeHNT("WTEN", std::uint8_t{ 1 });
+            writer.writeHNT("FTKP", std::uint8_t{ 0 });
+        }
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -173,6 +179,58 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     ESM::ESMReader reader;
     reader.open(std::move(stream), "unchanged-fallout-player-runtime");
     EXPECT_FALSE(reader.hasMoreRecs());
+}
+
+TEST(FalloutPlayerRuntimeStateTest, AppliesAndPersistsRetailEnableFastTravelArguments)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(0));
+
+    ASSERT_TRUE(runtime.setScriptedFastTravel(false, false, false));
+    EXPECT_FALSE(runtime.isFastTravelEnabled());
+    EXPECT_FALSE(runtime.isWaitEnabled());
+    EXPECT_FALSE(runtime.isFastTravelKeptOnCellChange());
+    runtime.notifyCellChanged();
+    EXPECT_TRUE(runtime.isFastTravelEnabled());
+    EXPECT_FALSE(runtime.isWaitEnabled());
+
+    ASSERT_TRUE(runtime.setScriptedFastTravel(false, false, true));
+    runtime.notifyCellChanged();
+    EXPECT_FALSE(runtime.isFastTravelEnabled());
+    EXPECT_FALSE(runtime.isWaitEnabled());
+    EXPECT_TRUE(runtime.isFastTravelKeptOnCellChange());
+
+    // Retail ignores a transient disable while a persistent scripted block is active.
+    ASSERT_TRUE(runtime.setScriptedFastTravel(false, true, false));
+    EXPECT_FALSE(runtime.isFastTravelEnabled());
+    EXPECT_FALSE(runtime.isWaitEnabled());
+    EXPECT_TRUE(runtime.isFastTravelKeptOnCellChange());
+
+    ASSERT_TRUE(runtime.setScriptedFastTravel(true, false, true));
+    EXPECT_TRUE(runtime.isFastTravelEnabled());
+    EXPECT_TRUE(runtime.isWaitEnabled());
+    EXPECT_TRUE(runtime.isFastTravelKeptOnCellChange());
+
+    ASSERT_TRUE(runtime.setScriptedFastTravel(false, false, true));
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        runtime.write(writer);
+    }
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-player-fast-travel-runtime");
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
+    reader.getRecHeader();
+
+    MWWorld::FalloutPlayerRuntimeState restored;
+    restored.initialize(makeBaseState(0));
+    restored.readRecord(reader);
+    EXPECT_FALSE(restored.isFastTravelEnabled());
+    EXPECT_FALSE(restored.isWaitEnabled());
+    EXPECT_TRUE(restored.isFastTravelKeptOnCellChange());
 }
 
 TEST(FalloutPlayerRuntimeStateTest, KeepsVatsActivityTransientAcrossStateLifecycle)

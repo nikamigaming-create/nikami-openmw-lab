@@ -838,6 +838,16 @@ namespace MWWorld
             [this](ESM::FormId markerId, bool canTravel) {
                 return showFalloutMapMarker(markerId, canTravel);
             });
+        mESM4QuestRuntime.setEnableFastTravelHandler(
+            [this](bool canFastTravel, bool canWait, bool keepOnCellChange) {
+                const bool applied = mFalloutPlayerRuntimeState.setScriptedFastTravel(
+                    canFastTravel, canWait, keepOnCellChange);
+                if (applied)
+                    Log(Debug::Info) << "FNV/ESM4 quest: EnableFastTravel canFastTravel=" << canFastTravel
+                                     << " canWait=" << canWait
+                                     << " keepOnCellChange=" << keepOnCellChange;
+                return applied;
+            });
         mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
             try
             {
@@ -1446,7 +1456,7 @@ namespace MWWorld
         return (reference->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0 ? 1 : 0;
     }
 
-    bool World::showFalloutMapMarker(ESM::FormId marker, bool canTravel)
+    bool World::showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi)
     {
         const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
         if (reference == nullptr || !reference->mIsMapMarker || reference->mFullName.empty())
@@ -1454,8 +1464,11 @@ namespace MWWorld
         const std::uint8_t requested = canTravel ? 2 : std::max<std::uint8_t>(1, getFalloutMapMarkerState(marker));
         if (!mFalloutPlayerRuntimeState.setMapMarkerState(marker, requested))
             return false;
-        if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
-            windowManager->refreshFalloutMapMarkers();
+        if (refreshUi)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+        }
         Log(Debug::Info) << "FNV/ESM4 map: ShowMap id=" << ESM::RefId(marker).serializeText()
                          << " name=\"" << reference->mFullName << "\" state="
                          << static_cast<unsigned int>(requested);
@@ -1478,7 +1491,8 @@ namespace MWWorld
             = currentCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(currentCell->mParent);
 
         FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, destinationCell,
-            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld, mPlayer->enemiesNearby());
+            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld,
+            mFalloutPlayerRuntimeState.isFastTravelEnabled(), mPlayer->enemiesNearby());
         if (!resolution)
         {
             error = std::move(resolution.mError);
@@ -1520,6 +1534,28 @@ namespace MWWorld
         float nearestDistanceSquared = std::numeric_limits<float>::max();
 
         const auto& references = mStore.get<ESM4::Reference>();
+        if (!mFalloutMapMarkersUnlockedForSession
+            && std::getenv("OPENMW_FNV_UNLOCK_ALL_MAP_MARKERS") != nullptr)
+        {
+            std::size_t unlocked = 0;
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                    continue;
+                const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+                if (markerCell == nullptr || !markerCell->isExterior()
+                    || markerCell->mParent != playerWorldspace)
+                    continue;
+                if (mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+                    ++unlocked;
+            }
+            mFalloutMapMarkersUnlockedForSession = true;
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: unlocked all authored exterior markers for local session count="
+                             << unlocked << " worldspace=" << playerWorldspace;
+        }
         const bool auditAllMarkers = !mFalloutMapMarkerAuditLogged
             && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT_ALL") != nullptr;
         for (std::size_t index = 0; index < references.getSize(); ++index)
@@ -2129,6 +2165,8 @@ namespace MWWorld
         removeContainerScripts(getPlayerPtr());
         mWorldScene->changeToInteriorCell(cellName, position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
     }
 
     void World::changeToCell(
@@ -2153,6 +2191,8 @@ namespace MWWorld
         else
             mWorldScene->changeToInteriorCell(destinationCell->getNameId(), position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
     }
 
     float World::getMaxActivationDistance() const
@@ -4448,6 +4488,13 @@ namespace MWWorld
     {
         return mProjectileManager != nullptr
             && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
+    bool World::launchFalloutHitscanTracer(
+        ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutHitscanTracer(projectile, origin, destination);
     }
 
     std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)

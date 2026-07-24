@@ -21,6 +21,7 @@ namespace ESM4
         = 3 * sFONVPlayerActorValueCount * (sizeof(float) + 1) + sizeof(std::uint32_t) + 1;
     static_assert(sFONVPlayerActorValueDataBytes == 1160);
     inline constexpr std::size_t sFONVPlayerChangedCharacterStateBytes = 510;
+    inline constexpr std::size_t sFONVPlayerChangedCharacterBaseStateBytes = 268;
     inline constexpr std::size_t sFONVPlayerCharacterScalarReferenceStateBytes = 287;
     inline constexpr std::size_t sFONVPlayerCharacterListsStateBytes = 147;
     inline constexpr std::size_t sFONVPlayerCharacterMagicTargetStateBytes = 234;
@@ -28,6 +29,7 @@ namespace ESM4
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
+    inline constexpr std::uint8_t sFONVExtraCannotWearType = 0x3e;
     inline constexpr std::uint8_t sFONVExtraHotkeyType = 0x4a;
     inline constexpr std::uint8_t sFONVExtraAmmoType = 0x6e;
     inline constexpr std::uint8_t sFONVExtraPackageStartLocationType = 0x18;
@@ -580,8 +582,8 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // Save330 selects ActorMover content bit 3, the detailed actor path handler. Other content branches have no
-    // enclosing byte length, so accepting them here would move the boundary by guesswork and is rejected.
+    // ActorMover content bit 3 selects the detailed actor path handler. xEdit's FNV save definition makes this a
+    // flag-controlled union, so saves with bit 3 clear omit the structure entirely.
     struct FONVSavePlayerDetailedActorPathHandler
     {
         std::array<FONVSavePlayerProcessVector3, 5> mCoords01C_028_034_040_04C;
@@ -628,7 +630,7 @@ namespace ESM4
         FONVSavePlayerPathingLocation mPathingLocation;
         FONVSaveResolvedReferenceId mForm02C;
         FONVSaveField<std::uint8_t> mContentFlags;
-        FONVSavePlayerDetailedActorPathHandler mDetailedPathHandler;
+        std::optional<FONVSavePlayerDetailedActorPathHandler> mDetailedPathHandler;
         FONVSavePlayerMoverState mPlayerMover;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;

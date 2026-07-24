@@ -137,6 +137,7 @@ namespace MWWorld
         using AddReputationHandler = std::function<bool(ESM::FormId, bool, int)>;
         using SetDestroyedHandler = std::function<bool(ESM::FormId, bool)>;
         using ShowMapHandler = std::function<bool(ESM::FormId, bool)>;
+        using EnableFastTravelHandler = std::function<bool(bool, bool, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -163,6 +164,7 @@ namespace MWWorld
         AddReputationHandler mAddReputationHandler;
         SetDestroyedHandler mSetDestroyedHandler;
         ShowMapHandler mShowMapHandler;
+        EnableFastTravelHandler mEnableFastTravelHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -196,6 +198,7 @@ namespace MWWorld
             AddReputation,
             SetDestroyed,
             ShowMap,
+            EnableFastTravel,
         };
 
         enum class CompiledConditionValueType : std::uint8_t
@@ -364,6 +367,10 @@ namespace MWWorld
         void setShowMapHandler(ShowMapHandler handler)
         {
             mShowMapHandler = std::move(handler);
+        }
+        void setEnableFastTravelHandler(EnableFastTravelHandler handler)
+        {
+            mEnableFastTravelHandler = std::move(handler);
         }
 
         // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:

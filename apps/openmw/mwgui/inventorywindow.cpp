@@ -117,14 +117,25 @@ namespace MWGui
         , mGuiMode(GM_Inventory)
         , mLastXSize(0)
         , mLastYSize(0)
-        , mPreview(std::make_unique<MWRender::InventoryPreview>(parent, resourceSystem, MWMechanics::getPlayer()))
         , mTrading(false)
         , mUpdateNextFrame(false)
         , mPendingControllerAction(ControllerAction::None)
     {
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory body begin";
+        const MWWorld::Ptr previewPlayer = MWMechanics::getPlayer();
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory preview player empty=" << previewPlayer.isEmpty()
+                         << " type=" << previewPlayer.getTypeDescription();
+        mPreview = std::make_unique<MWRender::InventoryPreview>(parent, resourceSystem, previewPlayer);
         mPreviewTexture
             = std::make_unique<MyGUIPlatform::OSGTexture>(mPreview->getTexture(), mPreview->getTextureStateSet());
-        mPreview->rebuild();
+        // Native FNV saves populate the player inventory and runtime actor
+        // state after the UI is constructed. Building the paper doll here can
+        // dereference an equipment Ptr that does not exist until loadState().
+        // updatePlayer() performs the authoritative rebuild after save load.
+        if (!hasFalloutContent())
+            mPreview->rebuild();
+        else
+            Log(Debug::Info) << "FNV/ESM4 UI init: deferred paper doll rebuild until player load";
 
         mMainWidget->castType<MyGUI::Window>()->eventWindowChangeCoord
             += MyGUI::newDelegate(this, &InventoryWindow::onWindowResize);
@@ -205,10 +216,13 @@ namespace MWGui
             Log(Debug::Info) << "FNV/ESM4 proof: enabled flat paper doll profiler panel front/profile/top";
         }
 
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory setGuiMode begin";
         setGuiMode(mGuiMode);
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory setGuiMode complete";
 
         if (Settings::gui().mControllerMenus)
         {
+            Log(Debug::Info) << "FNV/ESM4 UI init: inventory controller overlay begin";
             // Show L1 and R1 buttons next to tabs
             MyGUI::ImageBox* image;
             getWidget(image, "BtnL1Image");
@@ -224,9 +238,12 @@ namespace MWGui
                 SDL_CONTROLLER_BUTTON_RIGHTSHOULDER));
 
             mControllerButtons.mR3 = "#{Interface:Info}";
+            Log(Debug::Info) << "FNV/ESM4 UI init: inventory controller overlay complete";
         }
 
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory final adjust begin";
         adjustPanes();
+        Log(Debug::Info) << "FNV/ESM4 UI init: inventory body complete";
     }
 
     void InventoryWindow::adjustPanes()
@@ -286,7 +303,9 @@ namespace MWGui
         mPtr.getClass().getInventoryStore(mPtr).setContListener(this);
 
         if (mSortModel) // reuse existing SortModel when possible to keep previous category/filter settings
+        {
             mSortModel->setSourceModel(std::move(tradeModel));
+        }
         else
         {
             auto sortModel = std::make_unique<SortFilterItemModel>(std::move(tradeModel));

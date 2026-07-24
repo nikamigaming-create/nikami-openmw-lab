@@ -175,12 +175,21 @@ namespace MWWorld
         QuestStateMap states = mStates;
         std::optional<ESM::FormId> activeQuest;
         std::set<ESM::FormId> savedStateIds;
+        std::size_t skippedMissingRecords = 0;
+        const auto skipMissingRecord = [&](std::string_view role, ESM::FormId id) {
+            ++skippedMissingRecords;
+            Log(Debug::Warning) << "FNV/ESM4 save: skipped stale " << role << " for absent QUST "
+                                << ESM::RefId(id).serializeText();
+        };
         for (const ESM4SavedQuestProgress::State& saved : progress.mStates)
         {
             const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
             const auto state = states.find(saved.mQuest);
             if (quest == nullptr || state == states.end())
-                return fail("saved quest state references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            {
+                skipMissingRecord("quest state", saved.mQuest);
+                continue;
+            }
             if (!savedStateIds.insert(saved.mQuest).second)
                 return fail("saved quest state contains a duplicate QUST identity");
             if ((saved.mFlags & 0x80u) != 0)
@@ -193,7 +202,10 @@ namespace MWWorld
             const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
             const auto state = states.find(saved.mQuest);
             if (quest == nullptr || state == states.end())
-                return fail("saved quest stage references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            {
+                skipMissingRecord("quest stage", saved.mQuest);
+                continue;
+            }
             const auto stage = state->second.mStageDone.find(saved.mStage);
             if (stage == state->second.mStageDone.end())
                 return fail("saved quest stage index is absent from loaded QUST " + quest->mEditorId);
@@ -212,8 +224,8 @@ namespace MWWorld
             const auto state = states.find(saved.mQuest);
             if (quest == nullptr || state == states.end())
             {
-                return fail(
-                    "saved quest objective references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+                skipMissingRecord("quest objective", saved.mQuest);
+                continue;
             }
             const auto objective = state->second.mObjectiveStatus.find(saved.mObjective);
             if (objective == state->second.mObjectiveStatus.end())
@@ -236,7 +248,10 @@ namespace MWWorld
             const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
             const auto state = states.find(saved.mQuest);
             if (quest == nullptr || state == states.end())
-                return fail("saved quest variable references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            {
+                skipMissingRecord("quest variable", saved.mQuest);
+                continue;
+            }
             if (!savedVariableIds.emplace(saved.mQuest, saved.mIndex).second)
                 return fail("saved quest variables contain a duplicate QUST/local index");
             const ESM4::Script* script = mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
@@ -259,11 +274,13 @@ namespace MWWorld
             const auto state = states.find(*progress.mActiveQuest);
             if (quest == nullptr || state == states.end())
             {
-                return fail(
-                    "saved active quest references a missing QUST " + ESM::RefId(*progress.mActiveQuest).serializeText());
+                skipMissingRecord("active quest", *progress.mActiveQuest);
             }
-            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
-            activeQuest = *progress.mActiveQuest;
+            else
+            {
+                state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+                activeQuest = *progress.mActiveQuest;
+            }
         }
 
         mStates = std::move(states);
@@ -271,7 +288,8 @@ namespace MWWorld
         Log(Debug::Info) << "FNV/ESM4 save: imported quest progress stages=" << progress.mStages.size()
                          << " objectives=" << progress.mObjectives.size() << " variables="
                          << progress.mVariables.size() << " states=" << progress.mStates.size() << " active="
-                         << (mActiveQuest ? ESM::RefId(*mActiveQuest).serializeText() : std::string("<none>"));
+                         << (mActiveQuest ? ESM::RefId(*mActiveQuest).serializeText() : std::string("<none>"))
+                         << " skippedMissing=" << skippedMissingRecords;
         return true;
     }
 
@@ -414,6 +432,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x10cc
+                && instruction.opcode != 0x1111
                 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
@@ -961,6 +980,28 @@ namespace MWWorld
                 command.mValue = false;
                 prepared.mCommands.push_back(std::move(command));
             }
+            else if (instruction.opcode == 0x1111) // EnableFastTravel canFastTravel [canWait] [keepOnCellChange]
+            {
+                // Frozen FalloutNV.esm quest corpus: 14 frames, all global calls with one to three literal
+                // boolean arguments. FNV added canWait and keepOnCellChange after Fallout 3.
+                if (instruction.callingReferenceIndex || arguments.empty() || arguments.size() > 3
+                    || !mEnableFastTravelHandler)
+                    return false;
+                std::array<bool, 3> values{ false, true, false };
+                for (std::size_t index = 0; index < arguments.size(); ++index)
+                {
+                    const std::int32_t* value = std::get_if<std::int32_t>(&arguments[index]);
+                    if (value == nullptr || (*value != 0 && *value != 1))
+                        return false;
+                    values[index] = *value != 0;
+                }
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::EnableFastTravel;
+                command.mValue = values[0];
+                command.mSecondaryValue = values[1];
+                command.mObjective = values[2] ? 1 : 0;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1034) // reference.SayTo listener topic
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mSayToHandler
@@ -1462,11 +1503,12 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::RewardXp
             || command.mType == CompiledQuestCommandType::AddReputation
             || command.mType == CompiledQuestCommandType::SetDestroyed
-            || command.mType == CompiledQuestCommandType::ShowMap)
+            || command.mType == CompiledQuestCommandType::ShowMap
+            || command.mType == CompiledQuestCommandType::EnableFastTravel)
         {
             working.mExternalEffects.push_back(
                 { command.mType, command.mQuest, command.mTarget, command.mTopic,
-                    command.mValue, false, command.mObjective });
+                    command.mValue, command.mSecondaryValue, command.mObjective });
             return true;
         }
 
@@ -1561,6 +1603,7 @@ namespace MWWorld
             case CompiledQuestCommandType::AddReputation:
             case CompiledQuestCommandType::SetDestroyed:
             case CompiledQuestCommandType::ShowMap:
+            case CompiledQuestCommandType::EnableFastTravel:
                 return false;
         }
         return false;
@@ -1775,10 +1818,20 @@ namespace MWWorld
                     command = "ShowMap ";
                     executed = mShowMapHandler && mShowMapHandler(effect.mTarget, effect.mValue);
                     break;
+                case CompiledQuestCommandType::EnableFastTravel:
+                    command = "EnableFastTravel ";
+                    executed = mEnableFastTravelHandler
+                        && mEnableFastTravelHandler(
+                            effect.mValue, effect.mSecondaryValue, effect.mCount != 0);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
-            if (effect.mType == CompiledQuestCommandType::RewardXp)
+            if (effect.mType == CompiledQuestCommandType::EnableFastTravel)
+                command += std::to_string(static_cast<int>(effect.mValue)) + " "
+                    + std::to_string(static_cast<int>(effect.mSecondaryValue)) + " "
+                    + std::to_string(effect.mCount);
+            else if (effect.mType == CompiledQuestCommandType::RewardXp)
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
@@ -2034,6 +2087,11 @@ namespace MWWorld
                         case CompiledQuestCommandType::ShowMap:
                             executed = mShowMapHandler && mShowMapHandler(command.mQuest, command.mValue);
                             break;
+                        case CompiledQuestCommandType::EnableFastTravel:
+                            executed = mEnableFastTravelHandler
+                                && mEnableFastTravelHandler(
+                                    command.mValue, command.mSecondaryValue, command.mObjective != 0);
+                            break;
                     }
                     if (!executed)
                     {
@@ -2052,7 +2110,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::RewardXp
                             || command.mType == CompiledQuestCommandType::AddReputation
                             || command.mType == CompiledQuestCommandType::SetDestroyed
-                            || command.mType == CompiledQuestCommandType::ShowMap)
+                            || command.mType == CompiledQuestCommandType::ShowMap
+                            || command.mType == CompiledQuestCommandType::EnableFastTravel)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -2095,6 +2154,11 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::ShowMap)
                                 failure = "ShowMap " + ESM::RefId(command.mQuest).serializeText()
                                     + (command.mValue ? " 1" : "");
+                            else if (command.mType == CompiledQuestCommandType::EnableFastTravel)
+                                failure = "EnableFastTravel "
+                                    + std::to_string(static_cast<int>(command.mValue)) + " "
+                                    + std::to_string(static_cast<int>(command.mSecondaryValue)) + " "
+                                    + std::to_string(command.mObjective);
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
                             mUnsupportedStageCommands.push_back(failure);
@@ -2905,6 +2969,18 @@ namespace MWWorld
                     && mShowMapHandler(marker, canTravel != 0))
                     continue;
             }
+            else if (tokens.size() >= 2 && tokens.size() <= 4
+                && Misc::StringUtils::ciEqual(tokens[0], "EnableFastTravel"))
+            {
+                std::array<std::int32_t, 3> values{ 0, 1, 0 };
+                bool valid = true;
+                for (std::size_t index = 1; index < tokens.size(); ++index)
+                    valid = valid && parseInt(tokens[index], values[index - 1])
+                        && (values[index - 1] == 0 || values[index - 1] == 1);
+                if (valid && mEnableFastTravelHandler
+                    && mEnableFastTravelHandler(values[0] != 0, values[1] != 0, values[2] != 0))
+                    continue;
+            }
             else if (tokens.size() == 3 && Misc::StringUtils::ciEqual(tokens[0], "SetAlly"))
             {
                 const ESM::FormId first = resolveFaction(tokens[1]);
@@ -2924,6 +3000,20 @@ namespace MWWorld
                 {
                     const std::string_view target = tokens[0].substr(0, separator);
                     const std::string_view command = tokens[0].substr(separator + 1);
+                    if (Misc::StringUtils::ciEqual(command, "EnableFastTravel")
+                        && Misc::StringUtils::ciEqual(target, "Player")
+                        && tokens.size() >= 2 && tokens.size() <= 4)
+                    {
+                        std::array<std::int32_t, 3> values{ 0, 1, 0 };
+                        bool valid = true;
+                        for (std::size_t index = 1; index < tokens.size(); ++index)
+                            valid = valid && parseInt(tokens[index], values[index - 1])
+                                && (values[index - 1] == 0 || values[index - 1] == 1);
+                        if (valid && mEnableFastTravelHandler
+                            && mEnableFastTravelHandler(
+                                values[0] != 0, values[1] != 0, values[2] != 0))
+                            continue;
+                    }
                     if (Misc::StringUtils::ciEqual(command, "Enable")
                         && executeReferenceCommand(ESM4QuestReferenceCommand::Enable, target))
                         continue;

@@ -468,8 +468,10 @@ namespace SceneUtil
             }
         }
 
-        const osg::Vec4f vatsAmber(1.f, 0.58f, 0.12f, 1.f);
-        const osg::Vec4f vatsGreen(0.18f, 1.f, 0.28f, 1.f);
+        // Emissive values deliberately exceed one so HDR/bloom produces the retail Pip-Boy glow instead of a
+        // flat vertex tint. The whole target remains amber; only vertices weighted to the selected limb turn green.
+        const osg::Vec4f vatsAmber(1.35f, 0.52f, 0.06f, 1.f);
+        const osg::Vec4f vatsGreen(0.10f, 3.5f, 0.24f, 1.f);
         for (std::size_t index = 0; index < std::size(mGeometry); ++index)
         {
             osg::Geometry* geometry = mGeometry[index].get();

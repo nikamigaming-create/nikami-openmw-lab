@@ -1431,10 +1431,16 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactRetailVms54ShowMapFrame)
 TEST(ESM4QuestRuntimeTest, ProjectsRetailMarkerCoordinatesAndTypesToBethesdaMapAssets)
 {
     // FalloutNV.esm 0015A2E6 RemnantsBunkerMapMarker, exact DATA XY and TNAM cave type.
+    // FalloutNV.esm WastelandNV MNAM: 2048x2048, north-west (-35,35), south-east (25,-25).
+    constexpr MWGui::FalloutWorldMapGeometry authoredMap{ -35.f, 35.f, 25.f, -25.f, 2048.f, 2048.f };
     const MWGui::FalloutMapImagePosition image
-        = MWGui::projectFalloutWorldMapPosition(-77326.984375f, 94496.046875f);
-    EXPECT_NEAR(image.mX, 300.392f, 0.01f);
-    EXPECT_NEAR(image.mY, 142.875f, 0.01f);
+        = MWGui::projectFalloutWorldMapPosition(-77326.984375f, 94496.046875f, authoredMap);
+    EXPECT_NEAR(image.mX, 872.4709f, 0.01f);
+    EXPECT_NEAR(image.mY, 800.9331f, 0.01f);
+    const MWGui::FalloutMapImagePosition zoomed
+        = MWGui::projectFalloutWorldMapPosition(-77326.984375f, 94496.046875f, authoredMap, 2.f);
+    EXPECT_NEAR(zoomed.mX, image.mX * 2.f, 0.01f);
+    EXPECT_NEAR(zoomed.mY, image.mY * 2.f, 0.01f);
     EXPECT_EQ(MWGui::getFalloutMapMarkerIcon(ESM4::Map_Cave),
         "textures\\interface\\icons\\world map\\icon_map_cave.dds");
     EXPECT_EQ(MWGui::getFalloutMapMarkerIcon(ESM4::Map_Vault),
@@ -1472,6 +1478,77 @@ TEST(ESM4QuestRuntimeTest, ExecutesShowMapOptionalTravelFromWholeSourceFallback)
 
     ASSERT_TRUE(runtime.setStage(questId, 5));
     EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, bool>>{ { markerId, true } }));
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailEnableFastTravelFrames)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId transientQuestId{ .mIndex = 0x10f5a4, .mContentFile = 0 };
+    const ESM::FormId persistentQuestId{ .mIndex = 0x157dd3, .mContentFile = 0 };
+
+    ESM4::Quest transientQuest = makeQuest(transientQuestId, "VMQ03b");
+    ESM4::QuestStageEntry transientEntry;
+    // FalloutNV.esm VMQ03b stage 20, byte-for-byte first frame:
+    // EnableFastTravel 0 0
+    transientEntry.mScript.compiledData = {
+        0x11, 0x11, 0x0c, 0x00, 0x02, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+    };
+    transientQuest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(transientEntry) } });
+    store.overrideRecord(transientQuest);
+
+    ESM4::Quest persistentQuest = makeQuest(persistentQuestId, "VHDHouseBattle");
+    ESM4::QuestStageEntry persistentEntry;
+    // FalloutNV.esm VHDHouseBattle stage 10, byte-for-byte final frame:
+    // EnableFastTravel 0 0 1
+    persistentEntry.mScript.compiledData = {
+        0x11, 0x11, 0x11, 0x00, 0x03, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    persistentQuest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(persistentEntry) } });
+    store.overrideRecord(persistentQuest);
+
+    std::vector<std::array<bool, 3>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setEnableFastTravelHandler([&](bool canFastTravel, bool canWait, bool keepOnCellChange) {
+        calls.push_back({ canFastTravel, canWait, keepOnCellChange });
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(transientQuestId, 20));
+    ASSERT_TRUE(runtime.setStage(persistentQuestId, 10));
+    EXPECT_EQ(calls, (std::vector<std::array<bool, 3>>{ { false, false, false }, { false, false, true } }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesEnableFastTravelSourceDefaultsAndPlayerPrefix)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120500, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "EnableFastTravelFallback");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x00, 0x00 };
+    entry.mScript.scriptSource = "EnableFastTravel 0\nPlayer.EnableFastTravel 1 0 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    std::vector<std::array<bool, 3>> calls;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setEnableFastTravelHandler([&](bool canFastTravel, bool canWait, bool keepOnCellChange) {
+        calls.push_back({ canFastTravel, canWait, keepOnCellChange });
+        return true;
+    });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls, (std::vector<std::array<bool, 3>>{ { false, true, false }, { true, false, true } }));
     EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
@@ -3142,6 +3219,30 @@ TEST(ESM4QuestRuntimeTest, ImportsRetailSaveProgressTransactionallyWithoutExecut
         MWWorld::ESM4QuestState::Objective_Displayed | MWWorld::ESM4QuestState::Objective_Completed);
     EXPECT_EQ(runtime.getQuestVariable("SaveQuest", "iDialoguePath"), 42.25f);
     EXPECT_EQ(runtime.getActiveQuest(), questId);
+}
+
+TEST(ESM4QuestRuntimeTest, IgnoresLoggedStaleQuestProgressWhoseRecordIsAbsent)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId presentId{ .mIndex = 0x5229, .mContentFile = 1 };
+    const ESM::FormId staleId{ .mIndex = 0x1ffff8, .mContentFile = 1 };
+    store.overrideRecord(makeQuest(presentId, "PresentQuest"));
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    MWWorld::ESM4SavedQuestProgress progress;
+    progress.mStates.push_back({ staleId, 0x21 });
+    progress.mStages.push_back({ staleId, 5, 1 });
+    progress.mObjectives.push_back({ staleId, 10, MWWorld::ESM4QuestState::Objective_Displayed });
+    progress.mVariables.push_back({ staleId, 7, 42.f });
+    progress.mActiveQuest = staleId;
+
+    std::string error;
+    EXPECT_TRUE(runtime.loadSavedProgress(progress, &error)) << error;
+    EXPECT_EQ(runtime.getActiveQuest(), std::nullopt);
+    const MWWorld::ESM4QuestState* present = runtime.search(presentId);
+    ASSERT_NE(present, nullptr);
+    EXPECT_EQ(present->mFlags, 0);
 }
 
 TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)

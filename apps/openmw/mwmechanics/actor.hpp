@@ -75,7 +75,7 @@ namespace MWMechanics
         float mTargetAngleRadians{ 0.f };
         GreetingState mGreetingState{ GreetingState::None };
         Misc::DeviatingPeriodicTimer mEngageCombat{ 1.0f, 0.25f,
-            Misc::Rng::deviate(0, 0.25f, MWBase::Environment::get().getWorld()->getPrng()) };
+            Misc::Rng::deviate(0.f, 0.25f, MWBase::Environment::get().getWorld()->getPrng()) };
         bool mIsTurningToPlayer{ false };
         bool mInvalid{ false };
         bool mPositionAdjusted;

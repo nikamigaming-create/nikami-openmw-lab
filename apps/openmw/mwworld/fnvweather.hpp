@@ -26,6 +26,13 @@ namespace MWWorld
 
     using FalloutWeatherColorSamples = std::array<osg::Vec4f, ESM4::Weather::sTimeCount>;
 
+    struct FalloutWeatherTimeBlend
+    {
+        ESM4::Weather::Time mPrimary = ESM4::Weather::Time_Day;
+        ESM4::Weather::Time mSecondary = ESM4::Weather::Time_Day;
+        float mPrimaryStrength = 1.f;
+    };
+
     struct FalloutWeatherColorTable
     {
         std::array<FalloutWeatherColorSamples, ESM4::Weather::sColorTypeCount> mColors{};
@@ -55,7 +62,7 @@ namespace MWWorld
         FalloutNativeWeatherSnapshot mDefault;
         bool mCurrentWeatherInClimateList = false;
         float mGameHour = 0.f;
-        float mHighNoonToDayFactor = 0.f;
+        FalloutWeatherTimeBlend mTimeBlend;
         std::array<osg::Vec4f, ESM4::Weather::sColorTypeCount> mCurrentColors{};
         std::array<osg::Vec4f, ESM4::Weather::sCloudLayerCount> mCurrentCloudColors{};
     };
@@ -71,6 +78,10 @@ namespace MWWorld
     // FNV's fourth WTHR color byte is unused data, not opacity. This conversion is shared by ordinary and cloud color
     // rows so no value of that byte can make geometry or a HUD quad disappear.
     osg::Vec4f convertFalloutWeatherColor(const ESM4::Weather::Color& value);
+
+    // FalloutNV.exe 0x63F27E..0x63F510 plus the installed JIP selector patch.
+    FalloutWeatherTimeBlend getFalloutWeatherTimeBlend(float gameHour, float nightEnd, float dayStart,
+        float dayEnd, float nightStart, float daytimeColorExtension);
 
     FalloutWeatherModelResolution resolveFalloutWeatherModel(const Store<ESM4::World>& worlds,
         const Store<ESM4::Climate>& climates, const Store<ESM4::Weather>& weather,
