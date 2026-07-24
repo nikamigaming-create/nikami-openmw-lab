@@ -28,6 +28,8 @@ namespace
     TestingOpenMW::VFSTestFile runtimeFile(readDataFile("openmw_aux/obscript/runtime.lua"));
     constexpr VFS::Path::NormalizedView bindingsPath("openmw_aux/obscript/bindings.lua");
     TestingOpenMW::VFSTestFile bindingsFile(readDataFile("openmw_aux/obscript/bindings.lua"));
+    constexpr VFS::Path::NormalizedView retailCoveragePath("openmw_aux/obscript/fnv_retail_coverage.lua");
+    TestingOpenMW::VFSTestFile retailCoverageFile(readDataFile("openmw_aux/obscript/fnv_retail_coverage.lua"));
     constexpr VFS::Path::NormalizedView globalBindingsPath("scripts/omw/obscript.lua");
     TestingOpenMW::VFSTestFile globalBindingsFile(readDataFile("scripts/omw/obscript.lua"));
 
@@ -326,6 +328,54 @@ namespace
                     events[2].name, events[2].data.item, events[2].data.count,
                     isPlayer
             end,
+
+            corpusCoverage = function()
+                local corpus = require('openmw_aux.obscript.fnv_retail_coverage')
+                local mismatches = {}
+                local implementedCommands = 0
+                local implementedEvents = 0
+                local explicitUnsupported = 0
+                local requiredGaps = 0
+
+                local function check(rows, supportFn, kind)
+                    for _, row in ipairs(rows) do
+                        local supported = supportFn(row.name)
+                        local expected = row.status == 'implemented'
+                        if supported ~= expected then
+                            mismatches[#mismatches + 1] = kind .. ':' .. row.name
+                        end
+                        if row.status == 'implemented' then
+                            if kind == 'command' then
+                                implementedCommands = implementedCommands + 1
+                            else
+                                implementedEvents = implementedEvents + 1
+                            end
+                        elseif row.status == 'required-gap' then
+                            requiredGaps = requiredGaps + 1
+                        elseif row.status == 'unsupported-explicit' then
+                            explicitUnsupported = explicitUnsupported + 1
+                        else
+                            mismatches[#mismatches + 1] = 'unknown-status:' .. row.name
+                        end
+                    end
+                end
+
+                check(corpus.commands, obs.isCommandSupported, 'command')
+                check(corpus.events, obs.isEventSupported, 'event')
+                return {
+                    scripts = corpus.scripts,
+                    totalLines = corpus.totalLines,
+                    commands = #corpus.commands,
+                    events = #corpus.events,
+                    implementedCommands = implementedCommands,
+                    implementedEvents = implementedEvents,
+                    explicitUnsupported = explicitUnsupported,
+                    requiredGaps = requiredGaps,
+                    declaredRequiredGaps = corpus.requiredGaps,
+                    mismatchCount = #mismatches,
+                    firstMismatch = mismatches[1],
+                }
+            end,
         }
         )X");
 
@@ -514,6 +564,7 @@ namespace
         std::unique_ptr<VFS::Manager> mVFS = TestingOpenMW::createTestVFS({
             { runtimePath, &runtimeFile },
             { bindingsPath, &bindingsFile },
+            { retailCoveragePath, &retailCoverageFile },
             { globalBindingsPath, &globalBindingsFile },
             { driverPath, &driverFile },
             { bindingsDriverPath, &bindingsDriverFile },
@@ -723,6 +774,33 @@ namespace
             EXPECT_EQ(std::get<3>(values), "AmmoItem");
             EXPECT_EQ(std::get<4>(values), 2);
             EXPECT_EQ(std::get<5>(values), 1);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, RetailCorpusCoverageMatchesRuntimeBindings)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-corpus-coverage-test", extraPackages);
+            sol::table coverage = LuaUtil::call(s["corpusCoverage"]).get<sol::table>();
+            EXPECT_EQ(coverage["scripts"].get<int>(), 3708);
+            EXPECT_EQ(coverage["totalLines"].get<int>(), 165335);
+            EXPECT_EQ(coverage["commands"].get<int>(), 166);
+            EXPECT_EQ(coverage["events"].get<int>(), 23);
+            EXPECT_GT(coverage["implementedCommands"].get<int>(), 0);
+            EXPECT_GT(coverage["implementedEvents"].get<int>(), 0);
+            EXPECT_GT(coverage["explicitUnsupported"].get<int>(), 0);
+            EXPECT_EQ(coverage["requiredGaps"].get<int>(), coverage["declaredRequiredGaps"].get<int>());
+            EXPECT_EQ(coverage["mismatchCount"].get<int>(), 0);
         });
     }
 

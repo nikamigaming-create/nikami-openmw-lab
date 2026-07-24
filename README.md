@@ -58,6 +58,11 @@ This fork contains work-in-progress Fallout: New Vegas support. It does not incl
 you must own and install Fallout: New Vegas separately. Expect incomplete gameplay and keep saves made by this build
 separate from saves you care about.
 
+Engine contributors can follow the corpus-derived command and event status in
+[the FNV retail script coverage report](docs/fnv-obscript-coverage.md). A cell
+rendering successfully does not mean its quests, dialogue, AI, combat, or
+inventory scripts are complete.
+
 1. Download the appropriate Windows installer from this repository's
    [Releases](https://github.com/nikamigaming-create/nikami-openmw-lab/releases) page and install it to a new folder.
 2. Install Fallout: New Vegas with Steam or GOG and run the original launcher once. A typical Steam data folder is
