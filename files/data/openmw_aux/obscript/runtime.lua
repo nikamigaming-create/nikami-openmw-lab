@@ -33,7 +33,7 @@ obs._globalOverrides = {}
 obs._memberOverrides = {}
 obs._bindings = {}     -- command name (lower) -> function
 obs._unknown = {}      -- command name (lower) -> call count (coverage telemetry)
-obs._log = nil         -- optional function(msg) for stub logging
+obs._log = nil         -- optional function(command, script) for first-use stub logging
 obs._current = nil     -- script currently registering/executing
 
 local function scriptEntry(name)
@@ -77,17 +77,22 @@ function obs.b(x)
     return x and true or false
 end
 
+local function recordUnknown(name)
+    local key = name:lower()
+    obs._unknown[key] = (obs._unknown[key] or 0) + 1
+    if obs._unknown[key] == 1 and obs._log then
+        obs._log(name, obs._current and obs._current.name or "__no_active_script")
+    end
+    return 0
+end
+
 local function dispatch(name, ...)
     local key = name:lower()
     local fn = obs._bindings[key]
     if fn then
         return fn(...) or 0
     end
-    obs._unknown[key] = (obs._unknown[key] or 0) + 1
-    if obs._log then
-        obs._log("unimplemented: " .. name)
-    end
-    return 0
+    return recordUnknown(name)
 end
 
 -- free function call: SetStage(...), ShowMessage(...)
@@ -120,8 +125,7 @@ function obs.v(name)
         return obs._globals[key]
     end
     -- unknown: report once as coverage telemetry, evaluate as 0 (vanilla-ish)
-    obs._unknown[key] = (obs._unknown[key] or 0) + 1
-    return 0
+    return recordUnknown(name)
 end
 
 -- cross-script variable read: Quest.var / Ref.var

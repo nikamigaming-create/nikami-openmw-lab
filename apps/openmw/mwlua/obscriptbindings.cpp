@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,6 +24,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -54,6 +57,16 @@ namespace MWLua
     {
         sol::state_view lua = context.sol();
         sol::table api(lua, sol::create);
+
+        auto reportedUnsupportedCommands = std::make_shared<std::set<std::string>>();
+        api["reportUnsupportedCommand"]
+            = [reportedUnsupportedCommands](std::string_view command, std::string_view script) {
+                  const std::string canonical = Misc::StringUtils::lowerCase(command);
+                  if (!reportedUnsupportedCommands->insert(canonical).second)
+                      return;
+                  Log(Debug::Warning) << "FNV/ESM4 ObScript unsupported command: command=" << command
+                                      << " firstScript=" << script;
+              };
 
         auto recordBindingsClass = lua.new_usertype<ESM4::Script>("ESM4_Script");
         recordBindingsClass[sol::meta_function::to_string]

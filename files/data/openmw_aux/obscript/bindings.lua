@@ -13,6 +13,11 @@ local types = require('openmw.types')
 
 local obs = require('openmw_aux.obscript.runtime')
 
+-- Runtime stubs keep a script alive so one missing command does not take down
+-- the whole cell, but they must never be silent. The C++ package deduplicates
+-- these reports globally and retains the first script that exercised each gap.
+obs._log = core.obscript.reportUnsupportedCommand
+
 local function isInstance(typeApi, object)
     if object == nil or typeApi == nil or typeApi.objectIsInstance == nil then
         return false

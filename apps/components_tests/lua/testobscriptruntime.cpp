@@ -91,8 +91,16 @@ namespace
 
             unknownCommandIsZero = function()
                 local before = obs._unknown['neverimplemented'] or 0
+                local reports = {}
+                obs._log = function(command, script)
+                    reports[#reports + 1] = command .. ':' .. script
+                end
+                obs.locals('UnknownCommandScript')
                 local value = obs.f('NeverImplemented', 1, 2, 3)
-                return value, (obs._unknown['neverimplemented'] or 0) - before
+                obs.f('NeverImplemented')
+                obs._log = nil
+                return value, (obs._unknown['neverimplemented'] or 0) - before,
+                    #reports, reports[1]
             end,
 
             fireEvents = function(log)
@@ -527,9 +535,11 @@ namespace
     TEST_F(ObScriptRuntimeTest, UnknownCommandsStubToZero)
     {
         sol::table s = script();
-        auto r = LuaUtil::call(s["unknownCommandIsZero"]).get<std::tuple<int, int>>();
+        auto r = LuaUtil::call(s["unknownCommandIsZero"]).get<std::tuple<int, int, int, std::string>>();
         EXPECT_EQ(std::get<0>(r), 0); // unimplemented command evaluates to 0
-        EXPECT_EQ(std::get<1>(r), 1); // and is counted once
+        EXPECT_EQ(std::get<1>(r), 2); // every execution is counted
+        EXPECT_EQ(std::get<2>(r), 1); // but only the first use is reported
+        EXPECT_EQ(std::get<3>(r), "NeverImplemented:UnknownCommandScript");
     }
 
     TEST_F(ObScriptRuntimeTest, FireAndFrame)
