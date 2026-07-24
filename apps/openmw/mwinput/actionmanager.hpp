@@ -94,6 +94,7 @@ namespace MWInput
         std::string mFalloutVatsBodyPartName;
         std::string mFalloutVatsBodyPartTargetNode;
         unsigned int mFalloutVatsHitChance = 0;
+        bool mFalloutPlayerUseDown = false;
         int mFalloutVatsPreviousCameraMode = -1;
         float mFalloutVatsPreviousCameraDistance = 0.f;
         float mFalloutVatsPreviousCameraPitch = 0.f;

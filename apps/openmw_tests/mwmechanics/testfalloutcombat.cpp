@@ -704,6 +704,28 @@ namespace
         EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
     }
 
+    TEST(FalloutCombatTest, FlatPlayerUseReachesWeaponOnlyDuringOrdinaryArmedGameplay)
+    {
+        using Phase = MWMechanics::FalloutVatsPhase;
+        EXPECT_TRUE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, true, true));
+
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, true, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, false, true, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, false, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, false, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Inactive, true, true, false, true, false));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Targeting, true, true, false, true, true));
+        EXPECT_FALSE(MWMechanics::shouldApplyFalloutPlayerUseInput(
+            Phase::Executing, true, true, false, true, true));
+    }
+
     TEST(FalloutCombatTest, SelectsAuthoredDeliveryKeysOnlyForNonAutomaticEventRoutedAttacks)
     {
         using Event = MWMechanics::FalloutAttackDeliveryEvent;

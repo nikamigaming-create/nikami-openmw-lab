@@ -1236,6 +1236,13 @@ namespace MWMechanics
         return true;
     }
 
+    bool shouldApplyFalloutPlayerUseInput(FalloutVatsPhase vatsPhase, bool controlsEnabled,
+        bool fightingEnabled, bool guiMode, bool weaponDrawn, bool useDown) noexcept
+    {
+        return vatsPhase == FalloutVatsPhase::Inactive && controlsEnabled && fightingEnabled
+            && !guiMode && weaponDrawn && useDown;
+    }
+
     FalloutAttackDeliveryEvent getFalloutAttackDeliveryEvent(
         std::uint8_t animationType, bool authoredHitscan, bool automatic) noexcept
     {

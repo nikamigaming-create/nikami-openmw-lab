@@ -798,6 +798,11 @@ namespace MWMechanics
     [[nodiscard]] bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept;
 
+    /// Mirror the physical Flat "Use" binding into the native FNV weapon controller only while ordinary gameplay
+    /// owns input. This keeps Pip-Boy dismissal, disabled controls, holstered weapons, and V.A.T.S. from firing.
+    [[nodiscard]] bool shouldApplyFalloutPlayerUseInput(FalloutVatsPhase vatsPhase, bool controlsEnabled,
+        bool fightingEnabled, bool guiMode, bool weaponDrawn, bool useDown) noexcept;
+
     /// Select the authored KF event that delivers a non-V.A.T.S. attack. Melee clips author Hit; hand-thrown and
     /// placed explosive clips author Release; non-hitscan gun/launcher clips author Hit. Automatic and hitscan
     /// weapons continue to use trigger cadence directly so an action clip cannot collapse a firing loop to one hit.
