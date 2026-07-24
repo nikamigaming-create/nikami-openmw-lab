@@ -180,6 +180,24 @@ obs.bind('GetDead', function(ref)
     return types.Actor.isDead(actor) and 1 or 0
 end)
 
+obs.bind('GetUnconscious', function(ref)
+    local actor = resolveObject(ref)
+    if not isInstance(types.Actor, actor) then
+        return 0
+    end
+    return core.obscript.getUnconscious(actor) and 1 or 0
+end)
+
+obs.bind('Activate', function(ref)
+    local object = resolveObject(ref)
+    local actor = obs._actionRef or nearby.players[1]
+    if object == nil or actor == nil then
+        return 0
+    end
+    core.obscript.activate(object, actor)
+    return 0
+end)
+
 obs.bind('GetItemCount', function(ref, item)
     local object = resolveObject(ref)
     if object == nil or type(item) ~= 'string' then

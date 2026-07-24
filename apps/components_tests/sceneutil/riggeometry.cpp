@@ -48,10 +48,10 @@ namespace
             const auto* colors = dynamic_cast<const osg::Vec4Array*>(rig->getRenderGeometry(buffer)->getColorArray());
             ASSERT_NE(colors, nullptr);
             ASSERT_EQ(colors->size(), 4u);
-            EXPECT_EQ((*colors)[0], osg::Vec4f(1.f, 0.58f, 0.12f, 1.f));
-            EXPECT_EQ((*colors)[1], osg::Vec4f(0.18f, 1.f, 0.28f, 1.f));
-            EXPECT_EQ((*colors)[2], osg::Vec4f(1.f, 0.58f, 0.12f, 1.f));
-            EXPECT_EQ((*colors)[3], osg::Vec4f(1.f, 0.58f, 0.12f, 1.f));
+            EXPECT_EQ((*colors)[0], osg::Vec4f(1.35f, 0.52f, 0.06f, 1.f));
+            EXPECT_EQ((*colors)[1], osg::Vec4f(0.10f, 3.5f, 0.24f, 1.f));
+            EXPECT_EQ((*colors)[2], osg::Vec4f(1.35f, 0.52f, 0.06f, 1.f));
+            EXPECT_EQ((*colors)[3], osg::Vec4f(1.35f, 0.52f, 0.06f, 1.f));
             EXPECT_EQ(rig->getRenderGeometry(buffer)->getColorBinding(), osg::Array::BIND_PER_VERTEX);
         }
 
@@ -118,6 +118,6 @@ namespace
         const auto* colors = dynamic_cast<const osg::Vec4Array*>(rig->getRenderGeometry(0)->getColorArray());
         ASSERT_NE(colors, nullptr);
         for (const osg::Vec4f& color : *colors)
-            EXPECT_EQ(color, osg::Vec4f(1.f, 0.58f, 0.12f, 1.f));
+            EXPECT_EQ(color, osg::Vec4f(1.35f, 0.52f, 0.06f, 1.f));
     }
 }

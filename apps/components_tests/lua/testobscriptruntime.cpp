@@ -152,10 +152,12 @@ namespace
 
             makeLocalScriptEmpty = function()
                 -- fresh runtime per sandbox in the engine; here simulate by
-                -- checking a script with no blocks yields usable handlers
+                -- checking a script with no blocks yields usable handlers but
+                -- does not claim authored activation ownership.
                 obs.locals('EmptyIfaceScript')
                 local script = obs.makeLocalScript()
-                return type(script) == 'table' and 1 or 0
+                return type(script) == 'table' and 1 or 0,
+                    script.engineHandlers.onActivated == nil
             end,
 
             filteredGameplayEvents = function(log)
@@ -203,6 +205,8 @@ namespace
                     obs.m('MissingRef', 'GetDisabled'),
                     obs.m('PlacedRef', 'GetDead'),
                     obs.m('player', 'GetDead'),
+                    obs.m('PlacedRef', 'GetUnconscious'),
+                    obs.m('player', 'GetUnconscious'),
                     obs.m('player', 'GetItemCount', 'AmmoItem'),
                     obs.m('CrateRef', 'GetItemCount', 'AmmoItem'),
                     obs.m('player', 'GetItemCount', 'MissingItem')
@@ -229,6 +233,14 @@ namespace
                     obs.f('ShowMessage', 'VCG04Message'),
                     obs.f('IsAnimPlaying', 'Left'),
                     obs.m('PlacedRef', 'IsAnimPlaying', 'Right')
+            end,
+
+            retailActivation = function(mutations)
+                obs._actionRef = nearby.players[1]
+                obs.f('Activate')
+                obs._actionRef = nil
+                local mutation = mutations[#mutations]
+                return mutation.name, mutation.args[1].id, mutation.args[2].id
             end,
 
             questQueries = function()
@@ -322,7 +334,7 @@ namespace
         local sameCell = {}
         sameCell.isInSameSpace = function(_, obj) return obj.cell == sameCell end
 
-        local function object(id, kind, enabled, dead, itemCount, player, x, y, z)
+        local function object(id, kind, enabled, dead, itemCount, player, x, y, z, unconscious)
             local obj = {
                 id = id,
                 kind = kind,
@@ -332,13 +344,14 @@ namespace
                 player = player or false,
                 cell = sameCell,
                 position = { x = x or 0, y = y or 0, z = z or 0 },
+                unconscious = unconscious or false,
             }
             obj.isValid = function() return true end
             return obj
         end
 
-        local own = object('self', 'container', false, false, 1)
-        local placed = object('placed', 'actor', false, true, 3, false, 3, 4, 0)
+        local own = object('self', 'actor', false, false, 1)
+        local placed = object('placed', 'actor', false, true, 3, false, 3, 4, 0, true)
         local player = object('player', 'actor', true, false, 12, true, 3, 0, 0)
         local crate = object('crate', 'container', true, false, 4)
         local byFormId = {
@@ -423,6 +436,8 @@ namespace
                     mutations[#mutations + 1] = { name = 'showMessage', args = { message } }
                     return true
                 end,
+                getUnconscious = function(object) return object.unconscious end,
+                activate = mutation('activate'),
             },
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
@@ -603,8 +618,9 @@ namespace
     TEST_F(ObScriptRuntimeTest, MakeLocalScriptWithoutBlocks)
     {
         sol::table s = script();
-        auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<int>();
-        EXPECT_EQ(r, 1);
+        auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<std::tuple<int, bool>>();
+        EXPECT_EQ(std::get<0>(r), 1);
+        EXPECT_TRUE(std::get<1>(r));
     }
 
     TEST_F(ObScriptRuntimeTest, GameplayEventFiltersRequireMatchingAuthoritativeReference)
@@ -640,15 +656,39 @@ namespace
             sol::table s = mLua.runInNewSandbox(
                 VFS::Path::Normalized(bindingsDriverPath), "obscript-bindings-test", extraPackages);
             const auto values
-                = LuaUtil::call(s["queries"]).get<std::tuple<int, int, int, int, int, int, int, int>>();
+                = LuaUtil::call(s["queries"]).get<std::tuple<int, int, int, int, int, int, int, int, int, int>>();
             EXPECT_EQ(std::get<0>(values), 1); // disabled script owner
             EXPECT_EQ(std::get<1>(values), 1); // disabled placed actor
             EXPECT_EQ(std::get<2>(values), 0); // missing reference is safe
             EXPECT_EQ(std::get<3>(values), 1); // dead placed actor
             EXPECT_EQ(std::get<4>(values), 0); // living player
-            EXPECT_EQ(std::get<5>(values), 12); // actor inventory
-            EXPECT_EQ(std::get<6>(values), 4); // container inventory
-            EXPECT_EQ(std::get<7>(values), 0); // unknown item
+            EXPECT_EQ(std::get<5>(values), 1); // unconscious placed actor
+            EXPECT_EQ(std::get<6>(values), 0); // conscious player
+            EXPECT_EQ(std::get<7>(values), 12); // actor inventory
+            EXPECT_EQ(std::get<8>(values), 4); // container inventory
+            EXPECT_EQ(std::get<9>(values), 0); // unknown item
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, RetailActivateUsesScriptOwnerAndActionRef)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-activation-bindings-test", extraPackages);
+            const auto values = LuaUtil::call(s["retailActivation"], factory["mutations"])
+                                    .get<std::tuple<std::string, std::string, std::string>>();
+            EXPECT_EQ(std::get<0>(values), "activate");
+            EXPECT_EQ(std::get<1>(values), "self");
+            EXPECT_EQ(std::get<2>(values), "player");
         });
     }
 

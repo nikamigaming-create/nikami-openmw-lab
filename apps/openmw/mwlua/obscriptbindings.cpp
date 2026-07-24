@@ -34,12 +34,17 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwmechanics/creaturestats.hpp"
+#include "../mwworld/action.hpp"
+#include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/globalvariablename.hpp"
 #include "../mwworld/store.hpp"
 
 #include "context.hpp"
+#include "luamanagerimp.hpp"
+#include "object.hpp"
 
 namespace sol
 {
@@ -194,6 +199,35 @@ namespace MWLua
                 windowManager->messageBox(message.mDescription);
             else
                 windowManager->interactiveMessageBox(message.mDescription, buttons);
+            return true;
+        };
+        api["getUnconscious"] = [](const Object& object) {
+            const MWWorld::Ptr& ptr = object.ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return false;
+            return ptr.getClass().getCreatureStats(ptr).getKnockedDown();
+        };
+        api["activate"] = [context](const Object& object, const Object& actor) {
+            const MWWorld::Ptr& objectPtr = object.ptrOrEmpty();
+            const MWWorld::Ptr& actorPtr = actor.ptrOrEmpty();
+            if (objectPtr.isEmpty() || actorPtr.isEmpty() || objectPtr.getRefData().isDestroyed())
+                return false;
+            if (!objectPtr.getRefData().activateByScript() && objectPtr.getContainerStore() == nullptr)
+                return false;
+
+            context.mLuaManager->addAction(
+                [object = Object(objectPtr), actor = Object(actorPtr)] {
+                    const MWWorld::Ptr& delayedObject = object.ptrOrEmpty();
+                    const MWWorld::Ptr& delayedActor = actor.ptrOrEmpty();
+                    if (delayedObject.isEmpty() || delayedActor.isEmpty()
+                        || delayedObject.getRefData().isDestroyed())
+                        return;
+                    std::unique_ptr<MWWorld::Action> action
+                        = delayedObject.getClass().activate(delayedObject, delayedActor);
+                    if (action)
+                        action->execute(delayedActor);
+                },
+                "ObScriptActivate");
             return true;
         };
 

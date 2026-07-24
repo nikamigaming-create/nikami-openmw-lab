@@ -225,6 +225,12 @@ namespace LuaUtil
             }
         }
 
+        bool hasEngineHandlers(EngineHandlerList& handlers)
+        {
+            ensureLoaded();
+            return !handlers.mList.empty();
+        }
+
         // To add a new engine handler a derived class should register the corresponding EngineHandlerList and define
         // a public function (see how ScriptsContainer::update is implemented) that calls `callEngineHandlers`.
         void registerEngineHandlers(std::initializer_list<EngineHandlerList*> handlers);
