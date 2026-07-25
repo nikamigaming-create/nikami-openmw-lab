@@ -80,6 +80,31 @@ namespace
         return value;
     }
 
+    template <class ConditionEvaluator>
+    std::optional<std::string> buildQuestStageNotification(const ESM4::Quest& quest,
+        const ESM4::QuestStage& stage, bool wasRunning, ConditionEvaluator&& evaluateConditions)
+    {
+        const ESM4::QuestStageEntry* journalEntry = nullptr;
+        for (const ESM4::QuestStageEntry& entry : stage.mEntries)
+        {
+            if (!entry.mLogEntry.empty() && evaluateConditions(entry.mConditions))
+            {
+                journalEntry = &entry;
+                break;
+            }
+        }
+        // Script-only stages such as retail NQlvl do not create a journal update.
+        if (journalEntry == nullptr)
+            return std::nullopt;
+
+        const std::string& title = quest.mQuestName.empty() ? quest.mEditorId : quest.mQuestName;
+        std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
+        notification += title;
+        notification += "\n";
+        notification += journalEntry->mLogEntry;
+        return notification;
+    }
+
     void recordAllyPair(MWWorld::ESM4QuestState& state, ESM::FormId first, ESM::FormId second)
     {
         if (second.toUint32() < first.toUint32())
@@ -1700,19 +1725,12 @@ namespace MWWorld
 
         if (success)
         {
-            const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
-            std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
-            notification += title;
-            for (const ESM4::QuestStageEntry& entry : stage->mEntries)
-            {
-                if (!entry.mLogEntry.empty() && evaluateConditions(entry.mConditions, working.mStates, false))
-                {
-                    notification += "\n";
-                    notification += entry.mLogEntry;
-                    break;
-                }
-            }
-            working.mEffects.push_back({ id, stageIndex, wasRunning, executedEntry, std::move(notification) });
+            const std::optional<std::string> notification = buildQuestStageNotification(
+                *quest, *stage, wasRunning, [&](const std::vector<ESM4::TargetCondition>& conditions) {
+                    return evaluateConditions(conditions, working.mStates, false);
+                });
+            if (notification)
+                working.mEffects.push_back({ id, stageIndex, wasRunning, executedEntry, *notification });
         }
         working.mStack.pop_back();
         return success;
@@ -2192,22 +2210,17 @@ namespace MWWorld
 
         if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
         {
-            const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
-            std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
-            notification += title;
-            for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+            const std::optional<std::string> notification = buildQuestStageNotification(
+                *quest, *stage, wasRunning, [&](const std::vector<ESM4::TargetCondition>& conditions) {
+                    return evaluateConditions(conditions);
+                });
+            if (notification)
             {
-                if (!entry.mLogEntry.empty() && evaluateConditions(entry.mConditions))
-                {
-                    notification += "\n";
-                    notification += entry.mLogEntry;
-                    break;
-                }
+                windowManager->scheduleMessageBox(*notification, MWGui::ShowInDialogueMode_Never);
+                Log(Debug::Info) << "FNV/ESM4 behavior: queued quest notification quest=" << quest->mEditorId
+                                 << " stage=" << static_cast<unsigned int>(stageIndex)
+                                 << " mode=" << (wasRunning ? "updated" : "added");
             }
-            windowManager->scheduleMessageBox(std::move(notification), MWGui::ShowInDialogueMode_Never);
-            Log(Debug::Info) << "FNV/ESM4 behavior: queued quest notification quest=" << quest->mEditorId
-                             << " stage=" << static_cast<unsigned int>(stageIndex)
-                             << " mode=" << (wasRunning ? "updated" : "added");
         }
         return true;
     }

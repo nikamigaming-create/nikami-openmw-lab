@@ -2427,6 +2427,7 @@ namespace ESM4
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
             if (entry.mChangeType > 2 || entry.mResolvedFormId == sFONVPlayerReferenceFormId
+                || entry.mReferenceKind == FONVSaveReferenceKind::CreatedForm
                 || (entry.mChangeFlags.mValue & changedCell) != 0
                 || (entry.mChangeFlags.mValue & movedOrHavokMoved) == 0)
             {
@@ -2445,6 +2446,7 @@ namespace ESM4
         {
             if ((entry.mChangeType != 0 && entry.mChangeType != 1 && entry.mChangeType != 2)
                 || entry.mResolvedFormId == sFONVPlayerReferenceFormId
+                || entry.mReferenceKind == FONVSaveReferenceKind::CreatedForm
                 || (entry.mChangeFlags.mValue & changeFormFlags) == 0
                 || (entry.mChangeFlags.mValue & changedCell) != 0)
             {

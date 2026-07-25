@@ -573,6 +573,15 @@ namespace MWRender
         EXPECT_FALSE(canAdvanceFonvWeaponState(false, false, true));
     }
 
+    TEST(FalloutWeaponAnimationTest, letsAnActiveActionFinishThroughOrdinaryHitRecovery)
+    {
+        EXPECT_TRUE(canUpdateFonvWeaponState(false, false, false, false));
+        EXPECT_FALSE(canUpdateFonvWeaponState(false, false, false, true));
+        EXPECT_TRUE(canUpdateFonvWeaponState(true, false, false, true));
+        EXPECT_FALSE(canUpdateFonvWeaponState(true, true, false, true));
+        EXPECT_FALSE(canUpdateFonvWeaponState(true, false, true, true));
+    }
+
     TEST(FalloutWeaponAnimationTest, explicitSemanticAliasIncludesLegacyPlayerRenderer)
     {
         EXPECT_TRUE(shouldSynthesizeFonvSemanticAlias(true, {}));

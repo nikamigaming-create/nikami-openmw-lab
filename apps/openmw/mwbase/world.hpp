@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <osg/Matrixf>
+#include <osg/Quat>
 
 #include <components/esm/formid.hpp>
 #include <components/misc/rng.hpp>
@@ -587,7 +588,8 @@ namespace MWBase
 
         virtual void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
-            const ESM::RefId& lightId = {})
+            const ESM::RefId& lightId = {}, const osg::Quat& orientation = {},
+            float authoredDuration = 0.f)
             = 0;
         virtual void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
             const osg::Vec3f& surfaceNormal, float width, float height, float depth,
@@ -705,7 +707,8 @@ namespace MWBase
         virtual bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) = 0;
         virtual bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) = 0;
         virtual bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+            const osg::Vec3f& impactNormal)
             = 0;
     };
 }

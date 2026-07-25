@@ -261,14 +261,35 @@ namespace MWMechanics
         {
             bool isRanged = false;
             const std::optional<float> distance = getFalloutCombatRange(actor, isRanged);
+            const int mappedFlee
+                = actor.getClass().getCreatureStats(actor).getAiSetting(AiSetting::Flee).getBase();
+            const bool flee = makeFleeDecision(actor, enemy, 0.f);
             std::unique_ptr<Action> action;
             if (distance)
                 action = std::make_unique<ActionFalloutWeapon>(FalloutAiCombatRange{ *distance, isRanged });
             else
                 action = std::make_unique<ActionFlee>();
 
-            if (makeFleeDecision(actor, enemy, 0.f))
+            if (flee)
                 action = std::make_unique<ActionFlee>();
+            const osg::Vec3f actorPosition = actor.getRefData().getPosition().asVec3();
+            const osg::Vec3f targetPosition = enemy.getRefData().getPosition().asVec3();
+            Log(Debug::Info) << "FNV AI action: actor=" << actor.toString() << " target=" << enemy.toString()
+                             << " weapon="
+                             << (actor.getType() == ESM4::Npc::sRecordId
+                                     && MWClass::ESM4Npc::getEquippedWeapon(actor) != nullptr
+                                     ? ESM::RefId::formIdRefId(
+                                           MWClass::ESM4Npc::getEquippedWeapon(actor)->mId)
+                                           .toDebugString()
+                                     : std::string("unarmed"))
+                             << " range=" << distance.value_or(0.f) << " ranged=" << isRanged
+                             << " mappedFlee=" << mappedFlee << " flee=" << flee
+                             << " action=" << (action->isFleeing() ? "flee" : "attack")
+                             << " distance=" << (targetPosition - actorPosition).length()
+                             << " los=" << MWBase::Environment::get().getWorld()->getLOS(actor, enemy)
+                             << " actorPos=(" << actorPosition.x() << "," << actorPosition.y() << ","
+                             << actorPosition.z() << ") targetPos=(" << targetPosition.x() << ","
+                             << targetPosition.y() << "," << targetPosition.z() << ")";
             action->prepare(actor);
             return action;
         }

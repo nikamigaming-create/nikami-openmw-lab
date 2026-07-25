@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm/util.hpp>
 #include <components/esm3/loadnpc.hpp>
@@ -26,6 +27,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include "store.hpp"
@@ -530,11 +532,11 @@ namespace MWWorld
             return loadFailure("FNV save master table has ambiguous duplicate FalloutNV.esm Player provenance");
 
         const std::vector<std::size_t> currentPluginIndices = findCurrentFalloutPluginIndices(currentContentFiles);
-        if (currentPluginIndices.size() != save.mMasters.size())
+        if (currentPluginIndices.size() < save.mMasters.size())
         {
             std::ostringstream message;
-            message << "current ESM/ESP content count does not exactly match the FNV save master table: expected "
-                    << save.mMasters.size() << " [";
+            message << "current ESM/ESP content does not contain the complete FNV save master prefix: expected "
+                    << save.mMasters.size() << " saved files [";
             for (std::size_t i = 0; i < save.mMasters.size(); ++i)
             {
                 if (i != 0)
@@ -560,6 +562,13 @@ namespace MWWorld
                 return loadFailure("current ESM/ESP content order does not exactly match the FNV save master table at "
                     + std::to_string(position) + ": expected " + expected + ", got " + current);
             }
+        }
+        if (currentPluginIndices.size() > save.mMasters.size())
+        {
+            Log(Debug::Info) << "FNV save load plan: preserved exact " << save.mMasters.size()
+                             << "-file saved master prefix and accepted "
+                             << (currentPluginIndices.size() - save.mMasters.size())
+                             << " appended ESM/ESP content file(s)";
         }
 
         const std::size_t currentMasterIndex = currentMasterIndices.front();
@@ -1242,6 +1251,12 @@ namespace MWWorld
         proxy.mNpdt.mLevel = state.mStatsConfig.levelOrMult;
         proxy.mNpdt.mHealth = static_cast<std::uint16_t>(state.mHealth);
         proxy.mNpdt.mFatigue = state.mStatsConfig.fatigue;
+        // The native Fallout player currently travels through OpenMW's shared ESM3 NPC proxy. Movement reads the
+        // proxy Speed attribute, so leaving it at NPC::blank()'s zero silently reduces every new/load-game player to
+        // the minimum Morrowind walk speed. SpeedMult is the corresponding authored per-actor Fallout value.
+        const int speedIndex = ESM::Attribute::refIdToIndex(ESM::Attribute::Speed);
+        proxy.mNpdt.mAttributes[static_cast<std::size_t>(speedIndex)] = static_cast<std::uint8_t>(
+            std::min<std::uint16_t>(state.mStatsConfig.speedMultiplier, std::numeric_limits<std::uint8_t>::max()));
         if ((state.mStatsConfig.flags & ESM4::Npc::FO3_Female) != 0)
             proxy.mFlags |= ESM::NPC::Female;
         else

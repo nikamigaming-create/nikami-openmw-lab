@@ -614,7 +614,8 @@ namespace MWWorld
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact) override;
         bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination) override;
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+            const osg::Vec3f& impactNormal) override;
         std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) override;
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
         bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;
@@ -660,7 +661,8 @@ namespace MWWorld
 
         void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true,
-            bool useAmbientLight = true, const ESM::RefId& lightId = {}) override;
+            bool useAmbientLight = true, const ESM::RefId& lightId = {},
+            const osg::Quat& orientation = {}, float authoredDuration = 0.f) override;
         void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
             const osg::Vec3f& surfaceNormal, float width, float height, float depth,
             const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime) override;

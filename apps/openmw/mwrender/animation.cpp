@@ -3266,7 +3266,7 @@ namespace MWRender
             "Bip01 Neck", /* Head */
         };
 
-        while (node != mObjectRoot)
+        while (node != nullptr && node != mObjectRoot)
         {
             const std::string& name = node->getName();
             for (size_t i = 1; i < sNumBlendMasks; i++)
@@ -3275,7 +3275,13 @@ namespace MWRender
                     return i;
             }
 
-            assert(node->getNumParents() > 0);
+            // Runtime equipment changes can leave an animation target detached while
+            // a new weapon-family source is being prepared. It is still a valid
+            // controller target, but it no longer has an ancestry path to the actor
+            // root. Treat it as a full-body track instead of following parent 0 from
+            // an empty parent list.
+            if (node->getNumParents() == 0)
+                break;
 
             node = node->getParent(0);
         }
@@ -5161,6 +5167,147 @@ namespace MWRender
                 return (*source)->mSourceName;
         }
         return {};
+    }
+
+    Animation::SourceOverrideBinding Animation::bindSourceOverride(
+        std::string_view path, std::string_view requestedGroup)
+    {
+        SourceOverrideBinding result;
+        if (path.empty())
+            return result;
+
+        const std::string sourcePath = VFS::Path::toNormalized(path);
+        const bool sourceExists = mResourceSystem != nullptr
+            && mResourceSystem->getVFS()->exists(VFS::Path::Normalized(sourcePath));
+        Log(Debug::Info) << "FNV kNVSE source override begin actor=" << mPtr.getCellRef().getRefId()
+                         << " path=" << sourcePath << " requestedGroup=" << requestedGroup
+                         << " vfsExists=" << sourceExists;
+        if (!sourceExists)
+        {
+            Log(Debug::Error) << "FNV kNVSE source override rejected missing path=" << sourcePath;
+            return result;
+        }
+
+        std::vector<std::pair<std::string, std::string>> previousSources;
+        for (const std::string& group : getAnimationGroups())
+            previousSources.emplace_back(group, getAnimationSourceName(group));
+
+        const std::string semanticGroup(requestedGroup);
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        if (addSingleAnimSource(sourcePath, baseModel, false, {}, semanticGroup) == nullptr)
+        {
+            Log(Debug::Error) << "FNV kNVSE source override rejected controller binding actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath
+                              << " baseModel=" << baseModel << " requestedGroup=" << semanticGroup;
+            return result;
+        }
+
+        result.mGroup
+            = semanticGroup.empty() ? getAnimationGroupFromSource(sourcePath) : semanticGroup;
+        if (result.mGroup.empty())
+            return result;
+
+        for (const auto& [group, source] : previousSources)
+        {
+            if (group == result.mGroup)
+            {
+                result.mPreviousGroup = group;
+                result.mPreviousSource = source;
+                break;
+            }
+        }
+        // A custom SpecialIdle can introduce a group that had no source at
+        // installation time. In that case the actor's ordinary idle is the
+        // observable baseline to which native locomotion returns after the
+        // one-shot source is unregistered.
+        if (result.mPreviousSource.empty())
+        {
+            for (const auto& [group, source] : previousSources)
+            {
+                if (group == "idle" && !source.empty())
+                {
+                    result.mPreviousGroup = group;
+                    result.mPreviousSource = source;
+                    break;
+                }
+            }
+        }
+        result.mSelectedSource = getAnimationSourceName(result.mGroup);
+        result.mControllerMask = getAnimationGroupControllerMask(result.mGroup);
+        result.mLoaded = !result.mSelectedSource.empty() && result.mControllerMask != 0;
+        Log(result.mLoaded ? Debug::Info : Debug::Error)
+            << "FNV kNVSE source override result actor=" << mPtr.getCellRef().getRefId()
+            << " loaded=" << result.mLoaded << " group=" << result.mGroup
+            << " previousGroup=" << result.mPreviousGroup << " previousSource=" << result.mPreviousSource
+            << " selectedSource=" << result.mSelectedSource
+            << " controllerMask=" << result.mControllerMask;
+        return result;
+    }
+
+    Animation::SourceOverrideBinding Animation::restoreSourceOverride(std::string_view path,
+        std::string_view installedGroup, std::string_view expectedPreviousSource, std::string_view previousGroup)
+    {
+        SourceOverrideBinding result;
+        result.mGroup = previousGroup.empty() ? std::string(installedGroup) : std::string(previousGroup);
+        result.mPreviousGroup = result.mGroup;
+        result.mPreviousSource = std::string(expectedPreviousSource);
+        if (path.empty() || installedGroup.empty() || result.mGroup.empty())
+            return result;
+
+        const std::string sourcePath = VFS::Path::toNormalized(path);
+        const std::string group(installedGroup);
+        const std::string selectedOverride = getAnimationSourceName(group);
+        if (!Misc::StringUtils::ciEqual(selectedOverride, sourcePath))
+        {
+            Log(Debug::Error) << "FNV kNVSE source restore rejected non-selected override actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath << " group=" << group
+                              << " selectedSource=" << selectedOverride;
+            return result;
+        }
+
+        disable(group);
+        auto found = mAnimSources.rend();
+        for (auto source = mAnimSources.rbegin(); source != mAnimSources.rend(); ++source)
+        {
+            if (Misc::StringUtils::ciEqual((*source)->mSourceName, sourcePath)
+                && (*source)->getTextKeys().hasGroupStart(group))
+            {
+                found = source;
+                break;
+            }
+        }
+        if (found == mAnimSources.rend())
+        {
+            Log(Debug::Error) << "FNV kNVSE source restore could not locate installed source actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath << " group=" << group;
+            return result;
+        }
+
+        // mSupportedAnimations contains views owned by the sources, so release
+        // the views before erasing and rebuild them from the surviving stack.
+        mSupportedAnimations.clear();
+        mAnimSources.erase(std::next(found).base());
+        for (const std::shared_ptr<AnimSource>& source : mAnimSources)
+        {
+            for (const std::string& supportedGroup : source->getTextKeys().getGroups())
+                mSupportedAnimations.insert(supportedGroup);
+        }
+        mSupportedDirections.clear();
+
+        result.mSelectedSource = getAnimationSourceName(result.mGroup);
+        result.mControllerMask = getAnimationGroupControllerMask(result.mGroup);
+        const bool sourceRestored = expectedPreviousSource.empty()
+            ? getAnimationSourceName(group).empty()
+            : Misc::StringUtils::ciEqual(result.mSelectedSource, expectedPreviousSource);
+        result.mLoaded = sourceRestored
+            && (expectedPreviousSource.empty() || result.mControllerMask != 0);
+        Log(result.mLoaded ? Debug::Info : Debug::Error)
+            << "FNV kNVSE source restore result actor=" << mPtr.getCellRef().getRefId()
+            << " restored=" << result.mLoaded << " removedPath=" << sourcePath
+            << " removedGroup=" << group << " selectedGroup=" << result.mGroup
+            << " expectedSource=" << expectedPreviousSource << " selectedSource=" << result.mSelectedSource
+            << " controllerMask=" << result.mControllerMask;
+        return result;
     }
 
     std::string Animation::getAnimationGroupFromSource(

@@ -12,6 +12,7 @@
 
 #include <osg/Light>
 #include <osg/Matrixf>
+#include <osg/Quat>
 #include <osg/ref_ptr>
 
 #include <osgUtil/IncrementalCompileOperation>
@@ -230,7 +231,8 @@ namespace MWRender
 
         void spawnEffect(VFS::Path::NormalizedView model, std::string_view texture, const osg::Vec3f& worldPosition,
             float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
-            const ESM4::Light* light = nullptr, bool isExterior = false);
+            const ESM4::Light* light = nullptr, bool isExterior = false,
+            const osg::Quat& orientation = osg::Quat(), float authoredDuration = 0.f);
         void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
             const osg::Vec3f& surfaceNormal, float width, float height, float depth,
             const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime);

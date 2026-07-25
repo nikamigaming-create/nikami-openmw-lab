@@ -333,6 +333,13 @@ namespace MWMechanics
                     storage.mUseCustomDestination = false;
                     storage.stopAttack();
                     stats.setAttackingOrSpell(false);
+                    if (isFalloutNewVegasActor(actor))
+                    {
+                        Log(Debug::Warning) << "FNV AI path fallback: actor=" << actor.toString()
+                                            << " target=" << target.toString() << " range=" << rangeAttack
+                                            << " distance=" << distToTarget << " los=" << storage.mLOS
+                                            << " result=flee";
+                    }
                     currentAction = std::make_unique<ActionFlee>();
                     actionCooldown = currentAction->getActionCooldown();
                     storage.startFleeing();
@@ -480,7 +487,22 @@ namespace MWMechanics
         actorMovementSettings.mPosition[2] = storage.mMovement.mPosition[2];
 
         rotateActorOnAxis(actor, 2, actorMovementSettings, storage);
-        rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
+        const bool waitingForYaw = storage.mRotateMove;
+
+        // Grounded FNV actors aim firearms and melee strikes through the animated upper body and the explicit
+        // target ray. Their world transform does not consume pitch rotation, so waiting for root pitch here
+        // leaves them permanently ready-but-unable-to-attack. Flying and swimming actors still need full 3D
+        // steering. Also preserve both turn results for non-FNV actors instead of letting pitch overwrite yaw.
+        bool waitingForPitch = false;
+        if (!isFalloutNewVegasActor(actor) || canActorMoveByZAxis(actor))
+        {
+            rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
+            waitingForPitch = storage.mRotateMove;
+        }
+        else
+            actorMovementSettings.mRotation[0] = 0.f;
+
+        storage.mRotateMove = waitingForYaw || waitingForPitch;
     }
 
     void AiCombat::rotateActorOnAxis(

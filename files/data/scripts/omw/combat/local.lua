@@ -287,6 +287,20 @@ local function onHit(data)
     elseif data.attacker and Player.objectIsInstance(data.attacker) then
         core.sound.playSound3d('miss', self)
     end
+    local fnvHit = {
+        target = self.object,
+        attacker = data.attacker,
+        weapon = data.weapon,
+        damage = getDamage(data, 'health') or 0,
+        hitLocation = 0,
+        critical = false,
+    }
+    if data.attacker and Player.objectIsInstance(data.attacker) then
+        data.attacker:sendEvent('FNVObScriptOutgoingHit', fnvHit)
+    end
+    if isPlayer then
+        self:sendEvent('FNVObScriptIncomingHit', fnvHit)
+    end
     Actor._onHit(self, data)
 end
 

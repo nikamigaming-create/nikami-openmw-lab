@@ -42,7 +42,8 @@ namespace MWRender
 
     void EffectManager::addEffect(VFS::Path::NormalizedView model, std::string_view textureOverride,
         const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight,
-        const ESM4::Light* light, bool isExterior)
+        const ESM4::Light* light, bool isExterior, const osg::Quat& orientation,
+        float authoredDuration)
     {
         osg::ref_ptr<osg::Node> node = mResourceSystem->getSceneManager()->getInstance(model);
 
@@ -54,9 +55,24 @@ namespace MWRender
         SceneUtil::FindMaxControllerLengthVisitor findMaxLengthVisitor;
         node->accept(findMaxLengthVisitor);
         effect.mMaxControllerLength = findMaxLengthVisitor.getMaxLength();
+        if (std::isfinite(authoredDuration) && authoredDuration > 0.f)
+        {
+            if (std::isfinite(effect.mMaxControllerLength) && effect.mMaxControllerLength > 0.f)
+            {
+                // Fallout's PROJ/IPCT duration is the wall-clock lifetime of the complete effect. Preserve the
+                // controller's authored beginning, peak, and fade by fitting its animation clock into that lifetime.
+                effect.mPlaybackRate = effect.mMaxControllerLength / authoredDuration;
+            }
+            else
+            {
+                // Keep controller-less effects (notably an attached light) alive for the authored lifetime.
+                effect.mMaxControllerLength = authoredDuration;
+            }
+        }
 
         osg::ref_ptr<osg::PositionAttitudeTransform> trans = new osg::PositionAttitudeTransform;
         trans->setPosition(worldPosition);
+        trans->setAttitude(orientation);
         trans->setScale(osg::Vec3f(scale, scale, scale));
         trans->addChild(node);
         if (light != nullptr)
@@ -91,7 +107,8 @@ namespace MWRender
         const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime)
     {
         osg::Vec3f normal = surfaceNormal;
-        if (normal.normalize() == 0.f || width <= 0.f || height <= 0.f || lifetime <= 0.f)
+        if (normal.normalize() == 0.f || width <= 0.f || height <= 0.f
+            || !std::isfinite(depth) || depth < 0.f || lifetime <= 0.f)
             return;
 
         osg::Vec3f tangent = std::abs(normal.z()) < 0.9f
@@ -158,7 +175,9 @@ namespace MWRender
         geode->addDrawable(geometry);
         osg::ref_ptr<osg::PositionAttitudeTransform> transform = new osg::PositionAttitudeTransform;
         transform->setNodeMask(Mask_Effect);
-        transform->setPosition(worldPosition + normal * std::max(depth, 0.f));
+        // DODT depth describes the decal projection volume; it is not a world-space standoff. Moving the quad by
+        // the full authored depth (commonly 16 units) detached bullet marks from the surface that was hit.
+        transform->setPosition(worldPosition + normal * 0.25f);
         transform->addChild(geode);
         mParentNode->addChild(transform);
 
@@ -175,7 +194,7 @@ namespace MWRender
     {
         mEffects.erase(std::remove_if(mEffects.begin(), mEffects.end(),
                            [dt, this](Effect& effect) {
-                               effect.mAnimTime->addTime(dt);
+                               effect.mAnimTime->addTime(dt * effect.mPlaybackRate);
                                const auto remove = effect.mAnimTime->getTime() >= effect.mMaxControllerLength;
                                if (remove)
                                    mParentNode->removeChild(effect.mTransform);

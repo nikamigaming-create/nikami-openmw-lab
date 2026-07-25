@@ -1942,6 +1942,13 @@ namespace MWMechanics
             }
         }
         stats.getAiSequence().stack(MWMechanics::AiCombat(target), ptr);
+        if (isFalloutNewVegasActor(ptr))
+        {
+            // Authored FNV sandbox and furniture idles are queued as scripted animations. Combat must preempt
+            // those idles immediately; otherwise CharacterController rejects weapon updates and AiPackage::pathTo
+            // deliberately holds the actor stationary for as long as the ambient animation remains queued.
+            clearAnimationQueue(ptr, true);
+        }
         if (target == getPlayer())
         {
             // if guard starts combat with player, guards pursuing player should do the same

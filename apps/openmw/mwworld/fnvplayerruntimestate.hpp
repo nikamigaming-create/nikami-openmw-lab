@@ -46,8 +46,8 @@ namespace MWWorld
 
     /// Mutable Player actor values kept deliberately separate from the immutable NPC_ base record state.
     ///
-    /// This slice covers exact authored/current health, SPECIAL, the fourteen FNV skills, and runtime fame/infamy
-    /// reputation values. It does not project actor values into Morrowind attributes, skills, or formulas.
+    /// This slice covers exact authored/current health, SpeedMult, SPECIAL, the fourteen FNV skills, and runtime
+    /// fame/infamy reputation values. It does not project actor values into Morrowind attributes, skills, or formulas.
     /// Mutations are bounded to finite float values; retail modifier-stack and UI/allocation clamps are not
     /// inferred here.
     class FalloutPlayerRuntimeState
@@ -55,19 +55,21 @@ namespace MWWorld
     public:
         static constexpr std::uint32_t HealthActorValue = 16;
         static constexpr std::uint32_t ActionPointsActorValue = 12;
+        static constexpr std::uint32_t SpeedMultiplierActorValue = 21;
         static constexpr std::uint32_t ExperienceActorValue = 24;
         static constexpr std::uint32_t SpecialActorValueBegin = 5;
         static constexpr std::uint32_t SpecialActorValueEnd = 11;
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 6;
+        static constexpr std::uint32_t SaveVersion = 7;
 
     private:
         struct CurrentState
         {
             float mHealth = 0.f;
             float mActionPoints = 0.f;
+            float mSpeedMultiplier = 0.f;
             float mExperience = 0.f;
             std::array<float, FalloutPlayerState::SpecialCount> mSpecial{};
             std::array<float, FalloutPlayerState::SkillCount> mSkills{};

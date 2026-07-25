@@ -395,6 +395,13 @@ namespace MWRender
         return !knockedOut && !knockedDown && !recovering;
     }
 
+    inline bool canUpdateFonvWeaponState(
+        bool activeAction, bool knockedOut, bool knockedDown, bool recovering)
+    {
+        return canAdvanceFonvWeaponState(knockedOut, knockedDown, recovering)
+            || (activeAction && recovering && !knockedOut && !knockedDown);
+    }
+
     inline bool shouldSynthesizeFonvSemanticAlias(bool falloutActorContext, std::string_view semanticGroup)
     {
         return falloutActorContext || !semanticGroup.empty();

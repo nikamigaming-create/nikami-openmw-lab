@@ -459,7 +459,8 @@ namespace MWWorld
     }
 
     bool ProjectileManager::launchFalloutHitscanTracer(
-        ESM::FormId projectileId, const osg::Vec3f& origin, const osg::Vec3f& destination)
+        ESM::FormId projectileId, const osg::Vec3f& origin, const osg::Vec3f& destination,
+        const osg::Vec3f& impactNormal)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         const ESM4::Projectile* projectile
@@ -475,9 +476,9 @@ namespace MWWorld
         state.mOrigin = origin;
         state.mDestination = destination;
         state.mElapsedTime = 0.f;
-        // Keep an authored hitscan round visible for several frames without
-        // changing its instantaneous gameplay hit resolution.
-        state.mLifetime = std::clamp(distance / 30000.f, 0.055f, 0.12f);
+        // Hitscan gameplay still resolves immediately. Keep its presentation alive long enough to read as a
+        // shot at ordinary frame rates, with longer outdoor traces receiving a few additional frames.
+        state.mLifetime = std::clamp(distance / 24000.f, 0.11f, 0.18f);
         state.mToDelete = false;
 
         osg::Quat orientation;
@@ -494,28 +495,72 @@ namespace MWWorld
         state.mEffectAnimationTime = std::make_shared<MWRender::EffectAnimationTime>();
 
         osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
-        vertices->push_back(osg::Vec3f(0.f, -42.f, 0.f));
-        vertices->push_back(osg::Vec3f(0.f, 8.f, 0.f));
-        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
-        colors->push_back(osg::Vec4f(2.4f, 1.05f, 0.25f, 0.95f));
-        osg::ref_ptr<osg::Geometry> streak = new osg::Geometry;
-        streak->setVertexArray(vertices);
-        streak->setColorArray(colors, osg::Array::BIND_OVERALL);
-        streak->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, 2));
-        osg::StateSet* stateSet = streak->getOrCreateStateSet();
-        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
-        stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
-        stateSet->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE), osg::StateAttribute::ON);
-        stateSet->setAttributeAndModes(new osg::LineWidth(3.f), osg::StateAttribute::ON);
-        stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+        const float visibleLength = std::min(distance, 120.f);
+        // The line begins at ProjectileNode and extends only forward. The prior negative tail visibly crossed back
+        // through the center of the screen before the tracer moved away from the camera.
+        vertices->push_back(osg::Vec3f(0.f, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, visibleLength, 0.f));
+        const auto createAdditiveLine = [](osg::Vec3Array* lineVertices,
+                                            const osg::Vec4f& color, float width) {
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->push_back(color);
+            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+            geometry->setVertexArray(lineVertices);
+            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
+            geometry->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, lineVertices->size()));
+            osg::StateSet* stateSet = geometry->getOrCreateStateSet();
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+            stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+            stateSet->setAttributeAndModes(
+                new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE), osg::StateAttribute::ON);
+            stateSet->setAttributeAndModes(new osg::LineWidth(width), osg::StateAttribute::ON);
+            stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+            return geometry;
+        };
         osg::ref_ptr<osg::Geode> geode = new osg::Geode;
-        geode->addDrawable(streak);
+        geode->addDrawable(createAdditiveLine(vertices, osg::Vec4f(1.6f, 0.55f, 0.08f, 0.55f), 7.f));
+        geode->addDrawable(createAdditiveLine(vertices, osg::Vec4f(3.4f, 1.85f, 0.55f, 1.f), 2.5f));
         state.mNode->addChild(geode);
+
+        osg::Vec3f normalizedImpact = impactNormal;
+        const bool impactBurstSpawned = normalizedImpact.normalize() != 0.f;
+        if (impactBurstSpawned)
+        {
+            osg::Vec3f tangent = std::abs(normalizedImpact.z()) < 0.9f
+                ? normalizedImpact ^ osg::Vec3f(0.f, 0.f, 1.f)
+                : normalizedImpact ^ osg::Vec3f(0.f, 1.f, 0.f);
+            tangent.normalize();
+            osg::Vec3f bitangent = normalizedImpact ^ tangent;
+            bitangent.normalize();
+            constexpr float impactRadius = 8.f;
+            osg::ref_ptr<osg::Vec3Array> impactVertices = new osg::Vec3Array;
+            impactVertices->push_back(-tangent * impactRadius);
+            impactVertices->push_back(tangent * impactRadius);
+            impactVertices->push_back(-bitangent * impactRadius);
+            impactVertices->push_back(bitangent * impactRadius);
+            impactVertices->push_back(-normalizedImpact * 2.f);
+            impactVertices->push_back(normalizedImpact * 10.f);
+
+            osg::ref_ptr<osg::Geode> impactGeode = new osg::Geode;
+            impactGeode->addDrawable(
+                createAdditiveLine(impactVertices, osg::Vec4f(1.7f, 0.48f, 0.05f, 0.65f), 8.f));
+            impactGeode->addDrawable(
+                createAdditiveLine(impactVertices, osg::Vec4f(3.6f, 2.1f, 0.75f, 1.f), 3.f));
+            state.mImpactNode = new osg::PositionAttitudeTransform;
+            state.mImpactNode->setNodeMask(MWRender::Mask_Effect);
+            state.mImpactNode->setPosition(destination + normalizedImpact * 1.5f);
+            state.mImpactNode->addCullCallback(new SceneUtil::LightListCallback);
+            state.mImpactNode->addChild(impactGeode);
+            mParent->addChild(state.mImpactNode);
+        }
 
         mFalloutHitscanTracers.push_back(std::move(state));
         Log(Debug::Info) << "FNV hitscan tracer launched: projectile="
                          << ESM::RefId::formIdRefId(projectileId) << " origin=" << origin
                          << " destination=" << destination << " distance=" << distance
+                         << " visibleLength=" << visibleLength
+                         << " lifetime=" << mFalloutHitscanTracers.back().mLifetime
+                         << " impactNormal=" << impactNormal << " impactBurst=" << impactBurstSpawned
                          << " authoredModel=" << projectile->mModel;
         return true;
     }
@@ -621,7 +666,15 @@ namespace MWWorld
                 continue;
             }
             const float progress = std::clamp(state.mElapsedTime / state.mLifetime, 0.f, 1.f);
-            state.mNode->setPosition(state.mOrigin + (state.mDestination - state.mOrigin) * progress);
+            osg::Vec3f direction = state.mDestination - state.mOrigin;
+            const float distance = direction.length();
+            if (direction.normalize() == 0.f)
+            {
+                state.mToDelete = true;
+                continue;
+            }
+            const float travelDistance = std::max(distance - std::min(distance, 120.f), 0.f);
+            state.mNode->setPosition(state.mOrigin + direction * travelDistance * progress);
             update(state, duration);
         }
     }
@@ -1312,6 +1365,8 @@ namespace MWWorld
     void ProjectileManager::cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state)
     {
         mParent->removeChild(state.mNode);
+        if (state.mImpactNode)
+            mParent->removeChild(state.mImpactNode);
         state.mToDelete = true;
     }
 

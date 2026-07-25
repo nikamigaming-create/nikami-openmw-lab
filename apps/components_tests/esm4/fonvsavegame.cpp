@@ -1498,6 +1498,38 @@ namespace
         EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 17u);
     }
 
+    TEST(FONVSaveGame, KeepsConstructedMovedReferencePayloadOpaque)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        std::vector<std::uint8_t> payload = { 0x40, 0x04, 0x56 };
+        for (const float value : { 10.f, 20.f, 30.f, 0.1f, 0.2f, 0.3f })
+            appendF32(payload, value);
+        payload.push_back(3);
+        appendDelimitedReferenceId(payload, 0x400123);
+        payload.push_back(0);
+        appendDelimiter(payload);
+        appendU32(payload, ESM4::Rec_Disabled);
+        appendDelimiter(payload);
+
+        std::vector<std::uint8_t> envelope;
+        appendChangedForm(envelope, { 0x80, 0x01, 0x23 }, 0x00000003u, 1, 27, 2, payload);
+        source.mBytes.insert(source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mGlobalData2Begin),
+            envelope.begin(), envelope.end());
+        overwriteU32(source.mBytes, source.mGlobalData2OffsetField,
+            static_cast<std::uint32_t>(source.mGlobalData2Begin + envelope.size()));
+        overwriteU32(source.mBytes, source.mRefIdArrayOffsetField,
+            static_cast<std::uint32_t>(source.mRefIdArrayBegin + envelope.size()));
+        overwriteU32(source.mBytes, source.mUnknownTableOffsetField,
+            static_cast<std::uint32_t>(source.mUnknownTableBegin + envelope.size()));
+        overwriteU32(source.mBytes, source.mChangedFormsCountField, 4);
+
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        EXPECT_TRUE(save.mWorldReferenceMovements.empty());
+        EXPECT_TRUE(save.mWorldReferenceFlags.empty());
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u + payload.size());
+    }
+
     TEST(FONVSaveGame, ParsesOrdinaryObjectReferenceFormFlagsWithoutInventingActorProcessState)
     {
         constexpr std::array masters = { std::string_view("FalloutNV.esm") };

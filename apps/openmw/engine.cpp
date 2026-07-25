@@ -152,6 +152,7 @@
 #include "mwworld/class.hpp"
 #include "mwworld/action.hpp"
 #include "mwworld/actionequip.hpp"
+#include "mwworld/actorfacing.hpp"
 #include "mwworld/cellstore.hpp"
 #include "mwworld/containerstore.hpp"
 #include "mwworld/datetimemanager.hpp"
@@ -4525,6 +4526,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofFNVCameraResetApplied = false;
     static bool proofRetailProjectionApplied = false;
     static bool proofRetailProjectionAudited = false;
+    static bool proofFNVJamRouteHeadingApplied = false;
     static bool worldViewerNonStaticStartCameraSettled = false;
     static bool fnvFlatStartupCameraSettled = false;
     static bool proofScreenshotWaitLogged = false;
@@ -6026,6 +6028,41 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             Log(Debug::Error) << "FNV/ESM4 proof: level-1 Courier bootstrap failed: " << e.what();
         }
         proofFNVBootstrapApplied = true;
+    }
+
+    if (!proofFNVJamRouteHeadingApplied && proofWorldReady && proofWorldReadyFrames >= 2
+        && nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && std::getenv("OPENMW_FNV_JAM_PROOF_YAW_DEGREES") != nullptr)
+    {
+        MWWorld::Ptr player = mWorld->getPlayerPtr();
+        MWRender::Camera* camera = mWorld->getCamera();
+        if (!player.isEmpty() && camera != nullptr)
+        {
+            const ESM::Position savedPosition = player.getRefData().getPosition();
+            const float deltaDegrees = readProofFloat("OPENMW_FNV_JAM_PROOF_YAW_DEGREES", 0.f);
+            const float deltaRadians = osg::DegreesToRadians(deltaDegrees);
+            const float targetYaw = savedPosition.rot[2] + deltaRadians;
+
+            mWorld->rotateObject(
+                player, osg::Vec3f(savedPosition.rot[0], savedPosition.rot[1], targetYaw));
+            const ESM::Position appliedPosition = player.getRefData().getPosition();
+            camera->attachTo(player);
+            camera->setYaw(-appliedPosition.rot[2], true);
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+
+            const float appliedDelta
+                = std::remainder(appliedPosition.rot[2] - savedPosition.rot[2], 2.f * static_cast<float>(osg::PI));
+            const bool headingPass = std::abs(appliedDelta - deltaRadians) <= 0.0005f;
+            Log(Debug::Info) << "FNV/ESM4 proof: JAM route heading source=save-relative savedYawRadians="
+                             << savedPosition.rot[2] << " deltaDegrees=" << deltaDegrees
+                             << " targetYawRadians=" << targetYaw << " appliedYawRadians="
+                             << appliedPosition.rot[2] << " appliedDeltaDegrees="
+                             << osg::RadiansToDegrees(appliedDelta) << " status="
+                             << (headingPass ? "pass" : "fail");
+            proofFNVJamRouteHeadingApplied = true;
+        }
     }
 
     const char* worldViewerStartCameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
@@ -9859,13 +9896,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             float mMaximumStep = 0.f;
             float mMinimumZ = std::numeric_limits<float>::infinity();
             float mMaximumZ = -std::numeric_limits<float>::infinity();
-            float mMinimumMovingFacingDot = 1.f;
+            float mMinimumFacingDot = 1.f;
             float mAnchorDistance = std::numeric_limits<float>::infinity();
             float mAuthoredYawError = std::numeric_limits<float>::infinity();
             float mRenderedForwardDot = -1.f;
             unsigned int mSamples = 0;
             unsigned int mGroundedSamples = 0;
             unsigned int mMovingSamples = 0;
+            unsigned int mFacingReferenceSamples = 0;
             unsigned int mFacingSamples = 0;
             unsigned int mAnimationSamples = 0;
             unsigned int mAnimationAdvanceSamples = 0;
@@ -9882,7 +9920,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         // These are real authored references from the canonical Goodsprings census. The audit moves only the
         // player between their authored cells; it never stages, enables, repositions, or drives an actor.
-        static const std::array<GoodspringsActorAuditTarget, 11> targets = { {
+        static const std::array<GoodspringsActorAuditTarget, 14> targets = { {
             { "victor", 0x11073e8, osg::Vec3f(-72314.5f, -5998.995f, 8312.f), 0.0000006258f,
                 ESM::RefId(), -1, 300, false, false, true },
             { "bighorner-south", 0x110769d, osg::Vec3f(-71884.938f, -4167.562f, 8239.664f), 5.410522f,
@@ -9903,6 +9941,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 ESM::RefId(), 0, 600, true, false, false },
             { "gecko", 0x1157b3d, osg::Vec3f(-69248.f, -17219.f, 8818.688f), 2.216570f,
                 ESM::RefId(), 5, 600, true, true, false },
+            { "fiend-melee-vault3", 0x10f2dfe, osg::Vec3f(3117.7844f, 6401.6606f, 6656.f), 0.f,
+                ESM::RefId(ESM::FormId::fromUint32(0x10ec3a2)), 5, 600, true, true, false },
+            { "fiend-bat-vault3", 0x10f2dfc, osg::Vec3f(3132.4290f, 6835.7295f, 6656.f), 0.f,
+                ESM::RefId(ESM::FormId::fromUint32(0x10ec3a2)), 5, 600, true, true, false },
+            { "fiend-gun-mojave", 0x1178904, osg::Vec3f(-25004.6758f, 64453.75f, 4320.f), 1.0764047f,
+                ESM::RefId(), 5, 600, false, true, false },
             { "ambient-raven", 0x114c44a, osg::Vec3f(-69456.f, -3284.f, 8520.f), 0.f,
                 ESM::RefId(), -1, 240, false, false, false },
         } };
@@ -9913,6 +9957,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         static MWWorld::Ptr targetPtr;
         static bool auditFinished = false;
         static bool victorCaptureQueued = false;
+        const std::string_view targetFilter = [] {
+            const char* value = std::getenv("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT_TARGET");
+            return value != nullptr ? std::string_view(value) : std::string_view();
+        }();
+
+        const auto findNextActorAuditTarget = [&](int previous) {
+            for (int index = previous + 1; index < static_cast<int>(targets.size()); ++index)
+            {
+                if (targetFilter.empty()
+                    || Misc::StringUtils::ciEqual(targets[static_cast<std::size_t>(index)].mLabel, targetFilter))
+                    return index;
+            }
+            return -1;
+        };
 
         const auto findActiveActorAuditRef = [&](std::uint32_t rawFormId) {
             const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
@@ -9951,12 +10009,44 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     return "Other";
             }
         };
+        const auto actorAuditRenderedForward = [](const MWWorld::Ptr& ptr) {
+            const float gameplayYaw = ptr.getRefData().getPosition().rot[2];
+            osg::Vec3f renderedForward(std::sin(gameplayYaw), std::cos(gameplayYaw), 0.f);
+            if (ptr.getRefData().getBaseNode() == nullptr)
+                return renderedForward;
+
+            bool tes4Npc = false;
+            bool falloutNpc = false;
+            bool falloutCreature = false;
+            if (ptr.getType() == ESM::REC_NPC_4)
+            {
+                const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
+                tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
+                falloutNpc = npc != nullptr && npc->mBase != nullptr
+                    && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
+            }
+            else if (ptr.getType() == ESM::REC_CREA4)
+            {
+                const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
+                falloutCreature
+                    = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
+            }
+
+            renderedForward = ptr.getRefData().getBaseNode()->getAttitude()
+                * MWWorld::getActorModelLocalForward(tes4Npc, falloutNpc, falloutCreature);
+            renderedForward.z() = 0.f;
+            if (renderedForward.length2() > 0.f)
+                renderedForward.normalize();
+            return renderedForward;
+        };
         const auto visitActorAuditTarget = [&](int index) {
             const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(index)];
             const osg::Vec3f authoredForward(std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
+            const float playerDistance = std::clamp(
+                readProofFloat("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT_DISTANCE", 384.f), 64.f, 4096.f);
             ESM::Position playerPosition;
-            playerPosition.pos[0] = target.mAuthoredPosition.x() + authoredForward.x() * 384.f;
-            playerPosition.pos[1] = target.mAuthoredPosition.y() + authoredForward.y() * 384.f;
+            playerPosition.pos[0] = target.mAuthoredPosition.x() + authoredForward.x() * playerDistance;
+            playerPosition.pos[1] = target.mAuthoredPosition.y() + authoredForward.y() * playerDistance;
             playerPosition.pos[2] = target.mAuthoredPosition.z() + 48.f;
             playerPosition.rot[0] = 0.f;
             playerPosition.rot[1] = 0.f;
@@ -9992,7 +10082,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                              << " target=" << target.mLabel << " ref=FormId:0x" << std::hex
                              << target.mReference << std::dec << " cell=" << cellId.toDebugString()
                              << " playerPos=(" << playerPosition.pos[0] << "," << playerPosition.pos[1]
-                             << "," << playerPosition.pos[2] << ")";
+                             << "," << playerPosition.pos[2] << ") playerDistance=" << playerDistance;
             return true;
         };
         const auto finishActorAuditTarget = [&]() {
@@ -10001,8 +10091,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const float groundedFraction = state.mSamples != 0
                 ? static_cast<float>(state.mGroundedSamples) / static_cast<float>(state.mSamples)
                 : 0.f;
-            const float facingFraction = state.mMovingSamples != 0
-                ? static_cast<float>(state.mFacingSamples) / static_cast<float>(state.mMovingSamples)
+            const float facingFraction = state.mFacingReferenceSamples != 0
+                ? static_cast<float>(state.mFacingSamples) / static_cast<float>(state.mFacingReferenceSamples)
                 : 1.f;
             const bool grounded = groundedFraction >= 0.5f;
             const bool animation = state.mSamples != 0
@@ -10011,9 +10101,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const bool package = target.mExpectedPackage < 0
                 || state.mExpectedPackageSamples != 0
                 || (target.mRequireCombat && state.mCombatSamples != 0);
-            const bool travelled = !target.mRequireTravel || state.mTotalTravel >= 8.f;
+            // An actor can complete its approach during the cell-settling window before sampling starts.
+            // Preserve that real authored movement through its displacement from the census anchor instead of
+            // demanding that an actor already in contact pace around after combat begins.
+            const float observedTravel = std::max(state.mTotalTravel, state.mAnchorDistance);
+            const bool travelled = !target.mRequireTravel || observedTravel >= 8.f;
             const bool combat = !target.mRequireCombat || state.mCombatSamples != 0;
-            const bool facing = state.mMovingSamples == 0 || facingFraction >= 0.6f;
+            const bool facing = state.mFacingReferenceSamples == 0 || facingFraction >= 0.6f;
             const bool noWarp = state.mMaximumStep <= 96.f;
             const bool noVerticalWarp = state.mMaximumZ - state.mMinimumZ <= 192.f;
             const bool authoredAnchor = !target.mRequireAuthoredAnchor
@@ -10055,10 +10149,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << " animationLoopWraps=" << state.mAnimationLoopWraps
                 << " dogAnimationSourceSamples=" << state.mDogAnimationSourceSamples
                 << " dogAnimationSourceMismatchSamples=" << state.mDogAnimationSourceMismatchSamples
-                << " travel=" << state.mTotalTravel << " maxStep=" << state.mMaximumStep
+                << " travel=" << state.mTotalTravel << " observedTravel=" << observedTravel
+                << " maxStep=" << state.mMaximumStep
                 << " zRange=" << (state.mMaximumZ - state.mMinimumZ)
-                << " movingSamples=" << state.mMovingSamples << " facingFraction=" << facingFraction
-                << " minimumMovingFacingDot=" << state.mMinimumMovingFacingDot
+                << " movingSamples=" << state.mMovingSamples
+                << " facingReferenceSamples=" << state.mFacingReferenceSamples
+                << " facingFraction=" << facingFraction
+                << " minimumFacingDot=" << state.mMinimumFacingDot
                 << " anchorDistance=" << state.mAnchorDistance
                 << " authoredYawError=" << state.mAuthoredYawError
                 << " renderedForwardDot=" << state.mRenderedForwardDot;
@@ -10068,8 +10165,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             if (!mWorld->getGodModeState())
                 mWorld->toggleGodMode();
-            targetIndex = 0;
-            if (!visitActorAuditTarget(targetIndex))
+            targetIndex = findNextActorAuditTarget(-1);
+            if (targetIndex < 0)
+            {
+                Log(Debug::Error) << "FNV Goodsprings actor audit: result=fail passed=0 total=0"
+                                  << " failures=\"unknown target filter:" << targetFilter << "\"";
+                auditFinished = true;
+                mStateManager->requestQuit();
+            }
+            else if (!visitActorAuditTarget(targetIndex))
                 targetPhase = 3;
         }
         else if (!auditFinished && targetIndex >= 0 && targetPhase == 1
@@ -10099,11 +10203,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     targetPtr.getRefData().getPosition().rot[2] - target.mAuthoredYaw));
                 if (targetPtr.getRefData().getBaseNode() != nullptr)
                 {
-                    osg::Vec3f renderedForward
-                        = targetPtr.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
-                    renderedForward.z() = 0.f;
-                    if (renderedForward.length2() > 0.f)
-                        renderedForward.normalize();
+                    const osg::Vec3f renderedForward = actorAuditRenderedForward(targetPtr);
                     const osg::Vec3f authoredForward(
                         std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
                     state.mRenderedForwardDot = renderedForward * authoredForward;
@@ -10131,25 +10231,39 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (mWorld->isOnGround(targetPtr))
                 ++state.mGroundedSamples;
 
-            // Ignore sub-pixel physics settling/jitter; it is not locomotion and cannot establish facing.
+            // Ignore sub-pixel physics settling/jitter when measuring locomotion. Combatants are measured
+            // against their target every frame because authored combat can strafe or backpedal while facing it.
+            osg::Vec3f facingReference;
+            bool hasFacingReference = false;
             if (horizontalStep > 0.25f)
             {
                 ++state.mMovingSamples;
-                osg::Vec3f direction(step.x(), step.y(), 0.f);
-                direction.normalize();
-                osg::Vec3f renderedForward(
-                    std::sin(targetPtr.getRefData().getPosition().rot[2]),
-                    std::cos(targetPtr.getRefData().getPosition().rot[2]), 0.f);
-                if (targetPtr.getRefData().getBaseNode() != nullptr)
+                if (!target.mRequireCombat)
                 {
-                    renderedForward
-                        = targetPtr.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0.f, 1.f, 0.f);
-                    renderedForward.z() = 0.f;
-                    if (renderedForward.length2() > 0.f)
-                        renderedForward.normalize();
+                    facingReference.set(step.x(), step.y(), 0.f);
+                    facingReference.normalize();
+                    hasFacingReference = true;
                 }
-                const float facingDot = direction * renderedForward;
-                state.mMinimumMovingFacingDot = std::min(state.mMinimumMovingFacingDot, facingDot);
+            }
+            if (target.mRequireCombat)
+            {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (!player.isEmpty())
+                {
+                    const osg::Vec3f toPlayer = player.getRefData().getPosition().asVec3() - position;
+                    facingReference.set(toPlayer.x(), toPlayer.y(), 0.f);
+                    if (facingReference.length2() > 0.f)
+                    {
+                        facingReference.normalize();
+                        hasFacingReference = true;
+                    }
+                }
+            }
+            if (hasFacingReference)
+            {
+                ++state.mFacingReferenceSamples;
+                const float facingDot = facingReference * actorAuditRenderedForward(targetPtr);
+                state.mMinimumFacingDot = std::min(state.mMinimumFacingDot, facingDot);
                 if (facingDot >= 0.25f)
                     ++state.mFacingSamples;
             }
@@ -10161,6 +10275,24 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 ++state.mExpectedPackageSamples;
             if (sequence.isInCombat())
                 ++state.mCombatSamples;
+
+            // Keep the selected authored actor visible throughout the proof. This changes only the unattended
+            // audit camera; actor positions, packages, controls, and combat decisions remain entirely native.
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                const osg::Vec3d cameraPosition = camera->getPosition();
+                osg::Vec3d aimPosition = mWorld->getActorHeadTransform(targetPtr).getTrans();
+                const osg::Vec3d delta = aimPosition - cameraPosition;
+                const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                if (horizontal > 1.0)
+                {
+                    camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                    camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                    camera->setRoll(0.f);
+                    camera->instantTransition();
+                    camera->updateCamera();
+                }
+            }
 
             if (MWRender::Animation* animation = mWorld->getAnimation(targetPtr))
             {
@@ -10238,13 +10370,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         else if (!auditFinished && targetIndex >= 0 && targetPhase == 3
             && frameNumber - phaseFrame >= 8)
         {
-            ++targetIndex;
-            if (targetIndex >= static_cast<int>(targets.size()))
+            targetIndex = findNextActorAuditTarget(targetIndex);
+            if (targetIndex < 0)
             {
                 unsigned int passCount = 0;
+                unsigned int targetCount = 0;
                 std::ostringstream failures;
                 for (std::size_t index = 0; index < targetStates.size(); ++index)
                 {
+                    if (!targetFilter.empty()
+                        && !Misc::StringUtils::ciEqual(targets[index].mLabel, targetFilter))
+                        continue;
+                    ++targetCount;
                     if (targetStates[index].mPass)
                         ++passCount;
                     else
@@ -10254,10 +10391,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         failures << targets[index].mLabel << ':' << targetStates[index].mFailure;
                     }
                 }
-                const bool pass = passCount == targets.size();
+                const bool pass = targetCount != 0 && passCount == targetCount;
                 Log(pass ? Debug::Info : Debug::Error)
                     << "FNV Goodsprings actor audit: result=" << (pass ? "pass" : "fail")
-                    << " passed=" << passCount << " total=" << targets.size()
+                    << " passed=" << passCount << " total=" << targetCount
                     << " failures=\"" << failures.str() << "\"";
                 auditFinished = true;
                 mStateManager->requestQuit();

@@ -10,6 +10,20 @@ local Player = require('openmw.types').Player
 local I = require('openmw.interfaces')
 
 local settings = storage.playerSection('SettingsOMWControls')
+local falloutInputState = storage.playerSection('FNVInputState')
+local falloutNewVegas = core.contentFiles and core.contentFiles.has
+    and core.contentFiles.has('FalloutNV.esm') or false
+
+-- Existing OpenMW profiles predate FNV support and therefore persist the
+-- Morrowind walk-first default. Migrate each FNV player profile once so its
+-- normal W input matches retail Fallout's run-first control semantics; the
+-- Always Run trigger remains user-toggleable afterward.
+-- This must happen from onFrame, after the menu-context settings registry has
+-- installed defaults. Doing it while the player script loads can be overwritten
+-- later by that registry and silently leaves Fallout in the walk stance.
+local falloutRunDefaultPending = falloutNewVegas
+    and falloutInputState:get('runDefaultInitializedV2') ~= true
+local falloutRunStateAnnounced = false
 
 do
     local rangeActions = {
@@ -87,7 +101,24 @@ local attemptToJump = false
 local function processMovement()
     local movement = input.getRangeActionValue('MoveForward') - input.getRangeActionValue('MoveBackward')
     local sideMovement = input.getRangeActionValue('MoveRight') - input.getRangeActionValue('MoveLeft')
-    local run = input.getBooleanActionValue('Run') ~= settings:get('alwaysRun')
+    local alwaysRun = settings:get('alwaysRun')
+    if falloutRunDefaultPending then
+        settings:set('alwaysRun', true)
+        alwaysRun = true
+        if settings:get('alwaysRun') == true then
+            falloutInputState:set('runDefaultInitializedV2', true)
+            falloutRunDefaultPending = false
+            print('FNV input: run-first profile migration applied alwaysRun=1 phase=frame')
+        end
+    end
+    local runAction = input.getBooleanActionValue('Run')
+    local run = runAction ~= alwaysRun
+    if falloutNewVegas and movement ~= 0 and not falloutRunStateAnnounced then
+        falloutRunStateAnnounced = true
+        print(string.format(
+            'FNV input: locomotion state movement=%.3f runAction=%d alwaysRun=%d run=%d',
+            movement, runAction and 1 or 0, alwaysRun and 1 or 0, run and 1 or 0))
+    end
 
     if movement ~= 0 then
         autoMove = false

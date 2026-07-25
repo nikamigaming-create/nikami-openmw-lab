@@ -40,6 +40,23 @@ namespace MWLua
             return anim;
         }
 
+        MWRender::Animation* getSourceOverrideAnimationOrThrow(const Object& object, bool firstPerson)
+        {
+            const MWWorld::Ptr& ptr = getMutablePtrOrThrow(object);
+            auto world = MWBase::Environment::get().getWorld();
+            // Fallout's flat player has a hidden legacy tracking rig plus separate
+            // visible third- and first-person animation objects. Path-based kNVSE
+            // commands must target the latter, just like native weapon/action code.
+            MWRender::Animation* anim = world->getFalloutWeaponAnimation(ptr, firstPerson);
+            if (!anim && !firstPerson)
+                anim = world->getAnimation(ptr);
+            if (!anim)
+                throw std::runtime_error(firstPerson
+                        ? "Object has no first-person Fallout animation"
+                        : "Object has no Fallout animation");
+            return anim;
+        }
+
         const MWRender::Animation* getConstAnimationOrThrow(const Object& object)
         {
             auto world = MWBase::Environment::get().getWorld();
@@ -234,6 +251,81 @@ namespace MWLua
         api["hasGroup"] = [](const LObject& object, std::string_view groupname) -> bool {
             const MWRender::Animation* anim = getConstAnimationOrThrow(object);
             return anim->hasAnimation(groupname);
+        };
+
+        // kNVSE's path-based commands add a KF as the highest-priority source
+        // for an animation group.  Keep the mutation inside OpenMW's normal
+        // animation-source/controller machinery so compatibility bindings can
+        // install an override and later restore the exact previous source.
+        api["bindSourceOverride"]
+            = [view](const LObject& object, const std::string& path,
+                  sol::optional<std::string> requestedGroup, sol::optional<bool> firstPerson) -> sol::table {
+            if (path.empty())
+                throw std::runtime_error("Animation source path must not be empty");
+
+            MWRender::Animation* anim = getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false));
+            const MWRender::Animation::SourceOverrideBinding binding
+                = anim->bindSourceOverride(path, requestedGroup.value_or(""));
+
+            sol::table result(view, sol::create);
+            result["loaded"] = binding.mLoaded;
+            result["group"] = binding.mGroup;
+            result["previousGroup"] = binding.mPreviousGroup;
+            result["previousSource"] = binding.mPreviousSource;
+            result["selectedSource"] = binding.mSelectedSource;
+            result["controllerMask"] = binding.mControllerMask;
+            return result;
+        };
+        api["restoreSourceOverride"]
+            = [view](const LObject& object, const std::string& path, const std::string& installedGroup,
+                  const std::string& expectedPreviousSource, sol::optional<std::string> previousGroup,
+                  sol::optional<bool> firstPerson) -> sol::table {
+            MWRender::Animation* anim = getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false));
+            const MWRender::Animation::SourceOverrideBinding binding = anim->restoreSourceOverride(
+                path, installedGroup, expectedPreviousSource, previousGroup.value_or(""));
+
+            sol::table result(view, sol::create);
+            result["loaded"] = binding.mLoaded;
+            result["group"] = binding.mGroup;
+            result["previousGroup"] = binding.mPreviousGroup;
+            result["previousSource"] = binding.mPreviousSource;
+            result["selectedSource"] = binding.mSelectedSource;
+            result["controllerMask"] = binding.mControllerMask;
+            return result;
+        };
+        api["playSourceOverride"] = [](const LObject& object, std::string_view groupName, const sol::table& options,
+                                         sol::optional<bool> firstPerson) {
+            uint32_t loops = options.get_or("loops", 0u);
+            MWRender::Animation::AnimPriority priority = getPriorityArgument(options);
+            BlendMask blendMask = options.get_or("blendMask", BlendMask::BlendMask_All);
+            bool autoDisable = options.get_or("autoDisable", true);
+            float speed = options.get_or("speed", 1.0f);
+            std::string start = options.get_or<std::string>("startKey", "start");
+            std::string stop = options.get_or<std::string>("stopKey", "stop");
+            float startPoint = options.get_or("startPoint", 0.0f);
+            bool forceLoop = options.get_or("forceLoop", false);
+
+            const std::string lowerGroup = Misc::StringUtils::lowerCase(groupName);
+            MWRender::Animation* animation
+                = getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false));
+            animation->disable(lowerGroup);
+            animation->play(lowerGroup, priority, blendMask, autoDisable, speed, start, stop, startPoint, loops,
+                forceLoop || animation->isLoopingAnimation(lowerGroup));
+            return animation->isPlaying(lowerGroup);
+        };
+        api["getSourceName"]
+            = [](const LObject& object, std::string_view groupname, sol::optional<bool> firstPerson) {
+            return getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false))
+                ->getAnimationSourceName(groupname);
+        };
+        api["getGroupControllerMask"]
+            = [](const LObject& object, std::string_view groupname, sol::optional<bool> firstPerson) {
+            return getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false))
+                ->getAnimationGroupControllerMask(groupname);
+        };
+        api["isSourceOverridePlaying"]
+            = [](const LObject& object, std::string_view groupname, sol::optional<bool> firstPerson) {
+            return getSourceOverrideAnimationOrThrow(object, firstPerson.value_or(false))->isPlaying(groupname);
         };
 
         // Note: This checks the nodemap, and does not read the scene graph itself, and so should be thread safe.

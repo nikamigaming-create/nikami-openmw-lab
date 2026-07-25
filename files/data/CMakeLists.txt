@@ -129,6 +129,7 @@ set(BUILTIN_DATA_FILES
     openmw_aux/obscript/parser.lua
     openmw_aux/obscript/runtime.lua
     openmw_aux/obscript/transpiler.lua
+    openmw_aux/obscript/ui_bridge.lua
 
     builtin.omwscripts
 
@@ -179,6 +180,8 @@ set(BUILTIN_DATA_FILES
     scripts/omw/input/actionbindings.lua
     scripts/omw/input/smoothmovement.lua
     scripts/omw/input/gamepadcontrols.lua
+    scripts/omw/fnv/compat/directinput.lua
+    scripts/omw/fnv/compat/jam_sprint.lua
     scripts/omw/obscript.lua
     scripts/omw/vr/spaces.lua
     scripts/omw/vr/ui/common.lua

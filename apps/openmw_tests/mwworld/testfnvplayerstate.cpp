@@ -524,7 +524,7 @@ namespace
         EXPECT_THAT(resolution.mError, HasSubstr("lacks exact 20-byte AIDT"));
     }
 
-    TEST(FalloutPlayerStateTest, compatibilityProxyUsesExactSharedFieldsWithoutProjectingSpecialOrSkills)
+    TEST(FalloutPlayerStateTest, compatibilityProxyProjectsSpeedButNotSpecialOrSkills)
     {
         MWWorld::Store<ESM4::Npc> npcs;
         npcs.insertStatic(makeCompletePlayer());
@@ -550,8 +550,12 @@ namespace
         EXPECT_EQ(proxy.mNpdt.mFatigue, 200);
         EXPECT_EQ(proxy.mNpdt.mMana, 60);
         EXPECT_EQ(proxy.mNpdt.mDisposition, 50);
-        EXPECT_TRUE(std::all_of(proxy.mNpdt.mAttributes.begin(), proxy.mNpdt.mAttributes.end(),
-            [](std::uint8_t value) { return value == 50; }));
+        const int speedIndex = ESM::Attribute::refIdToIndex(ESM::Attribute::Speed);
+        for (std::size_t index = 0; index < proxy.mNpdt.mAttributes.size(); ++index)
+        {
+            EXPECT_EQ(proxy.mNpdt.mAttributes[index],
+                index == static_cast<std::size_t>(speedIndex) ? 100 : 50);
+        }
         EXPECT_TRUE(std::all_of(
             proxy.mNpdt.mSkills.begin(), proxy.mNpdt.mSkills.end(), [](std::uint8_t value) { return value == 35; }));
         ASSERT_EQ(proxy.mInventory.mList.size(), 2u);
@@ -969,6 +973,34 @@ namespace
         EXPECT_EQ(findProxyCount(form(0x0000431e, 1)), 14);
         EXPECT_EQ(findProxyCount(form(0x00015038, 1)), 1);
         EXPECT_EQ(findProxyCount(form(0x00025b83, 1)), 1);
+    }
+
+    TEST(FalloutPlayerStateTest, savePlanAcceptsOnlyAppendedPluginsAfterExactSavedMasterPrefix)
+    {
+        MWWorld::FalloutPlayerState player;
+        player.mBaseRecord = form(7, 1);
+        player.mReferenceRecord = form(0x14, 1);
+        player.mReferenceBaseRecord = player.mBaseRecord;
+        player.mEditorId = "Player";
+        const ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+
+        const std::vector<std::string> appended{
+            "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm", "JustAssortedMods.esp"
+        };
+        MWWorld::FalloutSaveLoadPlanResolution resolution = resolveSavePlan(save, &player, appended);
+        ASSERT_TRUE(resolution) << resolution.mError;
+
+        const std::vector<std::string> inserted{
+            "builtin.omwscripts", "FalloutNV.esm", "JustAssortedMods.esp", "DeadMoney.esm"
+        };
+        resolution = resolveSavePlan(save, &player, inserted);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("content order does not exactly match"));
+
+        const std::vector<std::string> missing{ "builtin.omwscripts", "FalloutNV.esm" };
+        resolution = resolveSavePlan(save, &player, missing);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("complete FNV save master prefix"));
     }
 
     TEST(FalloutPlayerStateTest, importsDecodedQuestRuntimeFlagsAndNumericVariables)

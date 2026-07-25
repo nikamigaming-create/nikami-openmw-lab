@@ -56,6 +56,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/fnvmovement.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "esm4base.hpp"
@@ -136,7 +137,7 @@ namespace MWClass
     {
     public:
         template <class Record>
-        bool addInitialRecord(const Record& record, int count)
+        bool addInitialRecord(const Record& record, int count, std::optional<float> condition = {})
         {
             if (count <= 0)
                 return false;
@@ -144,11 +145,22 @@ namespace MWClass
             ESM::CellRef cellRef = ESM::makeBlankCellRef();
             cellRef.mRefID = ESM::RefId::formIdRefId(record.mId);
             MWWorld::LiveCellRef<Record> liveRef(cellRef, &record);
-            const MWWorld::ConstPtr ptr(&liveRef);
+            const MWWorld::Ptr ptr(&liveRef);
+            if (condition)
+            {
+                const int maxHealth = ptr.getClass().getItemMaxHealth(ptr);
+                if (maxHealth > 0)
+                {
+                    const int health = std::clamp(
+                        static_cast<int>(std::lround(*condition * static_cast<float>(maxHealth))), 0, maxHealth);
+                    ptr.getCellRef().setCharge(health);
+                }
+            }
             const int type = getType(ptr);
             for (MWWorld::ContainerStoreIterator item = begin(type); item != end(); ++item)
             {
-                if (item->getCellRef().getRefId() != cellRef.mRefID)
+                if (item->getCellRef().getRefId() != ptr.getCellRef().getRefId()
+                    || item->getCellRef().getCharge() != ptr.getCellRef().getCharge())
                     continue;
                 item->getCellRef().setCount(addItems(item->getCellRef().getCount(false), count));
                 flagAsModified();
@@ -1235,7 +1247,7 @@ namespace MWClass
             data->mEquippedClothing.push_back(clothing);
             return true;
         };
-        const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, ESM::FormId itemId,
+        const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, const ESM::RefId& itemId,
                                       std::int64_t count, std::string_view result, std::string_view editor) {
             if (!worldViewerActorTelemetryEnabled())
                 return;
@@ -1245,22 +1257,25 @@ namespace MWClass
                              << " base=" << ptr.getCellRef().getRefId().toDebugString()
                              << " source=\"" << source << "\""
                              << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
-                             << " item=" << ESM::RefId(itemId)
+                             << " item=" << itemId
                              << " count=" << count
                              << " result=\"" << result << "\""
                              << " editor=\"" << editor << "\"";
         };
-        const auto storeInventoryRecord = [&](const auto* record, int count) {
+        const auto storeInventoryRecord
+            = [&](const auto* record, int count, std::optional<float> condition = std::nullopt) {
             if (record == nullptr || count <= 0)
                 return false;
 
-            return data->mContainerStore->addInitialRecord(*record, count);
+            return data->mContainerStore->addInitialRecord(*record, count, condition);
         };
         const ESM4::Npc* inventoryStats = chooseStatsRecord(*data);
         const int inventoryLevel = inventoryStats != nullptr ? getLevel(*inventoryStats) : ESM4Impl::sDefaultLevel;
-        std::function<bool(ESM::FormId, int, std::string_view, const ESM4::Npc*, int)> equipInventoryItem;
-        equipInventoryItem = [&](ESM::FormId itemId, int count, std::string_view source, const ESM4::Npc* owner,
-                                 int depth) {
+        std::function<bool(
+            ESM::RefId, int, std::string_view, const ESM4::Npc*, int, std::optional<float>)>
+            equipInventoryItem;
+        equipInventoryItem = [&](ESM::RefId itemId, int count, std::string_view source, const ESM4::Npc* owner,
+                                 int depth, std::optional<float> condition) {
             if (count <= 0)
             {
                 logInventoryItem(source, owner, itemId, count, "invalid-count", {});
@@ -1270,6 +1285,51 @@ namespace MWClass
             {
                 logInventoryItem(source, owner, itemId, count, "levelled-depth-limit", {});
                 return false;
+            }
+
+            // Fallout's NPC inventory commonly selects one ordinary LVLI branch whose result is a nested
+            // "WithAmmo..." Use All list. Resolving the outer list independently by terminal record type loses
+            // that selected branch: the weapon is retained while its authored ammunition siblings are discarded.
+            // Use the same recursive Fallout resolver as containers so the selected weapon, ammo, counts, and
+            // condition remain one atomic authored result.
+            if (const ESM4::LevelledItem* levelled = store->get<ESM4::LevelledItem>().search(itemId);
+                levelled != nullptr && owner != nullptr && owner->mIsFONV)
+            {
+                MWBase::World* world = MWBase::Environment::tryGetWorld();
+                Misc::Rng::Generator& prng = world != nullptr ? world->getPrng() : Misc::Rng::getGenerator();
+                std::vector<ResolvedFnvContainerItem> resolved;
+                std::string_view failure;
+                if (!resolveFnvLevelledItem(
+                        *store, itemId, inventoryLevel, count, prng, world, resolved, failure))
+                {
+                    Log(Debug::Warning) << "Ignoring unresolved FNV NPC inventory LVLI " << itemId << " in "
+                                        << (owner->mEditorId.empty() ? base->mEditorId : owner->mEditorId)
+                                        << " reason=" << failure;
+                    logInventoryItem(source, owner, itemId, count, failure, levelled->mEditorId);
+                    return false;
+                }
+
+                if (worldViewerActorTelemetryEnabled())
+                {
+                    Log(Debug::Info) << "World viewer actor ledger: phase=npc-inventory-levelled"
+                                     << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                     << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                     << " source=\"" << source << "\""
+                                     << " owner=\"" << owner->mEditorId << "\""
+                                     << " list=" << itemId
+                                     << " editor=\"" << levelled->mEditorId << "\""
+                                     << " resolved=" << resolved.size()
+                                     << " level=" << inventoryLevel;
+                }
+
+                bool usedAny = false;
+                for (const ResolvedFnvContainerItem& item : resolved)
+                {
+                    usedAny = equipInventoryItem(
+                                  item.mId, item.mCount, source, owner, depth + 1, item.mCondition)
+                        || usedAny;
+                }
+                return usedAny;
             }
 
             // Skyrim outfits commonly contain one LVLI whose Use All flag deliberately composes a complete outfit
@@ -1296,7 +1356,7 @@ namespace MWClass
                 {
                     if (entry.level > inventoryLevel)
                         continue;
-                    const ESM::FormId entryId = ESM::FormId::fromUint32(entry.item);
+                    const ESM::RefId entryId(ESM::FormId::fromUint32(entry.item));
                     if (entryId == itemId)
                         continue;
                     if (entry.count <= 0)
@@ -1310,7 +1370,8 @@ namespace MWClass
                         logInventoryItem(source, owner, entryId, nestedCount, "levelled-count-overflow", {});
                         continue;
                     }
-                    usedAny = equipInventoryItem(entryId, static_cast<int>(nestedCount), source, owner, depth + 1)
+                    usedAny = equipInventoryItem(
+                                  entryId, static_cast<int>(nestedCount), source, owner, depth + 1, std::nullopt)
                         || usedAny;
                 }
                 return usedAny;
@@ -1322,7 +1383,7 @@ namespace MWClass
             if (const ESM4::Armor* armor
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(armor, count);
+                const bool stored = storeInventoryRecord(armor, count, condition);
                 const bool added = addArmor(armor);
                 logInventoryItem(
                     source, owner, itemId, count, added ? "armor" : "armor-duplicate", armor->mEditorId);
@@ -1332,7 +1393,7 @@ namespace MWClass
             if (const ESM4::Weapon* weapon
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(weapon, count);
+                const bool stored = storeInventoryRecord(weapon, count, condition);
                 considerEquippedWeapon(*data, weapon);
                 logInventoryItem(source, owner, itemId, count, "weapon", weapon->mEditorId);
                 return stored;
@@ -1341,7 +1402,7 @@ namespace MWClass
             if (const ESM4::Clothing* clothing
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(clothing, count);
+                const bool stored = storeInventoryRecord(clothing, count, condition);
                 const bool added = addClothing(clothing);
                 logInventoryItem(source, owner, itemId, count, added ? "clothing" : "clothing-duplicate",
                     clothing->mEditorId);
@@ -1351,7 +1412,7 @@ namespace MWClass
             if (const ESM4::Ammunition* ammunition
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ammunition>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(ammunition, count);
+                const bool stored = storeInventoryRecord(ammunition, count, condition);
                 logInventoryItem(source, owner, itemId, count, "ammunition", ammunition->mEditorId);
                 return stored;
             }
@@ -1359,7 +1420,7 @@ namespace MWClass
             if (const ESM4::Potion* potion
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Potion>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(potion, count);
+                const bool stored = storeInventoryRecord(potion, count, condition);
                 logInventoryItem(source, owner, itemId, count, "potion", potion->mEditorId);
                 return stored;
             }
@@ -1367,7 +1428,7 @@ namespace MWClass
             if (const ESM4::Book* book
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Book>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(book, count);
+                const bool stored = storeInventoryRecord(book, count, condition);
                 logInventoryItem(source, owner, itemId, count, "book", book->mEditorId);
                 return stored;
             }
@@ -1375,7 +1436,7 @@ namespace MWClass
             if (const ESM4::Ingredient* ingredient
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ingredient>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(ingredient, count);
+                const bool stored = storeInventoryRecord(ingredient, count, condition);
                 logInventoryItem(source, owner, itemId, count, "ingredient", ingredient->mEditorId);
                 return stored;
             }
@@ -1383,7 +1444,7 @@ namespace MWClass
             if (const ESM4::ItemMod* itemMod
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::ItemMod>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(itemMod, count);
+                const bool stored = storeInventoryRecord(itemMod, count, condition);
                 logInventoryItem(source, owner, itemId, count, "item-mod", itemMod->mEditorId);
                 return stored;
             }
@@ -1391,7 +1452,7 @@ namespace MWClass
             if (const ESM4::Key* key
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Key>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(key, count);
+                const bool stored = storeInventoryRecord(key, count, condition);
                 logInventoryItem(source, owner, itemId, count, "key", key->mEditorId);
                 return stored;
             }
@@ -1399,7 +1460,7 @@ namespace MWClass
             if (const ESM4::Light* light
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Light>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(light, count);
+                const bool stored = storeInventoryRecord(light, count, condition);
                 logInventoryItem(source, owner, itemId, count, "light", light->mEditorId);
                 return stored;
             }
@@ -1407,7 +1468,7 @@ namespace MWClass
             if (const ESM4::MiscItem* miscellaneous
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::MiscItem>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(miscellaneous, count);
+                const bool stored = storeInventoryRecord(miscellaneous, count, condition);
                 logInventoryItem(source, owner, itemId, count, "miscellaneous", miscellaneous->mEditorId);
                 return stored;
             }
@@ -1440,7 +1501,7 @@ namespace MWClass
 
             bool usedAny = false;
             for (ESM::FormId itemId : outfit->mInventory)
-                usedAny = equipInventoryItem(itemId, 1, source, owner, 0) || usedAny;
+                usedAny = equipInventoryItem(itemId, 1, source, owner, 0, std::nullopt) || usedAny;
             return usedAny;
         };
         const auto equipNpcInventory = [&](const ESM4::Npc* inv, std::string_view source) {
@@ -1468,7 +1529,9 @@ namespace MWClass
                     logInventoryItem(source, inv, itemId, item.count, "invalid-container-count", {});
                     continue;
                 }
-                usedAny = equipInventoryItem(itemId, static_cast<int>(item.count), source, inv, 0) || usedAny;
+                usedAny = equipInventoryItem(
+                              itemId, static_cast<int>(item.count), source, inv, 0, std::nullopt)
+                    || usedAny;
             }
             usedAny = equipOutfit(inv->mDefaultOutfit, source, inv) || usedAny;
             return usedAny;
@@ -1919,7 +1982,7 @@ namespace MWClass
     {
         const ESM4NpcCustomData& data = getCustomData(ptr);
         const ESM4::Npc* statsRecord = chooseStatsRecord(data);
-        const float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
+        float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
         if (statsRecord != nullptr && statsRecord->mIsFONV)
         {
             const ESM::GameSetting* setting = MWBase::Environment::get()
@@ -1929,10 +1992,15 @@ namespace MWClass
             const float baseSpeed
                 = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
             MWBase::World* world = MWBase::Environment::get().getWorld();
-            const float playerScale = world != nullptr && ptr == world->getPlayerPtr()
-                ? MWWorld::getFalloutPlayerSpeedScale()
-                : 1.f;
-            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed) * playerScale;
+            if (world != nullptr && ptr == world->getPlayerPtr())
+            {
+                const std::optional<MWWorld::FalloutRuntimeActorValue> speedMultiplier
+                    = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
+                        MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
+                if (speedMultiplier && std::isfinite(speedMultiplier->mValue))
+                    multiplier = speedMultiplier->mValue / 100.f;
+            }
+            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed);
         }
 
         return std::max(1.f, data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified()) * 2.5f

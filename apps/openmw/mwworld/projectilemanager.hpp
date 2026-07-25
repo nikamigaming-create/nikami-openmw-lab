@@ -66,7 +66,8 @@ namespace MWWorld
             const osg::Vec3f& pos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact);
         bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination);
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+            const osg::Vec3f& impactNormal);
 
         /// Count queued V.A.T.S. projectiles that must resolve before the cinematic transaction can finish.
         /// Persistent mines/remote explosives are excluded because their authored lifetime is open-ended.
@@ -166,6 +167,7 @@ namespace MWWorld
 
         struct FalloutHitscanTracerState : public State
         {
+            osg::ref_ptr<osg::PositionAttitudeTransform> mImpactNode;
             osg::Vec3f mOrigin;
             osg::Vec3f mDestination;
             float mElapsedTime = 0.f;

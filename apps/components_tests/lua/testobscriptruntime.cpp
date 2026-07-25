@@ -56,6 +56,14 @@ namespace
                 return obs.b(0), obs.b(1), obs.b(-2.5), obs.b(nil), obs.b(true)
             end,
 
+            referenceEquality = function()
+                local firstProxy = { id = 'FormId:0x14', recordId = 'PlayerBase' }
+                local secondProxy = { id = 'FormId:0x14', recordId = 'PlayerBase' }
+                local otherProxy = { id = 'FormId:0x15', recordId = 'PlayerBase' }
+                return obs.eq(firstProxy, secondProxy),
+                    obs.eq(firstProxy, otherProxy), obs.eq(7, 7)
+            end,
+
             zeroInit = function()
                 local S = obs.locals('ZeroInitScript')
                 return S.neverSet
@@ -70,6 +78,26 @@ namespace
             setvRoundTrip = function()
                 obs.setv('SomeGlobal', 42)
                 return obs.v('someglobal'), obs.v('NeverSetGlobal')
+            end,
+
+            argumentNameResolution = function()
+                obs._getGlobalVariable = function(name)
+                    if tostring(name):lower() == 'jdclengthmin' then return 24 end
+                    return nil
+                end
+                local global = obs.arg('JDCLengthMin')
+                local actorValue = obs.arg('Strength')
+                local editorId = obs.arg('SomeForm')
+                obs._getGlobalVariable = nil
+                return global, actorValue, editorId
+            end,
+
+            outputArgumentRoundTrip = function()
+                local storage = { x = 1 }
+                local handle = obs.out(storage, 'X')
+                local changed = obs.setout(handle, 27.5)
+                local rejected = obs.setout(1, 4)
+                return changed, storage.x, rejected
             end,
 
             msetv = function()
@@ -164,6 +192,39 @@ namespace
                     script.engineHandlers.onActivated == nil
             end,
 
+            makeQuestHost = function(log)
+                local running = obs.locals('RunningQuestScript')
+                running.count = 0
+                obs.on('GameMode', function()
+                    running.count = running.count + 1
+                    log[#log + 1] = 'running'
+                end)
+                local stopped = obs.locals('StoppedQuestScript')
+                stopped.count = 0
+                obs.on('GameMode', function()
+                    stopped.count = stopped.count + 1
+                    log[#log + 1] = 'stopped'
+                end)
+                obs.udf('SharedUdf', function(value) return value + 1 end)
+                obs.bind('GetQuestRunning', function(quest)
+                    return quest == 'RunningQuest' and 1 or 0
+                end)
+                local host = obs.makeQuestHost({
+                    { script = 'RunningQuestScript', quest = 'RunningQuest', delay = 0.01 },
+                    { script = 'StoppedQuestScript', quest = 'StoppedQuest', delay = 0.01 },
+                })
+                host.engineHandlers.onUpdate(0.02)
+                host.engineHandlers.onUpdate(0.02)
+                obs.msetv('RunningQuest', 'sharedRef', { id = 42 })
+                local questAliasValue = obs.mv('RunningQuestScript', 'sharedRef').id
+                local saved = host.engineHandlers.onSave()
+                running.count = 99
+                host.engineHandlers.onLoad(saved)
+                local status = host.interface.getStatus()
+                return #log, running.count, stopped.count, obs.callUdf('SharedUdf', 7),
+                    status.quests, status.udfs, type(saved.scripts), questAliasValue
+            end,
+
             filteredGameplayEvents = function(log)
                 obs.locals('FilteredGameplayEvents')
                 obs.on('OnDeath', function() log[#log + 1] = 'death:any' end)
@@ -243,6 +304,59 @@ namespace
                     obs.f('ShowMessage', 'VCG04Message'),
                     obs.f('IsAnimPlaying', 'Left'),
                     obs.m('PlacedRef', 'IsAnimPlaying', 'Right')
+            end,
+
+            compatibilityGatesAndPerk = function()
+                local inputSpread = 0.42
+                local identity = obs.m(
+                    'player', 'GetPerkModifier', 34, inputSpread)
+                obs.f('SetNthPerkEntryValue1', 'JHBPerk', 0, 0.1)
+                obs.m('player', 'AddPerk', 'JHBPerk')
+                local reduced = obs.m(
+                    'player', 'GetPerkModifier', 34, inputSpread)
+                obs.m('player', 'RemovePerk', 'JHBPerk')
+                local restored = obs.m(
+                    'player', 'GetPerkModifier', 34, inputSpread)
+                return obs.f('GetVATSMode'), obs.f('IsInKillCam'),
+                    obs.f('ToggleVanityWheel', 0),
+                    identity, reduced, restored
+            end,
+
+            jamDependencyBridge = function()
+                obs.locals('JamDependencyBridgeTest')
+                local before = obs.f('IsSoundPlaying', 'UIPipBoyScroll')
+                local played = obs.f('PlaySound', 'UIPipBoyScroll', 1)
+                local during = obs.f('IsSoundPlaying', 'UIPipBoyScroll')
+                obs.f('SetUIStringAlt', 'HUDMainMenu/JWH/_JWHHP', 'HP')
+                return before, played, during,
+                    obs.f('ActorValueToStringC', 41, 2),
+                    obs.f('ActorValueToStringC', 41, 1),
+                    obs.f('ActorValueToStringC', 999, 2),
+                    obs.f('GetUIString', 'HUDMainMenu/JWH/_JWHHP')
+            end,
+
+            knvseProviderProbe = function()
+                obs.locals('compatibility probe (not JAM)')
+                local path =
+                    'meshes/characters/_male/idleanims/sprint/SpecialIdle_Sprint.kf'
+                local pluginInstalled = obs.f(
+                    'IsPluginInstalled', 'kNVSE.dll')
+                local installed = obs.m('player', 'SetActorAnimationPath',
+                    0, 1, path, 0, 0, 0)
+                local afterInstall = obs._getKnvseAnimationStatus()
+                local played = obs.m(
+                    'player', 'PlayAnimationPath', path, 0)
+                local afterPlay = obs._getKnvseAnimationStatus()
+                local removed = obs.m('player', 'SetActorAnimationPath',
+                    0, 0, path, 0, 0, 0)
+                local afterRemove = obs._getKnvseAnimationStatus()
+                return installed, played, removed,
+                    afterInstall.activeOverrideCount,
+                    afterPlay.overridePlayCount,
+                    afterRemove.restorePlayCount,
+                    afterRemove.activeOverrideCount,
+                    afterRemove.currentSource,
+                    pluginInstalled
             end,
 
             retailActivation = function(mutations)
@@ -457,6 +571,8 @@ namespace
         local events = {}
         local animations = {}
         local mutations = {}
+        local playingSounds = {}
+        local uiStrings = {}
 
         local function mutation(name)
             return function(...)
@@ -500,6 +616,19 @@ namespace
                     end
                     return nil
                 end,
+                resolveSoundEditorId = function(editorId)
+                    local sounds = {
+                        uipipboyscroll = 'FormId:0x00010A',
+                        uihealthheartbeatalp = 'FormId:0x00010B',
+                    }
+                    return sounds[editorId:lower()]
+                end,
+                getActorValueName = function(actorValue, nameType)
+                    if actorValue ~= 41 then return nil end
+                    if nameType == 0 or nameType == 2 then return 'Guns' end
+                    if nameType == 1 then return 'Guns (localized)' end
+                    return nil
+                end,
                 hasQuest = function(quest)
                     return quest:lower() == 'vmq01' or quest:lower() == 'vfreeformgoodsprings'
                 end,
@@ -540,6 +669,15 @@ namespace
                 setGlobalVariable = mutation('setGlobalVariable'),
                 isMenuMode = function() return true end,
                 getButtonPressed = function() return -1 end,
+                getVatsMode = function() return true end,
+                isInKillCam = function() return false end,
+                toggleVanityWheel = function(enabled)
+                    mutations[#mutations + 1] = {
+                        name = 'toggleVanityWheel',
+                        args = { enabled },
+                    }
+                    return true
+                end,
                 showMessage = function(message)
                     mutations[#mutations + 1] = { name = 'showMessage', args = { message } }
                     return true
@@ -562,21 +700,134 @@ namespace
             sendGlobalEvent = function(name, data)
                 events[#events + 1] = { name = name, data = data }
             end,
+            sound = {
+                playSound3d = function(sound)
+                    playingSounds[sound] = true
+                end,
+                playSoundFile3d = function(sound)
+                    playingSounds[sound] = true
+                end,
+                isSoundPlaying = function(sound)
+                    return playingSounds[sound] or false
+                end,
+                isSoundFilePlaying = function(sound)
+                    return playingSounds[sound] or false
+                end,
+            },
+        }
+        local ambient = {
+            playSound = function(sound, options)
+                playingSounds[sound] = true
+                mutations[#mutations + 1] = {
+                    name = 'playSound',
+                    args = { sound, options },
+                }
+            end,
+            playSoundFile = function(sound, options)
+                playingSounds[sound] = true
+                mutations[#mutations + 1] = {
+                    name = 'playSoundFile',
+                    args = { sound, options },
+                }
+            end,
+            isSoundPlaying = function(sound)
+                return playingSounds[sound] or false
+            end,
+            isSoundFilePlaying = function(sound)
+                return playingSounds[sound] or false
+            end,
+        }
+        local uiBridge = {
+            setFloat = function() return 1 end,
+            getFloat = function() return 0 end,
+            setFloatGradual = function() return 1 end,
+            setString = function(path, value)
+                uiStrings[path:lower():gsub('/', '\\')] = tostring(value)
+                return 1
+            end,
+            getString = function(path)
+                return uiStrings[path:lower():gsub('/', '\\')] or ''
+            end,
+            addTile = function() return 1 end,
+            unload = function() return 1 end,
+            isComponentLoaded = function() return 0 end,
         }
         local nearby = {
             players = { player },
             getObjectByFormId = function(formId) return byFormId[formId] end,
         }
+        local animationSources = {
+            idle2 = 'meshes/characters/_male/locomotion/mtidle.kf',
+        }
+        local activeAnimations = {}
         local animation = {
             clearAnimationQueue = function() end,
             isPlaying = function(obj, group)
-                return (obj == own and group == 'Left') or (obj == placed and group == 'Right')
+                return activeAnimations[group] == true
+                    or (obj == own and group == 'Left')
+                    or (obj == placed and group == 'Right')
             end,
             playQueued = function(_, group, options)
                 animations[#animations + 1] = {
                     group = group,
                     loops = options.loops,
                 }
+            end,
+            playBlended = function(_, group, options)
+                activeAnimations[group] = true
+                animations[#animations + 1] = {
+                    group = group,
+                    loops = options.loops,
+                }
+            end,
+            playSourceOverride = function(_, group, options)
+                activeAnimations[group] = true
+                animations[#animations + 1] = {
+                    group = group,
+                    loops = options.loops,
+                }
+                return true
+            end,
+            bindSourceOverride = function(_, path, group)
+                group = group or (path:lower():find('specialidle', 1, true)
+                    and 'idle2' or 'idle')
+                local previous = animationSources[group] or ''
+                animationSources[group] = path
+                return {
+                    loaded = true,
+                    group = group,
+                    previousGroup = group,
+                    previousSource = previous,
+                    selectedSource = path,
+                    controllerMask = 31,
+                }
+            end,
+            restoreSourceOverride = function(_, path, group, previous, previousGroup)
+                if animationSources[group] ~= path then
+                    return {
+                        loaded = false,
+                        group = previousGroup or group,
+                        selectedSource = animationSources[group] or '',
+                        controllerMask = 0,
+                    }
+                end
+                animationSources[group] = nil
+                local restoredGroup = previousGroup or group
+                animationSources[restoredGroup] = previous
+                return {
+                    loaded = true,
+                    group = restoredGroup,
+                    previousGroup = restoredGroup,
+                    previousSource = previous,
+                    selectedSource = previous,
+                    controllerMask = 31,
+                }
+            end,
+            getSourceName = function(_, group)
+                return animationSources[group] or ''
+            end,
+            getGroupControllerMask = function()
+                return 31
             end,
         }
         local types = {
@@ -614,11 +865,13 @@ namespace
         return {
             packages = {
                 ['openmw.animation'] = animation,
+                ['openmw.ambient'] = ambient,
                 ['openmw.core'] = core,
                 ['openmw.nearby'] = nearby,
                 ['openmw.self'] = { object = own },
                 ['openmw.types'] = types,
                 ['openmw.world'] = world,
+                ['openmw_aux.obscript.ui_bridge'] = uiBridge,
             },
             events = events,
             animations = animations,
@@ -688,6 +941,37 @@ namespace
         EXPECT_EQ(LuaUtil::call(s["msetv"]).get<int>(), 3);
     }
 
+    TEST_F(ObScriptRuntimeTest, ReferenceEqualityUsesStableEngineIdentity)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            const VFS::Path::Normalized path(driverPath);
+            sol::table script = mLua.runInNewSandbox(path);
+            const auto [sameReference, otherReference, sameNumber]
+                = LuaUtil::call(script["referenceEquality"]).get<std::tuple<bool, bool, bool>>();
+            EXPECT_TRUE(sameReference);
+            EXPECT_FALSE(otherReference);
+            EXPECT_TRUE(sameNumber);
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, BareArgumentsResolveGlobalsAndPreserveOtherNames)
+    {
+        const auto r
+            = LuaUtil::call(script()["argumentNameResolution"]).get<std::tuple<int, std::string, std::string>>();
+        EXPECT_EQ(std::get<0>(r), 24);
+        EXPECT_EQ(std::get<1>(r), "Strength");
+        EXPECT_EQ(std::get<2>(r), "SomeForm");
+    }
+
+    TEST_F(ObScriptRuntimeTest, OutputArgumentsMutateOriginalScriptLocal)
+    {
+        const auto r = LuaUtil::call(script()["outputArgumentRoundTrip"])
+                           .get<std::tuple<bool, double, bool>>();
+        EXPECT_TRUE(std::get<0>(r));
+        EXPECT_DOUBLE_EQ(std::get<1>(r), 27.5);
+        EXPECT_FALSE(std::get<2>(r));
+    }
+
     TEST_F(ObScriptRuntimeTest, BindAndDispatch)
     {
         sol::table s = script();
@@ -755,6 +1039,24 @@ namespace
         auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<std::tuple<int, bool>>();
         EXPECT_EQ(std::get<0>(r), 1);
         EXPECT_TRUE(std::get<1>(r));
+    }
+
+    TEST_F(ObScriptRuntimeTest, QuestHostSharesUdfsAndTicksOnlyRunningQuests)
+    {
+        sol::table s = script();
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table log = view.sol().create_table();
+            auto r = LuaUtil::call(s["makeQuestHost"], log)
+                         .get<std::tuple<int, int, int, int, int, int, std::string, int>>();
+            EXPECT_EQ(std::get<0>(r), 2);
+            EXPECT_EQ(std::get<1>(r), 2);
+            EXPECT_EQ(std::get<2>(r), 0);
+            EXPECT_EQ(std::get<3>(r), 8);
+            EXPECT_EQ(std::get<4>(r), 2);
+            EXPECT_EQ(std::get<5>(r), 1);
+            EXPECT_EQ(std::get<6>(r), "table");
+            EXPECT_EQ(std::get<7>(r), 42);
+        });
     }
 
     TEST_F(ObScriptRuntimeTest, GameplayEventFiltersRequireMatchingAuthoritativeReference)
@@ -1037,6 +1339,100 @@ namespace
             EXPECT_EQ(mutations[1].get<sol::table>()["name"].get<std::string>(), "showMessage");
             EXPECT_EQ(mutations[1].get<sol::table>()["args"].get<sol::table>()[1].get<std::string>(),
                 "VCG04Message");
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, CompatibilityGatesAndHoldBreathPerkUseNativeState)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-jam-gates-test", extraPackages);
+            const auto values = LuaUtil::call(s["compatibilityGatesAndPerk"])
+                                    .get<std::tuple<int, int, int, double, double, double>>();
+            EXPECT_EQ(std::get<0>(values), 1);
+            EXPECT_EQ(std::get<1>(values), 0);
+            EXPECT_EQ(std::get<2>(values), 1);
+            EXPECT_DOUBLE_EQ(std::get<3>(values), 0.42);
+            EXPECT_NEAR(std::get<4>(values), 0.042, 1e-9);
+            EXPECT_DOUBLE_EQ(std::get<5>(values), 0.42);
+
+            sol::table mutations = factory["mutations"];
+            ASSERT_EQ(mutations.size(), 1);
+            EXPECT_EQ(mutations[1].get<sol::table>()["name"].get<std::string>(), "toggleVanityWheel");
+            EXPECT_FALSE(mutations[1].get<sol::table>()["args"].get<sol::table>()[1].get<bool>());
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, JamDependencyCommandsReachNativeUiActorValueAndSoundLayers)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.ambient", packages["openmw.ambient"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+                { "openmw_aux.obscript.ui_bridge", packages["openmw_aux.obscript.ui_bridge"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-jam-dependencies-test", extraPackages);
+            const auto values = LuaUtil::call(s["jamDependencyBridge"])
+                                    .get<std::tuple<int, int, int, std::string, std::string, std::string, std::string>>();
+            EXPECT_EQ(std::get<0>(values), 0);
+            EXPECT_EQ(std::get<1>(values), 1);
+            EXPECT_EQ(std::get<2>(values), 1);
+            EXPECT_EQ(std::get<3>(values), "Guns");
+            EXPECT_EQ(std::get<4>(values), "Guns (localized)");
+            EXPECT_EQ(std::get<5>(values), "Unknown");
+            EXPECT_EQ(std::get<6>(values), "HP");
+
+            sol::table mutations = factory["mutations"];
+            ASSERT_EQ(mutations.size(), 1);
+            sol::table sound = mutations[1];
+            EXPECT_EQ(sound["name"].get<std::string>(), "playSound");
+            EXPECT_EQ(sound["args"].get<sol::table>()[1].get<std::string>(), "FormId:0x00010A");
+            EXPECT_FALSE(sound["args"].get<sol::table>()[2].get<sol::table>()["scale"].get<bool>());
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, KnvseProviderProbeInstallsPlaysAndRestoresNativeAnimationSource)
+    {
+        mLua.protectedCall([&](LuaUtil::LuaView&) {
+            sol::table factory = mLua.runInNewSandbox(VFS::Path::Normalized(bindingsFactoryPath));
+            sol::table packages = factory["packages"];
+            const std::map<std::string, sol::main_object> extraPackages{
+                { "openmw.animation", packages["openmw.animation"] },
+                { "openmw.core", packages["openmw.core"] },
+                { "openmw.nearby", packages["openmw.nearby"] },
+                { "openmw.self", packages["openmw.self"] },
+                { "openmw.types", packages["openmw.types"] },
+            };
+            sol::table s = mLua.runInNewSandbox(
+                VFS::Path::Normalized(bindingsDriverPath), "obscript-knvse-provider-test", extraPackages);
+            const auto values = LuaUtil::call(s["knvseProviderProbe"])
+                                    .get<std::tuple<int, int, int, int, int, int, int, std::string, int>>();
+            EXPECT_EQ(std::get<0>(values), 1);
+            EXPECT_EQ(std::get<1>(values), 1);
+            EXPECT_EQ(std::get<2>(values), 1);
+            EXPECT_EQ(std::get<3>(values), 1);
+            EXPECT_EQ(std::get<4>(values), 1);
+            EXPECT_EQ(std::get<5>(values), 1);
+            EXPECT_EQ(std::get<6>(values), 0);
+            EXPECT_EQ(
+                std::get<7>(values), "meshes/characters/_male/locomotion/mtidle.kf");
+            EXPECT_EQ(std::get<8>(values), 1);
         });
     }
 

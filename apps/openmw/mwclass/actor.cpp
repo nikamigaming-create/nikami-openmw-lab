@@ -87,7 +87,8 @@ namespace MWClass
     float Actor::getCurrentSpeed(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::Movement& movementSettings = ptr.getClass().getMovementSettings(ptr);
-        float moveSpeed = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor;
+        float moveSpeed
+            = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor * movementSettings.mSpeedMultiplier;
         if (movementSettings.mIsStrafing)
             moveSpeed *= 0.75f;
         return moveSpeed;

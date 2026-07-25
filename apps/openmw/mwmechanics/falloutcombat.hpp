@@ -138,6 +138,13 @@ namespace MWMechanics
         InvalidResult,
     };
 
+    enum class FalloutImpactOrientation : std::uint32_t
+    {
+        SurfaceNormal = 0,
+        ProjectileVector = 1,
+        ProjectileReflection = 2,
+    };
+
     enum class FalloutBallisticAimFailure
     {
         None,
@@ -540,6 +547,7 @@ namespace MWMechanics
         // Retained for record diagnostics only. FNV does not use WEAP.DNAM Spread when firing; Min Spread is the
         // authored weapon-spread input.
         float mLegacySpread = 0.f;
+        float mTracerChance = 0.f;
         bool mAuthoredHitscan = false;
         bool mConsumesWeapon = false;
 
@@ -671,6 +679,12 @@ namespace MWMechanics
     /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
     [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
         const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure);
+
+    /// Resolve the IPCT.DATA orientation vector used to pose an authored impact model. Projectile reflection is a
+    /// unit reflection of the incoming shot direction; unlike projectile bounce it does not apply bounciness.
+    [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutImpactDirection(
+        FalloutImpactOrientation orientation, const osg::Vec3f& projectileDirection,
+        const osg::Vec3f& collisionNormal) noexcept;
 
     /// Aim a constant-speed Fallout projectile at a fixed world-space displacement while preserving the exact
     /// downward acceleration used by ProjectileManager. The low trajectory is selected so V.A.T.S. and AI lobbed
@@ -850,6 +864,16 @@ namespace MWMechanics
     /// Build an intrinsic creature attack from the winning FNV CREA DATA damage/combatSkill/strength payload.
     [[nodiscard]] std::optional<FalloutMeleeContract> buildFalloutCreatureMeleeContract(float authoredDamage,
         float combatSkill, float strength, const FalloutMeleeTuning& tuning, FalloutMeleeFailure& failure);
+
+    /// FNV PROJ.DATA stores tracer chance as a closed authored probability in the [0, 1] range. Invalid authored
+    /// values and invalid random rolls fail closed rather than inventing a visible projectile.
+    [[nodiscard]] bool doesFalloutHitscanSpawnTracer(float tracerChance, float probabilityRoll) noexcept;
+
+    /// Convert the authored contact reach into a center-origin physics ray length. FNV AI compares reach against
+    /// the gap between actor bounds, while the delivery ray begins inside the attacker's collision shape, so the
+    /// attacker's forward half-extent must be restored for both decisions to describe the same contact point.
+    [[nodiscard]] std::optional<float> resolveFalloutMeleeRayReach(
+        float authoredReach, float attackerForwardHalfExtent) noexcept;
 
     [[nodiscard]] bool isFalloutMeleeAnimationType(std::uint8_t animationType) noexcept;
 

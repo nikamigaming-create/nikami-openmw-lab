@@ -23,7 +23,7 @@ namespace MWWorld
     bool FalloutPlayerRuntimeState::isSupported(std::uint32_t actorValue)
     {
         return actorValue == HealthActorValue || actorValue == ActionPointsActorValue
-            || actorValue == ExperienceActorValue
+            || actorValue == SpeedMultiplierActorValue || actorValue == ExperienceActorValue
             || (actorValue >= SpecialActorValueBegin && actorValue <= SpecialActorValueEnd)
             || (actorValue >= SkillActorValueBegin && actorValue <= SkillActorValueEnd);
     }
@@ -54,12 +54,14 @@ namespace MWWorld
             mBase->mSkillValues, result.mSkills.begin(), [](std::uint8_t value) { return static_cast<float>(value); });
         result.mActionPoints = 65.f + 3.f
             * result.mSpecial[static_cast<std::size_t>(FalloutSpecial::Agility)];
+        result.mSpeedMultiplier = static_cast<float>(mBase->mStatsConfig.speedMultiplier);
         const auto addModifiers = [&](std::uint32_t actorValue, float& value) {
             value += mPermanentModifiers[actorValue] + mDamageModifiers[actorValue]
                 + mTemporaryModifiers[actorValue];
         };
         addModifiers(HealthActorValue, result.mHealth);
         addModifiers(ActionPointsActorValue, result.mActionPoints);
+        addModifiers(SpeedMultiplierActorValue, result.mSpeedMultiplier);
         addModifiers(ExperienceActorValue, result.mExperience);
         for (std::size_t index = 0; index < result.mSpecial.size(); ++index)
             addModifiers(SpecialActorValueBegin + static_cast<std::uint32_t>(index), result.mSpecial[index]);
@@ -194,6 +196,9 @@ namespace MWWorld
             const float agility = static_cast<float>(mBase->getSpecial(FalloutSpecial::Agility));
             return FalloutRuntimeActorValue{ 65.f + 3.f * agility, std::nullopt };
         }
+        if (actorValue == SpeedMultiplierActorValue)
+            return FalloutRuntimeActorValue{
+                static_cast<float>(mBase->mStatsConfig.speedMultiplier), std::nullopt };
         if (actorValue == ExperienceActorValue)
             return FalloutRuntimeActorValue{ 0.f, std::nullopt };
         if (const auto index = specialIndex(actorValue))
@@ -213,6 +218,8 @@ namespace MWWorld
             return FalloutRuntimeActorValue{ mCurrent.mHealth, std::nullopt };
         if (actorValue == ActionPointsActorValue)
             return FalloutRuntimeActorValue{ mCurrent.mActionPoints, std::nullopt };
+        if (actorValue == SpeedMultiplierActorValue)
+            return FalloutRuntimeActorValue{ mCurrent.mSpeedMultiplier, std::nullopt };
         if (actorValue == ExperienceActorValue)
             return FalloutRuntimeActorValue{ mCurrent.mExperience, std::nullopt };
         if (const auto index = specialIndex(actorValue))
@@ -417,6 +424,8 @@ namespace MWWorld
             const float maximum = getMaxActionPoints().value_or(value);
             mCurrent.mActionPoints = std::clamp(value, 0.f, maximum);
         }
+        else if (actorValue == SpeedMultiplierActorValue)
+            mCurrent.mSpeedMultiplier = value;
         else if (actorValue == ExperienceActorValue)
             mCurrent.mExperience = value;
         else if (const auto index = specialIndex(actorValue))
@@ -457,6 +466,7 @@ namespace MWWorld
         writer.writeHNT("HLTH", mCurrent.mHealth);
         writer.writeHNT("ACTP", mCurrent.mActionPoints);
         writer.writeHNT("EXPR", mCurrent.mExperience);
+        writer.writeHNT("SPDM", mCurrent.mSpeedMultiplier);
         for (const float value : mCurrent.mSpecial)
             writer.writeHNT("SPEC", value);
         for (const float value : mCurrent.mSkills)
@@ -510,6 +520,10 @@ namespace MWWorld
             restored.mActionPoints = makeBaseCurrent().mActionPoints;
         if (version >= 3)
             reader.getHNT(restored.mExperience, "EXPR");
+        if (version >= 7)
+            reader.getHNT(restored.mSpeedMultiplier, "SPDM");
+        else
+            restored.mSpeedMultiplier = static_cast<float>(mBase->mStatsConfig.speedMultiplier);
         for (float& value : restored.mSpecial)
             reader.getHNT(value, "SPEC");
         for (float& value : restored.mSkills)
@@ -595,7 +609,7 @@ namespace MWWorld
             invalidSave("unexpected trailing subrecord");
 
         if (!std::isfinite(restored.mHealth) || !std::isfinite(restored.mActionPoints)
-            || !std::isfinite(restored.mExperience)
+            || !std::isfinite(restored.mSpeedMultiplier) || !std::isfinite(restored.mExperience)
             || !std::ranges::all_of(restored.mSpecial, [](float value) { return std::isfinite(value); })
             || !std::ranges::all_of(restored.mSkills, [](float value) { return std::isfinite(value); }))
             invalidSave("non-finite actor value");

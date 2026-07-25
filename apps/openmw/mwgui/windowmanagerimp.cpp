@@ -2973,8 +2973,9 @@ namespace MWGui
             return;
 
         mHitFader->clearQueue();
-        mHitFader->fadeTo(100, 0.0f);
-        mHitFader->fadeTo(0, 0.5f);
+        const bool falloutContent = isFalloutContentLoaded();
+        mHitFader->fadeTo(falloutContent ? 20 : 100, 0.0f);
+        mHitFader->fadeTo(0, falloutContent ? 0.3f : 0.5f);
     }
 
     void WindowManager::setWerewolfOverlay(bool set)

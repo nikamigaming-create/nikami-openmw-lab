@@ -14,8 +14,10 @@ namespace MWRender
 {
     inline constexpr float getFalloutFlatPlayerVisualYawOffset()
     {
-        // Imported Fallout rigs author forward on local +X while gameplay movement uses local +Y.
-        return -osg::PI_2f;
+        // Imported Fallout rigs author forward on local +X while gameplay movement uses local +Y. OSG applies
+        // this row-vector basis conversion around -Z, so +90 degrees maps the rendered actor away from the
+        // trailing third-person camera instead of turning the actor back toward it.
+        return osg::PI_2f;
     }
 
     inline std::vector<ESM::FormId> canonicalizeFalloutWornVisualSignature(

@@ -348,6 +348,7 @@ namespace
         projectile.mData.present = true;
         projectile.mData.flags = ESM4::Projectile::Hitscan;
         projectile.mData.range = 10000.f;
+        projectile.mData.tracerChance = 0.f;
 
         MWMechanics::FalloutShotFailure failure;
         const auto contract = MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure);
@@ -363,7 +364,25 @@ namespace
         EXPECT_FLOAT_EQ(contract->mMaxRange, 3548.f);
         EXPECT_FLOAT_EQ(contract->mProjectileRange, 10000.f);
         EXPECT_FLOAT_EQ(contract->damagePerProjectile(), 18.f);
+        EXPECT_FLOAT_EQ(contract->mTracerChance, 0.f);
         EXPECT_TRUE(contract->mAuthoredHitscan);
+    }
+
+    TEST(FalloutCombatTest, HonorsAuthoredHitscanTracerProbabilityWithoutInventingTenMillimeterTracers)
+    {
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(0.f, 0.f));
+        EXPECT_TRUE(MWMechanics::doesFalloutHitscanSpawnTracer(0.3f, 0.299f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(0.3f, 0.3f));
+        EXPECT_TRUE(MWMechanics::doesFalloutHitscanSpawnTracer(0.5f, 0.499f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(0.5f, 0.5f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(-0.1f, 0.f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(1.1f, 0.f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(0.5f, -0.1f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(0.5f, 1.f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(
+            std::numeric_limits<float>::quiet_NaN(), 0.f));
+        EXPECT_FALSE(MWMechanics::doesFalloutHitscanSpawnTracer(
+            0.5f, std::numeric_limits<float>::quiet_NaN()));
     }
 
     TEST(FalloutCombatTest, PreservesWeaponAuthoredVatsContractWithoutFallback)
@@ -1121,6 +1140,42 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::InvalidBounciness);
     }
 
+    TEST(FalloutCombatTest, HonorsAuthoredImpactOrientationPolicy)
+    {
+        using MWMechanics::FalloutImpactOrientation;
+        const osg::Vec3f incoming(1.f, 0.f, -1.f);
+        const osg::Vec3f normal(0.f, 0.f, 2.f);
+
+        const auto surface = MWMechanics::resolveFalloutImpactDirection(
+            FalloutImpactOrientation::SurfaceNormal, incoming, normal);
+        ASSERT_TRUE(surface);
+        EXPECT_EQ(*surface, osg::Vec3f(0.f, 0.f, 1.f));
+
+        const auto projectile = MWMechanics::resolveFalloutImpactDirection(
+            FalloutImpactOrientation::ProjectileVector, incoming, normal);
+        ASSERT_TRUE(projectile);
+        EXPECT_NEAR(projectile->x(), std::sqrt(0.5f), 1e-6f);
+        EXPECT_NEAR(projectile->z(), -std::sqrt(0.5f), 1e-6f);
+
+        const auto reflected = MWMechanics::resolveFalloutImpactDirection(
+            FalloutImpactOrientation::ProjectileReflection, incoming, normal);
+        ASSERT_TRUE(reflected);
+        EXPECT_NEAR(reflected->x(), std::sqrt(0.5f), 1e-6f);
+        EXPECT_NEAR(reflected->z(), std::sqrt(0.5f), 1e-6f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedImpactOrientationInputs)
+    {
+        using MWMechanics::FalloutImpactOrientation;
+        EXPECT_FALSE(MWMechanics::resolveFalloutImpactDirection(
+            FalloutImpactOrientation::SurfaceNormal, osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f()));
+        EXPECT_FALSE(MWMechanics::resolveFalloutImpactDirection(
+            FalloutImpactOrientation::ProjectileVector, osg::Vec3f(), osg::Vec3f(0.f, 0.f, 1.f)));
+        EXPECT_FALSE(MWMechanics::resolveFalloutImpactDirection(
+            static_cast<FalloutImpactOrientation>(3), osg::Vec3f(0.f, 1.f, 0.f),
+            osg::Vec3f(0.f, 0.f, 1.f)));
+    }
+
     TEST(FalloutCombatTest, AimsGravityProjectileAlongReachableLowBallisticArc)
     {
         MWMechanics::FalloutBallisticAimFailure failure;
@@ -1806,6 +1861,18 @@ end
         // CREA DATA damage 12 * (0.5 + 0.5 * combatSkill 60/100) + Strength 5 * 0.5.
         EXPECT_FLOAT_EQ(contract->mDamage, 12.1f);
         EXPECT_FLOAT_EQ(contract->mReach, 256.f);
+    }
+
+    TEST(FalloutCombatTest, RestoresAttackerBoundsToMeleeDeliveryRay)
+    {
+        const auto rayReach = MWMechanics::resolveFalloutMeleeRayReach(256.f, 64.f);
+        ASSERT_TRUE(rayReach);
+        EXPECT_FLOAT_EQ(*rayReach, 320.f);
+
+        EXPECT_FALSE(MWMechanics::resolveFalloutMeleeRayReach(0.f, 64.f));
+        EXPECT_FALSE(MWMechanics::resolveFalloutMeleeRayReach(256.f, -1.f));
+        EXPECT_FALSE(MWMechanics::resolveFalloutMeleeRayReach(
+            std::numeric_limits<float>::infinity(), 64.f));
     }
 
     TEST(FalloutCombatTest, RejectsNonMeleeAndMalformedMeleeContracts)

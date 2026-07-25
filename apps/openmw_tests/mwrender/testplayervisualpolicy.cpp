@@ -6,7 +6,7 @@ namespace MWRender
 {
     TEST(MWRenderPlayerVisualPolicyTest, convertsFlatFalloutPlayerModelForwardToGameplayForward)
     {
-        EXPECT_FLOAT_EQ(getFalloutFlatPlayerVisualYawOffset(), -osg::PI_2f);
+        EXPECT_FLOAT_EQ(getFalloutFlatPlayerVisualYawOffset(), osg::PI_2f);
     }
 
     TEST(MWRenderPlayerVisualPolicyTest, canonicalWornSignatureIgnoresSlotOrderAndDuplicates)

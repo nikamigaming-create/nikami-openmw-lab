@@ -574,7 +574,8 @@ namespace MWRender
                 if (weapon == nullptr || weapon->mModel.empty())
                     return false;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    weapon->mModel, {}, std::move(source), false });
+                    weapon->mModel, {}, std::move(source), false,
+                    MWVR::VRAnimation::FalloutVrHandSurface::Kind::Weapon });
                 Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
                                  << surfaces.back().source << " editor=" << weapon->mEditorId
                                  << " model=" << weapon->mModel;
@@ -622,8 +623,11 @@ namespace MWRender
             const auto addSurface = [&](std::string_view model, std::string_view texture, std::string source, bool left) {
                 if (model.empty())
                     return;
+                const bool pipBoy = Misc::StringUtils::lowerCase(model).find("pipboyarm") != std::string::npos;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    std::string(model), std::string(texture), std::move(source), left });
+                    std::string(model), std::string(texture), std::move(source), left,
+                    pipBoy ? MWVR::VRAnimation::FalloutVrHandSurface::Kind::PipBoy
+                           : MWVR::VRAnimation::FalloutVrHandSurface::Kind::Hand });
             };
 
             if (race != nullptr)
@@ -707,7 +711,8 @@ namespace MWRender
                     if (lowered.find("pipboyarm") == std::string::npos)
                         continue;
                     rightPipBoySurface = MWVR::VRAnimation::FalloutVrHandSurface{
-                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false };
+                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false,
+                        MWVR::VRAnimation::FalloutVrHandSurface::Kind::PipBoy };
                     break;
                 }
                 if (rightPipBoySurface)
@@ -1664,7 +1669,7 @@ namespace MWRender
 
                 const std::vector<ESM::FormId> wornSignature = makeFalloutWornVisualSignature(liveArmor);
                 if (hasLiveInventory
-                    && (!mFalloutPlayerFirstPersonWornSignatureObserved
+                    && (weaponChanged || !mFalloutPlayerFirstPersonWornSignatureObserved
                         || wornSignature != mFalloutPlayerFirstPersonWornSignature))
                 {
                     mFalloutPlayerFirstPersonWornSignature = wornSignature;
@@ -1696,13 +1701,15 @@ namespace MWRender
                             mFalloutPlayerFirstPersonAlignmentLogged = false;
                             Log(Debug::Info) << "FNV first-person equipment bridge: rebuilt=1 armor="
                                              << liveArmor.size() << " signature=" << wornSignature.size()
+                                             << " weaponChanged=" << weaponChanged
                                              << " pipBoy=" << profile->mPipBoy
                                              << " pipBoyGlove=" << profile->mPipBoyGlove;
                         }
                         catch (const std::exception& error)
                         {
                             Log(Debug::Error) << "FNV first-person equipment bridge: rebuilt=0 armor="
-                                              << liveArmor.size() << " reason=" << error.what();
+                                              << liveArmor.size() << " weaponChanged=" << weaponChanged
+                                              << " reason=" << error.what();
                         }
                     }
                     else
@@ -1711,6 +1718,7 @@ namespace MWRender
                         mFalloutPlayerFirstPersonAlignmentLogged = false;
                         Log(Debug::Info)
                             << "FNV first-person equipment bridge: rebuilt=0 armor=" << liveArmor.size()
+                            << " weaponChanged=" << weaponChanged
                             << " profile=hidden reason=no-connected-upper-body-arms";
                     }
                 }
@@ -2292,10 +2300,12 @@ namespace MWRender
 
     void RenderingManager::spawnEffect(VFS::Path::NormalizedView model, std::string_view texture,
         const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight,
-        const ESM4::Light* light, bool isExterior)
+        const ESM4::Light* light, bool isExterior, const osg::Quat& orientation,
+        float authoredDuration)
     {
         mEffectManager->addEffect(
-            model, texture, worldPosition, scale, isMagicVFX, useAmbientLight, light, isExterior);
+            model, texture, worldPosition, scale, isMagicVFX, useAmbientLight, light, isExterior,
+            orientation, authoredDuration);
     }
 
     void RenderingManager::spawnFalloutDecal(VFS::Path::NormalizedView texture,

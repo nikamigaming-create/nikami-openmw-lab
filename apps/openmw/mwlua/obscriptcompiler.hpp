@@ -19,7 +19,8 @@ namespace MWLua
     // Compiles every ESM4 script record (SCPT) into a Lua file under
     // generated/obscript/ in the given archive and rebuilds the VFS index.
     // Failures are logged and skipped. Returns a config attaching each
-    // generated script (as sCustom) to the base records referencing it via SCRI.
+    // generated script (as sCustom) to the base records referencing it via
+    // SCRI, plus a player-local shared host for xNVSE quest scripts and UDFs.
     ESM::LuaScriptsCfg compileObScripts(LuaUtil::LuaState& lua, VFS::Manager& vfs, VFS::InMemoryArchive& out);
 }
 

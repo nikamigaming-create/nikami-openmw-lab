@@ -36,7 +36,7 @@ return {
         { name = "rewardxp", calls = 265, scripts = 184, category = "Player-specific state and controls", status = "unsupported-explicit" },
         { name = "getstagedone", calls = 327, scripts = 178, category = "Quest/objective system", status = "implemented" },
         { name = "getself", calls = 297, scripts = 173, category = "Script/engine state only - implementable immediately", status = "implemented" },
-        { name = "playsound", calls = 446, scripts = 173, category = "Audio/imagespace/visual effects", status = "unsupported-explicit" },
+        { name = "playsound", calls = 446, scripts = 173, category = "Audio/imagespace/visual effects", status = "implemented" },
         { name = "getdistance", calls = 325, scripts = 163, category = "Object placement, enable state, cells", status = "implemented" },
         { name = "placeatme", calls = 438, scripts = 153, category = "Object placement, enable state, cells", status = "unsupported-explicit" },
         { name = "setdestroyed", calls = 340, scripts = 149, category = "Object placement, enable state, cells", status = "implemented" },

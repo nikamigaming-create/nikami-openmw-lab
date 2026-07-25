@@ -418,6 +418,26 @@ namespace MWRender
         /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
         std::string getAnimationSourceName(std::string_view anim) const;
 
+        struct SourceOverrideBinding
+        {
+            bool mLoaded = false;
+            std::string mGroup;
+            std::string mPreviousGroup;
+            std::string mPreviousSource;
+            std::string mSelectedSource;
+            unsigned int mControllerMask = 0;
+        };
+
+        /// Load a path-based compatibility animation as the highest-priority
+        /// source for a group and report the exact source it displaced.
+        SourceOverrideBinding bindSourceOverride(
+            std::string_view path, std::string_view requestedGroup = {});
+
+        /// Remove one path override from the source stack and prove that the
+        /// original source selected before installation is active again.
+        SourceOverrideBinding restoreSourceOverride(std::string_view path, std::string_view installedGroup,
+            std::string_view expectedPreviousSource, std::string_view previousGroup = {});
+
         /// Return the first group from a specific source whose name begins with the requested prefix.
         /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
         std::string getAnimationGroupFromSource(

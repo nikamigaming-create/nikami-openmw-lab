@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include <osg/Quat>
 #include <osg/ref_ptr>
 
 #include <components/vfs/pathutil.hpp>
@@ -42,7 +43,8 @@ namespace MWRender
         /// Add an effect. When it's finished playing, it will be removed automatically.
         void addEffect(VFS::Path::NormalizedView model, std::string_view textureOverride,
             const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true, bool useAmbientLight = true,
-            const ESM4::Light* light = nullptr, bool isExterior = false);
+            const ESM4::Light* light = nullptr, bool isExterior = false,
+            const osg::Quat& orientation = osg::Quat(), float authoredDuration = 0.f);
 
         /// Add a Fallout impact decal using the authored TXST diffuse texture and DODT dimensions.
         void addDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
@@ -58,6 +60,7 @@ namespace MWRender
         struct Effect
         {
             float mMaxControllerLength;
+            float mPlaybackRate = 1.f;
             std::shared_ptr<EffectAnimationTime> mAnimTime;
             osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         };

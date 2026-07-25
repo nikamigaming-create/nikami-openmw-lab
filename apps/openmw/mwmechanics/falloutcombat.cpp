@@ -251,7 +251,8 @@ namespace MWMechanics
             static_cast<std::uint8_t>(consumesWeapon ? 1 : weapon.mData.ammoUse),
             weapon.mData.numProjectiles, static_cast<float>(weapon.mData.damage), weapon.mData.minRange,
             weapon.mData.maxRange, projectile.mData.range, weapon.mData.minSpread, weapon.mData.spread,
-            (projectile.mData.flags & ESM4::Projectile::Hitscan) != 0, consumesWeapon };
+            projectile.mData.tracerChance, (projectile.mData.flags & ESM4::Projectile::Hitscan) != 0,
+            consumesWeapon };
     }
 
     std::optional<FalloutFireCadence> buildFalloutFireCadence(
@@ -502,6 +503,32 @@ namespace MWMechanics
             return std::nullopt;
         }
         return result;
+    }
+
+    std::optional<osg::Vec3f> resolveFalloutImpactDirection(FalloutImpactOrientation orientation,
+        const osg::Vec3f& projectileDirection, const osg::Vec3f& collisionNormal) noexcept
+    {
+        const auto normalizeFinite = [](osg::Vec3f value) -> std::optional<osg::Vec3f> {
+            if (!std::isfinite(value.x()) || !std::isfinite(value.y()) || !std::isfinite(value.z())
+                || value.normalize() == 0.f)
+                return std::nullopt;
+            return value;
+        };
+
+        const std::optional<osg::Vec3f> normal = normalizeFinite(collisionNormal);
+        if (!normal)
+            return std::nullopt;
+        if (orientation == FalloutImpactOrientation::SurfaceNormal)
+            return normal;
+
+        const std::optional<osg::Vec3f> incoming = normalizeFinite(projectileDirection);
+        if (!incoming)
+            return std::nullopt;
+        if (orientation == FalloutImpactOrientation::ProjectileVector)
+            return incoming;
+        if (orientation == FalloutImpactOrientation::ProjectileReflection)
+            return normalizeFinite(*incoming - *normal * (2.f * (*incoming * *normal)));
+        return std::nullopt;
     }
 
     std::optional<osg::Vec3f> buildFalloutBallisticAimDirection(
@@ -1426,6 +1453,26 @@ namespace MWMechanics
             return std::nullopt;
         }
         return FalloutMeleeContract{ damage, reach, true, true };
+    }
+
+    std::optional<float> resolveFalloutMeleeRayReach(
+        float authoredReach, float attackerForwardHalfExtent) noexcept
+    {
+        if (!std::isfinite(authoredReach) || authoredReach <= 0.f
+            || !std::isfinite(attackerForwardHalfExtent) || attackerForwardHalfExtent < 0.f)
+            return std::nullopt;
+
+        const float rayReach = authoredReach + attackerForwardHalfExtent;
+        if (!std::isfinite(rayReach) || rayReach <= 0.f)
+            return std::nullopt;
+        return rayReach;
+    }
+
+    bool doesFalloutHitscanSpawnTracer(float tracerChance, float probabilityRoll) noexcept
+    {
+        return std::isfinite(tracerChance) && tracerChance > 0.f && tracerChance <= 1.f
+            && std::isfinite(probabilityRoll) && probabilityRoll >= 0.f && probabilityRoll < 1.f
+            && probabilityRoll < tracerChance;
     }
 
     std::string_view getFalloutShotFailureName(FalloutShotFailure failure)

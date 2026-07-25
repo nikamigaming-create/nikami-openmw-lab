@@ -28,22 +28,25 @@ namespace MWVR
         void init(osg::Group* geometryRoot);
         void update(osg::NodeVisitor* nv);
 
+        bool enabled() const;
         bool updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint);
-        bool hasFocus() const { return mFocused; }
-        bool visible() const { return mVisible; }
-        bool modalInputActive() const { return mGripMenuOverride || (mVisible && !mRetailWorldMode); }
+        bool hasFocus() const { return enabled() && mFocused; }
+        bool visible() const { return enabled() && mVisible; }
+        bool modalInputActive() const
+        {
+            return enabled() && (mGripMenuOverride || (mVisible && !mRetailWorldMode));
+        }
         void updateAimPointer();
         bool injectMouseClick();
         bool recenterMenuAnchor();
         bool recenterMenuPortal();
         void setGripMenuOverride(bool active);
-        bool gripMenuOverride() const { return mGripMenuOverride; }
+        bool gripMenuOverride() const { return enabled() && mGripMenuOverride; }
 
     private:
         FNVXRLiveFrameSurface() = default;
         ~FNVXRLiveFrameSurface();
 
-        bool enabled() const;
         bool ensureVideoMapping();
         bool readFrame();
         void ensureSceneObjects();

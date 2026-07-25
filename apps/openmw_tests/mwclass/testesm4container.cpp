@@ -9,6 +9,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loaddoor.hpp>
@@ -20,6 +21,7 @@
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "apps/openmw/mwbase/environment.hpp"
 #include "apps/openmw/mwbase/luamanager.hpp"
@@ -1515,6 +1517,65 @@ namespace
         EXPECT_FLOAT_EQ(movement.mPosition[0], 0.f);
         EXPECT_FLOAT_EQ(movement.mRotation[2], 0.f);
         EXPECT_TRUE(stats.getAiSequence().isEmpty());
+    }
+
+    TEST_F(ESM4ContainerTest, NpcKeepsSelectedFalloutWeaponAndAmmoBundleTogether)
+    {
+        constexpr std::uint32_t weaponId = 0x01105001;
+        constexpr std::uint32_t ammoId = 0x01105002;
+        constexpr std::uint32_t withAmmoListId = 0x01105003;
+        constexpr std::uint32_t weaponChoiceListId = 0x01105004;
+
+        MWWorld::ESMStore store;
+        store.overrideRecord(makeNpcRace());
+
+        ESM4::Weapon weapon{};
+        weapon.mId = ESM::FormId::fromUint32(weaponId);
+        weapon.mEditorId = "SyntheticLaserRcw";
+        weapon.mFullName = "Laser RCW";
+        weapon.mModel = "weapons\\2handhandle\\laserrcw.nif";
+        weapon.mData.damage = 12;
+        store.overrideRecord(weapon);
+
+        ESM4::Ammunition ammo{};
+        ammo.mId = ESM::FormId::fromUint32(ammoId);
+        ammo.mEditorId = "SyntheticElectronChargePack";
+        ammo.mFullName = "Electron Charge Pack";
+        store.overrideRecord(ammo);
+
+        store.overrideRecord(makeLevelledItem(withAmmoListId, 0x04,
+            { makeLevelledEntry(1, weaponId), makeLevelledEntry(1, ammoId, 10) }));
+        store.overrideRecord(
+            makeLevelledItem(weaponChoiceListId, 0, { makeLevelledEntry(1, withAmmoListId) }));
+
+        ESM4::Npc npc = makeNpc();
+        npc.mInventory.clear();
+        npc.mInventory.push_back(ESM4::InventoryItem{ weaponChoiceListId, 1 });
+        store.overrideRecord(npc);
+        store.overrideRecord(makeCreatureCell());
+        const_cast<MWWorld::Store<ESM4::ActorCharacter>&>(store.get<ESM4::ActorCharacter>())
+            .insertStatic(makePlacedNpc());
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr ptr = findPlacedNpc(*cell);
+        ASSERT_FALSE(ptr.isEmpty());
+
+        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
+        MWWorld::ContainerStore& inventory = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(weaponId))), 1);
+        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(ammoId))), 10);
+        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(withAmmoListId))), 0);
+        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(weaponChoiceListId))), 0);
+        ASSERT_NE(MWClass::ESM4Npc::getEquippedWeapon(ptr), nullptr);
+        EXPECT_EQ(MWClass::ESM4Npc::getEquippedWeapon(ptr)->mId, ESM::FormId::fromUint32(weaponId));
     }
 
     TEST_F(ESM4ContainerTest, ResetAiClearsCreatureMovementState)

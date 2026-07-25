@@ -841,16 +841,26 @@ namespace MWClass
             if (Misc::Rng::roll0to99(prng) < chance)
                 MWBase::Environment::get().getDialogueManager()->say(ptr, ESM::RefId::stringRefId("hit"));
 
-            // Check for knockdown
-            float agilityTerm
-                = stats.getAttribute(ESM::Attribute::Agility).getModified() * gmst.fKnockDownMult->mValue.getFloat();
-            float knockdownTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
-                    * gmst.iKnockDownOddsMult->mValue.getInteger() * 0.01f
-                + gmst.iKnockDownOddsBase->mValue.getInteger();
-            if (hasHealthDamage && agilityTerm <= healthDamage && knockdownTerm <= Misc::Rng::roll0to99(prng))
-                stats.setKnockedDown(true);
+            // The native FNV player is represented by the shared ESM3 NPC class, but ordinary FNV weapon hits do
+            // not use Morrowind's agility-based knockdown roll. Explicit Fallout effects (for example explosions)
+            // apply knockdown after onHit; a regular impact only requests the same hit-recovery response used by
+            // native ESM4 actors.
+            if (store.getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
+                stats.setHitRecovery(true);
             else
-                stats.setHitRecovery(true); // Is this supposed to always occur?
+            {
+                // Check for knockdown
+                float agilityTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
+                    * gmst.fKnockDownMult->mValue.getFloat();
+                float knockdownTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
+                        * gmst.iKnockDownOddsMult->mValue.getInteger() * 0.01f
+                    + gmst.iKnockDownOddsBase->mValue.getInteger();
+                if (hasHealthDamage && agilityTerm <= healthDamage
+                    && knockdownTerm <= Misc::Rng::roll0to99(prng))
+                    stats.setKnockedDown(true);
+                else
+                    stats.setHitRecovery(true); // Is this supposed to always occur?
+            }
         }
 
         if (hasHealthDamage && healthDamage > 0.0f)
@@ -1485,8 +1495,23 @@ namespace MWClass
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
         const bool sneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
 
+        float speedAttribute = stats.getAttribute(ESM::Attribute::Speed).getModified();
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world != nullptr && ptr == world->getPlayerPtr())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime = world->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> baseSpeed
+                = runtime.getBaseActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
+            const std::optional<MWWorld::FalloutRuntimeActorValue> currentSpeed
+                = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
+            // Preserve ordinary ESM3 SetSpeed effects while the FNV value is unchanged. A native-save modifier or
+            // Fallout SetAV/ModAV becomes authoritative as soon as SpeedMult differs from its authored base.
+            if (baseSpeed && currentSpeed && currentSpeed->mValue != baseSpeed->mValue)
+                speedAttribute = currentSpeed->mValue;
+        }
+
         float walkSpeed = gmst.fMinWalkSpeed->mValue.getFloat()
-            + 0.01f * stats.getAttribute(ESM::Attribute::Speed).getModified()
+            + 0.01f * speedAttribute
                 * (gmst.fMaxWalkSpeed->mValue.getFloat() - gmst.fMinWalkSpeed->mValue.getFloat());
         walkSpeed *= 1.0f - gmst.fEncumberedMoveEffect->mValue.getFloat() * normalizedEncumbrance;
         walkSpeed = std::max(0.0f, walkSpeed);

@@ -21,6 +21,7 @@ namespace
         MWWorld::FalloutPlayerState result;
         result.mBaseRecord = ESM::FormId{ .mIndex = 7, .mContentFile = contentFile };
         result.mHealth = 100;
+        result.mStatsConfig.speedMultiplier = 100;
         result.mSpecial = { 5, 5, 5, 5, 5, 5, 5 };
         result.mSkillValues = { 13, 14, 12, 15, 15, 14, 30, 13, 14, 25, 22, 14, 22, 29 };
         result.mSkillOffsets = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xfe, 12, 13 };
@@ -43,6 +44,8 @@ namespace
             writer.writeHNT("ACTP", 80.f);
         if (version >= 3)
             writer.writeHNT("EXPR", 0.f);
+        if (version >= 7)
+            writer.writeHNT("SPDM", 100.f);
         for (std::size_t i = 0; i < MWWorld::FalloutPlayerState::SpecialCount; ++i)
             writer.writeHNT("SPEC", 5.f);
         for (const std::uint8_t value : base.mSkillValues)
@@ -85,15 +88,24 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     ASSERT_TRUE(runtime.getCurrentActorValue(5));
     EXPECT_FLOAT_EQ(runtime.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getBaseActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
     EXPECT_FALSE(runtime.isDirty());
 
     EXPECT_EQ(runtime.setCurrentActorValue(5, 12.25f), MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_EQ(runtime.modCurrentActorValue(16, -125.5f), MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_EQ(runtime.setCurrentActorValue(43, 137.75f), MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_EQ(runtime.setCurrentActorValue(
+                  MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue, 125.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_FLOAT_EQ(runtime.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 12.25f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(16)->mValue, -25.5f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(43)->mValue, 137.75f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     ASSERT_TRUE(runtime.getCurrentActorValue(43)->mRawSkillOffset);
     EXPECT_EQ(*runtime.getCurrentActorValue(43)->mRawSkillOffset, 0xfe);
     EXPECT_TRUE(runtime.isDirty());
@@ -110,6 +122,8 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     runtime.resetCurrent();
     EXPECT_FALSE(runtime.isDirty());
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSaveMapping)
@@ -317,11 +331,12 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     MWWorld::FalloutPlayerRuntimeState runtime;
     runtime.initialize(makeBaseState(2));
     using Header = MWWorld::FalloutSavePlayerHeaderState;
-    const std::array<Header::ActorValueModifier, 4> modifiers{ {
+    const std::array<Header::ActorValueModifier, 5> modifiers{ {
         { 24, 10.f, Header::ActorValueModifierKind::Permanent, 100 },
         { 16, -25.f, Header::ActorValueModifierKind::Damage, 110 },
         { 25, -40.f, Header::ActorValueModifierKind::Damage, 120 },
         { 43, 5.f, Header::ActorValueModifierKind::Temporary, 130 },
+        { 21, 25.f, Header::ActorValueModifierKind::Permanent, 135 },
     } };
     const std::array<Header::PerkRank, 2> perks{ {
         { ESM::FormId{ .mIndex = 0x31dac, .mContentFile = 2 }, 0, false, 140 },
@@ -332,6 +347,8 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(16)->mValue, 75.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(24)->mValue, 10.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(43)->mValue, 19.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     EXPECT_FLOAT_EQ(runtime.getSavedDamageModifier(25), -40.f);
     EXPECT_TRUE(runtime.hasPerk(perks[0].mPerk));
     EXPECT_FALSE(runtime.hasPerk(perks[0].mPerk, true));
@@ -360,6 +377,8 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(16)->mValue, 75.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(24)->mValue, 10.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 19.f);
+    EXPECT_FLOAT_EQ(
+        restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     EXPECT_TRUE(restored.hasPerk(ESM::FormId{ .mIndex = 0x31dac, .mContentFile = 7 }));
     EXPECT_EQ(restored.getPerkRankByte(ESM::FormId{ .mIndex = 0x44, .mContentFile = 7 }, true), 1);
 }
@@ -372,6 +391,9 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     ASSERT_EQ(original.setCurrentActorValue(16, 73.5f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(5, 12.25f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(43, 137.75f), MWWorld::FalloutActorValueMutationResult::Applied);
+    ASSERT_EQ(original.setCurrentActorValue(
+                  MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue, 112.5f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.modCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue, 100.f),
         MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.countSavedGameRecords(), 1);
@@ -403,6 +425,8 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     EXPECT_FLOAT_EQ(restored.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(5)->mValue, 12.25f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 137.75f);
+    EXPECT_FLOAT_EQ(
+        restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 112.5f);
     EXPECT_FLOAT_EQ(
         restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue)->mValue, 100.f);
     ASSERT_TRUE(restored.getCurrentActorValue(43)->mRawSkillOffset);

@@ -4491,10 +4491,12 @@ namespace MWWorld
     }
 
     bool World::launchFalloutHitscanTracer(
-        ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
+        ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+        const osg::Vec3f& impactNormal)
     {
         return mProjectileManager != nullptr
-            && mProjectileManager->launchFalloutHitscanTracer(projectile, origin, destination);
+            && mProjectileManager->launchFalloutHitscanTracer(
+                projectile, origin, destination, impactNormal);
     }
 
     std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
@@ -5170,7 +5172,7 @@ namespace MWWorld
 
     void World::spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
         const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight,
-        const ESM::RefId& lightId)
+        const ESM::RefId& lightId, const osg::Quat& orientation, float authoredDuration)
     {
         const ESM4::Light* light = lightId.empty()
             ? nullptr
@@ -5178,7 +5180,7 @@ namespace MWWorld
         if (!lightId.empty() && light == nullptr)
             Log(Debug::Error) << "Effect references missing ESM4 light: " << lightId;
         mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX,
-            useAmbientLight, light, isCellExterior());
+            useAmbientLight, light, isCellExterior(), orientation, authoredDuration);
     }
 
     void World::spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,

@@ -941,6 +941,68 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         out << "}";
     }
 
+    out << "\n  ],\n";
+    out << "  \"controllers\": [";
+    bool firstController = true;
+    for (const auto& record : meshFile->mRecords)
+    {
+        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
+        if (object == nullptr)
+            continue;
+
+        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+             controller = controller->mNext)
+        {
+            if (!firstController)
+                out << ",";
+            firstController = false;
+            out << "\n    {\"node\":\"" << jsonEscape(object->mName) << "\""
+                << ",\"type\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"flags\":" << controller->mFlags
+                << ",\"frequency\":" << controller->mFrequency
+                << ",\"phase\":" << controller->mPhase
+                << ",\"start\":" << controller->mTimeStart
+                << ",\"stop\":" << controller->mTimeStop;
+
+            const auto* transformController
+                = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr());
+            const auto* transformInterpolator = transformController == nullptr
+                ? nullptr
+                : dynamic_cast<const Nif::NiTransformInterpolator*>(
+                    transformController->mInterpolator.getPtr());
+            if (transformInterpolator != nullptr)
+            {
+                out << ",\"defaultTranslation\":"
+                    << formatVec3Json(transformInterpolator->mDefaultValue.mTranslation)
+                    << ",\"defaultRotation\":"
+                    << formatQuatJson(transformInterpolator->mDefaultValue.mRotation)
+                    << ",\"defaultScale\":" << transformInterpolator->mDefaultValue.mScale;
+                if (!transformInterpolator->mData.empty())
+                {
+                    const Nif::NiKeyframeData& data = *transformInterpolator->mData.getPtr();
+                    out << ",\"translations\":[";
+                    for (std::size_t i = 0; i < data.mTranslations->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mTranslations->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":"
+                            << formatVec3Json(key.mValue) << "}";
+                    }
+                    out << "],\"scales\":[";
+                    for (std::size_t i = 0; i < data.mScales->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mScales->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":" << key.mValue << "}";
+                    }
+                    out << "]";
+                }
+            }
+            out << "}";
+        }
+    }
     out << "\n  ]\n";
     out << "}\n";
     return 0;

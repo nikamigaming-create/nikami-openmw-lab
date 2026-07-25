@@ -1046,19 +1046,6 @@ namespace MWVR
             setPick(mFocusLayer->mLayerName, true);
     }
 
-    void VRGUIManager::setFocusWidget(MyGUI::Widget* widget)
-    {
-        // TODO: This relies on MyGUI internal functions and may break on any future version.
-        if (widget == mFocusWidget)
-            return;
-        if (mFocusWidget)
-            mFocusWidget->_riseMouseLostFocus(widget);
-        if (widget)
-            widget->_riseMouseSetFocus(mFocusWidget);
-
-        mFocusWidget = widget;
-    }
-
     VRGUILayer* VRGUIManager::getLayer(const std::string& name)
     {
         // TODO: insert return statement here
@@ -1096,16 +1083,19 @@ namespace MWVR
             }
         }
 
-        if (hasFocus() && mFocusWidget != nullptr)
+        MyGUI::Widget* focusWidget = hasFocus()
+            ? MyGUI::LayerManager::getInstance().getWidgetFromPoint(mGuiCursor.x(), mGuiCursor.y())
+            : nullptr;
+        if (focusWidget != nullptr)
         {
             if (mFocusLayer && isFalloutInventoryPanelLayer(mFocusLayer->mLayerName) && sFalloutInventoryClickLogCount < 12)
             {
                 ++sFalloutInventoryClickLogCount;
                 Log(Debug::Info) << "Fallout VR diag: inventory panel GUI click layer=" << mFocusLayer->mLayerName
                                  << " cursor=(" << mGuiCursor.x() << "," << mGuiCursor.y() << ") widget="
-                                 << mFocusWidget->getName();
+                                 << focusWidget->getName();
             }
-            mFocusWidget->_riseMouseButtonClick();
+            focusWidget->_riseMouseButtonClick();
             return true;
         }
         return false;
@@ -1294,16 +1284,11 @@ namespace MWVR
         mGuiCursor.y() = (int)y;
         MWBase::Environment::get().getWindowManager()->setCursorActive(true);
 
-        // The virtual keyboard and Fallout's native inventory panels are projected into VR and
-        // need the pointed MyGUI widget resolved before a controller click can activate them.
+        // Keep MyGUI's own lifetime-aware focus tracking current before a same-frame controller click.
+        // Inventory widgets can be rebuilt while the panel remains open, so never retain their raw pointers.
         if (mFocusLayer
             && (mFocusLayer->mLayerName == "VirtualKeyboard"
                 || isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)))
-        {
-            auto* widget = MyGUI::LayerManager::getInstance().getWidgetFromPoint((int)x, (int)y);
-            setFocusWidget(widget);
-        }
-        else
-            setFocusWidget(nullptr);
+            MyGUI::InputManager::getInstance().injectMouseMove((int)x, (int)y, 0);
     }
 }
