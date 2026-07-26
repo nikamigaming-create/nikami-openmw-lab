@@ -15,7 +15,9 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
@@ -61,6 +63,50 @@ namespace
         const char* const end = value.data() + value.size();
         const auto parsed = std::from_chars(begin, end, result);
         return parsed.ec == std::errc{} && parsed.ptr == end;
+    }
+
+    std::string removeQuotes(std::string_view value)
+    {
+        if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"')
+                                  || (value.front() == '\'' && value.back() == '\'')))
+            value = value.substr(1, value.size() - 2);
+        return std::string(value);
+    }
+
+    struct AuthoredOpeningSource
+    {
+        std::string mMarkerEditorId;
+        std::string mCinematicAsset;
+    };
+
+    std::optional<AuthoredOpeningSource> findAuthoredOpeningSource(std::string_view source)
+    {
+        std::optional<std::string> markerEditorId;
+        std::optional<std::string> cinematicAsset;
+        std::istringstream stream{ std::string(source) };
+        for (std::string line; std::getline(stream, line);)
+        {
+            const std::vector<std::string_view> tokens = tokenize(line);
+            if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "player.moveto"))
+            {
+                const std::string marker = removeQuotes(tokens[1]);
+                if (marker.empty() || (markerEditorId && !Misc::StringUtils::ciEqual(*markerEditorId, marker)))
+                    return std::nullopt;
+                markerEditorId = marker;
+            }
+            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "playbink"))
+            {
+                const std::string cinematic = removeQuotes(tokens[1]);
+                if (cinematic.empty()
+                    || (cinematicAsset && !Misc::StringUtils::ciEqual(*cinematicAsset, cinematic)))
+                    return std::nullopt;
+                cinematicAsset = cinematic;
+            }
+        }
+
+        if (!markerEditorId || !cinematicAsset)
+            return std::nullopt;
+        return AuthoredOpeningSource{ std::move(*markerEditorId), std::move(*cinematicAsset) };
     }
 }
 
@@ -1178,6 +1224,69 @@ namespace MWWorld
     {
         const auto found = mStates.find(id);
         return found != mStates.end() ? &found->second : nullptr;
+    }
+
+    std::vector<std::string> ESM4QuestRuntime::getStartGameEnabledQuestEditorIds() const
+    {
+        std::vector<std::string> result;
+        if (mStore == nullptr)
+            return result;
+
+        for (const ESM4::Quest& quest : mStore->get<ESM4::Quest>())
+        {
+            if ((quest.mData.flags & ESM4::Quest::Flag_StartGameEnabled) != 0 && !quest.mEditorId.empty())
+                result.push_back(quest.mEditorId);
+        }
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
+    std::optional<ESM4AuthoredStartPlacement> ESM4QuestRuntime::findAuthoredStartPlacement() const
+    {
+        if (mStore == nullptr)
+            return std::nullopt;
+
+        std::vector<ESM4AuthoredStartPlacement> candidates;
+        for (const ESM4::Quest& quest : mStore->get<ESM4::Quest>())
+        {
+            for (const ESM4::QuestStage& stage : quest.mStages)
+            {
+                if (stage.mIndex != 0)
+                    continue;
+                for (const ESM4::QuestStageEntry& entry : stage.mEntries)
+                {
+                    // A conditional entry is not a reliable universal new-game
+                    // contract. Do not turn a conditional branch into a spawn rule.
+                    if (!entry.mConditions.empty())
+                        continue;
+                    const std::optional<AuthoredOpeningSource> opening
+                        = findAuthoredOpeningSource(entry.mScript.scriptSource);
+                    if (!opening)
+                        continue;
+
+                    const ESM4::Reference* marker = nullptr;
+                    for (const ESM4::Reference& reference : mStore->get<ESM4::Reference>())
+                    {
+                        if (!Misc::StringUtils::ciEqual(reference.mEditorId, opening->mMarkerEditorId))
+                            continue;
+                        if (marker != nullptr)
+                            return std::nullopt;
+                        marker = &reference;
+                    }
+                    if (marker == nullptr || marker->mParent.empty()
+                        || mStore->get<ESM4::Cell>().search(marker->mParent) == nullptr)
+                    {
+                        continue;
+                    }
+
+                    candidates.push_back({ quest.mId, 0, marker->mId, marker->mParent, marker->mPos,
+                        quest.mEditorId, marker->mEditorId, opening->mCinematicAsset });
+                    if (candidates.size() > 1)
+                        return std::nullopt;
+                }
+            }
+        }
+        return candidates.empty() ? std::nullopt : std::optional<ESM4AuthoredStartPlacement>(candidates.front());
     }
 
     std::optional<float> ESM4QuestRuntime::getQuestVariable(std::string_view id, std::string_view variable) const

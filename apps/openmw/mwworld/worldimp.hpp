@@ -125,6 +125,19 @@ namespace MWWorld
 
         std::string mStartCell;
 
+        // Kept for OpenNV's opt-in authentic-start telemetry. These fields
+        // state whether a uniquely resolved authored opening placement was
+        // used, and distinguish it from the legacy generic fallback.
+        unsigned mLastNewGameGlobalScriptPasses = 0;
+        bool mLastNewGameUsedFallbackPlacement = false;
+        bool mLastNewGameUsedAuthoredStartPlacement = false;
+        bool mLastNewGameAuthoredStartStageExecuted = false;
+        bool mLastNewGameCinematicRequested = false;
+        std::string mLastNewGameCinematicAsset;
+        std::string mLastNewGameAuthoredStartQuestEditorId;
+        std::string mLastNewGameAuthoredStartMarkerEditorId;
+        std::string mLastNewGameAuthoredStartCinematicAsset;
+
         float mSwimHeightScale;
 
         float mDistanceToFacedObject;
@@ -224,6 +237,27 @@ namespace MWWorld
 
         void startNewGame(bool bypass) override;
         ///< \param bypass Bypass regular game start.
+
+        std::string_view getStartCell() const override { return mStartCell; }
+
+        unsigned getLastNewGameGlobalScriptPasses() const { return mLastNewGameGlobalScriptPasses; }
+        bool getLastNewGameUsedFallbackPlacement() const { return mLastNewGameUsedFallbackPlacement; }
+        bool getLastNewGameUsedAuthoredStartPlacement() const { return mLastNewGameUsedAuthoredStartPlacement; }
+        bool getLastNewGameAuthoredStartStageExecuted() const { return mLastNewGameAuthoredStartStageExecuted; }
+        bool getLastNewGameCinematicRequested() const { return mLastNewGameCinematicRequested; }
+        std::string_view getLastNewGameCinematicAsset() const { return mLastNewGameCinematicAsset; }
+        std::string_view getLastNewGameAuthoredStartQuestEditorId() const
+        {
+            return mLastNewGameAuthoredStartQuestEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartMarkerEditorId() const
+        {
+            return mLastNewGameAuthoredStartMarkerEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartCinematicAsset() const
+        {
+            return mLastNewGameAuthoredStartCinematicAsset;
+        }
 
         void clear() override;
 

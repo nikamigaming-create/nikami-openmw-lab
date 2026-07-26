@@ -183,6 +183,7 @@
 #include "mwworld/esmstore.hpp"
 #include "mwworld/esm4questruntime.hpp"
 #include "mwworld/inventorystore.hpp"
+#include "mwworld/globals.hpp"
 #include "mwworld/manualref.hpp"
 #include "mwworld/worldimp.hpp"
 #include "mwworld/worldmodel.hpp"
@@ -419,6 +420,282 @@ namespace
             }
         }
         stream << '"';
+    }
+
+    struct CompatibilityTelemetryConfig
+    {
+        std::filesystem::path mOutputPath;
+        std::string mScenario;
+        std::vector<std::string> mRequiredQuests;
+        unsigned mFrame = 120;
+        bool mExitAfterWrite = false;
+
+        [[nodiscard]] bool enabled() const { return !mOutputPath.empty(); }
+    };
+
+    std::vector<std::string> splitCompatibilityTelemetryList(std::string_view value)
+    {
+        std::vector<std::string> result;
+        while (!value.empty())
+        {
+            const std::size_t separator = value.find(',');
+            std::string_view item = value.substr(0, separator);
+            const std::size_t first = item.find_first_not_of(" \t\r\n");
+            if (first != std::string_view::npos)
+            {
+                item.remove_prefix(first);
+                const std::size_t last = item.find_last_not_of(" \t\r\n");
+                item = item.substr(0, last + 1);
+                if (!item.empty())
+                    result.emplace_back(item);
+            }
+            if (separator == std::string_view::npos)
+                break;
+            value.remove_prefix(separator + 1);
+        }
+        return result;
+    }
+
+    unsigned readCompatibilityTelemetryFrame(const char* value, unsigned fallback)
+    {
+        if (value == nullptr || *value == '\0')
+            return fallback;
+        unsigned parsed = fallback;
+        const char* const begin = value;
+        const char* const end = begin + std::char_traits<char>::length(value);
+        const auto result = std::from_chars(begin, end, parsed);
+        return result.ec == std::errc{} && result.ptr == end ? parsed : fallback;
+    }
+
+    CompatibilityTelemetryConfig readCompatibilityTelemetryConfig()
+    {
+        CompatibilityTelemetryConfig result;
+        const char* const output = std::getenv("OPENMW_COMPAT_TELEMETRY_PATH");
+        if (output == nullptr || *output == '\0')
+            return result;
+
+        result.mOutputPath = std::filesystem::path(output);
+        if (const char* const scenario = std::getenv("OPENMW_COMPAT_TELEMETRY_SCENARIO"))
+            result.mScenario = scenario;
+        if (const char* const quests = std::getenv("OPENMW_COMPAT_TELEMETRY_REQUIRED_QUESTS"))
+            result.mRequiredQuests = splitCompatibilityTelemetryList(quests);
+        result.mFrame = readCompatibilityTelemetryFrame(std::getenv("OPENMW_COMPAT_TELEMETRY_FRAME"), result.mFrame);
+        result.mExitAfterWrite = std::getenv("OPENMW_COMPAT_TELEMETRY_EXIT_AFTER_WRITE") != nullptr;
+        return result;
+    }
+
+    void writeCompatibilityTelemetry(const CompatibilityTelemetryConfig& config, MWWorld::World& world,
+        bool skipMenu, bool newGame, std::string_view startCell, unsigned frameNumber)
+    {
+        std::error_code error;
+        const std::filesystem::path parent = config.mOutputPath.parent_path();
+        if (!parent.empty())
+            std::filesystem::create_directories(parent, error);
+        if (error)
+        {
+            Log(Debug::Error) << "OpenNV compatibility telemetry: could not create output directory '"
+                              << parent.string() << "': " << error.message();
+            return;
+        }
+
+        std::ofstream output(config.mOutputPath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            Log(Debug::Error) << "OpenNV compatibility telemetry: could not open output '"
+                              << config.mOutputPath.string() << "'";
+            return;
+        }
+
+        MWWorld::Ptr player = world.getPlayerPtr();
+        const bool playerPresent = !player.isEmpty();
+        const bool playerInCell = playerPresent && player.isInCell() && player.getCell() != nullptr;
+        const int playerLevel = playerPresent ? player.getClass().getCreatureStats(player).getLevel() : -1;
+        const std::string cellId = playerInCell ? player.getCell()->getCell()->getId().toDebugString() : "";
+        const unsigned globalScriptPasses = world.getLastNewGameGlobalScriptPasses();
+        const bool usedFallbackPlacement = world.getLastNewGameUsedFallbackPlacement();
+        const bool usedAuthoredStartPlacement = world.getLastNewGameUsedAuthoredStartPlacement();
+        const bool authoredStartStageExecuted = world.getLastNewGameAuthoredStartStageExecuted();
+        const bool cinematicRequested = world.getLastNewGameCinematicRequested();
+        const std::string_view cinematicAsset = world.getLastNewGameCinematicAsset();
+        const std::string_view authoredStartQuest = world.getLastNewGameAuthoredStartQuestEditorId();
+        const std::string_view authoredStartMarker = world.getLastNewGameAuthoredStartMarkerEditorId();
+        const std::string_view authoredStartCinematic = world.getLastNewGameAuthoredStartCinematicAsset();
+        const MWWorld::ESM4QuestRuntime& questRuntime = world.getESM4QuestRuntime();
+        const std::vector<std::string> startGameEnabledQuests = questRuntime.getStartGameEnabledQuestEditorIds();
+        const std::vector<std::string>& unsupportedStageCommands = questRuntime.getUnsupportedStageCommands();
+        const std::vector<std::uint16_t>& unsupportedCompiledOpcodes = questRuntime.getUnsupportedCompiledOpcodes();
+        const std::vector<std::uint32_t>& unsupportedConditionFunctions
+            = questRuntime.getUnsupportedConditionFunctions();
+
+        int charGenState = -999;
+        try
+        {
+            charGenState = world.getGlobalInt(MWWorld::Globals::sCharGenState);
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "OpenNV compatibility telemetry: chargen global unavailable: " << e.what();
+        }
+
+        struct QuestResult
+        {
+            std::string mId;
+            bool mPresent = false;
+            bool mRunning = false;
+            bool mCompleted = false;
+            bool mFailed = false;
+            int mStage = -1;
+        };
+        std::vector<QuestResult> quests;
+        quests.reserve(config.mRequiredQuests.size());
+        for (const std::string& id : config.mRequiredQuests)
+        {
+            QuestResult result;
+            result.mId = id;
+            if (const MWWorld::ESM4QuestState* state = questRuntime.search(id))
+            {
+                result.mPresent = true;
+                result.mRunning = (state->mFlags & MWWorld::ESM4QuestState::Flag_Running) != 0;
+                result.mCompleted = (state->mFlags & MWWorld::ESM4QuestState::Flag_Completed) != 0;
+                result.mFailed = (state->mFlags & MWWorld::ESM4QuestState::Flag_Failed) != 0;
+                result.mStage = static_cast<int>(state->mCurrentStage);
+            }
+            quests.emplace_back(std::move(result));
+        }
+
+        std::vector<std::string> gaps;
+        if (!skipMenu)
+            gaps.emplace_back("not-started-with-skip-menu");
+        if (!newGame)
+            gaps.emplace_back("new-game-mechanics-bypassed");
+        if (!startCell.empty())
+            gaps.emplace_back("start-cell-override-present");
+        if (charGenState != 1)
+            gaps.emplace_back("chargen-not-active");
+        if (!playerPresent)
+            gaps.emplace_back("player-missing");
+        else if (playerLevel != 1)
+            gaps.emplace_back("player-not-level-one");
+        if (!playerInCell)
+            gaps.emplace_back("player-not-in-authored-cell");
+        if (usedFallbackPlacement)
+            gaps.emplace_back("generic-fallback-placement-used");
+        if (usedAuthoredStartPlacement)
+        {
+            if (!authoredStartStageExecuted)
+                gaps.emplace_back("authored-opening-stage-not-executed");
+            if (!authoredStartCinematic.empty())
+                gaps.emplace_back("authored-opening-cinematic-unimplemented:" + std::string(authoredStartCinematic));
+            else
+                gaps.emplace_back("authored-opening-cinematic-unidentified");
+        }
+        else if (!cinematicRequested)
+            gaps.emplace_back("new-game-cinematic-not-requested");
+        else if (cinematicAsset == "new_game.webm")
+            gaps.emplace_back("generic-new-game-cinematic-used");
+        if (!unsupportedStageCommands.empty())
+            gaps.emplace_back("unsupported-authored-stage-commands");
+        if (!unsupportedCompiledOpcodes.empty())
+            gaps.emplace_back("unsupported-authored-compiled-opcodes");
+        if (!unsupportedConditionFunctions.empty())
+            gaps.emplace_back("unsupported-authored-condition-functions");
+        if (newGame && startGameEnabledQuests.empty())
+            gaps.emplace_back("no-start-game-enabled-quests");
+        for (const QuestResult& quest : quests)
+        {
+            if (!quest.mPresent)
+                gaps.emplace_back("quest-missing:" + quest.mId);
+            else if (!quest.mRunning && !quest.mCompleted)
+                gaps.emplace_back("opening-quest-not-running:" + quest.mId);
+        }
+
+        output << "{\n  \"schema\": \"opennv-compat-telemetry/v1\",\n  \"scenario\": ";
+        writeProofJsonString(output, config.mScenario);
+        output << ",\n  \"frame\": " << frameNumber
+               << ",\n  \"launch\": {\n    \"skipMenu\": " << (skipMenu ? "true" : "false")
+               << ",\n    \"newGame\": " << (newGame ? "true" : "false")
+               << ",\n    \"startCellOverride\": ";
+        writeProofJsonString(output, startCell);
+        output << "\n  },\n  \"chargenState\": " << charGenState
+               << ",\n  \"player\": {\n    \"present\": " << (playerPresent ? "true" : "false")
+               << ",\n    \"inCell\": " << (playerInCell ? "true" : "false")
+               << ",\n    \"level\": " << playerLevel << ",\n    \"cell\": ";
+        writeProofJsonString(output, cellId);
+        output << "\n  },\n  \"newGame\": {\n    \"globalScriptPasses\": " << globalScriptPasses
+               << ",\n    \"usedFallbackPlacement\": " << (usedFallbackPlacement ? "true" : "false")
+               << ",\n    \"usedAuthoredStartPlacement\": " << (usedAuthoredStartPlacement ? "true" : "false")
+               << ",\n    \"authoredStartStageExecuted\": " << (authoredStartStageExecuted ? "true" : "false")
+               << ",\n    \"cinematicRequested\": " << (cinematicRequested ? "true" : "false")
+               << ",\n    \"cinematicAsset\": ";
+        writeProofJsonString(output, cinematicAsset);
+        output << ",\n    \"authoredStart\": {\n      \"quest\": ";
+        writeProofJsonString(output, authoredStartQuest);
+        output << ",\n      \"marker\": ";
+        writeProofJsonString(output, authoredStartMarker);
+        output << ",\n      \"cinematicAsset\": ";
+        writeProofJsonString(output, authoredStartCinematic);
+        output << ",\n      \"cinematicImplemented\": false\n    }";
+        output << "\n  },\n  \"startGameEnabledQuests\": [";
+        for (std::size_t i = 0; i < startGameEnabledQuests.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    ";
+            writeProofJsonString(output, startGameEnabledQuests[i]);
+        }
+        output << "\n  ],\n  \"unsupportedStageCommands\": [";
+        for (std::size_t i = 0; i < unsupportedStageCommands.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    ";
+            writeProofJsonString(output, unsupportedStageCommands[i]);
+        }
+        output << "\n  ],\n  \"unsupportedCompiledOpcodes\": [";
+        for (std::size_t i = 0; i < unsupportedCompiledOpcodes.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    " << unsupportedCompiledOpcodes[i];
+        }
+        output << "\n  ],\n  \"unsupportedConditionFunctions\": [";
+        for (std::size_t i = 0; i < unsupportedConditionFunctions.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    " << unsupportedConditionFunctions[i];
+        }
+        output << "\n  ],\n  \"quests\": [";
+        for (std::size_t i = 0; i < quests.size(); ++i)
+        {
+            const QuestResult& quest = quests[i];
+            if (i != 0)
+                output << ',';
+            output << "\n    {\"id\":";
+            writeProofJsonString(output, quest.mId);
+            output << ",\"present\":" << (quest.mPresent ? "true" : "false")
+                   << ",\"running\":" << (quest.mRunning ? "true" : "false")
+                   << ",\"completed\":" << (quest.mCompleted ? "true" : "false")
+                   << ",\"failed\":" << (quest.mFailed ? "true" : "false")
+                   << ",\"stage\":" << quest.mStage << '}';
+        }
+        output << "\n  ],\n  \"gaps\": [";
+        for (std::size_t i = 0; i < gaps.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    ";
+            writeProofJsonString(output, gaps[i]);
+        }
+        output << "\n  ],\n  \"result\": ";
+        writeProofJsonString(output, gaps.empty() ? "pass" : "gap");
+        output << "\n}\n";
+        output.close();
+
+        Log(gaps.empty() ? Debug::Info : Debug::Warning)
+            << "OpenNV compatibility telemetry: scenario='" << config.mScenario << "' frame=" << frameNumber
+            << " result=" << (gaps.empty() ? "pass" : "gap") << " gaps=" << gaps.size()
+            << " output='" << config.mOutputPath.string() << "'";
     }
 
     struct FNVSidecarScreenshot
@@ -12798,6 +13075,15 @@ void OMW::Engine::go()
 
     // Start the main rendering loop
     MWWorld::DateTimeManager& timeManager = *mWorld->getTimeManager();
+    const CompatibilityTelemetryConfig compatibilityTelemetry = readCompatibilityTelemetryConfig();
+    bool compatibilityTelemetryWritten = false;
+    if (compatibilityTelemetry.enabled())
+    {
+        Log(Debug::Info) << "OpenNV compatibility telemetry: armed scenario='"
+                         << compatibilityTelemetry.mScenario << "' frame=" << compatibilityTelemetry.mFrame
+                         << " quests=" << compatibilityTelemetry.mRequiredQuests.size() << " output='"
+                         << compatibilityTelemetry.mOutputPath.string() << "'";
+    }
     const float proofFrameRateLimit
         = readProofFloat("OPENMW_PROOF_FRAME_RATE_LIMIT", mEnvironment.getFrameRateLimit());
     Misc::FrameRateLimiter frameRateLimiter = Misc::makeFrameRateLimiter(proofFrameRateLimit);
@@ -12825,6 +13111,16 @@ void OMW::Engine::go()
         {
             timeManager.setSimulationTime(timeManager.getSimulationTime() + dt);
             timeManager.setRenderingSimulationTime(timeManager.getRenderingSimulationTime() + dt);
+        }
+
+        if (!compatibilityTelemetryWritten && compatibilityTelemetry.enabled()
+            && frameNumber >= compatibilityTelemetry.mFrame)
+        {
+            writeCompatibilityTelemetry(
+                compatibilityTelemetry, *mWorld, mSkipMenu, mNewGame, mWorld->getStartCell(), frameNumber);
+            compatibilityTelemetryWritten = true;
+            if (compatibilityTelemetry.mExitAfterWrite)
+                mStateManager->requestQuit();
         }
 
         if (stats)

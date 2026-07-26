@@ -7,6 +7,7 @@
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <variant>
 #include <vector>
 
@@ -15,7 +16,9 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
@@ -39,6 +42,29 @@ namespace
         global.mEditorId = editorId;
         global.mValue = value;
         return global;
+    }
+
+    ESM4::Cell makeOpeningCell(ESM::FormId id)
+    {
+        ESM4::Cell cell{};
+        cell.mId = ESM::RefId(id);
+        cell.mEditorId = "OpenNVOpeningCell";
+        cell.mFullName = "OpenNV Opening Cell";
+        cell.mCellFlags = ESM4::CELL_Interior;
+        return cell;
+    }
+
+    ESM4::Reference makeOpeningMarker(ESM::FormId id, ESM::FormId cellId, std::string_view editorId,
+        float x = 0.f, float y = 0.f, float z = 0.f)
+    {
+        ESM4::Reference marker{};
+        marker.mId = id;
+        marker.mParent = ESM::RefId(cellId);
+        marker.mEditorId = editorId;
+        marker.mPos.pos[0] = x;
+        marker.mPos.pos[1] = y;
+        marker.mPos.pos[2] = z;
+        return marker;
     }
 
     ESM4::TargetCondition makeCondition(std::uint32_t function, ESM::FormId parameter, float comparison,
@@ -120,6 +146,67 @@ TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
         EXPECT_EQ(state->mCurrentStage, 0) << editorId;
         EXPECT_TRUE(state->mStageDone.empty()) << editorId;
     }
+}
+
+TEST(ESM4QuestRuntimeTest, FindsUnambiguousAuthoredOpeningPlacementFromStageZeroSource)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId openingQuestId{ .mIndex = 0x100100, .mContentFile = 0 };
+    const ESM::FormId cellId{ .mIndex = 0x100101, .mContentFile = 0 };
+    const ESM::FormId markerId{ .mIndex = 0x100102, .mContentFile = 0 };
+
+    ESM4::Quest openingQuest = makeQuest(openingQuestId, "OpeningQuest");
+    ESM4::QuestStageEntry openingEntry;
+    openingEntry.mScript.scriptSource = "; player.moveto CommentedOutMarker\n"
+                                       "Player.MoveTo CourierOpeningMarker\n"
+                                       "PlayBink \"FNVIntro.bik\" 1 1 0 1";
+    openingQuest.mStages.push_back({ .mIndex = 0, .mEntries = { openingEntry } });
+    store.overrideRecord(openingQuest);
+    store.overrideRecord(makeOpeningCell(cellId));
+    auto& references = const_cast<MWWorld::Store<ESM4::Reference>&>(store.get<ESM4::Reference>());
+    references.insertStatic(makeOpeningMarker(markerId, cellId, "CourierOpeningMarker", 2257.04f, 2318.21f, 7360.f));
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    const std::optional<MWWorld::ESM4AuthoredStartPlacement> placement = runtime.findAuthoredStartPlacement();
+    ASSERT_TRUE(placement.has_value());
+    EXPECT_EQ(placement->mQuest, openingQuestId);
+    EXPECT_EQ(placement->mStage, 0);
+    EXPECT_EQ(placement->mMarker, markerId);
+    EXPECT_EQ(placement->mCell, ESM::RefId(cellId));
+    EXPECT_EQ(placement->mQuestEditorId, "OpeningQuest");
+    EXPECT_EQ(placement->mMarkerEditorId, "CourierOpeningMarker");
+    EXPECT_EQ(placement->mCinematicAsset, "FNVIntro.bik");
+    EXPECT_FLOAT_EQ(placement->mPosition.pos[0], 2257.04f);
+    EXPECT_FLOAT_EQ(placement->mPosition.pos[1], 2318.21f);
+    EXPECT_FLOAT_EQ(placement->mPosition.pos[2], 7360.f);
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsAmbiguousAuthoredOpeningPlacements)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId cellId{ .mIndex = 0x100110, .mContentFile = 0 };
+    store.overrideRecord(makeOpeningCell(cellId));
+    auto& references = const_cast<MWWorld::Store<ESM4::Reference>&>(store.get<ESM4::Reference>());
+    references.insertStatic(makeOpeningMarker({ .mIndex = 0x100111, .mContentFile = 0 }, cellId, "OpeningMarkerOne"));
+    references.insertStatic(makeOpeningMarker({ .mIndex = 0x100112, .mContentFile = 0 }, cellId, "OpeningMarkerTwo"));
+
+    for (const auto& [id, editorId, marker] : std::array{
+             std::tuple{ ESM::FormId{ .mIndex = 0x100113, .mContentFile = 0 }, "OpeningOne", "OpeningMarkerOne" },
+             std::tuple{ ESM::FormId{ .mIndex = 0x100114, .mContentFile = 0 }, "OpeningTwo", "OpeningMarkerTwo" },
+         })
+    {
+        ESM4::Quest quest = makeQuest(id, editorId);
+        ESM4::QuestStageEntry entry;
+        entry.mScript.scriptSource = std::string("player.moveto ") + marker + "\nPlayBink \"intro.bik\" 1";
+        quest.mStages.push_back({ .mIndex = 0, .mEntries = { entry } });
+        store.overrideRecord(quest);
+    }
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.findAuthoredStartPlacement().has_value());
 }
 
 TEST(ESM4QuestRuntimeTest, ExecutesFourNativeQuestStateCommandsFromFrozenRetailFrames)

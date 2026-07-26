@@ -10,6 +10,8 @@
 #include <vector>
 
 #include <components/esm/formid.hpp>
+#include <components/esm/position.hpp>
+#include <components/esm/refid.hpp>
 
 namespace ESM4
 {
@@ -54,6 +56,22 @@ namespace MWWorld
         std::map<std::int16_t, bool> mStageDone;
         std::map<std::int32_t, std::uint8_t> mObjectiveStatus;
         std::map<std::string, float, std::less<>> mVariables;
+    };
+
+    // An intentionally narrow reading of a Bethesda-style opening script. The
+    // runtime only accepts an unambiguous stage-zero source entry that contains
+    // both the player MoveTo anchor and a PlayBink command. It exposes the
+    // authored data; it does not claim to implement the rest of that script.
+    struct ESM4AuthoredStartPlacement
+    {
+        ESM::FormId mQuest{};
+        std::uint8_t mStage = 0;
+        ESM::FormId mMarker{};
+        ESM::RefId mCell;
+        ESM::Position mPosition;
+        std::string mQuestEditorId;
+        std::string mMarkerEditorId;
+        std::string mCinematicAsset;
     };
 
     class ESM4QuestRuntime
@@ -171,6 +189,8 @@ namespace MWWorld
         const ESM4QuestState* search(std::string_view id) const;
         const ESM4QuestState* search(ESM::FormId id) const;
         std::optional<float> getQuestVariable(std::string_view id, std::string_view variable) const;
+        std::vector<std::string> getStartGameEnabledQuestEditorIds() const;
+        std::optional<ESM4AuthoredStartPlacement> findAuthoredStartPlacement() const;
         std::optional<ESM::FormId> getActiveQuest() const { return mActiveQuest; }
         const std::vector<std::string>& getUnsupportedStageCommands() const { return mUnsupportedStageCommands; }
         const std::vector<std::uint16_t>& getUnsupportedCompiledOpcodes() const { return mUnsupportedCompiledOpcodes; }
