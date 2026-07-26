@@ -1086,6 +1086,16 @@ namespace MWWorld
         viewerTrace("start-new-game.begin");
         Log(Debug::Verbose) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
 
+        mLastNewGameGlobalScriptPasses = 0;
+        mLastNewGameUsedFallbackPlacement = false;
+        mLastNewGameUsedAuthoredStartPlacement = false;
+        mLastNewGameAuthoredStartStageExecuted = false;
+        mLastNewGameCinematicRequested = false;
+        mLastNewGameCinematicAsset.clear();
+        mLastNewGameAuthoredStartQuestEditorId.clear();
+        mLastNewGameAuthoredStartMarkerEditorId.clear();
+        mLastNewGameAuthoredStartCinematicAsset.clear();
+
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
@@ -1284,9 +1294,54 @@ namespace MWWorld
         else
         {
             for (int i = 0; i < 5; ++i)
+            {
                 MWBase::Environment::get().getScriptManager()->getGlobalScripts().run();
+                ++mLastNewGameGlobalScriptPasses;
+            }
             if (!getPlayerPtr().isInCell())
             {
+                if (const std::optional<ESM4AuthoredStartPlacement> authoredStart
+                    = mESM4QuestRuntime.findAuthoredStartPlacement())
+                {
+                    try
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: applying uniquely resolved authored opening placement"
+                                         << " quest=" << authoredStart->mQuestEditorId
+                                         << " marker=" << authoredStart->mMarkerEditorId
+                                         << " cell=" << authoredStart->mCell
+                                         << " activationStage="
+                                         << static_cast<unsigned int>(authoredStart->mActivationStage)
+                                         << " cinematic=" << authoredStart->mCinematicAsset;
+                        viewerTrace("authored-opening-placement.begin");
+                        changeToCell(authoredStart->mCell, authoredStart->mPosition, true);
+                        viewerTrace("authored-opening-placement.end");
+                        if (getPlayerPtr().isInCell())
+                        {
+                            mLastNewGameUsedAuthoredStartPlacement = true;
+                            mLastNewGameAuthoredStartQuestEditorId = authoredStart->mQuestEditorId;
+                            mLastNewGameAuthoredStartMarkerEditorId = authoredStart->mMarkerEditorId;
+                            mLastNewGameAuthoredStartCinematicAsset = authoredStart->mCinematicAsset;
+                            mLastNewGameAuthoredStartStageExecuted
+                                = mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mActivationStage);
+                            if (!mLastNewGameAuthoredStartStageExecuted)
+                            {
+                                Log(Debug::Warning)
+                                    << "FNV/ESM4 behavior: authored opening placement succeeded but stage source "
+                                       "could not be executed quest="
+                                    << authoredStart->mQuestEditorId;
+                            }
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 behavior: authored opening placement failed: " << e.what();
+                    }
+                }
+            }
+
+            if (!getPlayerPtr().isInCell())
+            {
+                mLastNewGameUsedFallbackPlacement = true;
                 ESM::Position pos;
                 bool usedEsm4Fallback = false;
                 const auto& esm4Lands = mStore.get<ESM4::Land>().getLands();
@@ -1357,11 +1412,13 @@ namespace MWWorld
             }
         }
 
-        if (!bypass)
+        if (!bypass && !mLastNewGameUsedAuthoredStartPlacement)
         {
             std::string_view video = Fallback::Map::getString("Movies_New_Game");
             if (!video.empty())
             {
+                mLastNewGameCinematicRequested = true;
+                mLastNewGameCinematicAsset = video;
                 // Make sure that we do not continue to play a Title music after a new game video.
                 MWBase::Environment::get().getSoundManager()->stopMusic();
                 MWBase::Environment::get().getWindowManager()->playVideo(video, true);

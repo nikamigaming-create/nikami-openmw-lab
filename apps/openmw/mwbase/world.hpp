@@ -158,6 +158,9 @@ namespace MWBase
         virtual void startNewGame(bool bypass) = 0;
         ///< \param bypass Bypass regular game start.
 
+        virtual std::string_view getStartCell() const = 0;
+        ///< Return the explicit command-line start cell, if one was requested.
+
         virtual void clear() = 0;
 
         virtual int countSavedGameRecords() const = 0;
