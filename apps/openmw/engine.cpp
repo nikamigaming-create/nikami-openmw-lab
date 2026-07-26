@@ -55,6 +55,15 @@
 #include <osg/Texture2D>
 #include <osgViewer/ViewerEventHandlers>
 
+// Some supported Windows OpenSceneGraph packages omit these valid sRGB S3TC
+// tokens from their GL headers. Keep the texture-format mapping portable.
+#ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
+#define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT 0x8C4D
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT 0x8C4E
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#endif
+
 #include <SDL.h>
 
 #include <components/debug/debuglog.hpp>

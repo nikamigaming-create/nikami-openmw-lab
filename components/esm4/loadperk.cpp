@@ -289,8 +289,11 @@ void ESM4::Perk::load(Reader& reader)
                 EntryPointEntry& entry = std::get<EntryPointEntry>(currentEntry->mData);
                 if (tab >= entry.mData.mConditionTabCount)
                     fail("PRKC tab is outside the declared condition-tab count");
-                if (!entry.mConditionGroups.empty() && tab <= entry.mConditionGroups.back().mTab)
-                    fail("PRKC tabs are duplicated or out of order");
+                // TTW's DLC04SuperiorDefender contains two authored condition
+                // groups for tab 0. Preserve them as separate groups; condition
+                // groups are retained here rather than evaluated by this loader.
+                if (!entry.mConditionGroups.empty() && tab < entry.mConditionGroups.back().mTab)
+                    fail("PRKC tabs are out of order");
                 entry.mConditionGroups.push_back({ .mTab = tab });
                 currentConditionGroup = &entry.mConditionGroups.back();
                 phase = EntryPhase::EntryPointCondition;

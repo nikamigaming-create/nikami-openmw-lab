@@ -28,6 +28,7 @@
 #include <istream>
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -261,7 +262,18 @@ namespace ESM4
         // NOTE: must be called before calling getRecordHeader()
         void setRecHeaderSize(const std::size_t size);
 
-        inline unsigned int esmVersion() const { return mHeader.mData.version.ui; }
+        inline unsigned int esmVersion() const
+        {
+            // TTW's converted Capital Wasteland masters carry a New Vegas-era
+            // header but retain Fallout 3 record layouts.  Expose their
+            // effective record format to individual loaders without changing
+            // the source files or the on-disk header.
+            const std::string fileName = mCtx.filename.filename().string();
+            if (fileName == "Fallout3.esm" || fileName == "Anchorage.esm" || fileName == "ThePitt.esm"
+                || fileName == "BrokenSteel.esm" || fileName == "PointLookout.esm" || fileName == "Zeta.esm")
+                return ESM::VER_094;
+            return mHeader.mData.version.ui;
+        }
         inline float esmVersionF() const { return mHeader.mData.version.f; }
         inline unsigned int numRecords() const { return mHeader.mData.records; }
 
