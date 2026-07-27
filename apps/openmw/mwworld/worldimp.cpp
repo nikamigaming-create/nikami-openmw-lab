@@ -1005,6 +1005,8 @@ namespace MWWorld
                                          << " quest=" << authoredStart->mQuestEditorId
                                          << " marker=" << authoredStart->mMarkerEditorId
                                          << " cell=" << authoredStart->mCell
+                                         << " activationStage="
+                                         << static_cast<unsigned int>(authoredStart->mActivationStage)
                                          << " cinematic=" << authoredStart->mCinematicAsset;
                         viewerTrace("authored-opening-placement.begin");
                         changeToCell(authoredStart->mCell, authoredStart->mPosition, true);
@@ -1016,7 +1018,7 @@ namespace MWWorld
                             mLastNewGameAuthoredStartMarkerEditorId = authoredStart->mMarkerEditorId;
                             mLastNewGameAuthoredStartCinematicAsset = authoredStart->mCinematicAsset;
                             mLastNewGameAuthoredStartStageExecuted
-                                = mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mStage);
+                                = mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mActivationStage);
                             if (!mLastNewGameAuthoredStartStageExecuted)
                             {
                                 Log(Debug::Warning)

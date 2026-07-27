@@ -60,12 +60,14 @@ namespace MWWorld
 
     // An intentionally narrow reading of a Bethesda-style opening script. The
     // runtime only accepts an unambiguous stage-zero source entry that contains
-    // both the player MoveTo anchor and a PlayBink command. It exposes the
-    // authored data; it does not claim to implement the rest of that script.
+    // a player MoveTo anchor, a PlayBink command, and a direct SetStage handoff
+    // to the same quest. The handoff differentiates the initial opening from
+    // later in-game cinematic transitions. It exposes authored data; it does
+    // not claim to implement the rest of the source script.
     struct ESM4AuthoredStartPlacement
     {
         ESM::FormId mQuest{};
-        std::uint8_t mStage = 0;
+        std::uint8_t mActivationStage = 0;
         ESM::FormId mMarker{};
         ESM::RefId mCell;
         ESM::Position mPosition;

@@ -40,7 +40,14 @@ namespace
             if (first == std::string_view::npos)
                 break;
             line.remove_prefix(first);
-            const std::size_t end = line.find_first_of(" \t\r");
+            std::size_t end = std::string_view::npos;
+            if (line.front() == '"' || line.front() == '\'')
+            {
+                const std::size_t closingQuote = line.find(line.front(), 1);
+                end = closingQuote == std::string_view::npos ? line.size() : closingQuote + 1;
+            }
+            else
+                end = line.find_first_of(" \t\r");
             result.push_back(line.substr(0, end));
             if (end == std::string_view::npos)
                 break;
@@ -77,12 +84,15 @@ namespace
     {
         std::string mMarkerEditorId;
         std::string mCinematicAsset;
+        std::uint8_t mActivationStage = 0;
     };
 
-    std::optional<AuthoredOpeningSource> findAuthoredOpeningSource(std::string_view source)
+    std::optional<AuthoredOpeningSource> findAuthoredOpeningSource(std::string_view source,
+        std::string_view questEditorId)
     {
         std::optional<std::string> markerEditorId;
         std::optional<std::string> cinematicAsset;
+        std::optional<std::uint8_t> activationStage;
         std::istringstream stream{ std::string(source) };
         for (std::string line; std::getline(stream, line);)
         {
@@ -102,11 +112,21 @@ namespace
                     return std::nullopt;
                 cinematicAsset = cinematic;
             }
+            else if (tokens.size() >= 3 && Misc::StringUtils::ciEqual(tokens[0], "setstage")
+                && Misc::StringUtils::ciEqual(tokens[1], questEditorId))
+            {
+                std::int32_t stage = 0;
+                if (!parseInt(tokens[2], stage) || stage <= 0 || stage > 255)
+                    return std::nullopt;
+                if (activationStage && *activationStage != stage)
+                    return std::nullopt;
+                activationStage = static_cast<std::uint8_t>(stage);
+            }
         }
 
-        if (!markerEditorId || !cinematicAsset)
+        if (!markerEditorId || !cinematicAsset || !activationStage)
             return std::nullopt;
-        return AuthoredOpeningSource{ std::move(*markerEditorId), std::move(*cinematicAsset) };
+        return AuthoredOpeningSource{ std::move(*markerEditorId), std::move(*cinematicAsset), *activationStage };
     }
 }
 
@@ -1260,29 +1280,47 @@ namespace MWWorld
                     if (!entry.mConditions.empty())
                         continue;
                     const std::optional<AuthoredOpeningSource> opening
-                        = findAuthoredOpeningSource(entry.mScript.scriptSource);
+                        = findAuthoredOpeningSource(entry.mScript.scriptSource, quest.mEditorId);
                     if (!opening)
                         continue;
 
                     const ESM4::Reference* marker = nullptr;
+                    unsigned markerCount = 0;
                     for (const ESM4::Reference& reference : mStore->get<ESM4::Reference>())
                     {
                         if (!Misc::StringUtils::ciEqual(reference.mEditorId, opening->mMarkerEditorId))
                             continue;
-                        if (marker != nullptr)
-                            return std::nullopt;
+                        ++markerCount;
                         marker = &reference;
+                    }
+                    if (markerCount > 1)
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 behavior: authored opening marker is ambiguous quest="
+                                            << quest.mEditorId << " marker=" << opening->mMarkerEditorId
+                                            << " count=" << markerCount;
+                        return std::nullopt;
                     }
                     if (marker == nullptr || marker->mParent.empty()
                         || mStore->get<ESM4::Cell>().search(marker->mParent) == nullptr)
                     {
+                        Log(Debug::Verbose) << "FNV/ESM4 behavior: authored opening candidate rejected quest="
+                                            << quest.mEditorId << " marker=" << opening->mMarkerEditorId
+                                            << " markerCount=" << markerCount
+                                            << " parent=" << (marker != nullptr ? marker->mParent.serializeText() : "")
+                                            << " cellResolved="
+                                            << (marker != nullptr
+                                                    && mStore->get<ESM4::Cell>().search(marker->mParent) != nullptr);
                         continue;
                     }
 
-                    candidates.push_back({ quest.mId, 0, marker->mId, marker->mParent, marker->mPos,
-                        quest.mEditorId, marker->mEditorId, opening->mCinematicAsset });
+                    candidates.push_back({ quest.mId, opening->mActivationStage, marker->mId, marker->mParent,
+                        marker->mPos, quest.mEditorId, marker->mEditorId, opening->mCinematicAsset });
                     if (candidates.size() > 1)
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 behavior: authored opening candidates are ambiguous first="
+                                            << candidates.front().mQuestEditorId << " second=" << quest.mEditorId;
                         return std::nullopt;
+                    }
                 }
             }
         }

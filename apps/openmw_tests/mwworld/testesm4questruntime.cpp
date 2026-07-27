@@ -159,7 +159,8 @@ TEST(ESM4QuestRuntimeTest, FindsUnambiguousAuthoredOpeningPlacementFromStageZero
     ESM4::QuestStageEntry openingEntry;
     openingEntry.mScript.scriptSource = "; player.moveto CommentedOutMarker\n"
                                        "Player.MoveTo CourierOpeningMarker\n"
-                                       "PlayBink \"FNVIntro.bik\" 1 1 0 1";
+                                       "PlayBink \"FNV Intro.bik\" 1 1 0 1\n"
+                                       "SetStage OpeningQuest 5";
     openingQuest.mStages.push_back({ .mIndex = 0, .mEntries = { openingEntry } });
     store.overrideRecord(openingQuest);
     store.overrideRecord(makeOpeningCell(cellId));
@@ -172,15 +173,59 @@ TEST(ESM4QuestRuntimeTest, FindsUnambiguousAuthoredOpeningPlacementFromStageZero
     const std::optional<MWWorld::ESM4AuthoredStartPlacement> placement = runtime.findAuthoredStartPlacement();
     ASSERT_TRUE(placement.has_value());
     EXPECT_EQ(placement->mQuest, openingQuestId);
-    EXPECT_EQ(placement->mStage, 0);
+    EXPECT_EQ(placement->mActivationStage, 5);
     EXPECT_EQ(placement->mMarker, markerId);
     EXPECT_EQ(placement->mCell, ESM::RefId(cellId));
     EXPECT_EQ(placement->mQuestEditorId, "OpeningQuest");
     EXPECT_EQ(placement->mMarkerEditorId, "CourierOpeningMarker");
-    EXPECT_EQ(placement->mCinematicAsset, "FNVIntro.bik");
+    EXPECT_EQ(placement->mCinematicAsset, "FNV Intro.bik");
     EXPECT_FLOAT_EQ(placement->mPosition.pos[0], 2257.04f);
     EXPECT_FLOAT_EQ(placement->mPosition.pos[1], 2318.21f);
     EXPECT_FLOAT_EQ(placement->mPosition.pos[2], 7360.f);
+}
+
+TEST(ESM4QuestRuntimeTest, SelectsSelfActivatingOpeningOverLaterCinematicTransition)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId openingQuestId{ .mIndex = 0x100105, .mContentFile = 0 };
+    const ESM::FormId laterQuestId{ .mIndex = 0x100106, .mContentFile = 0 };
+    const ESM::FormId openingCellId{ .mIndex = 0x100107, .mContentFile = 0 };
+    const ESM::FormId laterCellId{ .mIndex = 0x100108, .mContentFile = 0 };
+
+    ESM4::Quest openingQuest = makeQuest(openingQuestId, "BootstrapQuest");
+    ESM4::QuestStageEntry openingEntry;
+    openingEntry.mScript.scriptSource = "Player.MoveTo BirthMarker\n"
+                                        "PlayBink \"Birth Intro.bik\" 1\n"
+                                        "SetStage BootstrapQuest 5";
+    openingQuest.mStages.push_back({ .mIndex = 0, .mEntries = { openingEntry } });
+    store.overrideRecord(openingQuest);
+
+    // This looks similar enough to be dangerous: it has a marker and a movie,
+    // but it begins another quest rather than handing its own stage zero to an
+    // authored continuation. It must not become a new-game spawn rule.
+    ESM4::Quest laterQuest = makeQuest(laterQuestId, "LaterCinematic");
+    ESM4::QuestStageEntry laterEntry;
+    laterEntry.mScript.scriptSource = "Player.MoveTo LaterMarker\n"
+                                      "PlayBink \"Years Later.bik\" 1\n"
+                                      "StartQuest LaterCinematic";
+    laterQuest.mStages.push_back({ .mIndex = 0, .mEntries = { laterEntry } });
+    store.overrideRecord(laterQuest);
+
+    store.overrideRecord(makeOpeningCell(openingCellId));
+    store.overrideRecord(makeOpeningCell(laterCellId));
+    auto& references = const_cast<MWWorld::Store<ESM4::Reference>&>(store.get<ESM4::Reference>());
+    references.insertStatic(makeOpeningMarker({ .mIndex = 0x100109, .mContentFile = 0 }, openingCellId, "BirthMarker"));
+    references.insertStatic(makeOpeningMarker({ .mIndex = 0x10010a, .mContentFile = 0 }, laterCellId, "LaterMarker"));
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    const std::optional<MWWorld::ESM4AuthoredStartPlacement> placement = runtime.findAuthoredStartPlacement();
+    ASSERT_TRUE(placement.has_value());
+    EXPECT_EQ(placement->mQuest, openingQuestId);
+    EXPECT_EQ(placement->mActivationStage, 5);
+    EXPECT_EQ(placement->mMarkerEditorId, "BirthMarker");
+    EXPECT_EQ(placement->mCinematicAsset, "Birth Intro.bik");
 }
 
 TEST(ESM4QuestRuntimeTest, RejectsAmbiguousAuthoredOpeningPlacements)
@@ -199,7 +244,8 @@ TEST(ESM4QuestRuntimeTest, RejectsAmbiguousAuthoredOpeningPlacements)
     {
         ESM4::Quest quest = makeQuest(id, editorId);
         ESM4::QuestStageEntry entry;
-        entry.mScript.scriptSource = std::string("player.moveto ") + marker + "\nPlayBink \"intro.bik\" 1";
+        entry.mScript.scriptSource = std::string("player.moveto ") + marker + "\nPlayBink \"intro.bik\" 1\nSetStage "
+            + editorId + " 5";
         quest.mStages.push_back({ .mIndex = 0, .mEntries = { entry } });
         store.overrideRecord(quest);
     }
