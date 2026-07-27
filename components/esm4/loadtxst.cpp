@@ -35,24 +35,45 @@ namespace
 {
     void loadDecalData(ESM4::Reader& reader, ESM4::DecalData& decal)
     {
-        if (reader.subRecordHeader().dataSize != 36)
-            throw std::runtime_error("ESM4::TextureSet::load - unsupported Fallout New Vegas DODT layout");
+        const std::uint32_t size = reader.subRecordHeader().dataSize;
+        if (size == 36)
+        {
+            reader.get(decal.mMinWidth);
+            reader.get(decal.mMaxWidth);
+            reader.get(decal.mMinHeight);
+            reader.get(decal.mMaxHeight);
+            reader.get(decal.mDepth);
+            reader.get(decal.mShininess);
+            reader.get(decal.mParallaxScale);
+            reader.get(decal.mParallaxPasses);
+            reader.get(decal.mFlags);
+            std::uint16_t unused = 0;
+            reader.get(unused);
+            for (std::uint8_t& channel : decal.mColor)
+                reader.get(channel);
+            std::uint8_t unusedColorByte = 0;
+            reader.get(unusedColorByte);
+        }
+        else if (size == 28)
+        {
+            // FO76's pre-136 form-version layout omits shininess, alpha
+            // threshold, and colour. Its final four bytes are flags,
+            // unused, parallax passes, and unused.
+            reader.get(decal.mMinWidth);
+            reader.get(decal.mMaxWidth);
+            reader.get(decal.mMinHeight);
+            reader.get(decal.mMaxHeight);
+            reader.get(decal.mDepth);
+            reader.get(decal.mParallaxScale);
+            reader.get(decal.mFlags);
+            std::uint8_t unused = 0;
+            reader.get(unused);
+            reader.get(decal.mParallaxPasses);
+            reader.get(unused);
+        }
+        else
+            throw std::runtime_error("ESM4::TextureSet::load - unsupported DODT layout");
 
-        reader.get(decal.mMinWidth);
-        reader.get(decal.mMaxWidth);
-        reader.get(decal.mMinHeight);
-        reader.get(decal.mMaxHeight);
-        reader.get(decal.mDepth);
-        reader.get(decal.mShininess);
-        reader.get(decal.mParallaxScale);
-        reader.get(decal.mParallaxPasses);
-        reader.get(decal.mFlags);
-        std::uint16_t unused = 0;
-        reader.get(unused);
-        for (std::uint8_t& channel : decal.mColor)
-            reader.get(channel);
-        std::uint8_t unusedColorByte = 0;
-        reader.get(unusedColorByte);
         decal.mPresent = true;
     }
 }
@@ -69,6 +90,11 @@ void ESM4::TextureSet::load(ESM4::Reader& reader)
         {
             case ESM::fourCC("EDID"):
                 reader.getZString(mEditorId);
+                break;
+            case ESM::fourCC("DEFL"): // FO76 default layer
+            case ESM::fourCC("FULL"): // FO76 display name
+                // Texture sets do not currently use these fields at render time.
+                reader.skipSubRecordData();
                 break;
             case ESM::fourCC("FLTR"): // FO76
                 reader.getZString(mFilter);

@@ -481,17 +481,35 @@ namespace Bsa
                 header.pitchOrLinearSize = fileRecord.width * fileRecord.height;
                 break;
             }
+            // The legacy DDS FourCC formats do not encode a colour-space flag.  The BC1/2/3
+            // sRGB variants use the exact same compressed block layout as their UNORM peers,
+            // though, and OpenSceneGraph's DDS reader supports the legacy forms.  Emit those
+            // forms so FO76 archive textures remain their original pixels instead of becoming
+            // the renderer's missing-texture image.
             case DXGI_FORMAT_BC1_UNORM_SRGB:
             {
                 header.flags = header.flags | DDSD_LINEARSIZE;
                 header.ddspf.flags = DDPF_FOURCC;
-                header.ddspf.fourCC = ESM::fourCC("DX10");
-                header.dxgiFormat = int32_t(fileRecord.DXGIFormat);
+                header.ddspf.fourCC = ESM::fourCC("DXT1");
                 header.pitchOrLinearSize = fileRecord.width * fileRecord.height / 2;
                 break;
             }
             case DXGI_FORMAT_BC2_UNORM_SRGB:
+            {
+                header.flags = header.flags | DDSD_LINEARSIZE;
+                header.ddspf.flags = DDPF_FOURCC;
+                header.ddspf.fourCC = ESM::fourCC("DXT3");
+                header.pitchOrLinearSize = fileRecord.width * fileRecord.height;
+                break;
+            }
             case DXGI_FORMAT_BC3_UNORM_SRGB:
+            {
+                header.flags = header.flags | DDSD_LINEARSIZE;
+                header.ddspf.flags = DDPF_FOURCC;
+                header.ddspf.fourCC = ESM::fourCC("DXT5");
+                header.pitchOrLinearSize = fileRecord.width * fileRecord.height;
+                break;
+            }
             case DXGI_FORMAT_BC6H_UF16:
             case DXGI_FORMAT_BC6H_SF16:
             case DXGI_FORMAT_BC7_UNORM:

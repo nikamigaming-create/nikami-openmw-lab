@@ -4471,6 +4471,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int proofPinnedStagedActorLastLogFrame = -1000000;
     static std::size_t proofActorBatchIndex = static_cast<std::size_t>(-1);
     static MWWorld::Ptr proofActorBatchPrevious;
+    // A single-target proof run does not populate the batch slot. Retain its
+    // isolated base spawn independently so repeated camera/screenshot checks
+    // keep inspecting the same actor rather than placing a new one each frame.
+    static MWWorld::Ptr proofForcedBaseSpawnActor;
+    static ESM::RefId proofForcedBaseSpawnBase;
     static bool proofActorBaseRosterExpanded = false;
     static int proofActorBatchSelectedFrame = -1;
     static std::size_t proofActorPoseBatchIndex = static_cast<std::size_t>(-1);
@@ -4658,6 +4663,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             || mWorld->getStore().get<ESM4::Creature>().search(targetRefId) != nullptr;
         const bool forceBaseSpawn = targetIsActorBase
             && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_FORCE_BASE_SPAWN");
+        if (forceBaseSpawn && !proofForcedBaseSpawnActor.isEmpty()
+            && proofForcedBaseSpawnBase == targetRefId
+            && proofForcedBaseSpawnActor.getRefData().isEnabled())
+        {
+            return proofForcedBaseSpawnActor;
+        }
         if (forceBaseSpawn && !proofActorBatchPrevious.isEmpty()
             && proofActorBatchPrevious.getCellRef().getRefId() == targetRefId)
         {
@@ -4853,6 +4864,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     ref.getPtr().getCellRef().setPosition(pos);
                     found = mWorld->placeObject(ref.getPtr(), store, pos);
                     found.getClass().adjustPosition(found, true);
+                    if (forceBaseSpawn && !found.isEmpty())
+                    {
+                        proofForcedBaseSpawnActor = found;
+                        proofForcedBaseSpawnBase = targetRefId;
+                    }
                     Log(Debug::Info) << "FNV/ESM4 proof: placed missing actor target \"" << value
                                      << "\" base=" << placementRefId.toDebugString() << " requestedBase="
                                      << targetRefId.toDebugString() << " pos=(" << pos.pos[0] << "," << pos.pos[1]
@@ -11896,7 +11912,7 @@ void OMW::Engine::prepareEngine()
 
     mWindowManager = std::make_unique<MWGui::WindowManager>(mWindow, mViewer, guiRoot, mResourceSystem.get(),
         mWorkQueue.get(), mCfgMgr.getLogPath(), mScriptConsoleMode, mTranslationDataStorage, mEncoding, mExportFonts,
-        Version::getOpenmwVersionDescription(), shadersSupported, mCfgMgr);
+        Version::getOpenmwVersionDescription(), shadersSupported, mCfgMgr, hasFalloutNvContent(mContentFiles));
     mEnvironment.setWindowManager(*mWindowManager);
 
     // ## VR_PATCH BEGIN
@@ -12043,7 +12059,10 @@ void OMW::Engine::prepareEngine()
     Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine dialogue ready";
 
     if (mGeneratedFiles != nullptr)
+    {
         mLuaManager->compileObScripts(*mVFS, *mGeneratedFiles);
+        mLuaManager->compileMwseCompatMods(*mVFS, *mGeneratedFiles);
+    }
 
     // scripts
     if (mCompileAll)

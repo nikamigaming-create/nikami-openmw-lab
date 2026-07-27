@@ -166,6 +166,12 @@ namespace ESM4
                 return 200;
             return std::atoi(value);
         }
+
+        bool fallout76UnknownSubrecordToleranceEnabled()
+        {
+            const char* value = std::getenv("OPENMW_FO76_ESM4_TOLERANT");
+            return value != nullptr && value[0] == '1';
+        }
     }
 
     ReaderContext::ReaderContext()
@@ -635,14 +641,19 @@ namespace ESM4
 
     bool Reader::skipUnknownStarfieldSubRecordData(std::string_view owner)
     {
-        if (esmVersionF() < 0.959f || esmVersionF() > 0.961f)
+        const bool isStarfield = esmVersionF() >= 0.959f && esmVersionF() <= 0.961f;
+        // FO76 uses a 266.0 HEDR version. Keep its tolerant path opt-in so
+        // normal FO76 loading remains strict outside the asset-viewer probe.
+        const bool isFallout76 = esmVersionF() == 266.f && fallout76UnknownSubrecordToleranceEnabled();
+        if (!isStarfield && !isFallout76)
             return false;
 
         static int skipped = 0;
         const int logLimit = starfieldUnknownSkipLogLimit();
+        const char* game = isFallout76 ? "FO76" : "Starfield";
         if (logLimit < 0 || skipped < logLimit)
         {
-            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: owner=" << owner
+            Log(Debug::Warning) << "ESM4 " << game << " tolerant skip: owner=" << owner
                                 << " record=" << ESM::printName(mCtx.recordHeader.record.typeId)
                                 << " id=" << mCtx.recordHeader.record.getFormId().toString()
                                 << " subrecord=" << ESM::printName(mCtx.subRecordHeader.typeId)
@@ -650,7 +661,7 @@ namespace ESM4
         }
         else if (skipped == logLimit)
         {
-            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: further unknown subrecord logs suppressed; set "
+            Log(Debug::Warning) << "ESM4 " << game << " tolerant skip: further unknown subrecord logs suppressed; set "
                                    "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
         }
         ++skipped;
