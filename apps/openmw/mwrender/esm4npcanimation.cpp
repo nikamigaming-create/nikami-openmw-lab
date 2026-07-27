@@ -9968,10 +9968,21 @@ namespace MWRender
         }
         bool staticizedHeadPartRig = false;
         bool staticizedBareHandPartRig = false;
+        // Fallout 76 creature meshes use the FO4 rig format, but their bones are not yet mapped into the
+        // viewer's character skeleton.  For a static world-viewer presentation, retain the authored source
+        // geometry and material state while bypassing only that unavailable skinning pass.  Mounting the
+        // resulting mesh in actor space preserves the NIF's bind-pose placement rather than inheriting an
+        // arbitrary partial skeleton bone.
+        const bool staticizeFo76RiggedPart = traitsRecord != nullptr && traitsRecord->mIsFO4
+            && rigProbe.mRigGeometryCount > 0
+            && worldViewerEnvEnabled("OPENMW_FO76_STATICIZE_RIGGED_NPC_PARTS");
+        if (staticizeFo76RiggedPart)
+            attachNode = mObjectRoot.get();
         const bool staticizeTes5Hair = tes5StaticPart && isFalloutScalpHairModel(correctedModel.value())
             && rigProbe.mRigGeometryCount > 0
             && worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_STATICIZE_TES5_HAIR");
         const bool wantsStaticizedHeadPartRig = staticizeTes5Hair
+            || staticizeFo76RiggedPart
             || (headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
                 && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HEAD_PARTS") != nullptr
                 && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr);
@@ -10052,7 +10063,8 @@ namespace MWRender
         osg::ref_ptr<osg::Node> attached;
         osg::Group* rigPartMaster = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
         if ((staticizedHeadPartRig || staticizedBareHandPartRig)
-            && (staticizeTes5Hair || std::getenv("OPENMW_FNV_DIRECT_ATTACH_STATICIZED_RIG_PARTS") != nullptr))
+            && (staticizeTes5Hair || staticizeFo76RiggedPart
+                || std::getenv("OPENMW_FNV_DIRECT_ATTACH_STATICIZED_RIG_PARTS") != nullptr))
         {
             attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
             attachNode->addChild(attached);

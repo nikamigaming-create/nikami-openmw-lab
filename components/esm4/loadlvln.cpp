@@ -49,25 +49,53 @@ void ESM4::LevelledNpc::load(ESM4::Reader& reader)
                 reader.getZString(mModel);
                 break;
             case ESM::fourCC("LLCT"):
-                reader.get(mListCount);
+                if (subHdr.dataSize == sizeof(mListCount))
+                    reader.get(mListCount);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("LVLD"):
-                reader.get(mChanceNone);
+                // FO76 commonly writes LVLD as an empty marker.  Do not read
+                // past it into the following subrecord header.
+                if (subHdr.dataSize == sizeof(mChanceNone))
+                    reader.get(mChanceNone);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("LVLF"):
-                reader.get(mLvlActorFlags);
+                if (subHdr.dataSize == sizeof(mLvlActorFlags))
+                    reader.get(mLvlActorFlags);
+                else if (subHdr.dataSize == sizeof(std::uint16_t))
+                {
+                    // FO76 stores this flag field as a uint16.  The viewer
+                    // currently exposes only the legacy low-byte flags.
+                    std::uint16_t flags = 0;
+                    reader.get(flags);
+                    mLvlActorFlags = static_cast<std::uint8_t>(flags);
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("LVLO"):
             {
-                LVLO lvlo;
+                LVLO lvlo{};
                 if (subHdr.dataSize != 12)
                 {
-                    if (subHdr.dataSize == 8)
+                    if (subHdr.dataSize == 4)
+                    {
+                        // FO76 form-version 174+ entries contain only the
+                        // referenced NPC/list. The viewer has no authored
+                        // level/count data to apply, so use their neutral
+                        // defaults rather than rejecting the whole ESM.
+                        reader.get(lvlo.item);
+                        lvlo.level = 1;
+                        lvlo.count = 1;
+                    }
+                    else if (subHdr.dataSize == 8)
                     {
                         reader.get(lvlo.level);
                         reader.get(lvlo.item);
                         reader.get(lvlo.count);
-                        break;
                     }
                     else
                         throw std::runtime_error("ESM4::LVLN::load - " + mEditorId + " LVLO size error");

@@ -775,25 +775,75 @@ namespace MWWorld
             }
         }
 
+        static bool isFallout76ViewerUsefulRecord(ESM4::RecordTypes recordType)
+        {
+            // The opt-in FO76 viewer is an asset/cell probe, not a gameplay
+            // implementation.  Keep the records required to resolve and
+            // render placed world geometry, while skipping unrelated schemas
+            // whose newer layouts can otherwise desynchronise the ESM reader.
+            switch (recordType)
+            {
+                case ESM4::REC_ACHR:
+                case ESM4::REC_ACRE:
+                case ESM4::REC_ACTI:
+                case ESM4::REC_ARMA:
+                case ESM4::REC_ARMO:
+                case ESM4::REC_CELL:
+                case ESM4::REC_CONT:
+                case ESM4::REC_CREA:
+                case ESM4::REC_DOOR:
+                case ESM4::REC_FLOR:
+                case ESM4::REC_FURN:
+                case ESM4::REC_GRAS:
+                case ESM4::REC_LAND:
+                case ESM4::REC_LIGH:
+                case ESM4::REC_LTEX:
+                // NPC template chains in FO76 frequently pass through LVLN.
+                // Keep those lists in the viewer store so the terminal NPC can
+                // resolve its authored race/model instead of becoming a marker.
+                case ESM4::REC_LVLI:
+                case ESM4::REC_LVLN:
+                case ESM4::REC_MSTT:
+                case ESM4::REC_NPC_:
+                case ESM4::REC_OTFT:
+                case ESM4::REC_RACE:
+                case ESM4::REC_REFR:
+                case ESM4::REC_SCOL:
+                case ESM4::REC_STAT:
+                case ESM4::REC_TREE:
+                case ESM4::REC_TXST:
+                case ESM4::REC_WRLD:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         static bool shouldSkipStarfieldViewerRecord(ESM4::Reader& reader, ESM4::RecordTypes recordType)
         {
-            if (reader.esmVersionF() < 0.959f || reader.esmVersionF() > 0.961f)
+            const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
+            const char* fo76Tolerance = std::getenv("OPENMW_FO76_ESM4_TOLERANT");
+            const bool isFallout76 = reader.esmVersionF() == 266.f && fo76Tolerance != nullptr && fo76Tolerance[0] == '1';
+            if (!isStarfield && !isFallout76)
                 return false;
 
-            if (isStarfieldViewerUsefulRecord(recordType))
+            if ((isStarfield && isStarfieldViewerUsefulRecord(recordType))
+                || (isFallout76 && isFallout76ViewerUsefulRecord(recordType)))
                 return false;
 
             static int logged = 0;
             if (logged < 80)
             {
-                Log(Debug::Info) << "World viewer: Starfield coarse scan skipped record type="
+                Log(Debug::Info) << "World viewer: " << (isFallout76 ? "FO76" : "Starfield")
+                                 << " coarse scan skipped record type="
                                  << ESM::printName(reader.hdr().record.typeId)
                                  << " id=" << reader.hdr().record.getFormId().toString();
                 ++logged;
             }
             else if (logged == 80)
             {
-                Log(Debug::Info) << "World viewer: further Starfield coarse scan skipped-record logs suppressed";
+                Log(Debug::Info) << "World viewer: further " << (isFallout76 ? "FO76" : "Starfield")
+                                 << " coarse scan skipped-record logs suppressed";
                 ++logged;
             }
             return true;
