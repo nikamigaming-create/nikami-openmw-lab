@@ -93,7 +93,7 @@ namespace MWRender
             return osg::Vec3d();
         osg::Matrix worldMat = osg::computeLocalToWorld(nodepaths[0]);
         osg::Vec3d res = worldMat.getTrans();
-        if (mMode != Mode::FirstPerson)
+        if (mMode != Mode::FirstPerson || mFirstPersonUsesTrackingRoot)
             res.z() += mHeight * mHeightScale;
         return res;
     }
@@ -347,12 +347,21 @@ namespace MWRender
     {
         if (mTrackingPtr.isEmpty())
             return;
+
+        mFirstPersonUsesTrackingRoot = false;
         if (mMode == Mode::FirstPerson)
         {
             mAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
-            mTrackingNode = mAnimation->getNode("Camera");
+            mTrackingNode = mAnimation->getNode("Camera1st");
+            if (!mTrackingNode)
+                mTrackingNode = mAnimation->getNode("Camera");
             if (!mTrackingNode)
                 mTrackingNode = mAnimation->getNode("Head");
+            if (!mTrackingNode)
+            {
+                mTrackingNode = mTrackingPtr.getRefData().getBaseNode();
+                mFirstPersonUsesTrackingRoot = mTrackingNode != nullptr;
+            }
             mHeightScale = 1.f;
         }
         else

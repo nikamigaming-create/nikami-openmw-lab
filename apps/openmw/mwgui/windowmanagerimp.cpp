@@ -3,9 +3,15 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <thread>
 
+#include <osgViewer/ViewerEventHandlers>
 #include <osgViewer/Viewer>
 
 #include <MyGUI_ClipboardManager.h>
@@ -145,6 +151,117 @@ namespace MWGui
                     return nullptr;
             }
         }
+
+        bool equalNoCase(std::string_view left, std::string_view right)
+        {
+            if (left.size() != right.size())
+                return false;
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                const auto lhs = static_cast<unsigned char>(left[index]);
+                const auto rhs = static_cast<unsigned char>(right[index]);
+                if (std::tolower(lhs) != std::tolower(rhs))
+                    return false;
+            }
+            return true;
+        }
+
+        double readPositiveVideoCaptureSeconds(const char* variable)
+        {
+            const char* const text = std::getenv(variable);
+            if (text == nullptr || *text == '\0')
+                return 0.0;
+            char* end = nullptr;
+            const double value = std::strtod(text, &end);
+            return end != text && end != nullptr && *end == '\0' && std::isfinite(value) && value > 0.0 ? value : 0.0;
+        }
+
+        std::chrono::milliseconds readNativeVideoCaptureInterval()
+        {
+            const char* const text = std::getenv("OPENMW_CAPTURE_VIDEO_NATIVE_FRAME_INTERVAL_MS");
+            if (text == nullptr || *text == '\0')
+                return {};
+            char* end = nullptr;
+            const long value = std::strtol(text, &end, 10);
+            if (end == text || end == nullptr || *end != '\0' || value < 50 || value > 1000)
+                return {};
+            return std::chrono::milliseconds(value);
+        }
+
+        std::optional<float> authoredDefaultChoiceDelaySeconds()
+        {
+            const char* const text = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS");
+            if (text == nullptr || *text == '\0')
+                return std::nullopt;
+            char* end = nullptr;
+            const float value = std::strtof(text, &end);
+            if (end == text || end == nullptr || *end != '\0' || !std::isfinite(value))
+                return std::nullopt;
+            return std::max(0.f, value);
+        }
+
+        bool queueNativeVideoFrame(osgViewer::Viewer& viewer)
+        {
+            for (const osg::ref_ptr<osgGA::EventHandler>& handler : viewer.getEventHandlers())
+            {
+                if (auto* const capture = dynamic_cast<osgViewer::ScreenCaptureHandler*>(handler.get()))
+                {
+                    capture->setFramesToCapture(1);
+                    capture->captureNextFrame(viewer);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool isCaptureVideoTarget(std::string_view asset)
+        {
+            const char* const configuredAsset = std::getenv("OPENMW_CAPTURE_VIDEO_MATCH");
+            return configuredAsset != nullptr && *configuredAsset != '\0' && equalNoCase(asset, configuredAsset);
+        }
+
+        bool writeVideoCaptureReadyMarker(std::string_view asset)
+        {
+            const char* const markerPath = std::getenv("OPENMW_CAPTURE_VIDEO_READY_PATH");
+            if (markerPath == nullptr || *markerPath == '\0')
+                return false;
+
+            std::ofstream marker(markerPath, std::ios::trunc);
+            if (!marker)
+            {
+                Log(Debug::Warning) << "OpenNV capture: unable to write video-ready marker path=\"" << markerPath
+                                    << "\"";
+                return false;
+            }
+            marker << "asset=" << asset << '\n';
+            marker.flush();
+            Log(Debug::Info) << "OpenNV capture: video gate ready asset=\"" << asset << "\"";
+            return true;
+        }
+
+        void waitForVideoCaptureGate(std::string_view asset)
+        {
+            const char* const goPath = std::getenv("OPENMW_CAPTURE_VIDEO_GO_PATH");
+            if (goPath == nullptr || *goPath == '\0')
+                return;
+
+            const double timeout = readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_GATE_TIMEOUT_SECONDS");
+            const auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(static_cast<long long>(std::max(1.0, timeout > 0.0 ? timeout : 30.0) * 1000.0));
+            std::error_code error;
+            while (std::chrono::steady_clock::now() < deadline
+                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            {
+                if (std::filesystem::exists(goPath, error))
+                {
+                    Log(Debug::Info) << "OpenNV capture: video gate opened asset=\"" << asset << "\"";
+                    return;
+                }
+                error.clear();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            Log(Debug::Warning) << "OpenNV capture: timed out waiting for video gate asset=\"" << asset << "\"";
+        }
     }
 
     WindowManager::WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
@@ -213,6 +330,22 @@ namespace MWGui
         constexpr VFS::Path::NormalizedView resourcePath("mygui");
         mGuiPlatform = std::make_unique<MyGUIPlatform::Platform>(viewer, guiRoot, resourceSystem->getImageManager(),
             resourceSystem->getVFS(), mScalingFactor, resourcePath, logpath / "MyGUI.log");
+
+        // Fallout/TTW data intentionally does not include the Morrowind-only
+        // MyGUI menu, chrome, and cursor sheets referenced by OpenMW's shared
+        // layouts. Without a renderer-side fallback each missing image turns
+        // into a broken menu or cursor surface. Keep authored textures when
+        // present and enable the generated layer only for Fallout content.
+        const VFS::Manager* vfs = resourceSystem->getVFS();
+        const bool falloutContent = vfs != nullptr
+            && (vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+                || vfs->exists(VFS::Path::Normalized("fallout3.esm")));
+        const bool missingSharedChrome
+            = vfs != nullptr && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
+        const bool useMissingTextureFallback = falloutContent && missingSharedChrome;
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useMissingTextureFallback);
+        if (useMissingTextureFallback)
+            Log(Debug::Info) << "Fallout UI: enabling generated menu and cursor texture fallbacks";
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -782,6 +915,7 @@ namespace MWGui
         std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus)
     {
         mMessageBoxManager->createInteractiveMessageBox(message, buttons, block, defaultFocus);
+        mAuthoredDefaultChoiceDelay = authoredDefaultChoiceDelaySeconds().value_or(-1.f);
         updateVisible();
 
         if (block)
@@ -994,6 +1128,23 @@ namespace MWGui
 
     void WindowManager::update(float frameDuration)
     {
+        if (mPostVideoNativeCaptureRemaining > 0.f && mViewer != nullptr)
+        {
+            mPostVideoNativeCaptureRemaining -= std::max(0.f, frameDuration);
+            mPostVideoNativeCaptureUntilNextFrame -= std::max(0.f, frameDuration);
+            if (mPostVideoNativeCaptureUntilNextFrame <= 0.f)
+            {
+                queueNativeVideoFrame(*mViewer);
+                mPostVideoNativeCaptureUntilNextFrame = mPostVideoNativeCaptureInterval;
+            }
+            if (mPostVideoNativeCaptureRemaining <= 0.f)
+            {
+                Log(Debug::Info) << "OpenNV capture: post-video native scene frames complete";
+                mPostVideoNativeCaptureRemaining = 0.f;
+                mPostVideoNativeCaptureUntilNextFrame = -1.f;
+            }
+        }
+
         handleScheduledMessageBoxes();
 
         bool gameRunning
@@ -1041,6 +1192,22 @@ namespace MWGui
 
         if (mMessageBoxManager)
             mMessageBoxManager->onFrame(frameDuration);
+
+        if (mAuthoredDefaultChoiceDelay >= 0.f)
+        {
+            if (!mMessageBoxManager || !mMessageBoxManager->isInteractiveMessageBox())
+                mAuthoredDefaultChoiceDelay = -1.f;
+            else
+            {
+                mAuthoredDefaultChoiceDelay -= std::max(0.f, frameDuration);
+                if (mAuthoredDefaultChoiceDelay <= 0.f)
+                {
+                    mMessageBoxManager->getInteractiveMessageBox()->closeDefault();
+                    mAuthoredDefaultChoiceDelay = -1.f;
+                    Log(Debug::Info) << "OpenNV authored automation: selected default interactive message button";
+                }
+            }
+        }
 
         mToolTips->onFrame(frameDuration);
 
@@ -1383,6 +1550,26 @@ namespace MWGui
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
+    }
+
+    void WindowManager::showAuthoredRaceMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Race))
+            return;
+
+        mCharGen->beginAuthoredRaceMenu();
+        pushGuiMode(GM_Race);
+        Log(Debug::Info) << "FNV/ESM4 behavior: ShowRaceMenu opened authored character appearance menu";
+    }
+
+    void WindowManager::showAuthoredNameMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Name))
+            return;
+
+        mCharGen->beginAuthoredNameMenu();
+        pushGuiMode(GM_Name);
+        Log(Debug::Info) << "FNV/ESM4 behavior: GetPlayerName opened authored name menu";
     }
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg)
@@ -2077,8 +2264,34 @@ namespace MWGui
 
         mVideoBackground->setVisible(true);
 
-        bool cursorWasVisible = mCursorVisible;
+        const bool hudWasVisible = mHudEnabled;
+        const bool cursorWasVisible = mCursorVisible;
+        const bool cursorWasActive = mCursorActive;
+        setHudVisibility(false);
+        showCrosshair(false);
         setCursorVisible(false);
+        setCursorActive(false);
+        Log(Debug::Info) << "OpenNV UI: gameplay overlay suppression=1";
+
+        const bool captureVideoTarget = isCaptureVideoTarget(name);
+        const double captureVideoLimitSeconds = captureVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_MAX_SECONDS")
+            : 0.0;
+        const std::chrono::milliseconds nativeCaptureInterval = captureVideoTarget
+            ? readNativeVideoCaptureInterval()
+            : std::chrono::milliseconds{};
+        const double postVideoCaptureSeconds = captureVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_POST_SCENE_SECONDS")
+            : 0.0;
+        if (captureVideoTarget && writeVideoCaptureReadyMarker(name))
+        {
+            mVideoWidget->pause();
+            waitForVideoCaptureGate(name);
+            mVideoWidget->resume();
+        }
+        const auto captureVideoStart = std::chrono::steady_clock::now();
+        auto nextNativeCapture = captureVideoStart;
+        std::size_t queuedNativeFrames = 0;
 
         if (overrideSounds && mVideoWidget->hasAudioStream())
             MWBase::Environment::get().getSoundManager()->pauseSounds(
@@ -2088,6 +2301,16 @@ namespace MWGui
             = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
         while (mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
         {
+            if (captureVideoLimitSeconds > 0.0
+                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
+                    >= captureVideoLimitSeconds)
+            {
+                Log(Debug::Info) << "OpenNV capture: limiting authored video asset=\"" << name
+                                 << "\" seconds=" << captureVideoLimitSeconds;
+                mVideoWidget->stop();
+                break;
+            }
+
             const float dt
                 = std::chrono::duration_cast<std::chrono::duration<float>>(frameRateLimiter.getLastFrameDuration())
                       .count();
@@ -2104,6 +2327,14 @@ namespace MWGui
                 if (mVideoWidget->isPaused())
                     mVideoWidget->resume();
 
+                const auto now = std::chrono::steady_clock::now();
+                if (nativeCaptureInterval.count() > 0 && now >= nextNativeCapture)
+                {
+                    if (queueNativeVideoFrame(*mViewer))
+                        ++queuedNativeFrames;
+                    nextNativeCapture = now + nativeCaptureInterval;
+                }
+
                 mViewer->eventTraversal();
                 mViewer->updateTraversal();
                 mViewer->renderingTraversals();
@@ -2117,16 +2348,33 @@ namespace MWGui
         }
         mVideoWidget->stop();
 
+        if (captureVideoTarget && nativeCaptureInterval.count() > 0)
+        {
+            Log(Debug::Info) << "OpenNV capture: queued native source frames asset=\"" << name << "\" count="
+                             << queuedNativeFrames << " intervalMilliseconds=" << nativeCaptureInterval.count();
+        }
+
         MWBase::Environment::get().getSoundManager()->resumeSounds(MWSound::VideoPlayback);
 
         setKeyFocusWidget(oldKeyFocus);
 
+        setHudVisibility(hudWasVisible);
+        showCrosshair(hudWasVisible);
         setCursorVisible(cursorWasVisible);
+        setCursorActive(cursorWasActive);
 
         // Restore normal rendering
         updateVisible();
 
         mVideoBackground->setVisible(false);
+        if (captureVideoTarget && nativeCaptureInterval.count() > 0 && postVideoCaptureSeconds > 0.0)
+        {
+            mPostVideoNativeCaptureRemaining = static_cast<float>(postVideoCaptureSeconds);
+            mPostVideoNativeCaptureUntilNextFrame = 0.f;
+            mPostVideoNativeCaptureInterval = static_cast<float>(nativeCaptureInterval.count()) / 1000.f;
+            Log(Debug::Info) << "OpenNV capture: post-video native scene frame capture seconds="
+                             << postVideoCaptureSeconds << " intervalMilliseconds=" << nativeCaptureInterval.count();
+        }
     }
 
     void WindowManager::sizeVideo(int screenWidth, int screenHeight)

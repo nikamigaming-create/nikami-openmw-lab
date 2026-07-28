@@ -207,6 +207,7 @@ add_component_dir (esm4
     grouptype
     inventory
     lighting
+    lip
     loadachr
     loadacti
     loadalch
@@ -217,10 +218,12 @@ add_component_dir (esm4
     loadarma
     loadarmo
     loadaspc
+    loadavif
     loadbook
     loadbptd
     loadcell
     loadclas
+    loadclmt
     loadclfm
     loadclot
     loadcont
@@ -229,6 +232,7 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+    loadfact
     loadflor
     loadflst
     loadfurn
@@ -252,6 +256,7 @@ add_component_dir (esm4
     loadlvli
     loadlvln
     loadmato
+    loadmesg
     loadmisc
     loadmset
     loadmstt
@@ -262,11 +267,15 @@ add_component_dir (esm4
     loadnpc
     loadotft
     loadpack
+    loadperk
     loadpgrd
     loadpgre
     loadpwat
+    loadproj
     loadqust
     loadrace
+    loadrcct
+    loadrcpe
     loadrefr
     loadregn
     loadroad
@@ -285,6 +294,10 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+    loadwthr
+    loadimgs
+    loadimad
+    imagespacecomposition
     loadwrld
     magiceffectid
     reader

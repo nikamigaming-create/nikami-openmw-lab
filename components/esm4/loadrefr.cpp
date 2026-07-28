@@ -33,6 +33,7 @@
 
 void ESM4::Reference::load(ESM4::Reader& reader)
 {
+    const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     mId = reader.hdr().record.getFormId();
     reader.adjustFormId(mId);
     mFlags = reader.hdr().record.flags;
@@ -212,6 +213,13 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XMRK"):
                 mIsMapMarker = true;
                 break; // all have mBaseObj 0x00000010 "MapMarker"
+            case ESM::fourCC("ONAM"):
+                // Fallout 3 / New Vegas use a zero-sized ONAM subrecord on
+                // door references to mark their authored initial state as
+                // open.  It must survive loading so the live door can remove
+                // its closed collision before any quest package uses it.
+                mOpenByDefault = true;
+                break;
             case ESM::fourCC("FNAM"):
             {
                 // std::cout << "REFR " << ESM::printName(subHdr.typeId) << " skipping..."
@@ -284,7 +292,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("XPCI"): // formId
             case ESM::fourCC("XLCM"):
-            case ESM::fourCC("ONAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("XPRM"):
             case ESM::fourCC("INAM"):
@@ -364,8 +371,21 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadrefr"))
+                    break;
                 throw std::runtime_error("ESM4::REFR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
+    }
+    if (isStarfield)
+    {
+        // Starfield stores exterior placement coordinates in meter-like units. Its 128-unit cells map to the
+        // 4096-unit ESM4 cell used by OpenMW, so placed geometry and door destinations need the same 32x basis
+        // conversion as Starfield's external mesh vertices.
+        constexpr float starfieldWorldScale = 32.f;
+        for (float& value : mPos.pos)
+            value *= starfieldWorldScale;
+        for (float& value : mDoor.destPos.pos)
+            value *= starfieldWorldScale;
     }
     // if (mFormId == 0x0016B74B) // base is TACT vCasinoUltraLuxeRadio in cell ULCasino
     // std::cout << "REFR SCRO " << formIdToString(sid) << std::endl;

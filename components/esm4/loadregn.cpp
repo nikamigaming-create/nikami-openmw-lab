@@ -27,6 +27,7 @@
 #include "loadregn.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 #include "reader.hpp"
 //#include "writer.hpp"
@@ -35,6 +36,8 @@ void ESM4::Region::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+    std::size_t activeWeatherBlock = static_cast<std::size_t>(-1);
+    std::size_t activeSoundBlock = static_cast<std::size_t>(-1);
 
     while (reader.getSubRecordHeader())
     {
@@ -73,6 +76,20 @@ void ESM4::Region::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("RDAT"):
                 reader.get(mData);
+                if (mData.type == RDAT_Weather)
+                {
+                    mWeather.push_back({ mData, {} });
+                    activeWeatherBlock = mWeather.size() - 1;
+                }
+                else
+                    activeWeatherBlock = static_cast<std::size_t>(-1);
+                if (mData.type == RDAT_Sound)
+                {
+                    mSoundBlocks.push_back({ mData, {} });
+                    activeSoundBlock = mSoundBlocks.size() - 1;
+                }
+                else
+                    activeSoundBlock = static_cast<std::size_t>(-1);
                 break;
             case ESM::fourCC("RDMP"):
             {
@@ -107,16 +124,56 @@ void ESM4::Region::load(ESM4::Reader& reader)
                     throw std::runtime_error(
                         "ESM4::REGN::load - unexpected data type " + ESM::printName(subHdr.typeId));
 
-                std::size_t numSounds = subHdr.dataSize / sizeof(RegionSound);
-                mSounds.resize(numSounds);
-                for (std::size_t i = 0; i < numSounds; ++i)
-                    reader.get(mSounds.at(i));
+                constexpr std::size_t entrySize
+                    = sizeof(ESM::FormId32) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
+                if (activeSoundBlock == static_cast<std::size_t>(-1) || subHdr.dataSize % entrySize != 0)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
 
+                RegionSoundBlock& block = mSoundBlocks.at(activeSoundBlock);
+                const std::size_t numSounds = subHdr.dataSize / entrySize;
+                block.mEntries.reserve(block.mEntries.size() + numSounds);
+                mSounds.reserve(mSounds.size() + numSounds);
+                for (std::size_t i = 0; i < numSounds; ++i)
+                {
+                    RegionSound value;
+                    reader.getFormId(value.mSound);
+                    reader.get(value.mFlags);
+                    reader.get(value.mChance);
+                    block.mEntries.push_back(value);
+                    mSounds.push_back(std::move(value));
+                }
+
+                break;
+            }
+            case ESM::fourCC("RDWT"):
+            {
+                constexpr std::size_t entrySize
+                    = sizeof(ESM::FormId32) + sizeof(std::uint32_t) + sizeof(ESM::FormId32);
+                if (activeWeatherBlock == static_cast<std::size_t>(-1)
+                    || subHdr.dataSize % entrySize != 0)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+
+                RegionWeatherBlock& block = mWeather.at(activeWeatherBlock);
+                const std::size_t count = subHdr.dataSize / entrySize;
+                block.mEntries.reserve(block.mEntries.size() + count);
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    RegionWeather value;
+                    reader.getFormId(value.mWeather);
+                    reader.get(value.mChance);
+                    reader.getFormId(value.mGlobal);
+                    block.mEntries.push_back(std::move(value));
+                }
                 break;
             }
             case ESM::fourCC("RDGS"): // Only in Oblivion? (ToddTestRegion1) // formId
             case ESM::fourCC("RDSA"):
-            case ESM::fourCC("RDWT"): // formId
             case ESM::fourCC("RDOT"): // formId
             case ESM::fourCC("RDID"): // FONV
             case ESM::fourCC("RDSB"): // FONV
@@ -141,6 +198,8 @@ void ESM4::Region::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadregn"))
+                    break;
                 throw std::runtime_error("ESM4::REGN::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

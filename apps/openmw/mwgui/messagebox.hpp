@@ -31,6 +31,7 @@ namespace MWGui
 
         std::size_t getMessagesCount();
 
+        InteractiveMessageBox* getInteractiveMessageBox() { return mInterMessageBoxe.get(); }
         const InteractiveMessageBox* getInteractiveMessageBox() const { return mInterMessageBoxe.get(); }
 
         /// Remove all message boxes
@@ -96,6 +97,11 @@ namespace MWGui
             const std::vector<std::string>& buttons, bool immediate, size_t defaultFocus);
         void mousePressed(MyGUI::Widget* widget);
         int readPressedButton();
+
+        // Invokes the same UI callback as a button press. Used only by the
+        // engine's opt-in unattended capture path, never by host input.
+        void closeButton(std::size_t buttonIndex);
+        void closeDefault();
 
         MyGUI::Widget* getDefaultKeyFocus() override;
 

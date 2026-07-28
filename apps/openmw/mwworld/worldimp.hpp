@@ -13,7 +13,9 @@
 #include "../mwbase/world.hpp"
 
 #include "contentloader.hpp"
+#include "esm4questruntime.hpp"
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "globals.hpp"
 #include "groundcoverstore.hpp"
 #include "localscripts.hpp"
@@ -92,6 +94,8 @@ namespace MWWorld
         GroundcoverStore mGroundcoverStore;
         LocalScripts mLocalScripts;
         MWWorld::Globals mGlobalVariables;
+        MWWorld::ESM4QuestRuntime mESM4QuestRuntime;
+        MWWorld::FalloutPlayerRuntimeState mFalloutPlayerRuntimeState;
         Misc::Rng::Generator mPrng;
         WorldModel mWorldModel;
         std::vector<int> mESMVersions; // the versions of esm files
@@ -240,6 +244,21 @@ namespace MWWorld
         MWWorld::ESMStore& getStore() override { return mStore; }
 
         const MWWorld::ESMStore& getStore() const override { return mStore; }
+
+        MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() override { return mESM4QuestRuntime; }
+
+        const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
+
+        const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
+        {
+            return mFalloutPlayerRuntimeState;
+        }
+
+        bool setFalloutPlayerSpecial(const std::array<float, 7>& values) override
+        {
+            return mFalloutPlayerRuntimeState.setCurrentSpecial(values)
+                == MWWorld::FalloutActorValueMutationResult::Applied;
+        }
 
         const std::vector<int>& getESMVersions() const override;
 

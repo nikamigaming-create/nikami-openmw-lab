@@ -33,6 +33,7 @@
 
 void ESM4::ActorCharacter::load(ESM4::Reader& reader)
 {
+    const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
     mParent = reader.currCell();
@@ -132,8 +133,16 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadachr"))
+                    break;
                 throw std::runtime_error("ESM4 ACHR/ACRE load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
+    }
+    if (isStarfield)
+    {
+        constexpr float starfieldWorldScale = 32.f;
+        for (float& value : mPos.pos)
+            value *= starfieldWorldScale;
     }
 }
 

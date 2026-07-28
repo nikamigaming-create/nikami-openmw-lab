@@ -228,7 +228,15 @@ int runApplication(int argc, char* argv[])
         if (!Misc::checkRequiredOSGPluginsArePresent())
             return 1;
 
-        engine->go();
+        try
+        {
+            engine->go();
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Error) << "OpenNV startup failure: " << e.what();
+            throw;
+        }
     }
 
     return 0;

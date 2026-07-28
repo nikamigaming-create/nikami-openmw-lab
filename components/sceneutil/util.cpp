@@ -16,6 +16,16 @@
 #include <components/sceneutil/texturetype.hpp>
 #include <components/vfs/pathutil.hpp>
 
+// OpenSceneGraph's Windows GL header does not expose the sRGB S3TC tokens in
+// every supported dependency build even though the formats are valid core
+// constants. Keep the switch below portable across those OSG packages.
+#ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
+#define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT 0x8C4D
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT 0x8C4E
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#endif
+
 namespace SceneUtil
 {
     namespace

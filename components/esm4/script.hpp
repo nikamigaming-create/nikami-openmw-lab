@@ -29,8 +29,12 @@
 #ifndef ESM4_SCRIPT_H
 #define ESM4_SCRIPT_H
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <components/esm/defs.hpp>
@@ -38,6 +42,8 @@
 
 namespace ESM4
 {
+    class Reader;
+
     enum EmotionType
     {
         EMO_Neutral = 0,
@@ -325,22 +331,24 @@ namespace ESM4
         std::uint32_t emoType; // EmotionType
         std::int32_t emoValue;
         std::uint32_t unknown1;
-        std::uint32_t responseNo; // 1 byte + padding
+        std::uint8_t responseNo;
+        std::uint8_t responsePadding[3];
         // below FO3/FONV
         ESM::FormId32 sound; // when 20 bytes usually 0 but there are exceptions (FO3 INFO FormId = 0x0002241f)
-        std::uint32_t flags; // 1 byte + padding (0x01 = use emotion anim)
+        std::uint8_t flags; // 0x01 = use emotion anim
+        std::uint8_t flagsPadding[3];
     };
 
     struct TargetCondition
     {
-        std::uint32_t condition; // ConditionTypeAndFlag + padding
-        float comparison; // WARN: can be GLOB FormId if flag set
-        std::uint32_t functionIndex;
-        std::uint32_t param1; // FIXME: if formid needs modindex adjustment or not?
-        std::uint32_t param2;
-        std::uint32_t runOn; // 0 subject, 1 target, 2 reference, 3 combat target, 4 linked reference
+        std::uint32_t condition = 0; // ConditionTypeAndFlag + padding
+        float comparison = 0.f; // WARN: can be GLOB FormId if flag set
+        std::uint32_t functionIndex = 0;
+        std::uint32_t param1 = 0; // FIXME: if formid needs modindex adjustment or not?
+        std::uint32_t param2 = 0;
+        std::uint32_t runOn = 0; // 0 subject, 1 target, 2 reference, 3 combat target, 4 linked reference
         // below FO3/FONV/TES5
-        ESM::FormId32 reference;
+        ESM::FormId32 reference = 0;
     };
 
     struct ScriptHeader
@@ -369,13 +377,88 @@ namespace ESM4
 
     struct ScriptDefinition
     {
-        ScriptHeader scriptHeader;
+        ScriptHeader scriptHeader{};
         // SDCA compiled source
+        std::vector<std::uint8_t> compiledData;
         std::string scriptSource;
         std::vector<ScriptLocalVariableData> localVarData;
         std::vector<std::uint32_t> localRefVarIndex;
-        ESM::FormId globReference;
+        std::vector<ESM::FormId> references;
+
+        // Kept for source compatibility with the original loader. Retail scripts contain one
+        // SCRO per reference, so use references for execution and diagnostics.
+        ESM::FormId globReference{};
     };
+
+    enum class ScriptBytecodeDecodeError
+    {
+        None,
+        TruncatedInstructionHeader,
+        TruncatedReferenceInstructionHeader,
+        ArgumentPayloadOverrun,
+    };
+
+    struct ScriptBytecodeInstruction
+    {
+        std::size_t offset = 0;
+        std::uint16_t opcode = 0;
+        std::optional<std::uint16_t> callingReferenceIndex;
+        std::span<const std::uint8_t> arguments;
+
+        [[nodiscard]] bool isReferenceFunction() const { return callingReferenceIndex.has_value(); }
+    };
+
+    struct ScriptBytecodeDecodeResult
+    {
+        ScriptBytecodeDecodeError error = ScriptBytecodeDecodeError::None;
+        std::size_t bytesConsumed = 0;
+        std::size_t instructionCount = 0;
+
+        [[nodiscard]] bool succeeded() const { return error == ScriptBytecodeDecodeError::None; }
+    };
+
+    // Decode FO3/FNV SCDA line framing without interpreting command semantics. Every framed
+    // opcode, including unsupported opcodes, is returned. The argument spans remain valid only
+    // while bytecode remains alive and unmodified. On malformed input instructions is empty.
+    [[nodiscard]] ScriptBytecodeDecodeResult decodeFalloutScriptBytecode(
+        std::span<const std::uint8_t> bytecode, std::vector<ScriptBytecodeInstruction>& instructions);
+
+    using ScriptBytecodeArgument = std::variant<ESM::FormId, std::int32_t>;
+
+    enum class ScriptBytecodeArgumentDecodeError
+    {
+        None,
+        TruncatedArgumentCount,
+        ArgumentCountMismatch,
+        UnknownArgumentToken,
+        TruncatedReference,
+        InvalidReferenceIndex,
+        TruncatedInteger,
+        TrailingArgumentData,
+    };
+
+    struct ScriptBytecodeArgumentDecodeResult
+    {
+        ScriptBytecodeArgumentDecodeError error = ScriptBytecodeArgumentDecodeError::None;
+        std::size_t bytesConsumed = 0;
+        std::size_t argumentCount = 0;
+
+        [[nodiscard]] bool succeeded() const { return error == ScriptBytecodeArgumentDecodeError::None; }
+    };
+
+    // Decode the bounded FO3/FNV default-command argument grammar used by native commands.
+    // SCRO references are encoded as 'r' followed by a one-based uint16 index; integer constants
+    // are encoded as 'n' followed by a little-endian int32. On any mismatch arguments is empty.
+    [[nodiscard]] ScriptBytecodeArgumentDecodeResult decodeFalloutScriptArguments(std::span<const std::uint8_t> payload,
+        std::span<const ESM::FormId> references, std::vector<ScriptBytecodeArgument>& arguments);
+
+    // Load the current SCHR/SCDA/SCTX/SLSD/SCVR/SCRV/SCRO subrecord. Returns false
+    // when the current subrecord does not belong to an embedded or standalone script.
+    bool loadScriptSubRecord(Reader& reader, ScriptDefinition& script);
+
+    // Load the current TES4-family CTDA representation (20, 24, 28, or 36 bytes).
+    // The optional third parameter is present only in the 36-byte TES5 form.
+    bool loadTargetCondition(Reader& reader, TargetCondition& condition, ESM::FormId* parameter3 = nullptr);
 }
 
 #endif // ESM4_SCRIPT_H

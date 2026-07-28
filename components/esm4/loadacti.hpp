@@ -27,6 +27,7 @@
 #ifndef ESM4_ACTI_H
 #define ESM4_ACTI_H
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -45,13 +46,17 @@ namespace ESM4
 
         std::string mEditorId;
         std::string mFullName;
+        // Fallout-family trigger activators carry their authored collision
+        // extents in OBND.  Keep the bytes available to the runtime instead
+        // of treating every scripted trigger as a name-based special case.
+        std::array<std::uint8_t, 12> mObjectBounds{};
         std::string mModel;
 
         ESM::FormId mScriptId;
         ESM::FormId mLoopingSound; // SOUN
         ESM::FormId mActivationSound; // SOUN
 
-        float mBoundRadius;
+        float mBoundRadius = 0.f;
 
         ESM::FormId mRadioTemplate; // SOUN
         ESM::FormId mRadioStation; // TACT

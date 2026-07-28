@@ -5,6 +5,8 @@
 
 #include <osg/ref_ptr>
 
+#include <string_view>
+
 namespace osg
 {
     class Image;
@@ -20,10 +22,16 @@ namespace Resource
 namespace MyGUIPlatform
 {
 
+    // Fallout data does not ship the Morrowind-specific MyGUI skin textures
+    // expected by the shared OpenMW layouts.  The renderer uses this only
+    // after confirming that a requested VFS path is absent.
+    osg::ref_ptr<osg::Image> createMissingTextureFallback(std::string_view name);
+
     class OSGTexture final : public MyGUI::ITexture
     {
         std::string mName;
         Resource::ImageManager* mImageManager;
+        bool mUseMissingTextureFallback;
 
         osg::ref_ptr<osg::Image> mLockedImage;
         osg::ref_ptr<osg::Texture2D> mTexture;
@@ -36,7 +44,8 @@ namespace MyGUIPlatform
         int mHeight;
 
     public:
-        OSGTexture(const std::string& name, Resource::ImageManager* imageManager);
+        OSGTexture(const std::string& name, Resource::ImageManager* imageManager,
+            bool useMissingTextureFallback = false);
         OSGTexture(osg::Texture2D* texture, osg::StateSet* injectState = nullptr);
         ~OSGTexture() override;
 
