@@ -1444,7 +1444,9 @@ namespace MWWorld
                 && instruction.opcode != 0x1055 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
-                && instruction.opcode != 0x108b && instruction.opcode != 0x109e
+                && instruction.opcode != 0x108b
+                && instruction.opcode != 0x1097 && instruction.opcode != 0x1098
+                && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1111
                 && instruction.opcode != 0x114a
@@ -1844,7 +1846,8 @@ namespace MWWorld
             std::vector<ESM4::ScriptBytecodeArgument> arguments;
             // Zero-argument reference functions such as EVP and ResetAI have an empty frame rather
             // than the two-byte argument count used by ordinary command functions.
-            if (!((instruction.opcode == 0x105e || instruction.opcode == 0x11fa)
+            if (!((instruction.opcode == 0x105e || instruction.opcode == 0x1098
+                       || instruction.opcode == 0x11fa)
                     && argumentPayload.empty())
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
@@ -2146,6 +2149,39 @@ namespace MWWorld
                     && mStore->get<ESM4::ActorCreature>().search(target) == nullptr)
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::ResetAi, target });
+            }
+            else if (instruction.opcode == 0x1097 || instruction.opcode == 0x1098)
+            {
+                // Across the Fallout 3 and New Vegas base-master quest
+                // corpora, all 50 AddScriptPackage and 12
+                // RemoveScriptPackage frames are actor-qualified. Add carries
+                // exactly one PACK reference; remove has an empty frame.
+                const bool add = instruction.opcode == 0x1097;
+                if (!instruction.callingReferenceIndex || !mScriptPackageHandler || mStore == nullptr
+                    || arguments.size() != (add ? 1u : 0u))
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                if (!actorExists)
+                    return false;
+
+                ESM::FormId package;
+                if (add)
+                {
+                    const ESM::FormId* value = std::get_if<ESM::FormId>(&arguments[0]);
+                    if (value == nullptr || mStore->get<ESM4::AIPackage>().search(*value) == nullptr)
+                        return false;
+                    package = *value;
+                }
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetScriptPackage;
+                command.mQuest = actor;
+                command.mTarget = package;
+                command.mValue = add;
+                prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x109e) // reference.MoveTo marker
             {
@@ -2569,6 +2605,7 @@ namespace MWWorld
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::MoveTo
+            || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
             || command.mType == CompiledQuestCommandType::AddAchievement
@@ -2674,6 +2711,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::MoveTo:
+            case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -2839,6 +2877,12 @@ namespace MWWorld
                     command = "MoveTo ";
                     executed = mMoveToHandler && mMoveToHandler(effect.mTarget, effect.mListener);
                     break;
+                case CompiledQuestCommandType::SetScriptPackage:
+                    command = effect.mValue ? "AddScriptPackage " : "RemoveScriptPackage ";
+                    executed = mScriptPackageHandler
+                        && mScriptPackageHandler(effect.mTarget,
+                            effect.mValue ? std::optional<ESM::FormId>{ effect.mListener } : std::nullopt);
+                    break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
@@ -2944,6 +2988,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(effect.mCount);
             if (effect.mType == CompiledQuestCommandType::MoveTo)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetScriptPackage && effect.mValue)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (executed)
                 Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
@@ -3215,6 +3261,11 @@ namespace MWWorld
                         case CompiledQuestCommandType::MoveTo:
                             executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
                             break;
+                        case CompiledQuestCommandType::SetScriptPackage:
+                            executed = mScriptPackageHandler
+                                && mScriptPackageHandler(command.mQuest,
+                                    command.mValue ? std::optional<ESM::FormId>{ command.mTarget } : std::nullopt);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -3265,6 +3316,7 @@ namespace MWWorld
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::MoveTo
+                            || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::AddAchievement
@@ -3291,6 +3343,10 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::MoveTo)
                                 failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetScriptPackage)
+                                failure = std::string(command.mValue ? "AddScriptPackage " : "RemoveScriptPackage ")
+                                    + ESM::RefId(command.mQuest).serializeText()
+                                    + (command.mValue ? " " + ESM::RefId(command.mTarget).serializeText() : "");
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetNote)
@@ -5698,7 +5754,8 @@ namespace MWWorld
                     Log(Debug::Warning) << "FNV/ESM4 behavior: MoveTo failed reference=" << subject
                                         << " marker=" << removeQuotes(tokens[1]);
                 }
-                else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "AddScriptPackage") && mStore != nullptr)
+                else if (tokens.size() == 2 && Misc::StringUtils::ciEqual(command, "AddScriptPackage")
+                    && mStore != nullptr)
                 {
                     const std::string packageEditorId = removeQuotes(tokens[1]);
                     const ESM4::AIPackage* package = nullptr;
@@ -5708,9 +5765,9 @@ namespace MWWorld
                             package = &candidate;
                             break;
                         }
-                    const MWWorld::Ptr actor = resolveActor();
-                    if (world != nullptr && package != nullptr && !actor.isEmpty()
-                        && world->addESM4ScriptPackage(actor, package->mId))
+                    const ESM::FormId actor = sourceOwnerId();
+                    if (!actor.isZeroOrUnset() && package != nullptr && mScriptPackageHandler
+                        && mScriptPackageHandler(actor, package->mId))
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: AddScriptPackage actor=" << subject
                                          << " package=" << package->mEditorId
@@ -5718,10 +5775,11 @@ namespace MWWorld
                         continue;
                     }
                 }
-                else if (Misc::StringUtils::ciEqual(command, "RemoveScriptPackage"))
+                else if (tokens.size() == 1 && Misc::StringUtils::ciEqual(command, "RemoveScriptPackage"))
                 {
-                    const MWWorld::Ptr actor = resolveActor();
-                    if (world != nullptr && !actor.isEmpty() && world->removeESM4ScriptPackages(actor))
+                    const ESM::FormId actor = sourceOwnerId();
+                    if (!actor.isZeroOrUnset() && mScriptPackageHandler
+                        && mScriptPackageHandler(actor, std::nullopt))
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: RemoveScriptPackage actor=" << subject;
                         continue;

@@ -946,6 +946,27 @@ namespace MWWorld
                              << position.pos[2] << ")";
             return true;
         });
+        mESM4QuestRuntime.setScriptPackageHandler(
+            [this](ESM::FormId actorId, std::optional<ESM::FormId> packageId) {
+                Ptr actor;
+                if (actorId.mIndex == 0x7 || actorId.mIndex == 0x14)
+                    actor = getPlayerPtr();
+                else
+                {
+                    actor = searchPtr(ESM::RefId(actorId), false, false);
+                    if (actor.isEmpty())
+                        actor = searchPtrByRefNum(actorId);
+                }
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return false;
+
+                // Fallout bytecode only selects the actor and PACK. The
+                // existing world package stack remains responsible for
+                // package ordering, native animation/mechanics integration,
+                // and OnPackageDone delivery.
+                return packageId ? addESM4ScriptPackage(actor, *packageId)
+                                 : removeESM4ScriptPackages(actor);
+            });
         mESM4QuestRuntime.setReferenceActivationHandler(
             [this](ESM::FormId targetId, ESM::FormId activatorId, bool runOnActivateBlock) {
                 const auto resolveReference = [this](ESM::FormId id) {

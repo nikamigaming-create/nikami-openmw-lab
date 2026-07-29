@@ -30,6 +30,7 @@
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
@@ -660,6 +661,133 @@ TEST(ESM4QuestRuntimeTest, RejectsInvalidCompiledAchievementWithoutMutatingQuest
     EXPECT_FALSE(state->mStageDone.at(5));
     EXPECT_FALSE(state->mStageDone.at(10));
     EXPECT_EQ(achievements, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RoutesCompiledAndSourceScriptPackagesThroughOneEngineHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202f0, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1202f1, .mContentFile = 0 };
+    const ESM::FormId packageId{ .mIndex = 0x1202f2, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ScriptPackageQuest");
+    ESM4::QuestStageEntry compiledEntry;
+    compiledEntry.mScript.compiledData = {
+        // PackageActor.AddScriptPackage PackageIdle
+        0x1c, 0x00, 0x01, 0x00, 0x97, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+        // PackageActor.RemoveScriptPackage
+        0x1c, 0x00, 0x01, 0x00, 0x98, 0x10, 0x00, 0x00,
+        // SetStage ScriptPackageQuest 10
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    compiledEntry.mScript.references = { actorId, packageId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(compiledEntry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    ESM4::QuestStageEntry sourceAdd;
+    sourceAdd.mScript.scriptSource = "PackageActor.AddScriptPackage PackageIdle";
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(sourceAdd) } });
+    ESM4::QuestStageEntry sourceRemove;
+    sourceRemove.mScript.scriptSource = "PackageActor.RemoveScriptPackage";
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(sourceRemove) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    actor.mEditorId = "PackageActor";
+    store.overrideRecord(actor);
+    ESM4::AIPackage package;
+    package.mId = packageId;
+    package.mEditorId = "PackageIdle";
+    store.overrideRecord(package);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>> changes;
+    std::vector<std::uint8_t> stagesAtChange;
+    runtime.setScriptPackageHandler(
+        [&](ESM::FormId actorValue, std::optional<ESM::FormId> packageValue) {
+            changes.emplace_back(actorValue, packageValue);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtChange.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_TRUE(runtime.setStage(questId, 15));
+    ASSERT_TRUE(runtime.setStage(questId, 20));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>>{
+            { actorId, packageId },
+            { actorId, std::nullopt },
+            { actorId, packageId },
+            { actorId, std::nullopt },
+        }));
+    EXPECT_EQ(stagesAtChange, (std::vector<std::uint8_t>{ 10, 10, 15, 20 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 20);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledScriptPackageCommandsWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202f3, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1202f4, .mContentFile = 0 };
+    const ESM::FormId packageId{ .mIndex = 0x1202f5, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedScriptPackageQuest");
+    ESM4::QuestStageEntry globalAdd;
+    globalAdd.mScript.compiledData
+        = { 0x97, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    globalAdd.mScript.references = { packageId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalAdd) } });
+    ESM4::QuestStageEntry wrongPackageType;
+    wrongPackageType.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x97, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00
+    };
+    wrongPackageType.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(wrongPackageType) } });
+    ESM4::QuestStageEntry globalRemove;
+    globalRemove.mScript.compiledData = { 0x98, 0x10, 0x00, 0x00 };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(globalRemove) } });
+    ESM4::QuestStageEntry removeWithArgument;
+    removeWithArgument.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x98, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00
+    };
+    removeWithArgument.mScript.references = { actorId, packageId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(removeWithArgument) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::AIPackage package;
+    package.mId = packageId;
+    store.overrideRecord(package);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setScriptPackageHandler([&](ESM::FormId, std::optional<ESM::FormId>) {
+        ++changes;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    EXPECT_FALSE(runtime.setStage(questId, 15));
+    EXPECT_FALSE(runtime.setStage(questId, 20));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_FALSE(state->mStageDone.at(15));
+    EXPECT_FALSE(state->mStageDone.at(20));
+    EXPECT_EQ(changes, 0);
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 

@@ -176,6 +176,10 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using ReferenceActivationHandler = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using MoveToHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
+        // A package value adds one authored PACK through the engine package
+        // stack; nullopt removes the actor's scripted package stack.
+        using ScriptPackageHandler
+            = std::function<bool(ESM::FormId, std::optional<ESM::FormId>)>;
         using ActorIdleHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
         using ReferenceAnimationGroupHandler
             = std::function<bool(ESM::FormId, std::string_view, int)>;
@@ -368,6 +372,7 @@ namespace MWWorld
         EquipmentCommandHandler mEquipmentCommandHandler;
         ReferenceActivationHandler mReferenceActivationHandler;
         MoveToHandler mMoveToHandler;
+        ScriptPackageHandler mScriptPackageHandler;
         ActorIdleHandler mActorIdleHandler;
         ReferenceAnimationGroupHandler mReferenceAnimationGroupHandler;
         SoundCommandHandler mSoundCommandHandler;
@@ -425,6 +430,7 @@ namespace MWWorld
             Kill,
             ResetAi,
             MoveTo,
+            SetScriptPackage,
             AddItem,
             RemoveItem,
             EvaluatePackage,
@@ -650,6 +656,10 @@ namespace MWWorld
         void setMoveToHandler(MoveToHandler handler)
         {
             mMoveToHandler = std::move(handler);
+        }
+        void setScriptPackageHandler(ScriptPackageHandler handler)
+        {
+            mScriptPackageHandler = std::move(handler);
         }
         void setActorIdleHandler(ActorIdleHandler handler)
         {
