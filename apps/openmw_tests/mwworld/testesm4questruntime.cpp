@@ -159,14 +159,19 @@ TEST(ESM4QuestRuntimeTest, ExecutesFalloutShortFormImageSpaceCommands)
     ESM4::QuestStageEntry applyEntry;
     applyEntry.mScript.scriptSource = "imod IntroFade";
     quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(applyEntry) } });
+    ESM4::QuestStageEntry reapplyEntry;
+    reapplyEntry.mScript.scriptSource = "imod IntroFade";
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(reapplyEntry) } });
     ESM4::QuestStageEntry removeEntry;
     removeEntry.mScript.scriptSource = "rimod IntroFade";
-    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(removeEntry) } });
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(removeEntry) } });
     store.overrideRecord(quest);
 
     ESM4::ImageSpaceModifier modifier;
     modifier.mId = modifierId;
     modifier.mEditorId = "IntroFade";
+    modifier.mAdapterFlags = 1;
+    modifier.mDuration = 1.f;
     store.overrideRecord(modifier);
 
     MWWorld::ESM4QuestRuntime runtime;
@@ -177,7 +182,13 @@ TEST(ESM4QuestRuntimeTest, ExecutesFalloutShortFormImageSpaceCommands)
     ASSERT_EQ(active.size(), 1);
     EXPECT_EQ(active.front().mId, modifierId);
 
+    runtime.update(1.f, false);
+    EXPECT_TRUE(runtime.getActiveImageSpaceModifiers().empty());
+
     ASSERT_TRUE(runtime.setStage("ImageSpaceQuest", 10));
+    ASSERT_EQ(runtime.getActiveImageSpaceModifiers().size(), 1);
+
+    ASSERT_TRUE(runtime.setStage("ImageSpaceQuest", 15));
     EXPECT_TRUE(runtime.getActiveImageSpaceModifiers().empty());
 }
 

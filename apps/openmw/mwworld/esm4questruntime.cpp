@@ -717,6 +717,14 @@ namespace MWWorld
                 continue;
             modifier.mState.mTime = std::clamp(modifier.mState.mTime + duration / modifier.mDuration, 0.f, 1.f);
         }
+
+        // Timed IMADs are one-shot presentation effects.  Holding one at its
+        // final keyframe makes a fade/black-screen overlay permanent; only
+        // non-animatable modifiers stay active until the source script calls
+        // `rimod` / RemoveImageSpaceModifier.
+        std::erase_if(mActiveImageSpaceModifiers, [](const ActiveImageSpaceModifier& modifier) {
+            return modifier.mAnimatable && modifier.mState.mTime >= 1.f;
+        });
     }
 
     std::vector<ESM4::ImageSpaceModifierRuntimeState> ESM4QuestRuntime::getActiveImageSpaceModifiers() const
