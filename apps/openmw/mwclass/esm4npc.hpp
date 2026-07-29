@@ -118,6 +118,7 @@ namespace MWClass
         static const ESM4::Npc* getFactionsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getModelRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getAIDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getStatsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);

@@ -435,13 +435,20 @@ namespace MWWorld
         return mBase ? std::optional<float>(mKarma) : std::nullopt;
     }
 
+    bool FalloutPlayerRuntimeState::setKarma(float value)
+    {
+        if (!mBase || !std::isfinite(value))
+            return false;
+        mKarma = std::clamp(value, -1000.f, 1000.f);
+        return true;
+    }
+
     bool FalloutPlayerRuntimeState::rewardKarma(int amount)
     {
         if (!mBase || amount == 0)
             return false;
         const double value = static_cast<double>(mKarma) + static_cast<double>(amount);
-        mKarma = static_cast<float>(std::clamp(value, -1000.0, 1000.0));
-        return true;
+        return setKarma(static_cast<float>(std::clamp(value, -1000.0, 1000.0)));
     }
 
     std::optional<std::int32_t> FalloutPlayerRuntimeState::getSpecialPoints() const

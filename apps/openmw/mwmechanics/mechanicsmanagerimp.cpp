@@ -45,6 +45,7 @@
 #include "aipursue.hpp"
 #include "autocalcspell.hpp"
 #include "combat.hpp"
+#include "falloutactorstate.hpp"
 #include "falloutcombat.hpp"
 #include "npcstats.hpp"
 #include "spellutil.hpp"
@@ -69,34 +70,6 @@ namespace
             return creature != nullptr && creature->mIsFONV;
         }
         return false;
-    }
-
-    std::vector<ESM4::ActorFaction> getFalloutActorFactions(const MWWorld::Ptr& ptr)
-    {
-        // The gameplay player may also satisfy the ESM4 NPC type check, so resolve its runtime proxy before the
-        // generic NPC branch. The proxy preserves the winning Player NPC/template faction list.
-        if (ptr == MWMechanics::getPlayer())
-        {
-            const std::optional<MWWorld::FalloutPlayerState>& state
-                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getBaseState();
-            if (state)
-                return state->mFactions;
-        }
-        if (ptr.getType() == ESM4::Npc::sRecordId)
-        {
-            const ESM4::Npc* factions = MWClass::ESM4Npc::getFactionsRecord(ptr);
-            return factions != nullptr ? factions->mFactions : std::vector<ESM4::ActorFaction>{};
-        }
-        if (ptr.getType() == ESM4::Creature::sRecordId)
-        {
-            const ESM4::Creature* factions = MWClass::ESM4Creature::getFactionsRecord(ptr);
-            if (factions != nullptr && !factions->mFactions.empty())
-                return factions->mFactions;
-            if (factions != nullptr && factions->mFaction.faction != 0)
-                return { factions->mFaction }; // Compatibility for programmatically constructed records.
-            return {};
-        }
-        return {};
     }
 
     float getFightDispositionBias(float disposition)
@@ -2005,8 +1978,15 @@ namespace MWMechanics
             if (authoredAggression < 0 || authoredAggression > 3)
                 return false;
 
-            const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(ptr);
-            const std::vector<ESM4::ActorFaction> targetFactions = getFalloutActorFactions(target);
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const MWWorld::FalloutPlayerRuntimeState* const actorPlayerState
+                = ptr == getPlayer() ? &world->getFalloutPlayerRuntimeState() : nullptr;
+            const MWWorld::FalloutPlayerRuntimeState* const targetPlayerState
+                = target == getPlayer() ? &world->getFalloutPlayerRuntimeState() : nullptr;
+            const std::vector<ESM4::ActorFaction> actorFactions
+                = getFalloutActorFactions(ptr, actorPlayerState);
+            const std::vector<ESM4::ActorFaction> targetFactions
+                = getFalloutActorFactions(target, targetPlayerState);
             const MWWorld::Store<ESM4::Faction>& factionStore
                 = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
             const std::optional<ESM4::Faction::GroupCombatReaction> reaction = resolveFalloutFactionReaction(

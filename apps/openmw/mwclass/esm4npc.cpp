@@ -1857,6 +1857,11 @@ namespace MWClass
         return getCustomData(ptr).mAIPackage;
     }
 
+    const ESM4::Npc* ESM4Npc::getAIDataRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mAIData;
+    }
+
     const ESM4::Npc* ESM4Npc::getStatsRecord(const MWWorld::Ptr& ptr)
     {
         return chooseStatsRecord(getCustomData(ptr));
@@ -1990,6 +1995,10 @@ namespace MWClass
     float ESM4Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (const std::optional<float> scripted = stats.getFalloutActorValueOverride(13))
+            return std::max(0.f, *scripted);
+        if (const ESM4::Npc* record = getStatsRecord(ptr); record != nullptr && record->mIsFONV)
+            return std::max(0.f, 150.f + 10.f * stats.getAttribute(ESM::Attribute::Strength).getModified());
         return stats.getAttribute(ESM::Attribute::Strength).getModified() * 5.f;
     }
 
@@ -2008,7 +2017,9 @@ namespace MWClass
     {
         const ESM4NpcCustomData& data = getCustomData(ptr);
         const ESM4::Npc* statsRecord = chooseStatsRecord(data);
-        const float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
+        float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
+        if (const std::optional<float> scripted = data.mCreatureStats.getFalloutActorValueOverride(21))
+            multiplier = std::max(*scripted, 1.f) / 100.f;
         if (statsRecord != nullptr && statsRecord->mIsFONV)
         {
             const ESM::GameSetting* setting = MWBase::Environment::get()

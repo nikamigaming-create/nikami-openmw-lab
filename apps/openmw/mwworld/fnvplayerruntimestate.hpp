@@ -145,6 +145,7 @@ namespace MWWorld
         [[nodiscard]] std::optional<bool> getEssentialOverride(ESM::FormId actorBase) const;
         bool setEssentialOverride(ESM::FormId actorBase, bool essential);
         [[nodiscard]] std::optional<float> getKarma() const;
+        bool setKarma(float value);
         bool rewardKarma(int amount);
         [[nodiscard]] std::optional<std::int32_t> getSpecialPoints() const;
         bool addSpecialPoints(int amount);

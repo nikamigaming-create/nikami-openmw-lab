@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <string_view>
 
 #include <components/esm/formid.hpp>
@@ -17,6 +18,8 @@
 #include <apps/openmw/mwbase/environment.hpp>
 
 #include <apps/openmw/mwclass/classes.hpp>
+
+#include <apps/openmw/mwmechanics/falloutactorstate.hpp>
 
 #include <apps/openmw/mwworld/esm4questruntime.hpp>
 #include <apps/openmw/mwworld/esmstore.hpp>
@@ -187,5 +190,24 @@ namespace
         EXPECT_TRUE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, legionEvaluator));
         EXPECT_EQ(legionFactionChecks, 1);
         EXPECT_EQ(legionInfoChecks, excludedVoiceTypes.size());
+
+        ASSERT_TRUE(MWMechanics::setFalloutActorFaction(legionPtr, form(0x000ee68a), std::nullopt));
+        EXPECT_FALSE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, legionEvaluator))
+            << "RemoveFromFaction must immediately affect owning-quest dialogue filters";
+
+        ASSERT_TRUE(MWMechanics::setFalloutActorFaction(goodspringsPtr, form(0x000ee68a), 2));
+        EXPECT_TRUE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, goodspringsEvaluator))
+            << "AddToFaction must immediately affect owning-quest dialogue filters";
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetFactionRank, form(0x000ee68a), 2.f),
+                      goodspringsPtr, false),
+            std::optional<bool>(true));
+
+        ASSERT_TRUE(MWMechanics::applyFalloutActorValue(goodspringsPtr, 0,
+            MWMechanics::FalloutActorValueOperation::Set, 2.f));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetActorValue, form(0), 2.f),
+                      goodspringsPtr, false),
+            std::optional<bool>(true));
     }
 }

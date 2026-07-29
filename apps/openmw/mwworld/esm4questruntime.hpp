@@ -116,6 +116,19 @@ namespace MWWorld
         EvaluatePackage,
     };
 
+    enum class ESM4QuestActorValueCommand : std::uint8_t
+    {
+        Set,
+        Mod,
+        Restore,
+    };
+
+    struct ESM4QuestFactionMembership
+    {
+        bool mMember = false;
+        std::int8_t mRank = -1;
+    };
+
     class ESM4QuestRuntime
     {
     public:
@@ -144,6 +157,15 @@ namespace MWWorld
         using RewardKarmaHandler = std::function<bool(int)>;
         using AddSpecialPointsHandler = std::function<bool(int)>;
         using SetEssentialHandler = std::function<bool(ESM::FormId, bool)>;
+        using ActorValueCommandHandler
+            = std::function<bool(ESM::FormId, ESM4QuestActorValueCommand, std::string_view, float)>;
+        using ActorValueHandler
+            = std::function<std::optional<float>(ESM::FormId, std::string_view)>;
+        // A rank value adds/updates membership; nullopt records RemoveFromFaction.
+        using ActorFactionCommandHandler
+            = std::function<bool(ESM::FormId, ESM::FormId, std::optional<int>)>;
+        using ActorFactionMembershipHandler
+            = std::function<std::optional<ESM4QuestFactionMembership>(ESM::FormId, ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -294,6 +316,10 @@ namespace MWWorld
         RewardKarmaHandler mRewardKarmaHandler;
         AddSpecialPointsHandler mAddSpecialPointsHandler;
         SetEssentialHandler mSetEssentialHandler;
+        ActorValueCommandHandler mActorValueCommandHandler;
+        ActorValueHandler mActorValueHandler;
+        ActorFactionCommandHandler mActorFactionCommandHandler;
+        ActorFactionMembershipHandler mActorFactionMembershipHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -560,6 +586,22 @@ namespace MWWorld
         void setSetEssentialHandler(SetEssentialHandler handler)
         {
             mSetEssentialHandler = std::move(handler);
+        }
+        void setActorValueCommandHandler(ActorValueCommandHandler handler)
+        {
+            mActorValueCommandHandler = std::move(handler);
+        }
+        void setActorValueHandler(ActorValueHandler handler)
+        {
+            mActorValueHandler = std::move(handler);
+        }
+        void setActorFactionCommandHandler(ActorFactionCommandHandler handler)
+        {
+            mActorFactionCommandHandler = std::move(handler);
+        }
+        void setActorFactionMembershipHandler(ActorFactionMembershipHandler handler)
+        {
+            mActorFactionMembershipHandler = std::move(handler);
         }
 
         bool startQuest(std::string_view id);

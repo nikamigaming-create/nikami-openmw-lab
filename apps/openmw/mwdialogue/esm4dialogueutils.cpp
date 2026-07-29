@@ -14,10 +14,14 @@
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
+
 #include "../mwclass/esm4npc.hpp"
 #include "../mwclass/esm4creature.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutactorstate.hpp"
 
 #include "../mwworld/cell.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -65,11 +69,11 @@ namespace MWDialogue
         const ESM4::Npc* base = actorRef != nullptr ? actorRef->mBase : nullptr;
         const ESM4::Creature* creatureBase = creatureRef != nullptr ? creatureRef->mBase : nullptr;
         const ESM4::Npc* traits = actorRef != nullptr ? MWClass::ESM4Npc::getTraitsRecord(actor) : nullptr;
-        const ESM4::Npc* factions
-            = actorRef != nullptr ? MWClass::ESM4Npc::getFactionsRecord(actor) : nullptr;
         const ESM4::Npc* stats = actorRef != nullptr ? MWClass::ESM4Npc::getStatsRecord(actor) : nullptr;
-        const ESM4::Creature* creatureFactions
-            = creatureRef != nullptr ? MWClass::ESM4Creature::getFactionsRecord(actor) : nullptr;
+        const MWWorld::FalloutPlayerRuntimeState* playerState = nullptr;
+        if (isPlayer)
+            if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+                playerState = &world->getFalloutPlayerRuntimeState();
         const ESM::FormId parameter = ESM::FormId::fromUint32(condition.param1);
         float actual = 0.f;
         switch (condition.functionIndex)
@@ -107,23 +111,27 @@ namespace MWDialogue
                 break;
             case ESM4::FUN_GetInFaction:
             case ESM4::FUN_GetFactionRank:
-                if (condition.functionIndex == ESM4::FUN_GetFactionRank)
-                    actual = -1.f;
-                if (factions != nullptr)
-                    for (const ESM4::ActorFaction& faction : factions->mFactions)
-                        if (ESM::FormId::fromUint32(faction.faction) == parameter)
-                        {
-                            actual = condition.functionIndex == ESM4::FUN_GetInFaction ? 1.f : faction.rank;
-                            break;
-                        }
-                if (creatureFactions != nullptr)
-                    for (const ESM4::ActorFaction& faction : creatureFactions->mFactions)
-                        if (ESM::FormId::fromUint32(faction.faction) == parameter)
-                        {
-                            actual = condition.functionIndex == ESM4::FUN_GetInFaction ? 1.f : faction.rank;
-                            break;
-                        }
+            {
+                const MWMechanics::FalloutFactionMembership membership
+                    = MWMechanics::getFalloutFactionMembership(actor, parameter, playerState);
+                actual = condition.functionIndex == ESM4::FUN_GetInFaction
+                    ? (membership.mMember ? 1.f : 0.f)
+                    : (membership.mMember ? static_cast<float>(membership.mRank) : -1.f);
                 break;
+            }
+            case ESM4::FUN_GetActorValue:
+            case ESM4::FUN_GetBaseActorValue:
+            case ESM4::FUN_GetPermanentActorValue:
+            {
+                if (condition.param1 >= MWWorld::FalloutPlayerRuntimeState::ActorValueCount)
+                    return std::nullopt;
+                const std::optional<float> value = MWMechanics::getFalloutActorValue(
+                    actor, static_cast<std::uint8_t>(condition.param1), playerState);
+                if (!value)
+                    return std::nullopt;
+                actual = *value;
+                break;
+            }
             case ESM4::FUN_GetInCell:
                 actual = actor.isInCell() && actor.getCell()->getCell()->getId() == ESM::RefId(parameter) ? 1.f : 0.f;
                 break;

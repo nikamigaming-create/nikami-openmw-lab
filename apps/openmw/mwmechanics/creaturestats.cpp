@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <type_traits>
 
 #include <components/esm3/actoridconverter.hpp>
@@ -122,6 +123,31 @@ namespace MWMechanics
             || !std::isfinite(damage) || damage < 0.f)
             return false;
         mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)] = damage;
+        return true;
+    }
+
+    std::optional<float> CreatureStats::getFalloutActorValueOverride(std::uint8_t actorValue) const
+    {
+        const auto found = mFalloutActorValueOverrides.find(actorValue);
+        return found != mFalloutActorValueOverrides.end() ? std::optional<float>(found->second) : std::nullopt;
+    }
+
+    bool CreatureStats::setFalloutActorValueOverride(std::uint8_t actorValue, float value)
+    {
+        if (actorValue >= 96 || !std::isfinite(value))
+            return false;
+        mFalloutActorValueOverrides[actorValue] = value;
+        return true;
+    }
+
+    bool CreatureStats::setFalloutFactionOverride(ESM::FormId faction, std::optional<int> rank)
+    {
+        if (faction.isZeroOrUnset()
+            || (rank && (*rank < std::numeric_limits<std::int8_t>::min()
+                || *rank > std::numeric_limits<std::int8_t>::max())))
+            return false;
+        mFalloutFactionOverrides[faction]
+            = rank ? static_cast<std::int16_t>(*rank) : FalloutFactionRemoved;
         return true;
     }
 
@@ -574,6 +600,8 @@ namespace MWMechanics
 
         state.mMissingACDT = false;
         state.mFalloutLimbDamage = mFalloutLimbDamage;
+        state.mFalloutActorValueOverrides = mFalloutActorValueOverrides;
+        state.mFalloutFactionOverrides = mFalloutFactionOverrides;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -634,6 +662,8 @@ namespace MWMechanics
             graveyard.insert(graveyard.end(), state.mSummonGraveyard.begin(), state.mSummonGraveyard.end());
         }
         mFalloutLimbDamage = state.mFalloutLimbDamage;
+        mFalloutActorValueOverrides = state.mFalloutActorValueOverrides;
+        mFalloutFactionOverrides = state.mFalloutFactionOverrides;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)

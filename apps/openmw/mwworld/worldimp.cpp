@@ -89,6 +89,7 @@
 #include "../mwmechanics/character.hpp"
 #include "../mwmechanics/combat.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutactorstate.hpp"
 #include "../mwmechanics/levelledlist.hpp"
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/spellcasting.hpp"
@@ -1022,6 +1023,84 @@ namespace MWWorld
                                  << " essential=" << essential;
             return applied;
         });
+        mESM4QuestRuntime.setActorValueCommandHandler(
+            [this](ESM::FormId actorId, ESM4QuestActorValueCommand command,
+                std::string_view actorValueName, float value) {
+                const std::optional<std::uint8_t> actorValue
+                    = MWMechanics::resolveFalloutActorValue(actorValueName);
+                if (!actorValue)
+                    return false;
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return false;
+
+                MWMechanics::FalloutActorValueOperation operation
+                    = MWMechanics::FalloutActorValueOperation::Set;
+                if (command == ESM4QuestActorValueCommand::Mod)
+                    operation = MWMechanics::FalloutActorValueOperation::Mod;
+                else if (command == ESM4QuestActorValueCommand::Restore)
+                    operation = MWMechanics::FalloutActorValueOperation::Restore;
+                FalloutPlayerRuntimeState* const playerState
+                    = player ? &mFalloutPlayerRuntimeState : nullptr;
+                const bool applied = MWMechanics::applyFalloutActorValue(
+                    actor, *actorValue, operation, value, playerState);
+                if (applied)
+                    Log(Debug::Info) << "FNV/ESM4 quest: actor value command="
+                                     << static_cast<unsigned int>(command)
+                                     << " actor=" << actor.getCellRef().getRefId()
+                                     << " av=" << actorValueName << "(" << static_cast<unsigned int>(*actorValue)
+                                     << ") value=" << value;
+                return applied;
+            });
+        mESM4QuestRuntime.setActorValueHandler(
+            [this](ESM::FormId actorId, std::string_view actorValueName) -> std::optional<float> {
+                const std::optional<std::uint8_t> actorValue
+                    = MWMechanics::resolveFalloutActorValue(actorValueName);
+                if (!actorValue)
+                    return std::nullopt;
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                return MWMechanics::getFalloutActorValue(
+                    actor, *actorValue, player ? &mFalloutPlayerRuntimeState : nullptr);
+            });
+        mESM4QuestRuntime.setActorFactionCommandHandler(
+            [this](ESM::FormId actorId, ESM::FormId factionId, std::optional<int> rank) {
+                if (mStore.get<ESM4::Faction>().search(ESM::RefId(factionId)) == nullptr)
+                    return false;
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                const bool applied = MWMechanics::setFalloutActorFaction(actor, factionId, rank);
+                if (applied)
+                    Log(Debug::Info) << "FNV/ESM4 quest: "
+                                     << (rank ? "AddToFaction" : "RemoveFromFaction")
+                                     << " actor=" << actor.getCellRef().getRefId()
+                                     << " faction=" << ESM::RefId(factionId).serializeText()
+                                     << " rank=" << (rank ? std::to_string(*rank) : std::string("removed"));
+                return applied;
+            });
+        mESM4QuestRuntime.setActorFactionMembershipHandler(
+            [this](ESM::FormId actorId, ESM::FormId factionId)
+                -> std::optional<ESM4QuestFactionMembership> {
+                if (mStore.get<ESM4::Faction>().search(ESM::RefId(factionId)) == nullptr)
+                    return std::nullopt;
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return std::nullopt;
+                const MWMechanics::FalloutFactionMembership membership
+                    = MWMechanics::getFalloutFactionMembership(
+                        actor, factionId, player ? &mFalloutPlayerRuntimeState : nullptr);
+                return ESM4QuestFactionMembership{ membership.mMember, membership.mRank };
+            });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();

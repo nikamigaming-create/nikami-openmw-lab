@@ -132,6 +132,7 @@ namespace MWClass
         void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
 
         static const ESM4::Creature* getFactionsRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Creature* getAIDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Creature* getStatsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::BodyPartData* getBodyPartData(const MWWorld::Ptr& ptr);
 

@@ -44,6 +44,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 
 namespace
@@ -1025,6 +1026,11 @@ namespace
         ASSERT_EQ(sourceStore.remove(bottleId, 2, false, false), 2);
 
         MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        const ESM::FormId scriptedFaction{ .mIndex = 0x12345, .mContentFile = 0 };
+        const ESM::FormId removedFaction{ .mIndex = 0x12346, .mContentFile = 0 };
+        ASSERT_TRUE(stats.setFalloutActorValueOverride(13, 650.f));
+        ASSERT_TRUE(stats.setFalloutFactionOverride(scriptedFaction, 2));
+        ASSERT_TRUE(stats.setFalloutFactionOverride(removedFaction, std::nullopt));
         ESM::CreatureStats deadState;
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
@@ -1052,6 +1058,10 @@ namespace
         EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
         EXPECT_TRUE(restoredStats.isDead());
         EXPECT_TRUE(restoredStats.hasDied());
+        EXPECT_EQ(restoredStats.getFalloutActorValueOverride(13), std::optional<float>(650.f));
+        EXPECT_EQ(restoredStats.getFalloutFactionOverrides().at(scriptedFaction), 2);
+        EXPECT_EQ(restoredStats.getFalloutFactionOverrides().at(removedFaction),
+            MWMechanics::CreatureStats::FalloutFactionRemoved);
         EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
     }
 

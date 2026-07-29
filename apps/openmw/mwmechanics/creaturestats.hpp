@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -17,6 +18,7 @@
 #include "stat.hpp"
 
 #include <components/esm/attr.hpp>
+#include <components/esm/formid.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/magiceffects.hpp>
 
@@ -65,6 +67,10 @@ namespace MWMechanics
 
         // Native Fallout actor values 25..31 are accumulated limb damage channels.
         std::array<float, 7> mFalloutLimbDamage{};
+
+        // Quest-script mutations are per placed actor, not edits to the shared NPC_/CREA base record.
+        std::map<std::uint8_t, float> mFalloutActorValueOverrides;
+        std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
 
         float mFallHeight = 0.f;
 
@@ -130,6 +136,15 @@ namespace MWMechanics
 
         float getFalloutLimbDamage(std::int8_t actorValue) const;
         bool setFalloutLimbDamage(std::int8_t actorValue, float damage);
+        std::optional<float> getFalloutActorValueOverride(std::uint8_t actorValue) const;
+        bool setFalloutActorValueOverride(std::uint8_t actorValue, float value);
+
+        static constexpr std::int16_t FalloutFactionRemoved = -129;
+        const std::map<ESM::FormId, std::int16_t>& getFalloutFactionOverrides() const
+        {
+            return mFalloutFactionOverrides;
+        }
+        bool setFalloutFactionOverride(ESM::FormId faction, std::optional<int> rank);
 
         const Spells& getSpells() const;
 

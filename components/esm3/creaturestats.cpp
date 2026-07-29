@@ -5,6 +5,7 @@
 #include <components/esm3/loadmgef.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace ESM
@@ -183,6 +184,48 @@ namespace ESM
         }
         mFalloutLimbDamage.fill(0.f);
         esm.getHNOT(mFalloutLimbDamage, "FLMB");
+
+        mFalloutActorValueOverrides.clear();
+        std::uint32_t actorValueCount = 0;
+        if (esm.peekNextSub("FAVC"))
+        {
+            esm.getHNT(actorValueCount, "FAVC");
+            if (actorValueCount > 96)
+                esm.fail("Unreasonable Fallout actor-value override count");
+            for (std::uint32_t i = 0; i < actorValueCount; ++i)
+            {
+                std::uint8_t actorValue = 0;
+                float value = 0.f;
+                esm.getHNT(actorValue, "FAVI");
+                esm.getHNT(value, "FAVV");
+                if (!std::isfinite(value) || !mFalloutActorValueOverrides.emplace(actorValue, value).second)
+                    esm.fail("Invalid or duplicate Fallout actor-value override");
+            }
+        }
+
+        mFalloutFactionOverrides.clear();
+        std::uint32_t factionCount = 0;
+        if (esm.peekNextSub("FFCT"))
+        {
+            esm.getHNT(factionCount, "FFCT");
+            constexpr std::uint32_t MaximumFactionCount = 1'000'000;
+            if (factionCount > MaximumFactionCount)
+                esm.fail("Unreasonable Fallout faction override count");
+            for (std::uint32_t i = 0; i < factionCount; ++i)
+            {
+                ESM::FormId faction = esm.getFormId(true, "FFID");
+                const bool contentAvailable = esm.applyContentFileMapping(faction);
+                std::int16_t rank = 0;
+                esm.getHNT(rank, "FFRK");
+                if (rank != FalloutFactionRemoved
+                    && (rank < std::numeric_limits<std::int8_t>::min()
+                        || rank > std::numeric_limits<std::int8_t>::max()))
+                    esm.fail("Invalid Fallout faction override rank");
+                if (contentAvailable
+                    && (faction.isZeroOrUnset() || !mFalloutFactionOverrides.emplace(faction, rank).second))
+                    esm.fail("Invalid or duplicate Fallout faction override");
+            }
+        }
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -275,6 +318,24 @@ namespace ESM
             esm.writeHNT("NOAC", mMissingACDT);
         if (std::any_of(mFalloutLimbDamage.begin(), mFalloutLimbDamage.end(), [](float value) { return value != 0.f; }))
             esm.writeHNT("FLMB", mFalloutLimbDamage);
+        if (!mFalloutActorValueOverrides.empty())
+        {
+            esm.writeHNT("FAVC", static_cast<std::uint32_t>(mFalloutActorValueOverrides.size()));
+            for (const auto& [actorValue, value] : mFalloutActorValueOverrides)
+            {
+                esm.writeHNT("FAVI", actorValue);
+                esm.writeHNT("FAVV", value);
+            }
+        }
+        if (!mFalloutFactionOverrides.empty())
+        {
+            esm.writeHNT("FFCT", static_cast<std::uint32_t>(mFalloutFactionOverrides.size()));
+            for (const auto& [faction, rank] : mFalloutFactionOverrides)
+            {
+                esm.writeFormId(faction, true, "FFID");
+                esm.writeHNT("FFRK", rank);
+            }
+        }
     }
 
     void CreatureStats::blank()
@@ -305,6 +366,8 @@ namespace ESM
         mCorprusSpells.clear();
         mMissingACDT = false;
         mFalloutLimbDamage.fill(0.f);
+        mFalloutActorValueOverrides.clear();
+        mFalloutFactionOverrides.clear();
     }
 
 }

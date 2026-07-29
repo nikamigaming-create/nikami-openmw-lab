@@ -382,11 +382,19 @@ namespace ESM
             record.mLastHitAttemptObject = generateRandomRefId();
             record.mLastHitObject = generateRandomRefId();
             record.mFalloutLimbDamage = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f };
+            record.mFalloutActorValueOverrides = { { 13, 650.f }, { 57, 2.f } };
+            record.mFalloutFactionOverrides = {
+                { ESM::FormId{ .mIndex = 0x1234, .mContentFile = 0 }, 1 },
+                { ESM::FormId{ .mIndex = 0x5678, .mContentFile = 0 },
+                    CreatureStats::FalloutFactionRemoved },
+            };
             CreatureStats result;
             saveAndLoadRecord(record, GetParam(), result);
             EXPECT_EQ(record.mLastHitAttemptObject, result.mLastHitAttemptObject);
             EXPECT_EQ(record.mLastHitObject, result.mLastHitObject);
             EXPECT_EQ(record.mFalloutLimbDamage, result.mFalloutLimbDamage);
+            EXPECT_EQ(record.mFalloutActorValueOverrides, result.mFalloutActorValueOverrides);
+            EXPECT_EQ(record.mFalloutFactionOverrides, result.mFalloutFactionOverrides);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)

@@ -2,6 +2,7 @@
 #define OPENMW_ESM_CREATURESTATS_H
 
 #include <array>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -91,6 +92,13 @@ namespace ESM
 
         // Optional FLMB data keeps accumulated native Fallout limb damage across saves.
         std::array<float, 7> mFalloutLimbDamage{};
+
+        // Per-reference Fallout actor-value and faction changes made by quest scripts. Actor values use their
+        // native numeric AV index. A faction rank of FalloutFactionRemoved records an explicit removal from the
+        // authored base/template faction list; every other value must fit the signed rank byte used by ESM4.
+        static constexpr std::int16_t FalloutFactionRemoved = -129;
+        std::map<std::uint8_t, float> mFalloutActorValueOverrides;
+        std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
 
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;

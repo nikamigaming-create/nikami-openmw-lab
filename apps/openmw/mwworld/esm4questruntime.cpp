@@ -4009,7 +4009,7 @@ namespace MWWorld
         };
 
         const auto sourceValue = [this, &sourceVariable, &resolveAuthoredReference, secondsPassed,
-                                     &actionReference](const SourceTokens& tokens,
+                                     &actionReference, ownerActor, ownerReference](const SourceTokens& tokens,
                                      std::size_t& index) -> std::optional<float> {
             if (index >= tokens.size())
                 return std::nullopt;
@@ -4058,6 +4058,38 @@ namespace MWWorld
                         return std::nullopt;
                     const std::optional<bool> dead = mActorDeadHandler(actor);
                     return dead ? std::optional<float>(*dead ? 1.f : 0.f) : std::nullopt;
+                }
+                if (command == "getav" || command == "getactorvalue")
+                {
+                    if (index >= tokens.size() || !mActorValueHandler)
+                        return std::nullopt;
+                    const ESM::FormId actor = Misc::StringUtils::ciEqual(subject, "player")
+                            || Misc::StringUtils::ciEqual(subject, "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(subject);
+                    if (actor.isZeroOrUnset())
+                        return std::nullopt;
+                    return mActorValueHandler(actor, tokens[index++]);
+                }
+                if (command == "getinfaction" || command == "getfactionrank")
+                {
+                    if (index >= tokens.size() || !mActorFactionMembershipHandler)
+                        return std::nullopt;
+                    const ESM::FormId actor = Misc::StringUtils::ciEqual(subject, "player")
+                            || Misc::StringUtils::ciEqual(subject, "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(subject);
+                    const ESM::FormId faction = resolveFaction(tokens[index++]);
+                    if (actor.isZeroOrUnset() || faction.isZeroOrUnset())
+                        return std::nullopt;
+                    const std::optional<ESM4QuestFactionMembership> membership
+                        = mActorFactionMembershipHandler(actor, faction);
+                    if (!membership)
+                        return std::nullopt;
+                    return command == "getinfaction"
+                        ? std::optional<float>(membership->mMember ? 1.f : 0.f)
+                        : std::optional<float>(
+                            membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
                 }
                 if (command == "getitemcount")
                 {
@@ -4196,6 +4228,29 @@ namespace MWWorld
                     return std::nullopt;
                 const std::optional<bool> dead = mActorDeadHandler(actor);
                 return dead ? std::optional<float>(*dead ? 1.f : 0.f) : std::nullopt;
+            }
+            if ((token == "getav" || token == "getactorvalue") && (ownerActor || ownerReference))
+            {
+                if (index >= tokens.size() || !mActorValueHandler)
+                    return std::nullopt;
+                return mActorValueHandler(ownerActor ? *ownerActor : *ownerReference, tokens[index++]);
+            }
+            if ((token == "getinfaction" || token == "getfactionrank")
+                && (ownerActor || ownerReference))
+            {
+                if (index >= tokens.size() || !mActorFactionMembershipHandler)
+                    return std::nullopt;
+                const ESM::FormId faction = resolveFaction(tokens[index++]);
+                if (faction.isZeroOrUnset())
+                    return std::nullopt;
+                const std::optional<ESM4QuestFactionMembership> membership
+                    = mActorFactionMembershipHandler(ownerActor ? *ownerActor : *ownerReference, faction);
+                if (!membership)
+                    return std::nullopt;
+                return token == "getinfaction"
+                    ? std::optional<float>(membership->mMember ? 1.f : 0.f)
+                    : std::optional<float>(
+                        membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
             }
             if (token == "gethasnote")
             {
@@ -4728,6 +4783,67 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if ((Misc::StringUtils::ciEqual(command, "SetAV")
+                             || Misc::StringUtils::ciEqual(command, "ModAV")
+                             || Misc::StringUtils::ciEqual(command, "RestoreAV"))
+                    && tokens.size() >= 3)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    const std::optional<float> value = sourceExpression(sourceTokens, argument);
+                    const ESM::FormId actor = sourceOwnerId();
+                    ESM4QuestActorValueCommand actorValueCommand = ESM4QuestActorValueCommand::Set;
+                    if (Misc::StringUtils::ciEqual(command, "ModAV"))
+                        actorValueCommand = ESM4QuestActorValueCommand::Mod;
+                    else if (Misc::StringUtils::ciEqual(command, "RestoreAV"))
+                        actorValueCommand = ESM4QuestActorValueCommand::Restore;
+                    if (value && std::isfinite(*value) && argument == sourceTokens.size()
+                        && !actor.isZeroOrUnset() && mActorValueCommandHandler
+                        && mActorValueCommandHandler(actor, actorValueCommand, tokens[1], *value))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << command
+                                         << " actor=" << subject << " actorValue=" << tokens[1]
+                                         << " value=" << *value;
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "AddToFaction")
+                             || Misc::StringUtils::ciEqual(command, "RemoveFromFaction"))
+                    && tokens.size() >= 2 && tokens.size() <= 3)
+                {
+                    const bool add = Misc::StringUtils::ciEqual(command, "AddToFaction");
+                    std::optional<int> rank;
+                    bool valid = add || tokens.size() == 2;
+                    if (add)
+                    {
+                        rank = 0;
+                        valid = true;
+                        if (tokens.size() == 3)
+                        {
+                            const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                            std::size_t argument = 2;
+                            const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                            valid = parsed
+                                && *parsed >= std::numeric_limits<std::int8_t>::min()
+                                && *parsed <= std::numeric_limits<std::int8_t>::max()
+                                && argument == sourceTokens.size();
+                            if (valid)
+                                rank = *parsed;
+                        }
+                    }
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId faction = resolveFaction(tokens[1]);
+                    if (valid && !actor.isZeroOrUnset() && !faction.isZeroOrUnset()
+                        && mActorFactionCommandHandler
+                        && mActorFactionCommandHandler(actor, faction, rank))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                         << (add ? "AddToFaction" : "RemoveFromFaction")
+                                         << " actor=" << subject << " faction=" << tokens[1]
+                                         << " rank=" << (rank ? std::to_string(*rank) : std::string("removed"));
+                        continue;
+                    }
+                }
                 else if (Misc::StringUtils::ciEqual(command, "RewardXP")
                     && Misc::StringUtils::ciEqual(subject, "player") && tokens.size() >= 2)
                 {
@@ -5132,6 +5248,66 @@ namespace MWWorld
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: SetEssential actorBase=" << tokens[1]
                                      << " essential=" << (*value != 0);
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "SetAV")
+                         || Misc::StringUtils::ciEqual(tokens[0], "ModAV")
+                         || Misc::StringUtils::ciEqual(tokens[0], "RestoreAV"))
+                && (ownerActor || ownerReference) && tokens.size() >= 3)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                const std::optional<float> value = sourceExpression(sourceTokens, argument);
+                ESM4QuestActorValueCommand command = ESM4QuestActorValueCommand::Set;
+                if (Misc::StringUtils::ciEqual(tokens[0], "ModAV"))
+                    command = ESM4QuestActorValueCommand::Mod;
+                else if (Misc::StringUtils::ciEqual(tokens[0], "RestoreAV"))
+                    command = ESM4QuestActorValueCommand::Restore;
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                if (value && std::isfinite(*value) && argument == sourceTokens.size()
+                    && mActorValueCommandHandler
+                    && mActorValueCommandHandler(actor, command, tokens[1], *value))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: " << tokens[0]
+                                     << " owning actor=" << ESM::RefId(actor).serializeText()
+                                     << " actorValue=" << tokens[1] << " value=" << *value;
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "AddToFaction")
+                         || Misc::StringUtils::ciEqual(tokens[0], "RemoveFromFaction"))
+                && (ownerActor || ownerReference) && tokens.size() >= 2 && tokens.size() <= 3)
+            {
+                const bool add = Misc::StringUtils::ciEqual(tokens[0], "AddToFaction");
+                std::optional<int> rank;
+                bool valid = add || tokens.size() == 2;
+                if (add)
+                {
+                    rank = 0;
+                    if (tokens.size() == 3)
+                    {
+                        const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                        std::size_t argument = 2;
+                        const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                        valid = parsed
+                            && *parsed >= std::numeric_limits<std::int8_t>::min()
+                            && *parsed <= std::numeric_limits<std::int8_t>::max()
+                            && argument == sourceTokens.size();
+                        if (valid)
+                            rank = *parsed;
+                    }
+                }
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                const ESM::FormId faction = resolveFaction(tokens[1]);
+                if (valid && !faction.isZeroOrUnset() && mActorFactionCommandHandler
+                    && mActorFactionCommandHandler(actor, faction, rank))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                     << (add ? "AddToFaction" : "RemoveFromFaction")
+                                     << " owning actor=" << ESM::RefId(actor).serializeText()
+                                     << " faction=" << tokens[1]
+                                     << " rank=" << (rank ? std::to_string(*rank) : std::string("removed"));
                     continue;
                 }
             }

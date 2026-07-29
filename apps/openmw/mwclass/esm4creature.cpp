@@ -1202,6 +1202,31 @@ namespace MWClass
                     return false;
                 }
             }
+            if (!std::ranges::all_of(stats.mFalloutLimbDamage,
+                    [](float value) { return std::isfinite(value) && value >= 0.f; }))
+            {
+                error = "invalid Fallout limb-damage state";
+                return false;
+            }
+            for (const auto& [actorValue, value] : stats.mFalloutActorValueOverrides)
+            {
+                if (actorValue >= 96 || !std::isfinite(value))
+                {
+                    error = "invalid Fallout actor-value override";
+                    return false;
+                }
+            }
+            for (const auto& [faction, rank] : stats.mFalloutFactionOverrides)
+            {
+                if (faction.isZeroOrUnset()
+                    || (rank != ESM::CreatureStats::FalloutFactionRemoved
+                        && (rank < std::numeric_limits<std::int8_t>::min()
+                            || rank > std::numeric_limits<std::int8_t>::max())))
+                {
+                    error = "invalid Fallout faction override";
+                    return false;
+                }
+            }
             if (!std::isfinite(stats.mTradeTime.mHour) || !std::isfinite(stats.mTimeOfDeath.mHour)
                 || !std::isfinite(stats.mFallHeight))
             {
@@ -1524,6 +1549,11 @@ namespace MWClass
         return getCustomData(ptr).mTemplates.mFactions;
     }
 
+    const ESM4::Creature* ESM4Creature::getAIDataRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mTemplates.mAIData;
+    }
+
     const ESM4::Creature* ESM4Creature::getStatsRecord(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mTemplates.mStats;
@@ -1683,7 +1713,10 @@ namespace MWClass
                                                   .search(ESM::RefId::stringRefId("fMoveBaseSpeed"));
             const float baseSpeed
                 = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
-            return MWWorld::getFalloutWalkSpeed(getSpeedMultiplier(*creature), baseSpeed);
+            float multiplier = getSpeedMultiplier(*creature);
+            if (const std::optional<float> scripted = data.mCreatureStats.getFalloutActorValueOverride(21))
+                multiplier = std::max(*scripted, 1.f) / 100.f;
+            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed);
         }
         return std::max(1.f,
                    data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified())
@@ -1715,6 +1748,10 @@ namespace MWClass
     float ESM4Creature::getCapacity(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (const std::optional<float> scripted = stats.getFalloutActorValueOverride(13))
+            return std::max(0.f, *scripted);
+        if (const ESM4::Creature* record = getStatsRecord(ptr); record != nullptr && record->mIsFONV)
+            return std::max(0.f, 150.f + 10.f * stats.getAttribute(ESM::Attribute::Strength).getModified());
         return stats.getAttribute(ESM::Attribute::Strength).getModified() * 5.f;
     }
 

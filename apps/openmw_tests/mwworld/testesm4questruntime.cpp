@@ -1,12 +1,16 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <variant>
@@ -18,6 +22,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadnote.hpp>
@@ -1031,6 +1036,117 @@ TEST(ESM4QuestRuntimeTest, ExecutesConditionedItemRewardsAndScriptedLocksFromSou
             { doorId, 255 },
             { doorId, std::nullopt },
         }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesActorValuesAndPerReferenceFactionsFromSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12013c, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12013d, .mContentFile = 0 };
+    const ESM::FormId factionId{ .mIndex = 0x12013e, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ActorStateQuest");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Actor values applied" });
+    quest.mObjectives.push_back({ .mIndex = 20, .mDescription = "Faction removed" });
+    ESM4::QuestStageEntry mutateEntry;
+    mutateEntry.mScript.scriptSource
+        = "ActorStateRef.SetAV Aggression 1\n"
+          "ActorStateRef.ModAV Repair 30\n"
+          "ActorStateRef.RestoreAV LeftMobilityCondition 100\n"
+          "ActorStateRef.AddToFaction ActorStateFaction 2";
+    ESM4::QuestStageEntry presentConditionEntry;
+    presentConditionEntry.mScript.scriptSource
+        =
+          "if ActorStateRef.GetAV Aggression == 1 && ActorStateRef.GetFactionRank ActorStateFaction == 2\n"
+          "  SetObjectiveDisplayed ActorStateQuest 10 1\n"
+          "endif";
+    ESM4::QuestStageEntry removeEntry;
+    removeEntry.mScript.scriptSource = "ActorStateRef.RemoveFromFaction ActorStateFaction";
+    ESM4::QuestStageEntry absentConditionEntry;
+    absentConditionEntry.mScript.scriptSource
+        =
+          "if ActorStateRef.GetInFaction ActorStateFaction == 0\n"
+          "  SetObjectiveDisplayed ActorStateQuest 20 1\n"
+          "endif";
+    quest.mStages.push_back({ .mIndex = 5,
+        .mEntries = { std::move(mutateEntry), std::move(presentConditionEntry), std::move(removeEntry),
+            std::move(absentConditionEntry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference actor;
+    actor.mId = actorId;
+    actor.mEditorId = "ActorStateRef";
+    store.overrideRecord(actor);
+
+    ESM4::Faction faction;
+    faction.mId = factionId;
+    faction.mEditorId = "ActorStateFaction";
+    store.overrideRecord(faction);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    std::vector<std::tuple<ESM::FormId, MWWorld::ESM4QuestActorValueCommand, std::string, float>>
+        actorValueCommands;
+    std::map<std::string, float, std::less<>> actorValues;
+    actorValues["aggression"] = 0.f;
+    actorValues["repair"] = 50.f;
+    actorValues["leftmobilitycondition"] = 0.f;
+    runtime.setActorValueCommandHandler(
+        [&](ESM::FormId actorRef, MWWorld::ESM4QuestActorValueCommand command,
+            std::string_view actorValue, float value) {
+            actorValueCommands.emplace_back(actorRef, command, std::string(actorValue), value);
+            std::string key(actorValue);
+            std::ranges::transform(key, key.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            float& current = actorValues[key];
+            if (command == MWWorld::ESM4QuestActorValueCommand::Set)
+                current = value;
+            else
+                current += value;
+            return true;
+        });
+    runtime.setActorValueHandler([&](ESM::FormId actorRef, std::string_view actorValue) -> std::optional<float> {
+        if (actorRef != actorId)
+            return std::nullopt;
+        std::string key(actorValue);
+        std::ranges::transform(key, key.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        const auto found = actorValues.find(key);
+        return found != actorValues.end() ? std::optional<float>(found->second) : std::nullopt;
+    });
+
+    std::optional<int> factionRank;
+    runtime.setActorFactionCommandHandler(
+        [&](ESM::FormId actorRef, ESM::FormId factionRef, std::optional<int> rank) {
+            if (actorRef != actorId || factionRef != factionId)
+                return false;
+            factionRank = rank;
+            return true;
+        });
+    runtime.setActorFactionMembershipHandler(
+        [&](ESM::FormId actorRef, ESM::FormId factionRef)
+            -> std::optional<MWWorld::ESM4QuestFactionMembership> {
+            if (actorRef != actorId || factionRef != factionId)
+                return std::nullopt;
+            return MWWorld::ESM4QuestFactionMembership{
+                factionRank.has_value(), static_cast<std::int8_t>(factionRank.value_or(-1)) };
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_EQ(actorValueCommands.size(), 3);
+    EXPECT_EQ(std::get<1>(actorValueCommands[0]), MWWorld::ESM4QuestActorValueCommand::Set);
+    EXPECT_EQ(std::get<1>(actorValueCommands[1]), MWWorld::ESM4QuestActorValueCommand::Mod);
+    EXPECT_EQ(std::get<1>(actorValueCommands[2]), MWWorld::ESM4QuestActorValueCommand::Restore);
+    EXPECT_FALSE(factionRank.has_value());
+
+    const MWWorld::ESM4QuestState* const state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
