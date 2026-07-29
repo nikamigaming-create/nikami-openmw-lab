@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,6 +92,7 @@
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/falloutactorstate.hpp"
 #include "../mwmechanics/levelledlist.hpp"
+#include "../mwmechanics/movement.hpp"
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/spellcasting.hpp"
 #include "../mwmechanics/spellutil.hpp"
@@ -98,6 +100,7 @@
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/camera.hpp"
+#include "../mwrender/esm4npcanimation.hpp"
 #include "../mwrender/npcanimation.hpp"
 #include "../mwrender/postprocessor.hpp"
 #include "../mwrender/renderingmanager.hpp"
@@ -106,6 +109,7 @@
 #include "../mwscript/globalscripts.hpp"
 
 #include "../mwclass/door.hpp"
+#include "../mwclass/esm4npc.hpp"
 #include "../mwclass/fnvaipackage.hpp"
 
 #include "../mwphysics/actor.hpp"
@@ -132,6 +136,27 @@ namespace MWWorld
     namespace
     {
         constexpr std::string_view FalloutScriptPackageIdleGroup = "falloutscriptedpackageidle";
+
+        std::vector<ESM::FormId> collectFalloutInventoryEquipment(InventoryStore& inventory)
+        {
+            std::set<ESM::FormId> seen;
+            std::vector<ESM::FormId> equipped;
+            for (int slot = 0; slot < InventoryStore::Slots; ++slot)
+            {
+                const ContainerStoreIterator current = inventory.getSlot(slot);
+                if (current == inventory.end())
+                    continue;
+                const int type = current->getType();
+                if (type != ESM4::Armor::sRecordId && type != ESM4::Clothing::sRecordId
+                    && type != ESM4::Weapon::sRecordId)
+                    continue;
+                const ESM::FormId* formId
+                    = current->getCellRef().getRefId().getIf<ESM::FormId>();
+                if (formId != nullptr && seen.insert(*formId).second)
+                    equipped.push_back(*formId);
+            }
+            return equipped;
+        }
 
         void collectESM4ScriptPackageIdleModels(const MWWorld::ESMStore& store, ESM::FormId id,
             std::vector<std::string>& models, unsigned int depth = 0)
@@ -1101,6 +1126,243 @@ namespace MWWorld
                         actor, factionId, player ? &mFalloutPlayerRuntimeState : nullptr);
                 return ESM4QuestFactionMembership{ membership.mMember, membership.mRank };
             });
+        mESM4QuestRuntime.setActorFlagCommandHandler(
+            [this](ESM::FormId actorId, ESM4QuestActorFlag flag, bool enabled) {
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return false;
+
+                MWMechanics::FalloutActorFlag runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
+                switch (flag)
+                {
+                    case ESM4QuestActorFlag::Unconscious:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
+                        break;
+                    case ESM4QuestActorFlag::Restrained:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Restrained;
+                        break;
+                    case ESM4QuestActorFlag::PlayerTeammate:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::PlayerTeammate;
+                        break;
+                    case ESM4QuestActorFlag::IgnoreCrime:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreCrime;
+                        break;
+                }
+                if (!MWMechanics::setFalloutActorFlag(actor, runtimeFlag, enabled))
+                    return false;
+
+                MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+                if (runtimeFlag == MWMechanics::FalloutActorFlag::Unconscious)
+                {
+                    stats.setKnockedDown(enabled);
+                    if (!enabled)
+                    {
+                        stats.setKnockedDownOneFrame(false);
+                        stats.setKnockedDownOverOneFrame(false);
+                    }
+                }
+                if (runtimeFlag == MWMechanics::FalloutActorFlag::Restrained && enabled)
+                {
+                    MWMechanics::Movement& movement = actor.getClass().getMovementSettings(actor);
+                    movement.mPosition[0] = 0.f;
+                    movement.mPosition[1] = 0.f;
+                    movement.mPosition[2] = 0.f;
+                    movement.mRotation[0] = 0.f;
+                    movement.mRotation[1] = 0.f;
+                    movement.mRotation[2] = 0.f;
+                    stats.setAttackingOrSpell(false);
+                }
+                if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    mechanics->forceStateUpdate(actor);
+                Log(Debug::Info) << "FNV/ESM4 quest: actor flag=" << static_cast<unsigned int>(flag)
+                                 << " actor=" << actor.getCellRef().getRefId()
+                                 << " enabled=" << enabled;
+                return true;
+            });
+        mESM4QuestRuntime.setActorFlagHandler(
+            [this](ESM::FormId actorId, ESM4QuestActorFlag flag) -> std::optional<bool> {
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return std::nullopt;
+
+                MWMechanics::FalloutActorFlag runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
+                switch (flag)
+                {
+                    case ESM4QuestActorFlag::Unconscious:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
+                        break;
+                    case ESM4QuestActorFlag::Restrained:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Restrained;
+                        break;
+                    case ESM4QuestActorFlag::PlayerTeammate:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::PlayerTeammate;
+                        break;
+                    case ESM4QuestActorFlag::IgnoreCrime:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreCrime;
+                        break;
+                }
+                return MWMechanics::getFalloutActorFlag(actor, runtimeFlag);
+            });
+        mESM4QuestRuntime.setActorCommandHandler(
+            [this](ESM4QuestActorCommand command, ESM::FormId actorId, ESM::FormId targetId) {
+                const auto resolveActor = [this](ESM::FormId id) {
+                    const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
+                    Ptr result = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
+                    if (result.isEmpty() && !player)
+                        result = searchPtrByRefNum(id);
+                    return result;
+                };
+                const Ptr actor = resolveActor(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor())
+                    return false;
+                MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+                if (mechanics == nullptr)
+                    return false;
+
+                switch (command)
+                {
+                    case ESM4QuestActorCommand::StartCombat:
+                    {
+                        const Ptr target = resolveActor(targetId);
+                        if (target.isEmpty() || !target.getClass().isActor() || target == actor)
+                            return false;
+                        mechanics->startCombat(actor, target, nullptr);
+                        if (!actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat(target))
+                            return false;
+                        break;
+                    }
+                    case ESM4QuestActorCommand::StopCombat:
+                        mechanics->stopCombat(actor);
+                        if (actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat())
+                            return false;
+                        break;
+                    case ESM4QuestActorCommand::StopLook:
+                        mechanics->stopLooking(actor);
+                        break;
+                }
+                Log(Debug::Info) << "FNV/ESM4 quest: actor command="
+                                 << static_cast<unsigned int>(command)
+                                 << " actor=" << actor.getCellRef().getRefId()
+                                 << " target=" << ESM::RefId(targetId).serializeText();
+                return true;
+            });
+        mESM4QuestRuntime.setEquipmentCommandHandler(
+            [this](ESM::FormId actorId, ESM::FormId itemId, bool equip) {
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty())
+                    return false;
+
+                bool applied = false;
+                if (player)
+                {
+                    if (!actor.getClass().hasInventoryStore(actor))
+                        return false;
+                    InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+                    const ESM::RefId item(itemId);
+                    if (inventory.count(item) <= 0)
+                        return false;
+                    const int itemType = mStore.find(item);
+                    if (itemType != ESM::REC_ARMO4 && itemType != ESM::REC_CLOT4
+                        && itemType != ESM::REC_WEAP4)
+                        return false;
+
+                    if (equip)
+                    {
+                        std::uint32_t occupiedSlots = 0;
+                        if (const ESM4::Armor* armor = mStore.get<ESM4::Armor>().search(item))
+                            occupiedSlots = armor->mArmorFlags;
+                        else if (const ESM4::Clothing* clothing
+                            = mStore.get<ESM4::Clothing>().search(item))
+                            occupiedSlots = clothing->mClothingFlags;
+                        if (occupiedSlots != 0)
+                        {
+                            for (int slot = 0; slot < InventoryStore::Slots; ++slot)
+                            {
+                                ContainerStoreIterator current = inventory.getSlot(slot);
+                                if (current == inventory.end()
+                                    || current->getCellRef().getRefId() == item)
+                                    continue;
+                                std::uint32_t currentSlots = 0;
+                                if (current->getType() == ESM4::Armor::sRecordId)
+                                    currentSlots = current->get<ESM4::Armor>()->mBase->mArmorFlags;
+                                else if (current->getType() == ESM4::Clothing::sRecordId)
+                                    currentSlots = current->get<ESM4::Clothing>()->mBase->mClothingFlags;
+                                if ((currentSlots & occupiedSlots) != 0)
+                                    inventory.unequipSlot(slot);
+                            }
+                        }
+
+                        if (!inventory.isEquipped(item))
+                        {
+                            ContainerStoreIterator found = inventory.end();
+                            for (ContainerStoreIterator candidate = inventory.begin();
+                                 candidate != inventory.end(); ++candidate)
+                            {
+                                if (candidate->getCellRef().getRefId() == item)
+                                {
+                                    found = candidate;
+                                    break;
+                                }
+                            }
+                            if (found == inventory.end())
+                                return false;
+                            const std::pair<std::vector<int>, bool> slots
+                                = found->getClass().getEquipmentSlots(*found);
+                            if (slots.first.empty())
+                                return false;
+                            inventory.equip(slots.first.front(), found);
+                        }
+                    }
+                    else
+                    {
+                        for (int slot = 0; slot < InventoryStore::Slots; ++slot)
+                        {
+                            const ContainerStoreIterator current = inventory.getSlot(slot);
+                            if (current != inventory.end()
+                                && current->getCellRef().getRefId() == item)
+                                inventory.unequipSlot(slot);
+                        }
+                    }
+
+                    applied = actor.getClass().getCreatureStats(actor)
+                                  .setFalloutEquipmentOverride(
+                                      collectFalloutInventoryEquipment(inventory));
+                    if (applied)
+                        mRendering->refreshFalloutPlayerEquipment(actor);
+                }
+                else
+                {
+                    if (actor.getType() != ESM4::Npc::sRecordId
+                        || actor.getClass().getContainerStore(actor).count(ESM::RefId(itemId)) <= 0)
+                        return false;
+                    applied = equip
+                        ? MWClass::ESM4Npc::equipFalloutItem(actor, itemId)
+                        : MWClass::ESM4Npc::unequipFalloutItem(actor, itemId);
+                    if (applied)
+                    {
+                        if (auto* animation
+                            = dynamic_cast<MWRender::ESM4NpcAnimation*>(getAnimation(actor)))
+                            animation->refreshEquipment();
+                    }
+                }
+                if (!applied)
+                    return false;
+                if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    mechanics->forceStateUpdate(actor);
+                Log(Debug::Info) << "FNV/ESM4 quest: " << (equip ? "EquipItem" : "UnequipItem")
+                                 << " actor=" << actor.getCellRef().getRefId()
+                                 << " item=" << ESM::RefId(itemId).serializeText();
+                return true;
+            });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();
@@ -1241,15 +1503,42 @@ namespace MWWorld
                 return false;
             try
             {
-                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                const bool player = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14;
+                const Ptr owner = player
                     ? getPlayerPtr()
                     : searchPtr(ESM::RefId(ownerId), false, false);
-                if (owner.isEmpty())
+                Ptr resolvedOwner = owner;
+                if (resolvedOwner.isEmpty() && !player)
+                    resolvedOwner = searchPtrByRefNum(ownerId);
+                if (resolvedOwner.isEmpty())
                     return false;
-                ContainerStore& store = owner.getClass().getContainerStore(owner);
+                ContainerStore& store = resolvedOwner.getClass().getContainerStore(resolvedOwner);
                 const ESM::RefId item(itemId);
+                const bool refreshPlayerEquipment = player
+                    && resolvedOwner.getClass().hasInventoryStore(resolvedOwner)
+                    && (resolvedOwner.getClass().getCreatureStats(resolvedOwner)
+                            .hasFalloutEquipmentOverride()
+                        || resolvedOwner.getClass().getInventoryStore(resolvedOwner).isEquipped(item));
                 if (store.count(item) < count || store.remove(item, count, false, false) != count)
                     return false;
+                if (refreshPlayerEquipment)
+                {
+                    InventoryStore& inventory
+                        = resolvedOwner.getClass().getInventoryStore(resolvedOwner);
+                    if (!resolvedOwner.getClass().getCreatureStats(resolvedOwner)
+                            .setFalloutEquipmentOverride(
+                                collectFalloutInventoryEquipment(inventory)))
+                        return false;
+                    mRendering->refreshFalloutPlayerEquipment(resolvedOwner);
+                }
+                else if (store.count(item) == 0
+                    && resolvedOwner.getType() == ESM4::Npc::sRecordId)
+                {
+                    MWClass::ESM4Npc::unequipFalloutItem(resolvedOwner, itemId);
+                    if (auto* animation
+                        = dynamic_cast<MWRender::ESM4NpcAnimation*>(getAnimation(resolvedOwner)))
+                        animation->refreshEquipment();
+                }
                 Log(Debug::Info) << "FNV/ESM4 quest: RemoveItem owner=" << ESM::RefId(ownerId).serializeText()
                                  << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
                 return true;
@@ -1259,6 +1548,123 @@ namespace MWWorld
                 return false;
             }
         });
+        mESM4QuestRuntime.setRemoveAllItemsHandler(
+            [this](ESM::FormId ownerId, std::optional<ESM::FormId> destinationId, bool retainOwnership) {
+                const auto resolveContainer = [this](ESM::FormId id) {
+                    const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
+                    Ptr result = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
+                    if (result.isEmpty() && !player)
+                        result = searchPtrByRefNum(id);
+                    return result;
+                };
+
+                Ptr owner = resolveContainer(ownerId);
+                if (owner.isEmpty())
+                    return false;
+                const bool ownerIsPlayer = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14;
+                Ptr destination;
+                if (destinationId)
+                {
+                    destination = resolveContainer(*destinationId);
+                    if (destination.isEmpty())
+                        return false;
+                    if (destination == owner)
+                        return true;
+                }
+
+                try
+                {
+                    ContainerStore& source = owner.getClass().getContainerStore(owner);
+                    ContainerStore* target = destination.isEmpty()
+                        ? nullptr
+                        : &destination.getClass().getContainerStore(destination);
+
+                    struct TransferItem
+                    {
+                        Ptr mItem;
+                        int mCount = 0;
+                        ESM::RefId mOwner;
+                        ESM::RefId mFaction;
+                        int mFactionRank = -2;
+                    };
+                    std::vector<TransferItem> items;
+                    for (ContainerStoreIterator item = source.begin(); item != source.end(); ++item)
+                    {
+                        const int count = item->getCellRef().getCount(false);
+                        if (count <= 0)
+                            continue;
+                        items.push_back({ *item, count, item->getCellRef().getOwner(),
+                            item->getCellRef().getFaction(), item->getCellRef().getFactionRank() });
+                    }
+
+                    struct AmmoState
+                    {
+                        ESM::RefId mWeapon;
+                        std::optional<ESM::RefId> mAmmo;
+                        std::optional<int> mLoaded;
+                    };
+                    std::vector<AmmoState> ammoStates;
+                    for (const TransferItem& item : items)
+                    {
+                        const ESM::RefId id = item.mItem.getCellRef().getRefId();
+                        const std::optional<ESM::RefId> ammo = source.getFalloutAmmoSelection(id);
+                        const std::optional<int> loaded = source.getFalloutLoadedAmmo(id);
+                        if (ammo || loaded)
+                            ammoStates.push_back({ id, ammo, loaded });
+                    }
+
+                    if (target != nullptr)
+                    {
+                        for (const TransferItem& item : items)
+                        {
+                            if (source.remove(item.mItem, item.mCount, false, false) != item.mCount)
+                                return false;
+                            ContainerStoreIterator added = target->add(item.mItem, item.mCount, false);
+                            if (added == target->end())
+                                return false;
+                            if (retainOwnership)
+                            {
+                                added->getCellRef().setOwner(item.mOwner);
+                                added->getCellRef().setFaction(item.mFaction);
+                                added->getCellRef().setFactionRank(item.mFactionRank);
+                            }
+                        }
+                        for (const AmmoState& ammo : ammoStates)
+                        {
+                            if (ammo.mAmmo)
+                                target->setFalloutAmmoSelection(ammo.mWeapon, *ammo.mAmmo);
+                            if (ammo.mLoaded)
+                                target->setFalloutLoadedAmmo(ammo.mWeapon, *ammo.mLoaded);
+                        }
+                    }
+                    if (owner.getType() == ESM4::Npc::sRecordId)
+                        MWClass::ESM4Npc::clearFalloutEquipment(owner);
+                    source.clear();
+                    if (ownerIsPlayer)
+                    {
+                        if (!owner.getClass().getCreatureStats(owner)
+                                .setFalloutEquipmentOverride({}))
+                            return false;
+                        mRendering->refreshFalloutPlayerEquipment(owner);
+                    }
+
+                    if (auto* animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(getAnimation(owner)))
+                        animation->refreshEquipment();
+                    if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                        mechanics->forceStateUpdate(owner);
+                    Log(Debug::Info) << "FNV/ESM4 quest: RemoveAllItems owner="
+                                     << ESM::RefId(ownerId).serializeText() << " destination="
+                                     << (destinationId ? ESM::RefId(*destinationId).serializeText()
+                                                       : std::string("none"))
+                                     << " stacks=" << items.size()
+                                     << " retainOwnership=" << retainOwnership;
+                    return true;
+                }
+                catch (const std::exception&)
+                {
+                    return false;
+                }
+            });
     }
 
     void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,

@@ -123,6 +123,21 @@ namespace MWWorld
         Restore,
     };
 
+    enum class ESM4QuestActorFlag : std::uint8_t
+    {
+        Unconscious,
+        Restrained,
+        PlayerTeammate,
+        IgnoreCrime,
+    };
+
+    enum class ESM4QuestActorCommand : std::uint8_t
+    {
+        StartCombat,
+        StopCombat,
+        StopLook,
+    };
+
     struct ESM4QuestFactionMembership
     {
         bool mMember = false;
@@ -141,6 +156,10 @@ namespace MWWorld
         using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
         using AddItemHealthPercentHandler = std::function<bool(ESM::FormId, ESM::FormId, int, float)>;
         using RemoveItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using RemoveAllItemsHandler
+            = std::function<bool(ESM::FormId, std::optional<ESM::FormId>, bool)>;
+        using EquipmentCommandHandler
+            = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
@@ -166,6 +185,12 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, ESM::FormId, std::optional<int>)>;
         using ActorFactionMembershipHandler
             = std::function<std::optional<ESM4QuestFactionMembership>(ESM::FormId, ESM::FormId)>;
+        using ActorFlagCommandHandler
+            = std::function<bool(ESM::FormId, ESM4QuestActorFlag, bool)>;
+        using ActorFlagHandler
+            = std::function<std::optional<bool>(ESM::FormId, ESM4QuestActorFlag)>;
+        using ActorCommandHandler
+            = std::function<bool(ESM4QuestActorCommand, ESM::FormId, ESM::FormId)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -300,6 +325,8 @@ namespace MWWorld
         AddItemHandler mAddItemHandler;
         AddItemHealthPercentHandler mAddItemHealthPercentHandler;
         RemoveItemHandler mRemoveItemHandler;
+        RemoveAllItemsHandler mRemoveAllItemsHandler;
+        EquipmentCommandHandler mEquipmentCommandHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
@@ -320,6 +347,9 @@ namespace MWWorld
         ActorValueHandler mActorValueHandler;
         ActorFactionCommandHandler mActorFactionCommandHandler;
         ActorFactionMembershipHandler mActorFactionMembershipHandler;
+        ActorFlagCommandHandler mActorFlagCommandHandler;
+        ActorFlagHandler mActorFlagHandler;
+        ActorCommandHandler mActorCommandHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -541,6 +571,14 @@ namespace MWWorld
             mAddItemHealthPercentHandler = std::move(handler);
         }
         void setRemoveItemHandler(RemoveItemHandler handler) { mRemoveItemHandler = std::move(handler); }
+        void setRemoveAllItemsHandler(RemoveAllItemsHandler handler)
+        {
+            mRemoveAllItemsHandler = std::move(handler);
+        }
+        void setEquipmentCommandHandler(EquipmentCommandHandler handler)
+        {
+            mEquipmentCommandHandler = std::move(handler);
+        }
         void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
         void setRewardXpHandler(RewardXpHandler handler) { mRewardXpHandler = std::move(handler); }
@@ -602,6 +640,18 @@ namespace MWWorld
         void setActorFactionMembershipHandler(ActorFactionMembershipHandler handler)
         {
             mActorFactionMembershipHandler = std::move(handler);
+        }
+        void setActorFlagCommandHandler(ActorFlagCommandHandler handler)
+        {
+            mActorFlagCommandHandler = std::move(handler);
+        }
+        void setActorFlagHandler(ActorFlagHandler handler)
+        {
+            mActorFlagHandler = std::move(handler);
+        }
+        void setActorCommandHandler(ActorCommandHandler handler)
+        {
+            mActorCommandHandler = std::move(handler);
         }
 
         bool startQuest(std::string_view id);

@@ -461,4 +461,18 @@ namespace MWMechanics
         return !actor.isEmpty() && actor.getClass().isActor()
             && actor.getClass().getCreatureStats(actor).setFalloutFactionOverride(faction, rank);
     }
+
+    bool getFalloutActorFlag(const MWWorld::Ptr& actor, FalloutActorFlag flag)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && actor.getClass().getCreatureStats(actor).getFalloutRuntimeFlag(
+                static_cast<std::uint32_t>(flag));
+    }
+
+    bool setFalloutActorFlag(const MWWorld::Ptr& actor, FalloutActorFlag flag, bool enabled)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && actor.getClass().getCreatureStats(actor).setFalloutRuntimeFlag(
+                static_cast<std::uint32_t>(flag), enabled);
+    }
 }

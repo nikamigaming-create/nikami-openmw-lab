@@ -226,6 +226,37 @@ namespace ESM
                     esm.fail("Invalid or duplicate Fallout faction override");
             }
         }
+
+        mFalloutRuntimeFlags = 0;
+        esm.getHNOT(mFalloutRuntimeFlags, "FRTF");
+        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x0f;
+        if ((mFalloutRuntimeFlags & ~KnownFalloutRuntimeFlags) != 0)
+            esm.fail("Invalid Fallout actor runtime flags");
+
+        mHasFalloutEquipmentOverride = false;
+        mFalloutEquippedItems.clear();
+        if (esm.peekNextSub("FEQC"))
+        {
+            mHasFalloutEquipmentOverride = true;
+            std::uint32_t equippedCount = 0;
+            esm.getHNT(equippedCount, "FEQC");
+            constexpr std::uint32_t MaximumEquippedItems = 64;
+            if (equippedCount > MaximumEquippedItems)
+                esm.fail("Unreasonable Fallout equipped-item override count");
+            for (std::uint32_t i = 0; i < equippedCount; ++i)
+            {
+                ESM::FormId item = esm.getFormId(true, "FEQI");
+                const bool contentAvailable = esm.applyContentFileMapping(item);
+                if (contentAvailable)
+                {
+                    if (item.isZeroOrUnset()
+                        || std::find(mFalloutEquippedItems.begin(), mFalloutEquippedItems.end(), item)
+                            != mFalloutEquippedItems.end())
+                        esm.fail("Invalid or duplicate Fallout equipped-item override");
+                    mFalloutEquippedItems.push_back(item);
+                }
+            }
+        }
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -336,6 +367,14 @@ namespace ESM
                 esm.writeHNT("FFRK", rank);
             }
         }
+        if (mFalloutRuntimeFlags != 0)
+            esm.writeHNT("FRTF", mFalloutRuntimeFlags);
+        if (mHasFalloutEquipmentOverride)
+        {
+            esm.writeHNT("FEQC", static_cast<std::uint32_t>(mFalloutEquippedItems.size()));
+            for (const ESM::FormId item : mFalloutEquippedItems)
+                esm.writeFormId(item, true, "FEQI");
+        }
     }
 
     void CreatureStats::blank()
@@ -368,6 +407,9 @@ namespace ESM
         mFalloutLimbDamage.fill(0.f);
         mFalloutActorValueOverrides.clear();
         mFalloutFactionOverrides.clear();
+        mFalloutRuntimeFlags = 0;
+        mHasFalloutEquipmentOverride = false;
+        mFalloutEquippedItems.clear();
     }
 
 }

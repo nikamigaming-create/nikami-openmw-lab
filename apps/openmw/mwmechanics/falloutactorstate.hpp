@@ -24,6 +24,14 @@ namespace MWMechanics
         Restore,
     };
 
+    enum class FalloutActorFlag : std::uint32_t
+    {
+        Unconscious = 0x01,
+        Restrained = 0x02,
+        PlayerTeammate = 0x04,
+        IgnoreCrime = 0x08,
+    };
+
     struct FalloutFactionMembership
     {
         bool mMember = false;
@@ -48,6 +56,9 @@ namespace MWMechanics
         ESM::FormId faction, const MWWorld::FalloutPlayerRuntimeState* playerState = nullptr);
     [[nodiscard]] bool setFalloutActorFaction(
         const MWWorld::Ptr& actor, ESM::FormId faction, std::optional<int> rank);
+    [[nodiscard]] bool getFalloutActorFlag(const MWWorld::Ptr& actor, FalloutActorFlag flag);
+    [[nodiscard]] bool setFalloutActorFlag(
+        const MWWorld::Ptr& actor, FalloutActorFlag flag, bool enabled);
 }
 
 #endif

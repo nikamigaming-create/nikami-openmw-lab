@@ -121,6 +121,23 @@ namespace
         return parsed.ec == std::errc{} && parsed.ptr == end;
     }
 
+    std::optional<MWWorld::ESM4QuestActorFlag> actorFlagFromSourceCommand(std::string_view command)
+    {
+        if (Misc::StringUtils::ciEqual(command, "SetUnconscious")
+            || Misc::StringUtils::ciEqual(command, "GetUnconscious"))
+            return MWWorld::ESM4QuestActorFlag::Unconscious;
+        if (Misc::StringUtils::ciEqual(command, "SetRestrained")
+            || Misc::StringUtils::ciEqual(command, "GetRestrained"))
+            return MWWorld::ESM4QuestActorFlag::Restrained;
+        if (Misc::StringUtils::ciEqual(command, "SetPlayerTeammate")
+            || Misc::StringUtils::ciEqual(command, "GetPlayerTeammate"))
+            return MWWorld::ESM4QuestActorFlag::PlayerTeammate;
+        if (Misc::StringUtils::ciEqual(command, "IgnoreCrime")
+            || Misc::StringUtils::ciEqual(command, "GetIgnoreCrime"))
+            return MWWorld::ESM4QuestActorFlag::IgnoreCrime;
+        return std::nullopt;
+    }
+
     std::string removeQuotes(std::string_view value)
     {
         if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"')
@@ -4091,6 +4108,22 @@ namespace MWWorld
                         : std::optional<float>(
                             membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
                 }
+                if (command == "getunconscious" || command == "getrestrained"
+                    || command == "getplayerteammate" || command == "getignorecrime")
+                {
+                    if (!mActorFlagHandler)
+                        return std::nullopt;
+                    const ESM::FormId actor = Misc::StringUtils::ciEqual(subject, "player")
+                            || Misc::StringUtils::ciEqual(subject, "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(subject);
+                    const std::optional<ESM4QuestActorFlag> flag
+                        = actorFlagFromSourceCommand(command);
+                    if (actor.isZeroOrUnset() || !flag)
+                        return std::nullopt;
+                    const std::optional<bool> enabled = mActorFlagHandler(actor, *flag);
+                    return enabled ? std::optional<float>(*enabled ? 1.f : 0.f) : std::nullopt;
+                }
                 if (command == "getitemcount")
                 {
                     if (index >= tokens.size() || !mItemCountHandler)
@@ -4251,6 +4284,19 @@ namespace MWWorld
                     ? std::optional<float>(membership->mMember ? 1.f : 0.f)
                     : std::optional<float>(
                         membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
+            }
+            if ((token == "getunconscious" || token == "getrestrained"
+                    || token == "getplayerteammate" || token == "getignorecrime")
+                && (ownerActor || ownerReference))
+            {
+                if (!mActorFlagHandler)
+                    return std::nullopt;
+                const std::optional<ESM4QuestActorFlag> flag = actorFlagFromSourceCommand(token);
+                if (!flag)
+                    return std::nullopt;
+                const std::optional<bool> enabled
+                    = mActorFlagHandler(ownerActor ? *ownerActor : *ownerReference, *flag);
+                return enabled ? std::optional<float>(*enabled ? 1.f : 0.f) : std::nullopt;
             }
             if (token == "gethasnote")
             {
@@ -4728,6 +4774,12 @@ namespace MWWorld
                         return ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
                     return this->resolveReference(subject);
                 };
+                const auto sourceReferenceId = [this](std::string_view editorId) {
+                    if (Misc::StringUtils::ciEqual(editorId, "player")
+                        || Misc::StringUtils::ciEqual(editorId, "playerref"))
+                        return ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
+                    return this->resolveReference(editorId);
+                };
                 const bool playerSubject = Misc::StringUtils::ciEqual(subject, "player")
                     || Misc::StringUtils::ciEqual(subject, "playerref");
 
@@ -4780,6 +4832,126 @@ namespace MWWorld
                         Log(Debug::Info) << "FNV/ESM4 behavior: AddItemHealthPercent owner=" << subject
                                          << " item=" << tokens[1] << " count=" << *count
                                          << " healthPercent=" << *healthPercent;
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "RemoveAllItems")
+                    && tokens.size() >= 1 && tokens.size() <= 4)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    const ESM::FormId owner = sourceOwnerId();
+                    std::optional<ESM::FormId> destination;
+                    std::size_t argument = 1;
+                    bool valid = !owner.isZeroOrUnset();
+                    if (tokens.size() >= 2)
+                    {
+                        const ESM::FormId resolved = sourceReferenceId(tokens[1]);
+                        valid = !resolved.isZeroOrUnset();
+                        if (valid)
+                            destination = resolved;
+                        argument = 2;
+                    }
+                    bool retainOwnership = false;
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> retain = sourceInteger(sourceTokens, argument);
+                        valid = retain && (*retain == 0 || *retain == 1);
+                        retainOwnership = valid && *retain != 0;
+                    }
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> silent = sourceInteger(sourceTokens, argument);
+                        valid = silent && (*silent == 0 || *silent == 1);
+                    }
+                    if (valid && argument == sourceTokens.size() && mRemoveAllItemsHandler
+                        && mRemoveAllItemsHandler(owner, destination, retainOwnership))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: RemoveAllItems owner=" << subject
+                                         << " destination="
+                                         << (destination ? ESM::RefId(*destination).serializeText()
+                                                         : std::string("none"))
+                                         << " retainOwnership=" << retainOwnership;
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "EquipItem")
+                             || Misc::StringUtils::ciEqual(command, "UnequipItem"))
+                    && tokens.size() >= 2 && tokens.size() <= 4)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    bool valid = true;
+                    while (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> flag = sourceInteger(sourceTokens, argument);
+                        valid = flag && (*flag == 0 || *flag == 1);
+                    }
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId item = resolveInventoryItem(tokens[1]);
+                    const bool equip = Misc::StringUtils::ciEqual(command, "EquipItem");
+                    if (valid && argument == sourceTokens.size() && !actor.isZeroOrUnset()
+                        && !item.isZeroOrUnset() && mEquipmentCommandHandler
+                        && mEquipmentCommandHandler(actor, item, equip))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                         << (equip ? "EquipItem" : "UnequipItem")
+                                         << " actor=" << subject << " item=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "SetUnconscious")
+                             || Misc::StringUtils::ciEqual(command, "SetRestrained")
+                             || Misc::StringUtils::ciEqual(command, "SetPlayerTeammate")
+                             || Misc::StringUtils::ciEqual(command, "IgnoreCrime"))
+                    && tokens.size() >= 2)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<std::int32_t> value = sourceInteger(sourceTokens, argument);
+                    const std::optional<ESM4QuestActorFlag> flag
+                        = actorFlagFromSourceCommand(command);
+                    const ESM::FormId actor = sourceOwnerId();
+                    if (value && (*value == 0 || *value == 1) && flag
+                        && argument == sourceTokens.size() && !actor.isZeroOrUnset()
+                        && mActorFlagCommandHandler
+                        && mActorFlagCommandHandler(actor, *flag, *value != 0))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << command
+                                         << " actor=" << subject << " enabled=" << (*value != 0);
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "StartCombat") && tokens.size() == 2)
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId target = sourceReferenceId(tokens[1]);
+                    if (!actor.isZeroOrUnset() && !target.isZeroOrUnset() && mActorCommandHandler
+                        && mActorCommandHandler(
+                            ESM4QuestActorCommand::StartCombat, actor, target))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: StartCombat actor=" << subject
+                                         << " target=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "StopCombat") && tokens.size() == 1)
+                    || (Misc::StringUtils::ciEqual(command, "StopLook")
+                        && (tokens.size() == 1 || tokens.size() == 2)))
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM4QuestActorCommand actorCommand
+                        = Misc::StringUtils::ciEqual(command, "StopCombat")
+                        ? ESM4QuestActorCommand::StopCombat
+                        : ESM4QuestActorCommand::StopLook;
+                    const ESM::FormId target = tokens.size() == 2
+                        ? sourceReferenceId(tokens[1])
+                        : ESM::FormId{};
+                    if (!actor.isZeroOrUnset() && mActorCommandHandler
+                        && (tokens.size() == 1 || !target.isZeroOrUnset())
+                        && mActorCommandHandler(actorCommand, actor, target))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << command
+                                         << " actor=" << subject;
                         continue;
                     }
                 }
@@ -5248,6 +5420,136 @@ namespace MWWorld
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: SetEssential actorBase=" << tokens[1]
                                      << " essential=" << (*value != 0);
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "RemoveAllItems")
+                && (ownerActor || ownerReference) && tokens.size() >= 1 && tokens.size() <= 4)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                const ESM::FormId owner = ownerActor ? *ownerActor : *ownerReference;
+                std::optional<ESM::FormId> destination;
+                std::size_t argument = 1;
+                bool valid = true;
+                if (tokens.size() >= 2)
+                {
+                    const ESM::FormId resolved = Misc::StringUtils::ciEqual(tokens[1], "player")
+                            || Misc::StringUtils::ciEqual(tokens[1], "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(tokens[1]);
+                    valid = !resolved.isZeroOrUnset();
+                    if (valid)
+                        destination = resolved;
+                    argument = 2;
+                }
+                bool retainOwnership = false;
+                if (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> retain = sourceInteger(sourceTokens, argument);
+                    valid = retain && (*retain == 0 || *retain == 1);
+                    retainOwnership = valid && *retain != 0;
+                }
+                if (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> silent = sourceInteger(sourceTokens, argument);
+                    valid = silent && (*silent == 0 || *silent == 1);
+                }
+                if (valid && argument == sourceTokens.size() && mRemoveAllItemsHandler
+                    && mRemoveAllItemsHandler(owner, destination, retainOwnership))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: RemoveAllItems owning actor="
+                                     << ESM::RefId(owner).serializeText() << " destination="
+                                     << (destination ? ESM::RefId(*destination).serializeText()
+                                                     : std::string("none"))
+                                     << " retainOwnership=" << retainOwnership;
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "EquipItem")
+                         || Misc::StringUtils::ciEqual(tokens[0], "UnequipItem"))
+                && (ownerActor || ownerReference) && tokens.size() >= 2 && tokens.size() <= 4)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                bool valid = true;
+                while (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> flag = sourceInteger(sourceTokens, argument);
+                    valid = flag && (*flag == 0 || *flag == 1);
+                }
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                const ESM::FormId item = resolveInventoryItem(tokens[1]);
+                const bool equip = Misc::StringUtils::ciEqual(tokens[0], "EquipItem");
+                if (valid && argument == sourceTokens.size() && !item.isZeroOrUnset()
+                    && mEquipmentCommandHandler
+                    && mEquipmentCommandHandler(actor, item, equip))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                     << (equip ? "EquipItem" : "UnequipItem")
+                                     << " owning actor=" << ESM::RefId(actor).serializeText()
+                                     << " item=" << tokens[1];
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "SetUnconscious")
+                         || Misc::StringUtils::ciEqual(tokens[0], "SetRestrained")
+                         || Misc::StringUtils::ciEqual(tokens[0], "SetPlayerTeammate")
+                         || Misc::StringUtils::ciEqual(tokens[0], "IgnoreCrime"))
+                && (ownerActor || ownerReference) && tokens.size() >= 2)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 1;
+                const std::optional<std::int32_t> value = sourceInteger(sourceTokens, argument);
+                const std::optional<ESM4QuestActorFlag> flag
+                    = actorFlagFromSourceCommand(tokens[0]);
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                if (value && (*value == 0 || *value == 1) && flag
+                    && argument == sourceTokens.size() && mActorFlagCommandHandler
+                    && mActorFlagCommandHandler(actor, *flag, *value != 0))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: " << tokens[0]
+                                     << " owning actor=" << ESM::RefId(actor).serializeText()
+                                     << " enabled=" << (*value != 0);
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "StartCombat")
+                && (ownerActor || ownerReference) && tokens.size() == 2)
+            {
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                const ESM::FormId target = Misc::StringUtils::ciEqual(tokens[1], "player")
+                        || Misc::StringUtils::ciEqual(tokens[1], "playerref")
+                    ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                    : resolveReference(tokens[1]);
+                if (!target.isZeroOrUnset() && mActorCommandHandler
+                    && mActorCommandHandler(ESM4QuestActorCommand::StartCombat, actor, target))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: StartCombat owning actor="
+                                     << ESM::RefId(actor).serializeText() << " target=" << tokens[1];
+                    continue;
+                }
+            }
+            else if (((Misc::StringUtils::ciEqual(tokens[0], "StopCombat") && tokens.size() == 1)
+                         || (Misc::StringUtils::ciEqual(tokens[0], "StopLook")
+                             && (tokens.size() == 1 || tokens.size() == 2)))
+                && (ownerActor || ownerReference))
+            {
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                const ESM4QuestActorCommand command
+                    = Misc::StringUtils::ciEqual(tokens[0], "StopCombat")
+                    ? ESM4QuestActorCommand::StopCombat
+                    : ESM4QuestActorCommand::StopLook;
+                const ESM::FormId target = tokens.size() == 2
+                    ? (Misc::StringUtils::ciEqual(tokens[1], "player")
+                            || Misc::StringUtils::ciEqual(tokens[1], "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(tokens[1]))
+                    : ESM::FormId{};
+                if ((tokens.size() == 1 || !target.isZeroOrUnset())
+                    && mActorCommandHandler && mActorCommandHandler(command, actor, target))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: " << tokens[0]
+                                     << " owning actor=" << ESM::RefId(actor).serializeText();
                     continue;
                 }
             }

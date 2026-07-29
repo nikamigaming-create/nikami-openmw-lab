@@ -151,6 +151,32 @@ namespace MWMechanics
         return true;
     }
 
+    bool CreatureStats::setFalloutRuntimeFlag(std::uint32_t flag, bool enabled)
+    {
+        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x0f;
+        if (flag == 0 || (flag & ~KnownFalloutRuntimeFlags) != 0)
+            return false;
+        if (enabled)
+            mFalloutRuntimeFlags |= flag;
+        else
+            mFalloutRuntimeFlags &= ~flag;
+        return true;
+    }
+
+    bool CreatureStats::setFalloutEquipmentOverride(std::vector<ESM::FormId> items)
+    {
+        constexpr std::size_t MaximumEquippedItems = 64;
+        if (items.size() > MaximumEquippedItems
+            || std::ranges::any_of(items, [](ESM::FormId item) { return item.isZeroOrUnset(); }))
+            return false;
+        std::sort(items.begin(), items.end());
+        if (std::adjacent_find(items.begin(), items.end()) != items.end())
+            return false;
+        mHasFalloutEquipmentOverride = true;
+        mFalloutEquippedItems = std::move(items);
+        return true;
+    }
+
     Spells& CreatureStats::getSpells()
     {
         return mSpells;
@@ -602,6 +628,9 @@ namespace MWMechanics
         state.mFalloutLimbDamage = mFalloutLimbDamage;
         state.mFalloutActorValueOverrides = mFalloutActorValueOverrides;
         state.mFalloutFactionOverrides = mFalloutFactionOverrides;
+        state.mFalloutRuntimeFlags = mFalloutRuntimeFlags;
+        state.mHasFalloutEquipmentOverride = mHasFalloutEquipmentOverride;
+        state.mFalloutEquippedItems = mFalloutEquippedItems;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -664,6 +693,9 @@ namespace MWMechanics
         mFalloutLimbDamage = state.mFalloutLimbDamage;
         mFalloutActorValueOverrides = state.mFalloutActorValueOverrides;
         mFalloutFactionOverrides = state.mFalloutFactionOverrides;
+        mFalloutRuntimeFlags = state.mFalloutRuntimeFlags;
+        mHasFalloutEquipmentOverride = state.mHasFalloutEquipmentOverride;
+        mFalloutEquippedItems = state.mFalloutEquippedItems;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)

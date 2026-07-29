@@ -146,6 +146,30 @@ namespace MWDialogue
             case ESM4::FUN_GetDead:
                 actual = actor.getClass().getCreatureStats(actor).isDead() ? 1.f : 0.f;
                 break;
+            case ESM4::FUN_GetUnconscious:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::Unconscious)
+                    ? 1.f
+                    : 0.f;
+                break;
+            case ESM4::FUN_GetRestrained:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::Restrained)
+                    ? 1.f
+                    : 0.f;
+                break;
+            case ESM4::FUN_GetPlayerTeammate:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::PlayerTeammate)
+                    ? 1.f
+                    : 0.f;
+                break;
+            case ESM4::FUN_GetIgnoreCrime:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::IgnoreCrime)
+                    ? 1.f
+                    : 0.f;
+                break;
             case ESM4::FUN_GetDestroyed:
                 actual = actor.getRefData().isDestroyed() ? 1.f : 0.f;
                 break;

@@ -115,6 +115,7 @@ namespace MWBase
 
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
+        virtual void stopLooking(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool playFalloutDialogueAnimation(
             const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)

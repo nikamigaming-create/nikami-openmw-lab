@@ -197,6 +197,27 @@ namespace MWRender
             }
         }
 
+        bool applyFalloutInventoryPlayerRuntimeEquipment(
+            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& player)
+        {
+            if (player.isEmpty() || !player.getClass().isActor())
+                return false;
+            const MWMechanics::CreatureStats& playerStats
+                = player.getClass().getCreatureStats(player);
+            if (!playerStats.hasFalloutEquipmentOverride())
+                return false;
+            if (!MWClass::ESM4Npc::applyFalloutEquipmentOverride(
+                    visualPtr, playerStats.getFalloutEquippedItems(), false))
+                return false;
+            MWMechanics::CreatureStats& visualStats
+                = visualPtr.getClass().getCreatureStats(visualPtr);
+            if (MWClass::ESM4Npc::getEquippedWeapon(visualPtr) != nullptr)
+                visualStats.setDrawState(playerStats.getDrawState());
+            else
+                visualStats.setDrawState(MWMechanics::DrawState::Nothing);
+            return true;
+        }
+
         std::string trimFalloutPreviewText(const char* value)
         {
             if (value == nullptr)
@@ -989,6 +1010,7 @@ namespace MWRender
                 MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
                 visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
                 applyFalloutInventoryPlayerProxyConfiguredEquipment(visualPtr);
+                applyFalloutInventoryPlayerRuntimeEquipment(visualPtr, mCharacter);
 
                 Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
                                  << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)

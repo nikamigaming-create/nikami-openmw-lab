@@ -1150,6 +1150,130 @@ TEST(ESM4QuestRuntimeTest, ExecutesActorValuesAndPerReferenceFactionsFromSourceF
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120160, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120161, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120162, .mContentFile = 0 };
+    const ESM::FormId destinationId{ .mIndex = 0x120163, .mContentFile = 0 };
+    const ESM::FormId weaponId{ .mIndex = 0x120164, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ActorControlQuest");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Actor flags applied" });
+    ESM4::QuestStageEntry commandEntry;
+    commandEntry.mScript.scriptSource
+        = "ActorControlRef.SetUnconscious 1\n"
+          "ActorControlRef.SetRestrained 1\n"
+          "ActorControlRef.SetPlayerTeammate 1\n"
+          "ActorControlRef.IgnoreCrime 1\n"
+          "ActorControlRef.EquipItem ActorControlWeapon 1 1\n"
+          "ActorControlRef.UnequipItem ActorControlWeapon 1\n"
+          "ActorControlRef.StartCombat ActorControlTarget\n"
+          "ActorControlRef.StopCombat\n"
+          "ActorControlRef.StopLook ActorControlTarget\n"
+          "ActorControlRef.RemoveAllItems ActorControlDestination 0 1\n"
+          "player.EquipItem ActorControlWeapon 1 1\n"
+          "player.UnequipItem ActorControlWeapon 1\n"
+          "player.RemoveAllItems";
+    ESM4::QuestStageEntry conditionEntry;
+    conditionEntry.mScript.scriptSource
+        = "if ActorControlRef.GetUnconscious == 1 && ActorControlRef.GetRestrained == 1\n"
+          "  if ActorControlRef.GetPlayerTeammate == 1 && ActorControlRef.GetIgnoreCrime == 1\n"
+          "    SetObjectiveDisplayed ActorControlQuest 10 1\n"
+          "  endif\n"
+          "endif";
+    quest.mStages.push_back(
+        { .mIndex = 5, .mEntries = { std::move(commandEntry), std::move(conditionEntry) } });
+    store.overrideRecord(quest);
+
+    for (const auto& [id, editor] : std::array{
+             std::pair{ actorId, std::string_view("ActorControlRef") },
+             std::pair{ targetId, std::string_view("ActorControlTarget") },
+             std::pair{ destinationId, std::string_view("ActorControlDestination") },
+         })
+    {
+        ESM4::Reference reference;
+        reference.mId = id;
+        reference.mEditorId = editor;
+        store.overrideRecord(reference);
+    }
+    ESM4::Weapon weapon;
+    weapon.mId = weaponId;
+    weapon.mEditorId = "ActorControlWeapon";
+    store.overrideRecord(weapon);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    std::map<MWWorld::ESM4QuestActorFlag, bool> flags;
+    runtime.setActorFlagCommandHandler(
+        [&](ESM::FormId actor, MWWorld::ESM4QuestActorFlag flag, bool enabled) {
+            if (actor != actorId)
+                return false;
+            flags[flag] = enabled;
+            return true;
+        });
+    runtime.setActorFlagHandler(
+        [&](ESM::FormId actor, MWWorld::ESM4QuestActorFlag flag) -> std::optional<bool> {
+            if (actor != actorId)
+                return std::nullopt;
+            const auto found = flags.find(flag);
+            return found != flags.end() ? std::optional<bool>(found->second) : std::nullopt;
+        });
+
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>> equipment;
+    runtime.setEquipmentCommandHandler([&](ESM::FormId actor, ESM::FormId item, bool equip) {
+        equipment.emplace_back(actor, item, equip);
+        return (actor == actorId || actor == playerId) && item == weaponId;
+    });
+    std::vector<std::tuple<MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId>> actorCommands;
+    runtime.setActorCommandHandler(
+        [&](MWWorld::ESM4QuestActorCommand command, ESM::FormId actor, ESM::FormId target) {
+            actorCommands.emplace_back(command, actor, target);
+            return actor == actorId;
+        });
+    std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool>> removals;
+    runtime.setRemoveAllItemsHandler(
+        [&](ESM::FormId owner, std::optional<ESM::FormId> destination, bool retainOwnership) {
+            removals.emplace_back(owner, destination, retainOwnership);
+            return (owner == actorId && destination == destinationId && !retainOwnership)
+                || (owner == playerId && !destination && !retainOwnership);
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(flags.size(), 4);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Unconscious]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Restrained]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::PlayerTeammate]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::IgnoreCrime]);
+    ASSERT_EQ(equipment.size(), 4);
+    EXPECT_TRUE(std::get<2>(equipment[0]));
+    EXPECT_FALSE(std::get<2>(equipment[1]));
+    EXPECT_EQ(std::get<0>(equipment[2]), playerId);
+    EXPECT_TRUE(std::get<2>(equipment[2]));
+    EXPECT_EQ(std::get<0>(equipment[3]), playerId);
+    EXPECT_FALSE(std::get<2>(equipment[3]));
+    ASSERT_EQ(actorCommands.size(), 3);
+    EXPECT_EQ(std::get<0>(actorCommands[0]), MWWorld::ESM4QuestActorCommand::StartCombat);
+    EXPECT_EQ(std::get<2>(actorCommands[0]), targetId);
+    EXPECT_EQ(std::get<0>(actorCommands[1]), MWWorld::ESM4QuestActorCommand::StopCombat);
+    EXPECT_EQ(std::get<0>(actorCommands[2]), MWWorld::ESM4QuestActorCommand::StopLook);
+    EXPECT_EQ(std::get<2>(actorCommands[2]), targetId);
+    ASSERT_EQ(removals.size(), 2);
+    EXPECT_EQ(std::get<1>(removals[0]), destinationId);
+    EXPECT_FALSE(std::get<2>(removals[0]));
+    EXPECT_EQ(std::get<0>(removals[1]), playerId);
+    EXPECT_FALSE(std::get<1>(removals[1]));
+    EXPECT_FALSE(std::get<2>(removals[1]));
+
+    const MWWorld::ESM4QuestState* const state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, EvaluatesQuestActorAndInventoryFunctionsInSourceFallbackConditions)
 {
     MWWorld::ESMStore store;

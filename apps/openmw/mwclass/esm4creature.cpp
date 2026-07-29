@@ -1447,6 +1447,11 @@ namespace MWClass
             return true;
         if (!validateCreatureStats(state.mCreatureStats, error))
             return false;
+        if ((state.mCreatureStats.mFalloutRuntimeFlags & ~std::uint32_t{ 0x0f }) != 0)
+        {
+            error = "invalid Fallout actor runtime flags";
+            return false;
+        }
 
         std::set<ESM::RefNum> refNums;
         std::map<ESM::RefId, std::int64_t> counts;
@@ -1489,6 +1494,31 @@ namespace MWClass
             {
                 error = "invalid equipment-state item index";
                 return false;
+            }
+        }
+        if (state.mCreatureStats.mHasFalloutEquipmentOverride)
+        {
+            if (state.mCreatureStats.mFalloutEquippedItems.size() > 64)
+            {
+                error = "unreasonable Fallout equipment override count";
+                return false;
+            }
+            std::set<ESM::FormId> equipped;
+            for (const ESM::FormId item : state.mCreatureStats.mFalloutEquippedItems)
+            {
+                const int type = store.find(ESM::RefId(item));
+                if (item.isZeroOrUnset() || !equipped.insert(item).second
+                    || (type != ESM::REC_ARMO4 && type != ESM::REC_CLOT4 && type != ESM::REC_WEAP4))
+                {
+                    error = "invalid Fallout equipment override item";
+                    return false;
+                }
+                const auto count = counts.find(ESM::RefId(item));
+                if (count == counts.end() || count->second <= 0)
+                {
+                    error = "Fallout equipment override item is absent from inventory";
+                    return false;
+                }
             }
         }
         if (state.mInventory.mSelectedEnchantItem

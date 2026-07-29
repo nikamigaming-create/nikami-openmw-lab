@@ -19,6 +19,7 @@
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "apps/openmw/mwbase/environment.hpp"
 #include "apps/openmw/mwbase/luamanager.hpp"
@@ -27,6 +28,7 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
+#include "apps/openmw/mwclass/esm4npc.hpp"
 
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
@@ -94,6 +96,7 @@ namespace
     constexpr std::uint32_t sDoorRef = 0x01108744;
     constexpr std::uint32_t sDoorDestRef = 0x01108745;
     constexpr std::uint32_t sDoorDestCell = 0x01104c11;
+    constexpr std::uint32_t sNpcWeaponBase = 0x01103b2e;
 
     TEST(FnvCreatureAiPolicyTest, FlyAndWalkSandboxRetainsAuthoredPerch)
     {
@@ -409,7 +412,8 @@ namespace
             store.setUp();
         }
 
-        static void populateNpcWorldStore(MWWorld::ESMStore& store)
+        static void populateNpcWorldStore(
+            MWWorld::ESMStore& store, bool includeWeapon = false, bool weaponInInventory = true)
         {
             ESM4::MiscItem bottle{};
             bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
@@ -424,7 +428,19 @@ namespace
             store.overrideRecord(key);
 
             store.overrideRecord(makeNpcRace());
-            store.overrideRecord(makeNpc());
+            ESM4::Npc npc = makeNpc();
+            if (includeWeapon)
+            {
+                ESM4::Weapon weapon{};
+                weapon.mId = ESM::FormId::fromUint32(sNpcWeaponBase);
+                weapon.mEditorId = "GoodspringsNpcStateWeapon";
+                weapon.mFullName = "NPC State Weapon";
+                weapon.mData.damage = 12;
+                store.overrideRecord(weapon);
+                if (weaponInInventory)
+                    npc.mInventory.push_back(ESM4::InventoryItem{ sNpcWeaponBase, 1 });
+            }
+            store.overrideRecord(npc);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCharacter>&>(store.get<ESM4::ActorCharacter>())
                 .insertStatic(makePlacedNpc());
@@ -1372,7 +1388,7 @@ namespace
     TEST_F(ESM4ContainerTest, NpcCstaRoundTripFromUnloadedCellsRetainsOuterInventoryHealthDeathAndEmptyAi)
     {
         MWWorld::ESMStore store;
-        populateNpcWorldStore(store);
+        populateNpcWorldStore(store, true);
         ESM::ReadersCache readers;
         MWWorld::WorldModel sourceModel(store, readers);
         mEnvironment.setESMStore(store);
@@ -1381,6 +1397,7 @@ namespace
         const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
         const ESM::RefNum npcRef = ESM::FormId::fromUint32(sNpcRef);
         const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
         MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
         ASSERT_NE(sourceCell, nullptr);
         ASSERT_EQ(sourceCell->getState(), MWWorld::CellStore::State_Unloaded);
@@ -1395,6 +1412,10 @@ namespace
 
         MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
         ASSERT_TRUE(stats.getAiSequence().isEmpty());
+        ASSERT_TRUE(stats.setFalloutRuntimeFlag(0x0f, true));
+        ASSERT_TRUE(MWClass::ESM4Npc::equipFalloutItem(source, weaponId));
+        ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
+        ASSERT_EQ(stats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
         ESM::CreatureStats deadState;
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
@@ -1430,12 +1451,43 @@ namespace
         EXPECT_TRUE(restoredStats.isDead());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_TRUE(restoredStats.getAiSequence().isEmpty());
+        EXPECT_EQ(restoredStats.getFalloutRuntimeFlags(), 0x0fu);
+        EXPECT_TRUE(restoredStats.hasFalloutEquipmentOverride());
+        EXPECT_EQ(restoredStats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
+        const ESM4::Weapon* restoredWeapon = MWClass::ESM4Npc::getEquippedWeapon(restored);
+        ASSERT_NE(restoredWeapon, nullptr);
+        EXPECT_EQ(restoredWeapon->mId, weaponId);
         EXPECT_EQ(restored.getCellRef().getCount(false), 2);
         EXPECT_FLOAT_EQ(restored.getCellRef().getScale(), 1.25f);
         EXPECT_EQ(restored.getCellRef().getPosition(), savedPosition);
         EXPECT_EQ(restored.getRefData().getPosition(), savedPosition);
         EXPECT_TRUE(restored.getRefData().isEnabled());
         EXPECT_EQ(restored.getCellRef().getRefNum(), npcRef);
+    }
+
+    TEST_F(ESM4ContainerTest, FalloutVisualEquipmentOverrideCanUsePlayerInventoryOwnedOutsideProxy)
+    {
+        MWWorld::ESMStore store;
+        populateNpcWorldStore(store, true, false);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr proxy = findPlacedNpc(*cell);
+        ASSERT_FALSE(proxy.isEmpty());
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
+        EXPECT_EQ(proxy.getClass().getContainerStore(proxy).count(ESM::RefId(weaponId)), 0);
+        EXPECT_FALSE(MWClass::ESM4Npc::equipFalloutItem(proxy, weaponId));
+        ASSERT_TRUE(MWClass::ESM4Npc::applyFalloutEquipmentOverride(
+            proxy, std::vector<ESM::FormId>{ weaponId }, false));
+        const ESM4::Weapon* equipped = MWClass::ESM4Npc::getEquippedWeapon(proxy);
+        ASSERT_NE(equipped, nullptr);
+        EXPECT_EQ(equipped->mId, weaponId);
     }
 
     TEST_F(ESM4ContainerTest, NpcStateDropsItemsWhoseContentFileWasRemoved)

@@ -388,6 +388,12 @@ namespace ESM
                 { ESM::FormId{ .mIndex = 0x5678, .mContentFile = 0 },
                     CreatureStats::FalloutFactionRemoved },
             };
+            record.mFalloutRuntimeFlags = 0x0d;
+            record.mHasFalloutEquipmentOverride = true;
+            record.mFalloutEquippedItems = {
+                ESM::FormId{ .mIndex = 0x9abc, .mContentFile = 0 },
+                ESM::FormId{ .mIndex = 0xdef0, .mContentFile = 0 },
+            };
             CreatureStats result;
             saveAndLoadRecord(record, GetParam(), result);
             EXPECT_EQ(record.mLastHitAttemptObject, result.mLastHitAttemptObject);
@@ -395,6 +401,9 @@ namespace ESM
             EXPECT_EQ(record.mFalloutLimbDamage, result.mFalloutLimbDamage);
             EXPECT_EQ(record.mFalloutActorValueOverrides, result.mFalloutActorValueOverrides);
             EXPECT_EQ(record.mFalloutFactionOverrides, result.mFalloutFactionOverrides);
+            EXPECT_EQ(record.mFalloutRuntimeFlags, result.mFalloutRuntimeFlags);
+            EXPECT_EQ(record.mHasFalloutEquipmentOverride, result.mHasFalloutEquipmentOverride);
+            EXPECT_EQ(record.mFalloutEquippedItems, result.mFalloutEquippedItems);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)

@@ -85,6 +85,7 @@ namespace MWMechanics
 
         /// Removes an actor from combat and makes all of their allies stop fighting the actor's targets
         void stopCombat(const MWWorld::Ptr& ptr) const;
+        void stopLooking(const MWWorld::Ptr& ptr) const;
 
         void playIdleDialogue(const MWWorld::Ptr& actor) const;
         void updateMovementSpeed(const MWWorld::Ptr& actor) const;

@@ -93,6 +93,7 @@
 #include "creaturestats.hpp"
 #include "damagesourcetype.hpp"
 #include "falloutcombat.hpp"
+#include "falloutactorstate.hpp"
 #include "falloutweaponsound.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
@@ -984,7 +985,8 @@ namespace MWMechanics
             return;
         const auto world = MWBase::Environment::get().getWorld();
         auto& stats = charClass.getCreatureStats(mPtr);
-        bool knockout = stats.getFatigue().getCurrent() < 0 || stats.getFatigue().getBase() == 0;
+        bool knockout = getFalloutActorFlag(mPtr, FalloutActorFlag::Unconscious)
+            || stats.getFatigue().getCurrent() < 0 || stats.getFatigue().getBase() == 0;
         bool recovery = stats.getHitRecovery();
         bool knockdown = stats.getKnockedDown();
         bool block = stats.getBlock() && !knockout && !recovery && !knockdown;
@@ -4208,6 +4210,17 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
+            const bool restrained = getFalloutActorFlag(mPtr, FalloutActorFlag::Restrained);
+            if (restrained)
+            {
+                movementSettings.mPosition[0] = 0.f;
+                movementSettings.mPosition[1] = 0.f;
+                movementSettings.mPosition[2] = 0.f;
+                movementSettings.mRotation[0] = 0.f;
+                movementSettings.mRotation[1] = 0.f;
+                movementSettings.mRotation[2] = 0.f;
+                stats.setAttackingOrSpell(false);
+            }
             // Force Jump Logic
 
             bool isMoving
@@ -4275,7 +4288,7 @@ namespace MWMechanics
             }
 
             float effectiveRotation = rot.z();
-            bool canMove = cls.getMaxSpeed(mPtr) > 0;
+            bool canMove = !restrained && cls.getMaxSpeed(mPtr) > 0;
             const bool turnToMovementDirection = Settings::game().mTurnToMovementDirection;
             const bool isBiped = mPtr.getClass().isBipedal(mPtr);
             if (!isBiped || !turnToMovementDirection || isFirstPersonPlayer)

@@ -240,6 +240,7 @@ namespace MWRender
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
         Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
+        bool refreshFalloutPlayerEquipment(const MWWorld::Ptr& player);
 
         /// Return the visual animation that owns data-driven ESM4 script-package KFs. Fallout-family player
         /// presentation keeps a legacy first-person rig alongside a native body proxy; authored package animation

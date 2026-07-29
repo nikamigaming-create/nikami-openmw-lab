@@ -58,6 +58,7 @@
 #include "character.hpp"
 #include "creaturestats.hpp"
 #include "dialoguefacing.hpp"
+#include "falloutactorstate.hpp"
 #include "greetingstate.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
@@ -621,6 +622,13 @@ namespace MWMechanics
             for (const auto& target : targets)
                 target.getClass().getCreatureStats(target).getAiSequence().stopCombat(allies);
         }
+    }
+
+    void Actors::stopLooking(const MWWorld::Ptr& ptr) const
+    {
+        const auto found = mIndex.find(ptr.mRef);
+        if (found != mIndex.end())
+            found->second->getCharacterController().setHeadTrackTarget({});
     }
 
     void Actors::engageCombat(
@@ -2290,12 +2298,18 @@ namespace MWMechanics
     {
         std::vector<MWWorld::Ptr> list;
         list.push_back(actorPtr);
+        const MWWorld::Ptr player = getPlayer();
+        const bool actorIsPlayer = actorPtr == player;
+        const bool actorIsPlayerTeammate
+            = getFalloutActorFlag(actorPtr, FalloutActorFlag::PlayerTeammate);
+        if (!actorIsPlayer && actorIsPlayerTeammate)
+            list.push_back(player);
         for (const Actor& actor : mActors)
         {
             if (actor.isInvalid())
                 continue;
             const MWWorld::Ptr& iteratedActor = actor.getPtr();
-            if (iteratedActor == getPlayer())
+            if (iteratedActor == player)
                 continue;
 
             const bool sameActor = (iteratedActor == actorPtr);
@@ -2303,6 +2317,12 @@ namespace MWMechanics
             const CreatureStats& stats = iteratedActor.getClass().getCreatureStats(iteratedActor);
             if (stats.isDead())
                 continue;
+            if (!sameActor && (actorIsPlayer || actorIsPlayerTeammate)
+                && getFalloutActorFlag(iteratedActor, FalloutActorFlag::PlayerTeammate))
+            {
+                list.push_back(iteratedActor);
+                continue;
+            }
 
             // An actor counts as siding with this actor if Follow or Escort is the current AI package, or there are
             // only Wander packages before the Follow/Escort package Actors that are targeted by this actor's Follow or

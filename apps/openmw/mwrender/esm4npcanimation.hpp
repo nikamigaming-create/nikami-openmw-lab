@@ -49,6 +49,7 @@ namespace MWRender
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
+        void refreshEquipment() { updateParts(); }
 
     private:
         struct ProceduralPoseBone

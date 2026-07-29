@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 
 #include <components/esm/attr.hpp>
@@ -242,6 +243,112 @@ namespace MWClass
         , mFurnitureState(other.mFurnitureState)
         , mFurniturePlacement(other.mFurniturePlacement)
     {
+    }
+
+    namespace
+    {
+        bool addEquippedArmorToData(
+            ESM4NpcCustomData& data, const ESM4::Armor* armor, bool replaceOccupiedSlots)
+        {
+            if (armor == nullptr)
+                return false;
+            const std::uint32_t occupiedSlots = armor->mArmorFlags;
+            bool changed = false;
+            if (replaceOccupiedSlots && occupiedSlots != 0)
+            {
+                changed |= std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && equipped != armor
+                        && (equipped->mArmorFlags & occupiedSlots) != 0;
+                }) != 0;
+                changed |= std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+                }) != 0;
+            }
+            if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor)
+                != data.mEquippedArmor.end())
+                return changed;
+            data.mEquippedArmor.push_back(armor);
+            return true;
+        }
+
+        bool addEquippedClothingToData(ESM4NpcCustomData& data, const ESM4::Clothing* clothing)
+        {
+            if (clothing == nullptr)
+                return false;
+            const std::uint32_t occupiedSlots = clothing->mClothingFlags;
+            bool changed = false;
+            if (occupiedSlots != 0)
+            {
+                changed |= std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && (equipped->mArmorFlags & occupiedSlots) != 0;
+                }) != 0;
+                changed |= std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && equipped != clothing
+                        && (equipped->mClothingFlags & occupiedSlots) != 0;
+                }) != 0;
+            }
+            if (std::find(data.mEquippedClothing.begin(), data.mEquippedClothing.end(), clothing)
+                != data.mEquippedClothing.end())
+                return changed;
+            data.mEquippedClothing.push_back(clothing);
+            return true;
+        }
+
+        std::vector<ESM::FormId> collectEquippedItemIds(const ESM4NpcCustomData& data)
+        {
+            std::vector<ESM::FormId> result;
+            result.reserve(data.mEquippedArmor.size() + data.mEquippedClothing.size()
+                + (data.mEquippedWeapon != nullptr ? 1 : 0));
+            for (const ESM4::Armor* armor : data.mEquippedArmor)
+                if (armor != nullptr)
+                    result.push_back(armor->mId);
+            for (const ESM4::Clothing* clothing : data.mEquippedClothing)
+                if (clothing != nullptr)
+                    result.push_back(clothing->mId);
+            if (data.mEquippedWeapon != nullptr)
+                result.push_back(data.mEquippedWeapon->mId);
+            return result;
+        }
+
+        bool recordEquipmentOverride(ESM4NpcCustomData& data)
+        {
+            return data.mCreatureStats.setFalloutEquipmentOverride(collectEquippedItemIds(data));
+        }
+
+        bool applyEquippedItemToData(
+            ESM4NpcCustomData& data, const MWWorld::ESMStore& store, ESM::FormId item, bool requireInventory = true)
+        {
+            if (requireInventory && data.mContainerStore->count(ESM::RefId(item)) <= 0)
+                return false;
+            if (const ESM4::Weapon* weapon = store.get<ESM4::Weapon>().search(ESM::RefId(item)))
+            {
+                data.mEquippedWeapon = weapon;
+                return true;
+            }
+            if (const ESM4::Armor* armor = store.get<ESM4::Armor>().search(ESM::RefId(item)))
+            {
+                addEquippedArmorToData(data, armor, true);
+                return true;
+            }
+            if (const ESM4::Clothing* clothing = store.get<ESM4::Clothing>().search(ESM::RefId(item)))
+            {
+                addEquippedClothingToData(data, clothing);
+                return true;
+            }
+            return false;
+        }
+
+        void applySavedEquipmentOverride(ESM4NpcCustomData& data, const MWWorld::ESMStore& store)
+        {
+            if (!data.mCreatureStats.hasFalloutEquipmentOverride())
+                return;
+            const std::vector<ESM::FormId> equipped = data.mCreatureStats.getFalloutEquippedItems();
+            data.mEquippedArmor.clear();
+            data.mEquippedClothing.clear();
+            data.mEquippedWeapon = nullptr;
+        for (const ESM::FormId item : equipped)
+                applyEquippedItemToData(data, store, item);
+        }
     }
 
     bool requestFnvAiPackageEvaluation(const MWWorld::Ptr& ptr)
@@ -1705,6 +1812,7 @@ namespace MWClass
         const std::optional<FalloutSandboxSaveFallback> sandboxFallback
             = getFalloutSandboxSaveFallback(npcState.mCreatureStats.mAiSequence);
         data->mCreatureStats.readState(npcState.mCreatureStats);
+        applySavedEquipmentOverride(*data, *MWBase::Environment::get().getESMStore());
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered every retained saved stack.
         data->mFnvAiSequenceInitialised = !sandboxFallback.has_value();
         data->mFnvSandboxPackageNeedsReevaluation = sandboxFallback.has_value();
@@ -1792,39 +1900,20 @@ namespace MWClass
 
     bool ESM4Npc::addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
     {
-        if (armor == nullptr)
-            return false;
-
-        std::vector<const ESM4::Armor*>& equippedArmor = getCustomData(ptr).mEquippedArmor;
-        if (std::find(equippedArmor.begin(), equippedArmor.end(), armor) != equippedArmor.end())
-            return false;
-
-        equippedArmor.push_back(armor);
-        return true;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const bool changed = addEquippedArmorToData(data, armor, false);
+        if (changed)
+            recordEquipmentOverride(data);
+        return changed;
     }
 
     bool ESM4Npc::addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
     {
-        if (armor == nullptr)
-            return false;
-
         ESM4NpcCustomData& data = getCustomData(ptr);
-        const std::uint32_t occupiedSlots = armor->mArmorFlags;
-        if (occupiedSlots != 0)
-        {
-            std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
-                return equipped != nullptr && equipped != armor && (equipped->mArmorFlags & occupiedSlots) != 0;
-            });
-            std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
-                return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
-            });
-        }
-
-        if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor) != data.mEquippedArmor.end())
-            return false;
-
-        data.mEquippedArmor.push_back(armor);
-        return true;
+        const bool changed = addEquippedArmorToData(data, armor, true);
+        if (changed)
+            recordEquipmentOverride(data);
+        return changed;
     }
 
     bool ESM4Npc::setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon)
@@ -1834,7 +1923,99 @@ namespace MWClass
             return false;
 
         data.mEquippedWeapon = weapon;
+        recordEquipmentOverride(data);
         return true;
+    }
+
+    bool ESM4Npc::equipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item)
+    {
+        if (item.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || !applyEquippedItemToData(data, *store, item))
+            return false;
+        return recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::unequipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item)
+    {
+        if (item.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return false;
+
+        bool supported = false;
+        if (store->get<ESM4::Weapon>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            if (data.mEquippedWeapon != nullptr && data.mEquippedWeapon->mId == item)
+            {
+                data.mEquippedWeapon = nullptr;
+                data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+            }
+        }
+        if (store->get<ESM4::Armor>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            std::erase_if(data.mEquippedArmor,
+                [&](const ESM4::Armor* armor) { return armor != nullptr && armor->mId == item; });
+        }
+        if (store->get<ESM4::Clothing>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            std::erase_if(data.mEquippedClothing,
+                [&](const ESM4::Clothing* clothing) { return clothing != nullptr && clothing->mId == item; });
+        }
+        return supported && recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::clearFalloutEquipment(const MWWorld::Ptr& ptr)
+    {
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        data.mEquippedArmor.clear();
+        data.mEquippedClothing.clear();
+        data.mEquippedWeapon = nullptr;
+        data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+        return recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::applyFalloutEquipmentOverride(
+        const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& items, bool requireInventory)
+    {
+        if (items.size() > 64)
+            return false;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const std::vector<const ESM4::Armor*> oldArmor = data.mEquippedArmor;
+        const std::vector<const ESM4::Clothing*> oldClothing = data.mEquippedClothing;
+        const ESM4::Weapon* oldWeapon = data.mEquippedWeapon;
+        const MWMechanics::DrawState oldDrawState = data.mCreatureStats.getDrawState();
+
+        data.mEquippedArmor.clear();
+        data.mEquippedClothing.clear();
+        data.mEquippedWeapon = nullptr;
+        std::set<ESM::FormId> applied;
+        for (const ESM::FormId item : items)
+        {
+            if (item.isZeroOrUnset() || !applied.insert(item).second
+                || !applyEquippedItemToData(data, *store, item, requireInventory))
+            {
+                data.mEquippedArmor = oldArmor;
+                data.mEquippedClothing = oldClothing;
+                data.mEquippedWeapon = oldWeapon;
+                data.mCreatureStats.setDrawState(oldDrawState);
+                return false;
+            }
+        }
+        if (data.mEquippedWeapon == nullptr)
+            data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+        return recordEquipmentOverride(data);
     }
 
     const ESM4::Npc* ESM4Npc::getTraitsRecord(const MWWorld::Ptr& ptr)

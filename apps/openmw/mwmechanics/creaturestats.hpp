@@ -8,6 +8,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "activespells.hpp"
 #include "aisequence.hpp"
@@ -71,6 +72,9 @@ namespace MWMechanics
         // Quest-script mutations are per placed actor, not edits to the shared NPC_/CREA base record.
         std::map<std::uint8_t, float> mFalloutActorValueOverrides;
         std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
+        std::uint32_t mFalloutRuntimeFlags = 0;
+        bool mHasFalloutEquipmentOverride = false;
+        std::vector<ESM::FormId> mFalloutEquippedItems;
 
         float mFallHeight = 0.f;
 
@@ -145,6 +149,12 @@ namespace MWMechanics
             return mFalloutFactionOverrides;
         }
         bool setFalloutFactionOverride(ESM::FormId faction, std::optional<int> rank);
+        std::uint32_t getFalloutRuntimeFlags() const { return mFalloutRuntimeFlags; }
+        bool getFalloutRuntimeFlag(std::uint32_t flag) const { return (mFalloutRuntimeFlags & flag) != 0; }
+        bool setFalloutRuntimeFlag(std::uint32_t flag, bool enabled);
+        bool hasFalloutEquipmentOverride() const { return mHasFalloutEquipmentOverride; }
+        const std::vector<ESM::FormId>& getFalloutEquippedItems() const { return mFalloutEquippedItems; }
+        bool setFalloutEquipmentOverride(std::vector<ESM::FormId> items);
 
         const Spells& getSpells() const;
 

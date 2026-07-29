@@ -99,6 +99,12 @@ namespace ESM
         static constexpr std::int16_t FalloutFactionRemoved = -129;
         std::map<std::uint8_t, float> mFalloutActorValueOverrides;
         std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
+        // Per-reference Fallout flags changed by actor script commands. Equipment overrides preserve the complete
+        // equipped set after the first EquipItem/UnequipItem/RemoveAllItems mutation; the explicit presence bit
+        // distinguishes "authored base equipment" from an intentionally empty equipped set.
+        std::uint32_t mFalloutRuntimeFlags = 0;
+        bool mHasFalloutEquipmentOverride = false;
+        std::vector<ESM::FormId> mFalloutEquippedItems;
 
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;

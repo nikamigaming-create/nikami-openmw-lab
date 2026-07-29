@@ -271,6 +271,29 @@ namespace MWRender
             }
         }
 
+        bool applyFalloutPlayerRuntimeEquipment(
+            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& player, const char* context)
+        {
+            if (player.isEmpty() || !player.getClass().isActor())
+                return false;
+            const MWMechanics::CreatureStats& playerStats
+                = player.getClass().getCreatureStats(player);
+            if (!playerStats.hasFalloutEquipmentOverride())
+                return false;
+            if (!MWClass::ESM4Npc::applyFalloutEquipmentOverride(
+                    visualPtr, playerStats.getFalloutEquippedItems(), false))
+                return false;
+            MWMechanics::CreatureStats& visualStats
+                = visualPtr.getClass().getCreatureStats(visualPtr);
+            if (MWClass::ESM4Npc::getEquippedWeapon(visualPtr) != nullptr)
+                visualStats.setDrawState(playerStats.getDrawState());
+            else
+                visualStats.setDrawState(MWMechanics::DrawState::Nothing);
+            Log(Debug::Info) << "FNV/ESM4 player equipment: context=" << context
+                             << " equipped=" << playerStats.getFalloutEquippedItems().size();
+            return true;
+        }
+
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
         {
             uint32_t covered = 0;
@@ -531,6 +554,7 @@ namespace MWRender
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
+            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
             const bool rightPipBoyCalibration = [] {
@@ -585,6 +609,7 @@ namespace MWRender
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-diagnostic");
+            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "vr-hands-diagnostic");
             logFalloutVrHandSourceCandidates(visualPtr, "fallout-visual-record");
         }
 #endif
@@ -1981,6 +2006,18 @@ namespace MWRender
         return firstPerson ? nullptr : getAnimation(ptr);
     }
 
+    bool RenderingManager::refreshFalloutPlayerEquipment(const MWWorld::Ptr& player)
+    {
+        if (!mFalloutPlayerVisualRef || !mFalloutPlayerVisualAnimation)
+            return false;
+        MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
+        if (!applyFalloutPlayerRuntimeEquipment(visualPtr, player, "runtime"))
+            return false;
+        if (auto* animation = dynamic_cast<ESM4NpcAnimation*>(mFalloutPlayerVisualAnimation.get()))
+            animation->refreshEquipment();
+        return true;
+    }
+
     MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr() && mFalloutPlayerVisualAnimation)
@@ -2083,6 +2120,7 @@ namespace MWRender
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
+            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "world");
 
             Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
                              << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)

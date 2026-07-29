@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -135,6 +136,11 @@ namespace MWClass
         static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon);
+        static bool equipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item);
+        static bool unequipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item);
+        static bool clearFalloutEquipment(const MWWorld::Ptr& ptr);
+        static bool applyFalloutEquipmentOverride(
+            const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& items, bool requireInventory = true);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
 

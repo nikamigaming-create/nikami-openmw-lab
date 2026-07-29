@@ -1294,6 +1294,8 @@ namespace MWMechanics
         // Unconsious actor can not report about crime and should not become hostile
         if (actor.getClass().getCreatureStats(actor).getKnockedDown())
             return false;
+        if (getFalloutActorFlag(actor, FalloutActorFlag::IgnoreCrime))
+            return false;
 
         // Player's followers should not attack player, or try to arrest him
         if (actor.getClass().getCreatureStats(actor).getAiSequence().hasPackage(AiPackageTypeId::Follow))
@@ -1835,6 +1837,11 @@ namespace MWMechanics
     void MechanicsManager::stopCombat(const MWWorld::Ptr& actor)
     {
         mActors.stopCombat(actor);
+    }
+
+    void MechanicsManager::stopLooking(const MWWorld::Ptr& actor)
+    {
+        mActors.stopLooking(actor);
     }
 
     bool MechanicsManager::playFalloutDialogueAnimation(

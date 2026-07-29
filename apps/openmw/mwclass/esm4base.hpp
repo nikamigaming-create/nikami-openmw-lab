@@ -402,9 +402,14 @@ namespace MWClass
                 return { { MWWorld::InventoryStore::Slot_CarriedRight }, false };
             else if constexpr (std::is_same_v<Record, ESM4::Ammunition>)
                 return { { MWWorld::InventoryStore::Slot_Ammunition }, true };
-            else if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            else if constexpr (std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Clothing>)
             {
-                const std::uint32_t flags = ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
+                const std::uint32_t flags = [&] {
+                    if constexpr (std::is_same_v<Record, ESM4::Armor>)
+                        return ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
+                    else
+                        return ptr.get<ESM4::Clothing>()->mBase->mClothingFlags;
+                }();
                 constexpr std::uint32_t head = ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair
                     | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat | ESM4::Armor::FO3_EyeGlasses
                     | ESM4::Armor::FO3_NoseRing | ESM4::Armor::FO3_Earrings | ESM4::Armor::FO3_Mask
