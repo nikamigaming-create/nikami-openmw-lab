@@ -26,6 +26,7 @@
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
+#include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -1247,6 +1248,42 @@ TEST(ESM4QuestRuntimeTest, RoutesScriptedActivateThroughTheReferenceActivationHa
             { targetId, playerId, false },
             { targetId, activatorId, true },
         }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RoutesPlayIdleThroughTheNativeActorIdleHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12016a, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12016b, .mContentFile = 0 };
+    const ESM::FormId idleId{ .mIndex = 0x12016c, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "PlayIdleQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource = "IdleActor.PlayIdle LooseTestIdle";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    actor.mEditorId = "IdleActor";
+    store.overrideRecord(actor);
+    ESM4::IdleAnimation idle;
+    idle.mId = idleId;
+    idle.mEditorId = "LooseTestIdle";
+    idle.mModel = "meshes\\characters\\_male\\idleanims\\loosetestidle.kf";
+    store.overrideRecord(idle);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> playedIdles;
+    runtime.setActorIdleHandler([&](ESM::FormId actorRef, ESM::FormId idleRef) {
+        playedIdles.emplace_back(actorRef, idleRef);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(playedIdles, (std::vector<std::pair<ESM::FormId, ESM::FormId>>{ { actorId, idleId } }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 

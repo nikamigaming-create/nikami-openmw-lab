@@ -32,6 +32,7 @@
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
+#include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadacti.hpp>
@@ -709,6 +710,7 @@ namespace MWWorld
         mActorBaseIds.clear();
         mSpellIds.clear();
         mMessageIds.clear();
+        mIdleAnimationIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -3956,6 +3958,27 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveIdleAnimation(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mIdleAnimationIds.find(key); cached != mIdleAnimationIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::IdleAnimation& idle : mStore->get<ESM4::IdleAnimation>())
+            {
+                if (!Misc::StringUtils::ciEqual(idle.mEditorId, id))
+                    continue;
+                result = idle.mId;
+                break;
+            }
+        }
+        mIdleAnimationIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -4922,6 +4945,19 @@ namespace MWWorld
                         Log(Debug::Info) << "FNV/ESM4 behavior: Activate target=" << subject
                                          << " activator=" << ESM::RefId(activator).serializeText()
                                          << " runOnActivateBlock=" << runOnActivateBlock;
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "PlayIdle")
+                    && tokens.size() == 2)
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId idle = resolveIdleAnimation(tokens[1]);
+                    if (!actor.isZeroOrUnset() && !idle.isZeroOrUnset() && mActorIdleHandler
+                        && mActorIdleHandler(actor, idle))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: PlayIdle actor=" << subject
+                                         << " idle=" << tokens[1];
                         continue;
                     }
                 }

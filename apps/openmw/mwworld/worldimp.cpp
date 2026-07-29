@@ -945,6 +945,26 @@ namespace MWWorld
                 }
                 return sourceExecuted;
             });
+        mESM4QuestRuntime.setActorIdleHandler(
+            [this](ESM::FormId actorId, ESM::FormId idleId) {
+                const Ptr actor = searchPtr(ESM::RefId(actorId), false, false);
+                const ESM4::IdleAnimation* idle
+                    = mStore.get<ESM4::IdleAnimation>().search(ESM::RefId(idleId));
+                MWBase::MechanicsManager* const mechanics
+                    = MWBase::Environment::get().getMechanicsManager();
+                if (actor.isEmpty() || !actor.getClass().isActor() || idle == nullptr || mechanics == nullptr)
+                    return false;
+
+                // Dialogue gestures and PlayIdle both name an IDLE record.
+                // Reuse the same CharacterController path so animation
+                // priorities, blending, text keys, and completion remain
+                // engine-owned.
+                const bool played = mechanics->playFalloutDialogueAnimation(actor, ESM::RefId(idleId));
+                Log(played ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 quest: PlayIdle actor=" << ESM::RefId(actorId).serializeText()
+                    << " idle=" << idle->mEditorId << " played=" << played;
+                return played;
+            });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
                 const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
