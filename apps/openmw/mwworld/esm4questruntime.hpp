@@ -175,6 +175,7 @@ namespace MWWorld
         using EquipmentCommandHandler
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using ReferenceActivationHandler = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
+        using MoveToHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
         using ActorIdleHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
         using ReferenceAnimationGroupHandler
             = std::function<bool(ESM::FormId, std::string_view, int)>;
@@ -366,6 +367,7 @@ namespace MWWorld
         RemoveAllTypedItemsHandler mRemoveAllTypedItemsHandler;
         EquipmentCommandHandler mEquipmentCommandHandler;
         ReferenceActivationHandler mReferenceActivationHandler;
+        MoveToHandler mMoveToHandler;
         ActorIdleHandler mActorIdleHandler;
         ReferenceAnimationGroupHandler mReferenceAnimationGroupHandler;
         SoundCommandHandler mSoundCommandHandler;
@@ -422,6 +424,7 @@ namespace MWWorld
             Unlock,
             Kill,
             ResetAi,
+            MoveTo,
             AddItem,
             RemoveItem,
             EvaluatePackage,
@@ -641,6 +644,10 @@ namespace MWWorld
         void setReferenceActivationHandler(ReferenceActivationHandler handler)
         {
             mReferenceActivationHandler = std::move(handler);
+        }
+        void setMoveToHandler(MoveToHandler handler)
+        {
+            mMoveToHandler = std::move(handler);
         }
         void setActorIdleHandler(ActorIdleHandler handler)
         {

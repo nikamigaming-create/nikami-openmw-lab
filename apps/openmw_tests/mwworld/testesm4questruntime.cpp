@@ -393,6 +393,110 @@ TEST(ESM4QuestRuntimeTest, ExecutesFourNativeQuestStateCommandsFromFrozenRetailF
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesCompiledAndSourceMoveToThroughOneEngineHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201f0, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1201f1, .mContentFile = 0 };
+    const ESM::FormId markerId{ .mIndex = 0x1201f2, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MoveToQuest");
+    ESM4::QuestStageEntry compiledEntry;
+    // Retail reference-call framing followed by MoveTo's one SCRO argument.
+    // This is the only signature used by all 195 MoveTo instructions in the
+    // Fallout 3 and Fallout: New Vegas base-master quest corpora.
+    compiledEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x9e, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00, // MoveTo
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00 // SetStage 10
+    };
+    compiledEntry.mScript.references = { actorId, markerId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(compiledEntry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    ESM4::QuestStageEntry sourceEntry;
+    sourceEntry.mScript.scriptSource = "MoveToActor.MoveTo MoveToMarker";
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(sourceEntry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    actor.mEditorId = "MoveToActor";
+    store.overrideRecord(actor);
+    ESM4::Reference marker;
+    marker.mId = markerId;
+    marker.mEditorId = "MoveToMarker";
+    store.overrideRecord(marker);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> moves;
+    std::vector<std::uint8_t> stagesAtMove;
+    runtime.setMoveToHandler([&](ESM::FormId reference, ESM::FormId destination) {
+        moves.emplace_back(reference, destination);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtMove.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    ASSERT_TRUE(runtime.setStage(questId, 15));
+    EXPECT_EQ(moves,
+        (std::vector<std::pair<ESM::FormId, ESM::FormId>>{
+            { actorId, markerId },
+            { actorId, markerId },
+        }));
+    EXPECT_EQ(stagesAtMove, (std::vector<std::uint8_t>{ 10, 15 }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledMoveToWithoutMutatingQuest)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201f3, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1201f4, .mContentFile = 0 };
+    const ESM::FormId markerId{ .mIndex = 0x1201f5, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedMoveToQuest");
+    ESM4::QuestStageEntry missingSubject;
+    missingSubject.mScript.compiledData = { 0x9e, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    missingSubject.mScript.references = { markerId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(missingSubject) } });
+    ESM4::QuestStageEntry wrongArgumentType;
+    wrongArgumentType.mScript.compiledData = { 0x1c, 0x00, 0x01, 0x00, 0x9e, 0x10, 0x07, 0x00, 0x01,
+        0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    wrongArgumentType.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(wrongArgumentType) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Reference marker;
+    marker.mId = markerId;
+    store.overrideRecord(marker);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int moves = 0;
+    runtime.setMoveToHandler([&](ESM::FormId, ESM::FormId) {
+        ++moves;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(moves, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };

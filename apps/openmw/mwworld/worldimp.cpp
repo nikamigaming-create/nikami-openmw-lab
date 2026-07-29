@@ -910,6 +910,42 @@ namespace MWWorld
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
             });
+        mESM4QuestRuntime.setMoveToHandler([this](ESM::FormId referenceId, ESM::FormId markerId) {
+            const auto resolveReference = [this](ESM::FormId id) {
+                if (id.mIndex == 0x7 || id.mIndex == 0x14)
+                    return getPlayerPtr();
+                Ptr result = searchPtr(ESM::RefId(id), false, false);
+                if (result.isEmpty())
+                    result = searchPtrByRefNum(id);
+                return result;
+            };
+
+            const Ptr reference = resolveReference(referenceId);
+            const Ptr marker = resolveReference(markerId);
+            if (reference.isEmpty() || marker.isEmpty() || marker.getCell() == nullptr)
+                return false;
+
+            // MoveTo is a script adapter around OpenMW's ordinary object
+            // movement. Cell transfer, scene insertion, physics, and actor
+            // state therefore remain owned by the engine.
+            const Ptr moved = moveObject(reference, marker.getCell(),
+                marker.getRefData().getPosition().asVec3(), true, true);
+
+            // Authored player markers are not guaranteed to be exactly on the
+            // collision surface. Reuse the engine's normal grounding pass
+            // after the native move, as is done when restoring a player.
+            if (reference == getPlayerPtr())
+                adjustPosition(moved, true);
+
+            const ESM::Position& position = moved.getRefData().getPosition();
+            Log(Debug::Info) << "FNV/ESM4 quest: MoveTo reference="
+                             << ESM::RefId(referenceId).serializeText()
+                             << " marker=" << ESM::RefId(markerId).serializeText()
+                             << " cell=" << marker.getCell()->getCell()->getId()
+                             << " position=(" << position.pos[0] << "," << position.pos[1] << ","
+                             << position.pos[2] << ")";
+            return true;
+        });
         mESM4QuestRuntime.setReferenceActivationHandler(
             [this](ESM::FormId targetId, ESM::FormId activatorId, bool runOnActivateBlock) {
                 const auto resolveReference = [this](ESM::FormId id) {

@@ -1444,7 +1444,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1055 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
-                && instruction.opcode != 0x108b
+                && instruction.opcode != 0x108b && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1111
                 && instruction.opcode != 0x1177
@@ -2109,6 +2109,30 @@ namespace MWWorld
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::ResetAi, target });
             }
+            else if (instruction.opcode == 0x109e) // reference.MoveTo marker
+            {
+                // Across the Fallout 3 and Fallout: New Vegas base-master
+                // quest corpora, all 195 MoveTo frames are reference-called
+                // and carry exactly one object-reference argument.
+                if (!instruction.callingReferenceIndex || arguments.size() != 1 || !mMoveToHandler
+                    || mStore == nullptr)
+                    return false;
+                const ESM::FormId reference = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* marker = std::get_if<ESM::FormId>(&arguments[0]);
+                const auto exists = [this](ESM::FormId id) {
+                    const bool isPlayer = id.mIndex == 0x7 || id.mIndex == 0x14;
+                    return isPlayer || mStore->get<ESM4::Reference>().search(id) != nullptr
+                        || mStore->get<ESM4::ActorCharacter>().search(id) != nullptr
+                        || mStore->get<ESM4::ActorCreature>().search(id) != nullptr;
+                };
+                if (!exists(reference) || marker == nullptr || !exists(*marker))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::MoveTo;
+                command.mQuest = reference;
+                command.mTarget = *marker;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1059) // ShowMessage
             {
                 if (instruction.callingReferenceIndex || arguments.size() != 1 || !mMessageHandler
@@ -2506,6 +2530,7 @@ namespace MWWorld
             return executePureCompiledStage(command.mQuest, command.mStage, working);
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
+            || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
@@ -2608,6 +2633,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Unlock:
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
+            case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -2767,6 +2793,10 @@ namespace MWWorld
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, effect.mTarget);
                     break;
+                case CompiledQuestCommandType::MoveTo:
+                    command = "MoveTo ";
+                    executed = mMoveToHandler && mMoveToHandler(effect.mTarget, effect.mListener);
+                    break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
@@ -2860,6 +2890,8 @@ namespace MWWorld
                 || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(effect.mCount);
+            if (effect.mType == CompiledQuestCommandType::MoveTo)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
             if (executed)
                 Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
             else
@@ -3127,6 +3159,9 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::MoveTo:
+                            executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -3169,6 +3204,7 @@ namespace MWWorld
                     {
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ResetAi
+                            || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
@@ -3190,6 +3226,9 @@ namespace MWWorld
                                 failure = "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ResetAi)
                                 failure = "ResetAI " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::MoveTo)
+                                failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
@@ -5579,35 +5618,18 @@ namespace MWWorld
                     continue;
                 else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "MoveTo"))
                 {
-                    const std::string markerEditorId = removeQuotes(tokens[1]);
-                    const MWWorld::Ptr actor = resolveActor();
-                    const MWWorld::Ptr marker = resolveReference(markerEditorId);
-                    if (world != nullptr && !actor.isEmpty() && !marker.isEmpty() && marker.getCell() != nullptr)
+                    const ESM::FormId reference = sourceOwnerId();
+                    const ESM::FormId marker = sourceReferenceId(removeQuotes(tokens[1]));
+                    if (tokens.size() == 2 && !reference.isZeroOrUnset() && !marker.isZeroOrUnset()
+                        && mMoveToHandler && mMoveToHandler(reference, marker))
                     {
-                        const MWWorld::Ptr moved = world->moveObject(actor, marker.getCell(),
-                            marker.getRefData().getPosition().asVec3(), true, true);
-
-                        // ESM4 MoveTo moves actors to an authored marker, but the marker itself is not necessarily
-                        // on the final collision surface. Apply the engine's ordinary post-placement grounding pass
-                        // for the player so every scripted player MoveTo receives the same collision recovery as a
-                        // loaded player. This deliberately uses live cell collision rather than a quest, cell, or
-                        // game-specific offset.
-                        if (actor == world->getPlayerPtr())
-                            world->adjustPosition(moved, true);
-
-                        const ESM::Position& position = moved.getRefData().getPosition();
-                        Log(Debug::Info) << "FNV/ESM4 behavior: MoveTo actor=" << subject
-                                         << " marker=" << markerEditorId
-                                         << " cell=" << marker.getCell()->getCell()->getId()
-                                         << " position=(" << position.pos[0] << "," << position.pos[1] << ","
-                                         << position.pos[2] << ")";
+                        Log(Debug::Info) << "FNV/ESM4 behavior: MoveTo reference=" << subject
+                                         << " marker=" << removeQuotes(tokens[1]);
                         continue;
                     }
 
-                    Log(Debug::Warning) << "FNV/ESM4 behavior: MoveTo could not resolve actor=" << subject
-                                        << " marker=" << markerEditorId
-                                        << " actorPresent=" << !actor.isEmpty()
-                                        << " markerPresent=" << !marker.isEmpty();
+                    Log(Debug::Warning) << "FNV/ESM4 behavior: MoveTo failed reference=" << subject
+                                        << " marker=" << removeQuotes(tokens[1]);
                 }
                 else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "AddScriptPackage") && mStore != nullptr)
                 {
