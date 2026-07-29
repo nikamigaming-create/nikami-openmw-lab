@@ -1516,6 +1516,7 @@ namespace MWWorld
                 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x117f && instruction.opcode != 0x1180
+                && instruction.opcode != 0x1182
                 && instruction.opcode != 0x1191
                 && instruction.opcode != 0x1204
                 && instruction.opcode != 0x1219
@@ -1951,6 +1952,35 @@ namespace MWWorld
                 }
                 else
                     return false;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x1182) // actor.RestoreAV actorValue value
+            {
+                // All seven combined base-master frames use an actor
+                // receiver, a raw uint16 actor-value index, and a finite
+                // IEEE-754 double amount.
+                if (!instruction.callingReferenceIndex || !mCompiledActorValueCommandHandler
+                    || mStore == nullptr || argumentPayload.size() != 13
+                    || readUint16(argumentPayload, 0) != 2
+                    || argumentPayload[4] != 0x7a)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const std::uint16_t actorValue = readUint16(argumentPayload, 2);
+                const double amount = std::bit_cast<double>(readUint64(argumentPayload, 5));
+                const float value = static_cast<float>(amount);
+                if (!actorExists || actorValue >= 96
+                    || !std::isfinite(amount) || !std::isfinite(value))
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::RestoreActorValue;
+                command.mQuest = actor;
+                command.mObjective = actorValue;
+                command.mNumber = value;
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -3256,7 +3286,8 @@ namespace MWWorld
     {
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
-        if (command.mType == CompiledQuestCommandType::SetActorValue)
+        if (command.mType == CompiledQuestCommandType::SetActorValue
+            || command.mType == CompiledQuestCommandType::RestoreActorValue)
         {
             const std::optional<float> value = resolveCompiledActorValueArgument(command);
             if (!value)
@@ -3428,6 +3459,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
             case CompiledQuestCommandType::SetActorValue:
+            case CompiledQuestCommandType::RestoreActorValue:
             case CompiledQuestCommandType::SetActorFlag:
             case CompiledQuestCommandType::SetActorFaction:
             case CompiledQuestCommandType::AddItem:
@@ -3646,6 +3678,14 @@ namespace MWWorld
                             ESM4QuestActorValueCommand::Set, static_cast<std::uint8_t>(effect.mCount),
                             effect.mNumber);
                     break;
+                case CompiledQuestCommandType::RestoreActorValue:
+                    command = "RestoreAV ";
+                    executed = effect.mCount >= 0 && effect.mCount < 96
+                        && mCompiledActorValueCommandHandler
+                        && mCompiledActorValueCommandHandler(effect.mTarget,
+                            ESM4QuestActorValueCommand::Restore, static_cast<std::uint8_t>(effect.mCount),
+                            effect.mNumber);
+                    break;
                 case CompiledQuestCommandType::SetActorFlag:
                     command = "IgnoreCrime ";
                     executed = effect.mCount == static_cast<std::int32_t>(ESM4QuestActorFlag::IgnoreCrime)
@@ -3841,7 +3881,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
-            if (effect.mType == CompiledQuestCommandType::SetActorValue)
+            if (effect.mType == CompiledQuestCommandType::SetActorValue
+                || effect.mType == CompiledQuestCommandType::RestoreActorValue)
                 command += " " + std::to_string(effect.mCount) + " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::SetActorFlag)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
@@ -4175,6 +4216,15 @@ namespace MWWorld
                                     static_cast<std::uint8_t>(command.mObjective), *value);
                             break;
                         }
+                        case CompiledQuestCommandType::RestoreActorValue:
+                        {
+                            const std::optional<float> value = resolveCompiledActorValueArgument(command);
+                            executed = value && mCompiledActorValueCommandHandler
+                                && mCompiledActorValueCommandHandler(command.mQuest,
+                                    ESM4QuestActorValueCommand::Restore,
+                                    static_cast<std::uint8_t>(command.mObjective), *value);
+                            break;
+                        }
                         case CompiledQuestCommandType::SetActorFlag:
                             executed = command.mObjective
                                     == static_cast<std::int32_t>(ESM4QuestActorFlag::IgnoreCrime)
@@ -4288,6 +4338,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
                             || command.mType == CompiledQuestCommandType::SetActorValue
+                            || command.mType == CompiledQuestCommandType::RestoreActorValue
                             || command.mType == CompiledQuestCommandType::SetActorFlag
                             || command.mType == CompiledQuestCommandType::SetActorFaction
                             || command.mType == CompiledQuestCommandType::ShowMessage
@@ -4349,6 +4400,13 @@ namespace MWWorld
                             {
                                 const std::optional<float> value = resolveCompiledActorValueArgument(command);
                                 failure = "SetAV " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + std::to_string(command.mObjective) + " "
+                                    + (value ? std::to_string(*value) : std::string("<unresolved>"));
+                            }
+                            else if (command.mType == CompiledQuestCommandType::RestoreActorValue)
+                            {
+                                const std::optional<float> value = resolveCompiledActorValueArgument(command);
+                                failure = "RestoreAV " + ESM::RefId(command.mQuest).serializeText()
                                     + " " + std::to_string(command.mObjective) + " "
                                     + (value ? std::to_string(*value) : std::string("<unresolved>"));
                             }

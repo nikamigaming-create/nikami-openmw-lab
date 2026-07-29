@@ -2602,6 +2602,135 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledSetActorValueWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledRestoreActorValueThroughNativeStatsAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12035e, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12035f, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledRestoreAvQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // FalloutNV.esm VDoctors stage 30:
+        // player.RestoreAV RadiationRads 1000
+        0x1c, 0x00, 0x01, 0x00, 0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x36, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8f, 0x40,
+        // Fallout3.esm MS18 stage 50:
+        // ReillyRef.RestoreAV LeftMobilityCondition 100
+        0x1c, 0x00, 0x02, 0x00, 0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x1d, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x59, 0x40,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { playerId, actorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    using ActorValueCall
+        = std::tuple<ESM::FormId, MWWorld::ESM4QuestActorValueCommand, std::uint8_t, float>;
+    std::vector<ActorValueCall> calls;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setCompiledActorValueCommandHandler(
+        [&](ESM::FormId actorValue, MWWorld::ESM4QuestActorValueCommand command,
+            std::uint8_t index, float value) {
+            calls.emplace_back(actorValue, command, index, value);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls,
+        (std::vector<ActorValueCall>{
+            { playerId, MWWorld::ESM4QuestActorValueCommand::Restore, 54, 1000.f },
+            { actorId, MWWorld::ESM4QuestActorValueCommand::Restore, 29, 100.f },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledRestoreActorValueWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120360, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120361, .mContentFile = 0 };
+    const ESM::FormId nonActorId{ .mIndex = 0x120362, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedRestoreAvQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = {
+        0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x36, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8f, 0x40,
+    };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry nonActorCall;
+    nonActorCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x36, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8f, 0x40,
+    };
+    nonActorCall.mScript.references = { nonActorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActorCall) } });
+    ESM4::QuestStageEntry outOfRangeActorValue;
+    outOfRangeActorValue.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x60, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8f, 0x40,
+    };
+    outOfRangeActorValue.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(outOfRangeActorValue) } });
+    ESM4::QuestStageEntry integerValue;
+    integerValue.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x82, 0x11, 0x09, 0x00,
+        0x02, 0x00, 0x36, 0x00, 0x6e, 0xe8, 0x03, 0x00, 0x00,
+    };
+    integerValue.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(integerValue) } });
+    ESM4::QuestStageEntry nonFiniteValue;
+    nonFiniteValue.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x82, 0x11, 0x0d, 0x00,
+        0x02, 0x00, 0x36, 0x00, 0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f,
+    };
+    nonFiniteValue.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(nonFiniteValue) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Reference nonActor;
+    nonActor.mId = nonActorId;
+    store.overrideRecord(nonActor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int calls = 0;
+    runtime.setCompiledActorValueCommandHandler(
+        [&](ESM::FormId, MWWorld::ESM4QuestActorValueCommand, std::uint8_t, float) {
+            ++calls;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(calls, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledLiteralAndVariableKarmaAfterCommit)
 {
     MWWorld::ESMStore store;

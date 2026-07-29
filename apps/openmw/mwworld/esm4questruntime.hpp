@@ -457,6 +457,7 @@ namespace MWWorld
             SetScriptPackage,
             SetActorEffect,
             SetActorValue,
+            RestoreActorValue,
             SetActorFlag,
             SetActorFaction,
             AddItem,
