@@ -1442,7 +1442,8 @@ namespace MWWorld
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
-                && instruction.opcode != 0x1055 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
+                && instruction.opcode != 0x1055 && instruction.opcode != 0x1059
+                && instruction.opcode != 0x105d && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1072
                 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
@@ -1849,7 +1850,8 @@ namespace MWWorld
             std::vector<ESM4::ScriptBytecodeArgument> arguments;
             // Zero-argument reference functions such as EVP and ResetAI have an empty frame rather
             // than the two-byte argument count used by ordinary command functions.
-            if (!((instruction.opcode == 0x105e || instruction.opcode == 0x1098
+            if (!((instruction.opcode == 0x105d || instruction.opcode == 0x105e
+                       || instruction.opcode == 0x1098
                        || instruction.opcode == 0x11fa)
                     && argumentPayload.empty())
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
@@ -2222,6 +2224,21 @@ namespace MWWorld
                     && mStore->get<ESM4::ActorCreature>().search(target) == nullptr)
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::ResetAi, target });
+            }
+            else if (instruction.opcode == 0x105d) // actor.StopLook
+            {
+                // All 27 base-master frames are actor-qualified and carry an
+                // empty command frame. Retail source sometimes spells out
+                // Player, but that target is not encoded and StopLook simply
+                // clears the actor's current look tracking.
+                if (!instruction.callingReferenceIndex || !arguments.empty()
+                    || !mActorCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                if (mStore->get<ESM4::ActorCharacter>().search(actor) == nullptr
+                    && mStore->get<ESM4::ActorCreature>().search(actor) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::StopLook, actor });
             }
             else if (instruction.opcode == 0x1097 || instruction.opcode == 0x1098)
             {
@@ -2677,6 +2694,7 @@ namespace MWWorld
             return executePureCompiledStage(command.mQuest, command.mStage, working);
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
+            || command.mType == CompiledQuestCommandType::StopLook
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -2787,6 +2805,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Lock:
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
+            case CompiledQuestCommandType::StopLook:
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
@@ -2951,6 +2970,12 @@ namespace MWWorld
                     command = "ResetAI ";
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::StopLook:
+                    command = "StopLook ";
+                    executed = mActorCommandHandler
+                        && mActorCommandHandler(
+                            ESM4QuestActorCommand::StopLook, effect.mTarget, ESM::FormId{}, false);
                     break;
                 case CompiledQuestCommandType::MoveTo:
                     command = "MoveTo ";
@@ -3361,6 +3386,11 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::ResetAi, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::StopLook:
+                            executed = mActorCommandHandler
+                                && mActorCommandHandler(
+                                    ESM4QuestActorCommand::StopLook, command.mQuest, ESM::FormId{}, false);
+                            break;
                         case CompiledQuestCommandType::MoveTo:
                             executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
                             break;
@@ -3425,6 +3455,7 @@ namespace MWWorld
                     {
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ResetAi
+                            || command.mType == CompiledQuestCommandType::StopLook
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -3453,6 +3484,8 @@ namespace MWWorld
                                 failure = "EvaluatePackage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ResetAi)
                                 failure = "ResetAI " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::StopLook)
+                                failure = "StopLook " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::MoveTo)
                                 failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

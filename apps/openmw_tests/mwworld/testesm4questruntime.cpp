@@ -1080,6 +1080,93 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledLockWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledStopLookThroughNativeMechanicsAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120308, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120309, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledStopLookQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x5d, 0x10, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { actorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<MWWorld::ESM4QuestActorCommand> commands;
+    std::vector<ESM::FormId> actors;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setActorCommandHandler([&](MWWorld::ESM4QuestActorCommand command,
+                                       ESM::FormId actorValue, ESM::FormId, bool) {
+        commands.push_back(command);
+        actors.push_back(actorValue);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(commands, (std::vector<MWWorld::ESM4QuestActorCommand>{
+                            MWWorld::ESM4QuestActorCommand::StopLook }));
+    EXPECT_EQ(actors, (std::vector<ESM::FormId>{ actorId }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledStopLookWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12030a, .mContentFile = 0 };
+    const ESM::FormId referenceId{ .mIndex = 0x12030b, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedStopLookQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = { 0x5d, 0x10, 0x00, 0x00 };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry nonActor;
+    nonActor.mScript.compiledData = { 0x1c, 0x00, 0x01, 0x00, 0x5d, 0x10, 0x00, 0x00 };
+    nonActor.mScript.references = { referenceId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActor) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference reference;
+    reference.mId = referenceId;
+    store.overrideRecord(reference);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setActorCommandHandler(
+        [&](MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool) {
+            ++commands;
+            return true;
+        });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
