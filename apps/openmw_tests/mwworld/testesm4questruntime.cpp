@@ -890,6 +890,8 @@ TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSo
           "Player.RewardXP 25\n"
           "AddReputation NCRReputation 1 2\n"
           "Player.AddReputation NCRReputation 0 1\n"
+          "SetReputation NCRReputation 0 40\n"
+          "Player.AddReputationExact NCRReputation 1 QuestRewardCount + 1\n"
           "QuestDoor.Unlock\n"
           "QuestTarget.Kill Player\n"
           "QuestTarget.ResetAI\n"
@@ -938,6 +940,8 @@ TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSo
     std::vector<std::tuple<ESM::FormId, ESM::FormId, int>> removedItems;
     std::vector<int> rewardedXp;
     std::vector<std::tuple<ESM::FormId, bool, int>> reputationChanges;
+    std::vector<std::tuple<ESM::FormId, MWWorld::ESM4QuestReputationValueCommand, bool, float>>
+        reputationValueChanges;
     std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> referenceCommands;
     runtime.setAddItemHandler([&](ESM::FormId owner, ESM::FormId item, int count) {
         addedItems.emplace_back(owner, item, count);
@@ -955,6 +959,11 @@ TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSo
         reputationChanges.emplace_back(id, fame, bump);
         return true;
     });
+    runtime.setReputationValueCommandHandler(
+        [&](ESM::FormId id, MWWorld::ESM4QuestReputationValueCommand command, bool fame, float amount) {
+            reputationValueChanges.emplace_back(id, command, fame, amount);
+            return true;
+        });
     runtime.setReferenceCommandHandler([&](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
         referenceCommands.emplace_back(command, target);
         return true;
@@ -973,6 +982,11 @@ TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSo
     ASSERT_EQ(reputationChanges.size(), 2);
     EXPECT_EQ(reputationChanges[0], std::tuple(reputationId, true, 2));
     EXPECT_EQ(reputationChanges[1], std::tuple(reputationId, false, 1));
+    ASSERT_EQ(reputationValueChanges.size(), 2);
+    EXPECT_EQ(reputationValueChanges[0],
+        std::tuple(reputationId, MWWorld::ESM4QuestReputationValueCommand::Set, false, 40.f));
+    EXPECT_EQ(reputationValueChanges[1],
+        std::tuple(reputationId, MWWorld::ESM4QuestReputationValueCommand::AddExact, true, 2.f));
     ASSERT_EQ(referenceCommands.size(), 3);
     EXPECT_EQ(referenceCommands[0], std::pair(MWWorld::ESM4QuestReferenceCommand::Unlock, doorId));
     EXPECT_EQ(referenceCommands[1], std::pair(MWWorld::ESM4QuestReferenceCommand::Kill, targetId));

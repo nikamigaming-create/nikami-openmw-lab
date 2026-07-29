@@ -134,6 +134,8 @@ namespace MWWorld
         [[nodiscard]] std::optional<int> getReputationThreshold(
             ESM::FormId reputation, float maximum, std::uint32_t axis) const;
         bool addReputationBump(ESM::FormId reputation, bool fame, float maximum, int bump);
+        bool setReputationValue(ESM::FormId reputation, bool fame, float maximum, float value);
+        bool addReputationExact(ESM::FormId reputation, bool fame, float maximum, float amount);
         [[nodiscard]] std::optional<std::uint8_t> getMapMarkerState(ESM::FormId marker) const;
         bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
         [[nodiscard]] bool hasNote(ESM::FormId note) const;

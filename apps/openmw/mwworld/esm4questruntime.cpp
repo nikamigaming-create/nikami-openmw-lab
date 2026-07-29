@@ -4786,6 +4786,36 @@ namespace MWWorld
             return true;
         };
 
+        const auto executeSourceReputationValueCommand
+            = [this, &sourceExpression, &sourceInteger](
+                  std::string_view command, const std::vector<std::string_view>& tokens) {
+                  if (tokens.size() < 4 || !mReputationValueCommandHandler)
+                      return false;
+
+                  const bool set = Misc::StringUtils::ciEqual(command, "SetReputation");
+                  const bool addExact = Misc::StringUtils::ciEqual(command, "AddReputationExact");
+                  if (!set && !addExact)
+                      return false;
+
+                  const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                  std::size_t argument = 2;
+                  const std::optional<std::int32_t> fame = sourceInteger(sourceTokens, argument);
+                  const std::optional<float> amount = sourceExpression(sourceTokens, argument);
+                  const ESM::FormId reputation = resolveReputation(tokens[1]);
+                  if (!fame || (*fame != 0 && *fame != 1) || !amount || !std::isfinite(*amount)
+                      || argument != sourceTokens.size() || reputation.isZeroOrUnset())
+                      return false;
+
+                  const ESM4QuestReputationValueCommand type = set
+                      ? ESM4QuestReputationValueCommand::Set
+                      : ESM4QuestReputationValueCommand::AddExact;
+                  if (!mReputationValueCommandHandler(reputation, type, *fame != 0, *amount))
+                      return false;
+                  Log(Debug::Info) << "FNV/ESM4 behavior: " << command << " reputation=" << tokens[1]
+                                   << " fame=" << (*fame != 0) << " amount=" << *amount;
+                  return true;
+              };
+
         for (const std::string& line : executableLines)
         {
             const std::vector<std::string_view> tokens = tokenize(line);
@@ -5267,6 +5297,12 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if ((Misc::StringUtils::ciEqual(command, "SetReputation")
+                             || Misc::StringUtils::ciEqual(command, "AddReputationExact"))
+                    && playerSubject && executeSourceReputationValueCommand(command, tokens))
+                {
+                    continue;
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "AddNote")
                              || Misc::StringUtils::ciEqual(command, "RemoveNote"))
                     && playerSubject && tokens.size() == 2)
@@ -5564,6 +5600,12 @@ namespace MWWorld
                                      << " fame=" << (*fame != 0) << " bump=" << *bump;
                     continue;
                 }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "SetReputation")
+                         || Misc::StringUtils::ciEqual(tokens[0], "AddReputationExact"))
+                && executeSourceReputationValueCommand(tokens[0], tokens))
+            {
+                continue;
             }
             else if ((Misc::StringUtils::ciEqual(tokens[0], "AddNote")
                          || Misc::StringUtils::ciEqual(tokens[0], "RemoveNote"))

@@ -167,6 +167,31 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSav
     EXPECT_EQ(restored.getMapMarkerState(remappedMarker), 1);
 }
 
+TEST(FalloutPlayerRuntimeStateTest, SetsAndAddsExactReputationWithinTheAuthoredMaximum)
+{
+    const ESM::FormId goodsprings{ .mIndex = 0x104c22, .mContentFile = 2 };
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(2));
+
+    ASSERT_TRUE(runtime.setReputationValue(goodsprings, false, 15.f, 9999.f));
+    ASSERT_TRUE(runtime.setReputationValue(goodsprings, true, 15.f, 6.5f));
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mInfamy, 15.f);
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 6.5f);
+
+    ASSERT_TRUE(runtime.addReputationExact(goodsprings, true, 15.f, -2.f));
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 4.5f);
+    ASSERT_TRUE(runtime.addReputationExact(goodsprings, true, 15.f, 1000.f));
+    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 15.f);
+
+    ASSERT_TRUE(runtime.setReputationValue(goodsprings, true, 15.f, 0.f));
+    ASSERT_TRUE(runtime.addReputationExact(goodsprings, false, 15.f, -1000.f));
+    EXPECT_EQ(runtime.getReputation(goodsprings), MWWorld::FalloutReputationValue{});
+
+    EXPECT_FALSE(runtime.setReputationValue(
+        goodsprings, true, 15.f, std::numeric_limits<float>::quiet_NaN()));
+    EXPECT_FALSE(runtime.addReputationExact(goodsprings, true, 0.f, 1.f));
+}
+
 TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
 {
     MWWorld::FalloutPlayerRuntimeState runtime;

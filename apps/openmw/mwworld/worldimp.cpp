@@ -991,6 +991,27 @@ namespace MWWorld
                                  << " fame=" << fame << " bump=" << bump;
                 return true;
             });
+        mESM4QuestRuntime.setReputationValueCommandHandler(
+            [this](ESM::FormId reputationId, ESM4QuestReputationValueCommand command, bool fame, float amount) {
+                const ESM4::Reputation* reputation
+                    = mStore.get<ESM4::Reputation>().search(ESM::RefId(reputationId));
+                if (reputation == nullptr)
+                    return false;
+                const bool applied = command == ESM4QuestReputationValueCommand::Set
+                    ? mFalloutPlayerRuntimeState.setReputationValue(
+                        reputationId, fame, reputation->mMaximum, amount)
+                    : mFalloutPlayerRuntimeState.addReputationExact(
+                        reputationId, fame, reputation->mMaximum, amount);
+                if (!applied)
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: "
+                                 << (command == ESM4QuestReputationValueCommand::Set
+                                         ? "SetReputation"
+                                         : "AddReputationExact")
+                                 << " reputation=" << ESM::RefId(reputationId).serializeText()
+                                 << " fame=" << fame << " amount=" << amount;
+                return true;
+            });
         mESM4QuestRuntime.setNoteHandler([this](ESM::FormId noteId, bool known) {
             if (mStore.get<ESM4::Note>().search(ESM::RefId(noteId)) == nullptr)
                 return false;

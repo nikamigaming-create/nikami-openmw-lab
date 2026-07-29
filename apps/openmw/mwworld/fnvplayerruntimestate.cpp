@@ -353,6 +353,36 @@ namespace MWWorld
         return true;
     }
 
+    bool FalloutPlayerRuntimeState::setReputationValue(
+        ESM::FormId reputation, bool fame, float maximum, float amount)
+    {
+        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
+            || !std::isfinite(amount))
+            return false;
+
+        FalloutReputationValue value = mReputations[reputation];
+        (fame ? value.mFame : value.mInfamy) = std::clamp(amount, 0.f, maximum);
+        if (value == FalloutReputationValue{})
+            mReputations.erase(reputation);
+        else
+            mReputations[reputation] = value;
+        return true;
+    }
+
+    bool FalloutPlayerRuntimeState::addReputationExact(
+        ESM::FormId reputation, bool fame, float maximum, float amount)
+    {
+        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
+            || !std::isfinite(amount))
+            return false;
+
+        const FalloutReputationValue value = mReputations[reputation];
+        const float current = fame ? value.mFame : value.mInfamy;
+        const double result = std::clamp(
+            static_cast<double>(current) + static_cast<double>(amount), 0.0, static_cast<double>(maximum));
+        return setReputationValue(reputation, fame, maximum, static_cast<float>(result));
+    }
+
     std::optional<std::uint8_t> FalloutPlayerRuntimeState::getMapMarkerState(ESM::FormId marker) const
     {
         if (!mBase || marker.isZeroOrUnset())

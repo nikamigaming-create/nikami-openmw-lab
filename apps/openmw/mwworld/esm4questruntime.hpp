@@ -123,6 +123,12 @@ namespace MWWorld
         Restore,
     };
 
+    enum class ESM4QuestReputationValueCommand : std::uint8_t
+    {
+        Set,
+        AddExact,
+    };
+
     enum class ESM4QuestActorFlag : std::uint8_t
     {
         Unconscious,
@@ -172,6 +178,8 @@ namespace MWWorld
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
         using AddReputationHandler = std::function<bool(ESM::FormId, bool, int)>;
+        using ReputationValueCommandHandler
+            = std::function<bool(ESM::FormId, ESM4QuestReputationValueCommand, bool, float)>;
         using SetDestroyedHandler = std::function<bool(ESM::FormId, bool)>;
         using ShowMapHandler = std::function<bool(ESM::FormId, bool)>;
         using EnableFastTravelHandler = std::function<bool(bool, bool, bool)>;
@@ -347,6 +355,7 @@ namespace MWWorld
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
         AddReputationHandler mAddReputationHandler;
+        ReputationValueCommandHandler mReputationValueCommandHandler;
         SetDestroyedHandler mSetDestroyedHandler;
         ShowMapHandler mShowMapHandler;
         EnableFastTravelHandler mEnableFastTravelHandler;
@@ -610,6 +619,10 @@ namespace MWWorld
         void setAddReputationHandler(AddReputationHandler handler)
         {
             mAddReputationHandler = std::move(handler);
+        }
+        void setReputationValueCommandHandler(ReputationValueCommandHandler handler)
+        {
+            mReputationValueCommandHandler = std::move(handler);
         }
         void setSetDestroyedHandler(SetDestroyedHandler handler)
         {
