@@ -135,6 +135,7 @@ namespace MWClass
         static const ESM4::Creature* getAIDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Creature* getStatsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::BodyPartData* getBodyPartData(const MWWorld::Ptr& ptr);
+        static bool resetFalloutInventory(const MWWorld::Ptr& ptr);
 
         /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
         static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,

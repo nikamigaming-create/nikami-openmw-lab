@@ -2030,6 +2030,29 @@ namespace MWClass
         return recordEquipmentOverride(data);
     }
 
+    bool ESM4Npc::resetFalloutInventory(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const ESM4::Npc* const base = ptr.get<ESM4::Npc>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        // Build the authored template/levelled inventory off-reference, then atomically replace only inventory and
+        // equipment. Quest state, health, AI progress, spell overrides, scene state, and scripted name remain live.
+        std::unique_ptr<ESM4NpcCustomData> authored = makeNpcCustomData(ptr);
+        if (authored == nullptr || authored->mContainerStore == nullptr)
+            return false;
+        data.mContainerStore = std::move(authored->mContainerStore);
+        data.mContainerItemsRegistered = false;
+        data.mEquippedArmor = std::move(authored->mEquippedArmor);
+        data.mEquippedClothing = std::move(authored->mEquippedClothing);
+        data.mEquippedWeapon = authored->mEquippedWeapon;
+        data.mCreatureStats.clearFalloutEquipmentOverride();
+        return true;
+    }
+
     const ESM4::Npc* ESM4Npc::getTraitsRecord(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mTraits;

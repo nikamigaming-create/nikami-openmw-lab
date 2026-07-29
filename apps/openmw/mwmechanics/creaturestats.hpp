@@ -165,6 +165,7 @@ namespace MWMechanics
         bool hasFalloutEquipmentOverride() const { return mHasFalloutEquipmentOverride; }
         const std::vector<ESM::FormId>& getFalloutEquippedItems() const { return mFalloutEquippedItems; }
         bool setFalloutEquipmentOverride(std::vector<ESM::FormId> items);
+        void clearFalloutEquipmentOverride();
         bool hasFalloutActorEffectOverride() const { return mHasFalloutActorEffectOverride; }
         const std::vector<ESM::FormId>& getFalloutActorEffects() const { return mFalloutActorEffects; }
         bool setFalloutBaseActorEffects(std::vector<ESM::FormId> effects);

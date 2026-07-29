@@ -140,6 +140,7 @@ namespace MWWorld
         StopCombat,
         StopLook,
         ResetHealth,
+        ResetInventory,
         Look,
     };
 

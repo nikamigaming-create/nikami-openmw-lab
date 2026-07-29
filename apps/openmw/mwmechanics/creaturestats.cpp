@@ -186,6 +186,12 @@ namespace MWMechanics
         return true;
     }
 
+    void CreatureStats::clearFalloutEquipmentOverride()
+    {
+        mHasFalloutEquipmentOverride = false;
+        mFalloutEquippedItems.clear();
+    }
+
     bool CreatureStats::setFalloutBaseActorEffects(std::vector<ESM::FormId> effects)
     {
         constexpr std::size_t MaximumActorEffects = 1024;

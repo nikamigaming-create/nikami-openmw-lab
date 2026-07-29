@@ -5074,6 +5074,18 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if (Misc::StringUtils::ciEqual(command, "ResetInventory")
+                    && tokens.size() == 1)
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    if (!actor.isZeroOrUnset() && mActorCommandHandler
+                        && mActorCommandHandler(
+                            ESM4QuestActorCommand::ResetInventory, actor, ESM::FormId{}, false))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: ResetInventory actor=" << subject;
+                        continue;
+                    }
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "SetUnconscious")
                              || Misc::StringUtils::ciEqual(command, "SetRestrained")
                              || Misc::StringUtils::ciEqual(command, "SetPlayerTeammate")
@@ -5768,6 +5780,19 @@ namespace MWWorld
                     Log(Debug::Info) << "FNV/ESM4 behavior: SetActorFullName implicit actor="
                                      << ESM::RefId(actor).serializeText() << " message=" << message->mEditorId
                                      << " name=\"" << message->mFullName << "\"";
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "ResetInventory")
+                && (ownerActor || ownerReference) && tokens.size() == 1)
+            {
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                if (mActorCommandHandler
+                    && mActorCommandHandler(
+                        ESM4QuestActorCommand::ResetInventory, actor, ESM::FormId{}, false))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: ResetInventory owning actor="
+                                     << ESM::RefId(actor).serializeText();
                     continue;
                 }
             }

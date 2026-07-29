@@ -1644,6 +1644,24 @@ namespace MWClass
             : nullptr;
     }
 
+    bool ESM4Creature::resetFalloutInventory(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        const ESM4::Creature* const base = ptr.get<ESM4::Creature>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        std::unique_ptr<ESM4CreatureCustomData> authored = makeCreatureCustomData(*base);
+        if (authored == nullptr || authored->mContainerStore == nullptr)
+            return false;
+        data.mContainerStore = std::move(authored->mContainerStore);
+        data.mContainerItemsRegistered = false;
+        data.mCreatureStats.clearFalloutEquipmentOverride();
+        return true;
+    }
+
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;

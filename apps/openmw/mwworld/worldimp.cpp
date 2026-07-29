@@ -121,6 +121,7 @@
 #include "../mwscript/globalscripts.hpp"
 
 #include "../mwclass/door.hpp"
+#include "../mwclass/esm4creature.hpp"
 #include "../mwclass/esm4npc.hpp"
 #include "../mwclass/fnvaipackage.hpp"
 
@@ -1306,7 +1307,7 @@ namespace MWWorld
                 if (actor.isEmpty() || !actor.getClass().isActor())
                     return false;
                 MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
-                if (mechanics == nullptr)
+                if (mechanics == nullptr && command != ESM4QuestActorCommand::ResetInventory)
                     return false;
 
                 switch (command)
@@ -1345,6 +1346,27 @@ namespace MWWorld
                                 != FalloutActorValueMutationResult::Applied)
                             return false;
                         mechanics->forceStateUpdate(actor);
+                        break;
+                    }
+                    case ESM4QuestActorCommand::ResetInventory:
+                    {
+                        if (actor.getType() != ESM4::Npc::sRecordId
+                            && actor.getType() != ESM4::Creature::sRecordId)
+                            return false;
+                        removeContainerScripts(actor);
+                        const bool reset = actor.getType() == ESM4::Npc::sRecordId
+                            ? MWClass::ESM4Npc::resetFalloutInventory(actor)
+                            : MWClass::ESM4Creature::resetFalloutInventory(actor);
+                        if (!reset)
+                            return false;
+                        // Register the newly authored stacks before any later source line tries to address them.
+                        actor.getClass().getContainerStore(actor);
+                        if (mRendering != nullptr)
+                            if (auto* animation
+                                = dynamic_cast<MWRender::ESM4NpcAnimation*>(getAnimation(actor)))
+                                animation->refreshEquipment();
+                        if (mechanics != nullptr)
+                            mechanics->forceStateUpdate(actor);
                         break;
                     }
                     case ESM4QuestActorCommand::Look:
@@ -2968,7 +2990,8 @@ namespace MWWorld
     void World::removeContainerScripts(const Ptr& reference)
     {
         if (reference.getType() == ESM::Container::sRecordId || reference.getType() == ESM::NPC::sRecordId
-            || reference.getType() == ESM::Creature::sRecordId)
+            || reference.getType() == ESM::Creature::sRecordId || reference.getType() == ESM4::Npc::sRecordId
+            || reference.getType() == ESM4::Creature::sRecordId)
         {
             MWWorld::ContainerStore& container = reference.getClass().getContainerStore(reference);
             for (MWWorld::ContainerStoreIterator it = container.begin(); it != container.end(); ++it)

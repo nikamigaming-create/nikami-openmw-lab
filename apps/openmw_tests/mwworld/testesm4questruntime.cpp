@@ -1188,6 +1188,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
           "ActorControlRef.RemoveSpell ActorControlAbility\n"
           "RemoveSpell ActorControlAbility\n"
           "ActorControlRef.SetActorFullName ActorControlName\n"
+          "ActorControlRef.ResetInventory\n"
           "ActorControlRef.RemoveAllItems ActorControlDestination 0 1\n"
           "ActorControlRef.RemoveAllTypedItems player 0 1 108 ActorControlExceptions\n"
           "player.EquipItem ActorControlWeapon 1 1\n"
@@ -1316,7 +1317,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     EXPECT_TRUE(std::get<2>(equipment[2]));
     EXPECT_EQ(std::get<0>(equipment[3]), playerId);
     EXPECT_FALSE(std::get<2>(equipment[3]));
-    ASSERT_EQ(actorCommands.size(), 5);
+    ASSERT_EQ(actorCommands.size(), 6);
     EXPECT_EQ(std::get<0>(actorCommands[0]), MWWorld::ESM4QuestActorCommand::StartCombat);
     EXPECT_EQ(std::get<2>(actorCommands[0]), targetId);
     EXPECT_EQ(std::get<0>(actorCommands[1]), MWWorld::ESM4QuestActorCommand::StopCombat);
@@ -1327,6 +1328,8 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     EXPECT_EQ(std::get<2>(actorCommands[3]), targetId);
     EXPECT_EQ(std::get<0>(actorCommands[4]), MWWorld::ESM4QuestActorCommand::ResetHealth);
     EXPECT_TRUE(std::get<2>(actorCommands[4]).isZeroOrUnset());
+    EXPECT_EQ(std::get<0>(actorCommands[5]), MWWorld::ESM4QuestActorCommand::ResetInventory);
+    EXPECT_EQ(std::get<1>(actorCommands[5]), actorId);
     ASSERT_EQ(actorEffects.size(), 3);
     EXPECT_EQ(actorEffects[0], std::tuple(actorId, spellId, true));
     EXPECT_EQ(actorEffects[1], std::tuple(actorId, spellId, false));

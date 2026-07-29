@@ -436,6 +436,7 @@ namespace
                 weapon.mId = ESM::FormId::fromUint32(sNpcWeaponBase);
                 weapon.mEditorId = "GoodspringsNpcStateWeapon";
                 weapon.mFullName = "NPC State Weapon";
+                weapon.mModel = "Weapons\\GoodspringsNpcStateWeapon.nif";
                 weapon.mData.damage = 12;
                 store.overrideRecord(weapon);
                 if (weaponInInventory)
@@ -1481,6 +1482,46 @@ namespace
         EXPECT_EQ(restored.getRefData().getPosition(), savedPosition);
         EXPECT_TRUE(restored.getRefData().isEnabled());
         EXPECT_EQ(restored.getCellRef().getRefNum(), npcRef);
+    }
+
+    TEST_F(ESM4ContainerTest, ResetInventoryRestoresAuthoredNpcStacksAndEquipmentWithoutResettingActorState)
+    {
+        MWWorld::ESMStore store;
+        populateNpcWorldStore(store, true);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr actor = findPlacedNpc(*cell);
+        ASSERT_FALSE(actor.isEmpty());
+        worldModel.registerPtr(actor);
+
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
+        MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+        ASSERT_EQ(inventory.count(bottleId), 6);
+        ASSERT_EQ(inventory.remove(bottleId, 5, false, false), 5);
+        ASSERT_TRUE(MWClass::ESM4Npc::unequipFalloutItem(actor, weaponId));
+        MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+        auto health = stats.getHealth();
+        health.setCurrent(37.f);
+        stats.setHealth(health);
+        ASSERT_TRUE(stats.setFalloutFullName("Persistent Name"));
+        ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
+
+        ASSERT_TRUE(MWClass::ESM4Npc::resetFalloutInventory(actor));
+        EXPECT_EQ(actor.getClass().getContainerStore(actor).count(bottleId), 6);
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actor);
+        ASSERT_NE(weapon, nullptr);
+        EXPECT_EQ(weapon->mId, weaponId);
+        EXPECT_FALSE(stats.hasFalloutEquipmentOverride());
+        EXPECT_FLOAT_EQ(stats.getHealth().getCurrent(), 37.f);
+        EXPECT_EQ(actor.getClass().getName(actor), "Persistent Name");
     }
 
     TEST_F(ESM4ContainerTest, FalloutVisualEquipmentOverrideCanUsePlayerInventoryOwnedOutsideProxy)

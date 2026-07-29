@@ -141,6 +141,7 @@ namespace MWClass
         static bool clearFalloutEquipment(const MWWorld::Ptr& ptr);
         static bool applyFalloutEquipmentOverride(
             const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& items, bool requireInventory = true);
+        static bool resetFalloutInventory(const MWWorld::Ptr& ptr);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
 
