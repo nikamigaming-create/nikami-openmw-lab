@@ -4895,7 +4895,37 @@ namespace MWWorld
                 const bool playerSubject = Misc::StringUtils::ciEqual(subject, "player")
                     || Misc::StringUtils::ciEqual(subject, "playerref");
 
-                if ((Misc::StringUtils::ciEqual(command, "AddItem")
+                if (Misc::StringUtils::ciEqual(command, "Activate")
+                    && tokens.size() >= 1 && tokens.size() <= 3)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    const ESM::FormId target = sourceOwnerId();
+                    ESM::FormId activator{ .mIndex = 0x14, .mContentFile = 0 };
+                    std::size_t argument = 1;
+                    bool valid = !target.isZeroOrUnset();
+                    if (tokens.size() >= 2)
+                    {
+                        activator = sourceReferenceId(tokens[1]);
+                        valid = !activator.isZeroOrUnset();
+                        argument = 2;
+                    }
+                    bool runOnActivateBlock = false;
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> runBlock = sourceInteger(sourceTokens, argument);
+                        valid = runBlock && (*runBlock == 0 || *runBlock == 1);
+                        runOnActivateBlock = valid && *runBlock != 0;
+                    }
+                    if (valid && argument == sourceTokens.size() && mReferenceActivationHandler
+                        && mReferenceActivationHandler(target, activator, runOnActivateBlock))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: Activate target=" << subject
+                                         << " activator=" << ESM::RefId(activator).serializeText()
+                                         << " runOnActivateBlock=" << runOnActivateBlock;
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "AddItem")
                         || Misc::StringUtils::ciEqual(command, "RemoveItem"))
                     && tokens.size() >= 3 && tokens.size() <= 4)
                 {

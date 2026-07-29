@@ -130,6 +130,7 @@
 #include "../mwphysics/object.hpp"
 #include "../mwphysics/physicssystem.hpp"
 
+#include "action.hpp"
 #include "actionteleport.hpp"
 #include "cellstore.hpp"
 #include "containerstore.hpp"
@@ -906,6 +907,43 @@ namespace MWWorld
                                  << static_cast<unsigned int>(command)
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
+            });
+        mESM4QuestRuntime.setReferenceActivationHandler(
+            [this](ESM::FormId targetId, ESM::FormId activatorId, bool runOnActivateBlock) {
+                const auto resolveReference = [this](ESM::FormId id) {
+                    if (id == ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 })
+                        return getPlayerPtr();
+                    Ptr result = searchPtr(ESM::RefId(id), false, false);
+                    if (result.isEmpty())
+                        result = searchPtrByRefNum(id);
+                    return result;
+                };
+
+                const Ptr target = resolveReference(targetId);
+                const Ptr activator = resolveReference(activatorId);
+                if (target.isEmpty() || activator.isEmpty() || target.getRefData().isDestroyed())
+                    return false;
+
+                bool sourceExecuted = false;
+                if (runOnActivateBlock)
+                    sourceExecuted = mESM4QuestRuntime.onReferenceActivated(target, activator);
+
+                // Keep the Fallout command at the scripting boundary. The
+                // target's regular OpenMW class action remains responsible
+                // for doors, containers, terminals, crafting stations,
+                // furniture, radios, actors, and every other activation type.
+                std::unique_ptr<Action> action = target.getClass().activate(target, activator);
+                if (action != nullptr)
+                {
+                    action->execute(activator);
+                    Log(Debug::Info) << "FNV/ESM4 quest: activated reference target="
+                                     << ESM::RefId(targetId).serializeText()
+                                     << " activator=" << ESM::RefId(activatorId).serializeText()
+                                     << " runOnActivateBlock=" << runOnActivateBlock
+                                     << " sourceExecuted=" << sourceExecuted;
+                    return true;
+                }
+                return sourceExecuted;
             });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {

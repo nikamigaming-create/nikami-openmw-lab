@@ -1205,6 +1205,51 @@ TEST(ESM4QuestRuntimeTest, ExecutesSetFactionRankAndTreatsMinusOneAsRemoval)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesScriptedActivateThroughTheReferenceActivationHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12015f, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120168, .mContentFile = 0 };
+    const ESM::FormId activatorId{ .mIndex = 0x120169, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ReferenceActivationQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "ActivationTarget.Activate\n"
+          "ActivationTarget.Activate Player\n"
+          "ActivationTarget.Activate ActivationActor 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference target;
+    target.mId = targetId;
+    target.mEditorId = "ActivationTarget";
+    store.overrideRecord(target);
+    ESM4::Reference activator;
+    activator.mId = activatorId;
+    activator.mEditorId = "ActivationActor";
+    store.overrideRecord(activator);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>> activations;
+    runtime.setReferenceActivationHandler(
+        [&](ESM::FormId targetRef, ESM::FormId activatorRef, bool runOnActivateBlock) {
+            activations.emplace_back(targetRef, activatorRef, runOnActivateBlock);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(activations,
+        (std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>>{
+            { targetId, playerId, false },
+            { targetId, playerId, false },
+            { targetId, activatorId, true },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
 {
     MWWorld::ESMStore store;

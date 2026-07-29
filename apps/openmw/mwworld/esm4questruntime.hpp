@@ -174,6 +174,7 @@ namespace MWWorld
             std::int32_t, std::optional<ESM::FormId>)>;
         using EquipmentCommandHandler
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
+        using ReferenceActivationHandler = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
@@ -351,6 +352,7 @@ namespace MWWorld
         RemoveAllItemsHandler mRemoveAllItemsHandler;
         RemoveAllTypedItemsHandler mRemoveAllTypedItemsHandler;
         EquipmentCommandHandler mEquipmentCommandHandler;
+        ReferenceActivationHandler mReferenceActivationHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
@@ -612,6 +614,10 @@ namespace MWWorld
         void setEquipmentCommandHandler(EquipmentCommandHandler handler)
         {
             mEquipmentCommandHandler = std::move(handler);
+        }
+        void setReferenceActivationHandler(ReferenceActivationHandler handler)
+        {
+            mReferenceActivationHandler = std::move(handler);
         }
         void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
