@@ -42,20 +42,26 @@ local previewIfStandStill = false
 local showCrosshairInThirdPerson = false
 local slowViewChange = false
 
+local function settingOrDefault(key, default)
+    local value = settings:get(key)
+    if value == nil then return default end
+    return value
+end
+
 local function updateSettings()
-    previewIfStandStill = settings:get('previewIfStandStill')
-    showCrosshairInThirdPerson = settings:get('viewOverShoulder')
-    camera.allowCharacterDeferredRotation(settings:get('deferredPreviewRotation'))
+    previewIfStandStill = settingOrDefault('previewIfStandStill', false)
+    showCrosshairInThirdPerson = settingOrDefault('viewOverShoulder', false)
+    camera.allowCharacterDeferredRotation(settingOrDefault('deferredPreviewRotation', false))
     local collisionType = util.bitAnd(nearby.COLLISION_TYPE.Default, util.bitNot(nearby.COLLISION_TYPE.Actor))
     collisionType = util.bitOr(collisionType, nearby.COLLISION_TYPE.Camera)
-    if settings:get('ignoreNC') then
+    if settingOrDefault('ignoreNC', false) then
         collisionType = util.bitOr(collisionType, nearby.COLLISION_TYPE.VisualOnly)
     end
     camera.setCollisionType(collisionType)
-    move360.enabled = settings:get('move360')
-    move360.turnSpeed = settings:get('move360TurnSpeed')
-    pov_auto_switch.enabled = settings:get('povAutoSwitch')
-    slowViewChange = settings:get('slowViewChange')
+    move360.enabled = settingOrDefault('move360', false)
+    move360.turnSpeed = settingOrDefault('move360TurnSpeed', 5)
+    pov_auto_switch.enabled = settingOrDefault('povAutoSwitch', false)
+    slowViewChange = settingOrDefault('slowViewChange', false)
 end
 
 local primaryMode
@@ -109,7 +115,10 @@ local function updatePOV(dt)
 end
 
 local idleTimer = 0
-local vanityDelay = core.getGMST('fVanityDelay')
+-- Fallout content does not need Morrowind's vanity camera, and some ESM4
+-- stacks omit this GMST.  Disabling that optional path is safer than failing
+-- the shared camera script.
+local vanityDelay = core.getGMST('fVanityDelay') or math.huge
 
 local function updateVanity(dt)
     local vanityAllowed = Player.getControlSwitch(self, Player.CONTROL_SWITCH.VanityMode)
