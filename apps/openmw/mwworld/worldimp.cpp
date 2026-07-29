@@ -883,6 +883,17 @@ namespace MWWorld
                         if (target.getCellRef().isLocked())
                             target.getCellRef().unlock();
                         break;
+                    case ESM4QuestReferenceCommand::Open:
+                    case ESM4QuestReferenceCommand::Close:
+                        // Keep scripted door movement in OpenMW's native
+                        // state machine so animation, physics, and navigation
+                        // observe the same transition as an ordinary door.
+                        if (!target.getClass().isDoor())
+                            return false;
+                        activateDoor(target, command == ESM4QuestReferenceCommand::Open
+                                ? DoorState::Opening
+                                : DoorState::Closing);
+                        break;
                     case ESM4QuestReferenceCommand::Kill:
                     {
                         if (!target.getClass().isActor())

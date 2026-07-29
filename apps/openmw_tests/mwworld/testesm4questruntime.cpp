@@ -1080,6 +1080,144 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledLockWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledAndSourceSetOpenStateThroughNativeDoorState)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120347, .mContentFile = 0 };
+    const ESM::FormId doorId{ .mIndex = 0x120348, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledSetOpenStateQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // FalloutNV.esm VMS55 stage 200: LockedOuterDoor.SetOpenState 0
+        0x1c, 0x00, 0x01, 0x00, 0xdd, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00,
+        // Fallout3.esm CG04 stage 142: CG04SecretDoorREF.SetOpenState 1
+        0x1c, 0x00, 0x01, 0x00, 0xdd, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { doorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Reference door;
+    door.mId = doorId;
+    door.mEditorId = "NativeDoorREF";
+    store.overrideRecord(door);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setReferenceCommandHandler(
+        [&](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+            if (command != MWWorld::ESM4QuestReferenceCommand::Open
+                && command != MWWorld::ESM4QuestReferenceCommand::Close)
+                return false;
+            changes.emplace_back(command, target);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Close, doorId },
+            { MWWorld::ESM4QuestReferenceCommand::Open, doorId },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+
+    changes.clear();
+    stagesAtCommand.clear();
+    runtime.executeResultSource(
+        "NativeDoorREF.SetOpenState 0\n"
+        "NativeDoorREF.SetOpenState 1\n");
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Close, doorId },
+            { MWWorld::ESM4QuestReferenceCommand::Open, doorId },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedSetOpenStateWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120349, .mContentFile = 0 };
+    const ESM::FormId doorId{ .mIndex = 0x12034a, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedSetOpenStateQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = {
+        0xdd, 0x10, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry missingArgument;
+    missingArgument.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xdd, 0x10, 0x02, 0x00, 0x00, 0x00,
+    };
+    missingArgument.mScript.references = { doorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(missingArgument) } });
+    ESM4::QuestStageEntry invalidBoolean;
+    invalidBoolean.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xdd, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x02, 0x00, 0x00, 0x00,
+    };
+    invalidBoolean.mScript.references = { doorId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(invalidBoolean) } });
+    ESM4::QuestStageEntry referenceArgument;
+    referenceArgument.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xdd, 0x10, 0x05, 0x00,
+        0x01, 0x00, 0x72, 0x02, 0x00,
+    };
+    referenceArgument.mScript.references = { doorId, questId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(referenceArgument) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference door;
+    door.mId = doorId;
+    door.mEditorId = "MalformedDoorREF";
+    store.overrideRecord(door);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setReferenceCommandHandler(
+        [&](MWWorld::ESM4QuestReferenceCommand, ESM::FormId) {
+            ++changes;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+
+    runtime.executeResultSource(
+        "MalformedDoorREF.SetOpenState 2\n"
+        "MalformedDoorREF.SetOpenState 0 1\n");
+    EXPECT_EQ(changes, 0);
+    EXPECT_EQ(runtime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{
+            "MalformedDoorREF.SetOpenState 2",
+            "MalformedDoorREF.SetOpenState 0 1",
+        }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledStopLookThroughNativeMechanicsAfterCommit)
 {
     MWWorld::ESMStore store;

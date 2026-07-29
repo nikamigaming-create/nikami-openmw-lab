@@ -1506,6 +1506,7 @@ namespace MWWorld
                 && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10ab
                 && instruction.opcode != 0x10cc
+                && instruction.opcode != 0x10dd
                 && instruction.opcode != 0x110d && instruction.opcode != 0x1111
                 && instruction.opcode != 0x114a
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
@@ -2452,6 +2453,25 @@ namespace MWWorld
                 command.mObjective = level.value_or(0);
                 prepared.mCommands.push_back(std::move(command));
             }
+            else if (instruction.opcode == 0x10dd) // reference.SetOpenState open
+            {
+                // All 19 Fallout 3/New Vegas base-master quest frames are
+                // placed-reference-qualified calls with one literal boolean:
+                // zero closes the door and one opens it.
+                if (!instruction.callingReferenceIndex || arguments.size() != 1
+                    || !mReferenceCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
+                const std::int32_t* open = std::get_if<std::int32_t>(&arguments[0]);
+                if (mStore->get<ESM4::Reference>().search(target) == nullptr || open == nullptr
+                    || (*open != 0 && *open != 1))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetOpenState;
+                command.mQuest = target;
+                command.mValue = *open != 0;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x10cc) // reference.SetDestroyed bool
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 1 || !mSetDestroyedHandler
@@ -3222,6 +3242,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::Disable
             || command.mType == CompiledQuestCommandType::Unlock
             || command.mType == CompiledQuestCommandType::Lock
+            || command.mType == CompiledQuestCommandType::SetOpenState
             || command.mType == CompiledQuestCommandType::Kill
             || command.mType == CompiledQuestCommandType::AddItem
             || command.mType == CompiledQuestCommandType::RemoveItem
@@ -3319,6 +3340,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Disable:
             case CompiledQuestCommandType::Unlock:
             case CompiledQuestCommandType::Lock:
+            case CompiledQuestCommandType::SetOpenState:
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::StopLook:
@@ -3613,6 +3635,14 @@ namespace MWWorld
                         && mLockHandler(effect.mTarget,
                             effect.mValue ? std::optional<int>{ effect.mCount } : std::nullopt);
                     break;
+                case CompiledQuestCommandType::SetOpenState:
+                    command = "SetOpenState ";
+                    executed = mReferenceCommandHandler
+                        && mReferenceCommandHandler(
+                            effect.mValue ? ESM4QuestReferenceCommand::Open
+                                          : ESM4QuestReferenceCommand::Close,
+                            effect.mTarget);
+                    break;
                 case CompiledQuestCommandType::Kill:
                     command = "Kill ";
                     executed = mReferenceCommandHandler
@@ -3687,6 +3717,8 @@ namespace MWWorld
                 command += " " + std::to_string(static_cast<int>(effect.mValue)) + " "
                     + std::to_string(effect.mCount);
             if (effect.mType == CompiledQuestCommandType::SetDestroyed)
+                command += " " + std::to_string(static_cast<int>(effect.mValue));
+            if (effect.mType == CompiledQuestCommandType::SetOpenState)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::ShowMap && effect.mValue)
                 command += " 1";
@@ -3984,6 +4016,13 @@ namespace MWWorld
                                 && mLockHandler(command.mQuest,
                                     command.mValue ? std::optional<int>{ command.mObjective } : std::nullopt);
                             break;
+                        case CompiledQuestCommandType::SetOpenState:
+                            executed = mReferenceCommandHandler
+                                && mReferenceCommandHandler(
+                                    command.mValue ? ESM4QuestReferenceCommand::Open
+                                                   : ESM4QuestReferenceCommand::Close,
+                                    command.mQuest);
+                            break;
                         case CompiledQuestCommandType::Kill:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Kill, command.mQuest);
@@ -4144,6 +4183,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Disable
                             || command.mType == CompiledQuestCommandType::Unlock
                             || command.mType == CompiledQuestCommandType::Lock
+                            || command.mType == CompiledQuestCommandType::SetOpenState
                             || command.mType == CompiledQuestCommandType::Kill
                             || command.mType == CompiledQuestCommandType::AddItem
                             || command.mType == CompiledQuestCommandType::AddItemHealthPercent
@@ -4230,6 +4270,9 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::Lock)
                                 failure = "Lock " + ESM::RefId(command.mQuest).serializeText()
                                     + (command.mValue ? " " + std::to_string(command.mObjective) : "");
+                            else if (command.mType == CompiledQuestCommandType::SetOpenState)
+                                failure = "SetOpenState " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + std::to_string(static_cast<int>(command.mValue));
                             else if (command.mType == CompiledQuestCommandType::Kill)
                                 failure = "Kill " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::AddItem)
@@ -6699,27 +6742,21 @@ namespace MWWorld
                     Log(Debug::Warning) << "FNV/ESM4 behavior: " << command
                                         << " could not resolve reference=" << subject;
                 }
-                else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "SetOpenState"))
+                else if (tokens.size() == 2 && Misc::StringUtils::ciEqual(command, "SetOpenState"))
                 {
-                    // Fallout scripts use 0 for closed and 1 for open. Route
-                    // that semantic request through the regular door state
-                    // machine so physics, animation, and navigation receive
-                    // the same change as an ordinary authored door action.
                     std::int32_t openState = 0;
-                    const MWWorld::Ptr reference = resolveActor();
-                    if (world != nullptr && parseInt(tokens[1], openState) && !reference.isEmpty()
-                        && reference.getType() == ESM::REC_DOOR4 && (openState == 0 || openState == 1))
+                    if (parseInt(tokens[1], openState) && (openState == 0 || openState == 1)
+                        && executeReferenceCommand(
+                            openState != 0 ? ESM4QuestReferenceCommand::Open
+                                           : ESM4QuestReferenceCommand::Close,
+                            subject))
                     {
-                        const MWWorld::DoorState state
-                            = openState == 0 ? MWWorld::DoorState::Closing : MWWorld::DoorState::Opening;
-                        world->activateDoor(reference, state);
                         Log(Debug::Info) << "FNV/ESM4 behavior: SetOpenState reference=" << subject
                                          << " state=" << openState;
                         continue;
                     }
                     Log(Debug::Warning) << "FNV/ESM4 behavior: SetOpenState unsupported reference=" << subject
-                                        << " state=" << (tokens.size() >= 2 ? tokens[1] : std::string_view{})
-                                        << " type=" << (reference.isEmpty() ? 0 : reference.getType());
+                                        << " state=" << tokens[1];
                 }
                 else if ((Misc::StringUtils::ciEqual(command, "Say") && tokens.size() >= 2)
                     || (Misc::StringUtils::ciEqual(command, "SayTo") && tokens.size() >= 3))
