@@ -56,6 +56,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrepu.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -1136,6 +1137,39 @@ namespace MWWorld
                     = MWMechanics::getFalloutFactionMembership(
                         actor, factionId, player ? &mFalloutPlayerRuntimeState : nullptr);
                 return ESM4QuestFactionMembership{ membership.mMember, membership.mRank };
+            });
+        mESM4QuestRuntime.setActorEffectCommandHandler(
+            [this](ESM::FormId actorId, ESM::FormId spellId, bool add) {
+                if (mStore.get<ESM4::Spell>().search(ESM::RefId(spellId)) == nullptr)
+                    return false;
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor()
+                    || !actor.getClass().getCreatureStats(actor).setFalloutActorEffect(spellId, add))
+                    return false;
+                if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    mechanics->forceStateUpdate(actor);
+                Log(Debug::Info) << "FNV/ESM4 quest: " << (add ? "AddSpell" : "RemoveSpell")
+                                 << " actor=" << actor.getCellRef().getRefId()
+                                 << " spell=" << ESM::RefId(spellId).serializeText();
+                return true;
+            });
+        mESM4QuestRuntime.setActorNameCommandHandler(
+            [this](ESM::FormId actorId, std::string_view name) {
+                const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
+                if (actor.isEmpty() && !player)
+                    actor = searchPtrByRefNum(actorId);
+                if (actor.isEmpty() || !actor.getClass().isActor()
+                    || !actor.getClass().getCreatureStats(actor).setFalloutFullName(std::string(name)))
+                    return false;
+                if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    mechanics->forceStateUpdate(actor);
+                Log(Debug::Info) << "FNV/ESM4 quest: SetActorFullName actor="
+                                 << actor.getCellRef().getRefId() << " name=\"" << name << "\"";
+                return true;
             });
         mESM4QuestRuntime.setActorFlagCommandHandler(
             [this](ESM::FormId actorId, ESM4QuestActorFlag flag, bool enabled) {

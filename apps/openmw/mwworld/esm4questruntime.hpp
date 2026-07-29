@@ -198,6 +198,10 @@ namespace MWWorld
             = std::function<std::optional<bool>(ESM::FormId, ESM4QuestActorFlag)>;
         using ActorCommandHandler
             = std::function<bool(ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool)>;
+        using ActorEffectCommandHandler
+            = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
+        using ActorNameCommandHandler
+            = std::function<bool(ESM::FormId, std::string_view)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -324,6 +328,8 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mNoteIds;
         std::unordered_map<std::string, ESM::FormId> mPerkIds;
         std::unordered_map<std::string, ESM::FormId> mActorBaseIds;
+        std::unordered_map<std::string, ESM::FormId> mSpellIds;
+        std::unordered_map<std::string, ESM::FormId> mMessageIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
@@ -359,6 +365,8 @@ namespace MWWorld
         ActorFlagCommandHandler mActorFlagCommandHandler;
         ActorFlagHandler mActorFlagHandler;
         ActorCommandHandler mActorCommandHandler;
+        ActorEffectCommandHandler mActorEffectCommandHandler;
+        ActorNameCommandHandler mActorNameCommandHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -554,6 +562,8 @@ namespace MWWorld
         ESM::FormId resolveNote(std::string_view id);
         ESM::FormId resolvePerk(std::string_view id);
         ESM::FormId resolveActorBase(std::string_view id);
+        ESM::FormId resolveSpell(std::string_view id);
+        ESM::FormId resolveMessage(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:
@@ -666,6 +676,14 @@ namespace MWWorld
         void setActorCommandHandler(ActorCommandHandler handler)
         {
             mActorCommandHandler = std::move(handler);
+        }
+        void setActorEffectCommandHandler(ActorEffectCommandHandler handler)
+        {
+            mActorEffectCommandHandler = std::move(handler);
+        }
+        void setActorNameCommandHandler(ActorNameCommandHandler handler)
+        {
+            mActorNameCommandHandler = std::move(handler);
         }
 
         bool startQuest(std::string_view id);

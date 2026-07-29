@@ -26,6 +26,7 @@
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
+#include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
@@ -33,6 +34,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
@@ -1160,6 +1162,8 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     const ESM::FormId destinationId{ .mIndex = 0x120163, .mContentFile = 0 };
     const ESM::FormId weaponId{ .mIndex = 0x120164, .mContentFile = 0 };
     const ESM::FormId exceptionListId{ .mIndex = 0x120165, .mContentFile = 0 };
+    const ESM::FormId spellId{ .mIndex = 0x120166, .mContentFile = 0 };
+    const ESM::FormId nameMessageId{ .mIndex = 0x120167, .mContentFile = 0 };
     const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
 
     ESM4::Quest quest = makeQuest(questId, "ActorControlQuest");
@@ -1180,6 +1184,10 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
           "ActorControlRef.Look ActorControlTarget 1\n"
           "ActorControlRef.StopLook ActorControlTarget\n"
           "ActorControlRef.ResetHealth\n"
+          "ActorControlRef.AddSpell ActorControlAbility\n"
+          "ActorControlRef.RemoveSpell ActorControlAbility\n"
+          "RemoveSpell ActorControlAbility\n"
+          "ActorControlRef.SetActorFullName ActorControlName\n"
           "ActorControlRef.RemoveAllItems ActorControlDestination 0 1\n"
           "ActorControlRef.RemoveAllTypedItems player 0 1 108 ActorControlExceptions\n"
           "player.EquipItem ActorControlWeapon 1 1\n"
@@ -1220,6 +1228,17 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     exceptionList.mEditorId = "ActorControlExceptions";
     exceptionList.mObjects.push_back(weaponId);
     store.overrideRecord(exceptionList);
+    ESM4::Spell spell;
+    spell.mId = spellId;
+    spell.mEditorId = "ActorControlAbility";
+    spell.mData.present = true;
+    spell.mData.type = ESM4::Spell::Type::Ability;
+    store.overrideRecord(spell);
+    ESM4::Message nameMessage;
+    nameMessage.mId = nameMessageId;
+    nameMessage.mEditorId = "ActorControlName";
+    nameMessage.mFullName = "Dog";
+    store.overrideRecord(nameMessage);
 
     MWWorld::ESM4QuestRuntime runtime;
     runtime.initialize(store);
@@ -1252,6 +1271,16 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
             actorCommands.emplace_back(command, actor, target, commandFlag);
             return actor == actorId;
         });
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>> actorEffects;
+    runtime.setActorEffectCommandHandler([&](ESM::FormId actor, ESM::FormId spell, bool add) {
+        actorEffects.emplace_back(actor, spell, add);
+        return (actor == actorId || actor == playerId) && spell == spellId;
+    });
+    std::vector<std::pair<ESM::FormId, std::string>> actorNames;
+    runtime.setActorNameCommandHandler([&](ESM::FormId actor, std::string_view name) {
+        actorNames.emplace_back(actor, name);
+        return actor == actorId && name == "Dog";
+    });
     std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool>> removals;
     runtime.setRemoveAllItemsHandler(
         [&](ESM::FormId owner, std::optional<ESM::FormId> destination, bool retainOwnership) {
@@ -1298,6 +1327,12 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     EXPECT_EQ(std::get<2>(actorCommands[3]), targetId);
     EXPECT_EQ(std::get<0>(actorCommands[4]), MWWorld::ESM4QuestActorCommand::ResetHealth);
     EXPECT_TRUE(std::get<2>(actorCommands[4]).isZeroOrUnset());
+    ASSERT_EQ(actorEffects.size(), 3);
+    EXPECT_EQ(actorEffects[0], std::tuple(actorId, spellId, true));
+    EXPECT_EQ(actorEffects[1], std::tuple(actorId, spellId, false));
+    EXPECT_EQ(actorEffects[2], std::tuple(playerId, spellId, false));
+    ASSERT_EQ(actorNames.size(), 1);
+    EXPECT_EQ(actorNames.front(), std::pair(actorId, std::string("Dog")));
     ASSERT_EQ(removals.size(), 2);
     EXPECT_EQ(std::get<1>(removals[0]), destinationId);
     EXPECT_FALSE(std::get<2>(removals[0]));

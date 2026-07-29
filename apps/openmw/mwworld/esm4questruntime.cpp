@@ -47,6 +47,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/settings/settings.hpp>
@@ -706,6 +707,8 @@ namespace MWWorld
         mNoteIds.clear();
         mPerkIds.clear();
         mActorBaseIds.clear();
+        mSpellIds.clear();
+        mMessageIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -3911,6 +3914,48 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveSpell(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mSpellIds.find(key); cached != mSpellIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Spell& spell : mStore->get<ESM4::Spell>())
+            {
+                if (!Misc::StringUtils::ciEqual(spell.mEditorId, id))
+                    continue;
+                result = spell.mId;
+                break;
+            }
+        }
+        mSpellIds.emplace(key, result);
+        return result;
+    }
+
+    ESM::FormId ESM4QuestRuntime::resolveMessage(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mMessageIds.find(key); cached != mMessageIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Message& message : mStore->get<ESM4::Message>())
+            {
+                if (!Misc::StringUtils::ciEqual(message.mEditorId, id))
+                    continue;
+                result = message.mId;
+                break;
+            }
+        }
+        mMessageIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -4994,6 +5039,41 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if ((Misc::StringUtils::ciEqual(command, "AddSpell")
+                             || Misc::StringUtils::ciEqual(command, "RemoveSpell"))
+                    && tokens.size() == 2)
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId spell = resolveSpell(tokens[1]);
+                    const bool add = Misc::StringUtils::ciEqual(command, "AddSpell");
+                    if (!actor.isZeroOrUnset() && !spell.isZeroOrUnset()
+                        && mActorEffectCommandHandler
+                        && mActorEffectCommandHandler(actor, spell, add))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                         << (add ? "AddSpell" : "RemoveSpell")
+                                         << " actor=" << subject << " spell=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "SetActorFullName")
+                    && tokens.size() == 2)
+                {
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId messageId = resolveMessage(tokens[1]);
+                    const ESM4::Message* const message = !messageId.isZeroOrUnset() && mStore != nullptr
+                        ? mStore->get<ESM4::Message>().search(ESM::RefId(messageId))
+                        : nullptr;
+                    if (!actor.isZeroOrUnset() && message != nullptr && !message->mFullName.empty()
+                        && mActorNameCommandHandler
+                        && mActorNameCommandHandler(actor, message->mFullName))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: SetActorFullName actor="
+                                         << subject << " message=" << message->mEditorId
+                                         << " name=\"" << message->mFullName << "\"";
+                        continue;
+                    }
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "SetUnconscious")
                              || Misc::StringUtils::ciEqual(command, "SetRestrained")
                              || Misc::StringUtils::ciEqual(command, "SetPlayerTeammate")
@@ -5648,6 +5728,46 @@ namespace MWWorld
                                      << " exceptionList="
                                      << (exceptionList ? ESM::RefId(*exceptionList).serializeText()
                                                        : std::string("none"));
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "AddSpell")
+                         || Misc::StringUtils::ciEqual(tokens[0], "RemoveSpell"))
+                && tokens.size() == 2)
+            {
+                // Quest-stage cure scripts use bare RemoveSpell for the player, while actor/reference scripts use
+                // their normal implicit owner. This is the native implicit-reference split, not a quest ID rule.
+                const ESM::FormId actor = ownerActor ? *ownerActor
+                    : ownerReference ? *ownerReference
+                                     : ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
+                const ESM::FormId spell = resolveSpell(tokens[1]);
+                const bool add = Misc::StringUtils::ciEqual(tokens[0], "AddSpell");
+                if (!spell.isZeroOrUnset() && mActorEffectCommandHandler
+                    && mActorEffectCommandHandler(actor, spell, add))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: "
+                                     << (add ? "AddSpell" : "RemoveSpell")
+                                     << " implicit actor=" << ESM::RefId(actor).serializeText()
+                                     << " spell=" << tokens[1];
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "SetActorFullName")
+                && tokens.size() == 2)
+            {
+                const ESM::FormId actor = ownerActor ? *ownerActor
+                    : ownerReference ? *ownerReference
+                                     : ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
+                const ESM::FormId messageId = resolveMessage(tokens[1]);
+                const ESM4::Message* const message = !messageId.isZeroOrUnset() && mStore != nullptr
+                    ? mStore->get<ESM4::Message>().search(ESM::RefId(messageId))
+                    : nullptr;
+                if (message != nullptr && !message->mFullName.empty() && mActorNameCommandHandler
+                    && mActorNameCommandHandler(actor, message->mFullName))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: SetActorFullName implicit actor="
+                                     << ESM::RefId(actor).serializeText() << " message=" << message->mEditorId
+                                     << " name=\"" << message->mFullName << "\"";
                     continue;
                 }
             }
