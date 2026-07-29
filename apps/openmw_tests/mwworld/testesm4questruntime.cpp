@@ -1344,6 +1344,138 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledAddSpecialPointsWithoutMutati
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledActorFactionChangesAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120313, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120314, .mContentFile = 0 };
+    const ESM::FormId factionId{ .mIndex = 0x120315, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledActorFactionQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x7f, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x1c, 0x00, 0x01, 0x00, 0x80, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { actorId, factionId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Faction faction;
+    faction.mId = factionId;
+    store.overrideRecord(faction);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, std::optional<int>>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setActorFactionCommandHandler(
+        [&](ESM::FormId actorValue, ESM::FormId factionValue, std::optional<int> rank) {
+            changes.emplace_back(actorValue, factionValue, rank);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::tuple<ESM::FormId, ESM::FormId, std::optional<int>>>{
+            { actorId, factionId, 1 },
+            { actorId, factionId, std::nullopt },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledActorFactionChangesWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120316, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120317, .mContentFile = 0 };
+    const ESM::FormId factionId{ .mIndex = 0x120318, .mContentFile = 0 };
+    const ESM::FormId nonActorId{ .mIndex = 0x120319, .mContentFile = 0 };
+    const ESM::FormId nonFactionId{ .mIndex = 0x12031a, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedActorFactionQuest");
+    ESM4::QuestStageEntry globalAdd;
+    globalAdd.mScript.compiledData = {
+        0x7f, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    globalAdd.mScript.references = { factionId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalAdd) } });
+    ESM4::QuestStageEntry nonActor;
+    nonActor.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x7f, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    nonActor.mScript.references = { nonActorId, factionId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActor) } });
+    ESM4::QuestStageEntry nonFaction;
+    nonFaction.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x7f, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    nonFaction.mScript.references = { actorId, nonFactionId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(nonFaction) } });
+    ESM4::QuestStageEntry outOfRange;
+    outOfRange.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x7f, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x80, 0x00, 0x00, 0x00
+    };
+    outOfRange.mScript.references = { actorId, factionId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(outOfRange) } });
+    ESM4::QuestStageEntry removeWithRank;
+    removeWithRank.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x80, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    removeWithRank.mScript.references = { actorId, factionId };
+    quest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(removeWithRank) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Faction faction;
+    faction.mId = factionId;
+    store.overrideRecord(faction);
+    ESM4::Reference nonActorRecord;
+    nonActorRecord.mId = nonActorId;
+    store.overrideRecord(nonActorRecord);
+    ESM4::Book nonFactionRecord;
+    nonFactionRecord.mId = nonFactionId;
+    store.overrideRecord(nonFactionRecord);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setActorFactionCommandHandler(
+        [&](ESM::FormId, ESM::FormId, std::optional<int>) {
+            ++commands;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };

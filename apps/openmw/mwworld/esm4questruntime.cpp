@@ -1456,6 +1456,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
+                && instruction.opcode != 0x117f && instruction.opcode != 0x1180
                 && instruction.opcode != 0x1219
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
@@ -1985,6 +1986,41 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetPerk;
                 command.mQuest = *perk;
                 command.mValue = true;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x117f || instruction.opcode == 0x1180)
+            {
+                // The combined base-master corpus has 29 actor-qualified
+                // AddToFaction frames carrying FACT + rank (observed 0/1),
+                // and 22 actor-qualified RemoveFromFaction frames carrying
+                // one FACT. Preserve the command's signed-byte rank contract.
+                const bool add = instruction.opcode == 0x117f;
+                if (!instruction.callingReferenceIndex || !mActorFactionCommandHandler
+                    || mStore == nullptr || arguments.size() != (add ? 2u : 1u))
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const ESM::FormId* faction = std::get_if<ESM::FormId>(&arguments[0]);
+                if (!actorExists || faction == nullptr
+                    || mStore->get<ESM4::Faction>().search(ESM::RefId(*faction)) == nullptr)
+                    return false;
+                std::int32_t rank = 0;
+                if (add)
+                {
+                    const std::int32_t* value = std::get_if<std::int32_t>(&arguments[1]);
+                    if (value == nullptr || *value < std::numeric_limits<std::int8_t>::min()
+                        || *value > std::numeric_limits<std::int8_t>::max())
+                        return false;
+                    rank = *value;
+                }
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetActorFaction;
+                command.mQuest = actor;
+                command.mTarget = *faction;
+                command.mValue = add;
+                command.mObjective = rank;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x110d) // SetQuestObject item questObject
@@ -2747,6 +2783,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::SetActorEffect
+            || command.mType == CompiledQuestCommandType::SetActorFaction
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
             || command.mType == CompiledQuestCommandType::SetPerk
@@ -2860,6 +2897,7 @@ namespace MWWorld
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
+            case CompiledQuestCommandType::SetActorFaction:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -3045,6 +3083,12 @@ namespace MWWorld
                     executed = mActorEffectCommandHandler
                         && mActorEffectCommandHandler(effect.mTarget, effect.mListener, effect.mValue);
                     break;
+                case CompiledQuestCommandType::SetActorFaction:
+                    command = effect.mValue ? "AddToFaction " : "RemoveFromFaction ";
+                    executed = mActorFactionCommandHandler
+                        && mActorFactionCommandHandler(effect.mTarget, effect.mListener,
+                            effect.mValue ? std::optional<int>{ effect.mCount } : std::nullopt);
+                    break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
@@ -3175,6 +3219,12 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetActorFaction)
+            {
+                command += " " + ESM::RefId(effect.mListener).serializeText();
+                if (effect.mValue)
+                    command += " " + std::to_string(effect.mCount);
+            }
             if (effect.mType == CompiledQuestCommandType::SetQuestObject)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::Lock && effect.mValue)
@@ -3468,6 +3518,11 @@ namespace MWWorld
                             executed = mActorEffectCommandHandler
                                 && mActorEffectCommandHandler(command.mQuest, command.mTarget, command.mValue);
                             break;
+                        case CompiledQuestCommandType::SetActorFaction:
+                            executed = mActorFactionCommandHandler
+                                && mActorFactionCommandHandler(command.mQuest, command.mTarget,
+                                    command.mValue ? std::optional<int>{ command.mObjective } : std::nullopt);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -3532,6 +3587,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
+                            || command.mType == CompiledQuestCommandType::SetActorFaction
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::SetPerk
@@ -3572,6 +3628,11 @@ namespace MWWorld
                                 failure = std::string(command.mValue ? "AddSpell " : "RemoveSpell ")
                                     + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetActorFaction)
+                                failure = std::string(command.mValue ? "AddToFaction " : "RemoveFromFaction ")
+                                    + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText()
+                                    + (command.mValue ? " " + std::to_string(command.mObjective) : "");
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetNote)

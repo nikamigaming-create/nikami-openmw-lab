@@ -434,6 +434,7 @@ namespace MWWorld
             MoveTo,
             SetScriptPackage,
             SetActorEffect,
+            SetActorFaction,
             AddItem,
             RemoveItem,
             EvaluatePackage,
