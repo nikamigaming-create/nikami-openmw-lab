@@ -90,6 +90,7 @@
 
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
+#include "combat.hpp"
 #include "creaturestats.hpp"
 #include "damagesourcetype.hpp"
 #include "falloutcombat.hpp"
@@ -5306,58 +5307,24 @@ namespace MWMechanics
         if (!limbDamageMultiplier || !playerLimbDamageMultiplier || *playerLimbDamageMultiplier < 0.f)
             return fail("missing-limb-damage-tuning");
 
-        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
-        std::vector<MWWorld::Ptr> targetActors;
-        if (mPtr != getPlayer())
-            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
-
-        osg::Vec3f direction;
-        if (mPtr == getPlayer() && world->getCamera() != nullptr)
-            direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
-        else if (!targetActors.empty())
-            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
-        else
-        {
-            const ESM::Position& position = mPtr.getRefData().getPosition();
-            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
-                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
-            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
-        }
-        if (direction.normalize() == 0.f)
-            return fail("zero-strike-direction");
-
-        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
-        if (rayCasting == nullptr)
-            return fail("missing-ray-caster");
-        const osg::Vec3f destination = origin + direction * contract->mReach;
-        MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, {},
-            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
-        const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
-        MWPhysics::RayCastingResult renderedHit;
-        if (world->castRenderingRay(renderedHit, origin, destination, false, false, renderingRayIgnore)
-            && !renderedHit.mHitObject.isEmpty() && renderedHit.mHitObject.getClass().isActor())
-        {
-            const float renderedDistance = (renderedHit.mHitPos - origin).length2();
-            const float physicalDistance
-                = result.mHit ? (result.mHitPos - origin).length2() : std::numeric_limits<float>::infinity();
-            if (!result.mHit || renderedDistance <= physicalDistance + 1.f)
-                result = std::move(renderedHit);
-        }
-
-        const bool actorHit = result.mHit && !result.mHitObject.isEmpty()
-            && result.mHitObject.getClass().isActor();
+        const auto [target, hitPosition] = getHitContact(mPtr, contract->mReach);
+        const bool actorHit = !target.isEmpty() && target.getClass().isActor();
         float healthDamage = 0.f;
         FalloutDamageMitigation mitigation;
         std::optional<FalloutBodyPartContract> bodyPart;
         std::optional<FalloutLimbImpact> limbImpact;
         if (actorHit)
         {
+            const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+            const osg::Vec3f renderingDestination = hitPosition + (hitPosition - origin) * 0.1f;
+            const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
             MWPhysics::RayCastingResult bodyPartHit;
             std::span<const std::string> renderedNodePath;
-            if (world->castRenderingRay(bodyPartHit, origin, destination, false, false, renderingRayIgnore)
-                && bodyPartHit.mHitObject == result.mHitObject)
+            if (world->castRenderingRay(
+                    bodyPartHit, origin, renderingDestination, false, false, renderingRayIgnore)
+                && bodyPartHit.mHitObject == target)
                 renderedNodePath = bodyPartHit.mHitNodePath;
-            bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
+            bodyPart = resolveFalloutRayBodyPart(target, hitPosition, renderedNodePath);
 
             float incomingDamage = contract->mDamage;
             if (bodyPart)
@@ -5365,7 +5332,7 @@ namespace MWMechanics
             FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
             FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
             const std::optional<FalloutDamageMitigation> resolved = resolveFalloutActorImpactDamage(
-                result.mHitObject, incomingDamage, {}, mitigationFailure, ammoEffectFailure);
+                target, incomingDamage, {}, mitigationFailure, ammoEffectFailure);
             if (!resolved)
                 return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
                         ? getFalloutDamageMitigationFailureName(mitigationFailure)
@@ -5375,18 +5342,18 @@ namespace MWMechanics
             const ESM::RefId weapon = mFalloutWeapon != nullptr
                 ? ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                 : ESM::RefId{};
-            CreatureStats& targetStats = result.mHitObject.getClass().getCreatureStats(result.mHitObject);
+            CreatureStats& targetStats = target.getClass().getCreatureStats(target);
             if (bodyPart && bodyPart->mHealthPercent != 0)
             {
                 limbImpact = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
                     bodyPart->mHealthPercent, targetStats.getFalloutLimbDamage(bodyPart->mActorValue),
                     contract->mDamage, *limbDamageMultiplier,
-                    result.mHitObject == getPlayer() ? *playerLimbDamageMultiplier : 1.f);
+                    target == getPlayer() ? *playerLimbDamageMultiplier : 1.f);
                 if (!limbImpact)
                     return fail("invalid-limb-impact");
             }
-            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", healthDamage } }, weapon, mPtr,
-                true, DamageSourceType::Melee);
+            target.getClass().onHit(
+                target, { { "health", healthDamage } }, weapon, mPtr, true, DamageSourceType::Melee);
             if (limbImpact)
             {
                 if (!targetStats.setFalloutLimbDamage(bodyPart->mActorValue, limbImpact->mDamageTakenAfter))
@@ -5412,7 +5379,7 @@ namespace MWMechanics
                          << " damageResistance=" << mitigation.mDamageResistance
                          << " damageThreshold=" << mitigation.mDamageThreshold
                          << " actorHit=" << actorHit
-                         << " target=" << (actorHit ? result.mHitObject.toString() : std::string("none"))
+                         << " target=" << (actorHit ? target.toString() : std::string("none"))
                          << " status=pass";
         return true;
     }
