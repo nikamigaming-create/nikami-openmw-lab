@@ -12,6 +12,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadmisc.hpp>
@@ -33,6 +34,7 @@
 
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
+#include "apps/openmw/mwmechanics/ownership.hpp"
 
 #include "apps/openmw/mwworld/actionopen.hpp"
 #include "apps/openmw/mwworld/actiondoor.hpp"
@@ -1051,6 +1053,49 @@ namespace
 
         readWorldState(std::move(stream), restoredModel);
         EXPECT_TRUE(restoredCell->getOwner().empty());
+    }
+
+    TEST_F(ESM4ContainerTest, OwnershipResolutionInheritsCellOwnerUnlessReferenceOverridesIt)
+    {
+        const ESM::FormId factionId = ESM::FormId::fromUint32(0x01104c6e);
+        MWWorld::ESMStore store;
+        ESM4::Faction faction;
+        faction.mId = factionId;
+        faction.mEditorId = "GoodspringsFaction";
+        store.overrideRecord(faction);
+        store.setUp();
+        mEnvironment.setESMStore(store);
+
+        ESM4::Cell authoredCell = makeCreatureCell();
+        authoredCell.mOwner = factionId;
+        ESM::ReadersCache readers;
+        MWWorld::CellStore cell(MWWorld::Cell(authoredCell), store, readers);
+
+        ESM4::MiscItem base{};
+        base.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
+        ESM4::Reference inheritedReference{};
+        inheritedReference.mId = ESM::FormId::fromUint32(sSaloonContainerRef);
+        inheritedReference.mParent = authoredCell.mId;
+        inheritedReference.mBaseObj = base.mId;
+        MWWorld::LiveCellRef<ESM4::MiscItem> inheritedLive(inheritedReference, &base);
+        const MWWorld::Ptr inherited(&inheritedLive, &cell);
+
+        const MWMechanics::Ownership cellOwnership = MWMechanics::resolveOwnership(inherited, store);
+        EXPECT_EQ(cellOwnership.mOwner, ESM::RefId(factionId));
+        EXPECT_EQ(cellOwnership.mFaction, ESM::RefId(factionId));
+        EXPECT_TRUE(cellOwnership.mOwnerIsFaction);
+        EXPECT_EQ(cellOwnership.mRequiredFactionRank, -1);
+
+        ESM4::Reference explicitReference = inheritedReference;
+        explicitReference.mId = ESM::FormId::fromUint32(sKeyHolderRef);
+        explicitReference.mOwner = ESM::FormId::fromUint32(sNpcBase);
+        MWWorld::LiveCellRef<ESM4::MiscItem> explicitLive(explicitReference, &base);
+        const MWWorld::Ptr explicitOwner(&explicitLive, &cell);
+
+        const MWMechanics::Ownership referenceOwnership = MWMechanics::resolveOwnership(explicitOwner, store);
+        EXPECT_EQ(referenceOwnership.mOwner, ESM::RefId(ESM::FormId::fromUint32(sNpcBase)));
+        EXPECT_TRUE(referenceOwnership.mFaction.empty());
+        EXPECT_FALSE(referenceOwnership.mOwnerIsFaction);
     }
 
     TEST_F(ESM4ContainerTest, CreatureCstaRoundTripFromUnloadedCellsRetainsMutableInventoryHealthAndDeath)

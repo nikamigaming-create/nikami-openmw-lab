@@ -48,6 +48,7 @@
 #include "falloutactorstate.hpp"
 #include "falloutcombat.hpp"
 #include "npcstats.hpp"
+#include "ownership.hpp"
 #include "spellutil.hpp"
 
 namespace
@@ -113,34 +114,28 @@ namespace
         }
     }
 
-    bool isOwned(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, MWWorld::Ptr& victim)
+    bool isOwned(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, MWWorld::Ptr& victim,
+        MWMechanics::Ownership* resolvedOwnership = nullptr)
     {
         const MWWorld::CellRef& cellref = target.getCellRef();
-
-        const ESM::RefId& owner = cellref.getOwner();
-        bool isOwned = !owner.empty() && owner != ESM::RefId::stringRefId("Player");
-
-        const ESM::RefId& faction = cellref.getFaction();
-        bool isFactionOwned = false;
-        if (!faction.empty() && ptr.getClass().isNpc())
-        {
-            const std::map<ESM::RefId, int>& factions = ptr.getClass().getNpcStats(ptr).getFactionRanks();
-            auto found = factions.find(faction);
-            if (found == factions.end() || found->second < cellref.getFactionRank())
-                isFactionOwned = true;
-        }
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const MWMechanics::Ownership ownership = MWMechanics::resolveOwnership(target, store);
+        const std::map<ESM::RefId, int>* factions = nullptr;
+        if (ptr.getClass().isNpc())
+            factions = &ptr.getClass().getNpcStats(ptr).getFactionRanks();
+        bool owned = !MWMechanics::isOwnershipAllowed(
+            ownership, ptr.getCellRef().getRefId(), ptr.getCellRef().getRefNum(), factions);
 
         const std::string& globalVariable = cellref.getGlobalVariable();
         if (!globalVariable.empty() && MWBase::Environment::get().getWorld()->getGlobalInt(globalVariable))
-        {
-            isOwned = false;
-            isFactionOwned = false;
-        }
+            owned = false;
 
-        if (!cellref.getOwner().empty())
-            victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true, false);
+        if (owned && !ownership.mOwner.empty() && !ownership.mOwnerIsFaction)
+            victim = MWBase::Environment::get().getWorld()->searchPtr(ownership.mOwner, true, false);
+        if (resolvedOwnership != nullptr)
+            *resolvedOwnership = ownership;
 
-        return isOwned || isFactionOwned;
+        return owned;
     }
 }
 
@@ -1020,10 +1015,12 @@ namespace MWMechanics
         }
 
         MWWorld::Ptr victim;
+        Ownership ownership;
         if (isAllowedToUse(ptr, bed, victim))
             return false;
 
-        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, bed.getCellRef().getFaction()))
+        ownership = resolveOwnership(bed, *MWBase::Environment::get().getESMStore());
+        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, ownership.mFaction))
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage64}");
             return true;
@@ -1035,13 +1032,14 @@ namespace MWMechanics
     void MechanicsManager::unlockAttempted(const MWWorld::Ptr& ptr, const MWWorld::Ptr& item)
     {
         MWWorld::Ptr victim;
-        if (isOwned(ptr, item, victim))
+        Ownership ownership;
+        if (isOwned(ptr, item, victim, &ownership))
         {
             // Note that attempting to unlock something that has ever been locked is a crime even if it's already
             // unlocked. Likewise, it's illegal to unlock something that has a trap but isn't otherwise locked.
             const auto& cellref = item.getCellRef();
             if (cellref.getLockLevel() || cellref.isLocked() || !cellref.getTrap().empty())
-                commitCrime(ptr, victim, OT_Trespassing, item.getCellRef().getFaction());
+                commitCrime(ptr, victim, OT_Trespassing, ownership.mFaction);
         }
     }
 
@@ -1181,19 +1179,27 @@ namespace MWMechanics
         if (isAllowed)
             return;
 
+        const bool actorContainer = !container.isEmpty() && container.getClass().isActor();
+        Ownership ownership;
+        if (!actorContainer)
+        {
+            const MWWorld::Ptr& ownershipTarget = !container.isEmpty() ? container : item;
+            ownership = resolveOwnership(ownershipTarget, *MWBase::Environment::get().getESMStore());
+        }
         Owner owner;
         owner.second = false;
-        if (!container.isEmpty() && container.getClass().isActor())
+        if (actorContainer)
         {
             // "container" is an actor inventory, so just take actor's ID
             owner.first = ownerCellRef->getRefId();
         }
         else
         {
-            owner.first = ownerCellRef->getOwner();
+            owner.first = ownership.mOwner;
+            owner.second = ownership.mOwnerIsFaction;
             if (owner.first.empty())
             {
-                owner.first = ownerCellRef->getFaction();
+                owner.first = ownership.mFaction;
                 owner.second = true;
             }
         }
@@ -1211,7 +1217,8 @@ namespace MWMechanics
             int value = count;
             if (!isGold)
                 value *= item.getClass().getValue(item);
-            commitCrime(ptr, victim, OT_Theft, ownerCellRef->getFaction(), value);
+            const ESM::RefId& faction = actorContainer ? ownerCellRef->getFaction() : ownership.mFaction;
+            commitCrime(ptr, victim, OT_Theft, faction, value);
         }
     }
 

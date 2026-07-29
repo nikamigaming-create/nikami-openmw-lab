@@ -51,6 +51,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwmechanics/testfalloutcombat.cpp
     mwmechanics/testdialoguefacing.cpp
+    mwmechanics/testownership.cpp
 
     mwsound/testsaysequence.cpp
 
