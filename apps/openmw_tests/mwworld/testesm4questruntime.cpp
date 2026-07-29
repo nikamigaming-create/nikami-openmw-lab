@@ -898,6 +898,89 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledRemoveSpellWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledPlayerAddPerkAfterTransactionCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202fd, .mContentFile = 0 };
+    const ESM::FormId perkId{ .mIndex = 0x1202fe, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledAddPerkQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x76, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { playerId, perkId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Perk perk;
+    perk.mId = perkId;
+    store.overrideRecord(perk);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, bool>> changes;
+    std::vector<std::uint8_t> stagesAtChange;
+    runtime.setPlayerPerkHandler([&](ESM::FormId perkValue, bool add) {
+        changes.emplace_back(perkValue, add);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtChange.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes, (std::vector<std::pair<ESM::FormId, bool>>{ { perkId, true } }));
+    EXPECT_EQ(stagesAtChange, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsCompiledAddPerkForNonPlayerReceiver)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202ff, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120300, .mContentFile = 0 };
+    const ESM::FormId perkId{ .mIndex = 0x120301, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "InvalidAddPerkReceiverQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x76, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00
+    };
+    entry.mScript.references = { actorId, perkId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Perk perk;
+    perk.mId = perkId;
+    store.overrideRecord(perk);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setPlayerPerkHandler([&](ESM::FormId, bool) {
+        ++changes;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };

@@ -437,6 +437,7 @@ namespace MWWorld
             EvaluatePackage,
             ShowMessage,
             SetNote,
+            SetPerk,
             AddAchievement,
             SayTo,
             RewardXp,

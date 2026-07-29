@@ -1451,7 +1451,8 @@ namespace MWWorld
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1111
                 && instruction.opcode != 0x114a
-                && instruction.opcode != 0x1177 && instruction.opcode != 0x117c
+                && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
+                && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
@@ -1962,6 +1963,24 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetNote;
                 command.mQuest = *note;
                 command.mValue = instruction.opcode == 0x117c;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1176) // Player.AddPerk perk
+            {
+                // All 34 Fallout 3/New Vegas base-master quest frames are
+                // explicitly player-qualified with one PERK reference.
+                if (!instruction.callingReferenceIndex || arguments.size() != 1
+                    || !mPlayerPerkHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId receiver = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* perk = std::get_if<ESM::FormId>(&arguments[0]);
+                if ((receiver.mIndex != 0x7 && receiver.mIndex != 0x14) || perk == nullptr
+                    || mStore->get<ESM4::Perk>().search(ESM::RefId(*perk)) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetPerk;
+                command.mQuest = *perk;
+                command.mValue = true;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x114a) // AddAchievement id
@@ -2636,6 +2655,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::SetActorEffect
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
+            || command.mType == CompiledQuestCommandType::SetPerk
             || command.mType == CompiledQuestCommandType::AddAchievement
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
@@ -2746,6 +2766,7 @@ namespace MWWorld
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SetNote:
+            case CompiledQuestCommandType::SetPerk:
             case CompiledQuestCommandType::AddAchievement:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
@@ -2924,6 +2945,10 @@ namespace MWWorld
                 case CompiledQuestCommandType::SetNote:
                     command = effect.mValue ? "AddNote " : "RemoveNote ";
                     executed = mNoteHandler && mNoteHandler(effect.mTarget, effect.mValue);
+                    break;
+                case CompiledQuestCommandType::SetPerk:
+                    command = effect.mValue ? "AddPerk " : "RemovePerk ";
+                    executed = mPlayerPerkHandler && mPlayerPerkHandler(effect.mTarget, effect.mValue);
                     break;
                 case CompiledQuestCommandType::AddAchievement:
                     command = "AddAchievement ";
@@ -3324,6 +3349,9 @@ namespace MWWorld
                         case CompiledQuestCommandType::SetNote:
                             executed = mNoteHandler && mNoteHandler(command.mQuest, command.mValue);
                             break;
+                        case CompiledQuestCommandType::SetPerk:
+                            executed = mPlayerPerkHandler && mPlayerPerkHandler(command.mQuest, command.mValue);
+                            break;
                         case CompiledQuestCommandType::AddAchievement:
                             executed = mAchievementHandler
                                 && mAchievementHandler(static_cast<std::uint32_t>(command.mObjective));
@@ -3360,6 +3388,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetActorEffect
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
+                            || command.mType == CompiledQuestCommandType::SetPerk
                             || command.mType == CompiledQuestCommandType::AddAchievement
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
@@ -3396,6 +3425,9 @@ namespace MWWorld
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetNote)
                                 failure = std::string(command.mValue ? "AddNote " : "RemoveNote ")
+                                    + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetPerk)
+                                failure = std::string(command.mValue ? "AddPerk " : "RemovePerk ")
                                     + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::AddAchievement)
                                 failure = "AddAchievement " + std::to_string(command.mObjective);
