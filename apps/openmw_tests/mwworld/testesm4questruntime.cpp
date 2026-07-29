@@ -1377,6 +1377,30 @@ TEST(ESM4QuestRuntimeTest, RoutesFalloutSoundCommandsThroughTheNativeSoundHandle
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesAutosaveThroughTheNativeSaveHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120173, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "AutosaveQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource = "Autosave";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int autosaves = 0;
+    runtime.setAutosaveHandler([&] {
+        ++autosaves;
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(autosaves, 1);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
 {
     MWWorld::ESMStore store;

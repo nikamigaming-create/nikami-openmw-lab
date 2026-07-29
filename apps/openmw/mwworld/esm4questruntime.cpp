@@ -5714,6 +5714,14 @@ namespace MWWorld
                     continue;
                 }
             }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "Autosave") && tokens.size() == 1)
+            {
+                if (mAutosaveHandler && mAutosaveHandler())
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: Autosave";
+                    continue;
+                }
+            }
             else if (Misc::StringUtils::ciEqual(tokens[0], "RewardXP") && tokens.size() >= 2)
             {
                 const SourceTokens sourceTokens = normaliseSourceTokens(tokens);

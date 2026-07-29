@@ -1017,6 +1017,13 @@ namespace MWWorld
                     << " positional=" << positional << " played=" << played;
                 return played;
             });
+        mESM4QuestRuntime.setAutosaveHandler([] {
+            // Scripted Fallout autosaves use OpenMW's regular rotating
+            // quicksave/autosave path and its existing save eligibility
+            // checks, serialization, and slot management.
+            MWBase::Environment::get().getStateManager()->quickSave("Autosave");
+            return true;
+        });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
                 const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);

@@ -180,6 +180,7 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, std::string_view, int)>;
         using SoundCommandHandler
             = std::function<bool(ESM::FormId, std::optional<ESM::FormId>, bool)>;
+        using AutosaveHandler = std::function<bool()>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
@@ -363,6 +364,7 @@ namespace MWWorld
         ActorIdleHandler mActorIdleHandler;
         ReferenceAnimationGroupHandler mReferenceAnimationGroupHandler;
         SoundCommandHandler mSoundCommandHandler;
+        AutosaveHandler mAutosaveHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
@@ -642,6 +644,10 @@ namespace MWWorld
         void setSoundCommandHandler(SoundCommandHandler handler)
         {
             mSoundCommandHandler = std::move(handler);
+        }
+        void setAutosaveHandler(AutosaveHandler handler)
+        {
+            mAutosaveHandler = std::move(handler);
         }
         void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
