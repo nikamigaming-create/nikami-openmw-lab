@@ -235,6 +235,8 @@ MWWorld::ContainerStore::ContainerStore(const MWWorld::ContainerStore& store)
     , mWeightUpToDate(store.mWeightUpToDate)
     , mModified(store.mModified)
     , mResolved(store.mResolved)
+    , mFalloutAmmoSelections(store.mFalloutAmmoSelections)
+    , mFalloutLoadedAmmo(store.mFalloutLoadedAmmo)
     , mRechargingItemsUpToDate(false)
 {
     if (store.mSelectedEnchantItem != store.end())
@@ -254,6 +256,8 @@ MWWorld::ContainerStore::ContainerStore(MWWorld::ContainerStore&& store)
     , mWeightUpToDate(store.mWeightUpToDate)
     , mModified(store.mModified)
     , mResolved(store.mResolved)
+    , mFalloutAmmoSelections(std::move(store.mFalloutAmmoSelections))
+    , mFalloutLoadedAmmo(std::move(store.mFalloutLoadedAmmo))
     , mRechargingItemsUpToDate(false)
 {
     const std::ptrdiff_t distance = store.index(store.mSelectedEnchantItem);
@@ -300,6 +304,8 @@ MWWorld::ContainerStore& MWWorld::ContainerStore::operator=(const ContainerStore
     mWeightUpToDate = store.mWeightUpToDate;
     mModified = store.mModified;
     mResolved = store.mResolved;
+    mFalloutAmmoSelections = store.mFalloutAmmoSelections;
+    mFalloutLoadedAmmo = store.mFalloutLoadedAmmo;
     mRechargingItemsUpToDate = false;
     if (store.mSelectedEnchantItem != store.end())
     {
@@ -334,6 +340,8 @@ MWWorld::ContainerStore& MWWorld::ContainerStore::operator=(ContainerStore&& sto
     mWeightUpToDate = store.mWeightUpToDate;
     mModified = store.mModified;
     mResolved = store.mResolved;
+    mFalloutAmmoSelections = std::move(store.mFalloutAmmoSelections);
+    mFalloutLoadedAmmo = std::move(store.mFalloutLoadedAmmo);
     mRechargingItemsUpToDate = false;
     if (distance != -1)
     {
@@ -382,6 +390,36 @@ int MWWorld::ContainerStore::count(const ESM::RefId& id) const
         if (iter.getCellRef().getRefId() == id)
             total += iter.getCellRef().getCount();
     return total;
+}
+
+void MWWorld::ContainerStore::setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo)
+{
+    if (weapon.empty() || ammo.empty())
+        throw std::invalid_argument("Fallout ammo selection requires non-empty weapon and ammo IDs");
+    mFalloutAmmoSelections[weapon] = ammo;
+}
+
+std::optional<ESM::RefId> MWWorld::ContainerStore::getFalloutAmmoSelection(const ESM::RefId& weapon) const
+{
+    const auto found = mFalloutAmmoSelections.find(weapon);
+    if (found == mFalloutAmmoSelections.end())
+        return std::nullopt;
+    return found->second;
+}
+
+void MWWorld::ContainerStore::setFalloutLoadedAmmo(const ESM::RefId& weapon, int count)
+{
+    if (weapon.empty() || count < 0)
+        throw std::invalid_argument("Fallout loaded ammo requires a weapon ID and non-negative count");
+    mFalloutLoadedAmmo[weapon] = count;
+}
+
+std::optional<int> MWWorld::ContainerStore::getFalloutLoadedAmmo(const ESM::RefId& weapon) const
+{
+    const auto found = mFalloutLoadedAmmo.find(weapon);
+    if (found == mFalloutLoadedAmmo.end())
+        return std::nullopt;
+    return found->second;
 }
 
 void MWWorld::ContainerStore::updateRefNums()
@@ -928,6 +966,8 @@ void MWWorld::ContainerStore::clear()
     for (auto&& iter : *this)
         iter.getCellRef().setCount(0);
 
+    mFalloutAmmoSelections.clear();
+    mFalloutLoadedAmmo.clear();
     flagAsModified();
     mModified = true;
 }
@@ -1319,6 +1359,8 @@ void MWWorld::ContainerStore::writeState(ESM::InventoryState& state) const
     storeStates(esm4ItemMods, state, index);
     storeStates(esm4Keys, state, index);
     storeStates(esm4Lights, state, index, true);
+    state.mFalloutAmmoSelections = mFalloutAmmoSelections;
+    state.mFalloutLoadedAmmo = mFalloutLoadedAmmo;
 }
 
 void MWWorld::ContainerStore::readState(const ESM::InventoryState& inventory)
@@ -1414,6 +1456,8 @@ void MWWorld::ContainerStore::readState(const ESM::InventoryState& inventory)
                 break;
         }
     }
+    mFalloutAmmoSelections = inventory.mFalloutAmmoSelections;
+    mFalloutLoadedAmmo = inventory.mFalloutLoadedAmmo;
 }
 
 template <class PtrType>

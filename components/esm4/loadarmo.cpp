@@ -207,6 +207,15 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("DESC"):
                 reader.getLocalizedString(mText);
                 break;
+            case ESM::fourCC("DNAM"):
+                if (subHdr.dataSize == sizeof(mFalloutData))
+                {
+                    reader.get(mFalloutData);
+                    mHasFalloutData = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("YNAM"):
                 if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mPickUpSound);
@@ -233,7 +242,6 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
             case ESM::fourCC("TNAM"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("ETYP"):

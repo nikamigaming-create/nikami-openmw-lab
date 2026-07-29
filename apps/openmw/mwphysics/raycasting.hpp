@@ -3,6 +3,9 @@
 
 #include <osg/Vec3f>
 
+#include <string>
+#include <vector>
+
 #include "../mwworld/ptr.hpp"
 
 #include "collisiontype.hpp"
@@ -16,6 +19,7 @@ namespace MWPhysics
         osg::Vec3f mHitPos;
         osg::Vec3f mHitNormal;
         MWWorld::Ptr mHitObject;
+        std::vector<std::string> mHitNodePath;
     };
 
     class RayCastingInterface

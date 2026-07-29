@@ -1523,6 +1523,11 @@ namespace MWClass
         return getCustomData(ptr).mTemplates.mFactions;
     }
 
+    const ESM4::Creature* ESM4Creature::getStatsRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mTemplates.mStats;
+    }
+
     const ESM4::BodyPartData* ESM4Creature::getBodyPartData(const MWWorld::Ptr& ptr)
     {
         if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)

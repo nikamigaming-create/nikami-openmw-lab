@@ -1732,6 +1732,13 @@ namespace MWRender
             if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld)
             {
                 result.mHit = true;
+                result.mHitNodePath.clear();
+                result.mHitNodePath.reserve(intersection.nodePath.size());
+                for (const osg::Node* node : intersection.nodePath)
+                {
+                    if (node != nullptr && !node->getName().empty())
+                        result.mHitNodePath.push_back(node->getName());
+                }
                 result.mHitPointWorld = intersection.getWorldIntersectPoint();
                 result.mHitNormalWorld = intersection.getWorldIntersectNormal();
                 result.mRatio = static_cast<float>(intersection.ratio);
@@ -1956,6 +1963,22 @@ namespace MWRender
             return mPlayerAnimation.get();
 
         return mObjects->getAnimation(ptr);
+    }
+
+    MWRender::Animation* RenderingManager::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        if (mPlayerAnimation && ptr == mPlayerAnimation->getPtr())
+        {
+            // The recovered 0.51 flat renderer currently owns one native ESM4 player proxy. Route authored
+            // weapon keys through it; a separate Camera1st arms rig can replace the null first-person result later.
+            if (firstPerson)
+                return nullptr;
+            if (mFalloutPlayerVisualAnimation)
+                return mFalloutPlayerVisualAnimation.get();
+        }
+
+        return firstPerson ? nullptr : getAnimation(ptr);
     }
 
     MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)

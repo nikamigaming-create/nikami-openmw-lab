@@ -89,6 +89,9 @@ namespace ESM
         int32_t mLevel;
         bool mMissingACDT;
 
+        // Optional FLMB data keeps accumulated native Fallout limb damage across saves.
+        std::array<float, 7> mFalloutLimbDamage{};
+
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;
         ActiveSpells mActiveSpells;

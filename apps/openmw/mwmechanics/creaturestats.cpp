@@ -1,6 +1,7 @@
 #include "creaturestats.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <type_traits>
 
 #include <components/esm3/actoridconverter.hpp>
@@ -104,6 +105,24 @@ namespace MWMechanics
             throw std::runtime_error("dynamic stat index is out of range");
         }
         return mDynamic[index];
+    }
+
+    float CreatureStats::getFalloutLimbDamage(std::int8_t actorValue) const
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size()))
+            return 0.f;
+        return mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)];
+    }
+
+    bool CreatureStats::setFalloutLimbDamage(std::int8_t actorValue, float damage)
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size())
+            || !std::isfinite(damage) || damage < 0.f)
+            return false;
+        mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)] = damage;
+        return true;
     }
 
     Spells& CreatureStats::getSpells()
@@ -554,6 +573,7 @@ namespace MWMechanics
             mAiSettings[i].writeState(state.mAiSettings[i]);
 
         state.mMissingACDT = false;
+        state.mFalloutLimbDamage = mFalloutLimbDamage;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -613,6 +633,7 @@ namespace MWMechanics
             auto& graveyard = state.mAiSequence.mActorIdConverter->mGraveyard;
             graveyard.insert(graveyard.end(), state.mSummonGraveyard.begin(), state.mSummonGraveyard.end());
         }
+        mFalloutLimbDamage = state.mFalloutLimbDamage;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)

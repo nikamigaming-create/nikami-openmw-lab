@@ -3,12 +3,15 @@
 
 #include <cstdint>
 #include <deque>
+#include <optional>
 
 #include <components/esm3/loadweap.hpp>
 
 #include "../mwworld/ptr.hpp"
 
 #include "../mwrender/animation.hpp"
+
+#include "falloutcombat.hpp"
 
 namespace ESM4
 {
@@ -29,8 +32,6 @@ namespace MWRender
 namespace MWMechanics
 {
 
-    struct FalloutProjectileImpactContract;
-    struct FalloutVatsQueuedAction;
     struct Movement;
     class CreatureStats;
 
@@ -139,7 +140,15 @@ namespace MWMechanics
         MWWorld::Ptr mPtr;
         MWWorld::Ptr mWeapon;
         const ESM4::Weapon* mFalloutWeapon = nullptr;
+        FalloutTriggerState mFalloutTriggerState;
+        FalloutAttackDelivery mFalloutAttackDelivery;
+        FalloutAttackDelivery mFalloutVatsAttackDelivery;
+        bool mFalloutVatsVisualAttackPrepared = false;
+        bool mFalloutVatsReleaseReady = false;
+        bool mFalloutReloadQueued = false;
         MWRender::Animation* mAnimation;
+        MWRender::Animation* mFalloutWeaponAnimation = nullptr;
+        bool mFalloutWeaponListenerAttached = false;
 
         struct AnimationQueueEntry
         {
@@ -227,10 +236,13 @@ namespace MWMechanics
         void refreshMovementAnims(CharacterState movement, bool force = false);
         void refreshIdleAnims(CharacterState idle, bool force = false);
 
-        bool updateWeaponState();
+        bool updateWeaponState(float duration);
         bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
-            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon);
-        bool fireFalloutWeapon();
+            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration);
+        bool fireFalloutWeapon(const MWWorld::Ptr& vatsTarget = MWWorld::Ptr(),
+            const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt,
+            const FalloutVatsQueuedAction* vatsAction = nullptr, bool vatsTargetHit = true);
+        bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;
 
         std::string chooseRandomAttackAnimation() const;
@@ -261,6 +273,13 @@ namespace MWMechanics
 
         std::string_view getWeaponAnimation(int weaponType);
         std::string_view getWeaponShortGroup(int weaponType) const;
+        MWRender::Animation* getFalloutWeaponAnimation(bool firstPerson = false);
+        void attachFalloutWeaponTextKeys();
+        void detachFalloutWeaponTextKeys();
+        void disableFalloutWeaponGroup(std::string_view group);
+        void setFalloutWeaponGroup(std::string_view group, bool relativeDuration);
+        void showFalloutWeapons(bool show);
+        void setFalloutWeaponAiming(float pitchFactor, bool accurate);
         std::string_view getFalloutWeaponActionGroup(int weaponType, MWRender::FonvWeaponAction action);
         bool playFalloutWeaponAction(
             int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon);
@@ -355,6 +374,7 @@ namespace MWMechanics
         bool executeFalloutVatsRangedHit(
             const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
             const FalloutVatsQueuedAction& action, bool targetHit);
+        bool reloadFalloutWeapon();
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& target, const osg::Vec3f& segmentStart,
             const osg::Vec3f& hitPosition, const FalloutProjectileImpactContract& impact);
         bool executeFalloutExplosion(

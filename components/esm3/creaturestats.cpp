@@ -4,6 +4,7 @@
 
 #include <components/esm3/loadmgef.hpp>
 
+#include <algorithm>
 #include <limits>
 
 namespace ESM
@@ -180,6 +181,8 @@ namespace ESM
             mMissingACDT = false;
             esm.getHNOT(mMissingACDT, "NOAC");
         }
+        mFalloutLimbDamage.fill(0.f);
+        esm.getHNOT(mFalloutLimbDamage, "FLMB");
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -270,6 +273,8 @@ namespace ESM
         }
         if (mMissingACDT)
             esm.writeHNT("NOAC", mMissingACDT);
+        if (std::any_of(mFalloutLimbDamage.begin(), mFalloutLimbDamage.end(), [](float value) { return value != 0.f; }))
+            esm.writeHNT("FLMB", mFalloutLimbDamage);
     }
 
     void CreatureStats::blank()
@@ -299,6 +304,7 @@ namespace ESM
         mLevel = 1;
         mCorprusSpells.clear();
         mMissingACDT = false;
+        mFalloutLimbDamage.fill(0.f);
     }
 
 }

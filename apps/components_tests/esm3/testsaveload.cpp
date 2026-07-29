@@ -381,10 +381,12 @@ namespace ESM
             record.blank();
             record.mLastHitAttemptObject = generateRandomRefId();
             record.mLastHitObject = generateRandomRefId();
+            record.mFalloutLimbDamage = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f };
             CreatureStats result;
             saveAndLoadRecord(record, GetParam(), result);
             EXPECT_EQ(record.mLastHitAttemptObject, result.mLastHitAttemptObject);
             EXPECT_EQ(record.mLastHitObject, result.mLastHitObject);
+            EXPECT_EQ(record.mFalloutLimbDamage, result.mFalloutLimbDamage);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)

@@ -3178,6 +3178,7 @@ namespace MWWorld
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
         res.mHitObject = rayRes.mHitObject;
+        res.mHitNodePath = std::move(rayRes.mHitNodePath);
         if (res.mHitObject.isEmpty() && rayRes.mHitRefnum.isSet())
             res.mHitObject = MWBase::Environment::get().getWorldModel()->getPtr(rayRes.mHitRefnum);
         return res.mHit;
@@ -3757,6 +3758,12 @@ namespace MWWorld
     const MWRender::Animation* World::getAnimation(const MWWorld::ConstPtr& ptr) const
     {
         return mRendering->getAnimation(ptr);
+    }
+
+    MWRender::Animation* World::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        return mRendering->getFalloutWeaponAnimation(ptr, firstPerson);
     }
 
     bool World::addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId packageId)

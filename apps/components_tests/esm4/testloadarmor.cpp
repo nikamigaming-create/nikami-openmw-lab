@@ -127,6 +127,24 @@ namespace
         EXPECT_EQ(addon.mBodyTemplate.flags, 0u);
     }
 
+    TEST(Esm4ArmorTest, shouldDecodeFnvDamageResistanceAndThreshold)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("TestCombatArmor"));
+        const ESM4::Armor::FalloutData data{ 2350, 1, 12.5f, 0x80000000u };
+        appendSubRecord(payload, "DNAM", data);
+
+        auto reader = makeFnvReader("ARMO", std::move(payload));
+        ESM4::Armor armor;
+        armor.load(*reader);
+
+        ASSERT_TRUE(armor.mHasFalloutData);
+        EXPECT_EQ(armor.mFalloutData.damageResistanceHundredths, 2350);
+        EXPECT_EQ(armor.mFalloutData.modifiesVoice, 1);
+        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 12.5f);
+        EXPECT_EQ(armor.mFalloutData.flags, 0x80000000u);
+    }
+
     TEST(Esm4ArmorTest, shouldKeepFo4BipedModelWhenModlContainsAdditionalRace)
     {
         std::string payload;

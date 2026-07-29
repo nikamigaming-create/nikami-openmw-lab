@@ -20,6 +20,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace osg
 {
@@ -198,6 +199,7 @@ namespace MWRender
             osg::Vec3f mHitNormalWorld;
             osg::Vec3f mHitPointWorld;
             MWWorld::Ptr mHitObject;
+            std::vector<std::string> mHitNodePath;
             ESM::RefNum mHitRefnum;
             float mRatio;
         };
@@ -237,6 +239,7 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+        Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
 
         /// Return the visual animation that owns data-driven ESM4 script-package KFs. Fallout-family player
         /// presentation keeps a legacy first-person rig alongside a native body proxy; authored package animation

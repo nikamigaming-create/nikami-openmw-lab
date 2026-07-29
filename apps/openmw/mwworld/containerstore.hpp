@@ -4,6 +4,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <components/esm3/loadalch.hpp>
@@ -600,6 +601,12 @@ namespace MWWorld
         bool mModified = false;
         bool mResolved = false;
 
+        // Fallout magazines belong to all actor containers. ESM4 NPCs and
+        // creatures intentionally use ContainerStore subclasses instead of
+        // InventoryStore, but still need persistent selected ammo and rounds.
+        std::map<ESM::RefId, ESM::RefId> mFalloutAmmoSelections;
+        std::map<ESM::RefId, int32_t> mFalloutLoadedAmmo;
+
     protected:
         bool mRechargingItemsUpToDate = false;
 
@@ -711,6 +718,11 @@ namespace MWWorld
 
         int count(const ESM::RefId& id) const;
         ///< @return How many items with refID \a id are in this container?
+
+        void setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo);
+        std::optional<ESM::RefId> getFalloutAmmoSelection(const ESM::RefId& weapon) const;
+        void setFalloutLoadedAmmo(const ESM::RefId& weapon, int count);
+        std::optional<int> getFalloutLoadedAmmo(const ESM::RefId& weapon) const;
 
         ContainerStoreListener* getContListener() const;
         void setContListener(ContainerStoreListener* listener);

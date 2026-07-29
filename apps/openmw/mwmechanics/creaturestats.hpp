@@ -1,6 +1,8 @@
 #ifndef GAME_MWMECHANICS_CREATURESTATS_H
 #define GAME_MWMECHANICS_CREATURESTATS_H
 
+#include <array>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -60,6 +62,9 @@ namespace MWMechanics
         bool mHitRecovery = false;
         bool mBlock = false;
         unsigned int mMovementFlags = 0;
+
+        // Native Fallout actor values 25..31 are accumulated limb damage channels.
+        std::array<float, 7> mFalloutLimbDamage{};
 
         float mFallHeight = 0.f;
 
@@ -122,6 +127,9 @@ namespace MWMechanics
         const DynamicStat<float>& getFatigue() const;
 
         const DynamicStat<float>& getDynamic(int index) const;
+
+        float getFalloutLimbDamage(std::int8_t actorValue) const;
+        bool setFalloutLimbDamage(std::int8_t actorValue, float damage);
 
         const Spells& getSpells() const;
 
