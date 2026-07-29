@@ -1578,6 +1578,143 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledIgnoreCrimeWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledConditionedItemsWithLiveGlobalCountAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120330, .mContentFile = 0 };
+    const ESM::FormId ownerId{ .mIndex = 0x120331, .mContentFile = 0 };
+    const ESM::FormId weaponId{ .mIndex = 0x120332, .mContentFile = 0 };
+    const ESM::FormId countGlobalId{ .mIndex = 0x120333, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledConditionedItemQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xbc, 0x11, 0x13, 0x00,
+        0x03, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x7a, 0xcd, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xe4, 0x3f,
+        0x1c, 0x00, 0x01, 0x00, 0xbc, 0x11, 0x11, 0x00,
+        0x03, 0x00, 0x72, 0x02, 0x00, 0x47, 0x03, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x3f,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x04, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { ownerId, weaponId, countGlobalId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+    ESM4::Reference owner;
+    owner.mId = ownerId;
+    store.overrideRecord(owner);
+    ESM4::Weapon weapon;
+    weapon.mId = weaponId;
+    weapon.mData.health = 100;
+    store.overrideRecord(weapon);
+    store.overrideRecord(makeGlobal(countGlobalId, "ConditionedItemCount", 2.f));
+
+    MWWorld::Globals globals;
+    globals.fill(store);
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store, &globals);
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, int, float>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setAddItemHealthPercentHandler(
+        [&](ESM::FormId ownerValue, ESM::FormId item, int count, float healthPercent) {
+            changes.emplace_back(ownerValue, item, count, healthPercent);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_EQ(changes.size(), 2);
+    EXPECT_EQ(std::get<0>(changes[0]), ownerId);
+    EXPECT_EQ(std::get<1>(changes[0]), weaponId);
+    EXPECT_EQ(std::get<2>(changes[0]), 1);
+    EXPECT_FLOAT_EQ(std::get<3>(changes[0]), .65f);
+    EXPECT_EQ(std::get<0>(changes[1]), ownerId);
+    EXPECT_EQ(std::get<1>(changes[1]), weaponId);
+    EXPECT_EQ(std::get<2>(changes[1]), 2);
+    EXPECT_FLOAT_EQ(std::get<3>(changes[1]), .25f);
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledConditionedItemsWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120334, .mContentFile = 0 };
+    const ESM::FormId ownerId{ .mIndex = 0x120335, .mContentFile = 0 };
+    const ESM::FormId weaponId{ .mIndex = 0x120336, .mContentFile = 0 };
+    const ESM::FormId nonItemId{ .mIndex = 0x120337, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedConditionedItemQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = {
+        0xbc, 0x11, 0x13, 0x00,
+        0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x3f,
+    };
+    globalCall.mScript.references = { weaponId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry nonOwnerCall;
+    nonOwnerCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xbc, 0x11, 0x13, 0x00,
+        0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x3f,
+    };
+    nonOwnerCall.mScript.references = { weaponId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonOwnerCall) } });
+    ESM4::QuestStageEntry nonItemCall;
+    nonItemCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xbc, 0x11, 0x13, 0x00,
+        0x03, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x3f,
+    };
+    nonItemCall.mScript.references = { ownerId, nonItemId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(nonItemCall) } });
+    ESM4::QuestStageEntry invalidCondition;
+    invalidCondition.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xbc, 0x11, 0x13, 0x00,
+        0x03, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x3f,
+    };
+    invalidCondition.mScript.references = { ownerId, weaponId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(invalidCondition) } });
+    store.overrideRecord(quest);
+    ESM4::Reference owner;
+    owner.mId = ownerId;
+    store.overrideRecord(owner);
+    ESM4::Weapon weapon;
+    weapon.mId = weaponId;
+    store.overrideRecord(weapon);
+    ESM4::Reference nonItem;
+    nonItem.mId = nonItemId;
+    store.overrideRecord(nonItem);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setAddItemHealthPercentHandler(
+        [&](ESM::FormId, ESM::FormId, int, float) {
+            ++commands;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledLiteralAndActorVariableSetActorValueAfterCommit)
 {
     MWWorld::ESMStore store;

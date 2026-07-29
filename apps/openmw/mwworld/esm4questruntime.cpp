@@ -1431,6 +1431,10 @@ namespace MWWorld
                 | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
                 | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
         };
+        const auto readUint64 = [&readUint32](std::span<const std::uint8_t> bytes, std::size_t offset) {
+            return static_cast<std::uint64_t>(readUint32(bytes, offset))
+                | (static_cast<std::uint64_t>(readUint32(bytes, offset + 4)) << 32);
+        };
         std::vector<bool> conditionalElseSeen;
         for (const ESM4::ScriptBytecodeInstruction& instruction : instructions)
         {
@@ -1470,6 +1474,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
+                && instruction.opcode != 0x11bc
                 && instruction.opcode != 0x11fa)
             {
                 prepared.mUseSourceFallback = true;
@@ -1898,6 +1903,68 @@ namespace MWWorld
                 }
                 else
                     return false;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x11bc) // owner.AddItemHealthPercent item count condition
+            {
+                // All 30 combined base-master frames carry a WEAP/ARMO
+                // reference and an IEEE-754 double condition fraction. 26
+                // use an int32 count; four use the live CG04WeaponCount GLOB.
+                if (!instruction.callingReferenceIndex || !mAddItemHealthPercentHandler
+                    || mStore == nullptr || argumentPayload.size() < 2
+                    || readUint16(argumentPayload, 0) != 3
+                    || (argumentPayload.size() != 17 && argumentPayload.size() != 19)
+                    || argumentPayload[2] != 0x72)
+                    return false;
+                const ESM::FormId owner = script.references[*instruction.callingReferenceIndex - 1];
+                const bool ownerExists = owner.mIndex == 0x7 || owner.mIndex == 0x14
+                    || mStore->get<ESM4::Reference>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCharacter>().search(owner) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(owner) != nullptr;
+                const std::uint16_t itemIndex = readUint16(argumentPayload, 3);
+                if (!ownerExists || itemIndex == 0 || itemIndex > script.references.size())
+                    return false;
+                const ESM::FormId item = script.references[itemIndex - 1];
+                if (mStore->get<ESM4::Armor>().search(ESM::RefId(item)) == nullptr
+                    && mStore->get<ESM4::Weapon>().search(ESM::RefId(item)) == nullptr)
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::AddItemHealthPercent;
+                command.mQuest = owner;
+                command.mTarget = item;
+                std::size_t healthOffset = 0;
+                if (argumentPayload.size() == 19 && argumentPayload[5] == 0x6e)
+                {
+                    command.mObjective = std::bit_cast<std::int32_t>(readUint32(argumentPayload, 6));
+                    if (command.mObjective <= 0)
+                        return false;
+                    healthOffset = 10;
+                }
+                else if (argumentPayload.size() == 17 && argumentPayload[5] == 0x47)
+                {
+                    const std::uint16_t globalIndex = readUint16(argumentPayload, 6);
+                    if (globalIndex == 0 || globalIndex > script.references.size() || mGlobals == nullptr)
+                        return false;
+                    const ESM4::GlobalVariable* const global
+                        = mStore->get<ESM4::GlobalVariable>().search(
+                            ESM::RefId(script.references[globalIndex - 1]));
+                    if (global == nullptr || global->mEditorId.empty())
+                        return false;
+                    command.mVariable = global->mEditorId;
+                    prepared.mHasLiveArgument = true;
+                    healthOffset = 8;
+                }
+                else
+                    return false;
+                if (argumentPayload[healthOffset] != 0x7a)
+                    return false;
+                const double healthPercent
+                    = std::bit_cast<double>(readUint64(argumentPayload, healthOffset + 1));
+                if (!std::isfinite(healthPercent) || healthPercent < 0.0 || healthPercent > 1.0)
+                    return false;
+                command.mNumber = static_cast<float>(healthPercent);
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -2896,6 +2963,25 @@ namespace MWWorld
         return std::isfinite(value) ? std::optional<float>{ value } : std::nullopt;
     }
 
+    std::optional<int> ESM4QuestRuntime::resolveCompiledItemCountArgument(
+        const CompiledQuestCommand& command) const
+    {
+        double value = command.mObjective;
+        if (!command.mVariable.empty())
+        {
+            if (mGlobals == nullptr)
+                return std::nullopt;
+            const GlobalVariableName name{ command.mVariable };
+            if (mGlobals->getType(name) == ' ')
+                return std::nullopt;
+            value = (*mGlobals)[name].getFloat();
+        }
+        if (!std::isfinite(value) || std::trunc(value) != value || value <= 0.0
+            || value > static_cast<double>(std::numeric_limits<int>::max()))
+            return std::nullopt;
+        return static_cast<int>(value);
+    }
+
     bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,
         const QuestStateMap& states, std::vector<CompiledConditionalFrame>& stack, bool& execute) const
     {
@@ -2965,6 +3051,20 @@ namespace MWWorld
             effect.mTarget = command.mQuest;
             effect.mCount = command.mObjective;
             effect.mNumber = *value;
+            working.mExternalEffects.push_back(std::move(effect));
+            return true;
+        }
+        if (command.mType == CompiledQuestCommandType::AddItemHealthPercent)
+        {
+            const std::optional<int> count = resolveCompiledItemCountArgument(command);
+            if (!count)
+                return false;
+            PendingExternalEffect effect;
+            effect.mType = command.mType;
+            effect.mTarget = command.mQuest;
+            effect.mListener = command.mTarget;
+            effect.mCount = *count;
+            effect.mNumber = command.mNumber;
             working.mExternalEffects.push_back(std::move(effect));
             return true;
         }
@@ -3105,6 +3205,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetActorFlag:
             case CompiledQuestCommandType::SetActorFaction:
             case CompiledQuestCommandType::AddItem:
+            case CompiledQuestCommandType::AddItemHealthPercent:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
@@ -3385,6 +3486,12 @@ namespace MWWorld
                     executed = mAddItemHandler
                         && mAddItemHandler(effect.mTarget, effect.mListener, effect.mCount);
                     break;
+                case CompiledQuestCommandType::AddItemHealthPercent:
+                    command = "AddItemHealthPercent ";
+                    executed = mAddItemHealthPercentHandler
+                        && mAddItemHealthPercentHandler(
+                            effect.mTarget, effect.mListener, effect.mCount, effect.mNumber);
+                    break;
                 case CompiledQuestCommandType::RemoveItem:
                     command = "RemoveItem ";
                     executed = mRemoveItemHandler
@@ -3438,9 +3545,12 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::ShowMap && effect.mValue)
                 command += " 1";
             if (effect.mType == CompiledQuestCommandType::AddItem
+                || effect.mType == CompiledQuestCommandType::AddItemHealthPercent
                 || effect.mType == CompiledQuestCommandType::RemoveItem)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(effect.mCount);
+            if (effect.mType == CompiledQuestCommandType::AddItemHealthPercent)
+                command += " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::MoveTo)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetScriptPackage && effect.mValue)
@@ -3775,6 +3885,14 @@ namespace MWWorld
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
                             break;
+                        case CompiledQuestCommandType::AddItemHealthPercent:
+                        {
+                            const std::optional<int> count = resolveCompiledItemCountArgument(command);
+                            executed = count && mAddItemHealthPercentHandler
+                                && mAddItemHealthPercentHandler(
+                                    command.mQuest, command.mTarget, *count, command.mNumber);
+                            break;
+                        }
                         case CompiledQuestCommandType::RemoveItem:
                             executed = mRemoveItemHandler
                                 && mRemoveItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -3863,6 +3981,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Lock
                             || command.mType == CompiledQuestCommandType::Kill
                             || command.mType == CompiledQuestCommandType::AddItem
+                            || command.mType == CompiledQuestCommandType::AddItemHealthPercent
                             || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp
                             || command.mType == CompiledQuestCommandType::AddReputation
@@ -3944,6 +4063,15 @@ namespace MWWorld
                                 failure = "AddItem " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "
                                     + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::AddItemHealthPercent)
+                            {
+                                const std::optional<int> count = resolveCompiledItemCountArgument(command);
+                                failure = "AddItemHealthPercent "
+                                    + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText() + " "
+                                    + (count ? std::to_string(*count) : std::string("<unresolved>"))
+                                    + " " + std::to_string(command.mNumber);
+                            }
                             else if (command.mType == CompiledQuestCommandType::RemoveItem)
                                 failure = "RemoveItem " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "

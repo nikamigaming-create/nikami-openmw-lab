@@ -441,6 +441,7 @@ namespace MWWorld
             SetActorFlag,
             SetActorFaction,
             AddItem,
+            AddItemHealthPercent,
             RemoveItem,
             EvaluatePackage,
             ShowMessage,
@@ -599,6 +600,8 @@ namespace MWWorld
         std::optional<int> resolveCompiledIntegerVariable(
             const CompiledQuestCommand& command, const QuestStateMap& states) const;
         std::optional<float> resolveCompiledActorValueArgument(
+            const CompiledQuestCommand& command) const;
+        std::optional<int> resolveCompiledItemCountArgument(
             const CompiledQuestCommand& command) const;
         bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
             std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
