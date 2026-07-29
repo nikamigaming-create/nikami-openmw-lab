@@ -84,15 +84,11 @@ void ESM4::Projectile::load(Reader& reader)
             {
                 std::vector<std::uint8_t> bytes(subHdr.dataSize);
                 reader.get(bytes.data(), bytes.size());
-                // Fallout 3 shares ESM version 0.94 with an early Skyrim
-                // layout, but its 68-byte DATA record is unambiguous. Do
-                // not let a form-version marker reinterpret FO3 projectiles
-                // as Skyrim and reject a valid record before gameplay loads.
-                const bool isSkyrimLayout = bytes.size() != 68 && reader.hasFormVersion()
-                    && (reader.esmVersion() == ESM::VER_094 || reader.esmVersion() == ESM::VER_170);
-                const bool loaded = isSkyrimLayout ? loadSkyrimProjectileData(bytes, mData)
-                                                    : loadFalloutProjectileData(bytes, mData);
-                if (!loaded)
+                // This player branch supports Fallout 3 and New Vegas.  Both
+                // use the Fallout DATA layouts; Skyrim's similarly-versioned
+                // records are not part of this runtime and must not be routed
+                // to an unavailable reader.
+                if (!loadFalloutProjectileData(bytes, mData))
                     throw std::runtime_error("ESM4::Projectile::load - unsupported DATA layout size="
                         + std::to_string(bytes.size()) + " esmVersion=" + std::to_string(reader.esmVersion()));
                 reader.adjustFormId(mData.projectileLight);
