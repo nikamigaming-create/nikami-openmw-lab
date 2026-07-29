@@ -1457,6 +1457,7 @@ namespace MWWorld
                 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x1097 && instruction.opcode != 0x1098
                 && instruction.opcode != 0x109e
+                && instruction.opcode != 0x10ab
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x110d && instruction.opcode != 0x1111
                 && instruction.opcode != 0x114a
@@ -2105,6 +2106,28 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetPerk;
                 command.mQuest = *perk;
                 command.mValue = true;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x10ab) // actor.IgnoreCrime enabled
+            {
+                // All 31 combined base-master frames are actor-qualified
+                // with the same one-boolean signature. Route the flag through
+                // the existing per-reference actor state used by source.
+                if (!instruction.callingReferenceIndex || arguments.size() != 1
+                    || !mActorFlagCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const std::int32_t* value = std::get_if<std::int32_t>(&arguments[0]);
+                if (!actorExists || value == nullptr || (*value != 0 && *value != 1))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetActorFlag;
+                command.mQuest = actor;
+                command.mObjective = static_cast<std::int32_t>(ESM4QuestActorFlag::IgnoreCrime);
+                command.mValue = *value != 0;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x117f || instruction.opcode == 0x1180)
@@ -2962,6 +2985,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::SetActorEffect
+            || command.mType == CompiledQuestCommandType::SetActorFlag
             || command.mType == CompiledQuestCommandType::SetActorFaction
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
@@ -3078,6 +3102,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
             case CompiledQuestCommandType::SetActorValue:
+            case CompiledQuestCommandType::SetActorFlag:
             case CompiledQuestCommandType::SetActorFaction:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
@@ -3273,6 +3298,13 @@ namespace MWWorld
                             ESM4QuestActorValueCommand::Set, static_cast<std::uint8_t>(effect.mCount),
                             effect.mNumber);
                     break;
+                case CompiledQuestCommandType::SetActorFlag:
+                    command = "IgnoreCrime ";
+                    executed = effect.mCount == static_cast<std::int32_t>(ESM4QuestActorFlag::IgnoreCrime)
+                        && mActorFlagCommandHandler
+                        && mActorFlagCommandHandler(
+                            effect.mTarget, ESM4QuestActorFlag::IgnoreCrime, effect.mValue);
+                    break;
                 case CompiledQuestCommandType::SetActorFaction:
                     command = effect.mValue ? "AddToFaction " : "RemoveFromFaction ";
                     executed = mActorFactionCommandHandler
@@ -3417,6 +3449,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorValue)
                 command += " " + std::to_string(effect.mCount) + " " + std::to_string(effect.mNumber);
+            if (effect.mType == CompiledQuestCommandType::SetActorFlag)
+                command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::SetActorFaction)
             {
                 command += " " + ESM::RefId(effect.mListener).serializeText();
@@ -3725,6 +3759,13 @@ namespace MWWorld
                                     static_cast<std::uint8_t>(command.mObjective), *value);
                             break;
                         }
+                        case CompiledQuestCommandType::SetActorFlag:
+                            executed = command.mObjective
+                                    == static_cast<std::int32_t>(ESM4QuestActorFlag::IgnoreCrime)
+                                && mActorFlagCommandHandler
+                                && mActorFlagCommandHandler(
+                                    command.mQuest, ESM4QuestActorFlag::IgnoreCrime, command.mValue);
+                            break;
                         case CompiledQuestCommandType::SetActorFaction:
                             executed = mActorFactionCommandHandler
                                 && mActorFactionCommandHandler(command.mQuest, command.mTarget,
@@ -3804,6 +3845,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
                             || command.mType == CompiledQuestCommandType::SetActorValue
+                            || command.mType == CompiledQuestCommandType::SetActorFlag
                             || command.mType == CompiledQuestCommandType::SetActorFaction
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
@@ -3853,6 +3895,9 @@ namespace MWWorld
                                     + " " + std::to_string(command.mObjective) + " "
                                     + (value ? std::to_string(*value) : std::string("<unresolved>"));
                             }
+                            else if (command.mType == CompiledQuestCommandType::SetActorFlag)
+                                failure = "IgnoreCrime " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + std::to_string(static_cast<int>(command.mValue));
                             else if (command.mType == CompiledQuestCommandType::SetActorFaction)
                                 failure = std::string(command.mValue ? "AddToFaction " : "RemoveFromFaction ")
                                     + ESM::RefId(command.mQuest).serializeText() + " "

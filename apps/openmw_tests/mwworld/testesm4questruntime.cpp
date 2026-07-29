@@ -1476,6 +1476,108 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledActorFactionChangesWithoutMut
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledIgnoreCrimeAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12032b, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12032c, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledIgnoreCrimeQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xab, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { actorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, MWWorld::ESM4QuestActorFlag, bool>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setActorFlagCommandHandler(
+        [&](ESM::FormId target, MWWorld::ESM4QuestActorFlag flag, bool enabled) {
+            changes.emplace_back(target, flag, enabled);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::tuple<ESM::FormId, MWWorld::ESM4QuestActorFlag, bool>>{
+            { actorId, MWWorld::ESM4QuestActorFlag::IgnoreCrime, true },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledIgnoreCrimeWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12032d, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12032e, .mContentFile = 0 };
+    const ESM::FormId nonActorId{ .mIndex = 0x12032f, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedIgnoreCrimeQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = {
+        0xab, 0x10, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry nonActorCall;
+    nonActorCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xab, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    nonActorCall.mScript.references = { nonActorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActorCall) } });
+    ESM4::QuestStageEntry invalidBoolean;
+    invalidBoolean.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xab, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x02, 0x00, 0x00, 0x00,
+    };
+    invalidBoolean.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(invalidBoolean) } });
+    store.overrideRecord(quest);
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Reference nonActor;
+    nonActor.mId = nonActorId;
+    store.overrideRecord(nonActor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setActorFlagCommandHandler(
+        [&](ESM::FormId, MWWorld::ESM4QuestActorFlag, bool) {
+            ++commands;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledLiteralAndActorVariableSetActorValueAfterCommit)
 {
     MWWorld::ESMStore store;
