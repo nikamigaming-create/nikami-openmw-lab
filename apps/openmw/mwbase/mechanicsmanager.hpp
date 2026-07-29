@@ -19,6 +19,7 @@ namespace osg
 namespace ESM
 {
     struct Class;
+    struct FormId;
     class RefId;
     class ESMReader;
     class ESMWriter;
@@ -115,6 +116,9 @@ namespace MWBase
 
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
+        virtual bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            ESM::FormId targetId, bool rotateBody)
+            = 0;
         virtual void stopLooking(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool playFalloutDialogueAnimation(

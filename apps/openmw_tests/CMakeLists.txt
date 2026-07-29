@@ -13,6 +13,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testesm4perkstore.cpp
     mwworld/testesm4recipestore.cpp
     mwworld/testesm4notestore.cpp
+    mwworld/testesm4specialinventorystore.cpp
     mwworld/testfnvcraftingruntime.cpp
     mwworld/testfnvlockpickruntime.cpp
     mwworld/testactionfnvcrafting.cpp

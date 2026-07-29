@@ -23,6 +23,7 @@
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadnote.hpp>
@@ -1158,6 +1159,7 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     const ESM::FormId targetId{ .mIndex = 0x120162, .mContentFile = 0 };
     const ESM::FormId destinationId{ .mIndex = 0x120163, .mContentFile = 0 };
     const ESM::FormId weaponId{ .mIndex = 0x120164, .mContentFile = 0 };
+    const ESM::FormId exceptionListId{ .mIndex = 0x120165, .mContentFile = 0 };
     const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
 
     ESM4::Quest quest = makeQuest(questId, "ActorControlQuest");
@@ -1168,12 +1170,18 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
           "ActorControlRef.SetRestrained 1\n"
           "ActorControlRef.SetPlayerTeammate 1\n"
           "ActorControlRef.IgnoreCrime 1\n"
+          "ActorControlRef.SetGhost 1\n"
+          "ActorControlRef.SetIgnoreFriendlyHits 1\n"
+          "ActorControlRef.SetAlert 1\n"
           "ActorControlRef.EquipItem ActorControlWeapon 1 1\n"
           "ActorControlRef.UnequipItem ActorControlWeapon 1\n"
           "ActorControlRef.StartCombat ActorControlTarget\n"
           "ActorControlRef.StopCombat\n"
+          "ActorControlRef.Look ActorControlTarget 1\n"
           "ActorControlRef.StopLook ActorControlTarget\n"
+          "ActorControlRef.ResetHealth\n"
           "ActorControlRef.RemoveAllItems ActorControlDestination 0 1\n"
+          "ActorControlRef.RemoveAllTypedItems player 0 1 108 ActorControlExceptions\n"
           "player.EquipItem ActorControlWeapon 1 1\n"
           "player.UnequipItem ActorControlWeapon 1\n"
           "player.RemoveAllItems";
@@ -1181,7 +1189,11 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     conditionEntry.mScript.scriptSource
         = "if ActorControlRef.GetUnconscious == 1 && ActorControlRef.GetRestrained == 1\n"
           "  if ActorControlRef.GetPlayerTeammate == 1 && ActorControlRef.GetIgnoreCrime == 1\n"
-          "    SetObjectiveDisplayed ActorControlQuest 10 1\n"
+          "    if ActorControlRef.GetIsGhost == 1 && ActorControlRef.GetIgnoreFriendlyHits == 1\n"
+          "      if ActorControlRef.GetIsAlerted == 1\n"
+          "        SetObjectiveDisplayed ActorControlQuest 10 1\n"
+          "      endif\n"
+          "    endif\n"
           "  endif\n"
           "endif";
     quest.mStages.push_back(
@@ -1203,6 +1215,11 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     weapon.mId = weaponId;
     weapon.mEditorId = "ActorControlWeapon";
     store.overrideRecord(weapon);
+    ESM4::FormIdList exceptionList;
+    exceptionList.mId = exceptionListId;
+    exceptionList.mEditorId = "ActorControlExceptions";
+    exceptionList.mObjects.push_back(weaponId);
+    store.overrideRecord(exceptionList);
 
     MWWorld::ESM4QuestRuntime runtime;
     runtime.initialize(store);
@@ -1228,10 +1245,11 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
         equipment.emplace_back(actor, item, equip);
         return (actor == actorId || actor == playerId) && item == weaponId;
     });
-    std::vector<std::tuple<MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId>> actorCommands;
+    std::vector<std::tuple<MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool>> actorCommands;
     runtime.setActorCommandHandler(
-        [&](MWWorld::ESM4QuestActorCommand command, ESM::FormId actor, ESM::FormId target) {
-            actorCommands.emplace_back(command, actor, target);
+        [&](MWWorld::ESM4QuestActorCommand command, ESM::FormId actor, ESM::FormId target,
+            bool commandFlag) {
+            actorCommands.emplace_back(command, actor, target, commandFlag);
             return actor == actorId;
         });
     std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool>> removals;
@@ -1241,13 +1259,27 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
             return (owner == actorId && destination == destinationId && !retainOwnership)
                 || (owner == playerId && !destination && !retainOwnership);
         });
+    std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool, std::int32_t,
+        std::optional<ESM::FormId>>>
+        typedRemovals;
+    runtime.setRemoveAllTypedItemsHandler([&](ESM::FormId owner,
+                                              std::optional<ESM::FormId> destination,
+                                              bool retainOwnership, std::int32_t type,
+                                              std::optional<ESM::FormId> exception) {
+        typedRemovals.emplace_back(owner, destination, retainOwnership, type, exception);
+        return owner == actorId && destination == playerId && !retainOwnership && type == 108
+            && exception == exceptionListId;
+    });
 
     ASSERT_TRUE(runtime.setStage(questId, 5));
-    EXPECT_EQ(flags.size(), 4);
+    EXPECT_EQ(flags.size(), 7);
     EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Unconscious]);
     EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Restrained]);
     EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::PlayerTeammate]);
     EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::IgnoreCrime]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Ghost]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::IgnoreFriendlyHits]);
+    EXPECT_TRUE(flags[MWWorld::ESM4QuestActorFlag::Alert]);
     ASSERT_EQ(equipment.size(), 4);
     EXPECT_TRUE(std::get<2>(equipment[0]));
     EXPECT_FALSE(std::get<2>(equipment[1]));
@@ -1255,18 +1287,29 @@ TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCo
     EXPECT_TRUE(std::get<2>(equipment[2]));
     EXPECT_EQ(std::get<0>(equipment[3]), playerId);
     EXPECT_FALSE(std::get<2>(equipment[3]));
-    ASSERT_EQ(actorCommands.size(), 3);
+    ASSERT_EQ(actorCommands.size(), 5);
     EXPECT_EQ(std::get<0>(actorCommands[0]), MWWorld::ESM4QuestActorCommand::StartCombat);
     EXPECT_EQ(std::get<2>(actorCommands[0]), targetId);
     EXPECT_EQ(std::get<0>(actorCommands[1]), MWWorld::ESM4QuestActorCommand::StopCombat);
-    EXPECT_EQ(std::get<0>(actorCommands[2]), MWWorld::ESM4QuestActorCommand::StopLook);
+    EXPECT_EQ(std::get<0>(actorCommands[2]), MWWorld::ESM4QuestActorCommand::Look);
     EXPECT_EQ(std::get<2>(actorCommands[2]), targetId);
+    EXPECT_TRUE(std::get<3>(actorCommands[2]));
+    EXPECT_EQ(std::get<0>(actorCommands[3]), MWWorld::ESM4QuestActorCommand::StopLook);
+    EXPECT_EQ(std::get<2>(actorCommands[3]), targetId);
+    EXPECT_EQ(std::get<0>(actorCommands[4]), MWWorld::ESM4QuestActorCommand::ResetHealth);
+    EXPECT_TRUE(std::get<2>(actorCommands[4]).isZeroOrUnset());
     ASSERT_EQ(removals.size(), 2);
     EXPECT_EQ(std::get<1>(removals[0]), destinationId);
     EXPECT_FALSE(std::get<2>(removals[0]));
     EXPECT_EQ(std::get<0>(removals[1]), playerId);
     EXPECT_FALSE(std::get<1>(removals[1]));
     EXPECT_FALSE(std::get<2>(removals[1]));
+    ASSERT_EQ(typedRemovals.size(), 1);
+    EXPECT_EQ(std::get<0>(typedRemovals[0]), actorId);
+    EXPECT_EQ(std::get<1>(typedRemovals[0]), playerId);
+    EXPECT_FALSE(std::get<2>(typedRemovals[0]));
+    EXPECT_EQ(std::get<3>(typedRemovals[0]), 108);
+    EXPECT_EQ(std::get<4>(typedRemovals[0]), exceptionListId);
 
     const MWWorld::ESM4QuestState* const state = runtime.search(questId);
     ASSERT_NE(state, nullptr);

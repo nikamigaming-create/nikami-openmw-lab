@@ -153,13 +153,22 @@ namespace MWMechanics
 
     bool CreatureStats::setFalloutRuntimeFlag(std::uint32_t flag, bool enabled)
     {
-        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x0f;
+        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x3f;
         if (flag == 0 || (flag & ~KnownFalloutRuntimeFlags) != 0)
             return false;
         if (enabled)
             mFalloutRuntimeFlags |= flag;
         else
             mFalloutRuntimeFlags &= ~flag;
+        return true;
+    }
+
+    bool CreatureStats::setFalloutLookTarget(std::optional<ESM::FormId> target, bool rotateBody)
+    {
+        if (target && target->isZeroOrUnset())
+            return false;
+        mFalloutLookTarget = target;
+        mFalloutLookRotateBody = target && rotateBody;
         return true;
     }
 
@@ -629,6 +638,8 @@ namespace MWMechanics
         state.mFalloutActorValueOverrides = mFalloutActorValueOverrides;
         state.mFalloutFactionOverrides = mFalloutFactionOverrides;
         state.mFalloutRuntimeFlags = mFalloutRuntimeFlags;
+        state.mFalloutLookTarget = mFalloutLookTarget;
+        state.mFalloutLookRotateBody = mFalloutLookRotateBody;
         state.mHasFalloutEquipmentOverride = mHasFalloutEquipmentOverride;
         state.mFalloutEquippedItems = mFalloutEquippedItems;
     }
@@ -694,6 +705,8 @@ namespace MWMechanics
         mFalloutActorValueOverrides = state.mFalloutActorValueOverrides;
         mFalloutFactionOverrides = state.mFalloutFactionOverrides;
         mFalloutRuntimeFlags = state.mFalloutRuntimeFlags;
+        mFalloutLookTarget = state.mFalloutLookTarget;
+        mFalloutLookRotateBody = state.mFalloutLookRotateBody;
         mHasFalloutEquipmentOverride = state.mHasFalloutEquipmentOverride;
         mFalloutEquippedItems = state.mFalloutEquippedItems;
     }

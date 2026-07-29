@@ -22,6 +22,7 @@
 
 #include "actorutil.hpp"
 #include "creaturestats.hpp"
+#include "falloutactorstate.hpp"
 #include "spelleffects.hpp"
 #include "spellutil.hpp"
 #include "weapontype.hpp"
@@ -145,6 +146,9 @@ namespace MWMechanics
     {
         bool targetIsDeadActor = false;
         const bool targetIsActor = !target.isEmpty() && target.getClass().isActor();
+        if (targetIsActor && target != getPlayer() && target != mCaster
+            && getFalloutActorFlag(target, FalloutActorFlag::Ghost))
+            return;
         if (targetIsActor)
         {
             const auto& stats = target.getClass().getCreatureStats(target);

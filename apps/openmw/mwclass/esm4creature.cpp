@@ -1227,6 +1227,12 @@ namespace MWClass
                     return false;
                 }
             }
+            if ((stats.mFalloutLookTarget && stats.mFalloutLookTarget->isZeroOrUnset())
+                || (!stats.mFalloutLookTarget && stats.mFalloutLookRotateBody))
+            {
+                error = "invalid Fallout scripted look state";
+                return false;
+            }
             if (!std::isfinite(stats.mTradeTime.mHour) || !std::isfinite(stats.mTimeOfDeath.mHour)
                 || !std::isfinite(stats.mFallHeight))
             {
@@ -1447,7 +1453,7 @@ namespace MWClass
             return true;
         if (!validateCreatureStats(state.mCreatureStats, error))
             return false;
-        if ((state.mCreatureStats.mFalloutRuntimeFlags & ~std::uint32_t{ 0x0f }) != 0)
+        if ((state.mCreatureStats.mFalloutRuntimeFlags & ~std::uint32_t{ 0x3f }) != 0)
         {
             error = "invalid Fallout actor runtime flags";
             return false;

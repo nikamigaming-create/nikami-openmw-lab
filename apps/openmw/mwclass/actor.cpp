@@ -14,6 +14,7 @@
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutactorstate.hpp"
 #include "../mwmechanics/magiceffects.hpp"
 #include "../mwmechanics/movement.hpp"
 
@@ -114,11 +115,23 @@ namespace MWClass
         (void)sourceType;
         MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         const bool wasDead = stats.isDead();
+        if (ptr != MWMechanics::getPlayer()
+            && MWMechanics::getFalloutActorFlag(ptr, MWMechanics::FalloutActorFlag::Ghost))
+            return;
 
         if (!attacker.isEmpty() && attacker.getClass().isActor() && !stats.getAiSequence().isInCombat(attacker))
         {
-            stats.setAttacked(true);
-            MWBase::Environment::get().getMechanicsManager()->actorAttacked(ptr, attacker);
+            MWBase::MechanicsManager* const mechanics
+                = MWBase::Environment::get().getMechanicsManager();
+            const bool ignoreFriendlyHit
+                = MWMechanics::getFalloutActorFlag(
+                      ptr, MWMechanics::FalloutActorFlag::IgnoreFriendlyHits)
+                && !mechanics->isAggressive(ptr, attacker);
+            if (!ignoreFriendlyHit)
+            {
+                stats.setAttacked(true);
+                mechanics->actorAttacked(ptr, attacker);
+            }
         }
 
         if (!object.empty())

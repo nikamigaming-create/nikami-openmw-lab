@@ -723,6 +723,7 @@ namespace MWWorld
         std::optional<ESM::RefId> getFalloutAmmoSelection(const ESM::RefId& weapon) const;
         void setFalloutLoadedAmmo(const ESM::RefId& weapon, int count);
         std::optional<int> getFalloutLoadedAmmo(const ESM::RefId& weapon) const;
+        void clearFalloutWeaponState(const ESM::RefId& weapon);
 
         ContainerStoreListener* getContListener() const;
         void setContListener(ContainerStoreListener* listener);

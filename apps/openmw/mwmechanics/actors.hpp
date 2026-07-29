@@ -13,6 +13,7 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
+    struct FormId;
 }
 
 namespace osg
@@ -85,6 +86,8 @@ namespace MWMechanics
 
         /// Removes an actor from combat and makes all of their allies stop fighting the actor's targets
         void stopCombat(const MWWorld::Ptr& ptr) const;
+        bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            ESM::FormId targetId, bool rotateBody) const;
         void stopLooking(const MWWorld::Ptr& ptr) const;
 
         void playIdleDialogue(const MWWorld::Ptr& actor) const;

@@ -624,8 +624,31 @@ namespace MWMechanics
         }
     }
 
+    bool Actors::lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        ESM::FormId targetId, bool rotateBody) const
+    {
+        if (actor.isEmpty() || target.isEmpty() || actor == target || targetId.isZeroOrUnset())
+            return false;
+        const auto found = mIndex.find(actor.mRef);
+        if (found == mIndex.end())
+            return false;
+        if (!actor.getClass().getCreatureStats(actor).setFalloutLookTarget(targetId, rotateBody))
+            return false;
+        found->second->getCharacterController().setHeadTrackTarget(target);
+        if (rotateBody)
+        {
+            const osg::Vec3f direction
+                = target.getRefData().getPosition().asVec3() - actor.getRefData().getPosition().asVec3();
+            if (direction.length2() > 0.f)
+                zTurn(actor, std::atan2(direction.x(), direction.y()));
+        }
+        return true;
+    }
+
     void Actors::stopLooking(const MWWorld::Ptr& ptr) const
     {
+        if (!ptr.isEmpty() && ptr.getClass().isActor())
+            ptr.getClass().getCreatureStats(ptr).setFalloutLookTarget(std::nullopt, false);
         const auto found = mIndex.find(ptr.mRef);
         if (found != mIndex.end())
             found->second->getCharacterController().setHeadTrackTarget({});
@@ -1722,7 +1745,40 @@ namespace MWMechanics
                             }
                         }
                         if (mTimerUpdateHeadTrack == 0)
-                            updateHeadTracking(actor.getPtr(), mActors, isPlayer, ctrl);
+                        {
+                            CreatureStats& actorStats
+                                = actor.getPtr().getClass().getCreatureStats(actor.getPtr());
+                            bool scriptedLookApplied = false;
+                            if (const std::optional<ESM::FormId> targetId
+                                = actorStats.getFalloutLookTarget())
+                            {
+                                MWWorld::Ptr target;
+                                if (targetId->mIndex == 0x7 || targetId->mIndex == 0x14)
+                                    target = player;
+                                else
+                                {
+                                    target = world->searchPtr(ESM::RefId(*targetId), true, false);
+                                    if (target.isEmpty())
+                                        target = world->searchPtrByRefNum(*targetId);
+                                }
+                                if (target.isEmpty() || !target.getRefData().isEnabled())
+                                    actorStats.setFalloutLookTarget(std::nullopt, false);
+                                else
+                                {
+                                    ctrl.setHeadTrackTarget(target);
+                                    scriptedLookApplied = true;
+                                    if (actorStats.getFalloutLookRotateBody())
+                                    {
+                                        const osg::Vec3f direction = target.getRefData().getPosition().asVec3()
+                                            - actor.getPtr().getRefData().getPosition().asVec3();
+                                        if (direction.length2() > 0.f)
+                                            zTurn(actor.getPtr(), std::atan2(direction.x(), direction.y()));
+                                    }
+                                }
+                            }
+                            if (!scriptedLookApplied)
+                                updateHeadTracking(actor.getPtr(), mActors, isPlayer, ctrl);
+                        }
 
                         if (actor.getPtr().getClass().isNpc() && !isPlayer)
                             updateCrimePursuit(actor.getPtr(), duration, cachedAllies);

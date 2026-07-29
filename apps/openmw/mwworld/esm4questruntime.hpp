@@ -129,6 +129,9 @@ namespace MWWorld
         Restrained,
         PlayerTeammate,
         IgnoreCrime,
+        Ghost,
+        IgnoreFriendlyHits,
+        Alert,
     };
 
     enum class ESM4QuestActorCommand : std::uint8_t
@@ -136,6 +139,8 @@ namespace MWWorld
         StartCombat,
         StopCombat,
         StopLook,
+        ResetHealth,
+        Look,
     };
 
     struct ESM4QuestFactionMembership
@@ -158,6 +163,8 @@ namespace MWWorld
         using RemoveItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
         using RemoveAllItemsHandler
             = std::function<bool(ESM::FormId, std::optional<ESM::FormId>, bool)>;
+        using RemoveAllTypedItemsHandler = std::function<bool(ESM::FormId, std::optional<ESM::FormId>, bool,
+            std::int32_t, std::optional<ESM::FormId>)>;
         using EquipmentCommandHandler
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
@@ -190,7 +197,7 @@ namespace MWWorld
         using ActorFlagHandler
             = std::function<std::optional<bool>(ESM::FormId, ESM4QuestActorFlag)>;
         using ActorCommandHandler
-            = std::function<bool(ESM4QuestActorCommand, ESM::FormId, ESM::FormId)>;
+            = std::function<bool(ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -312,6 +319,7 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mReferenceIds;
         std::unordered_map<std::string, ESM::FormId> mFactionIds;
         std::unordered_map<std::string, ESM::FormId> mInventoryItemIds;
+        std::unordered_map<std::string, ESM::FormId> mFormListIds;
         std::unordered_map<std::string, ESM::FormId> mReputationIds;
         std::unordered_map<std::string, ESM::FormId> mNoteIds;
         std::unordered_map<std::string, ESM::FormId> mPerkIds;
@@ -326,6 +334,7 @@ namespace MWWorld
         AddItemHealthPercentHandler mAddItemHealthPercentHandler;
         RemoveItemHandler mRemoveItemHandler;
         RemoveAllItemsHandler mRemoveAllItemsHandler;
+        RemoveAllTypedItemsHandler mRemoveAllTypedItemsHandler;
         EquipmentCommandHandler mEquipmentCommandHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
@@ -540,6 +549,7 @@ namespace MWWorld
         ESM::FormId resolveReference(std::string_view id);
         ESM::FormId resolveFaction(std::string_view id);
         ESM::FormId resolveInventoryItem(std::string_view id);
+        ESM::FormId resolveFormList(std::string_view id);
         ESM::FormId resolveReputation(std::string_view id);
         ESM::FormId resolveNote(std::string_view id);
         ESM::FormId resolvePerk(std::string_view id);
@@ -574,6 +584,10 @@ namespace MWWorld
         void setRemoveAllItemsHandler(RemoveAllItemsHandler handler)
         {
             mRemoveAllItemsHandler = std::move(handler);
+        }
+        void setRemoveAllTypedItemsHandler(RemoveAllTypedItemsHandler handler)
+        {
+            mRemoveAllTypedItemsHandler = std::move(handler);
         }
         void setEquipmentCommandHandler(EquipmentCommandHandler handler)
         {

@@ -1686,6 +1686,8 @@ namespace MWMechanics
     {
         if (observer.getClass().getCreatureStats(observer).isDead() || !observer.getRefData().isEnabled())
             return false;
+        if (getFalloutActorFlag(ptr, FalloutActorFlag::Ghost))
+            return false;
 
         const MWWorld::Store<ESM::GameSetting>& store
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
@@ -1761,7 +1763,8 @@ namespace MWMechanics
         CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
 
         // Don't add duplicate packages nor add packages to dead actors.
-        if (stats.isDead() || stats.getAiSequence().isInCombat(target))
+        if (stats.isDead() || stats.getAiSequence().isInCombat(target)
+            || getFalloutActorFlag(target, FalloutActorFlag::Ghost))
             return;
 
         // The target is somehow the same as the actor. Early-out.
@@ -1837,6 +1840,12 @@ namespace MWMechanics
     void MechanicsManager::stopCombat(const MWWorld::Ptr& actor)
     {
         mActors.stopCombat(actor);
+    }
+
+    bool MechanicsManager::lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        ESM::FormId targetId, bool rotateBody)
+    {
+        return mActors.lookAt(actor, target, targetId, rotateBody);
     }
 
     void MechanicsManager::stopLooking(const MWWorld::Ptr& actor)
@@ -1947,6 +1956,8 @@ namespace MWMechanics
 
     bool MechanicsManager::isAggressive(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target)
     {
+        if (getFalloutActorFlag(target, FalloutActorFlag::Ghost))
+            return false;
         // If already in combat with target, consider aggressive
         if (ptr.getClass().getCreatureStats(ptr).getAiSequence().isInCombat(target))
             return true;

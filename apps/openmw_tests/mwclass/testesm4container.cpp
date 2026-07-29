@@ -1412,7 +1412,9 @@ namespace
 
         MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
         ASSERT_TRUE(stats.getAiSequence().isEmpty());
-        ASSERT_TRUE(stats.setFalloutRuntimeFlag(0x0f, true));
+        const ESM::FormId lookTarget = ESM::FormId::fromUint32(sCreatureRef);
+        ASSERT_TRUE(stats.setFalloutRuntimeFlag(0x3f, true));
+        ASSERT_TRUE(stats.setFalloutLookTarget(lookTarget, true));
         ASSERT_TRUE(MWClass::ESM4Npc::equipFalloutItem(source, weaponId));
         ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
         ASSERT_EQ(stats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
@@ -1451,7 +1453,9 @@ namespace
         EXPECT_TRUE(restoredStats.isDead());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_TRUE(restoredStats.getAiSequence().isEmpty());
-        EXPECT_EQ(restoredStats.getFalloutRuntimeFlags(), 0x0fu);
+        EXPECT_EQ(restoredStats.getFalloutRuntimeFlags(), 0x3fu);
+        EXPECT_EQ(restoredStats.getFalloutLookTarget(), lookTarget);
+        EXPECT_TRUE(restoredStats.getFalloutLookRotateBody());
         EXPECT_TRUE(restoredStats.hasFalloutEquipmentOverride());
         EXPECT_EQ(restoredStats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
         const ESM4::Weapon* restoredWeapon = MWClass::ESM4Npc::getEquippedWeapon(restored);

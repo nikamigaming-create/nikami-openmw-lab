@@ -19,8 +19,11 @@
 
 #include <apps/openmw/mwclass/classes.hpp>
 
+#include <apps/openmw/mwmechanics/creaturestats.hpp>
+#include <apps/openmw/mwmechanics/drawstate.hpp>
 #include <apps/openmw/mwmechanics/falloutactorstate.hpp>
 
+#include <apps/openmw/mwworld/class.hpp>
 #include <apps/openmw/mwworld/esm4questruntime.hpp>
 #include <apps/openmw/mwworld/esmstore.hpp>
 #include <apps/openmw/mwworld/livecellref.hpp>
@@ -208,6 +211,22 @@ namespace
         EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
                       condition(ESM4::FUN_GetActorValue, form(0), 2.f),
                       goodspringsPtr, false),
+            std::optional<bool>(true));
+
+        ASSERT_TRUE(MWMechanics::setFalloutActorFlag(
+            goodspringsPtr, MWMechanics::FalloutActorFlag::Ghost, true));
+        ASSERT_TRUE(MWMechanics::setFalloutActorFlag(
+            goodspringsPtr, MWMechanics::FalloutActorFlag::IgnoreFriendlyHits, true));
+        goodspringsPtr.getClass().getCreatureStats(goodspringsPtr).setDrawState(
+            MWMechanics::DrawState::Weapon);
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIsGhost, {}, 1.f), goodspringsPtr, false),
+            std::optional<bool>(true));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIgnoreFriendlyHits, {}, 1.f), goodspringsPtr, false),
+            std::optional<bool>(true));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIsAlerted, {}, 1.f), goodspringsPtr, false),
             std::optional<bool>(true));
     }
 }

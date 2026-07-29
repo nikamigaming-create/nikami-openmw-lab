@@ -33,13 +33,23 @@
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadidlm.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadcrea.hpp>
@@ -47,6 +57,7 @@
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include <components/misc/constants.hpp>
@@ -1135,6 +1146,19 @@ namespace MWWorld
                 if (actor.isEmpty() || !actor.getClass().isActor())
                     return false;
 
+                MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+                if (flag == ESM4QuestActorFlag::Alert)
+                {
+                    stats.setDrawState(enabled ? MWMechanics::DrawState::Weapon
+                                               : MWMechanics::DrawState::Nothing);
+                    if (MWBase::MechanicsManager* mechanics
+                        = MWBase::Environment::get().getMechanicsManager())
+                        mechanics->forceStateUpdate(actor);
+                    Log(Debug::Info) << "FNV/ESM4 quest: SetAlert actor="
+                                     << actor.getCellRef().getRefId() << " enabled=" << enabled;
+                    return true;
+                }
+
                 MWMechanics::FalloutActorFlag runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
                 switch (flag)
                 {
@@ -1150,11 +1174,18 @@ namespace MWWorld
                     case ESM4QuestActorFlag::IgnoreCrime:
                         runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreCrime;
                         break;
+                    case ESM4QuestActorFlag::Ghost:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Ghost;
+                        break;
+                    case ESM4QuestActorFlag::IgnoreFriendlyHits:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreFriendlyHits;
+                        break;
+                    case ESM4QuestActorFlag::Alert:
+                        return false;
                 }
                 if (!MWMechanics::setFalloutActorFlag(actor, runtimeFlag, enabled))
                     return false;
 
-                MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
                 if (runtimeFlag == MWMechanics::FalloutActorFlag::Unconscious)
                 {
                     stats.setKnockedDown(enabled);
@@ -1175,6 +1206,12 @@ namespace MWWorld
                     movement.mRotation[2] = 0.f;
                     stats.setAttackingOrSpell(false);
                 }
+                if (runtimeFlag == MWMechanics::FalloutActorFlag::Ghost && enabled)
+                {
+                    if (MWBase::MechanicsManager* mechanics
+                        = MWBase::Environment::get().getMechanicsManager())
+                        mechanics->stopCombat(actor);
+                }
                 if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
                     mechanics->forceStateUpdate(actor);
                 Log(Debug::Info) << "FNV/ESM4 quest: actor flag=" << static_cast<unsigned int>(flag)
@@ -1191,6 +1228,10 @@ namespace MWWorld
                 if (actor.isEmpty() || !actor.getClass().isActor())
                     return std::nullopt;
 
+                if (flag == ESM4QuestActorFlag::Alert)
+                    return actor.getClass().getCreatureStats(actor).getDrawState()
+                        != MWMechanics::DrawState::Nothing;
+
                 MWMechanics::FalloutActorFlag runtimeFlag = MWMechanics::FalloutActorFlag::Unconscious;
                 switch (flag)
                 {
@@ -1206,11 +1247,20 @@ namespace MWWorld
                     case ESM4QuestActorFlag::IgnoreCrime:
                         runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreCrime;
                         break;
+                    case ESM4QuestActorFlag::Ghost:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::Ghost;
+                        break;
+                    case ESM4QuestActorFlag::IgnoreFriendlyHits:
+                        runtimeFlag = MWMechanics::FalloutActorFlag::IgnoreFriendlyHits;
+                        break;
+                    case ESM4QuestActorFlag::Alert:
+                        return std::nullopt;
                 }
                 return MWMechanics::getFalloutActorFlag(actor, runtimeFlag);
             });
         mESM4QuestRuntime.setActorCommandHandler(
-            [this](ESM4QuestActorCommand command, ESM::FormId actorId, ESM::FormId targetId) {
+            [this](ESM4QuestActorCommand command, ESM::FormId actorId, ESM::FormId targetId,
+                bool commandFlag) {
                 const auto resolveActor = [this](ESM::FormId id) {
                     const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
                     Ptr result = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
@@ -1245,6 +1295,32 @@ namespace MWWorld
                     case ESM4QuestActorCommand::StopLook:
                         mechanics->stopLooking(actor);
                         break;
+                    case ESM4QuestActorCommand::ResetHealth:
+                    {
+                        MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+                        MWMechanics::DynamicStat<float> health = stats.getHealth();
+                        health.setCurrent(health.getModified(), false, true);
+                        stats.setHealth(health);
+                        for (std::int8_t actorValue = 25; actorValue <= 31; ++actorValue)
+                            if (!stats.setFalloutLimbDamage(actorValue, 0.f))
+                                return false;
+                        const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
+                        if (player
+                            && mFalloutPlayerRuntimeState.setCurrentActorValue(
+                                   16, health.getCurrent())
+                                != FalloutActorValueMutationResult::Applied)
+                            return false;
+                        mechanics->forceStateUpdate(actor);
+                        break;
+                    }
+                    case ESM4QuestActorCommand::Look:
+                    {
+                        const Ptr target = resolveActor(targetId);
+                        if (target.isEmpty() || target == actor
+                            || !mechanics->lookAt(actor, target, targetId, commandFlag))
+                            return false;
+                        break;
+                    }
                 }
                 Log(Debug::Info) << "FNV/ESM4 quest: actor command="
                                  << static_cast<unsigned int>(command)
@@ -1521,6 +1597,8 @@ namespace MWWorld
                         || resolvedOwner.getClass().getInventoryStore(resolvedOwner).isEquipped(item));
                 if (store.count(item) < count || store.remove(item, count, false, false) != count)
                     return false;
+                if (store.count(item) == 0)
+                    store.clearFalloutWeaponState(item);
                 if (refreshPlayerEquipment)
                 {
                     InventoryStore& inventory
@@ -1548,122 +1626,291 @@ namespace MWWorld
                 return false;
             }
         });
-        mESM4QuestRuntime.setRemoveAllItemsHandler(
-            [this](ESM::FormId ownerId, std::optional<ESM::FormId> destinationId, bool retainOwnership) {
-                const auto resolveContainer = [this](ESM::FormId id) {
-                    const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
-                    Ptr result = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
-                    if (result.isEmpty() && !player)
-                        result = searchPtrByRefNum(id);
-                    return result;
+        const auto removeInventoryItems = [this](ESM::FormId ownerId,
+                                              std::optional<ESM::FormId> destinationId,
+                                              bool retainOwnership, std::optional<std::int32_t> type,
+                                              std::optional<ESM::FormId> exceptionList) {
+            const auto supportedType = [](std::int32_t value) {
+                switch (value)
+                {
+                    case -1:
+                    case 0:
+                    case 24: // ARMO
+                    case 25: // BOOK
+                    case 26: // CLOT
+                    case 31: // MISC
+                    case 40: // WEAP
+                    case 41: // AMMO
+                    case 46: // KEYM
+                    case 47: // ALCH
+                    case 49: // NOTE (not a physical ContainerStore item)
+                    case 103: // IMOD
+                    case 108: // CHIP
+                    case 115: // CCRD
+                    case 116: // CMNY
+                        return true;
+                    default:
+                        return false;
+                }
+            };
+            if (type && !supportedType(*type))
+                return false;
+            if (exceptionList
+                && mStore.get<ESM4::FormIdList>().search(ESM::RefId(*exceptionList)) == nullptr)
+                return false;
+
+            const auto resolveContainer = [this](ESM::FormId id) {
+                const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
+                Ptr result = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
+                if (result.isEmpty() && !player)
+                    result = searchPtrByRefNum(id);
+                return result;
+            };
+
+            Ptr owner = resolveContainer(ownerId);
+            if (owner.isEmpty())
+                return false;
+            const bool ownerIsPlayer = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14;
+            Ptr destination;
+            if (destinationId)
+            {
+                destination = resolveContainer(*destinationId);
+                if (destination.isEmpty())
+                    return false;
+                if (destination == owner)
+                    return true;
+            }
+
+            try
+            {
+                ContainerStore& source = owner.getClass().getContainerStore(owner);
+                ContainerStore* target
+                    = destination.isEmpty() ? nullptr : &destination.getClass().getContainerStore(destination);
+
+                const auto isException = [this, exceptionList](ESM::FormId item) {
+                    if (!exceptionList)
+                        return false;
+                    std::vector<ESM::FormId> pending{ *exceptionList };
+                    std::vector<ESM::FormId> visited;
+                    while (!pending.empty())
+                    {
+                        const ESM::FormId current = pending.back();
+                        pending.pop_back();
+                        if (std::find(visited.begin(), visited.end(), current) != visited.end())
+                            continue;
+                        visited.push_back(current);
+                        const ESM4::FormIdList* const list
+                            = mStore.get<ESM4::FormIdList>().search(ESM::RefId(current));
+                        if (list == nullptr)
+                            continue;
+                        for (const ESM::FormId entry : list->mObjects)
+                        {
+                            if (entry == item)
+                                return true;
+                            if (mStore.get<ESM4::FormIdList>().search(ESM::RefId(entry)) != nullptr)
+                                pending.push_back(entry);
+                        }
+                    }
+                    return false;
                 };
 
-                Ptr owner = resolveContainer(ownerId);
-                if (owner.isEmpty())
-                    return false;
-                const bool ownerIsPlayer = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14;
-                Ptr destination;
-                if (destinationId)
-                {
-                    destination = resolveContainer(*destinationId);
-                    if (destination.isEmpty())
-                        return false;
-                    if (destination == owner)
+                const auto isRecordQuestObject = [this](ESM::FormId item) {
+                    std::uint32_t flags = 0;
+                    const auto findFlags = [&item, &flags](const auto& records) {
+                        const auto* const record = records.search(ESM::RefId(item));
+                        if (record == nullptr)
+                            return false;
+                        flags = record->mFlags;
                         return true;
+                    };
+                    if (!findFlags(mStore.get<ESM4::Ammunition>())
+                        && !findFlags(mStore.get<ESM4::Armor>())
+                        && !findFlags(mStore.get<ESM4::Book>())
+                        && !findFlags(mStore.get<ESM4::Clothing>())
+                        && !findFlags(mStore.get<ESM4::Ingredient>())
+                        && !findFlags(mStore.get<ESM4::ItemMod>())
+                        && !findFlags(mStore.get<ESM4::Key>())
+                        && !findFlags(mStore.get<ESM4::Light>())
+                        && !findFlags(mStore.get<ESM4::MiscItem>())
+                        && !findFlags(mStore.get<ESM4::Potion>()))
+                        findFlags(mStore.get<ESM4::Weapon>());
+                    return (flags & ESM4::Rec_Persistent) != 0;
+                };
+
+                const auto matchesType = [](const Ptr& item, std::int32_t wanted) {
+                    if (wanted == -1 || wanted == 0)
+                        return true;
+                    const unsigned int recordType = item.getType();
+                    switch (wanted)
+                    {
+                        case 24:
+                            return recordType == ESM4::Armor::sRecordId;
+                        case 25:
+                            return recordType == ESM4::Book::sRecordId;
+                        case 26:
+                            return recordType == ESM4::Clothing::sRecordId;
+                        case 31:
+                            return recordType == ESM4::MiscItem::sRecordId
+                                && item.get<ESM4::MiscItem>()->mBase->mOriginalRecordType == ESM4::REC_MISC;
+                        case 40:
+                            return recordType == ESM4::Weapon::sRecordId;
+                        case 41:
+                            return recordType == ESM4::Ammunition::sRecordId;
+                        case 46:
+                            return recordType == ESM4::Key::sRecordId;
+                        case 47:
+                            return recordType == ESM4::Potion::sRecordId;
+                        case 49:
+                            // NOTE records live in the Pip-Boy note state and
+                            // are deliberately not physical container items.
+                            return false;
+                        case 103:
+                            return recordType == ESM4::ItemMod::sRecordId;
+                        case 108:
+                            return recordType == ESM4::MiscItem::sRecordId
+                                && item.get<ESM4::MiscItem>()->mBase->mOriginalRecordType == ESM4::REC_CHIP;
+                        case 115:
+                            return recordType == ESM4::MiscItem::sRecordId
+                                && item.get<ESM4::MiscItem>()->mBase->mOriginalRecordType == ESM4::REC_CCRD;
+                        case 116:
+                            return recordType == ESM4::MiscItem::sRecordId
+                                && item.get<ESM4::MiscItem>()->mBase->mOriginalRecordType == ESM4::REC_CMNY;
+                        default:
+                            return false;
+                    }
+                };
+
+                struct TransferItem
+                {
+                    Ptr mItem;
+                    int mCount = 0;
+                    ESM::RefId mOwner;
+                    ESM::RefId mFaction;
+                    int mFactionRank = -2;
+                };
+                std::vector<TransferItem> items;
+                for (ContainerStoreIterator item = source.begin(); item != source.end(); ++item)
+                {
+                    const int count = item->getCellRef().getCount(false);
+                    if (count <= 0)
+                        continue;
+                    const ESM::FormId* const formId = item->getCellRef().getRefId().getIf<ESM::FormId>();
+                    if (type && !matchesType(*item, *type))
+                        continue;
+                    if (formId != nullptr && isException(*formId))
+                        continue;
+                    if (ownerIsPlayer && formId != nullptr
+                        && (mFalloutPlayerRuntimeState.isQuestObject(*formId)
+                            || isRecordQuestObject(*formId)))
+                        continue;
+                    if (item->getType() == ESM4::Armor::sRecordId
+                        && (item->get<ESM4::Armor>()->mBase->mGeneralFlags
+                            & ESM4::Armor::FO3_NonPlayable)
+                            != 0)
+                        continue;
+                    items.push_back({ *item, count, item->getCellRef().getOwner(),
+                        item->getCellRef().getFaction(), item->getCellRef().getFactionRank() });
                 }
 
-                try
+                struct AmmoState
                 {
-                    ContainerStore& source = owner.getClass().getContainerStore(owner);
-                    ContainerStore* target = destination.isEmpty()
-                        ? nullptr
-                        : &destination.getClass().getContainerStore(destination);
+                    ESM::RefId mWeapon;
+                    std::optional<ESM::RefId> mAmmo;
+                    std::optional<int> mLoaded;
+                };
+                std::vector<AmmoState> ammoStates;
+                for (const TransferItem& item : items)
+                {
+                    const ESM::RefId id = item.mItem.getCellRef().getRefId();
+                    const std::optional<ESM::RefId> ammo = source.getFalloutAmmoSelection(id);
+                    const std::optional<int> loaded = source.getFalloutLoadedAmmo(id);
+                    if (ammo || loaded)
+                        ammoStates.push_back({ id, ammo, loaded });
+                }
 
-                    struct TransferItem
+                for (const TransferItem& item : items)
+                {
+                    const ESM::RefId id = item.mItem.getCellRef().getRefId();
+                    if (source.remove(item.mItem, item.mCount, false, false) != item.mCount)
+                        return false;
+                    if (source.count(id) == 0)
+                        source.clearFalloutWeaponState(id);
+                    if (target == nullptr)
+                        continue;
+                    ContainerStoreIterator added = target->add(item.mItem, item.mCount, false);
+                    if (added == target->end())
+                        return false;
+                    if (retainOwnership)
                     {
-                        Ptr mItem;
-                        int mCount = 0;
-                        ESM::RefId mOwner;
-                        ESM::RefId mFaction;
-                        int mFactionRank = -2;
-                    };
-                    std::vector<TransferItem> items;
-                    for (ContainerStoreIterator item = source.begin(); item != source.end(); ++item)
-                    {
-                        const int count = item->getCellRef().getCount(false);
-                        if (count <= 0)
-                            continue;
-                        items.push_back({ *item, count, item->getCellRef().getOwner(),
-                            item->getCellRef().getFaction(), item->getCellRef().getFactionRank() });
+                        added->getCellRef().setOwner(item.mOwner);
+                        added->getCellRef().setFaction(item.mFaction);
+                        added->getCellRef().setFactionRank(item.mFactionRank);
                     }
-
-                    struct AmmoState
+                }
+                if (target != nullptr)
+                {
+                    for (const AmmoState& ammo : ammoStates)
                     {
-                        ESM::RefId mWeapon;
-                        std::optional<ESM::RefId> mAmmo;
-                        std::optional<int> mLoaded;
-                    };
-                    std::vector<AmmoState> ammoStates;
+                        if (ammo.mAmmo)
+                            target->setFalloutAmmoSelection(ammo.mWeapon, *ammo.mAmmo);
+                        if (ammo.mLoaded)
+                            target->setFalloutLoadedAmmo(ammo.mWeapon, *ammo.mLoaded);
+                    }
+                }
+
+                if (owner.getType() == ESM4::Npc::sRecordId)
+                {
                     for (const TransferItem& item : items)
                     {
-                        const ESM::RefId id = item.mItem.getCellRef().getRefId();
-                        const std::optional<ESM::RefId> ammo = source.getFalloutAmmoSelection(id);
-                        const std::optional<int> loaded = source.getFalloutLoadedAmmo(id);
-                        if (ammo || loaded)
-                            ammoStates.push_back({ id, ammo, loaded });
+                        const ESM::FormId* const formId
+                            = item.mItem.getCellRef().getRefId().getIf<ESM::FormId>();
+                        if (formId != nullptr && source.count(ESM::RefId(*formId)) == 0)
+                            MWClass::ESM4Npc::unequipFalloutItem(owner, *formId);
                     }
+                }
+                if (ownerIsPlayer && !items.empty())
+                {
+                    InventoryStore& inventory = owner.getClass().getInventoryStore(owner);
+                    if (!owner.getClass().getCreatureStats(owner).setFalloutEquipmentOverride(
+                            collectFalloutInventoryEquipment(inventory)))
+                        return false;
+                    mRendering->refreshFalloutPlayerEquipment(owner);
+                }
 
-                    if (target != nullptr)
-                    {
-                        for (const TransferItem& item : items)
-                        {
-                            if (source.remove(item.mItem, item.mCount, false, false) != item.mCount)
-                                return false;
-                            ContainerStoreIterator added = target->add(item.mItem, item.mCount, false);
-                            if (added == target->end())
-                                return false;
-                            if (retainOwnership)
-                            {
-                                added->getCellRef().setOwner(item.mOwner);
-                                added->getCellRef().setFaction(item.mFaction);
-                                added->getCellRef().setFactionRank(item.mFactionRank);
-                            }
-                        }
-                        for (const AmmoState& ammo : ammoStates)
-                        {
-                            if (ammo.mAmmo)
-                                target->setFalloutAmmoSelection(ammo.mWeapon, *ammo.mAmmo);
-                            if (ammo.mLoaded)
-                                target->setFalloutLoadedAmmo(ammo.mWeapon, *ammo.mLoaded);
-                        }
-                    }
-                    if (owner.getType() == ESM4::Npc::sRecordId)
-                        MWClass::ESM4Npc::clearFalloutEquipment(owner);
-                    source.clear();
-                    if (ownerIsPlayer)
-                    {
-                        if (!owner.getClass().getCreatureStats(owner)
-                                .setFalloutEquipmentOverride({}))
-                            return false;
-                        mRendering->refreshFalloutPlayerEquipment(owner);
-                    }
-
+                if (!items.empty())
+                {
                     if (auto* animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(getAnimation(owner)))
                         animation->refreshEquipment();
-                    if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    if (MWBase::MechanicsManager* mechanics
+                        = MWBase::Environment::get().getMechanicsManager())
                         mechanics->forceStateUpdate(owner);
-                    Log(Debug::Info) << "FNV/ESM4 quest: RemoveAllItems owner="
-                                     << ESM::RefId(ownerId).serializeText() << " destination="
-                                     << (destinationId ? ESM::RefId(*destinationId).serializeText()
-                                                       : std::string("none"))
-                                     << " stacks=" << items.size()
-                                     << " retainOwnership=" << retainOwnership;
-                    return true;
                 }
-                catch (const std::exception&)
-                {
-                    return false;
-                }
+                Log(Debug::Info) << "FNV/ESM4 quest: "
+                                 << (type ? "RemoveAllTypedItems" : "RemoveAllItems") << " owner="
+                                 << ESM::RefId(ownerId).serializeText() << " destination="
+                                 << (destinationId ? ESM::RefId(*destinationId).serializeText()
+                                                   : std::string("none"))
+                                 << " stacks=" << items.size() << " retainOwnership=" << retainOwnership
+                                 << " type=" << (type ? std::to_string(*type) : std::string("all"))
+                                 << " exceptionList="
+                                 << (exceptionList ? ESM::RefId(*exceptionList).serializeText()
+                                                   : std::string("none"));
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        };
+        mESM4QuestRuntime.setRemoveAllItemsHandler(
+            [removeInventoryItems](ESM::FormId ownerId, std::optional<ESM::FormId> destinationId,
+                bool retainOwnership) {
+                return removeInventoryItems(ownerId, destinationId, retainOwnership, std::nullopt, std::nullopt);
+            });
+        mESM4QuestRuntime.setRemoveAllTypedItemsHandler(
+            [removeInventoryItems](ESM::FormId ownerId, std::optional<ESM::FormId> destinationId,
+                bool retainOwnership, std::int32_t type, std::optional<ESM::FormId> exceptionList) {
+                return removeInventoryItems(ownerId, destinationId, retainOwnership, type, exceptionList);
             });
     }
 

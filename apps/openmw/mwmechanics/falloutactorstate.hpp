@@ -30,6 +30,8 @@ namespace MWMechanics
         Restrained = 0x02,
         PlayerTeammate = 0x04,
         IgnoreCrime = 0x08,
+        Ghost = 0x10,
+        IgnoreFriendlyHits = 0x20,
     };
 
     struct FalloutFactionMembership

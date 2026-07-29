@@ -29,6 +29,7 @@
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadpack.hpp>
@@ -135,6 +136,15 @@ namespace
         if (Misc::StringUtils::ciEqual(command, "IgnoreCrime")
             || Misc::StringUtils::ciEqual(command, "GetIgnoreCrime"))
             return MWWorld::ESM4QuestActorFlag::IgnoreCrime;
+        if (Misc::StringUtils::ciEqual(command, "SetGhost")
+            || Misc::StringUtils::ciEqual(command, "GetIsGhost"))
+            return MWWorld::ESM4QuestActorFlag::Ghost;
+        if (Misc::StringUtils::ciEqual(command, "SetIgnoreFriendlyHits")
+            || Misc::StringUtils::ciEqual(command, "GetIgnoreFriendlyHits"))
+            return MWWorld::ESM4QuestActorFlag::IgnoreFriendlyHits;
+        if (Misc::StringUtils::ciEqual(command, "SetAlert")
+            || Misc::StringUtils::ciEqual(command, "GetIsAlerted"))
+            return MWWorld::ESM4QuestActorFlag::Alert;
         return std::nullopt;
     }
 
@@ -691,6 +701,7 @@ namespace MWWorld
         mReferenceIds.clear();
         mFactionIds.clear();
         mInventoryItemIds.clear();
+        mFormListIds.clear();
         mReputationIds.clear();
         mNoteIds.clear();
         mPerkIds.clear();
@@ -3792,6 +3803,28 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveFormList(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mFormListIds.find(key); cached != mFormListIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::FormIdList& list : mStore->get<ESM4::FormIdList>())
+            {
+                if (Misc::StringUtils::ciEqual(list.mEditorId, id))
+                {
+                    result = list.mId;
+                    break;
+                }
+            }
+        }
+        mFormListIds.emplace(key, result);
+        return result;
+    }
+
     ESM::FormId ESM4QuestRuntime::resolveReputation(std::string_view id)
     {
         const std::string key = Misc::StringUtils::lowerCase(id);
@@ -4109,7 +4142,9 @@ namespace MWWorld
                             membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
                 }
                 if (command == "getunconscious" || command == "getrestrained"
-                    || command == "getplayerteammate" || command == "getignorecrime")
+                    || command == "getplayerteammate" || command == "getignorecrime"
+                    || command == "getisghost" || command == "getignorefriendlyhits"
+                    || command == "getisalerted")
                 {
                     if (!mActorFlagHandler)
                         return std::nullopt;
@@ -4286,7 +4321,9 @@ namespace MWWorld
                         membership->mMember ? static_cast<float>(membership->mRank) : -1.f);
             }
             if ((token == "getunconscious" || token == "getrestrained"
-                    || token == "getplayerteammate" || token == "getignorecrime")
+                    || token == "getplayerteammate" || token == "getignorecrime"
+                    || token == "getisghost" || token == "getignorefriendlyhits"
+                    || token == "getisalerted")
                 && (ownerActor || ownerReference))
             {
                 if (!mActorFlagHandler)
@@ -4874,6 +4911,64 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if (Misc::StringUtils::ciEqual(command, "RemoveAllTypedItems")
+                    && tokens.size() >= 1 && tokens.size() <= 6)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    const ESM::FormId owner = sourceOwnerId();
+                    std::optional<ESM::FormId> destination;
+                    std::optional<ESM::FormId> exceptionList;
+                    std::size_t argument = 1;
+                    bool valid = !owner.isZeroOrUnset();
+                    if (tokens.size() >= 2)
+                    {
+                        const ESM::FormId resolved = sourceReferenceId(tokens[1]);
+                        valid = !resolved.isZeroOrUnset();
+                        if (valid)
+                            destination = resolved;
+                        argument = 2;
+                    }
+                    bool retainOwnership = false;
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> retain = sourceInteger(sourceTokens, argument);
+                        valid = retain && (*retain == 0 || *retain == 1);
+                        retainOwnership = valid && *retain != 0;
+                    }
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> silent = sourceInteger(sourceTokens, argument);
+                        valid = silent && (*silent == 0 || *silent == 1);
+                    }
+                    std::int32_t type = -1;
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> parsedType = sourceInteger(sourceTokens, argument);
+                        valid = parsedType.has_value();
+                        if (valid)
+                            type = *parsedType;
+                    }
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const ESM::FormId resolved = resolveFormList(sourceTokens[argument++]);
+                        valid = !resolved.isZeroOrUnset();
+                        if (valid)
+                            exceptionList = resolved;
+                    }
+                    if (valid && argument == sourceTokens.size() && mRemoveAllTypedItemsHandler
+                        && mRemoveAllTypedItemsHandler(owner, destination, retainOwnership, type, exceptionList))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: RemoveAllTypedItems owner=" << subject
+                                         << " destination="
+                                         << (destination ? ESM::RefId(*destination).serializeText()
+                                                         : std::string("none"))
+                                         << " retainOwnership=" << retainOwnership << " type=" << type
+                                         << " exceptionList="
+                                         << (exceptionList ? ESM::RefId(*exceptionList).serializeText()
+                                                           : std::string("none"));
+                        continue;
+                    }
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "EquipItem")
                              || Misc::StringUtils::ciEqual(command, "UnequipItem"))
                     && tokens.size() >= 2 && tokens.size() <= 4)
@@ -4902,7 +4997,10 @@ namespace MWWorld
                 else if ((Misc::StringUtils::ciEqual(command, "SetUnconscious")
                              || Misc::StringUtils::ciEqual(command, "SetRestrained")
                              || Misc::StringUtils::ciEqual(command, "SetPlayerTeammate")
-                             || Misc::StringUtils::ciEqual(command, "IgnoreCrime"))
+                             || Misc::StringUtils::ciEqual(command, "IgnoreCrime")
+                             || Misc::StringUtils::ciEqual(command, "SetGhost")
+                             || Misc::StringUtils::ciEqual(command, "SetIgnoreFriendlyHits")
+                             || Misc::StringUtils::ciEqual(command, "SetAlert"))
                     && tokens.size() >= 2)
                 {
                     const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
@@ -4921,13 +5019,38 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if (Misc::StringUtils::ciEqual(command, "Look")
+                    && tokens.size() >= 2 && tokens.size() <= 3)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    bool rotateBody = false;
+                    bool valid = true;
+                    if (argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> rotate = sourceInteger(sourceTokens, argument);
+                        valid = rotate && (*rotate == 0 || *rotate == 1);
+                        rotateBody = valid && *rotate != 0;
+                    }
+                    const ESM::FormId actor = sourceOwnerId();
+                    const ESM::FormId target = sourceReferenceId(tokens[1]);
+                    if (valid && argument == sourceTokens.size() && !actor.isZeroOrUnset()
+                        && !target.isZeroOrUnset() && mActorCommandHandler
+                        && mActorCommandHandler(
+                            ESM4QuestActorCommand::Look, actor, target, rotateBody))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: Look actor=" << subject
+                                         << " target=" << tokens[1] << " rotateBody=" << rotateBody;
+                        continue;
+                    }
+                }
                 else if (Misc::StringUtils::ciEqual(command, "StartCombat") && tokens.size() == 2)
                 {
                     const ESM::FormId actor = sourceOwnerId();
                     const ESM::FormId target = sourceReferenceId(tokens[1]);
                     if (!actor.isZeroOrUnset() && !target.isZeroOrUnset() && mActorCommandHandler
                         && mActorCommandHandler(
-                            ESM4QuestActorCommand::StartCombat, actor, target))
+                            ESM4QuestActorCommand::StartCombat, actor, target, false))
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: StartCombat actor=" << subject
                                          << " target=" << tokens[1];
@@ -4935,20 +5058,22 @@ namespace MWWorld
                     }
                 }
                 else if ((Misc::StringUtils::ciEqual(command, "StopCombat") && tokens.size() == 1)
+                    || (Misc::StringUtils::ciEqual(command, "ResetHealth") && tokens.size() == 1)
                     || (Misc::StringUtils::ciEqual(command, "StopLook")
                         && (tokens.size() == 1 || tokens.size() == 2)))
                 {
                     const ESM::FormId actor = sourceOwnerId();
-                    const ESM4QuestActorCommand actorCommand
-                        = Misc::StringUtils::ciEqual(command, "StopCombat")
-                        ? ESM4QuestActorCommand::StopCombat
-                        : ESM4QuestActorCommand::StopLook;
+                    ESM4QuestActorCommand actorCommand = ESM4QuestActorCommand::StopLook;
+                    if (Misc::StringUtils::ciEqual(command, "StopCombat"))
+                        actorCommand = ESM4QuestActorCommand::StopCombat;
+                    else if (Misc::StringUtils::ciEqual(command, "ResetHealth"))
+                        actorCommand = ESM4QuestActorCommand::ResetHealth;
                     const ESM::FormId target = tokens.size() == 2
                         ? sourceReferenceId(tokens[1])
                         : ESM::FormId{};
                     if (!actor.isZeroOrUnset() && mActorCommandHandler
                         && (tokens.size() == 1 || !target.isZeroOrUnset())
-                        && mActorCommandHandler(actorCommand, actor, target))
+                        && mActorCommandHandler(actorCommand, actor, target, false))
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: " << command
                                          << " actor=" << subject;
@@ -5465,6 +5590,67 @@ namespace MWWorld
                     continue;
                 }
             }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "RemoveAllTypedItems")
+                && (ownerActor || ownerReference) && tokens.size() >= 1 && tokens.size() <= 6)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                const ESM::FormId owner = ownerActor ? *ownerActor : *ownerReference;
+                std::optional<ESM::FormId> destination;
+                std::optional<ESM::FormId> exceptionList;
+                std::size_t argument = 1;
+                bool valid = true;
+                if (tokens.size() >= 2)
+                {
+                    const ESM::FormId resolved = Misc::StringUtils::ciEqual(tokens[1], "player")
+                            || Misc::StringUtils::ciEqual(tokens[1], "playerref")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(tokens[1]);
+                    valid = !resolved.isZeroOrUnset();
+                    if (valid)
+                        destination = resolved;
+                    argument = 2;
+                }
+                bool retainOwnership = false;
+                if (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> retain = sourceInteger(sourceTokens, argument);
+                    valid = retain && (*retain == 0 || *retain == 1);
+                    retainOwnership = valid && *retain != 0;
+                }
+                if (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> silent = sourceInteger(sourceTokens, argument);
+                    valid = silent && (*silent == 0 || *silent == 1);
+                }
+                std::int32_t type = -1;
+                if (valid && argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> parsedType = sourceInteger(sourceTokens, argument);
+                    valid = parsedType.has_value();
+                    if (valid)
+                        type = *parsedType;
+                }
+                if (valid && argument < sourceTokens.size())
+                {
+                    const ESM::FormId resolved = resolveFormList(sourceTokens[argument++]);
+                    valid = !resolved.isZeroOrUnset();
+                    if (valid)
+                        exceptionList = resolved;
+                }
+                if (valid && argument == sourceTokens.size() && mRemoveAllTypedItemsHandler
+                    && mRemoveAllTypedItemsHandler(owner, destination, retainOwnership, type, exceptionList))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: RemoveAllTypedItems owning actor="
+                                     << ESM::RefId(owner).serializeText() << " destination="
+                                     << (destination ? ESM::RefId(*destination).serializeText()
+                                                     : std::string("none"))
+                                     << " retainOwnership=" << retainOwnership << " type=" << type
+                                     << " exceptionList="
+                                     << (exceptionList ? ESM::RefId(*exceptionList).serializeText()
+                                                       : std::string("none"));
+                    continue;
+                }
+            }
             else if ((Misc::StringUtils::ciEqual(tokens[0], "EquipItem")
                          || Misc::StringUtils::ciEqual(tokens[0], "UnequipItem"))
                 && (ownerActor || ownerReference) && tokens.size() >= 2 && tokens.size() <= 4)
@@ -5492,9 +5678,12 @@ namespace MWWorld
                 }
             }
             else if ((Misc::StringUtils::ciEqual(tokens[0], "SetUnconscious")
-                         || Misc::StringUtils::ciEqual(tokens[0], "SetRestrained")
-                         || Misc::StringUtils::ciEqual(tokens[0], "SetPlayerTeammate")
-                         || Misc::StringUtils::ciEqual(tokens[0], "IgnoreCrime"))
+                          || Misc::StringUtils::ciEqual(tokens[0], "SetRestrained")
+                          || Misc::StringUtils::ciEqual(tokens[0], "SetPlayerTeammate")
+                          || Misc::StringUtils::ciEqual(tokens[0], "IgnoreCrime")
+                          || Misc::StringUtils::ciEqual(tokens[0], "SetGhost")
+                          || Misc::StringUtils::ciEqual(tokens[0], "SetIgnoreFriendlyHits")
+                          || Misc::StringUtils::ciEqual(tokens[0], "SetAlert"))
                 && (ownerActor || ownerReference) && tokens.size() >= 2)
             {
                 const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
@@ -5513,6 +5702,34 @@ namespace MWWorld
                     continue;
                 }
             }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "Look")
+                && (ownerActor || ownerReference) && tokens.size() >= 2 && tokens.size() <= 3)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                bool rotateBody = false;
+                bool valid = true;
+                if (argument < sourceTokens.size())
+                {
+                    const std::optional<std::int32_t> rotate = sourceInteger(sourceTokens, argument);
+                    valid = rotate && (*rotate == 0 || *rotate == 1);
+                    rotateBody = valid && *rotate != 0;
+                }
+                const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
+                const ESM::FormId target = Misc::StringUtils::ciEqual(tokens[1], "player")
+                        || Misc::StringUtils::ciEqual(tokens[1], "playerref")
+                    ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                    : resolveReference(tokens[1]);
+                if (valid && argument == sourceTokens.size() && !target.isZeroOrUnset()
+                    && mActorCommandHandler
+                    && mActorCommandHandler(ESM4QuestActorCommand::Look, actor, target, rotateBody))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: Look owning actor="
+                                     << ESM::RefId(actor).serializeText() << " target=" << tokens[1]
+                                     << " rotateBody=" << rotateBody;
+                    continue;
+                }
+            }
             else if (Misc::StringUtils::ciEqual(tokens[0], "StartCombat")
                 && (ownerActor || ownerReference) && tokens.size() == 2)
             {
@@ -5522,7 +5739,7 @@ namespace MWWorld
                     ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
                     : resolveReference(tokens[1]);
                 if (!target.isZeroOrUnset() && mActorCommandHandler
-                    && mActorCommandHandler(ESM4QuestActorCommand::StartCombat, actor, target))
+                    && mActorCommandHandler(ESM4QuestActorCommand::StartCombat, actor, target, false))
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: StartCombat owning actor="
                                      << ESM::RefId(actor).serializeText() << " target=" << tokens[1];
@@ -5530,15 +5747,17 @@ namespace MWWorld
                 }
             }
             else if (((Misc::StringUtils::ciEqual(tokens[0], "StopCombat") && tokens.size() == 1)
+                         || (Misc::StringUtils::ciEqual(tokens[0], "ResetHealth") && tokens.size() == 1)
                          || (Misc::StringUtils::ciEqual(tokens[0], "StopLook")
-                             && (tokens.size() == 1 || tokens.size() == 2)))
+                              && (tokens.size() == 1 || tokens.size() == 2)))
                 && (ownerActor || ownerReference))
             {
                 const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
-                const ESM4QuestActorCommand command
-                    = Misc::StringUtils::ciEqual(tokens[0], "StopCombat")
-                    ? ESM4QuestActorCommand::StopCombat
-                    : ESM4QuestActorCommand::StopLook;
+                ESM4QuestActorCommand command = ESM4QuestActorCommand::StopLook;
+                if (Misc::StringUtils::ciEqual(tokens[0], "StopCombat"))
+                    command = ESM4QuestActorCommand::StopCombat;
+                else if (Misc::StringUtils::ciEqual(tokens[0], "ResetHealth"))
+                    command = ESM4QuestActorCommand::ResetHealth;
                 const ESM::FormId target = tokens.size() == 2
                     ? (Misc::StringUtils::ciEqual(tokens[1], "player")
                             || Misc::StringUtils::ciEqual(tokens[1], "playerref")
@@ -5546,7 +5765,7 @@ namespace MWWorld
                         : resolveReference(tokens[1]))
                     : ESM::FormId{};
                 if ((tokens.size() == 1 || !target.isZeroOrUnset())
-                    && mActorCommandHandler && mActorCommandHandler(command, actor, target))
+                    && mActorCommandHandler && mActorCommandHandler(command, actor, target, false))
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: " << tokens[0]
                                      << " owning actor=" << ESM::RefId(actor).serializeText();

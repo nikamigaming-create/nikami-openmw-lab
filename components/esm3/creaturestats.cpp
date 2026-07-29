@@ -229,9 +229,28 @@ namespace ESM
 
         mFalloutRuntimeFlags = 0;
         esm.getHNOT(mFalloutRuntimeFlags, "FRTF");
-        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x0f;
+        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x3f;
         if ((mFalloutRuntimeFlags & ~KnownFalloutRuntimeFlags) != 0)
             esm.fail("Invalid Fallout actor runtime flags");
+
+        mFalloutLookTarget.reset();
+        mFalloutLookRotateBody = false;
+        if (esm.peekNextSub("FLKT"))
+        {
+            ESM::FormId target = esm.getFormId(true, "FLKT");
+            const bool contentAvailable = esm.applyContentFileMapping(target);
+            std::uint8_t rotateBody = 0;
+            esm.getHNOT(rotateBody, "FLKR");
+            if (rotateBody > 1)
+                esm.fail("Invalid Fallout scripted look flag");
+            if (contentAvailable)
+            {
+                if (target.isZeroOrUnset())
+                    esm.fail("Invalid Fallout scripted look target");
+                mFalloutLookTarget = target;
+                mFalloutLookRotateBody = rotateBody != 0;
+            }
+        }
 
         mHasFalloutEquipmentOverride = false;
         mFalloutEquippedItems.clear();
@@ -369,6 +388,11 @@ namespace ESM
         }
         if (mFalloutRuntimeFlags != 0)
             esm.writeHNT("FRTF", mFalloutRuntimeFlags);
+        if (mFalloutLookTarget)
+        {
+            esm.writeFormId(*mFalloutLookTarget, true, "FLKT");
+            esm.writeHNT("FLKR", static_cast<std::uint8_t>(mFalloutLookRotateBody ? 1 : 0));
+        }
         if (mHasFalloutEquipmentOverride)
         {
             esm.writeHNT("FEQC", static_cast<std::uint32_t>(mFalloutEquippedItems.size()));
@@ -408,6 +432,8 @@ namespace ESM
         mFalloutActorValueOverrides.clear();
         mFalloutFactionOverrides.clear();
         mFalloutRuntimeFlags = 0;
+        mFalloutLookTarget.reset();
+        mFalloutLookRotateBody = false;
         mHasFalloutEquipmentOverride = false;
         mFalloutEquippedItems.clear();
     }

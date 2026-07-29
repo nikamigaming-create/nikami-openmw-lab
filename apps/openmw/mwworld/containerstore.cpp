@@ -422,6 +422,12 @@ std::optional<int> MWWorld::ContainerStore::getFalloutLoadedAmmo(const ESM::RefI
     return found->second;
 }
 
+void MWWorld::ContainerStore::clearFalloutWeaponState(const ESM::RefId& weapon)
+{
+    mFalloutAmmoSelections.erase(weapon);
+    mFalloutLoadedAmmo.erase(weapon);
+}
+
 void MWWorld::ContainerStore::updateRefNums()
 {
     for (const auto& iter : *this)

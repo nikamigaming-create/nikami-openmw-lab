@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -103,6 +104,8 @@ namespace ESM
         // equipped set after the first EquipItem/UnequipItem/RemoveAllItems mutation; the explicit presence bit
         // distinguishes "authored base equipment" from an intentionally empty equipped set.
         std::uint32_t mFalloutRuntimeFlags = 0;
+        std::optional<ESM::FormId> mFalloutLookTarget;
+        bool mFalloutLookRotateBody = false;
         bool mHasFalloutEquipmentOverride = false;
         std::vector<ESM::FormId> mFalloutEquippedItems;
 

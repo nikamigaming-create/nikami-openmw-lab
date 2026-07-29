@@ -597,7 +597,10 @@ namespace MWWorld
             {
                 if constexpr (ESM::isESM4Rec(T::sRecordId))
                 {
-                    if (T::sRecordId == esm4RecName)
+                    const bool falloutMiscAlias = std::is_same_v<T, ESM4::MiscItem>
+                        && (recordType == ESM4::REC_CHIP || recordType == ESM4::REC_CCRD
+                            || recordType == ESM4::REC_CMNY);
+                    if (T::sRecordId == esm4RecName || falloutMiscAlias)
                     {
                         reader.getRecordData();
                         T value;
@@ -719,6 +722,8 @@ namespace MWWorld
 
             // These typed loaders implement only the frozen Fallout: New Vegas contracts.
             if ((recordType == ESM4::REC_AMEF || recordType == ESM4::REC_AVIF || recordType == ESM4::REC_EXPL
+                    || recordType == ESM4::REC_CHIP || recordType == ESM4::REC_CCRD
+                    || recordType == ESM4::REC_CMNY
                     || recordType == ESM4::REC_FACT || recordType == ESM4::REC_IPCT
                     || recordType == ESM4::REC_IPDS || recordType == ESM4::REC_MESG
                     || recordType == ESM4::REC_MGEF || recordType == ESM4::REC_PERK

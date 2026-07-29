@@ -73,6 +73,8 @@ namespace MWMechanics
         std::map<std::uint8_t, float> mFalloutActorValueOverrides;
         std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
         std::uint32_t mFalloutRuntimeFlags = 0;
+        std::optional<ESM::FormId> mFalloutLookTarget;
+        bool mFalloutLookRotateBody = false;
         bool mHasFalloutEquipmentOverride = false;
         std::vector<ESM::FormId> mFalloutEquippedItems;
 
@@ -152,6 +154,9 @@ namespace MWMechanics
         std::uint32_t getFalloutRuntimeFlags() const { return mFalloutRuntimeFlags; }
         bool getFalloutRuntimeFlag(std::uint32_t flag) const { return (mFalloutRuntimeFlags & flag) != 0; }
         bool setFalloutRuntimeFlag(std::uint32_t flag, bool enabled);
+        std::optional<ESM::FormId> getFalloutLookTarget() const { return mFalloutLookTarget; }
+        bool getFalloutLookRotateBody() const { return mFalloutLookTarget && mFalloutLookRotateBody; }
+        bool setFalloutLookTarget(std::optional<ESM::FormId> target, bool rotateBody);
         bool hasFalloutEquipmentOverride() const { return mHasFalloutEquipmentOverride; }
         const std::vector<ESM::FormId>& getFalloutEquippedItems() const { return mFalloutEquippedItems; }
         bool setFalloutEquipmentOverride(std::vector<ESM::FormId> items);

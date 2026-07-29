@@ -170,6 +170,24 @@ namespace MWDialogue
                     ? 1.f
                     : 0.f;
                 break;
+            case ESM4::FUN_GetIsGhost:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::Ghost)
+                    ? 1.f
+                    : 0.f;
+                break;
+            case ESM4::FUN_GetIgnoreFriendlyHits:
+                actual = MWMechanics::getFalloutActorFlag(
+                    actor, MWMechanics::FalloutActorFlag::IgnoreFriendlyHits)
+                    ? 1.f
+                    : 0.f;
+                break;
+            case ESM4::FUN_GetIsAlerted:
+                actual = actor.getClass().getCreatureStats(actor).getDrawState()
+                        != MWMechanics::DrawState::Nothing
+                    ? 1.f
+                    : 0.f;
+                break;
             case ESM4::FUN_GetDestroyed:
                 actual = actor.getRefData().isDestroyed() ? 1.f : 0.f;
                 break;

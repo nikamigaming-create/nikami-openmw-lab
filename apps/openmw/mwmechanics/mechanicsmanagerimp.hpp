@@ -109,6 +109,8 @@ namespace MWMechanics
             const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, const std::set<MWWorld::Ptr>* targetAllies) override;
 
         void stopCombat(const MWWorld::Ptr& ptr) override;
+        bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            ESM::FormId targetId, bool rotateBody) override;
         void stopLooking(const MWWorld::Ptr& ptr) override;
 
         bool playFalloutDialogueAnimation(
