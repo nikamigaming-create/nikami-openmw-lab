@@ -439,6 +439,7 @@ namespace MWWorld
             CompleteAllObjectives,
             ForceActiveQuest,
             SetVariable,
+            SetActorScriptVariable,
             SetVariableFromItemCount,
             SetAlly,
             SetEnemy,
@@ -582,6 +583,7 @@ namespace MWWorld
             bool mSecondaryValue = false;
             std::int32_t mCount = 0;
             float mNumber = 0.f;
+            std::string mVariable;
         };
 
         struct CompiledStageWorkingState

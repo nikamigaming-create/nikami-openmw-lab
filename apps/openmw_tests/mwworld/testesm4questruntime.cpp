@@ -730,6 +730,138 @@ TEST(ESM4QuestRuntimeTest, RoutesCompiledAndSourceScriptPackagesThroughOneEngine
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesRetailCg00ActorLocalWritesBeforeBirthPackage)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x01f388, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId dadId{ .mIndex = 0x0290a7, .mContentFile = 6 };
+    const ESM::FormId dadBaseId{ .mIndex = 0x1202f3, .mContentFile = 0 };
+    const ESM::FormId dadScriptId{ .mIndex = 0x1202f4, .mContentFile = 0 };
+    const ESM::FormId packageId{ .mIndex = 0x038ea3, .mContentFile = 0 };
+
+    ESM4::Script dadScript;
+    dadScript.mId = dadScriptId;
+    dadScript.mScript.scriptSource
+        = "scn CG00DadScript\n"
+          "short doTalk\n"
+          "float timer\n"
+          "Begin GameMode\n"
+          "  if GetStage CG00 == 10\n"
+          "  endif\n"
+          "End";
+    dadScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "doTalk" },
+        ESM4::ScriptLocalVariableData{ .index = 3, .variableName = "timer" },
+    };
+    store.overrideRecord(dadScript);
+
+    ESM4::Npc dadBase;
+    dadBase.mId = dadBaseId;
+    dadBase.mScriptId = dadScriptId;
+    store.overrideRecord(dadBase);
+    ESM4::ActorCharacter dad;
+    dad.mId = dadId;
+    dad.mBaseObj = dadBaseId;
+    dad.mEditorId = "CG00DadREF";
+    store.overrideRecord(dad);
+
+    ESM4::AIPackage package;
+    package.mId = packageId;
+    package.mEditorId = "CG00PlayerSection1";
+    store.overrideRecord(package);
+
+    ESM4::Quest quest = makeQuest(questId, "CG00");
+    ESM4::QuestStageEntry initializeEntry;
+    initializeEntry.mScript.scriptSource
+        = "set CG00DadREF.doTalk to 9\n"
+          "set CG00DadREF.timer to 7";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(initializeEntry) } });
+
+    ESM4::QuestStageEntry birthEntry;
+    // Fallout3.esm / TaleOfTwoWastelands.esm CG00 stage 10 entry 0,
+    // byte-for-byte. The first two frames set locals on Dad's placed
+    // actor script, then the third assigns the player's birth package.
+    birthEntry.mScript.compiledData = {
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x02, 0x00, 0x73, 0x01, 0x00, 0x02, 0x00, 0x20, 0x31,
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x02, 0x00, 0x66, 0x03, 0x00, 0x02, 0x00, 0x20, 0x30,
+        0x1c, 0x00, 0x01, 0x00, 0x97, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x03, 0x00,
+    };
+    birthEntry.mScript.references = { playerId, dadId, packageId };
+    birthEntry.mScript.scriptSource
+        = "set CG00DadREF.doTalk to 1\n"
+          "set CG00DadREF.timer to 0\n"
+          "player.addScriptPackage CG00PlayerSection1";
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(birthEntry) } });
+
+    ESM4::QuestStageEntry inspectEntry;
+    inspectEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x0f, 0x10, 0x0a, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00,
+        0x1c, 0x00, 0x01, 0x00, 0x0f, 0x10, 0x0a, 0x00,
+        0x02, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00, 0x73, 0x03, 0x00,
+    };
+    inspectEntry.mScript.references = { dadId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(inspectEntry) } });
+
+    ESM4::QuestStageEntry transactionalEntry;
+    transactionalEntry.mScript.compiledData = {
+        0x15, 0x00, 0x0a, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00, 0x02, 0x00, 0x20, 0x34,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x19, 0x00, 0x00, 0x00,
+    };
+    transactionalEntry.mScript.references = { dadId, questId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(transactionalEntry) } });
+    quest.mStages.push_back({ .mIndex = 25 });
+
+    ESM4::QuestStageEntry inspectTransactionEntry;
+    inspectTransactionEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x0f, 0x10, 0x0a, 0x00,
+        0x02, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x73, 0x01, 0x00,
+    };
+    inspectTransactionEntry.mScript.references = { dadId };
+    quest.mStages.push_back({ .mIndex = 30, .mEntries = { std::move(inspectTransactionEntry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>> packageChanges;
+    runtime.setScriptPackageHandler(
+        [&](ESM::FormId actor, std::optional<ESM::FormId> actorPackage) {
+            packageChanges.emplace_back(actor, actorPackage);
+            return true;
+        });
+    std::vector<std::tuple<std::uint8_t, float>> actorValues;
+    runtime.setCompiledActorValueCommandHandler(
+        [&](ESM::FormId actor, MWWorld::ESM4QuestActorValueCommand command,
+            std::uint8_t actorValue, float value) {
+            EXPECT_EQ(actor, dadId);
+            EXPECT_EQ(command, MWWorld::ESM4QuestActorValueCommand::Set);
+            actorValues.emplace_back(actorValue, value);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_TRUE(runtime.setStage(questId, 10));
+    ASSERT_TRUE(runtime.setStage(questId, 15));
+    ASSERT_TRUE(runtime.setStage(questId, 20));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 25);
+    ASSERT_TRUE(runtime.setStage(questId, 30));
+
+    EXPECT_EQ(packageChanges,
+        (std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>>{
+            { playerId, packageId },
+        }));
+    EXPECT_EQ(actorValues,
+        (std::vector<std::tuple<std::uint8_t, float>>{
+            { 0, 1.f },
+            { 1, 0.f },
+            { 2, 4.f },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledScriptPackageCommandsWithoutMutation)
 {
     MWWorld::ESMStore store;
