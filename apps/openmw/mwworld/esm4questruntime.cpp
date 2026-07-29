@@ -1456,6 +1456,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
+                && instruction.opcode != 0x1219
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
@@ -2031,6 +2032,21 @@ namespace MWWorld
                 CompiledQuestCommand command;
                 command.mType = CompiledQuestCommandType::AddAchievement;
                 command.mObjective = *achievement;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1219) // AddSPECIALPoints amount
+            {
+                // All 20 Fallout 3/New Vegas base-master quest frames are
+                // global calls with one positive literal integer (always 1).
+                if (instruction.callingReferenceIndex || arguments.size() != 1
+                    || !mAddSpecialPointsHandler)
+                    return false;
+                const std::int32_t* amount = std::get_if<std::int32_t>(&arguments[0]);
+                if (amount == nullptr || *amount <= 0)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::AddSpecialPoints;
+                command.mObjective = *amount;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x1239) // AddReputation reputation infamy/fame bump
@@ -2736,6 +2752,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::SetPerk
             || command.mType == CompiledQuestCommandType::SetQuestObject
             || command.mType == CompiledQuestCommandType::AddAchievement
+            || command.mType == CompiledQuestCommandType::AddSpecialPoints
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
@@ -2851,6 +2868,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetPerk:
             case CompiledQuestCommandType::SetQuestObject:
             case CompiledQuestCommandType::AddAchievement:
+            case CompiledQuestCommandType::AddSpecialPoints:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
@@ -3048,6 +3066,10 @@ namespace MWWorld
                     executed = mAchievementHandler
                         && mAchievementHandler(static_cast<std::uint32_t>(effect.mCount));
                     break;
+                case CompiledQuestCommandType::AddSpecialPoints:
+                    command = "AddSPECIALPoints ";
+                    executed = mAddSpecialPointsHandler && mAddSpecialPointsHandler(effect.mCount);
+                    break;
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
                     executed = mSayToHandler && mSayToHandler(effect.mTarget, effect.mListener, effect.mTopic);
@@ -3131,6 +3153,8 @@ namespace MWWorld
             else if (effect.mType == CompiledQuestCommandType::RewardXp)
                 command += std::to_string(effect.mCount);
             else if (effect.mType == CompiledQuestCommandType::AddAchievement)
+                command += std::to_string(effect.mCount);
+            else if (effect.mType == CompiledQuestCommandType::AddSpecialPoints)
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
@@ -3473,6 +3497,10 @@ namespace MWWorld
                             executed = mAchievementHandler
                                 && mAchievementHandler(static_cast<std::uint32_t>(command.mObjective));
                             break;
+                        case CompiledQuestCommandType::AddSpecialPoints:
+                            executed = mAddSpecialPointsHandler
+                                && mAddSpecialPointsHandler(command.mObjective);
+                            break;
                         case CompiledQuestCommandType::SayTo:
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
@@ -3509,6 +3537,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetPerk
                             || command.mType == CompiledQuestCommandType::SetQuestObject
                             || command.mType == CompiledQuestCommandType::AddAchievement
+                            || command.mType == CompiledQuestCommandType::AddSpecialPoints
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
@@ -3556,6 +3585,8 @@ namespace MWWorld
                                     + " " + std::to_string(static_cast<int>(command.mValue));
                             else if (command.mType == CompiledQuestCommandType::AddAchievement)
                                 failure = "AddAchievement " + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::AddSpecialPoints)
+                                failure = "AddSPECIALPoints " + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

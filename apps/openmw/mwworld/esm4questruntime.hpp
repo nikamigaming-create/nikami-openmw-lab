@@ -442,6 +442,7 @@ namespace MWWorld
             SetPerk,
             SetQuestObject,
             AddAchievement,
+            AddSpecialPoints,
             SayTo,
             RewardXp,
             AddReputation,

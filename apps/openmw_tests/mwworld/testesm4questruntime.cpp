@@ -1267,6 +1267,83 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledSetQuestObjectWithoutMutation
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledAddSpecialPointsAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120311, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledAddSpecialPointsQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x19, 0x12, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<int> rewards;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setAddSpecialPointsHandler([&](int amount) {
+        rewards.push_back(amount);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(rewards, (std::vector<int>{ 1 }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledAddSpecialPointsWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120312, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedAddSpecialPointsQuest");
+    ESM4::QuestStageEntry qualified;
+    qualified.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x19, 0x12, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00
+    };
+    qualified.mScript.references = { playerId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(qualified) } });
+    ESM4::QuestStageEntry zero;
+    zero.mScript.compiledData = {
+        0x19, 0x12, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(zero) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setAddSpecialPointsHandler([&](int) {
+        ++commands;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
