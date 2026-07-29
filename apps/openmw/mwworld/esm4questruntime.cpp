@@ -5197,27 +5197,32 @@ namespace MWWorld
                     }
                 }
                 else if ((Misc::StringUtils::ciEqual(command, "AddToFaction")
-                             || Misc::StringUtils::ciEqual(command, "RemoveFromFaction"))
+                             || Misc::StringUtils::ciEqual(command, "RemoveFromFaction")
+                             || Misc::StringUtils::ciEqual(command, "SetFactionRank"))
                     && tokens.size() >= 2 && tokens.size() <= 3)
                 {
                     const bool add = Misc::StringUtils::ciEqual(command, "AddToFaction");
+                    const bool setRank = Misc::StringUtils::ciEqual(command, "SetFactionRank");
                     std::optional<int> rank;
-                    bool valid = add || tokens.size() == 2;
-                    if (add)
+                    bool valid = !add && !setRank && tokens.size() == 2;
+                    if (add || setRank)
                     {
-                        rank = 0;
-                        valid = true;
-                        if (tokens.size() == 3)
+                        valid = add ? tokens.size() >= 2 : tokens.size() == 3;
+                        if (valid)
                         {
-                            const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
-                            std::size_t argument = 2;
-                            const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
-                            valid = parsed
-                                && *parsed >= std::numeric_limits<std::int8_t>::min()
-                                && *parsed <= std::numeric_limits<std::int8_t>::max()
-                                && argument == sourceTokens.size();
-                            if (valid)
-                                rank = *parsed;
+                            rank = 0;
+                            if (tokens.size() == 3)
+                            {
+                                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                                std::size_t argument = 2;
+                                const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                                valid = parsed
+                                    && *parsed >= std::numeric_limits<std::int8_t>::min()
+                                    && *parsed <= std::numeric_limits<std::int8_t>::max()
+                                    && argument == sourceTokens.size();
+                                if (valid)
+                                    rank = setRank && *parsed == -1 ? std::nullopt : std::optional<int>(*parsed);
+                            }
                         }
                     }
                     const ESM::FormId actor = sourceOwnerId();
@@ -5226,8 +5231,7 @@ namespace MWWorld
                         && mActorFactionCommandHandler
                         && mActorFactionCommandHandler(actor, faction, rank))
                     {
-                        Log(Debug::Info) << "FNV/ESM4 behavior: "
-                                         << (add ? "AddToFaction" : "RemoveFromFaction")
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << command
                                          << " actor=" << subject << " faction=" << tokens[1]
                                          << " rank=" << (rank ? std::to_string(*rank) : std::string("removed"));
                         continue;
@@ -5942,26 +5946,32 @@ namespace MWWorld
                 }
             }
             else if ((Misc::StringUtils::ciEqual(tokens[0], "AddToFaction")
-                         || Misc::StringUtils::ciEqual(tokens[0], "RemoveFromFaction"))
+                         || Misc::StringUtils::ciEqual(tokens[0], "RemoveFromFaction")
+                         || Misc::StringUtils::ciEqual(tokens[0], "SetFactionRank"))
                 && (ownerActor || ownerReference) && tokens.size() >= 2 && tokens.size() <= 3)
             {
                 const bool add = Misc::StringUtils::ciEqual(tokens[0], "AddToFaction");
+                const bool setRank = Misc::StringUtils::ciEqual(tokens[0], "SetFactionRank");
                 std::optional<int> rank;
-                bool valid = add || tokens.size() == 2;
-                if (add)
+                bool valid = !add && !setRank && tokens.size() == 2;
+                if (add || setRank)
                 {
-                    rank = 0;
-                    if (tokens.size() == 3)
+                    valid = add ? tokens.size() >= 2 : tokens.size() == 3;
+                    if (valid)
                     {
-                        const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
-                        std::size_t argument = 2;
-                        const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
-                        valid = parsed
-                            && *parsed >= std::numeric_limits<std::int8_t>::min()
-                            && *parsed <= std::numeric_limits<std::int8_t>::max()
-                            && argument == sourceTokens.size();
-                        if (valid)
-                            rank = *parsed;
+                        rank = 0;
+                        if (tokens.size() == 3)
+                        {
+                            const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                            std::size_t argument = 2;
+                            const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                            valid = parsed
+                                && *parsed >= std::numeric_limits<std::int8_t>::min()
+                                && *parsed <= std::numeric_limits<std::int8_t>::max()
+                                && argument == sourceTokens.size();
+                            if (valid)
+                                rank = setRank && *parsed == -1 ? std::nullopt : std::optional<int>(*parsed);
+                        }
                     }
                 }
                 const ESM::FormId actor = ownerActor ? *ownerActor : *ownerReference;
@@ -5969,8 +5979,7 @@ namespace MWWorld
                 if (valid && !faction.isZeroOrUnset() && mActorFactionCommandHandler
                     && mActorFactionCommandHandler(actor, faction, rank))
                 {
-                    Log(Debug::Info) << "FNV/ESM4 behavior: "
-                                     << (add ? "AddToFaction" : "RemoveFromFaction")
+                    Log(Debug::Info) << "FNV/ESM4 behavior: " << tokens[0]
                                      << " owning actor=" << ESM::RefId(actor).serializeText()
                                      << " faction=" << tokens[1]
                                      << " rank=" << (rank ? std::to_string(*rank) : std::string("removed"));

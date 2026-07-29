@@ -1153,6 +1153,44 @@ TEST(ESM4QuestRuntimeTest, ExecutesActorValuesAndPerReferenceFactionsFromSourceF
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesSetFactionRankAndTreatsMinusOneAsRemoval)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12015d, .mContentFile = 0 };
+    const ESM::FormId factionId{ .mIndex = 0x12015e, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "SetFactionRankQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "Player.SetFactionRank SetFactionRankFaction 0\n"
+          "Player.SetFactionRank SetFactionRankFaction -1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Faction faction;
+    faction.mId = factionId;
+    faction.mEditorId = "SetFactionRankFaction";
+    store.overrideRecord(faction);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::optional<int>> ranks;
+    runtime.setActorFactionCommandHandler(
+        [&](ESM::FormId actor, ESM::FormId factionRef, std::optional<int> rank) {
+            if (actor != playerId || factionRef != factionId)
+                return false;
+            ranks.push_back(rank);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_EQ(ranks.size(), 2);
+    EXPECT_EQ(ranks[0], 0);
+    EXPECT_FALSE(ranks[1].has_value());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
 {
     MWWorld::ESMStore store;
