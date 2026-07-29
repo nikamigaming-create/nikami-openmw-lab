@@ -1502,7 +1502,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1072
                 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
-                && instruction.opcode != 0x108b
+                && instruction.opcode != 0x1089 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x1097 && instruction.opcode != 0x1098
                 && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10ab
@@ -2294,6 +2294,34 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetPerk;
                 command.mQuest = *perk;
                 command.mValue = true;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1089) // actor.SetFactionRank faction rank
+            {
+                // All nine combined base-master frames are player-qualified
+                // calls with one FACT reference and rank 0 or -1. Preserve
+                // the source command's signed-byte contract: -1 removes.
+                if (!instruction.callingReferenceIndex || arguments.size() != 2
+                    || !mActorFactionCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const ESM::FormId* faction = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* rank = std::get_if<std::int32_t>(&arguments[1]);
+                if (!actorExists || faction == nullptr || rank == nullptr
+                    || *rank < std::numeric_limits<std::int8_t>::min()
+                    || *rank > std::numeric_limits<std::int8_t>::max()
+                    || mStore->get<ESM4::Faction>().search(ESM::RefId(*faction)) == nullptr)
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetActorFaction;
+                command.mQuest = actor;
+                command.mTarget = *faction;
+                command.mValue = *rank != -1;
+                command.mObjective = *rank;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x10ab) // actor.IgnoreCrime enabled
