@@ -981,6 +981,105 @@ TEST(ESM4QuestRuntimeTest, RejectsCompiledAddPerkForNonPlayerReceiver)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledLockThroughNativeReferenceStateAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120302, .mContentFile = 0 };
+    const ESM::FormId defaultDoorId{ .mIndex = 0x120303, .mContentFile = 0 };
+    const ESM::FormId sealedDoorId{ .mIndex = 0x120304, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledLockQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // Default lock level.
+        0x1c, 0x00, 0x01, 0x00, 0x72, 0x10, 0x02, 0x00, 0x00, 0x00,
+        // Explicit retail level 255.
+        0x1c, 0x00, 0x02, 0x00, 0x72, 0x10, 0x07, 0x00, 0x01, 0x00, 0x6e, 0xff, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { defaultDoorId, sealedDoorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Reference defaultDoor;
+    defaultDoor.mId = defaultDoorId;
+    store.overrideRecord(defaultDoor);
+    ESM4::Reference sealedDoor;
+    sealedDoor.mId = sealedDoorId;
+    store.overrideRecord(sealedDoor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, std::optional<int>>> locks;
+    std::vector<std::uint8_t> stagesAtLock;
+    runtime.setLockHandler([&](ESM::FormId reference, std::optional<int> level) {
+        locks.emplace_back(reference, level);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtLock.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(locks,
+        (std::vector<std::pair<ESM::FormId, std::optional<int>>>{
+            { defaultDoorId, std::nullopt },
+            { sealedDoorId, 255 },
+        }));
+    EXPECT_EQ(stagesAtLock, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledLockWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120305, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120306, .mContentFile = 0 };
+    const ESM::FormId doorId{ .mIndex = 0x120307, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedLockQuest");
+    ESM4::QuestStageEntry actorTarget;
+    actorTarget.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0x72, 0x10, 0x02, 0x00, 0x00, 0x00 };
+    actorTarget.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(actorTarget) } });
+    ESM4::QuestStageEntry invalidLevel;
+    invalidLevel.mScript.compiledData = { 0x1c, 0x00, 0x01, 0x00, 0x72, 0x10, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x00, 0x01, 0x00, 0x00 };
+    invalidLevel.mScript.references = { doorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(invalidLevel) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Reference door;
+    door.mId = doorId;
+    store.overrideRecord(door);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int locks = 0;
+    runtime.setLockHandler([&](ESM::FormId, std::optional<int>) {
+        ++locks;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(locks, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };

@@ -1443,7 +1443,8 @@ namespace MWWorld
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
                 && instruction.opcode != 0x1055 && instruction.opcode != 0x1059 && instruction.opcode != 0x105e
-                && instruction.opcode != 0x1071 && instruction.opcode != 0x1073
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x1072
+                && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
                 && instruction.opcode != 0x108b
                 && instruction.opcode != 0x1097 && instruction.opcode != 0x1098
@@ -2042,6 +2043,32 @@ namespace MWWorld
                 else if (instruction.opcode == 0x1073)
                     type = CompiledQuestCommandType::Unlock;
                 prepared.mCommands.push_back({ type, target });
+            }
+            else if (instruction.opcode == 0x1072) // reference.Lock [level]
+            {
+                // All 35 base-master frames are placed-reference-qualified.
+                // Six use the default level; the remaining 29 carry one
+                // literal level (100 or 255 in the audited corpus).
+                if (!instruction.callingReferenceIndex || arguments.size() > 1
+                    || !mLockHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId target = script.references[*instruction.callingReferenceIndex - 1];
+                if (mStore->get<ESM4::Reference>().search(target) == nullptr)
+                    return false;
+                std::optional<int> level;
+                if (!arguments.empty())
+                {
+                    const std::int32_t* value = std::get_if<std::int32_t>(&arguments[0]);
+                    if (value == nullptr || *value < 0 || *value > 255)
+                        return false;
+                    level = *value;
+                }
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::Lock;
+                command.mQuest = target;
+                command.mValue = level.has_value();
+                command.mObjective = level.value_or(0);
+                prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x10cc) // reference.SetDestroyed bool
             {
@@ -2661,6 +2688,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
             || command.mType == CompiledQuestCommandType::Unlock
+            || command.mType == CompiledQuestCommandType::Lock
             || command.mType == CompiledQuestCommandType::Kill
             || command.mType == CompiledQuestCommandType::AddItem
             || command.mType == CompiledQuestCommandType::RemoveItem
@@ -2756,6 +2784,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Enable:
             case CompiledQuestCommandType::Disable:
             case CompiledQuestCommandType::Unlock:
+            case CompiledQuestCommandType::Lock:
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::MoveTo:
@@ -2984,6 +3013,12 @@ namespace MWWorld
                     executed = mReferenceCommandHandler
                         && mReferenceCommandHandler(ESM4QuestReferenceCommand::Unlock, effect.mTarget);
                     break;
+                case CompiledQuestCommandType::Lock:
+                    command = "Lock ";
+                    executed = mLockHandler
+                        && mLockHandler(effect.mTarget,
+                            effect.mValue ? std::optional<int>{ effect.mCount } : std::nullopt);
+                    break;
                 case CompiledQuestCommandType::Kill:
                     command = "Kill ";
                     executed = mReferenceCommandHandler
@@ -3052,6 +3087,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::Lock && effect.mValue)
+                command += " " + std::to_string(effect.mCount);
             if (executed)
                 Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
             else
@@ -3311,6 +3348,11 @@ namespace MWWorld
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Unlock, command.mQuest);
                             break;
+                        case CompiledQuestCommandType::Lock:
+                            executed = mLockHandler
+                                && mLockHandler(command.mQuest,
+                                    command.mValue ? std::optional<int>{ command.mObjective } : std::nullopt);
+                            break;
                         case CompiledQuestCommandType::Kill:
                             executed = mReferenceCommandHandler
                                 && mReferenceCommandHandler(ESM4QuestReferenceCommand::Kill, command.mQuest);
@@ -3396,6 +3438,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Enable
                             || command.mType == CompiledQuestCommandType::Disable
                             || command.mType == CompiledQuestCommandType::Unlock
+                            || command.mType == CompiledQuestCommandType::Lock
                             || command.mType == CompiledQuestCommandType::Kill
                             || command.mType == CompiledQuestCommandType::AddItem
                             || command.mType == CompiledQuestCommandType::RemoveItem
@@ -3443,6 +3486,9 @@ namespace MWWorld
                                 failure = "Disable " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::Unlock)
                                 failure = "Unlock " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::Lock)
+                                failure = "Lock " + ESM::RefId(command.mQuest).serializeText()
+                                    + (command.mValue ? " " + std::to_string(command.mObjective) : "");
                             else if (command.mType == CompiledQuestCommandType::Kill)
                                 failure = "Kill " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::AddItem)

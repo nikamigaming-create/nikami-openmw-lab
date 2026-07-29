@@ -427,6 +427,7 @@ namespace MWWorld
             Enable,
             Disable,
             Unlock,
+            Lock,
             Kill,
             ResetAi,
             MoveTo,
