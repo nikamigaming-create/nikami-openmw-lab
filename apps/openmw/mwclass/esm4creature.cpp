@@ -48,6 +48,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvmovement.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/actionopen.hpp"
 #include "../mwworld/actiontalk.hpp"
@@ -1765,6 +1766,25 @@ namespace MWClass
     bool ESM4Creature::isPersistent(const MWWorld::ConstPtr& ptr) const
     {
         return (ptr.get<ESM4::Creature>()->mBase->mFlags & ESM::FLAG_Persistent) != 0;
+    }
+
+    bool ESM4Creature::isEssential(const MWWorld::ConstPtr& ptr) const
+    {
+        const ESM4::Creature* const record = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::Creature* const baseData = getCustomData(ptr).mTemplates.mBaseData;
+        if (record == nullptr || baseData == nullptr)
+            return false;
+
+        if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& state = world->getFalloutPlayerRuntimeState();
+            if (const std::optional<bool> override = state.getEssentialOverride(record->mId))
+                return *override;
+            if (baseData->mId != record->mId)
+                if (const std::optional<bool> override = state.getEssentialOverride(baseData->mId))
+                    return *override;
+        }
+        return (baseData->mBaseConfig.fo3.flags & ESM4::Creature::FO3_Essential) != 0;
     }
 
     bool ESM4Creature::canFly(const MWWorld::ConstPtr& ptr) const

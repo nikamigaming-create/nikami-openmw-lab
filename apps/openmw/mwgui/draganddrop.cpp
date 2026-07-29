@@ -104,7 +104,8 @@ namespace MWGui
         }
 
         // We can't drop a conjured item to the ground; the target container should always be the source container
-        if (mItem.mFlags & ItemStack::Flag_Bound && targetModel != mSourceModel)
+        if (mItem.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest)
+            && targetModel != mSourceModel)
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sBarterDialog12}");
             return;

@@ -10,10 +10,12 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/inventorystore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/manualref.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/world.hpp"
 
 namespace MWGui
 {
@@ -101,7 +103,7 @@ namespace MWGui
     {
         // Can't move conjured items: This is a general fix that also takes care of issues with taking conjured items
         // via the 'Take All' button.
-        if (item.mFlags & ItemStack::Flag_Bound)
+        if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
             return MWWorld::Ptr();
 
         return ItemModel::moveItem(item, count, otherModel, allowAutoEquip);
@@ -110,6 +112,8 @@ namespace MWGui
     void InventoryItemModel::update()
     {
         MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
+        MWBase::World* const world = MWBase::Environment::tryGetWorld();
+        const bool playerInventory = world != nullptr && mActor == world->getPlayerPtr();
 
         mItems.clear();
 
@@ -129,6 +133,12 @@ namespace MWGui
                 continue;
 
             ItemStack newItem(item, this, item.getCellRef().getCount());
+            if (playerInventory)
+            {
+                const ESM::FormId* const formId = item.getCellRef().getRefId().getIf<ESM::FormId>();
+                if (formId != nullptr && world->getFalloutPlayerRuntimeState().isQuestObject(*formId))
+                    newItem.mFlags |= ItemStack::Flag_Quest;
+            }
 
             if (mActor.getClass().hasInventoryStore(mActor))
             {

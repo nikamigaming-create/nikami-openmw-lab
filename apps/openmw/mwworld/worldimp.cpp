@@ -39,7 +39,11 @@
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadnote.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -924,6 +928,76 @@ namespace MWWorld
                                  << " fame=" << fame << " bump=" << bump;
                 return true;
             });
+        mESM4QuestRuntime.setNoteHandler([this](ESM::FormId noteId, bool known) {
+            if (mStore.get<ESM4::Note>().search(ESM::RefId(noteId)) == nullptr)
+                return false;
+            const bool applied = mFalloutPlayerRuntimeState.setNoteKnown(noteId, known);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: " << (known ? "AddNote" : "RemoveNote")
+                                 << " note=" << ESM::RefId(noteId).serializeText();
+            return applied;
+        });
+        mESM4QuestRuntime.setKnownNoteHandler([this](ESM::FormId noteId) -> std::optional<bool> {
+            if (mStore.get<ESM4::Note>().search(ESM::RefId(noteId)) == nullptr)
+                return std::nullopt;
+            return mFalloutPlayerRuntimeState.hasNote(noteId);
+        });
+        mESM4QuestRuntime.setPlayerPerkHandler([this](ESM::FormId perkId, bool add) {
+            const ESM4::Perk* const perk = mStore.get<ESM4::Perk>().search(ESM::RefId(perkId));
+            if (perk == nullptr)
+                return false;
+            const bool applied = add
+                ? mFalloutPlayerRuntimeState.addPerk(perkId, perk->mData.mRankCount)
+                : mFalloutPlayerRuntimeState.removePerk(perkId);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: " << (add ? "AddPerk" : "RemovePerk")
+                                 << " perk=" << ESM::RefId(perkId).serializeText();
+            return applied;
+        });
+        mESM4QuestRuntime.setPlayerHasPerkHandler([this](ESM::FormId perkId) -> std::optional<bool> {
+            if (mStore.get<ESM4::Perk>().search(ESM::RefId(perkId)) == nullptr)
+                return std::nullopt;
+            return mFalloutPlayerRuntimeState.hasPerk(perkId);
+        });
+        mESM4QuestRuntime.setQuestObjectHandler([this](ESM::FormId itemId, bool questObject) {
+            const bool applied = mFalloutPlayerRuntimeState.setQuestObject(itemId, questObject);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: SetQuestObject item="
+                                 << ESM::RefId(itemId).serializeText()
+                                 << " questObject=" << questObject;
+            return applied;
+        });
+        mESM4QuestRuntime.setAchievementHandler([this](std::uint32_t achievement) {
+            const bool applied = mFalloutPlayerRuntimeState.unlockAchievement(achievement);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: AddAchievement id=" << achievement;
+            return applied;
+        });
+        mESM4QuestRuntime.setRewardKarmaHandler([this](int amount) {
+            const bool applied = mFalloutPlayerRuntimeState.rewardKarma(amount);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: RewardKarma amount=" << amount
+                                 << " current=" << *mFalloutPlayerRuntimeState.getKarma();
+            return applied;
+        });
+        mESM4QuestRuntime.setAddSpecialPointsHandler([this](int amount) {
+            const bool applied = mFalloutPlayerRuntimeState.addSpecialPoints(amount);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: AddSpecialPoints amount=" << amount
+                                 << " unspent=" << *mFalloutPlayerRuntimeState.getSpecialPoints();
+            return applied;
+        });
+        mESM4QuestRuntime.setSetEssentialHandler([this](ESM::FormId actorBaseId, bool essential) {
+            if (mStore.get<ESM4::Npc>().search(ESM::RefId(actorBaseId)) == nullptr
+                && mStore.get<ESM4::Creature>().search(ESM::RefId(actorBaseId)) == nullptr)
+                return false;
+            const bool applied = mFalloutPlayerRuntimeState.setEssentialOverride(actorBaseId, essential);
+            if (applied)
+                Log(Debug::Info) << "FNV/ESM4 quest: SetEssential actorBase="
+                                 << ESM::RefId(actorBaseId).serializeText()
+                                 << " essential=" << essential;
+            return applied;
+        });
         mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
             const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
             MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();

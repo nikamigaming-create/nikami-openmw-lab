@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <vector>
 
@@ -61,7 +62,7 @@ namespace MWWorld
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 6;
+        static constexpr std::uint32_t SaveVersion = 7;
 
     private:
         struct CurrentState
@@ -85,6 +86,12 @@ namespace MWWorld
         // Per-player discovery state for Fallout world-map references. Values use the retail
         // GetMapMarkerVisible contract: 0 hidden, 1 visible, 2 visible and fast-travel enabled.
         std::map<ESM::FormId, std::uint8_t> mMapMarkerStates;
+        std::set<ESM::FormId> mKnownNotes;
+        std::set<ESM::FormId> mQuestObjects;
+        std::set<std::uint32_t> mAchievements;
+        std::map<ESM::FormId, bool> mEssentialOverrides;
+        float mKarma = 0.f;
+        std::int32_t mSpecialPoints = 0;
         // Vanilla EnableFastTravel state. The optional FNV arguments independently control waiting and whether
         // a cell transition may clear a scripted fast-travel block.
         bool mFastTravelEnabled = true;
@@ -98,6 +105,7 @@ namespace MWWorld
         static std::optional<std::size_t> specialIndex(std::uint32_t actorValue);
         static std::optional<std::size_t> skillIndex(std::uint32_t actorValue);
         CurrentState makeBaseCurrent() const;
+        float makeBaseKarma() const;
 
     public:
         void initialize(const std::optional<FalloutPlayerState>& base);
@@ -120,12 +128,26 @@ namespace MWWorld
         [[nodiscard]] std::optional<std::uint8_t> getPerkRankByte(
             ESM::FormId perk, bool alternate = false) const;
         [[nodiscard]] const std::vector<FalloutSavePlayerHeaderState::PerkRank>& getPerks() const { return mPerks; }
+        bool addPerk(ESM::FormId perk, std::uint8_t rankCount, bool alternate = false);
+        bool removePerk(ESM::FormId perk, bool alternate = false);
         [[nodiscard]] std::optional<FalloutReputationValue> getReputation(ESM::FormId reputation) const;
         [[nodiscard]] std::optional<int> getReputationThreshold(
             ESM::FormId reputation, float maximum, std::uint32_t axis) const;
         bool addReputationBump(ESM::FormId reputation, bool fame, float maximum, int bump);
         [[nodiscard]] std::optional<std::uint8_t> getMapMarkerState(ESM::FormId marker) const;
         bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
+        [[nodiscard]] bool hasNote(ESM::FormId note) const;
+        bool setNoteKnown(ESM::FormId note, bool known);
+        [[nodiscard]] bool isQuestObject(ESM::FormId item) const;
+        bool setQuestObject(ESM::FormId item, bool questObject);
+        [[nodiscard]] bool hasAchievement(std::uint32_t achievement) const;
+        bool unlockAchievement(std::uint32_t achievement);
+        [[nodiscard]] std::optional<bool> getEssentialOverride(ESM::FormId actorBase) const;
+        bool setEssentialOverride(ESM::FormId actorBase, bool essential);
+        [[nodiscard]] std::optional<float> getKarma() const;
+        bool rewardKarma(int amount);
+        [[nodiscard]] std::optional<std::int32_t> getSpecialPoints() const;
+        bool addSpecialPoints(int amount);
         [[nodiscard]] bool isFastTravelEnabled() const { return mFastTravelEnabled; }
         [[nodiscard]] bool isWaitEnabled() const { return mWaitEnabled; }
         [[nodiscard]] bool isFastTravelKeptOnCellChange() const { return mFastTravelKeepOnCellChange; }

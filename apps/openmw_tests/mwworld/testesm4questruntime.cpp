@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <tuple>
@@ -19,6 +20,9 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
+#include <components/esm4/loadnote.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
@@ -1050,6 +1054,148 @@ TEST(ESM4QuestRuntimeTest, EvaluatesQuestActorAndInventoryFunctionsInSourceFallb
     ASSERT_NE(state, nullptr);
     for (const std::int32_t objective : { 10, 20, 30, 40 })
         EXPECT_NE(state->mObjectiveStatus.at(objective) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, PreservesPersistentPlayerRewardsAndEssentialFlagsInSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120150, .mContentFile = 0 };
+    const ESM::FormId firstNoteId{ .mIndex = 0x120151, .mContentFile = 0 };
+    const ESM::FormId secondNoteId{ .mIndex = 0x120152, .mContentFile = 0 };
+    const ESM::FormId perkId{ .mIndex = 0x120153, .mContentFile = 0 };
+    const ESM::FormId itemId{ .mIndex = 0x120154, .mContentFile = 0 };
+    const ESM::FormId actorBaseId{ .mIndex = 0x120155, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "PersistentRewardQuest");
+    quest.mObjectives = {
+        { .mIndex = 10, .mDescription = "Notes retained" },
+        { .mIndex = 20, .mDescription = "Perk retained" },
+    };
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x03, 0x00, 0xaa, 0xbb, 0xcc };
+    entry.mScript.scriptSource
+        = "AddNote FirstNote\n"
+          "Player.AddNote SecondNote\n"
+          "if GetHasNote FirstNote == 1 && Player.GetHasNote SecondNote == 1\n"
+          "  SetObjectiveDisplayed PersistentRewardQuest 10 1\n"
+          "endif\n"
+          "Player.AddPerk QuestPerk\n"
+          "if PlayerRef.HasPerk QuestPerk == 1\n"
+          "  SetObjectiveDisplayed PersistentRewardQuest 20 1\n"
+          "endif\n"
+          "Player.RemovePerk QuestPerk\n"
+          "Player.RemoveNote SecondNote\n"
+          "SetQuestObject QuestBook 1\n"
+          "SetQuestObject QuestBook 0\n"
+          "AddAchievement 16\n"
+          "RewardKarma KarmaReward\n"
+          "Player.RewardKarma 25\n"
+          "AddSpecialPoints 1\n"
+          "Player.AddSpecialPoints 2\n"
+          "SetEssential QuestActorBase 0";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    for (const auto& [id, editorId] : std::array{
+             std::pair{ firstNoteId, std::string_view{ "FirstNote" } },
+             std::pair{ secondNoteId, std::string_view{ "SecondNote" } },
+         })
+    {
+        ESM4::Note note;
+        note.mId = id;
+        note.mEditorId = editorId;
+        store.overrideRecord(note);
+    }
+    ESM4::Perk perk;
+    perk.mId = perkId;
+    perk.mEditorId = "QuestPerk";
+    perk.mData.mRankCount = 1;
+    store.overrideRecord(perk);
+    ESM4::Book book;
+    book.mId = itemId;
+    book.mEditorId = "QuestBook";
+    store.overrideRecord(book);
+    ESM4::Npc actorBase;
+    actorBase.mId = actorBaseId;
+    actorBase.mEditorId = "QuestActorBase";
+    store.overrideRecord(actorBase);
+    store.overrideRecord(makeGlobal(
+        { .mIndex = 0x120156, .mContentFile = 0 }, "KarmaReward", -50.f));
+
+    MWWorld::Globals globals;
+    globals.fill(store);
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store, &globals);
+
+    std::set<ESM::FormId> knownNotes;
+    std::set<ESM::FormId> perks;
+    std::vector<std::pair<ESM::FormId, bool>> questObjectChanges;
+    std::vector<std::uint32_t> achievements;
+    std::vector<int> karmaRewards;
+    std::vector<int> specialPointRewards;
+    std::vector<std::pair<ESM::FormId, bool>> essentialChanges;
+    runtime.setNoteHandler([&](ESM::FormId note, bool known) {
+        if (known)
+            knownNotes.insert(note);
+        else
+            knownNotes.erase(note);
+        return true;
+    });
+    runtime.setKnownNoteHandler([&](ESM::FormId note) -> std::optional<bool> {
+        return knownNotes.contains(note);
+    });
+    runtime.setPlayerPerkHandler([&](ESM::FormId perkValue, bool add) {
+        if (add)
+            perks.insert(perkValue);
+        else
+            perks.erase(perkValue);
+        return true;
+    });
+    runtime.setPlayerHasPerkHandler([&](ESM::FormId perkValue) -> std::optional<bool> {
+        return perks.contains(perkValue);
+    });
+    runtime.setQuestObjectHandler([&](ESM::FormId item, bool questObject) {
+        questObjectChanges.emplace_back(item, questObject);
+        return true;
+    });
+    runtime.setAchievementHandler([&](std::uint32_t achievement) {
+        achievements.push_back(achievement);
+        return true;
+    });
+    runtime.setRewardKarmaHandler([&](int amount) {
+        karmaRewards.push_back(amount);
+        return true;
+    });
+    runtime.setAddSpecialPointsHandler([&](int amount) {
+        specialPointRewards.push_back(amount);
+        return true;
+    });
+    runtime.setSetEssentialHandler([&](ESM::FormId actorBaseValue, bool essential) {
+        essentialChanges.emplace_back(actorBaseValue, essential);
+        return true;
+    });
+
+    // Conditions are selected before their executable lines are dispatched, so seed the pre-stage
+    // persistent state that these GetHasNote/HasPerk predicates observe.
+    knownNotes.insert(firstNoteId);
+    knownNotes.insert(secondNoteId);
+    perks.insert(perkId);
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* const state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_TRUE(knownNotes.contains(firstNoteId));
+    EXPECT_FALSE(knownNotes.contains(secondNoteId));
+    EXPECT_FALSE(perks.contains(perkId));
+    EXPECT_EQ(questObjectChanges,
+        (std::vector<std::pair<ESM::FormId, bool>>{ { itemId, true }, { itemId, false } }));
+    EXPECT_EQ(achievements, (std::vector<std::uint32_t>{ 16 }));
+    EXPECT_EQ(karmaRewards, (std::vector<int>{ -50, 25 }));
+    EXPECT_EQ(specialPointRewards, (std::vector<int>{ 1, 2 }));
+    EXPECT_EQ(essentialChanges,
+        (std::vector<std::pair<ESM::FormId, bool>>{ { actorBaseId, false } }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 

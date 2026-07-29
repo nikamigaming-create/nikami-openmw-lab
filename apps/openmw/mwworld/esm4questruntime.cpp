@@ -39,7 +39,9 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
@@ -673,6 +675,9 @@ namespace MWWorld
         mFactionIds.clear();
         mInventoryItemIds.clear();
         mReputationIds.clear();
+        mNoteIds.clear();
+        mPerkIds.clear();
+        mActorBaseIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -3791,6 +3796,71 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveNote(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mNoteIds.find(key); cached != mNoteIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Note& note : mStore->get<ESM4::Note>())
+            {
+                if (!Misc::StringUtils::ciEqual(note.mEditorId, id))
+                    continue;
+                result = note.mId;
+                break;
+            }
+        }
+        mNoteIds.emplace(key, result);
+        return result;
+    }
+
+    ESM::FormId ESM4QuestRuntime::resolvePerk(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mPerkIds.find(key); cached != mPerkIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Perk& perk : mStore->get<ESM4::Perk>())
+            {
+                if (!Misc::StringUtils::ciEqual(perk.mEditorId, id))
+                    continue;
+                result = perk.mId;
+                break;
+            }
+        }
+        mPerkIds.emplace(key, result);
+        return result;
+    }
+
+    ESM::FormId ESM4QuestRuntime::resolveActorBase(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mActorBaseIds.find(key); cached != mActorBaseIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        const auto searchRecords = [&id, &result](const auto& records) {
+            for (const auto& record : records)
+            {
+                if (!Misc::StringUtils::ciEqual(record.mEditorId, id))
+                    continue;
+                result = record.mId;
+                return true;
+            }
+            return false;
+        };
+        if (mStore != nullptr && !searchRecords(mStore->get<ESM4::Npc>()))
+            searchRecords(mStore->get<ESM4::Creature>());
+        mActorBaseIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -4002,6 +4072,30 @@ namespace MWWorld
                     const std::optional<int> count = mItemCountHandler(owner, item);
                     return count && *count >= 0 ? std::optional<float>(static_cast<float>(*count)) : std::nullopt;
                 }
+                if (command == "gethasnote")
+                {
+                    if (index >= tokens.size() || !mKnownNoteHandler
+                        || (!Misc::StringUtils::ciEqual(subject, "player")
+                            && !Misc::StringUtils::ciEqual(subject, "playerref")))
+                        return std::nullopt;
+                    const ESM::FormId note = resolveNote(tokens[index++]);
+                    if (note.isZeroOrUnset())
+                        return std::nullopt;
+                    const std::optional<bool> known = mKnownNoteHandler(note);
+                    return known ? std::optional<float>(*known ? 1.f : 0.f) : std::nullopt;
+                }
+                if (command == "hasperk")
+                {
+                    if (index >= tokens.size() || !mPlayerHasPerkHandler
+                        || (!Misc::StringUtils::ciEqual(subject, "player")
+                            && !Misc::StringUtils::ciEqual(subject, "playerref")))
+                        return std::nullopt;
+                    const ESM::FormId perk = resolvePerk(tokens[index++]);
+                    if (perk.isZeroOrUnset())
+                        return std::nullopt;
+                    const std::optional<bool> present = mPlayerHasPerkHandler(perk);
+                    return present ? std::optional<float>(*present ? 1.f : 0.f) : std::nullopt;
+                }
                 if (command == "getdisabled" || command == "getdestroyed")
                 {
                     const MWWorld::Ptr reference = resolveAuthoredReference(subject);
@@ -4102,6 +4196,16 @@ namespace MWWorld
                     return std::nullopt;
                 const std::optional<bool> dead = mActorDeadHandler(actor);
                 return dead ? std::optional<float>(*dead ? 1.f : 0.f) : std::nullopt;
+            }
+            if (token == "gethasnote")
+            {
+                if (index >= tokens.size() || !mKnownNoteHandler)
+                    return std::nullopt;
+                const ESM::FormId note = resolveNote(tokens[index++]);
+                if (note.isZeroOrUnset())
+                    return std::nullopt;
+                const std::optional<bool> known = mKnownNoteHandler(note);
+                return known ? std::optional<float>(*known ? 1.f : 0.f) : std::nullopt;
             }
             if (token == "getobjectivedisplayed" || token == "getobjectivecompleted")
             {
@@ -4564,10 +4668,13 @@ namespace MWWorld
                 };
 
                 const auto sourceOwnerId = [this, subject]() {
-                    if (Misc::StringUtils::ciEqual(subject, "player"))
+                    if (Misc::StringUtils::ciEqual(subject, "player")
+                        || Misc::StringUtils::ciEqual(subject, "playerref"))
                         return ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
                     return this->resolveReference(subject);
                 };
+                const bool playerSubject = Misc::StringUtils::ciEqual(subject, "player")
+                    || Misc::StringUtils::ciEqual(subject, "playerref");
 
                 if ((Misc::StringUtils::ciEqual(command, "AddItem")
                         || Misc::StringUtils::ciEqual(command, "RemoveItem"))
@@ -4614,7 +4721,7 @@ namespace MWWorld
                     }
                 }
                 else if (Misc::StringUtils::ciEqual(command, "AddReputation")
-                    && Misc::StringUtils::ciEqual(subject, "player") && tokens.size() == 4)
+                    && playerSubject && tokens.size() == 4)
                 {
                     const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
                     std::size_t argument = 2;
@@ -4627,6 +4734,58 @@ namespace MWWorld
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: AddReputation reputation=" << tokens[1]
                                          << " fame=" << (*fame != 0) << " bump=" << *bump;
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "AddNote")
+                             || Misc::StringUtils::ciEqual(command, "RemoveNote"))
+                    && playerSubject && tokens.size() == 2)
+                {
+                    const ESM::FormId note = resolveNote(tokens[1]);
+                    const bool known = Misc::StringUtils::ciEqual(command, "AddNote");
+                    if (!note.isZeroOrUnset() && mNoteHandler && mNoteHandler(note, known))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << (known ? "AddNote" : "RemoveNote")
+                                         << " note=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if ((Misc::StringUtils::ciEqual(command, "AddPerk")
+                             || Misc::StringUtils::ciEqual(command, "RemovePerk"))
+                    && playerSubject && tokens.size() == 2)
+                {
+                    const ESM::FormId perk = resolvePerk(tokens[1]);
+                    const bool add = Misc::StringUtils::ciEqual(command, "AddPerk");
+                    if (!perk.isZeroOrUnset() && mPlayerPerkHandler && mPlayerPerkHandler(perk, add))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << (add ? "AddPerk" : "RemovePerk")
+                                         << " perk=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "RewardKarma")
+                    && playerSubject && tokens.size() >= 2)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                    if (amount && *amount != 0 && argument == sourceTokens.size()
+                        && mRewardKarmaHandler && mRewardKarmaHandler(*amount))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: RewardKarma amount=" << *amount;
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "AddSpecialPoints")
+                    && playerSubject && tokens.size() >= 2)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                    if (amount && *amount > 0 && argument == sourceTokens.size()
+                        && mAddSpecialPointsHandler && mAddSpecialPointsHandler(*amount))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: AddSpecialPoints amount=" << *amount;
                         continue;
                     }
                 }
@@ -4850,6 +5009,85 @@ namespace MWWorld
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: AddReputation reputation=" << tokens[1]
                                      << " fame=" << (*fame != 0) << " bump=" << *bump;
+                    continue;
+                }
+            }
+            else if ((Misc::StringUtils::ciEqual(tokens[0], "AddNote")
+                         || Misc::StringUtils::ciEqual(tokens[0], "RemoveNote"))
+                && tokens.size() == 2)
+            {
+                const ESM::FormId note = resolveNote(tokens[1]);
+                const bool known = Misc::StringUtils::ciEqual(tokens[0], "AddNote");
+                if (!note.isZeroOrUnset() && mNoteHandler && mNoteHandler(note, known))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: " << (known ? "AddNote" : "RemoveNote")
+                                     << " note=" << tokens[1];
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "RewardKarma") && tokens.size() >= 2)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 1;
+                const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                if (amount && *amount != 0 && argument == sourceTokens.size()
+                    && mRewardKarmaHandler && mRewardKarmaHandler(*amount))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: RewardKarma amount=" << *amount;
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "AddSpecialPoints") && tokens.size() >= 2)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 1;
+                const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                if (amount && *amount > 0 && argument == sourceTokens.size()
+                    && mAddSpecialPointsHandler && mAddSpecialPointsHandler(*amount))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: AddSpecialPoints amount=" << *amount;
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "SetQuestObject") && tokens.size() == 3)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                const std::optional<std::int32_t> value = sourceInteger(sourceTokens, argument);
+                const ESM::FormId item = resolveInventoryItem(tokens[1]);
+                if (value && (*value == 0 || *value == 1) && argument == sourceTokens.size()
+                    && !item.isZeroOrUnset() && mQuestObjectHandler
+                    && mQuestObjectHandler(item, *value != 0))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: SetQuestObject item=" << tokens[1]
+                                     << " questObject=" << (*value != 0);
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "AddAchievement") && tokens.size() >= 2)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 1;
+                const std::optional<std::int32_t> achievement = sourceInteger(sourceTokens, argument);
+                if (achievement && *achievement > 0 && argument == sourceTokens.size()
+                    && mAchievementHandler && mAchievementHandler(static_cast<std::uint32_t>(*achievement)))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: AddAchievement id=" << *achievement;
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "SetEssential") && tokens.size() == 3)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                const std::optional<std::int32_t> value = sourceInteger(sourceTokens, argument);
+                const ESM::FormId actorBase = resolveActorBase(tokens[1]);
+                if (value && (*value == 0 || *value == 1) && argument == sourceTokens.size()
+                    && !actorBase.isZeroOrUnset() && mSetEssentialHandler
+                    && mSetEssentialHandler(actorBase, *value != 0))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: SetEssential actorBase=" << tokens[1]
+                                     << " essential=" << (*value != 0);
                     continue;
                 }
             }

@@ -30,7 +30,7 @@ namespace MWGui
 
         void apply(const ItemStack& item, std::size_t count, ItemView& sourceView)
         {
-            if (item.mFlags & ItemStack::Flag_Bound)
+            if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
             {
                 mWindowManager->messageBox("#{sBarterDialog12}");
                 return;

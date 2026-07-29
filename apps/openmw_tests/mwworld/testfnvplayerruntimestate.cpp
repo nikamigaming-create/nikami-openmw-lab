@@ -57,6 +57,15 @@ namespace
             writer.writeHNT("WTEN", std::uint8_t{ 1 });
             writer.writeHNT("FTKP", std::uint8_t{ 0 });
         }
+        if (version >= 7)
+        {
+            writer.writeHNT("KARM", base.mStatsConfig.karma);
+            writer.writeHNT("SPPT", std::int32_t{ 0 });
+            writer.writeHNT("NCNT", std::uint32_t{ 0 });
+            writer.writeHNT("QCNT", std::uint32_t{ 0 });
+            writer.writeHNT("ACNT", std::uint32_t{ 0 });
+            writer.writeHNT("ECNT", std::uint32_t{ 0 });
+        }
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -358,6 +367,74 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 19.f);
     EXPECT_TRUE(restored.hasPerk(ESM::FormId{ .mIndex = 0x31dac, .mContentFile = 7 }));
     EXPECT_EQ(restored.getPerkRankByte(ESM::FormId{ .mIndex = 0x44, .mContentFile = 7 }, true), 1);
+}
+
+TEST(FalloutPlayerRuntimeStateTest, PersistsQuestRewardsAndActorOverridesAcrossChangedLoadOrder)
+{
+    const ESM::FormId note{ .mIndex = 0x101, .mContentFile = 2 };
+    const ESM::FormId questObject{ .mIndex = 0x102, .mContentFile = 2 };
+    const ESM::FormId perk{ .mIndex = 0x103, .mContentFile = 2 };
+    const ESM::FormId actorBase{ .mIndex = 0x104, .mContentFile = 2 };
+    MWWorld::FalloutPlayerState base = makeBaseState(2);
+    base.mStatsConfig.karma = 25.f;
+
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(base);
+    ASSERT_TRUE(runtime.setNoteKnown(note, true));
+    ASSERT_TRUE(runtime.setQuestObject(questObject, true));
+    ASSERT_TRUE(runtime.addPerk(perk, 2));
+    ASSERT_TRUE(runtime.addPerk(perk, 2));
+    ASSERT_TRUE(runtime.unlockAchievement(17));
+    ASSERT_TRUE(runtime.setEssentialOverride(actorBase, false));
+    ASSERT_TRUE(runtime.rewardKarma(-75));
+    ASSERT_TRUE(runtime.addSpecialPoints(2));
+
+    EXPECT_TRUE(runtime.hasNote(note));
+    EXPECT_TRUE(runtime.isQuestObject(questObject));
+    EXPECT_EQ(runtime.getPerkRankByte(perk), 1);
+    EXPECT_TRUE(runtime.hasAchievement(17));
+    EXPECT_EQ(runtime.getEssentialOverride(actorBase), false);
+    ASSERT_TRUE(runtime.getKarma());
+    EXPECT_FLOAT_EQ(*runtime.getKarma(), -50.f);
+    EXPECT_EQ(runtime.getSpecialPoints(), 2);
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        runtime.write(writer);
+    }
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-player-quest-rewards-runtime");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
+    reader.getRecHeader();
+
+    base.mBaseRecord.mContentFile = 7;
+    MWWorld::FalloutPlayerRuntimeState restored;
+    restored.initialize(base);
+    restored.readRecord(reader);
+    const ESM::FormId mappedNote{ .mIndex = note.mIndex, .mContentFile = 7 };
+    const ESM::FormId mappedQuestObject{ .mIndex = questObject.mIndex, .mContentFile = 7 };
+    const ESM::FormId mappedPerk{ .mIndex = perk.mIndex, .mContentFile = 7 };
+    const ESM::FormId mappedActorBase{ .mIndex = actorBase.mIndex, .mContentFile = 7 };
+    EXPECT_TRUE(restored.hasNote(mappedNote));
+    EXPECT_TRUE(restored.isQuestObject(mappedQuestObject));
+    EXPECT_EQ(restored.getPerkRankByte(mappedPerk), 1);
+    EXPECT_TRUE(restored.hasAchievement(17));
+    EXPECT_EQ(restored.getEssentialOverride(mappedActorBase), false);
+    EXPECT_FLOAT_EQ(*restored.getKarma(), -50.f);
+    EXPECT_EQ(restored.getSpecialPoints(), 2);
+
+    EXPECT_TRUE(restored.removePerk(mappedPerk));
+    EXPECT_FALSE(restored.hasPerk(mappedPerk));
+    EXPECT_TRUE(restored.setNoteKnown(mappedNote, false));
+    EXPECT_FALSE(restored.hasNote(mappedNote));
+    EXPECT_TRUE(restored.setQuestObject(mappedQuestObject, false));
+    EXPECT_FALSE(restored.isQuestObject(mappedQuestObject));
 }
 
 TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanceAcrossChangedLoadOrder)

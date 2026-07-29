@@ -191,7 +191,7 @@ namespace MWGui
                     continue;
 
                 // Bound items may not be bought
-                if (item.mFlags & ItemStack::Flag_Bound)
+                if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
                     continue;
 
                 // don't show equipped items

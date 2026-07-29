@@ -433,7 +433,7 @@ namespace MWGui
         if (mTrading)
         {
             // Can't give conjured items to a merchant
-            if (item.mFlags & ItemStack::Flag_Bound)
+            if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
             {
                 MWBase::Environment::get().getWindowManager()->playSound(sound);
                 MWBase::Environment::get().getWindowManager()->messageBox("#{sBarterDialog9}");

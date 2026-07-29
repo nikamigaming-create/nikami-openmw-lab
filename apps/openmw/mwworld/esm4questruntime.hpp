@@ -133,6 +133,15 @@ namespace MWWorld
         using SetDestroyedHandler = std::function<bool(ESM::FormId, bool)>;
         using ShowMapHandler = std::function<bool(ESM::FormId, bool)>;
         using EnableFastTravelHandler = std::function<bool(bool, bool, bool)>;
+        using NoteHandler = std::function<bool(ESM::FormId, bool)>;
+        using KnownNoteHandler = std::function<std::optional<bool>(ESM::FormId)>;
+        using PlayerPerkHandler = std::function<bool(ESM::FormId, bool)>;
+        using PlayerHasPerkHandler = std::function<std::optional<bool>(ESM::FormId)>;
+        using QuestObjectHandler = std::function<bool(ESM::FormId, bool)>;
+        using AchievementHandler = std::function<bool(std::uint32_t)>;
+        using RewardKarmaHandler = std::function<bool(int)>;
+        using AddSpecialPointsHandler = std::function<bool(int)>;
+        using SetEssentialHandler = std::function<bool(ESM::FormId, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -255,6 +264,9 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mFactionIds;
         std::unordered_map<std::string, ESM::FormId> mInventoryItemIds;
         std::unordered_map<std::string, ESM::FormId> mReputationIds;
+        std::unordered_map<std::string, ESM::FormId> mNoteIds;
+        std::unordered_map<std::string, ESM::FormId> mPerkIds;
+        std::unordered_map<std::string, ESM::FormId> mActorBaseIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
@@ -269,6 +281,15 @@ namespace MWWorld
         SetDestroyedHandler mSetDestroyedHandler;
         ShowMapHandler mShowMapHandler;
         EnableFastTravelHandler mEnableFastTravelHandler;
+        NoteHandler mNoteHandler;
+        KnownNoteHandler mKnownNoteHandler;
+        PlayerPerkHandler mPlayerPerkHandler;
+        PlayerHasPerkHandler mPlayerHasPerkHandler;
+        QuestObjectHandler mQuestObjectHandler;
+        AchievementHandler mAchievementHandler;
+        RewardKarmaHandler mRewardKarmaHandler;
+        AddSpecialPointsHandler mAddSpecialPointsHandler;
+        SetEssentialHandler mSetEssentialHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -460,6 +481,9 @@ namespace MWWorld
         ESM::FormId resolveFaction(std::string_view id);
         ESM::FormId resolveInventoryItem(std::string_view id);
         ESM::FormId resolveReputation(std::string_view id);
+        ESM::FormId resolveNote(std::string_view id);
+        ESM::FormId resolvePerk(std::string_view id);
+        ESM::FormId resolveActorBase(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:
@@ -500,6 +524,33 @@ namespace MWWorld
         void setEnableFastTravelHandler(EnableFastTravelHandler handler)
         {
             mEnableFastTravelHandler = std::move(handler);
+        }
+        void setNoteHandler(NoteHandler handler) { mNoteHandler = std::move(handler); }
+        void setKnownNoteHandler(KnownNoteHandler handler) { mKnownNoteHandler = std::move(handler); }
+        void setPlayerPerkHandler(PlayerPerkHandler handler) { mPlayerPerkHandler = std::move(handler); }
+        void setPlayerHasPerkHandler(PlayerHasPerkHandler handler)
+        {
+            mPlayerHasPerkHandler = std::move(handler);
+        }
+        void setQuestObjectHandler(QuestObjectHandler handler)
+        {
+            mQuestObjectHandler = std::move(handler);
+        }
+        void setAchievementHandler(AchievementHandler handler)
+        {
+            mAchievementHandler = std::move(handler);
+        }
+        void setRewardKarmaHandler(RewardKarmaHandler handler)
+        {
+            mRewardKarmaHandler = std::move(handler);
+        }
+        void setAddSpecialPointsHandler(AddSpecialPointsHandler handler)
+        {
+            mAddSpecialPointsHandler = std::move(handler);
+        }
+        void setSetEssentialHandler(SetEssentialHandler handler)
+        {
+            mSetEssentialHandler = std::move(handler);
         }
 
         bool startQuest(std::string_view id);

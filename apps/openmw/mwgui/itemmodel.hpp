@@ -28,7 +28,8 @@ namespace MWGui
         enum Flags
         {
             Flag_Enchanted = (1 << 0),
-            Flag_Bound = (1 << 1)
+            Flag_Bound = (1 << 1),
+            Flag_Quest = (1 << 2),
         };
         int mFlags;
 

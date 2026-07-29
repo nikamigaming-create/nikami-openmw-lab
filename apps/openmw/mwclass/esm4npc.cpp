@@ -53,6 +53,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/worldmodel.hpp"
 #include "../mwworld/actiontalk.hpp"
@@ -2086,6 +2087,25 @@ namespace MWClass
     {
         const ESM4NpcCustomData& data = getCustomData(ptr);
         return data.mBaseData != nullptr && isPersistentRecord(*data.mBaseData);
+    }
+
+    bool ESM4Npc::isEssential(const MWWorld::ConstPtr& ptr) const
+    {
+        const ESM4::Npc* const record = ptr.get<ESM4::Npc>()->mBase;
+        const ESM4::Npc* const baseData = getCustomData(ptr).mBaseData;
+        if (record == nullptr || baseData == nullptr)
+            return false;
+
+        if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& state = world->getFalloutPlayerRuntimeState();
+            if (const std::optional<bool> override = state.getEssentialOverride(record->mId))
+                return *override;
+            if (baseData->mId != record->mId)
+                if (const std::optional<bool> override = state.getEssentialOverride(baseData->mId))
+                    return *override;
+        }
+        return (baseData->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Essential) != 0;
     }
 
     bool ESM4Npc::isBipedal(const MWWorld::ConstPtr& ptr) const

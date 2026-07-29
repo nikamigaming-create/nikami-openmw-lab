@@ -122,6 +122,7 @@ namespace MWClass
         std::unique_ptr<MWWorld::Action> activate(
             const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         bool isPersistent(const MWWorld::ConstPtr& ptr) const override;
+        bool isEssential(const MWWorld::ConstPtr& ptr) const override;
         bool canFly(const MWWorld::ConstPtr& ptr) const override;
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
