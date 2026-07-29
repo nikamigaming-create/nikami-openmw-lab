@@ -1019,6 +1019,40 @@ namespace
         EXPECT_EQ(restored.getRefData().getCustomData(), nullptr);
     }
 
+    TEST_F(ESM4ContainerTest, CellOwnershipOverrideUsesNativeStateAndPersistsExplicitClear)
+    {
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId authoredOwner(ESM::FormId::fromUint32(sNpcBase));
+        MWWorld::ESMStore store;
+        ESM4::Cell authoredCell = makeCreatureCell();
+        authoredCell.mOwner = ESM::FormId::fromUint32(sNpcBase);
+        store.overrideRecord(authoredCell);
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        EXPECT_EQ(sourceCell->getOwner(), authoredOwner);
+        EXPECT_FALSE(sourceCell->hasState());
+
+        sourceCell->setOwner({});
+        EXPECT_TRUE(sourceCell->getOwner().empty());
+        EXPECT_TRUE(sourceCell->hasState());
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        EXPECT_EQ(restoredCell->getOwner(), authoredOwner);
+
+        readWorldState(std::move(stream), restoredModel);
+        EXPECT_TRUE(restoredCell->getOwner().empty());
+    }
+
     TEST_F(ESM4ContainerTest, CreatureCstaRoundTripFromUnloadedCellsRetainsMutableInventoryHealthAndDeath)
     {
         MWWorld::ESMStore store;

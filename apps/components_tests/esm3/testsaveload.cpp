@@ -1,6 +1,7 @@
 #include <components/esm/fourcc.hpp>
 #include <components/esm3/aipackage.hpp>
 #include <components/esm3/aisequence.hpp>
+#include <components/esm3/cellstate.hpp>
 #include <components/esm3/effectlist.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -404,6 +405,33 @@ namespace ESM
             EXPECT_EQ(record.mFalloutRuntimeFlags, result.mFalloutRuntimeFlags);
             EXPECT_EQ(record.mHasFalloutEquipmentOverride, result.mHasFalloutEquipmentOverride);
             EXPECT_EQ(record.mFalloutEquippedItems, result.mFalloutEquippedItems);
+        }
+
+        TEST_F(Esm3SaveLoadRecordTest, cellOwnerOverrideShouldRoundTripIncludingExplicitClear)
+        {
+            CellState owned{};
+            owned.mIsInterior = true;
+            owned.mHasOwnerOverride = true;
+            owned.mOwner = RefId(FormId{ .mIndex = 0x12345, .mContentFile = 0 });
+            CellState ownedResult{};
+            saveAndLoadRecord(owned, CurrentSaveGameFormatVersion, ownedResult);
+            EXPECT_TRUE(ownedResult.mHasOwnerOverride);
+            EXPECT_EQ(ownedResult.mOwner, owned.mOwner);
+
+            CellState publicCell{};
+            publicCell.mIsInterior = true;
+            publicCell.mHasOwnerOverride = true;
+            CellState publicResult{};
+            saveAndLoadRecord(publicCell, CurrentSaveGameFormatVersion, publicResult);
+            EXPECT_TRUE(publicResult.mHasOwnerOverride);
+            EXPECT_TRUE(publicResult.mOwner.empty());
+
+            CellState unchanged{};
+            unchanged.mIsInterior = true;
+            CellState unchangedResult{};
+            saveAndLoadRecord(unchanged, CurrentSaveGameFormatVersion, unchangedResult);
+            EXPECT_FALSE(unchangedResult.mHasOwnerOverride);
+            EXPECT_TRUE(unchangedResult.mOwner.empty());
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)

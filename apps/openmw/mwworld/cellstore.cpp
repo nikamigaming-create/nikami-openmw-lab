@@ -891,6 +891,10 @@ namespace MWWorld
         , mCellVariant(std::move(cell))
         , mState(State_Unloaded)
         , mHasState(false)
+        , mOwner(mCellVariant.isEsm4() && !mCellVariant.getEsm4().mOwner.isZeroOrUnset()
+                  ? ESM::RefId(mCellVariant.getEsm4().mOwner)
+                  : ESM::RefId{})
+        , mHasOwnerOverride(false)
         , mLastRespawn(0, 0)
         , mCellStoreImp(std::make_unique<CellStoreImp>())
         , mRechargingItemsUpToDate(false)
@@ -995,6 +999,15 @@ namespace MWWorld
         if (isExterior() && !mHasState)
             return getCell()->getWaterHeight();
         return mWaterLevel;
+    }
+
+    void CellStore::setOwner(const ESM::RefId& owner)
+    {
+        if (owner == mOwner)
+            return;
+        mOwner = owner;
+        mHasOwnerOverride = true;
+        mHasState = true;
     }
 
     void CellStore::setWaterLevel(float level)
@@ -1390,6 +1403,12 @@ namespace MWWorld
         if (!mCellVariant.isExterior() && mCellVariant.hasWater())
             mWaterLevel = state.mWaterLevel;
 
+        if (state.mHasOwnerOverride)
+        {
+            mOwner = state.mOwner;
+            mHasOwnerOverride = true;
+        }
+
         mLastRespawn = MWWorld::TimeStamp(state.mLastRespawn);
     }
 
@@ -1402,6 +1421,8 @@ namespace MWWorld
         state.mIsInterior = !mCellVariant.isExterior();
         state.mHasFogOfWar = (mFogState.get() ? 1 : 0);
         state.mLastRespawn = mLastRespawn.toEsm();
+        state.mHasOwnerOverride = mHasOwnerOverride;
+        state.mOwner = mOwner;
     }
 
     void CellStore::writeFog(ESM::ESMWriter& writer) const

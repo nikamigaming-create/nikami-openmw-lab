@@ -192,6 +192,10 @@ namespace MWWorld
 
         float getWaterLevel() const;
 
+        const ESM::RefId& getOwner() const { return mOwner; }
+
+        void setOwner(const ESM::RefId& owner);
+
         bool movedHere(const MWWorld::Ptr& ptr) const;
 
         void setWaterLevel(float level);
@@ -360,6 +364,8 @@ namespace MWWorld
         bool mHasState;
         std::vector<ESM::RefId> mIds;
         float mWaterLevel;
+        ESM::RefId mOwner;
+        bool mHasOwnerOverride;
 
         MWWorld::TimeStamp mLastRespawn;
 
