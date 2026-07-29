@@ -1451,7 +1451,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1097 && instruction.opcode != 0x1098
                 && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10cc
-                && instruction.opcode != 0x1111
+                && instruction.opcode != 0x110d && instruction.opcode != 0x1111
                 && instruction.opcode != 0x114a
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x117c
@@ -1984,6 +1984,39 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetPerk;
                 command.mQuest = *perk;
                 command.mValue = true;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x110d) // SetQuestObject item questObject
+            {
+                // The combined Fallout 3 and New Vegas base-master quest
+                // corpus has 24 global two-argument frames. All retail values
+                // are zero, but the command's authored contract is boolean.
+                if (instruction.callingReferenceIndex || arguments.size() != 2
+                    || !mQuestObjectHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId* item = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* value = std::get_if<std::int32_t>(&arguments[1]);
+                if (item == nullptr || value == nullptr || (*value != 0 && *value != 1))
+                    return false;
+                const ESM::RefId itemId{ *item };
+                const bool itemExists
+                    = mStore->get<ESM4::Ammunition>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Armor>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Book>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Clothing>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Ingredient>().search(itemId) != nullptr
+                    || mStore->get<ESM4::ItemMod>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Key>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Light>().search(itemId) != nullptr
+                    || mStore->get<ESM4::MiscItem>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Potion>().search(itemId) != nullptr
+                    || mStore->get<ESM4::Weapon>().search(itemId) != nullptr;
+                if (!itemExists)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetQuestObject;
+                command.mQuest = *item;
+                command.mValue = *value != 0;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x114a) // AddAchievement id
@@ -2701,6 +2734,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
             || command.mType == CompiledQuestCommandType::SetPerk
+            || command.mType == CompiledQuestCommandType::SetQuestObject
             || command.mType == CompiledQuestCommandType::AddAchievement
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
@@ -2815,6 +2849,7 @@ namespace MWWorld
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SetNote:
             case CompiledQuestCommandType::SetPerk:
+            case CompiledQuestCommandType::SetQuestObject:
             case CompiledQuestCommandType::AddAchievement:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
@@ -3004,6 +3039,10 @@ namespace MWWorld
                     command = effect.mValue ? "AddPerk " : "RemovePerk ";
                     executed = mPlayerPerkHandler && mPlayerPerkHandler(effect.mTarget, effect.mValue);
                     break;
+                case CompiledQuestCommandType::SetQuestObject:
+                    command = "SetQuestObject ";
+                    executed = mQuestObjectHandler && mQuestObjectHandler(effect.mTarget, effect.mValue);
+                    break;
                 case CompiledQuestCommandType::AddAchievement:
                     command = "AddAchievement ";
                     executed = mAchievementHandler
@@ -3112,6 +3151,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetQuestObject)
+                command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::Lock && effect.mValue)
                 command += " " + std::to_string(effect.mCount);
             if (executed)
@@ -3424,6 +3465,10 @@ namespace MWWorld
                         case CompiledQuestCommandType::SetPerk:
                             executed = mPlayerPerkHandler && mPlayerPerkHandler(command.mQuest, command.mValue);
                             break;
+                        case CompiledQuestCommandType::SetQuestObject:
+                            executed = mQuestObjectHandler
+                                && mQuestObjectHandler(command.mQuest, command.mValue);
+                            break;
                         case CompiledQuestCommandType::AddAchievement:
                             executed = mAchievementHandler
                                 && mAchievementHandler(static_cast<std::uint32_t>(command.mObjective));
@@ -3462,6 +3507,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::SetPerk
+                            || command.mType == CompiledQuestCommandType::SetQuestObject
                             || command.mType == CompiledQuestCommandType::AddAchievement
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
@@ -3505,6 +3551,9 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::SetPerk)
                                 failure = std::string(command.mValue ? "AddPerk " : "RemovePerk ")
                                     + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetQuestObject)
+                                failure = "SetQuestObject " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + std::to_string(static_cast<int>(command.mValue));
                             else if (command.mType == CompiledQuestCommandType::AddAchievement)
                                 failure = "AddAchievement " + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::SetAlly)

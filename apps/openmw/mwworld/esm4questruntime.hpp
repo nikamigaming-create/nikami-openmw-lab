@@ -440,6 +440,7 @@ namespace MWWorld
             ShowMessage,
             SetNote,
             SetPerk,
+            SetQuestObject,
             AddAchievement,
             SayTo,
             RewardXp,

@@ -1167,6 +1167,106 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledStopLookWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledSetQuestObjectAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12030c, .mContentFile = 0 };
+    const ESM::FormId itemId{ .mIndex = 0x12030d, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledSetQuestObjectQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x0d, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { itemId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Book item;
+    item.mId = itemId;
+    store.overrideRecord(item);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, bool>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setQuestObjectHandler([&](ESM::FormId itemValue, bool questObject) {
+        changes.emplace_back(itemValue, questObject);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<ESM::FormId, bool>>{ { itemId, false } }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledSetQuestObjectWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12030e, .mContentFile = 0 };
+    const ESM::FormId itemId{ .mIndex = 0x12030f, .mContentFile = 0 };
+    const ESM::FormId nonItemId{ .mIndex = 0x120310, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedSetQuestObjectQuest");
+    ESM4::QuestStageEntry qualified;
+    qualified.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x0d, 0x11, 0x0a, 0x00,
+        0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    qualified.mScript.references = { itemId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(qualified) } });
+    ESM4::QuestStageEntry nonItemEntry;
+    nonItemEntry.mScript.compiledData = {
+        0x0d, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    nonItemEntry.mScript.references = { itemId, nonItemId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonItemEntry) } });
+    ESM4::QuestStageEntry nonBoolean;
+    nonBoolean.mScript.compiledData = {
+        0x0d, 0x11, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x02, 0x00, 0x00, 0x00
+    };
+    nonBoolean.mScript.references = { itemId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(nonBoolean) } });
+    store.overrideRecord(quest);
+
+    ESM4::Book item;
+    item.mId = itemId;
+    store.overrideRecord(item);
+    ESM4::Reference nonItem;
+    nonItem.mId = nonItemId;
+    store.overrideRecord(nonItem);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int commands = 0;
+    runtime.setQuestObjectHandler([&](ESM::FormId, bool) {
+        ++commands;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    EXPECT_FALSE(runtime.setStage(questId, 15));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_FALSE(state->mStageDone.at(15));
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
