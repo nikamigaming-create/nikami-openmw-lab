@@ -26,6 +26,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
+    mwworld/testcellref.cpp
     mwworld/testcellvisitors.cpp
     mwworld/testactorfacing.cpp
     mwworld/testfnvtriggervolume.cpp

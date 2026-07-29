@@ -265,15 +265,43 @@ namespace MWWorld
 
     void CellRef::setOwner(const ESM::RefId& owner)
     {
-        if (owner != getOwner())
-        {
-            std::visit(ESM::VisitOverload{
-                           [&](ESM4::Reference& /*ref*/) {},
-                           [&](ESM4::ActorCharacter&) {},
-                           [&](ESM::CellRef& ref) { ref.mOwner = owner; },
+        if (owner == getOwner())
+            return;
+
+        bool changed = false;
+        const ESM::FormId* const formId = owner.getIf<ESM::FormId>();
+        std::visit(ESM::VisitOverload{
+                       [&](ESM4::Reference& ref) {
+                           if (owner.empty())
+                           {
+                               ref.mOwner = {};
+                               changed = true;
+                           }
+                           else if (formId != nullptr)
+                           {
+                               ref.mOwner = *formId;
+                               changed = true;
+                           }
                        },
-                mCellRef.mVariant);
-        }
+                       [&](ESM4::ActorCharacter& ref) {
+                           if (owner.empty())
+                           {
+                               ref.mOwner = {};
+                               changed = true;
+                           }
+                           else if (formId != nullptr)
+                           {
+                               ref.mOwner = *formId;
+                               changed = true;
+                           }
+                       },
+                       [&](ESM::CellRef& ref) {
+                           ref.mOwner = owner;
+                           changed = true;
+                       },
+                   },
+            mCellRef.mVariant);
+        mChanged = mChanged || changed;
     }
 
     void CellRef::setSoul(const ESM::RefId& soul)
