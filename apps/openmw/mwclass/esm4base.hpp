@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -422,6 +423,26 @@ namespace MWClass
             }
             else
                 return {};
+        }
+
+        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
+                return ptr.get<Record>()->mBase->mData.health > 0;
+            else
+                return false;
+        }
+
+        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
+            {
+                const std::uint32_t health = ptr.get<Record>()->mBase->mData.health;
+                return static_cast<int>(
+                    std::min(health, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+            }
+            else
+                return ESM4Base<Record>::getItemMaxHealth(ptr);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }

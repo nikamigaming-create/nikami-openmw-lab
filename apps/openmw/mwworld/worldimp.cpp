@@ -868,6 +868,30 @@ namespace MWWorld
                                  << " id=" << target.getCellRef().getRefId();
                 return true;
             });
+        mESM4QuestRuntime.setLockHandler(
+            [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty() || !target.getClass().canLock(target))
+                    return false;
+
+                const int lockLevel = requestedLevel.value_or(100);
+                if (lockLevel < 0 || lockLevel > 255)
+                    return false;
+                target.getCellRef().lock(lockLevel);
+                if (!target.getCellRef().isLocked()
+                    || static_cast<std::uint8_t>(target.getCellRef().getLockLevel())
+                        != static_cast<std::uint8_t>(lockLevel))
+                    return false;
+
+                // Bethesda's scripted Lock command also closes an ordinary
+                // non-teleport door immediately.
+                if (target.getClass().isDoor() && !target.getCellRef().getTeleport())
+                    activateDoor(target, DoorState::Idle);
+
+                Log(Debug::Info) << "FNV/ESM4 quest: Lock id=" << target.getCellRef().getRefId()
+                                 << " level=" << lockLevel;
+                return true;
+            });
         mESM4QuestRuntime.setSetDestroyedHandler([this](ESM::FormId referenceId, bool destroyed) {
             const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
             if (target.isEmpty())
@@ -1090,6 +1114,49 @@ namespace MWWorld
                 return false;
             }
         });
+        mESM4QuestRuntime.setAddItemHealthPercentHandler(
+            [this](ESM::FormId ownerId, ESM::FormId itemId, int count, float healthPercent) {
+                if (itemId.isZeroOrUnset() || count <= 0 || !std::isfinite(healthPercent)
+                    || healthPercent < 0.f || healthPercent > 1.f)
+                    return false;
+                try
+                {
+                    const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                        ? getPlayerPtr()
+                        : searchPtr(ESM::RefId(ownerId), false, false);
+                    if (owner.isEmpty())
+                        return false;
+
+                    ManualRef itemRef(mStore, ESM::RefId(itemId), count);
+                    const Ptr item = itemRef.getPtr();
+                    int condition = -1;
+                    if (item.getClass().hasItemHealth(item))
+                    {
+                        const int maximum = item.getClass().getItemMaxHealth(item);
+                        if (maximum <= 0)
+                            return false;
+                        condition = std::clamp(
+                            static_cast<int>(std::lround(static_cast<double>(maximum) * healthPercent)),
+                            0, maximum);
+                        item.getCellRef().setCharge(condition);
+                        item.getCellRef().setChargeIntRemainder(0.f);
+                    }
+
+                    ContainerStore& store = owner.getClass().getContainerStore(owner);
+                    if (store.add(item, count, false) == store.end())
+                        return false;
+                    Log(Debug::Info) << "FNV/ESM4 quest: AddItemHealthPercent owner="
+                                     << ESM::RefId(ownerId).serializeText()
+                                     << " item=" << ESM::RefId(itemId).serializeText()
+                                     << " count=" << count << " healthPercent=" << healthPercent
+                                     << " condition=" << condition;
+                    return true;
+                }
+                catch (const std::exception&)
+                {
+                    return false;
+                }
+            });
         mESM4QuestRuntime.setRemoveItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
             if (itemId.isZeroOrUnset() || count <= 0)
                 return false;

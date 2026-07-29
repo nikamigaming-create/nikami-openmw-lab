@@ -1,4 +1,5 @@
 #include "apps/openmw/mwworld/containerstore.hpp"
+#include "apps/openmw/mwworld/class.hpp"
 #include "apps/openmw/mwworld/livecellref.hpp"
 #include "apps/openmw/mwclass/classes.hpp"
 
@@ -70,6 +71,8 @@ namespace MWWorld
             ESM4::ItemMod itemMod;
             ESM4::Key key;
             ESM4::Light light;
+            armor.mData.health = 240;
+            weapon.mData.health = 360;
 
             TestContainerStore store;
             store.addRecord(ammunition, 0x01000001, 1);
@@ -86,14 +89,32 @@ namespace MWWorld
 
             std::set<unsigned int> recordTypes;
             int totalCount = 0;
+            bool sawArmorCondition = false;
+            bool sawWeaponCondition = false;
             for (const ConstPtr item : store)
             {
                 recordTypes.insert(item.getType());
                 totalCount += item.getCellRef().getCount();
+                if (item.getType() == ESM4::Armor::sRecordId)
+                {
+                    sawArmorCondition = true;
+                    EXPECT_TRUE(item.getClass().hasItemHealth(item));
+                    EXPECT_EQ(item.getClass().getItemMaxHealth(item), 240);
+                    EXPECT_EQ(item.getClass().getItemHealth(item), 240);
+                }
+                else if (item.getType() == ESM4::Weapon::sRecordId)
+                {
+                    sawWeaponCondition = true;
+                    EXPECT_TRUE(item.getClass().hasItemHealth(item));
+                    EXPECT_EQ(item.getClass().getItemMaxHealth(item), 360);
+                    EXPECT_EQ(item.getClass().getItemHealth(item), 360);
+                }
             }
 
             EXPECT_EQ(recordTypes.size(), 11u);
             EXPECT_EQ(totalCount, 66);
+            EXPECT_TRUE(sawArmorCondition);
+            EXPECT_TRUE(sawWeaponCondition);
         }
 
         TEST(ESM4ContainerStoreTest, falloutAmmoSelectionSurvivesInventoryStateAndCopies)

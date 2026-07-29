@@ -4707,6 +4707,27 @@ namespace MWWorld
                         }
                     }
                 }
+                else if (Misc::StringUtils::ciEqual(command, "AddItemHealthPercent")
+                    && tokens.size() >= 4)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    const std::optional<std::int32_t> count = sourceInteger(sourceTokens, argument);
+                    const std::optional<float> healthPercent = sourceExpression(sourceTokens, argument);
+                    const ESM::FormId owner = sourceOwnerId();
+                    const ESM::FormId item = resolveInventoryItem(tokens[1]);
+                    if (count && *count > 0 && healthPercent && std::isfinite(*healthPercent)
+                        && *healthPercent >= 0.f && *healthPercent <= 1.f
+                        && argument == sourceTokens.size() && !owner.isZeroOrUnset()
+                        && !item.isZeroOrUnset() && mAddItemHealthPercentHandler
+                        && mAddItemHealthPercentHandler(owner, item, *count, *healthPercent))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: AddItemHealthPercent owner=" << subject
+                                         << " item=" << tokens[1] << " count=" << *count
+                                         << " healthPercent=" << *healthPercent;
+                        continue;
+                    }
+                }
                 else if (Misc::StringUtils::ciEqual(command, "RewardXP")
                     && Misc::StringUtils::ciEqual(subject, "player") && tokens.size() >= 2)
                 {
@@ -4792,6 +4813,29 @@ namespace MWWorld
                 else if (Misc::StringUtils::ciEqual(command, "Unlock") && tokens.size() == 1
                     && executeReferenceCommand(ESM4QuestReferenceCommand::Unlock, subject))
                     continue;
+                else if (Misc::StringUtils::ciEqual(command, "Lock") && tokens.size() >= 1)
+                {
+                    std::optional<int> lockLevel;
+                    bool valid = tokens.size() == 1;
+                    if (!valid)
+                    {
+                        const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                        std::size_t argument = 1;
+                        const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                        valid = parsed && *parsed >= 0 && *parsed <= 255
+                            && argument == sourceTokens.size();
+                        if (valid)
+                            lockLevel = *parsed;
+                    }
+                    const ESM::FormId reference = this->resolveReference(subject);
+                    if (valid && !reference.isZeroOrUnset() && mLockHandler
+                        && mLockHandler(reference, lockLevel))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: Lock reference=" << subject
+                                         << " level=" << lockLevel.value_or(100);
+                        continue;
+                    }
+                }
                 else if (Misc::StringUtils::ciEqual(command, "Kill")
                     && (tokens.size() == 1
                         || (tokens.size() == 2 && Misc::StringUtils::ciEqual(tokens[1], "player")))
@@ -5088,6 +5132,29 @@ namespace MWWorld
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: SetEssential actorBase=" << tokens[1]
                                      << " essential=" << (*value != 0);
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "Lock") && ownerReference
+                && tokens.size() >= 1)
+            {
+                std::optional<int> lockLevel;
+                bool valid = tokens.size() == 1;
+                if (!valid)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<std::int32_t> parsed = sourceInteger(sourceTokens, argument);
+                    valid = parsed && *parsed >= 0 && *parsed <= 255
+                        && argument == sourceTokens.size();
+                    if (valid)
+                        lockLevel = *parsed;
+                }
+                if (valid && mLockHandler && mLockHandler(*ownerReference, lockLevel))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: Lock owning reference="
+                                     << ESM::RefId(*ownerReference).serializeText()
+                                     << " level=" << lockLevel.value_or(100);
                     continue;
                 }
             }

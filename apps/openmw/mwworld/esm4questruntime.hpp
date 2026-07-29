@@ -126,7 +126,9 @@ namespace MWWorld
         using SetEnemyHandler = std::function<bool(ESM::FormId, ESM::FormId, bool, bool)>;
         using ItemCountHandler = std::function<std::optional<int>(ESM::FormId, ESM::FormId)>;
         using AddItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using AddItemHealthPercentHandler = std::function<bool(ESM::FormId, ESM::FormId, int, float)>;
         using RemoveItemHandler = std::function<bool(ESM::FormId, ESM::FormId, int)>;
+        using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
         using AddReputationHandler = std::function<bool(ESM::FormId, bool, int)>;
@@ -274,7 +276,9 @@ namespace MWWorld
         SetEnemyHandler mSetEnemyHandler;
         ItemCountHandler mItemCountHandler;
         AddItemHandler mAddItemHandler;
+        AddItemHealthPercentHandler mAddItemHealthPercentHandler;
         RemoveItemHandler mRemoveItemHandler;
+        LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
         AddReputationHandler mAddReputationHandler;
@@ -506,7 +510,12 @@ namespace MWWorld
         void setSetEnemyHandler(SetEnemyHandler handler) { mSetEnemyHandler = std::move(handler); }
         void setItemCountHandler(ItemCountHandler handler) { mItemCountHandler = std::move(handler); }
         void setAddItemHandler(AddItemHandler handler) { mAddItemHandler = std::move(handler); }
+        void setAddItemHealthPercentHandler(AddItemHealthPercentHandler handler)
+        {
+            mAddItemHealthPercentHandler = std::move(handler);
+        }
         void setRemoveItemHandler(RemoveItemHandler handler) { mRemoveItemHandler = std::move(handler); }
+        void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
         void setRewardXpHandler(RewardXpHandler handler) { mRewardXpHandler = std::move(handler); }
         void setAddReputationHandler(AddReputationHandler handler)

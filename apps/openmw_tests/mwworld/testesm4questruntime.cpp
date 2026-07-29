@@ -27,6 +27,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
@@ -974,6 +975,62 @@ TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSo
     EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Completed, 0);
     EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Completed, 0);
     EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesConditionedItemRewardsAndScriptedLocksFromSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120139, .mContentFile = 0 };
+    const ESM::FormId weaponId{ .mIndex = 0x12013a, .mContentFile = 0 };
+    const ESM::FormId doorId{ .mIndex = 0x12013b, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ConditionRewardQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "Player.AddItemHealthPercent ConditionRewardWeapon 2 .85\n"
+          "ConditionRewardDoor.Lock 255\n"
+          "ConditionRewardDoor.Lock";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Weapon weapon;
+    weapon.mId = weaponId;
+    weapon.mEditorId = "ConditionRewardWeapon";
+    weapon.mData.health = 400;
+    store.overrideRecord(weapon);
+
+    ESM4::Reference door;
+    door.mId = doorId;
+    door.mEditorId = "ConditionRewardDoor";
+    store.overrideRecord(door);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, int, float>> conditionedItems;
+    std::vector<std::pair<ESM::FormId, std::optional<int>>> locks;
+    runtime.setAddItemHealthPercentHandler(
+        [&](ESM::FormId owner, ESM::FormId item, int count, float healthPercent) {
+            conditionedItems.emplace_back(owner, item, count, healthPercent);
+            return true;
+        });
+    runtime.setLockHandler([&](ESM::FormId reference, std::optional<int> lockLevel) {
+        locks.emplace_back(reference, lockLevel);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_EQ(conditionedItems.size(), 1);
+    EXPECT_EQ(std::get<0>(conditionedItems.front()), (ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }));
+    EXPECT_EQ(std::get<1>(conditionedItems.front()), weaponId);
+    EXPECT_EQ(std::get<2>(conditionedItems.front()), 2);
+    EXPECT_FLOAT_EQ(std::get<3>(conditionedItems.front()), .85f);
+    EXPECT_EQ(locks,
+        (std::vector<std::pair<ESM::FormId, std::optional<int>>>{
+            { doorId, 255 },
+            { doorId, std::nullopt },
+        }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
