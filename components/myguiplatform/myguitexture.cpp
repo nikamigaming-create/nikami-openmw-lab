@@ -54,6 +54,58 @@ namespace
         return separator == std::string_view::npos ? path : path.substr(separator + 1);
     }
 
+    bool isFnvPlaceholderTexture(std::string_view requestedName, const osg::Image& image)
+    {
+        // The FNV compatibility profile historically shipped uniform 8x8
+        // stand-ins for Morrowind's MyGUI chrome.  Their presence must not
+        // disable the readable generated UI: MainMenu scales those stand-ins
+        // into blank bars and every window skin inherits the same problem.
+        if (image.s() > 8 || image.t() > 8)
+            return false;
+
+        const std::string name = normalizeName(requestedName);
+        const std::string_view fileName = getFileName(name);
+        return fileName.starts_with("menu_") || fileName.starts_with("tx_menubook")
+            || fileName == "scroll.dds";
+    }
+
+    bool isS3tcCompressed(GLint pixelFormat)
+    {
+        return pixelFormat == GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+            || pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+            || pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT3_EXT
+            || pixelFormat == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    }
+
+    bool isPowerOfTwo(int value)
+    {
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
+    osg::ref_ptr<osg::Image> decompressNpotS3tcUiImage(const osg::Image& source)
+    {
+        if (!isS3tcCompressed(source.getPixelFormat())
+            || (isPowerOfTwo(source.s()) && isPowerOfTwo(source.t())))
+        {
+            return const_cast<osg::Image*>(&source);
+        }
+
+        // OSG's GL upload path can pad non-power-of-two S3TC images while
+        // MyGUI continues to use the unpadded dimensions for its UVs. Small
+        // Gamebryo UI sprites then sample only their transparent black
+        // background. Decode this texture class at the MyGUI boundary so the
+        // authored alpha and exact dimensions survive unchanged.
+        osg::ref_ptr<osg::Image> result = new osg::Image;
+        result->allocateImage(source.s(), source.t(), source.r(), GL_RGBA, GL_UNSIGNED_BYTE);
+        result->setFileName(source.getFileName());
+        result->setOrigin(source.getOrigin());
+        for (int r = 0; r < source.r(); ++r)
+            for (int t = 0; t < source.t(); ++t)
+                for (int s = 0; s < source.s(); ++s)
+                    result->setColor(source.getColor(s, t, r), s, t, r);
+        return result;
+    }
+
     osg::ref_ptr<osg::Image> makeImage(int width, int height, const Colour& colour, std::string_view name)
     {
         osg::ref_ptr<osg::Image> image = new osg::Image;
@@ -258,6 +310,92 @@ namespace
             drawRect(*image, 0, 0, size - 1, size - 1, sGreen);
         return image;
     }
+
+    osg::ref_ptr<osg::Image> makeHeadBlockChrome(std::string_view name)
+    {
+        const std::string_view fileName = getFileName(name);
+        if (contains(fileName, "middle"))
+        {
+            osg::ref_ptr<osg::Image> image = makeImage(32, 16, Colour{ 5, 24, 12, 232 }, name);
+            for (int y = 0; y < image->t(); ++y)
+            {
+                const unsigned char green = static_cast<unsigned char>(24 + std::abs(7 - y));
+                fillRect(*image, 0, y, image->s() - 1, y, Colour{ 5, green, 13, 232 });
+            }
+            drawLine(*image, 0, 0, image->s() - 1, 0, sDimGreen);
+            drawLine(*image, 0, image->t() - 1, image->s() - 1, image->t() - 1, sDimGreen);
+            return image;
+        }
+
+        const bool top = contains(fileName, "top");
+        const bool bottom = contains(fileName, "bottom");
+        const bool left = contains(fileName, "left");
+        const bool right = contains(fileName, "right");
+        const int width = (top || bottom) && !left && !right ? 32 : 2;
+        const int height = (left || right) && !top && !bottom ? 16 : 2;
+        osg::ref_ptr<osg::Image> image = makeImage(width, height, Colour{ 5, 24, 12, 232 }, name);
+        if (top)
+        {
+            drawLine(*image, 0, 0, width - 1, 0, sGreen);
+            if (height > 1)
+                drawLine(*image, 0, 1, width - 1, 1, sDimGreen);
+        }
+        if (bottom)
+        {
+            drawLine(*image, 0, height - 1, width - 1, height - 1, sGreen);
+            if (height > 1)
+                drawLine(*image, 0, height - 2, width - 1, height - 2, sDimGreen);
+        }
+        if (left)
+        {
+            drawLine(*image, 0, 0, 0, height - 1, sGreen);
+            if (width > 1)
+                drawLine(*image, 1, 0, 1, height - 1, sDimGreen);
+        }
+        if (right)
+        {
+            drawLine(*image, width - 1, 0, width - 1, height - 1, sGreen);
+            if (width > 1)
+                drawLine(*image, width - 2, 0, width - 2, height - 1, sDimGreen);
+        }
+        return image;
+    }
+
+    osg::ref_ptr<osg::Image> makeRightButtonChrome(std::string_view name)
+    {
+        const std::string_view fileName = getFileName(name);
+        const bool top = contains(fileName, "top");
+        const bool bottom = contains(fileName, "bottom");
+        const bool left = contains(fileName, "left");
+        const bool right = contains(fileName, "right");
+        const bool centre = contains(fileName, "center");
+        const int width = centre || ((top || bottom) && !left && !right) ? 16 : 2;
+        const int height = centre || ((left || right) && !top && !bottom) ? 16 : 2;
+        osg::ref_ptr<osg::Image> image = makeImage(width, height, Colour{ 5, 24, 12, 232 }, name);
+        if (centre)
+        {
+            drawRect(*image, 0, 0, width - 1, height - 1, sDimGreen);
+            drawLine(*image, 4, 5, 11, 5, sBrightGreen);
+            drawLine(*image, 8, 3, 8, 12, sBrightGreen);
+            if (contains(fileName, "down"))
+                fillRect(*image, 6, 9, 10, 12, sGreen);
+            else
+            {
+                drawLine(*image, 5, 10, 8, 13, sGreen);
+                drawLine(*image, 8, 13, 11, 10, sGreen);
+            }
+            return image;
+        }
+        if (top)
+            drawLine(*image, 0, 0, width - 1, 0, sGreen);
+        if (bottom)
+            drawLine(*image, 0, height - 1, width - 1, height - 1, sGreen);
+        if (left)
+            drawLine(*image, 0, 0, 0, height - 1, sGreen);
+        if (right)
+            drawLine(*image, width - 1, 0, width - 1, height - 1, sGreen);
+        return image;
+    }
 }
 
 namespace MyGUIPlatform
@@ -346,10 +484,15 @@ namespace MyGUIPlatform
             category = "menu chrome";
             image = makeChrome(name, 4);
         }
-        else if (contains(fileName, "menu_head_block_") || contains(fileName, "menu_rightbutton"))
+        else if (contains(fileName, "menu_head_block_"))
         {
             category = "window-control chrome";
-            image = makeChrome(name, 2);
+            image = makeHeadBlockChrome(name);
+        }
+        else if (contains(fileName, "menu_rightbutton"))
+        {
+            category = "window-control chrome";
+            image = makeRightButtonChrome(name);
         }
         else if (contains(fileName, "menu_small_energy_bar_"))
         {
@@ -449,6 +592,10 @@ namespace MyGUIPlatform
             drawLine(*image, 13, 2, 2, 13, sGreen);
         }
 
+        // MyGUI authors image rows from the top while osg::Image owns them
+        // from the bottom. File-backed textures arrive with the orientation
+        // expected by the shared GUI TexMat; make in-memory fallbacks match.
+        image->flipVertical();
         logFallbackOnce(name, category);
         return image;
     }
@@ -551,7 +698,12 @@ namespace MyGUIPlatform
         if (mUseMissingTextureFallback && vfs != nullptr && !vfs->exists(path))
             image = createMissingTextureFallback(path.value());
         else
+        {
             image = mImageManager->getImage(path);
+            if (mUseMissingTextureFallback && image != nullptr && isFnvPlaceholderTexture(path.value(), *image))
+                image = createMissingTextureFallback(path.value());
+        }
+        image = decompressNpotS3tcUiImage(*image);
 //## VR_PATCH BEGIN
         auto* texture2D = new osg::Texture2D(image);
         mTexture = texture2D;

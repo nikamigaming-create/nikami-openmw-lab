@@ -5,6 +5,10 @@
         <BasisSkin type="LuaTileRect"/>
     </Resource>
 
+    <Resource type="ResourceSkin" name="LuaRotatingImage" size="16 16">
+        <BasisSkin type="RotatingSkin" offset="0 0 16 16" align="Stretch"/>
+    </Resource>
+
     <Resource type="ResourceSkin" name="LuaText" size="16 16">
         <Property key="FontName" value="Default"/>
         <Property key="TextAlign" value="Left Top"/>

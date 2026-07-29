@@ -195,17 +195,32 @@ namespace MWGui
             }
         }
         else if (name == "loadgame" || name == "savegame")
-        {
-            if (!mSaveGameDialog)
-                mSaveGameDialog = std::make_unique<SaveGameDialog>();
-            mSaveGameDialog->setLoadOrSave(name == "loadgame");
-            mSaveGameDialog->setVisible(true);
-        }
+            setSaveGameDialogVisible(true, name == "loadgame");
 
         if (winMgr->isSettingsWindowVisible() || name == "options")
         {
             winMgr->toggleSettingsWindow();
         }
+    }
+
+    void MainMenu::setSaveGameDialogVisible(bool visible, bool load)
+    {
+        if (!visible)
+        {
+            if (mSaveGameDialog)
+                mSaveGameDialog->setVisible(false);
+            return;
+        }
+
+        if (!mSaveGameDialog)
+            mSaveGameDialog = std::make_unique<SaveGameDialog>();
+        mSaveGameDialog->setLoadOrSave(load);
+        mSaveGameDialog->setVisible(true);
+    }
+
+    bool MainMenu::isSaveGameDialogVisible() const
+    {
+        return mSaveGameDialog && mSaveGameDialog->isVisible();
     }
 
     bool MainMenu::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)

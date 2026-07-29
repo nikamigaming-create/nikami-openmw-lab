@@ -130,6 +130,7 @@ set(BUILTIN_DATA_FILES
     openmw_aux/obscript/runtime.lua
     openmw_aux/obscript/transpiler.lua
     openmw_aux/obscript/ui_bridge.lua
+    openmw_aux/mwse/runtime.lua
 
     builtin.omwscripts
 

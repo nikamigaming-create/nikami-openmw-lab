@@ -1283,6 +1283,15 @@ namespace Resource
                 "Root Bone",
                 "BoneOffset",
                 "AttachLight",
+                // Script extenders and authored meshes commonly use empty
+                // named nodes as runtime sockets/controllers. They must
+                // survive REMOVE_REDUNDANT_NODES for Lua scene mutation.
+                "ATTACH_",
+                "HANG_",
+                "POT_",
+                "SWITCH_",
+                "FIRE_PARTICLE_NODE",
+                "COLD_PARTICLE_NODE",
                 "Arrow",
                 "Camera",
                 "Collision",

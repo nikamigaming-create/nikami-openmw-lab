@@ -243,7 +243,9 @@ namespace MWLua
         api["getItemInfo"] = [lua](std::string_view id) -> sol::object {
             const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
             auto makeResult = [lua](const auto& record, int typeCode, float weight, bool scripted,
-                                  bool playable, float baseHealth, std::uint32_t weaponFlags1) {
+                                  bool playable, float baseHealth, std::uint32_t weaponFlags1,
+                                  std::string_view icon = {}, std::string_view bipedIconMale = {},
+                                  std::string_view bipedIconFemale = {}) {
                 sol::table result(lua, sol::create);
                 result["id"] = ESM::RefId(record.mId).serializeText();
                 result["editorId"] = record.mEditorId;
@@ -254,34 +256,42 @@ namespace MWLua
                 result["playable"] = playable;
                 result["baseHealth"] = baseHealth;
                 result["weaponFlags1"] = weaponFlags1;
+                result["icon"] = icon;
+                result["bipedIconMale"] = bipedIconMale;
+                result["bipedIconFemale"] = bipedIconFemale;
                 return sol::make_object(lua, std::move(result));
             };
 
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Weapon>(), id))
                 return makeResult(*record, 40, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true,
-                    static_cast<float>(record->mData.health), record->mData.weaponFlags1);
+                    static_cast<float>(record->mData.health), record->mData.weaponFlags1, record->mIcon);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Ammunition>(), id))
                 return makeResult(*record, 41, record->mData.mWeight, !record->mScript.isZeroOrUnset(), true,
-                    static_cast<float>(record->mData.mHealth), 0);
+                    static_cast<float>(record->mData.mHealth), 0, record->mIcon);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Armor>(), id))
                 return makeResult(*record, 24, record->mData.weight, !record->mScriptId.isZeroOrUnset(),
                     (record->mGeneralFlags & ESM4::Armor::FO3_NonPlayable) == 0,
-                    static_cast<float>(record->mData.health), 0);
+                    static_cast<float>(record->mData.health), 0, record->mIconMale, record->mIconMale,
+                    record->mIconFemale);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Clothing>(), id))
-                return makeResult(
-                    *record, 26, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0);
+                return makeResult(*record, 26, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true,
+                    0.f, 0, record->mIconMale, record->mIconMale, record->mIconFemale);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Potion>(), id))
                 return makeResult(
-                    *record, 47, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0);
+                    *record, 47, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0,
+                    record->mIcon);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Ingredient>(), id))
                 return makeResult(
-                    *record, 49, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0);
+                    *record, 49, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0,
+                    record->mIcon);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::Book>(), id))
                 return makeResult(
-                    *record, 25, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0);
+                    *record, 25, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0,
+                    record->mIcon);
             if (const auto* record = findEsm4Record(esmStore.get<ESM4::MiscItem>(), id))
                 return makeResult(
-                    *record, 30, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0);
+                    *record, 30, record->mData.weight, !record->mScriptId.isZeroOrUnset(), true, 0.f, 0,
+                    record->mIcon);
             return sol::make_object(lua, sol::nil);
         };
 

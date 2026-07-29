@@ -39,6 +39,7 @@
 #include "../mwworld/worldmodel.hpp"
 
 #include "luabindings.hpp"
+#include "mwsecompatcompiler.hpp"
 #include "obscriptcompiler.hpp"
 #include "playerscripts.hpp"
 #include "types/types.hpp"
@@ -106,6 +107,7 @@ namespace MWLua
     {
         ESM::LuaScriptsCfg cfg = MWBase::Environment::get().getESMStore()->getLuaScriptsCfg();
         cfg.mScripts.insert(cfg.mScripts.end(), mObScriptCfg.mScripts.begin(), mObScriptCfg.mScripts.end());
+        cfg.mScripts.insert(cfg.mScripts.end(), mMwseCompatCfg.mScripts.begin(), mMwseCompatCfg.mScripts.end());
         mConfiguration.init(std::move(cfg));
         Log(Debug::Verbose) << "Lua scripts configuration (" << mConfiguration.size() << " scripts):";
         for (size_t i = 0; i < mConfiguration.size(); ++i)
@@ -117,6 +119,11 @@ namespace MWLua
     void LuaManager::compileObScripts(VFS::Manager& vfs, VFS::InMemoryArchive& out)
     {
         mObScriptCfg = MWLua::compileObScripts(mLua, vfs, out);
+    }
+
+    void LuaManager::compileMwseCompatMods(VFS::Manager& vfs, VFS::InMemoryArchive& out)
+    {
+        mMwseCompatCfg = MWLua::compileMwseCompatMods(vfs, out);
     }
 
     void LuaManager::init()

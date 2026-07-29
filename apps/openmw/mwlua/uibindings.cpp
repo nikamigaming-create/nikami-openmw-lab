@@ -18,6 +18,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include "../mwgui/mainmenu.hpp"
 #include "../mwvr/vrgui.hpp"
 #include <MyGUI_InputManager.h>
 
@@ -34,6 +35,22 @@ namespace MWLua
                 return res;
             }();
             return ntm;
+        }
+
+        MWGui::MainMenu* getMainMenu(MWBase::WindowManager& windowManager)
+        {
+            for (MWGui::WindowBase* window : windowManager.getGuiModeWindows(MWGui::GM_MainMenu))
+            {
+                if (auto* mainMenu = dynamic_cast<MWGui::MainMenu*>(window))
+                    return mainMenu;
+            }
+            return nullptr;
+        }
+
+        void validateBuiltinMenuWindow(std::string_view window)
+        {
+            if (window != "loadgame" && window != "settings" && window != "postprocessor")
+                throw std::logic_error("Unsupported built-in menu window: " + std::string(window));
         }
     }
 
@@ -282,6 +299,40 @@ namespace MWLua
                     MWBase::Environment::get().getInputManager()->injectEscapeKey();
                 }
             });
+        };
+        api["_setBuiltinMenuWindowVisible"]
+            = [windowManager, luaManager = context.mLuaManager](std::string_view window, bool visible) {
+                  validateBuiltinMenuWindow(window);
+                  luaManager->addAction(
+                      [windowManager, window = std::string(window), visible] {
+                          if (window == "loadgame")
+                          {
+                              if (MWGui::MainMenu* mainMenu = getMainMenu(*windowManager))
+                                  mainMenu->setSaveGameDialogVisible(visible, true);
+                              return;
+                          }
+                          if (window == "settings")
+                          {
+                              if (windowManager->isSettingsWindowVisible() != visible)
+                                  windowManager->toggleSettingsWindow();
+                              return;
+                          }
+                          if (windowManager->isPostProcessorHudVisible() != visible)
+                              windowManager->togglePostProcessorHud();
+                      },
+                      "Set built-in menu window visibility");
+              };
+        api["_isBuiltinMenuWindowVisible"] = [windowManager](std::string_view window) {
+            validateBuiltinMenuWindow(window);
+            if (window == "loadgame")
+            {
+                if (const MWGui::MainMenu* mainMenu = getMainMenu(*windowManager))
+                    return mainMenu->isSaveGameDialogVisible();
+                return false;
+            }
+            if (window == "settings")
+                return windowManager->isSettingsWindowVisible();
+            return windowManager->isPostProcessorHudVisible();
         };
 
         // TODO

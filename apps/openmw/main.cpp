@@ -219,6 +219,14 @@ int runApplication(int argc, char* argv[])
 
 #ifdef __APPLE__
     setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
+#elif defined(_WIN32)
+    // OSG 3.6.5 can recycle immutable glTexStorage-backed objects for MyGUI's
+    // short-lived writable textures, then attempts to redefine them with
+    // glTexImage2D.  Shader controls create and release several such textures
+    // when their window opens or closes.  Use the mutable allocation path on
+    // Windows unless the caller explicitly selected another OSG policy.
+    if (std::getenv("OSG_GL_TEXTURE_STORAGE") == nullptr)
+        _putenv_s("OSG_GL_TEXTURE_STORAGE", "OFF");
 #endif
 
 //## VR_PATCH BEGIN

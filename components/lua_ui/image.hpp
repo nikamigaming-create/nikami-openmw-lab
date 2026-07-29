@@ -2,6 +2,7 @@
 #define OPENMW_LUAUI_IMAGE
 
 #include <MyGUI_ImageBox.h>
+#include <MyGUI_RotatingSkin.h>
 #include <MyGUI_TileRect.h>
 
 #include "widget.hpp"
@@ -28,7 +29,8 @@ namespace LuaUi
     protected:
         void initialize() override;
         void updateProperties() override;
-        LuaTileRect* mTileRect;
+        LuaTileRect* mTileRect = nullptr;
+        MyGUI::RotatingSkin* mRotatingSkin = nullptr;
     };
 }
 

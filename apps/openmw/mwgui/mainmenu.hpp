@@ -55,6 +55,9 @@ namespace MWGui
 
         bool exit() override;
 
+        void setSaveGameDialogVisible(bool visible, bool load);
+        bool isSaveGameDialogVisible() const;
+
     private:
         const VFS::Manager* mVFS;
 

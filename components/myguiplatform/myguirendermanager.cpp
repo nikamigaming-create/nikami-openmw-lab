@@ -5,6 +5,7 @@
 #include <MyGUI_LayerNode.h>
 #include <MyGUI_Timer.h>
 
+#include <osg/BlendFunc>
 #include <osg/Drawable>
 #include <osg/TexMat>
 #include <osg/Texture2D>
@@ -518,6 +519,8 @@ namespace MyGUIPlatform
         mGuiStateSet->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON);
         mGuiStateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
         mGuiStateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+        mGuiStateSet->setAttributeAndModes(
+            new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA), osg::StateAttribute::ON);
         // need to flip tex coords since MyGUI uses DirectX convention of top left image origin
         osg::Matrix flipMat;
         flipMat.preMultTranslate(osg::Vec3f(0, 1, 0));

@@ -1,5 +1,8 @@
 #include "animationbindings.hpp"
 
+#include <algorithm>
+
+#include <components/debug/debuglog.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/misc/finitevalues.hpp>
 
@@ -8,6 +11,10 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/character.hpp"
+
+#include "../mwworld/actionequip.hpp"
+#include "../mwworld/class.hpp"
+#include "../mwworld/containerstore.hpp"
 
 #include "context.hpp"
 #include "luamanagerimp.hpp"
@@ -64,6 +71,46 @@ namespace MWLua
             if (!anim)
                 throw std::runtime_error("Object has no animation");
             return anim;
+        }
+
+        std::vector<std::string> getMwseCompatStringPath(const sol::table& options, std::string_view key)
+        {
+            std::vector<std::string> result;
+            const sol::optional<sol::table> path = options.get<sol::optional<sol::table>>(key);
+            if (!path)
+                return result;
+            result.reserve(path->size());
+            for (std::size_t i = 1; i <= path->size(); ++i)
+            {
+                const sol::optional<std::string> value = path->get<sol::optional<std::string>>(i);
+                if (value)
+                    result.push_back(*value);
+            }
+            return result;
+        }
+
+        osg::Vec3f getMwseCompatVec3(
+            const sol::table& options, std::string_view key, const osg::Vec3f& fallback)
+        {
+            const sol::optional<sol::table> value = options.get<sol::optional<sol::table>>(key);
+            if (!value)
+                return fallback;
+            return osg::Vec3f(
+                value->get_or("x", value->get_or(1, fallback.x())),
+                value->get_or("y", value->get_or(2, fallback.y())),
+                value->get_or("z", value->get_or(3, fallback.z())));
+        }
+
+        osg::Quat getMwseCompatQuat(const sol::table& options, std::string_view key)
+        {
+            const sol::optional<sol::table> value = options.get<sol::optional<sol::table>>(key);
+            if (!value)
+                return osg::Quat();
+            return osg::Quat(
+                value->get_or("x", value->get_or(1, 0.f)),
+                value->get_or("y", value->get_or(2, 0.f)),
+                value->get_or("z", value->get_or(3, 0.f)),
+                value->get_or("w", value->get_or(4, 1.f)));
         }
 
         AnimationPriorities getPriorityArgument(const sol::table& args)
@@ -376,6 +423,114 @@ namespace MWLua
                     anim->removeEffects();
                 },
                 "removeVfxAction");
+        };
+
+        api["_mwseHasNode"] = [](const LObject& object, const sol::table& options) {
+            const std::string parentAttachment = options.get_or<std::string>("parentAttachment", "");
+            const std::vector<std::string> path = getMwseCompatStringPath(options, "path");
+            const MWRender::Animation* anim = getConstAnimationOrThrow(object);
+            return anim->hasMwseCompatNode(parentAttachment, path);
+        };
+
+        api["_mwseMeshHasNode"] = [](const LObject& object, const sol::table& options) {
+            const std::string model = options.get<std::string>("model");
+            const std::vector<std::string> path = getMwseCompatStringPath(options, "path");
+            const MWRender::Animation* anim = getConstAnimationOrThrow(object);
+            return anim->hasMwseCompatMeshNode(model, path);
+        };
+
+        api["_mwseAttachMesh"] = [context](const LObject& object, const sol::table& options) {
+            const std::string id = options.get<std::string>("id");
+            const std::string model = options.get<std::string>("model");
+            const std::string parentAttachment = options.get_or<std::string>("parentAttachment", "");
+            const std::vector<std::string> parentPath = getMwseCompatStringPath(options, "parentPath");
+            const std::string nodeName = options.get_or<std::string>("nodeName", "");
+            const osg::Vec3f translation = getMwseCompatVec3(options, "translation", osg::Vec3f());
+            const osg::Quat rotation = getMwseCompatQuat(options, "rotation");
+            const float scale = options.get_or("scale", 1.f);
+            const bool clearRootTransform = options.get_or("clearRootTransform", false);
+            context.mLuaManager->addAction(
+                [object = Object(object), id, model, parentAttachment, parentPath, nodeName,
+                    translation, rotation, scale, clearRootTransform] {
+                    MWRender::Animation* anim = getMutableAnimationOrThrow(object);
+                    if (!anim->attachMwseCompatMesh(id, model, parentAttachment, parentPath,
+                            nodeName, translation, rotation, scale, clearRootTransform))
+                    {
+                        Log(Debug::Warning) << "MWSE compat scene: failed to attach id=" << id
+                                            << " model=" << model;
+                    }
+                },
+                "mwseAttachMeshAction");
+        };
+
+        api["_mwseDetachMesh"] = [context](const LObject& object, std::string_view id) {
+            context.mLuaManager->addAction(
+                [object = Object(object), id = std::string(id)] {
+                    MWRender::Animation* anim = getMutableAnimationOrThrow(object);
+                    anim->detachMwseCompatMesh(id);
+                },
+                "mwseDetachMeshAction");
+        };
+
+        api["_mwseSetSwitch"] = [context](const LObject& object, const sol::table& options) {
+            const std::string parentAttachment = options.get_or<std::string>("parentAttachment", "");
+            const std::vector<std::string> path = getMwseCompatStringPath(options, "path");
+            const int index = options.get_or("index", 0);
+            context.mLuaManager->addAction(
+                [object = Object(object), parentAttachment, path, index] {
+                    MWRender::Animation* anim = getMutableAnimationOrThrow(object);
+                    if (!anim->setMwseCompatSwitch(parentAttachment, path, index))
+                    {
+                        Log(Debug::Warning) << "MWSE compat scene: failed to set switch index="
+                                            << index;
+                    }
+                },
+                "mwseSetSwitchAction");
+        };
+
+        api["_mwseAddItem"] = [context](
+                                        const SelfObject& object, std::string_view recordId,
+                                        sol::optional<int> count) {
+            context.mLuaManager->addAction(
+                [object = Object(object), recordId = std::string(recordId),
+                    count = std::max(1, count.value_or(1))] {
+                    const MWWorld::Ptr& actor = getMutablePtrOrThrow(object);
+                    actor.getClass().getContainerStore(actor).add(
+                        ESM::RefId::deserializeText(recordId), count, true);
+                    Log(Debug::Info) << "MWSE compat inventory: added id=" << recordId
+                                     << " count=" << count;
+                },
+                "mwseAddItemAction");
+        };
+
+        api["_mwseRemoveItem"] = [context](
+                                           const SelfObject& object, std::string_view recordId,
+                                           sol::optional<int> count) {
+            context.mLuaManager->addAction(
+                [object = Object(object), recordId = std::string(recordId),
+                    count = std::max(1, count.value_or(1))] {
+                    const MWWorld::Ptr& actor = getMutablePtrOrThrow(object);
+                    const int removed = actor.getClass().getContainerStore(actor).remove(
+                        ESM::RefId::deserializeText(recordId), count);
+                    Log(Debug::Info) << "MWSE compat inventory: removed id=" << recordId
+                                     << " count=" << removed;
+                },
+                "mwseRemoveItemAction");
+        };
+
+        api["_mwseEquipItem"] = [context](const SelfObject& object, std::string_view recordId) {
+            context.mLuaManager->addAction(
+                [object = Object(object), recordId = std::string(recordId)] {
+                    const MWWorld::Ptr& actor = getMutablePtrOrThrow(object);
+                    MWWorld::ContainerStore& store = actor.getClass().getContainerStore(actor);
+                    const MWWorld::Ptr item = store.search(ESM::RefId::deserializeText(recordId));
+                    if (item.isEmpty())
+                        throw std::runtime_error("Can't equip missing inventory item " + recordId);
+                    MWWorld::ActionEquip action(item, true);
+                    action.execute(actor);
+                    Log(Debug::Info) << "MWSE compat inventory: equipped id=" << recordId;
+                },
+                "mwseEquipItemAction");
         };
 
 

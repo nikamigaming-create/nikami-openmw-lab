@@ -7469,6 +7469,7 @@ namespace MWRender
     void Animation::setObjectRoot(const std::string& model, bool forceskeleton, bool baseonly, bool isCreature)
     {
         osg::ref_ptr<osg::StateSet> previousStateset;
+        mMwseCompatAttachments.clear();
         if (mObjectRoot)
         {
             detachActiveControllers();
@@ -7811,6 +7812,261 @@ namespace MWRender
         overrideFirstRootTexture(texture, mResourceSystem, *node);
     }
 
+    bool Animation::attachMwseCompatMesh(std::string_view id, std::string_view model,
+        std::string_view parentAttachment, const std::vector<std::string>& parentPath,
+        std::string_view nodeName, const osg::Vec3f& translation, const osg::Quat& rotation,
+        float scale, bool clearRootTransform)
+    {
+        if (!mObjectRoot || id.empty() || model.empty())
+            return false;
+
+        osg::Node* searchRoot = mObjectRoot;
+        if (!parentAttachment.empty())
+        {
+            const auto parentIt = mMwseCompatAttachments.find(std::string(parentAttachment));
+            if (parentIt == mMwseCompatAttachments.end() || !parentIt->second.mContent)
+                return false;
+            searchRoot = parentIt->second.mContent;
+        }
+
+        osg::Group* parent = searchRoot->asGroup();
+        for (const std::string& name : parentPath)
+        {
+            if (!parent)
+                return false;
+            if (name.starts_with("@child:"))
+            {
+                osg::Group* indexedParent = parent;
+                if (parent->getNumChildren() == 1 && parent->getChild(0)->asSwitch())
+                    indexedParent = parent->getChild(0)->asSwitch();
+                const char* valueStart = name.c_str() + 7;
+                char* valueEnd = nullptr;
+                const unsigned long luaIndex = std::strtoul(valueStart, &valueEnd, 10);
+                if (valueEnd == valueStart || *valueEnd != '\0' || luaIndex == 0)
+                    return false;
+                const unsigned long childIndex = luaIndex - 1;
+                if (childIndex >= indexedParent->getNumChildren())
+                    return false;
+                parent = indexedParent->getChild(static_cast<unsigned int>(childIndex))->asGroup();
+                continue;
+            }
+            osg::Group* searchParent = parent;
+            SceneUtil::FindByNameVisitor visitor(name);
+            parent->accept(visitor);
+            parent = visitor.mFoundNode;
+            if (!parent)
+            {
+                Log(Debug::Warning) << "MWSE compat scene: path component not found component="
+                                    << name << " beneath=" << searchParent->getName();
+                return false;
+            }
+        }
+
+        detachMwseCompatMesh(id);
+
+        osg::ref_ptr<SceneUtil::PositionAttitudeTransform> anchor
+            = new SceneUtil::PositionAttitudeTransform;
+        anchor->setName("MWSECompat:" + std::string(id));
+        anchor->setPosition(translation);
+        anchor->setAttitude(rotation);
+        anchor->setScale(osg::Vec3f(scale, scale, scale));
+        parent->addChild(anchor);
+
+        osg::ref_ptr<osg::Node> content;
+        try
+        {
+            content = mResourceSystem->getSceneManager()->getInstance(
+                VFS::Path::toNormalized(model), anchor);
+        }
+        catch (...)
+        {
+            parent->removeChild(anchor);
+            throw;
+        }
+
+        if (clearRootTransform)
+        {
+            if (auto* positionTransform
+                = dynamic_cast<SceneUtil::PositionAttitudeTransform*>(content.get()))
+            {
+                positionTransform->setPosition(osg::Vec3f());
+                positionTransform->setAttitude(osg::Quat());
+                positionTransform->setScale(osg::Vec3f(1.f, 1.f, 1.f));
+            }
+            else if (auto* matrixTransform = dynamic_cast<osg::MatrixTransform*>(content.get()))
+                matrixTransform->setMatrix(osg::Matrixf::identity());
+        }
+        if (!nodeName.empty())
+            content->setName(std::string(nodeName));
+
+        mMwseCompatAttachments.insert_or_assign(
+            std::string(id), MwseCompatAttachment{ anchor, content });
+        Log(Debug::Info) << "MWSE compat scene: attached id=" << id
+                         << " model=" << model
+                         << " parentAttachment="
+                         << (parentAttachment.empty() ? "<actor>" : parentAttachment)
+                         << " parentDepth=" << parentPath.size();
+        return true;
+    }
+
+    bool Animation::detachMwseCompatMesh(std::string_view id)
+    {
+        const auto it = mMwseCompatAttachments.find(std::string(id));
+        if (it == mMwseCompatAttachments.end())
+            return false;
+
+        osg::Node* anchor = it->second.mAnchor;
+        while (anchor && anchor->getNumParents() != 0)
+            anchor->getParent(0)->removeChild(anchor);
+        mMwseCompatAttachments.erase(it);
+        Log(Debug::Info) << "MWSE compat scene: detached id=" << id;
+        return true;
+    }
+
+    bool Animation::hasMwseCompatNode(
+        std::string_view parentAttachment, const std::vector<std::string>& path) const
+    {
+        if (!mObjectRoot)
+            return false;
+
+        osg::Node* searchRoot = mObjectRoot;
+        if (!parentAttachment.empty())
+        {
+            const auto parentIt = mMwseCompatAttachments.find(std::string(parentAttachment));
+            if (parentIt == mMwseCompatAttachments.end() || !parentIt->second.mContent)
+                return false;
+            searchRoot = parentIt->second.mContent;
+        }
+
+        osg::Group* node = searchRoot->asGroup();
+        for (const std::string& name : path)
+        {
+            if (!node)
+                return false;
+            if (name.starts_with("@child:"))
+            {
+                osg::Group* indexedParent = node;
+                if (node->getNumChildren() == 1 && node->getChild(0)->asSwitch())
+                    indexedParent = node->getChild(0)->asSwitch();
+                const char* valueStart = name.c_str() + 7;
+                char* valueEnd = nullptr;
+                const unsigned long luaIndex = std::strtoul(valueStart, &valueEnd, 10);
+                if (valueEnd == valueStart || *valueEnd != '\0' || luaIndex == 0)
+                    return false;
+                const unsigned long childIndex = luaIndex - 1;
+                if (childIndex >= indexedParent->getNumChildren())
+                    return false;
+                node = indexedParent->getChild(static_cast<unsigned int>(childIndex))->asGroup();
+                continue;
+            }
+            SceneUtil::FindByNameVisitor visitor(name);
+            node->accept(visitor);
+            node = visitor.mFoundNode;
+        }
+        return node != nullptr;
+    }
+
+    bool Animation::hasMwseCompatMeshNode(
+        std::string_view model, const std::vector<std::string>& path) const
+    {
+        osg::ref_ptr<osg::Node> instance
+            = mResourceSystem->getSceneManager()->getInstance(VFS::Path::toNormalized(model));
+        osg::Group* node = instance ? instance->asGroup() : nullptr;
+        for (const std::string& name : path)
+        {
+            if (!node)
+                return false;
+            if (name.starts_with("@child:"))
+            {
+                osg::Group* indexedParent = node;
+                if (node->getNumChildren() == 1 && node->getChild(0)->asSwitch())
+                    indexedParent = node->getChild(0)->asSwitch();
+                const char* valueStart = name.c_str() + 7;
+                char* valueEnd = nullptr;
+                const unsigned long luaIndex = std::strtoul(valueStart, &valueEnd, 10);
+                if (valueEnd == valueStart || *valueEnd != '\0' || luaIndex == 0)
+                    return false;
+                const unsigned long childIndex = luaIndex - 1;
+                if (childIndex >= indexedParent->getNumChildren())
+                    return false;
+                node = indexedParent->getChild(static_cast<unsigned int>(childIndex))->asGroup();
+                continue;
+            }
+            SceneUtil::FindByNameVisitor visitor(name);
+            node->accept(visitor);
+            node = visitor.mFoundNode;
+        }
+        return node != nullptr;
+    }
+
+    bool Animation::setMwseCompatSwitch(
+        std::string_view parentAttachment, const std::vector<std::string>& path, int index)
+    {
+        if (!mObjectRoot || path.empty())
+            return false;
+
+        osg::Node* searchRoot = mObjectRoot;
+        if (!parentAttachment.empty())
+        {
+            const auto parentIt = mMwseCompatAttachments.find(std::string(parentAttachment));
+            if (parentIt == mMwseCompatAttachments.end() || !parentIt->second.mContent)
+                return false;
+            searchRoot = parentIt->second.mContent;
+        }
+
+        osg::Group* node = searchRoot->asGroup();
+        for (const std::string& name : path)
+        {
+            if (!node)
+                return false;
+            if (name.starts_with("@child:"))
+            {
+                osg::Group* indexedParent = node;
+                if (node->getNumChildren() == 1 && node->getChild(0)->asSwitch())
+                    indexedParent = node->getChild(0)->asSwitch();
+                const char* valueStart = name.c_str() + 7;
+                char* valueEnd = nullptr;
+                const unsigned long luaIndex = std::strtoul(valueStart, &valueEnd, 10);
+                if (valueEnd == valueStart || *valueEnd != '\0' || luaIndex == 0)
+                    return false;
+                const unsigned long childIndex = luaIndex - 1;
+                if (childIndex >= indexedParent->getNumChildren())
+                    return false;
+                node = indexedParent->getChild(static_cast<unsigned int>(childIndex))->asGroup();
+                continue;
+            }
+            SceneUtil::FindByNameVisitor visitor(name);
+            node->accept(visitor);
+            node = visitor.mFoundNode;
+        }
+
+        osg::Switch* switchNode = node ? node->asSwitch() : nullptr;
+        // The NIF loader wraps NiSwitchNode in a transform so the authored
+        // transform applies to the switch and its children.  Both wrapper and
+        // osg::Switch carry the NIF name, so FindByNameVisitor intentionally
+        // returns the wrapper first.
+        if (!switchNode && node)
+        {
+            for (unsigned int childIndex = 0; childIndex < node->getNumChildren(); ++childIndex)
+            {
+                if (osg::Switch* candidate = node->getChild(childIndex)->asSwitch())
+                {
+                    switchNode = candidate;
+                    break;
+                }
+            }
+        }
+        if (!switchNode)
+            return false;
+        if (index < 0 || static_cast<unsigned int>(index) >= switchNode->getNumChildren())
+            switchNode->setAllChildrenOff();
+        else
+            switchNode->setSingleChildOn(static_cast<unsigned int>(index));
+        Log(Debug::Info) << "MWSE compat scene: switch path=" << path.back()
+                         << " index=" << index;
+        return true;
+    }
+
     void Animation::removeEffect(std::string_view effectId)
     {
         RemoveCallbackVisitor visitor(effectId);
@@ -8033,6 +8289,7 @@ namespace MWRender
         // overlay callback on the skeleton until member destruction can make OSG tear the callback chain down after
         // its AnimationTime source has already gone away (observed as a ucrtbase FAST_FAIL_INVALID_ARG on shutdown).
         detachActiveControllers();
+        mMwseCompatAttachments.clear();
 
         if (mGlowLight != nullptr)
             mInsert->removeChild(mGlowLight);

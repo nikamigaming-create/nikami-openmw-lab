@@ -54,6 +54,9 @@ namespace MWLua
         // Translates ESM4 script records (SCPT) and remembers their per-record attachments.
         void compileObScripts(VFS::Manager& vfs, VFS::InMemoryArchive& out);
 
+        // Discovers legacy MWSE-Lua mods and creates their shared compatibility host.
+        void compileMwseCompatMods(VFS::Manager& vfs, VFS::InMemoryArchive& out);
+
         void loadPermanentStorage(const std::filesystem::path& userConfigPath);
         void savePermanentStorage(const std::filesystem::path& userConfigPath) override;
 
@@ -215,6 +218,7 @@ namespace MWLua
         bool mRunningSynchronizedUpdates = false;
         LuaUtil::ScriptsConfiguration mConfiguration;
         ESM::LuaScriptsCfg mObScriptCfg;
+        ESM::LuaScriptsCfg mMwseCompatCfg;
         LuaUtil::LuaState mLua;
         LuaUi::ResourceManager mUiResourceManager;
         std::map<std::string, sol::object> mLocalPackages;

@@ -1157,6 +1157,29 @@ local function itemInfo(value)
     return ok and info or nil
 end
 
+obs.bind('GetTexturePath', function(value)
+    local info = itemInfo(value)
+    return info and tostring(info.icon or '') or ''
+end, provider('xnvse-core', 'openmw.esm4.record.icon', 'GetTexturePath'))
+
+obs.bind('GetBipedIconPath', function(first, second)
+    -- xNVSE accepts both `GetBipedIconPath pathCode form` and the member-call
+    -- spelling `form.GetBipedIconPath pathCode`.
+    local value = type(first) == 'number' and second or first
+    local info = itemInfo(value)
+    if info == nil then return '' end
+    local female = core.obscript.getPlayerIsFemale ~= nil
+        and core.obscript.getPlayerIsFemale() or false
+    if female and info.bipedIconFemale ~= nil
+            and tostring(info.bipedIconFemale) ~= '' then
+        return tostring(info.bipedIconFemale)
+    end
+    if info.bipedIconMale ~= nil and tostring(info.bipedIconMale) ~= '' then
+        return tostring(info.bipedIconMale)
+    end
+    return tostring(info.icon or '')
+end, provider('xnvse-core', 'openmw.esm4.record.bipedIcon', 'GetBipedIconPath'))
+
 obs.bind('GetType', function(value)
     local object = resolveObject(value)
     if isInstance(types.Container, object) then return 27 end

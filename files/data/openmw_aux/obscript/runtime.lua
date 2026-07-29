@@ -468,7 +468,7 @@ function obs.str(value)
         return string.format('%d', value)
     end
     if value == 0 then return '' end
-    if type(value) == 'userdata' and obs._bindings ~= nil
+    if (type(value) == 'userdata' or type(value) == 'string') and obs._bindings ~= nil
             and obs._bindings['lngetname'] ~= nil then
         local ok, name = pcall(obs._bindings['lngetname'], value)
         if ok and name ~= nil and tostring(name) ~= '' then

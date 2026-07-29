@@ -146,7 +146,7 @@ namespace MWGui
             Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
             const std::filesystem::path& logpath, bool consoleOnlyScripts, Translation::Storage& translationDataStorage,
             ToUTF8::FromType encoding, bool exportFonts, const std::string& versionDescription, bool useShaders,
-            Files::ConfigurationManager& cfgMgr);
+            Files::ConfigurationManager& cfgMgr, bool useMissingGuiTextureFallback);
         virtual ~WindowManager();
 
         /// Set the ESMStore to use for retrieving of GUI-related strings.

@@ -18,7 +18,9 @@
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Node>
+#include <osg/Quat>
 #include <osg/StateSet>
+#include <osg/Vec3f>
 
 #include <map>
 #include <span>
@@ -239,6 +241,13 @@ namespace MWRender
 
         Resource::ResourceSystem* mResourceSystem;
 
+        struct MwseCompatAttachment
+        {
+            osg::ref_ptr<osg::Node> mAnchor;
+            osg::ref_ptr<osg::Node> mContent;
+        };
+        std::unordered_map<std::string, MwseCompatAttachment> mMwseCompatAttachments;
+
         osg::Vec3f mAccumulate;
 
         TextKeyListener* mTextKeyListener;
@@ -400,6 +409,21 @@ namespace MWRender
         void removeEffect(std::string_view effectId);
         void removeEffects();
         std::vector<std::string_view> getLoopingEffects() const;
+
+        /// MWSE exposes mutable NiNode trees to Lua.  The compatibility host
+        /// translates those operations into named, owned scene attachments
+        /// instead of exposing raw OSG pointers across the Lua boundary.
+        bool attachMwseCompatMesh(std::string_view id, std::string_view model,
+            std::string_view parentAttachment, const std::vector<std::string>& parentPath,
+            std::string_view nodeName, const osg::Vec3f& translation, const osg::Quat& rotation,
+            float scale, bool clearRootTransform);
+        bool detachMwseCompatMesh(std::string_view id);
+        bool hasMwseCompatNode(
+            std::string_view parentAttachment, const std::vector<std::string>& path) const;
+        bool hasMwseCompatMeshNode(
+            std::string_view model, const std::vector<std::string>& path) const;
+        bool setMwseCompatSwitch(
+            std::string_view parentAttachment, const std::vector<std::string>& path, int index);
 
         // Add a spell casting glow to an object. From measuring video taken from the original engine,
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.

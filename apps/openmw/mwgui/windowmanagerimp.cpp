@@ -217,7 +217,8 @@ namespace MWGui
     WindowManager::WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
         Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue, const std::filesystem::path& logpath,
         bool consoleOnlyScripts, Translation::Storage& translationDataStorage, ToUTF8::FromType encoding,
-        bool exportFonts, const std::string& versionDescription, bool useShaders, Files::ConfigurationManager& cfgMgr)
+        bool exportFonts, const std::string& versionDescription, bool useShaders, Files::ConfigurationManager& cfgMgr,
+        bool useMissingGuiTextureFallback)
         : mOldUpdateMask(0)
         , mOldCullMask(0)
         , mStore(nullptr)
@@ -292,12 +293,11 @@ namespace MWGui
 //## VR_PATCH END
 
         const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
-            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
+        const bool useFnvMissingGuiFallback = !VR::getVR() && useMissingGuiTextureFallback;
         mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
         if (useFnvMissingGuiFallback)
-            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
+            Log(Debug::Info)
+                << "FNV UI: enabled generated fallbacks for absent or placeholder MyGUI textures";
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});

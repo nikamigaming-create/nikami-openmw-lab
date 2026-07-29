@@ -1,5 +1,7 @@
 #include "image.hpp"
 
+#include <cmath>
+
 #include <MyGUI_RenderManager.h>
 
 #include "resources.hpp"
@@ -31,11 +33,22 @@ namespace LuaUi
     {
         changeWidgetSkin("LuaImage");
         mTileRect = dynamic_cast<LuaTileRect*>(getSubWidgetMain());
+        mRotatingSkin = nullptr;
         WidgetExtension::initialize();
     }
 
     void LuaImage::updateProperties()
     {
+        const float rotation = propertyValue("rotation", 0.f);
+        const bool shouldRotate = std::abs(rotation) > 1e-6f;
+        const bool isRotating = mRotatingSkin != nullptr;
+        if (shouldRotate != isRotating)
+        {
+            changeWidgetSkin(shouldRotate ? "LuaRotatingImage" : "LuaImage");
+            mTileRect = dynamic_cast<LuaTileRect*>(getSubWidgetMain());
+            mRotatingSkin = dynamic_cast<MyGUI::RotatingSkin*>(getSubWidgetMain());
+        }
+
         deleteAllItems();
         TextureResource* resource = propertyValue<TextureResource*>("resource", nullptr);
         MyGUI::IntCoord atlasCoord;
@@ -60,9 +73,17 @@ namespace LuaUi
         if (atlasCoord.height == 0)
             atlasCoord.height = textureSize.height;
 
-        mTileRect->updateSize(MyGUI::IntSize(tileH ? atlasCoord.width : 0, tileV ? atlasCoord.height : 0));
+        if (mTileRect != nullptr)
+            mTileRect->updateSize(MyGUI::IntSize(tileH ? atlasCoord.width : 0, tileV ? atlasCoord.height : 0));
         setImageTile(atlasCoord.size());
         setImageCoord(atlasCoord);
+
+        if (mRotatingSkin != nullptr)
+        {
+            mRotatingSkin->setCenter(propertyValue(
+                "rotationCenter", MyGUI::IntPoint(getWidth() / 2, getHeight() / 2)));
+            mRotatingSkin->setAngle(rotation);
+        }
 
         setColour(propertyValue("color", MyGUI::Colour(1, 1, 1, 1)));
 

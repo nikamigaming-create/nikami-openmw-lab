@@ -237,8 +237,15 @@ namespace MWWorld
 
             try
             {
-                ESM::RefId worldspace = ESM::RefId::deserializeText(worldspaceText);
-                if (worldspace.empty())
+                // TES3 exterior cells intentionally use the empty worldspace
+                // in the file format, represented internally by the engine's
+                // sys::default identifier.  Expose an explicit sentinel for
+                // unattended Morrowind proof launches.
+                const bool isEsm3Worldspace = std::string_view(worldspaceText) == "esm3";
+                ESM::RefId worldspace
+                    = isEsm3Worldspace ? ESM::Cell::sDefaultWorldspaceId
+                                      : ESM::RefId::deserializeText(worldspaceText);
+                if (worldspace.empty() && !isEsm3Worldspace)
                 {
                     Log(Debug::Warning) << "World viewer: explicit exterior start ignored; worldspace is empty";
                     return false;
