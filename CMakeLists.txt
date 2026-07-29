@@ -315,6 +315,24 @@ endif()
 
 find_package(collada_dom 2.5)
 
+# The legacy collada-dom config distributed by vcpkg assumes that every
+# post-Visual-Studio-2008 compiler uses the vc100 library suffix. Modern
+# vcpkg packages use their actual toolset suffix instead (for example vc140).
+# Prefer the configured name when it exists, and otherwise resolve the single
+# installed matching library without changing the dependency installation.
+if (MSVC AND COLLADA_DOM_LIBRARY_DIRS)
+    set(_openmw_collada_expected
+        "${COLLADA_DOM_LIBRARY_DIRS}/collada-dom${COLLADA_DOM_LIBRARY_SUFFIX}.lib")
+    if (NOT EXISTS "${_openmw_collada_expected}")
+        file(GLOB _openmw_collada_candidates
+            "${COLLADA_DOM_LIBRARY_DIRS}/collada-dom${COLLADA_DOM_VERSION_MAJOR}.${COLLADA_DOM_VERSION_MINOR}-dp-vc*-mt.lib")
+        list(LENGTH _openmw_collada_candidates _openmw_collada_candidate_count)
+        if (_openmw_collada_candidate_count EQUAL 1)
+            set(COLLADA_DOM_LIBRARIES "${_openmw_collada_candidates}")
+        endif()
+    endif()
+endif()
+
 option(OPENMW_USE_SYSTEM_ICU "Use system ICU library instead of internal. If disabled, requires autotools" ON)
 if(OPENMW_USE_SYSTEM_ICU)
     find_package(ICU REQUIRED COMPONENTS uc i18n data)
