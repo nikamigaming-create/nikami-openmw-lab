@@ -210,6 +210,8 @@ namespace MWWorld
         using SetEssentialHandler = std::function<bool(ESM::FormId, bool)>;
         using ActorValueCommandHandler
             = std::function<bool(ESM::FormId, ESM4QuestActorValueCommand, std::string_view, float)>;
+        using CompiledActorValueCommandHandler
+            = std::function<bool(ESM::FormId, ESM4QuestActorValueCommand, std::uint8_t, float)>;
         using ActorValueHandler
             = std::function<std::optional<float>(ESM::FormId, std::string_view)>;
         // A rank value adds/updates membership; nullopt records RemoveFromFaction.
@@ -397,6 +399,7 @@ namespace MWWorld
         AddSpecialPointsHandler mAddSpecialPointsHandler;
         SetEssentialHandler mSetEssentialHandler;
         ActorValueCommandHandler mActorValueCommandHandler;
+        CompiledActorValueCommandHandler mCompiledActorValueCommandHandler;
         ActorValueHandler mActorValueHandler;
         ActorFactionCommandHandler mActorFactionCommandHandler;
         ActorFactionMembershipHandler mActorFactionMembershipHandler;
@@ -434,6 +437,7 @@ namespace MWWorld
             MoveTo,
             SetScriptPackage,
             SetActorEffect,
+            SetActorValue,
             SetActorFaction,
             AddItem,
             RemoveItem,
@@ -551,6 +555,7 @@ namespace MWWorld
             bool mValue = false;
             bool mSecondaryValue = false;
             std::int32_t mCount = 0;
+            float mNumber = 0.f;
         };
 
         struct CompiledStageWorkingState
@@ -592,6 +597,8 @@ namespace MWWorld
             const CompiledQuestCondition& condition, const QuestStateMap& states) const;
         std::optional<int> resolveCompiledIntegerVariable(
             const CompiledQuestCommand& command, const QuestStateMap& states) const;
+        std::optional<float> resolveCompiledActorValueArgument(
+            const CompiledQuestCommand& command) const;
         bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
             std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
@@ -749,6 +756,10 @@ namespace MWWorld
         void setActorValueCommandHandler(ActorValueCommandHandler handler)
         {
             mActorValueCommandHandler = std::move(handler);
+        }
+        void setCompiledActorValueCommandHandler(CompiledActorValueCommandHandler handler)
+        {
+            mCompiledActorValueCommandHandler = std::move(handler);
         }
         void setActorValueHandler(ActorValueHandler handler)
         {

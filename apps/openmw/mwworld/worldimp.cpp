@@ -1282,13 +1282,9 @@ namespace MWWorld
                                  << " essential=" << essential;
             return applied;
         });
-        mESM4QuestRuntime.setActorValueCommandHandler(
-            [this](ESM::FormId actorId, ESM4QuestActorValueCommand command,
-                std::string_view actorValueName, float value) {
-                const std::optional<std::uint8_t> actorValue
-                    = MWMechanics::resolveFalloutActorValue(actorValueName);
-                if (!actorValue)
-                    return false;
+        const auto applyQuestActorValue
+            = [this](ESM::FormId actorId, ESM4QuestActorValueCommand command,
+                  std::uint8_t actorValue, float value) {
                 const bool player = actorId.mIndex == 0x7 || actorId.mIndex == 0x14;
                 Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(actorId), false, false);
                 if (actor.isEmpty() && !player)
@@ -1305,15 +1301,24 @@ namespace MWWorld
                 FalloutPlayerRuntimeState* const playerState
                     = player ? &mFalloutPlayerRuntimeState : nullptr;
                 const bool applied = MWMechanics::applyFalloutActorValue(
-                    actor, *actorValue, operation, value, playerState);
+                    actor, actorValue, operation, value, playerState);
                 if (applied)
                     Log(Debug::Info) << "FNV/ESM4 quest: actor value command="
                                      << static_cast<unsigned int>(command)
                                      << " actor=" << actor.getCellRef().getRefId()
-                                     << " av=" << actorValueName << "(" << static_cast<unsigned int>(*actorValue)
-                                     << ") value=" << value;
+                                     << " av=" << static_cast<unsigned int>(actorValue)
+                                     << " value=" << value;
                 return applied;
+            };
+        mESM4QuestRuntime.setActorValueCommandHandler(
+            [applyQuestActorValue](ESM::FormId actorId, ESM4QuestActorValueCommand command,
+                std::string_view actorValueName, float value) {
+                const std::optional<std::uint8_t> actorValue
+                    = MWMechanics::resolveFalloutActorValue(actorValueName);
+                return actorValue
+                    && applyQuestActorValue(actorId, command, *actorValue, value);
             });
+        mESM4QuestRuntime.setCompiledActorValueCommandHandler(applyQuestActorValue);
         mESM4QuestRuntime.setActorValueHandler(
             [this](ESM::FormId actorId, std::string_view actorValueName) -> std::optional<float> {
                 const std::optional<std::uint8_t> actorValue

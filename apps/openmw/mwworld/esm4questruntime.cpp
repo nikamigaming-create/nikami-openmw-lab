@@ -1425,6 +1425,12 @@ namespace MWWorld
             return static_cast<std::uint16_t>(
                 bytes[offset] | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
         };
+        const auto readUint32 = [](std::span<const std::uint8_t> bytes, std::size_t offset) {
+            return static_cast<std::uint32_t>(bytes[offset])
+                | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
+                | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
+                | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
+        };
         std::vector<bool> conditionalElseSeen;
         for (const ESM4::ScriptBytecodeInstruction& instruction : instructions)
         {
@@ -1437,6 +1443,7 @@ namespace MWWorld
                 && instruction.opcode != 0x0016 && instruction.opcode != 0x0017
                 && instruction.opcode != 0x0018 && instruction.opcode != 0x0019
                 && instruction.opcode != 0x1002
+                && instruction.opcode != 0x100f
                 && instruction.opcode != 0x101d
                 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
@@ -1835,6 +1842,61 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetVariableFromItemCount;
                 command.mTarget = owner;
                 command.mTopic = item;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x100f) // actor.SetAV actorValue value
+            {
+                // The 37 Fallout 3 base-master quest frames use an actor
+                // reference receiver, a raw uint16 actor-value index, and
+                // either an int32 literal (36 frames) or one placed-actor
+                // local (ShortyRef.startingAggression).
+                if (!instruction.callingReferenceIndex || !mCompiledActorValueCommandHandler
+                    || mStore == nullptr || argumentPayload.size() < 4
+                    || readUint16(argumentPayload, 0) != 2)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const std::uint16_t actorValue = readUint16(argumentPayload, 2);
+                if (!actorExists || actorValue >= 96)
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetActorValue;
+                command.mQuest = actor;
+                command.mObjective = actorValue;
+                if (argumentPayload.size() == 9 && argumentPayload[4] == 0x6e)
+                {
+                    command.mNumber = static_cast<float>(
+                        std::bit_cast<std::int32_t>(readUint32(argumentPayload, 5)));
+                }
+                else if (argumentPayload.size() == 10
+                    && argumentPayload[4] == 0x72 && argumentPayload[7] == 0x73)
+                {
+                    const std::uint16_t ownerIndex = readUint16(argumentPayload, 5);
+                    const std::uint16_t variableIndex = readUint16(argumentPayload, 8);
+                    if (ownerIndex == 0 || ownerIndex > script.references.size())
+                        return false;
+                    command.mTarget = script.references[ownerIndex - 1];
+                    const ActorScriptState* const actorState = findActorScriptState(command.mTarget);
+                    const ESM4::Script* actorScript = actorState == nullptr
+                        ? nullptr
+                        : mStore->get<ESM4::Script>().search(ESM::RefId(actorState->mScript));
+                    if (actorScript == nullptr)
+                        return false;
+                    const auto variable = std::ranges::find(
+                        actorScript->mScript.localVarData, variableIndex,
+                        &ESM4::ScriptLocalVariableData::index);
+                    if (variable == actorScript->mScript.localVarData.end()
+                        || variable->variableName.empty())
+                        return false;
+                    command.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                    prepared.mHasLiveArgument = true;
+                }
+                else
+                    return false;
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -2794,6 +2856,23 @@ namespace MWWorld
         return static_cast<int>(value);
     }
 
+    std::optional<float> ESM4QuestRuntime::resolveCompiledActorValueArgument(
+        const CompiledQuestCommand& command) const
+    {
+        float value = command.mNumber;
+        if (!command.mVariable.empty())
+        {
+            const ActorScriptState* const state = findActorScriptState(command.mTarget);
+            if (state == nullptr)
+                return std::nullopt;
+            const auto variable = state->mVariables.find(command.mVariable);
+            if (variable == state->mVariables.end())
+                return std::nullopt;
+            value = variable->second;
+        }
+        return std::isfinite(value) ? std::optional<float>{ value } : std::nullopt;
+    }
+
     bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,
         const QuestStateMap& states, std::vector<CompiledConditionalFrame>& stack, bool& execute) const
     {
@@ -2853,6 +2932,19 @@ namespace MWWorld
     {
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
+        if (command.mType == CompiledQuestCommandType::SetActorValue)
+        {
+            const std::optional<float> value = resolveCompiledActorValueArgument(command);
+            if (!value)
+                return false;
+            PendingExternalEffect effect;
+            effect.mType = command.mType;
+            effect.mTarget = command.mQuest;
+            effect.mCount = command.mObjective;
+            effect.mNumber = *value;
+            working.mExternalEffects.push_back(std::move(effect));
+            return true;
+        }
         if (command.mType == CompiledQuestCommandType::RewardKarma && !command.mVariable.empty())
         {
             const std::optional<int> amount = resolveCompiledIntegerVariable(command, working.mStates);
@@ -2985,6 +3077,7 @@ namespace MWWorld
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
+            case CompiledQuestCommandType::SetActorValue:
             case CompiledQuestCommandType::SetActorFaction:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
@@ -3172,6 +3265,14 @@ namespace MWWorld
                     executed = mActorEffectCommandHandler
                         && mActorEffectCommandHandler(effect.mTarget, effect.mListener, effect.mValue);
                     break;
+                case CompiledQuestCommandType::SetActorValue:
+                    command = "SetAV ";
+                    executed = effect.mCount >= 0 && effect.mCount < 96
+                        && mCompiledActorValueCommandHandler
+                        && mCompiledActorValueCommandHandler(effect.mTarget,
+                            ESM4QuestActorValueCommand::Set, static_cast<std::uint8_t>(effect.mCount),
+                            effect.mNumber);
+                    break;
                 case CompiledQuestCommandType::SetActorFaction:
                     command = effect.mValue ? "AddToFaction " : "RemoveFromFaction ";
                     executed = mActorFactionCommandHandler
@@ -3314,6 +3415,8 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetActorValue)
+                command += " " + std::to_string(effect.mCount) + " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::SetActorFaction)
             {
                 command += " " + ESM::RefId(effect.mListener).serializeText();
@@ -3613,6 +3716,15 @@ namespace MWWorld
                             executed = mActorEffectCommandHandler
                                 && mActorEffectCommandHandler(command.mQuest, command.mTarget, command.mValue);
                             break;
+                        case CompiledQuestCommandType::SetActorValue:
+                        {
+                            const std::optional<float> value = resolveCompiledActorValueArgument(command);
+                            executed = value && mCompiledActorValueCommandHandler
+                                && mCompiledActorValueCommandHandler(command.mQuest,
+                                    ESM4QuestActorValueCommand::Set,
+                                    static_cast<std::uint8_t>(command.mObjective), *value);
+                            break;
+                        }
                         case CompiledQuestCommandType::SetActorFaction:
                             executed = mActorFactionCommandHandler
                                 && mActorFactionCommandHandler(command.mQuest, command.mTarget,
@@ -3691,6 +3803,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
+                            || command.mType == CompiledQuestCommandType::SetActorValue
                             || command.mType == CompiledQuestCommandType::SetActorFaction
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
@@ -3733,6 +3846,13 @@ namespace MWWorld
                                 failure = std::string(command.mValue ? "AddSpell " : "RemoveSpell ")
                                     + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetActorValue)
+                            {
+                                const std::optional<float> value = resolveCompiledActorValueArgument(command);
+                                failure = "SetAV " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + std::to_string(command.mObjective) + " "
+                                    + (value ? std::to_string(*value) : std::string("<unresolved>"));
+                            }
                             else if (command.mType == CompiledQuestCommandType::SetActorFaction)
                                 failure = std::string(command.mValue ? "AddToFaction " : "RemoveFromFaction ")
                                     + ESM::RefId(command.mQuest).serializeText() + " "
