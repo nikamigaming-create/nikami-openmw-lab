@@ -276,6 +276,42 @@ namespace ESM
                 }
             }
         }
+
+        mHasFalloutActorEffectOverride = false;
+        mFalloutActorEffects.clear();
+        if (esm.peekNextSub("FAEC"))
+        {
+            mHasFalloutActorEffectOverride = true;
+            std::uint32_t effectCount = 0;
+            esm.getHNT(effectCount, "FAEC");
+            constexpr std::uint32_t MaximumActorEffects = 1024;
+            if (effectCount > MaximumActorEffects)
+                esm.fail("Unreasonable Fallout actor-effect override count");
+            for (std::uint32_t i = 0; i < effectCount; ++i)
+            {
+                ESM::FormId effect = esm.getFormId(true, "FAEI");
+                const bool contentAvailable = esm.applyContentFileMapping(effect);
+                if (contentAvailable)
+                {
+                    if (effect.isZeroOrUnset()
+                        || std::find(mFalloutActorEffects.begin(), mFalloutActorEffects.end(), effect)
+                            != mFalloutActorEffects.end())
+                        esm.fail("Invalid or duplicate Fallout actor-effect override");
+                    mFalloutActorEffects.push_back(effect);
+                }
+            }
+        }
+
+        mFalloutFullName.reset();
+        if (esm.peekNextSub("FFNM"))
+        {
+            std::string name = esm.getHNString("FFNM");
+            constexpr std::size_t MaximumFullNameLength = 4096;
+            if (name.empty() || name.size() > MaximumFullNameLength
+                || name.find('\0') != std::string::npos)
+                esm.fail("Invalid Fallout actor full-name override");
+            mFalloutFullName = std::move(name);
+        }
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -399,6 +435,14 @@ namespace ESM
             for (const ESM::FormId item : mFalloutEquippedItems)
                 esm.writeFormId(item, true, "FEQI");
         }
+        if (mHasFalloutActorEffectOverride)
+        {
+            esm.writeHNT("FAEC", static_cast<std::uint32_t>(mFalloutActorEffects.size()));
+            for (const ESM::FormId effect : mFalloutActorEffects)
+                esm.writeFormId(effect, true, "FAEI");
+        }
+        if (mFalloutFullName)
+            esm.writeHNString("FFNM", *mFalloutFullName);
     }
 
     void CreatureStats::blank()
@@ -436,6 +480,9 @@ namespace ESM
         mFalloutLookRotateBody = false;
         mHasFalloutEquipmentOverride = false;
         mFalloutEquippedItems.clear();
+        mHasFalloutActorEffectOverride = false;
+        mFalloutActorEffects.clear();
+        mFalloutFullName.reset();
     }
 
 }

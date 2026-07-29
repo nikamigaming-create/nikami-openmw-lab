@@ -178,6 +178,7 @@ namespace MWClass
         const ESM4::Npc* mFactions = nullptr;
         const ESM4::Npc* mModel = nullptr;
         const ESM4::Npc* mAIPackage = nullptr;
+        const ESM4::Npc* mActorEffects = nullptr;
         const ESM4::Npc* mStats = nullptr;
         const ESM4::Npc* mAIData = nullptr;
         const ESM4::Npc* mBaseData = nullptr;
@@ -222,6 +223,7 @@ namespace MWClass
         , mFactions(other.mFactions)
         , mModel(other.mModel)
         , mAIPackage(other.mAIPackage)
+        , mActorEffects(other.mActorEffects)
         , mStats(other.mStats)
         , mAIData(other.mAIData)
         , mBaseData(other.mBaseData)
@@ -1333,6 +1335,10 @@ namespace MWClass
         stats.setMagicka(0.f);
         stats.setFatigue(fatigue);
         stats.getSpells().setSpells(ESM::RefId(statsRecord->mId), ESM::REC_NPC_4);
+        if (!stats.setFalloutBaseActorEffects(
+                data.mActorEffects != nullptr ? data.mActorEffects->mSpell : std::vector<ESM::FormId>{}))
+            Log(Debug::Warning) << "Invalid native actor-effect list for ESM4 NPC "
+                                << ESM::RefId(statsRecord->mId);
 
         const ESM4::Npc* aiRecord = data.mAIData != nullptr ? data.mAIData : statsRecord;
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
@@ -1384,6 +1390,12 @@ namespace MWClass
         if (data->mAIPackage == nullptr)
             Log(Debug::Warning) << "AI package data is not found for ESM4 NPC base record: \"" << base->mEditorId
                                 << "\" (" << ESM::RefId(base->mId) << ")";
+
+        data->mActorEffects = chooseTemplate(npcRecs, ESM4::Npc::Template_UseSpellList);
+
+        if (data->mActorEffects == nullptr)
+            Log(Debug::Warning) << "Actor effects are not found for ESM4 NPC base record: \""
+                                << base->mEditorId << "\" (" << ESM::RefId(base->mId) << ")";
 
         data->mBaseData = chooseTemplate(npcRecs, ESM4::Npc::Template_UseBaseData);
 
@@ -2117,7 +2129,10 @@ namespace MWClass
 
     std::string_view ESM4Npc::getName(const MWWorld::ConstPtr& ptr) const
     {
-        const ESM4::Npc* const baseData = getCustomData(ptr).mBaseData;
+        const ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mCreatureStats.getFalloutFullName())
+            return *data.mCreatureStats.getFalloutFullName();
+        const ESM4::Npc* const baseData = data.mBaseData;
         if (baseData == nullptr)
             return {};
         return baseData->mFullName;

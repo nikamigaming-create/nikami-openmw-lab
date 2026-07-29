@@ -11,12 +11,16 @@
 
 #include <components/esm/attr.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadspel.hpp>
 
+#include "../mwbase/environment.hpp"
 #include "../mwclass/esm4creature.hpp"
 #include "../mwclass/esm4npc.hpp"
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/ptr.hpp"
 
@@ -112,6 +116,113 @@ namespace MWMechanics
             return actor.getType() == ESM4::Creature::sRecordId
                 ? MWClass::ESM4Creature::getStatsRecord(actor)
                 : nullptr;
+        }
+
+        bool isPersistentFalloutActorEffect(const ESM4::Spell& spell)
+        {
+            if (!spell.mData.present)
+                return false;
+            switch (spell.mData.type)
+            {
+                case ESM4::Spell::Type::ActorEffect:
+                case ESM4::Spell::Type::Disease:
+                case ESM4::Spell::Type::Ability:
+                case ESM4::Spell::Type::Addiction:
+                    return true;
+                case ESM4::Spell::Type::Power:
+                case ESM4::Spell::Type::LesserPower:
+                case ESM4::Spell::Type::Poison:
+                    return false;
+            }
+            return false;
+        }
+
+        std::optional<std::uint8_t> effectActorValue(
+            const ESM4::Spell::Effect& effect, const ESM4::MagicEffect& magicEffect)
+        {
+            std::int32_t actorValue = effect.actorValue;
+            if (actorValue < 0 || actorValue >= 96)
+                actorValue = magicEffect.mData.actorValue;
+            if (actorValue < 0 || actorValue >= 96)
+            {
+                switch (magicEffect.mData.archetype)
+                {
+                    case ESM4::MagicEffect::Archetype::Invisibility:
+                        actorValue = 48;
+                        break;
+                    case ESM4::MagicEffect::Archetype::Chameleon:
+                        actorValue = 49;
+                        break;
+                    case ESM4::MagicEffect::Archetype::Turbo:
+                        actorValue = 51;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            return actorValue >= 0 && actorValue < 96
+                ? std::optional<std::uint8_t>(static_cast<std::uint8_t>(actorValue))
+                : std::nullopt;
+        }
+
+        bool isActorValueModifierArchetype(ESM4::MagicEffect::Archetype archetype)
+        {
+            switch (archetype)
+            {
+                case ESM4::MagicEffect::Archetype::ValueModifier:
+                case ESM4::MagicEffect::Archetype::Invisibility:
+                case ESM4::MagicEffect::Archetype::Chameleon:
+                case ESM4::MagicEffect::Archetype::Concussion:
+                case ESM4::MagicEffect::Archetype::ValueAndParts:
+                case ESM4::MagicEffect::Archetype::LimbCondition:
+                case ESM4::MagicEffect::Archetype::Turbo:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        float getFalloutActorEffectModifier(const CreatureStats& stats, std::uint8_t actorValue)
+        {
+            const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+            double result = 0.0;
+            for (const ESM::FormId spellId : stats.getFalloutActorEffects())
+            {
+                const ESM4::Spell* const spell = store.get<ESM4::Spell>().search(ESM::RefId(spellId));
+                if (spell == nullptr || !isPersistentFalloutActorEffect(*spell))
+                    continue;
+                for (const ESM4::Spell::Effect& effect : spell->mEffects)
+                {
+                    // Conditional actor effects need the full CTDA subject/target evaluator. Never turn an
+                    // unevaluated condition into an unconditional permanent bonus.
+                    if (!effect.conditions.empty() || effect.range != ESM4::Spell::Range::Self
+                        || effect.baseEffect.isZeroOrUnset())
+                        continue;
+                    const ESM4::MagicEffect* const magicEffect
+                        = store.get<ESM4::MagicEffect>().search(ESM::RefId(effect.baseEffect));
+                    if (magicEffect == nullptr || !magicEffect->mData.present
+                        || !isActorValueModifierArchetype(magicEffect->mData.archetype))
+                        continue;
+                    const std::optional<std::uint8_t> modifiedActorValue
+                        = effectActorValue(effect, *magicEffect);
+                    if (!modifiedActorValue || *modifiedActorValue != actorValue)
+                        continue;
+
+                    float magnitude = static_cast<float>(effect.magnitude);
+                    if (magnitude == 0.f
+                        && (magicEffect->mData.archetype == ESM4::MagicEffect::Archetype::Invisibility
+                            || magicEffect->mData.archetype == ESM4::MagicEffect::Archetype::Turbo))
+                        magnitude = 1.f;
+                    if ((magicEffect->mData.flags & ESM4::MagicEffect::Detrimental) != 0)
+                        magnitude = -magnitude;
+                    result += magnitude;
+                }
+            }
+            if (!std::isfinite(result))
+                return 0.f;
+            return static_cast<float>(std::clamp(result,
+                static_cast<double>(-std::numeric_limits<float>::max()),
+                static_cast<double>(std::numeric_limits<float>::max())));
         }
 
         std::optional<float> authoredFalloutActorValue(const MWWorld::Ptr& actor,
@@ -258,24 +369,31 @@ namespace MWMechanics
         if (actor.isEmpty() || !actor.getClass().isActor() || actorValue >= 96)
             return std::nullopt;
 
+        const CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+        std::optional<float> rawValue;
         if (playerState != nullptr)
         {
             if (actorValue == 23)
                 if (const std::optional<float> karma = playerState->getKarma())
-                    return karma;
-            if (const std::optional<MWWorld::FalloutRuntimeActorValue> value
-                = playerState->getCurrentActorValue(actorValue))
-                return value->mValue;
-            if (actorValue == 13)
+                    rawValue = karma;
+            if (!rawValue)
+                if (const std::optional<MWWorld::FalloutRuntimeActorValue> value
+                    = playerState->getCurrentActorValue(actorValue))
+                    rawValue = value->mValue;
+            if (!rawValue && actorValue == 13)
                 if (const std::optional<float> capacity = playerState->getCarryCapacity())
-                    if (!actor.getClass().getCreatureStats(actor).getFalloutActorValueOverride(actorValue))
-                        return capacity;
+                    if (!stats.getFalloutActorValueOverride(actorValue))
+                        rawValue = capacity;
         }
 
-        const CreatureStats& stats = actor.getClass().getCreatureStats(actor);
-        if (const std::optional<float> value = stats.getFalloutActorValueOverride(actorValue))
-            return value;
-        return authoredFalloutActorValue(actor, stats, actorValue);
+        if (!rawValue)
+            rawValue = stats.getFalloutActorValueOverride(actorValue);
+        if (!rawValue)
+            rawValue = authoredFalloutActorValue(actor, stats, actorValue);
+        if (!rawValue)
+            return std::nullopt;
+        const float result = *rawValue + getFalloutActorEffectModifier(stats, actorValue);
+        return std::isfinite(result) ? std::optional<float>(result) : std::nullopt;
     }
 
     bool applyFalloutActorValue(const MWWorld::Ptr& actor, std::uint8_t actorValue,
@@ -305,24 +423,29 @@ namespace MWMechanics
         if (actorValue == 54 && operation == FalloutActorValueOperation::Restore)
             target = std::max(0.f, *current - value);
 
+        const float modifier = getFalloutActorEffectModifier(stats, actorValue);
+        const float rawTarget = target - modifier;
+        if (!std::isfinite(rawTarget))
+            return false;
+
         if (actorValue == 0)
         {
             stats.setAiSetting(AiSetting::Fight,
-                std::clamp(static_cast<int>(std::lround(target)), 0, 3));
+                std::clamp(static_cast<int>(std::lround(rawTarget)), 0, 3));
             return true;
         }
         if (actorValue == 1)
         {
-            const int confidence = std::clamp(static_cast<int>(std::lround(target)), 0, 4);
+            const int confidence = std::clamp(static_cast<int>(std::lround(rawTarget)), 0, 4);
             stats.setAiSetting(AiSetting::Flee, 100 - confidence);
             return true;
         }
         if (actorValue == 3)
         {
-            if (target < static_cast<float>(std::numeric_limits<int>::min())
-                || target > static_cast<float>(std::numeric_limits<int>::max()))
+            if (rawTarget < static_cast<float>(std::numeric_limits<int>::min())
+                || rawTarget > static_cast<float>(std::numeric_limits<int>::max()))
                 return false;
-            stats.setAiSetting(AiSetting::Alarm, static_cast<int>(std::lround(target)));
+            stats.setAiSetting(AiSetting::Alarm, static_cast<int>(std::lround(rawTarget)));
             return true;
         }
 
@@ -336,7 +459,10 @@ namespace MWMechanics
                 stats.setAttribute(*attribute, restored);
             }
             else
-                stats.setAttribute(*attribute, target);
+            {
+                stats.setAttribute(*attribute, rawTarget);
+                target = rawTarget;
+            }
 
             if (playerState != nullptr
                 && playerState->setCurrentActorValue(actorValue, target)
@@ -355,7 +481,7 @@ namespace MWMechanics
                 const float priorCurrent = dynamic.getCurrent();
                 const float priorBase = dynamic.getBase();
                 const float newBase = operation == FalloutActorValueOperation::Set
-                    ? std::max(0.f, value)
+                    ? std::max(0.f, rawTarget)
                     : std::max(0.f, priorBase + value);
                 const float newCurrent = operation == FalloutActorValueOperation::Set
                     ? newBase
@@ -379,16 +505,16 @@ namespace MWMechanics
         if (playerState != nullptr)
         {
             if (actorValue == 23)
-                return playerState->setKarma(target);
+                return playerState->setKarma(rawTarget);
             const MWWorld::FalloutActorValueMutationResult result
-                = playerState->setCurrentActorValue(actorValue, target);
+                = playerState->setCurrentActorValue(actorValue, rawTarget);
             if (result == MWWorld::FalloutActorValueMutationResult::Applied)
                 return true;
             if (result != MWWorld::FalloutActorValueMutationResult::Unsupported)
                 return false;
         }
 
-        return stats.setFalloutActorValueOverride(actorValue, target);
+        return stats.setFalloutActorValueOverride(actorValue, rawTarget);
     }
 
     std::vector<ESM4::ActorFaction> getFalloutActorFactions(const MWWorld::Ptr& actor,

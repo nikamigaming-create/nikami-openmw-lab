@@ -77,6 +77,11 @@ namespace MWMechanics
         bool mFalloutLookRotateBody = false;
         bool mHasFalloutEquipmentOverride = false;
         std::vector<ESM::FormId> mFalloutEquippedItems;
+        bool mHasFalloutActorEffectOverride = false;
+        // This is always the effective list. Before the first script mutation it contains the immutable
+        // NPC_/CREA template list; afterwards the presence bit makes the same vector a saved override.
+        std::vector<ESM::FormId> mFalloutActorEffects;
+        std::optional<std::string> mFalloutFullName;
 
         float mFallHeight = 0.f;
 
@@ -160,6 +165,12 @@ namespace MWMechanics
         bool hasFalloutEquipmentOverride() const { return mHasFalloutEquipmentOverride; }
         const std::vector<ESM::FormId>& getFalloutEquippedItems() const { return mFalloutEquippedItems; }
         bool setFalloutEquipmentOverride(std::vector<ESM::FormId> items);
+        bool hasFalloutActorEffectOverride() const { return mHasFalloutActorEffectOverride; }
+        const std::vector<ESM::FormId>& getFalloutActorEffects() const { return mFalloutActorEffects; }
+        bool setFalloutBaseActorEffects(std::vector<ESM::FormId> effects);
+        bool setFalloutActorEffect(ESM::FormId effect, bool enabled);
+        const std::optional<std::string>& getFalloutFullName() const { return mFalloutFullName; }
+        bool setFalloutFullName(std::string name);
 
         const Spells& getSpells() const;
 

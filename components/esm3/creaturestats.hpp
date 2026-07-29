@@ -108,6 +108,13 @@ namespace ESM
         bool mFalloutLookRotateBody = false;
         bool mHasFalloutEquipmentOverride = false;
         std::vector<ESM::FormId> mFalloutEquippedItems;
+        // AddSpell/RemoveSpell mutate the effective ESM4 SPEL list on one placed actor. The presence bit
+        // distinguishes an explicitly empty runtime list from the immutable NPC_/CREA template list.
+        bool mHasFalloutActorEffectOverride = false;
+        std::vector<ESM::FormId> mFalloutActorEffects;
+        // SetActorFullName is likewise per-reference. MESG.FULL is copied here so the save never retains a
+        // pointer into a content store whose winning record may change after load-order remapping.
+        std::optional<std::string> mFalloutFullName;
 
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;

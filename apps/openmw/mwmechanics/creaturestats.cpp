@@ -186,6 +186,52 @@ namespace MWMechanics
         return true;
     }
 
+    bool CreatureStats::setFalloutBaseActorEffects(std::vector<ESM::FormId> effects)
+    {
+        constexpr std::size_t MaximumActorEffects = 1024;
+        if (effects.size() > MaximumActorEffects
+            || std::ranges::any_of(effects, [](ESM::FormId effect) { return effect.isZeroOrUnset(); }))
+            return false;
+        std::sort(effects.begin(), effects.end());
+        if (std::adjacent_find(effects.begin(), effects.end()) != effects.end())
+            return false;
+        mHasFalloutActorEffectOverride = false;
+        mFalloutActorEffects = std::move(effects);
+        return true;
+    }
+
+    bool CreatureStats::setFalloutActorEffect(ESM::FormId effect, bool enabled)
+    {
+        constexpr std::size_t MaximumActorEffects = 1024;
+        if (effect.isZeroOrUnset())
+            return false;
+        const auto found = std::find(mFalloutActorEffects.begin(), mFalloutActorEffects.end(), effect);
+        if (enabled)
+        {
+            if (found == mFalloutActorEffects.end())
+            {
+                if (mFalloutActorEffects.size() >= MaximumActorEffects)
+                    return false;
+                mFalloutActorEffects.push_back(effect);
+                std::sort(mFalloutActorEffects.begin(), mFalloutActorEffects.end());
+            }
+        }
+        else if (found != mFalloutActorEffects.end())
+            mFalloutActorEffects.erase(found);
+        mHasFalloutActorEffectOverride = true;
+        return true;
+    }
+
+    bool CreatureStats::setFalloutFullName(std::string name)
+    {
+        constexpr std::size_t MaximumFullNameLength = 4096;
+        if (name.empty() || name.size() > MaximumFullNameLength
+            || name.find('\0') != std::string::npos)
+            return false;
+        mFalloutFullName = std::move(name);
+        return true;
+    }
+
     Spells& CreatureStats::getSpells()
     {
         return mSpells;
@@ -642,6 +688,10 @@ namespace MWMechanics
         state.mFalloutLookRotateBody = mFalloutLookRotateBody;
         state.mHasFalloutEquipmentOverride = mHasFalloutEquipmentOverride;
         state.mFalloutEquippedItems = mFalloutEquippedItems;
+        state.mHasFalloutActorEffectOverride = mHasFalloutActorEffectOverride;
+        state.mFalloutActorEffects
+            = mHasFalloutActorEffectOverride ? mFalloutActorEffects : std::vector<ESM::FormId>{};
+        state.mFalloutFullName = mFalloutFullName;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -709,6 +759,12 @@ namespace MWMechanics
         mFalloutLookRotateBody = state.mFalloutLookRotateBody;
         mHasFalloutEquipmentOverride = state.mHasFalloutEquipmentOverride;
         mFalloutEquippedItems = state.mFalloutEquippedItems;
+        // makeNpcCustomData/makeCreatureCustomData seed the winning authored template list before loading a save.
+        // An older save without FAEC therefore retains that list, while an explicit zero-count FAEC replaces it.
+        if (state.mHasFalloutActorEffectOverride)
+            mFalloutActorEffects = state.mFalloutActorEffects;
+        mHasFalloutActorEffectOverride = state.mHasFalloutActorEffectOverride;
+        mFalloutFullName = state.mFalloutFullName;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)

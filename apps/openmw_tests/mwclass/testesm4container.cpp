@@ -18,6 +18,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -1389,6 +1390,13 @@ namespace
     {
         MWWorld::ESMStore store;
         populateNpcWorldStore(store, true);
+        const ESM::FormId scriptedEffectId{ .mIndex = 0x103b30, .mContentFile = 0 };
+        ESM4::Spell scriptedEffect;
+        scriptedEffect.mId = scriptedEffectId;
+        scriptedEffect.mEditorId = "GoodspringsNpcPersistentActorEffect";
+        scriptedEffect.mData.present = true;
+        scriptedEffect.mData.type = ESM4::Spell::Type::Ability;
+        store.overrideRecord(scriptedEffect);
         ESM::ReadersCache readers;
         MWWorld::WorldModel sourceModel(store, readers);
         mEnvironment.setESMStore(store);
@@ -1416,6 +1424,8 @@ namespace
         ASSERT_TRUE(stats.setFalloutRuntimeFlag(0x3f, true));
         ASSERT_TRUE(stats.setFalloutLookTarget(lookTarget, true));
         ASSERT_TRUE(MWClass::ESM4Npc::equipFalloutItem(source, weaponId));
+        ASSERT_TRUE(stats.setFalloutActorEffect(scriptedEffectId, true));
+        ASSERT_TRUE(stats.setFalloutFullName("Dog"));
         ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
         ASSERT_EQ(stats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
         ESM::CreatureStats deadState;
@@ -1458,6 +1468,10 @@ namespace
         EXPECT_TRUE(restoredStats.getFalloutLookRotateBody());
         EXPECT_TRUE(restoredStats.hasFalloutEquipmentOverride());
         EXPECT_EQ(restoredStats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
+        EXPECT_TRUE(restoredStats.hasFalloutActorEffectOverride());
+        EXPECT_EQ(restoredStats.getFalloutActorEffects(), std::vector<ESM::FormId>{ scriptedEffectId });
+        EXPECT_EQ(restoredStats.getFalloutFullName(), std::optional<std::string>("Dog"));
+        EXPECT_EQ(restored.getClass().getName(restored), "Dog");
         const ESM4::Weapon* restoredWeapon = MWClass::ESM4Npc::getEquippedWeapon(restored);
         ASSERT_NE(restoredWeapon, nullptr);
         EXPECT_EQ(restoredWeapon->mId, weaponId);

@@ -33,6 +33,7 @@
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 #include <components/misc/rng.hpp>
@@ -1068,6 +1069,11 @@ namespace MWClass
         stats.setMagicka(0.f);
         stats.setFatigue(fatigue);
         stats.getSpells().setSpells(ESM::RefId(baseCreature.mId), ESM::REC_CREA4);
+        if (!stats.setFalloutBaseActorEffects(data.mTemplates.mActorEffects != nullptr
+                ? data.mTemplates.mActorEffects->mSpell
+                : std::vector<ESM::FormId>{}))
+            Log(Debug::Warning) << "Invalid native actor-effect list for ESM4 creature "
+                                << ESM::RefId(baseCreature.mId);
 
         int aggression = 0;
         int confidence = 0;
@@ -1176,7 +1182,8 @@ namespace MWClass
             }
         }
 
-        bool validateCreatureStats(const ESM::CreatureStats& stats, std::string& error)
+        bool validateCreatureStats(
+            const ESM::CreatureStats& stats, const MWWorld::ESMStore& store, std::string& error)
         {
             for (const auto& attribute : stats.mAttributes)
             {
@@ -1226,6 +1233,31 @@ namespace MWClass
                     error = "invalid Fallout faction override";
                     return false;
                 }
+            }
+            if (stats.mHasFalloutActorEffectOverride)
+            {
+                if (stats.mFalloutActorEffects.size() > 1024)
+                {
+                    error = "unreasonable Fallout actor-effect override count";
+                    return false;
+                }
+                std::set<ESM::FormId> actorEffects;
+                for (const ESM::FormId effect : stats.mFalloutActorEffects)
+                {
+                    if (effect.isZeroOrUnset() || !actorEffects.insert(effect).second
+                        || store.get<ESM4::Spell>().search(ESM::RefId(effect)) == nullptr)
+                    {
+                        error = "invalid Fallout actor-effect override";
+                        return false;
+                    }
+                }
+            }
+            if (stats.mFalloutFullName
+                && (stats.mFalloutFullName->empty() || stats.mFalloutFullName->size() > 4096
+                    || stats.mFalloutFullName->find('\0') != std::string::npos))
+            {
+                error = "invalid Fallout actor full-name override";
+                return false;
             }
             if ((stats.mFalloutLookTarget && stats.mFalloutLookTarget->isZeroOrUnset())
                 || (!stats.mFalloutLookTarget && stats.mFalloutLookRotateBody))
@@ -1451,7 +1483,7 @@ namespace MWClass
         }
         if (!state.mHasCustomState)
             return true;
-        if (!validateCreatureStats(state.mCreatureStats, error))
+        if (!validateCreatureStats(state.mCreatureStats, store, error))
             return false;
         if ((state.mCreatureStats.mFalloutRuntimeFlags & ~std::uint32_t{ 0x3f }) != 0)
         {
@@ -1639,7 +1671,10 @@ namespace MWClass
         const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
         if (creature->mIsFONV)
         {
-            const ESM4::Creature* baseData = getCustomData(ptr).mTemplates.mBaseData;
+            const ESM4CreatureCustomData& data = getCustomData(ptr);
+            if (data.mCreatureStats.getFalloutFullName())
+                return *data.mCreatureStats.getFalloutFullName();
+            const ESM4::Creature* baseData = data.mTemplates.mBaseData;
             return baseData != nullptr ? std::string_view(baseData->mFullName) : std::string_view{};
         }
         if (!creature->mFullName.empty())

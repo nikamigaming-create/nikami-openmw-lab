@@ -10,9 +10,11 @@
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/script.hpp>
 
 #include <apps/openmw/mwbase/environment.hpp>
@@ -128,6 +130,28 @@ namespace
         caucasian.mFullName = "Caucasian";
         store.overrideRecord(caucasian);
 
+        const ESM::FormId radiationEffectId = form(0x0018f101);
+        const ESM::FormId ghoulResistanceId = form(0x0018f102);
+        ESM4::MagicEffect radiationEffect;
+        radiationEffect.mId = radiationEffectId;
+        radiationEffect.mEditorId = "RadResistGhoulEffect";
+        radiationEffect.mData.present = true;
+        radiationEffect.mData.archetype = ESM4::MagicEffect::Archetype::ValueModifier;
+        radiationEffect.mData.actorValue = 20;
+        store.overrideRecord(radiationEffect);
+        ESM4::Spell ghoulResistance;
+        ghoulResistance.mId = ghoulResistanceId;
+        ghoulResistance.mEditorId = "RadResistGhoul";
+        ghoulResistance.mData.present = true;
+        ghoulResistance.mData.type = ESM4::Spell::Type::Ability;
+        ESM4::Spell::Effect resistanceEntry;
+        resistanceEntry.baseEffect = radiationEffectId;
+        resistanceEntry.magnitude = 85;
+        resistanceEntry.range = ESM4::Spell::Range::Self;
+        resistanceEntry.actorValue = 20;
+        ghoulResistance.mEffects.push_back(resistanceEntry);
+        store.overrideRecord(ghoulResistance);
+
         ESM4::DialogInfo info;
         info.mId = form(0x00175650);
         info.mQuest = ownerId;
@@ -140,6 +164,7 @@ namespace
         ESM4::Npc goodsprings = actorBase(0x00104f02, "GSSettlerAAM", "Goodsprings Settler", 0x0000424a,
             0x0002ab62,
             { 0x0013f89e, 0x0013f89b, 0x00104c6e, 0x0016311a });
+        goodsprings.mSpell.push_back(ghoulResistanceId);
         ESM4::ActorCharacter goodspringsRef = actorReference(0x00104f03, goodsprings.mId);
         MWWorld::LiveCellRef<ESM4::Npc> liveGoodsprings(goodspringsRef, &goodsprings);
         const MWWorld::Ptr goodspringsPtr(&liveGoodsprings);
@@ -228,5 +253,15 @@ namespace
         EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
                       condition(ESM4::FUN_GetIsAlerted, {}, 1.f), goodspringsPtr, false),
             std::optional<bool>(true));
+
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(85.f));
+        MWMechanics::CreatureStats& actorStats
+            = goodspringsPtr.getClass().getCreatureStats(goodspringsPtr);
+        EXPECT_FALSE(actorStats.hasFalloutActorEffectOverride());
+        ASSERT_TRUE(actorStats.setFalloutActorEffect(ghoulResistanceId, false));
+        EXPECT_TRUE(actorStats.hasFalloutActorEffectOverride());
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(0.f));
+        ASSERT_TRUE(actorStats.setFalloutActorEffect(ghoulResistanceId, true));
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(85.f));
     }
 }
