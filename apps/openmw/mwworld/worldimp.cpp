@@ -1024,6 +1024,22 @@ namespace MWWorld
             MWBase::Environment::get().getStateManager()->quickSave("Autosave");
             return true;
         });
+        mESM4QuestRuntime.setReferenceOwnershipHandler(
+            [this](ESM::FormId referenceId, std::optional<ESM::FormId> ownerId) {
+                Ptr reference = searchPtr(ESM::RefId(referenceId), false, false);
+                if (reference.isEmpty())
+                    reference = searchPtrByRefNum(referenceId);
+                if (reference.isEmpty())
+                    return false;
+
+                // CellRef owns the mutable reference state and already writes
+                // it through OpenMW's ordinary object-state save path. Crime,
+                // beds, containers, and doors therefore observe one canonical
+                // owner instead of a Fallout-only side table.
+                const ESM::RefId owner = ownerId ? ESM::RefId(*ownerId) : ESM::RefId{};
+                reference.getCellRef().setOwner(owner);
+                return reference.getCellRef().getOwner() == owner;
+            });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
                 const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);

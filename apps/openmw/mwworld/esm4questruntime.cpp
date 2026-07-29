@@ -4005,6 +4005,17 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveOwner(std::string_view id)
+    {
+        // Fallout's XOWN field accepts either an NPC base or a faction. Keep
+        // that distinction in the native record identity instead of
+        // translating ownership into quest-local state.
+        ESM::FormId result = resolveFaction(id);
+        if (result.isZeroOrUnset())
+            result = resolveActorBase(id);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -5023,6 +5034,29 @@ namespace MWWorld
                     {
                         Log(Debug::Info) << "FNV/ESM4 behavior: " << command
                                          << " reference=" << subject << " sound=" << tokens[1];
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "SetOwnership")
+                    && tokens.size() <= 2)
+                {
+                    const ESM::FormId reference = sourceOwnerId();
+                    std::optional<ESM::FormId> owner;
+                    bool valid = !reference.isZeroOrUnset();
+                    if (tokens.size() == 2)
+                    {
+                        const ESM::FormId resolved = resolveOwner(tokens[1]);
+                        valid = !resolved.isZeroOrUnset();
+                        if (valid)
+                            owner = resolved;
+                    }
+                    if (valid && mReferenceOwnershipHandler
+                        && mReferenceOwnershipHandler(reference, owner))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: SetOwnership reference=" << subject
+                                         << " owner="
+                                         << (owner ? ESM::RefId(*owner).serializeText()
+                                                   : std::string("none"));
                         continue;
                     }
                 }
