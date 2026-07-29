@@ -791,6 +791,113 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledScriptPackageCommandsWithoutM
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledRemoveSpellThroughActorEffectsAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202f6, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1202f7, .mContentFile = 0 };
+    const ESM::FormId playerSpellId{ .mIndex = 0x1202f8, .mContentFile = 0 };
+    const ESM::FormId actorSpellId{ .mIndex = 0x1202f9, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledRemoveSpellQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // Quest-stage implicit player RemoveSpell.
+        0x1d, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+        // Explicit actor RemoveSpell.
+        0x1c, 0x00, 0x02, 0x00, 0x1d, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x03, 0x00,
+        // Commit both effects only after the nested stage succeeds.
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x04, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { playerSpellId, actorId, actorSpellId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Spell playerSpell;
+    playerSpell.mId = playerSpellId;
+    store.overrideRecord(playerSpell);
+    ESM4::Spell actorSpell;
+    actorSpell.mId = actorSpellId;
+    store.overrideRecord(actorSpell);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>> effects;
+    std::vector<std::uint8_t> stagesAtEffect;
+    runtime.setActorEffectCommandHandler(
+        [&](ESM::FormId actorValue, ESM::FormId spellValue, bool add) {
+            effects.emplace_back(actorValue, spellValue, add);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtEffect.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(effects,
+        (std::vector<std::tuple<ESM::FormId, ESM::FormId, bool>>{
+            { playerId, playerSpellId, false },
+            { actorId, actorSpellId, false },
+        }));
+    EXPECT_EQ(stagesAtEffect, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledRemoveSpellWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1202fa, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1202fb, .mContentFile = 0 };
+    const ESM::FormId spellId{ .mIndex = 0x1202fc, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedRemoveSpellQuest");
+    ESM4::QuestStageEntry wrongArgumentRecord;
+    wrongArgumentRecord.mScript.compiledData
+        = { 0x1d, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    wrongArgumentRecord.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(wrongArgumentRecord) } });
+    ESM4::QuestStageEntry nonActorReceiver;
+    nonActorReceiver.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x1d, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00
+    };
+    nonActorReceiver.mScript.references = { spellId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActorReceiver) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Spell spell;
+    spell.mId = spellId;
+    store.overrideRecord(spell);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int effects = 0;
+    runtime.setActorEffectCommandHandler([&](ESM::FormId, ESM::FormId, bool) {
+        ++effects;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(effects, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };

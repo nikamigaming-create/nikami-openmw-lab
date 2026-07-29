@@ -431,6 +431,7 @@ namespace MWWorld
             ResetAi,
             MoveTo,
             SetScriptPackage,
+            SetActorEffect,
             AddItem,
             RemoveItem,
             EvaluatePackage,

@@ -1437,6 +1437,7 @@ namespace MWWorld
                 && instruction.opcode != 0x0016 && instruction.opcode != 0x0017
                 && instruction.opcode != 0x0018 && instruction.opcode != 0x0019
                 && instruction.opcode != 0x1002
+                && instruction.opcode != 0x101d
                 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
                 && instruction.opcode != 0x1037
@@ -1913,6 +1914,32 @@ namespace MWWorld
                 CompiledQuestCommand command;
                 command.mType = CompiledQuestCommandType::RewardXp;
                 command.mObjective = *amount;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x101d) // [actor.]RemoveSpell spell
+            {
+                // The combined base-master corpus has 39 one-SPEL frames:
+                // 26 quest-stage implicit-player calls and 13 explicit
+                // player/actor calls. Both forms use the same actor-effect
+                // capability as source scripts.
+                if (arguments.size() != 1 || !mActorEffectCommandHandler || mStore == nullptr)
+                    return false;
+                ESM::FormId actor{ .mIndex = 0x14, .mContentFile = 0 };
+                if (instruction.callingReferenceIndex)
+                    actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const ESM::FormId* spell = std::get_if<ESM::FormId>(&arguments[0]);
+                if (!actorExists || spell == nullptr
+                    || mStore->get<ESM4::Spell>().search(ESM::RefId(*spell)) == nullptr)
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetActorEffect;
+                command.mQuest = actor;
+                command.mTarget = *spell;
+                command.mValue = false;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x117c || instruction.opcode == 0x117d) // AddNote / RemoveNote
@@ -2606,6 +2633,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
+            || command.mType == CompiledQuestCommandType::SetActorEffect
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
             || command.mType == CompiledQuestCommandType::AddAchievement
@@ -2712,6 +2740,7 @@ namespace MWWorld
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
+            case CompiledQuestCommandType::SetActorEffect:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
@@ -2883,6 +2912,11 @@ namespace MWWorld
                         && mScriptPackageHandler(effect.mTarget,
                             effect.mValue ? std::optional<ESM::FormId>{ effect.mListener } : std::nullopt);
                     break;
+                case CompiledQuestCommandType::SetActorEffect:
+                    command = effect.mValue ? "AddSpell " : "RemoveSpell ";
+                    executed = mActorEffectCommandHandler
+                        && mActorEffectCommandHandler(effect.mTarget, effect.mListener, effect.mValue);
+                    break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
@@ -2990,6 +3024,8 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::MoveTo)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetScriptPackage && effect.mValue)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetActorEffect)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (executed)
                 Log(Debug::Info) << "FNV/ESM4 behavior: executed committed quest stage effect " << command;
@@ -3266,6 +3302,10 @@ namespace MWWorld
                                 && mScriptPackageHandler(command.mQuest,
                                     command.mValue ? std::optional<ESM::FormId>{ command.mTarget } : std::nullopt);
                             break;
+                        case CompiledQuestCommandType::SetActorEffect:
+                            executed = mActorEffectCommandHandler
+                                && mActorEffectCommandHandler(command.mQuest, command.mTarget, command.mValue);
+                            break;
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -3317,6 +3357,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
+                            || command.mType == CompiledQuestCommandType::SetActorEffect
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::AddAchievement
@@ -3347,6 +3388,10 @@ namespace MWWorld
                                 failure = std::string(command.mValue ? "AddScriptPackage " : "RemoveScriptPackage ")
                                     + ESM::RefId(command.mQuest).serializeText()
                                     + (command.mValue ? " " + ESM::RefId(command.mTarget).serializeText() : "");
+                            else if (command.mType == CompiledQuestCommandType::SetActorEffect)
+                                failure = std::string(command.mValue ? "AddSpell " : "RemoveSpell ")
+                                    + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetNote)
