@@ -19,6 +19,8 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 
+#include <components/debug/debuglog.hpp>
+
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
@@ -36,6 +38,8 @@
 #include <components/fallback/fallback.hpp>
 
 #include <components/settings/values.hpp>
+
+#include <components/vfs/manager.hpp>
 
 #include "../mwworld/cellstore.hpp"
 
@@ -467,8 +471,9 @@ namespace MWRender
 
         // simple water fallback for the local map
         osg::ref_ptr<osg::Geometry> geom2(osg::clone(mWaterGeom.get(), osg::CopyOp::DEEP_COPY_NODES));
-        createSimpleWaterStateSet(geom2, Fallback::Map::getFloat("Water_Map_Alpha"));
-        geom2->setNodeMask(Mask_SimpleWater);
+        const bool localMapWaterAvailable
+            = createSimpleWaterStateSet(geom2, Fallback::Map::getFloat("Water_Map_Alpha"));
+        geom2->setNodeMask(localMapWaterAvailable ? Mask_SimpleWater : 0);
         geom2->setName("Simple Water Geometry");
         mWaterNode->addChild(geom2);
 
@@ -535,6 +540,7 @@ namespace MWRender
 
         if (Settings::water().mShader)
         {
+            mWaterGeom->setNodeMask(Mask_Water);
             const unsigned int rttSize = Settings::water().mRttSize;
 
             mReflection = new Reflection(rttSize, mInterior);
@@ -562,8 +568,8 @@ namespace MWRender
 
             createShaderWaterStateSet(mWaterNode);
         }
-        else
-            createSimpleWaterStateSet(mWaterGeom, Fallback::Map::getFloat("Water_World_Alpha"));
+        else if (!createSimpleWaterStateSet(mWaterGeom, Fallback::Map::getFloat("Water_World_Alpha")))
+            mWaterGeom->setNodeMask(0);
 
         mResourceSystem->getSceneManager()->setUpNormalsRTForStateSet(mWaterGeom->getOrCreateStateSet(), true);
 
@@ -575,7 +581,7 @@ namespace MWRender
         return mWaterNode->getPosition();
     }
 
-    void Water::createSimpleWaterStateSet(osg::Node* node, float alpha)
+    bool Water::createSimpleWaterStateSet(osg::Node* node, float alpha)
     {
         osg::ref_ptr<osg::StateSet> stateset = SceneUtil::createSimpleWaterStateSet(alpha, MWRender::RenderBin_Water);
 
@@ -587,11 +593,26 @@ namespace MWRender
         std::vector<osg::ref_ptr<osg::Texture2D>> textures;
         const int frameCount = std::clamp(Fallback::Map::getInt("Water_SurfaceFrameCount"), 0, 320);
         std::string_view texture = Fallback::Map::getString("Water_SurfaceTexture");
+        if (frameCount == 0 || texture.empty())
+            return false;
+
+        std::ostringstream firstTextureName;
+        firstTextureName << "textures/water/" << texture << std::setw(2) << std::setfill('0') << 0 << ".dds";
+        const VFS::Path::Normalized firstTexturePath(firstTextureName.str());
+        if (!mResourceSystem->getVFS()->exists(firstTexturePath))
+        {
+            Log(Debug::Info) << "Water: legacy animated-water source " << firstTexturePath.value()
+                             << " is absent; disabling the legacy fallback";
+            return false;
+        }
+
         for (int i = 0; i < frameCount; ++i)
         {
             std::ostringstream texname;
             texname << "textures/water/" << texture << std::setw(2) << std::setfill('0') << i << ".dds";
             const VFS::Path::Normalized path(texname.str());
+            if (!mResourceSystem->getVFS()->exists(path))
+                break;
             osg::ref_ptr<osg::Texture2D> tex(new osg::Texture2D(mResourceSystem->getImageManager()->getImage(path)));
             tex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
             tex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
@@ -600,7 +621,7 @@ namespace MWRender
         }
 
         if (textures.empty())
-            return;
+            return false;
 
         float fps = Fallback::Map::getFloat("Water_SurfaceFPS");
 
@@ -617,6 +638,7 @@ namespace MWRender
         sceneManager->setForceShaders(true);
         sceneManager->recreateShaders(node);
         sceneManager->setForceShaders(oldValue);
+        return true;
     }
 
     class ShaderWaterStateSetUpdater : public SceneUtil::StateSetUpdater
@@ -751,11 +773,22 @@ namespace MWRender
     {
         const int frameCount = std::clamp(Fallback::Map::getInt("Water_SurfaceFrameCount"), 0, 320);
         std::string_view texture = Fallback::Map::getString("Water_SurfaceTexture");
+        if (frameCount == 0 || texture.empty())
+            return;
+
+        std::ostringstream firstTextureName;
+        firstTextureName << "textures/water/" << texture << std::setw(2) << std::setfill('0') << 0 << ".dds";
+        if (!mResourceSystem->getVFS()->exists(VFS::Path::Normalized(firstTextureName.str())))
+            return;
+
         for (int i = 0; i < frameCount; ++i)
         {
             std::ostringstream texname;
             texname << "textures/water/" << texture << std::setw(2) << std::setfill('0') << i << ".dds";
-            textures.emplace_back(texname.str());
+            VFS::Path::Normalized path(texname.str());
+            if (!mResourceSystem->getVFS()->exists(path))
+                break;
+            textures.push_back(std::move(path));
         }
     }
 

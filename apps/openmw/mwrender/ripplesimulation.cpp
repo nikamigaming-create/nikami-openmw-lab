@@ -12,12 +12,15 @@
 #include <osgParticle/ParticleSystemUpdater>
 
 #include <components/fallback/fallback.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
 #include <components/nifosg/controller.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
+
+#include <components/vfs/manager.hpp>
 
 #include "vismask.hpp"
 
@@ -28,13 +31,25 @@
 
 namespace
 {
-    void createWaterRippleStateSet(Resource::ResourceSystem* resourceSystem, osg::Node* node)
+    bool createWaterRippleStateSet(Resource::ResourceSystem* resourceSystem, osg::Node* node)
     {
         int rippleFrameCount = Fallback::Map::getInt("Water_RippleFrameCount");
         if (rippleFrameCount <= 0)
-            return;
+            return false;
 
         std::string_view tex = Fallback::Map::getString("Water_RippleTexture");
+        if (tex.empty())
+            return false;
+
+        std::ostringstream firstTextureName;
+        firstTextureName << "textures/water/" << tex << std::setw(2) << std::setfill('0') << 0 << ".dds";
+        const VFS::Path::Normalized firstTexturePath(firstTextureName.str());
+        if (!resourceSystem->getVFS()->exists(firstTexturePath))
+        {
+            Log(Debug::Info) << "Water: legacy ripple source " << firstTexturePath.value()
+                             << " is absent; disabling legacy ripples";
+            return false;
+        }
 
         std::vector<osg::ref_ptr<osg::Texture2D>> textures;
         for (int i = 0; i < rippleFrameCount; ++i)
@@ -42,12 +57,17 @@ namespace
             std::ostringstream texname;
             texname << "textures/water/" << tex << std::setw(2) << std::setfill('0') << i << ".dds";
             const VFS::Path::Normalized path(texname.str());
+            if (!resourceSystem->getVFS()->exists(path))
+                break;
             osg::ref_ptr<osg::Texture2D> tex2(new osg::Texture2D(resourceSystem->getImageManager()->getImage(path)));
             tex2->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
             tex2->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
             resourceSystem->getSceneManager()->applyFilterSettings(tex2);
             textures.push_back(tex2);
         }
+
+        if (textures.empty())
+            return false;
 
         osg::ref_ptr<NifOsg::FlipController> controller(
             new NifOsg::FlipController(0, 0.3f / rippleFrameCount, textures));
@@ -79,6 +99,7 @@ namespace
         stateset->setAttributeAndModes(mat, osg::StateAttribute::ON);
 
         node->setStateSet(stateset);
+        return true;
     }
 
     int findOldestParticleAlive(const osgParticle::ParticleSystem* partsys)
@@ -130,9 +151,10 @@ namespace MWRender
         mParticleNode->addChild(mParticleSystem);
         mParticleNode->setNodeMask(Mask_Water);
 
-        createWaterRippleStateSet(resourceSystem, mParticleNode);
-
-        resourceSystem->getSceneManager()->recreateShaders(mParticleNode);
+        if (createWaterRippleStateSet(resourceSystem, mParticleNode))
+            resourceSystem->getSceneManager()->recreateShaders(mParticleNode);
+        else
+            mParticleNode->setNodeMask(0);
 
         mParent->addChild(mParticleNode);
     }

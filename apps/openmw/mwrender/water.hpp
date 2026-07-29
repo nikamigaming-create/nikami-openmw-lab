@@ -80,7 +80,11 @@ namespace MWRender
         osg::Vec3f getSceneNodeCoordinates(int gridX, int gridY);
         void updateVisible();
 
-        void createSimpleWaterStateSet(osg::Node* node, float alpha);
+        // Returns false when the configured legacy animated-water source is
+        // absent.  Fallout profiles deliberately have no Morrowind waterXX
+        // texture sequence, so callers can disable that fallback instead of
+        // binding OpenSceneGraph's magenta missing-image texture.
+        bool createSimpleWaterStateSet(osg::Node* node, float alpha);
 
         void createShaderWaterStateSet(osg::Node* node);
 

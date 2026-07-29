@@ -1338,7 +1338,12 @@ namespace MWRender
         else
             Log(Debug::Info) << "World viewer: skipped Morrowind common actor preloads because xbase assets are absent";
 
-        workItem->mTextures.emplace_back("textures/_land_default.dds");
+        // This Morrowind-only default is useful when it exists, but Fallout
+        // terrain has its own ESM4 defaults.  Do not preload a missing legacy
+        // texture and turn an otherwise valid Fallout scene magenta.
+        const VFS::Path::Normalized defaultLandTexture("textures/_land_default.dds");
+        if (mResourceSystem->getVFS()->exists(defaultLandTexture))
+            workItem->mTextures.push_back(defaultLandTexture);
 
         mWorkQueue->addWorkItem(std::move(workItem));
     }
