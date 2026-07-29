@@ -372,9 +372,13 @@ namespace MWLua
             = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, std::string_view>(lua,
                 {
                     { "Controls", "playercontrols" },
+                    { "Movement", "playermovement" },
+                    { "Interface", "playerinterface" },
                     { "Fighting", "playerfighting" },
                     { "Jumping", "playerjumping" },
                     { "Looking", "playerlooking" },
+                    { "Sneaking", "playersneaking" },
+                    { "Rollover", "playerrollover" },
                     { "Magic", "playermagic" },
                     { "ViewMode", "playerviewswitch" },
                     { "VanityMode", "vanitymode" },

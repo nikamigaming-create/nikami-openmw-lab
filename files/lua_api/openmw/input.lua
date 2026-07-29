@@ -121,10 +121,14 @@
 
 ---
 -- @type CONTROL_SWITCH
--- @field [parent=#CONTROL_SWITCH] #ControlSwitch Controls Ability to move
+-- @field [parent=#CONTROL_SWITCH] #ControlSwitch Controls Master switch for player actions
+-- @field [parent=#CONTROL_SWITCH] #ControlSwitch Movement Ability to move and activate world objects
+-- @field [parent=#CONTROL_SWITCH] #ControlSwitch Interface Ability to open the player interface
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch Fighting Ability to attack
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch Jumping Ability to jump
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch Looking Ability to change view direction
+-- @field [parent=#CONTROL_SWITCH] #ControlSwitch Sneaking Ability to enter sneak mode
+-- @field [parent=#CONTROL_SWITCH] #ControlSwitch Rollover Ability to see focused-world-object tooltips
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch Magic Ability to use magic
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch ViewMode Ability to toggle 1st/3rd person view
 -- @field [parent=#CONTROL_SWITCH] #ControlSwitch VanityMode Vanity view if the player doesn't touch controls for a long time

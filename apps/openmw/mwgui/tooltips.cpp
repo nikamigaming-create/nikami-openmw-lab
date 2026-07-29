@@ -17,6 +17,7 @@
 #include <components/widgets/box.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
@@ -92,6 +93,9 @@ namespace MWGui
 
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
         bool guiMode = winMgr->isGuiMode();
+        if (!guiMode
+            && !MWBase::Environment::get().getInputManager()->getControlSwitch("playerrollover"))
+            return;
 
         if (guiMode)
         {

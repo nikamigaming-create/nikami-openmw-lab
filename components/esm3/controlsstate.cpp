@@ -14,6 +14,10 @@ namespace ESM
         , mVanityModeDisabled(false)
         , mWeaponDrawingDisabled(false)
         , mSpellDrawingDisabled(false)
+        , mMovementDisabled(false)
+        , mInterfaceDisabled(false)
+        , mSneakingDisabled(false)
+        , mRolloverDisabled(false)
     {
     }
 
@@ -29,6 +33,10 @@ namespace ESM
         mVanityModeDisabled = flags & VanityModeDisabled;
         mWeaponDrawingDisabled = flags & WeaponDrawingDisabled;
         mSpellDrawingDisabled = flags & SpellDrawingDisabled;
+        mMovementDisabled = flags & MovementDisabled;
+        mInterfaceDisabled = flags & InterfaceDisabled;
+        mSneakingDisabled = flags & SneakingDisabled;
+        mRolloverDisabled = flags & RolloverDisabled;
     }
 
     void ControlsState::save(ESMWriter& esm) const
@@ -48,6 +56,14 @@ namespace ESM
             flags |= WeaponDrawingDisabled;
         if (mSpellDrawingDisabled)
             flags |= SpellDrawingDisabled;
+        if (mMovementDisabled)
+            flags |= MovementDisabled;
+        if (mInterfaceDisabled)
+            flags |= InterfaceDisabled;
+        if (mSneakingDisabled)
+            flags |= SneakingDisabled;
+        if (mRolloverDisabled)
+            flags |= RolloverDisabled;
 
         esm.writeHNT("CFLG", flags);
     }

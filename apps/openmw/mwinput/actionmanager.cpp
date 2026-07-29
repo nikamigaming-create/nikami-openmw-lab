@@ -243,6 +243,9 @@ namespace MWInput
             case A_Journal:
                 if (isFalloutContent())
                 {
+                    if (!inputManager->getControlSwitch("playercontrols")
+                        || !inputManager->getControlSwitch("playerinterface"))
+                        break;
                     if (windowManager->containsMode(MWGui::GM_Inventory))
                         windowManager->removeGuiMode(MWGui::GM_Inventory);
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
@@ -256,6 +259,9 @@ namespace MWInput
             case A_Map:
                 if (isFalloutContent())
                 {
+                    if (!inputManager->getControlSwitch("playercontrols")
+                        || !inputManager->getControlSwitch("playerinterface"))
+                        break;
                     if (windowManager->containsMode(MWGui::GM_Inventory))
                         windowManager->removeGuiMode(MWGui::GM_Inventory);
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
@@ -1179,7 +1185,8 @@ namespace MWInput
 
     void ActionManager::rest()
     {
-        if (!MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols"))
+        if (!MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
+            || !MWBase::Environment::get().getInputManager()->getControlSwitch("playerinterface"))
             return;
 
         if (!MWBase::Environment::get().getWindowManager()->getRestEnabled()
@@ -1221,7 +1228,8 @@ namespace MWInput
             if (!SDL_IsTextInputActive() && !mBindingsManager->isLeftOrRightButton(A_Activate, joystickUsed))
                 MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::Return, 0, false);
         }
-        else if (MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols"))
+        else if (MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
+            && MWBase::Environment::get().getInputManager()->getControlSwitch("playermovement"))
         {
             MWWorld::Player& player = MWBase::Environment::get().getWorld()->getPlayer();
             player.activate();

@@ -40,6 +40,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwgui/tooltips.cpp
     mwgui/weightedsearch.cpp
 
+    mwinput/testcontrolswitch.cpp
+
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp
     mwclass/testfnvfurniturelifecycle.cpp

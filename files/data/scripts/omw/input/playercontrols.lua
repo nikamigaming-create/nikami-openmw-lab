@@ -99,10 +99,6 @@ local function processMovement()
     self.controls.sideMovement = sideMovement
     self.controls.run = run
     self.controls.jump = attemptToJump
-
-    if not settings:get('toggleSneak') then
-        self.controls.sneak = input.getBooleanActionValue('Sneak')
-    end
 end
 
 local function controlsAllowed()
@@ -112,7 +108,14 @@ local function controlsAllowed()
 end
 
 local function movementAllowed()
-    return controlsAllowed() and not movementControlsOverridden
+    return controlsAllowed()
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Movement)
+        and not movementControlsOverridden
+end
+
+local function sneakingAllowed()
+    return controlsAllowed()
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Sneaking)
 end
 
 input.registerTriggerHandler('Jump', async:callback(function()
@@ -121,7 +124,10 @@ input.registerTriggerHandler('Jump', async:callback(function()
 end))
 
 input.registerTriggerHandler('ToggleSneak', async:callback(function()
-    if not movementAllowed() then return end
+    if not sneakingAllowed() then
+        self.controls.sneak = false
+        return
+    end
     if settings:get('toggleSneak') then
         self.controls.sneak = not self.controls.sneak
     end
@@ -170,9 +176,12 @@ end))
 local function processAttacking()
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
-    if Actor.getStance(self) == Actor.STANCE.Spell then
+    if Actor.getStance(self) == Actor.STANCE.Spell
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Magic) then
         self.controls.use = startUse and self.ATTACK_TYPE.Any or self.ATTACK_TYPE.NoAttack
-    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') then
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
+        and input.getBooleanActionValue('Use') then
         self.controls.use = self.ATTACK_TYPE.Any
     else
         self.controls.use = self.ATTACK_TYPE.NoAttack
@@ -183,7 +192,9 @@ end
 local uiControlsOverridden = false
 
 local function uiAllowed()
-    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls) and not uiControlsOverridden
+    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls)
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Interface)
+        and not uiControlsOverridden
 end
 
 input.registerTriggerHandler('Inventory', async:callback(function()
@@ -226,6 +237,11 @@ local function onFrame(_)
         self.controls.movement = 0
         self.controls.sideMovement = 0
         self.controls.jump = false
+    end
+    if not sneakingAllowed() then
+        self.controls.sneak = false
+    elseif not settings:get('toggleSneak') then
+        self.controls.sneak = input.getBooleanActionValue('Sneak')
     end
     if combatAllowed() then
         processAttacking()

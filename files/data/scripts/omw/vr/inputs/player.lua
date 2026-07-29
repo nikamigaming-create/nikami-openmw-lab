@@ -214,9 +214,12 @@ local function processAttacking()
     if pointerMode() then return end
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
-    if Actor.getStance(self) == Actor.STANCE.Spell then
+    if Actor.getStance(self) == Actor.STANCE.Spell
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Magic) then
         self.controls.use = startUse and 1 or 0
-    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') and not pointerMode() then
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
+        and input.getBooleanActionValue('Use') and not pointerMode() then
         self.controls.use = 1
     else
         self.controls.use = 0
