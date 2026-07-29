@@ -2142,6 +2142,13 @@ namespace MWMechanics
             && iter->second->getCharacterController().playFalloutDialogueAnimation(animationId);
     }
 
+    bool Actors::reloadFalloutWeapon(const MWWorld::Ptr& actor) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().reloadFalloutWeapon();
+    }
+
     bool Actors::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const
     {
         const auto iter = mIndex.find(actor.mRef);

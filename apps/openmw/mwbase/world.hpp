@@ -170,6 +170,7 @@ namespace MWBase
         virtual bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
         virtual bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) = 0;
 
+        virtual MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() = 0;
         virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
 
         /// Apply a complete Fallout SPECIAL allocation atomically to the
@@ -390,6 +391,11 @@ namespace MWBase
         virtual bool isOnGround(const MWWorld::Ptr& ptr) const = 0;
 
         virtual osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const = 0;
+        virtual std::optional<osg::Matrixf> getActorNodeTransform(
+            const MWWorld::ConstPtr&, std::string_view) const
+        {
+            return std::nullopt;
+        }
 
         virtual MWRender::Camera* getCamera() = 0;
         virtual void togglePOV(bool force = false) = 0;

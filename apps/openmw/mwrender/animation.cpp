@@ -7547,6 +7547,59 @@ namespace MWRender
         }
     }
 
+    void Animation::setFalloutVatsWireframes(
+        std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled)
+    {
+        class FalloutVatsHighlightVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutVatsHighlightVisitor(
+                std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mTargetNodes(targetNodes)
+                , mSelectedNode(selectedNode)
+                , mEnabled(enabled)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                    highlight(geode.getDrawable(index));
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                highlight(&drawable);
+            }
+
+            std::size_t mHighlightedRigs = 0;
+
+        private:
+            std::span<const std::string_view> mTargetNodes;
+            std::string_view mSelectedNode;
+            bool mEnabled;
+            std::unordered_set<SceneUtil::RigGeometry*> mVisited;
+
+            void highlight(osg::Drawable* drawable)
+            {
+                SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable);
+                if (rig == nullptr || !mVisited.insert(rig).second)
+                    return;
+                if (rig->setFalloutVatsHighlight(mTargetNodes, mSelectedNode, mEnabled))
+                    ++mHighlightedRigs;
+            }
+        } visitor(targetNodes, selectedNode, enabled);
+
+        if (mObjectRoot)
+            mObjectRoot->accept(visitor);
+        Log(Debug::Info) << "FNV VATS: skinned highlight enabled=" << enabled
+                         << " rigs=" << visitor.mHighlightedRigs
+                         << " bodyParts=" << targetNodes.size()
+                         << " selected=" << selectedNode;
+    }
+
     void Animation::addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& esmLight)
     {
         bool exterior = mPtr.isInCell() && mPtr.getCell()->getCell()->isExterior();

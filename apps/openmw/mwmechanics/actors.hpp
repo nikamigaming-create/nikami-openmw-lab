@@ -115,6 +115,7 @@ namespace MWMechanics
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
 
         bool playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const;
+        bool reloadFalloutWeapon(const MWWorld::Ptr& actor) const;
         bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const;
         bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,

@@ -177,6 +177,7 @@ namespace MWBase
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
         ///< Forces an object to refresh its animation state.
 
+        virtual bool reloadFalloutWeapon(const MWWorld::Ptr&) { return false; }
         virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
         virtual bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr&) { return false; }
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,

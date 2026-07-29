@@ -815,6 +815,12 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::reloadFalloutWeapon(const MWWorld::Ptr& actor)
+    {
+        return !actor.isEmpty() && actor.getClass().isActor()
+            && mActors.reloadFalloutWeapon(actor);
+    }
+
     bool MechanicsManager::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor)
     {
         return !actor.isEmpty() && actor.getClass().isActor()

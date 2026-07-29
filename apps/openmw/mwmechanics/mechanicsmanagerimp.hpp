@@ -140,6 +140,7 @@ namespace MWMechanics
         bool sleepInBed(const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) override;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
+        bool reloadFalloutWeapon(const MWWorld::Ptr& actor) override;
         bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) override;
         bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) override;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,

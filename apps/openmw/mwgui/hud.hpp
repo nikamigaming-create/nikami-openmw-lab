@@ -2,6 +2,9 @@
 #define OPENMW_GAME_MWGUI_HUD_H
 
 #include <memory>
+#include <span>
+#include <string_view>
+#include <vector>
 
 #include "mapwindow.hpp"
 #include "spellicons.hpp"
@@ -17,6 +20,15 @@ namespace MWGui
     class DragAndDrop;
     class ItemWidget;
     class SpellWidget;
+
+    struct FalloutVatsBodyPartDisplay
+    {
+        std::string_view mName;
+        unsigned int mHitChance = 0;
+        float mViewportX = 0.5f;
+        float mViewportY = 0.5f;
+        bool mSelected = false;
+    };
 
     class HUD : public WindowBase, public LocalMapBase, public StatsListener
     {
@@ -59,6 +71,10 @@ namespace MWGui
         MyGUI::Widget* getEffectBox() { return mEffectBox; }
 
         void setEnemy(const MWWorld::Ptr& enemy);
+        void setFalloutVatsVisible(bool visible, std::string_view targetName = {},
+            std::span<const FalloutVatsBodyPartDisplay> bodyParts = {},
+            float actionPointsBefore = 0.f, float actionPointsAfter = 0.f,
+            std::size_t queuedAttacks = 0, std::size_t availableShots = 0, bool executing = false);
 
         void clear() override;
 
@@ -79,6 +95,16 @@ namespace MWGui
         MyGUI::TextBox* mCellNameBox;
         MyGUI::TextBox* mWeaponSpellBox;
         MyGUI::TextBox* mCompassHeading;
+        MyGUI::Widget* mFalloutVatsOverlay = nullptr;
+        MyGUI::TextBox* mFalloutVatsTarget = nullptr;
+        MyGUI::TextBox* mFalloutVatsActionPoints = nullptr;
+        MyGUI::TextBox* mFalloutVatsInstructions = nullptr;
+        struct FalloutVatsBodyPartWidgets
+        {
+            MyGUI::Widget* mFrame = nullptr;
+            MyGUI::TextBox* mText = nullptr;
+        };
+        std::vector<FalloutVatsBodyPartWidgets> mFalloutVatsBodyPartWidgets;
         MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
 
         std::string mCellName;

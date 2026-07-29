@@ -409,6 +409,9 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
+        void setFalloutVatsWireframes(
+            std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled);
+
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 
         bool hasAnimation(std::string_view anim) const;

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,6 +80,8 @@ namespace SceneUtil
         bool getFalloutFingerVertexWeights(
             std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
         bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
+        bool setFalloutVatsHighlight(
+            std::span<const std::string_view> targetBones, std::string_view selectedBone, bool enabled);
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
@@ -164,6 +167,9 @@ namespace SceneUtil
         mutable bool mFalloutCharacterRig{ false };
         std::vector<osg::Matrixf> mFalloutMatrixBaseline;
         std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
+        std::array<osg::ref_ptr<osg::Array>, 2> mFalloutVatsOriginalColorArrays;
+        osg::ref_ptr<osg::StateSet> mFalloutVatsOriginalStateSet;
+        bool mFalloutVatsHighlightActive{ false };
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 
