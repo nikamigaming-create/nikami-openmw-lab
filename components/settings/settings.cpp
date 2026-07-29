@@ -184,7 +184,17 @@ namespace Settings
             parser.loadSettingsFile(settingspath, mUserSettings, false, false);
 
         if (!loadEditorSettings)
+        {
             Settings::StaticValues::init();
+
+            // These compatibility settings are intentionally queried through
+            // Manager rather than a static category because they map authored
+            // Fallout data to engine-owned semantics.  Register both defaults
+            // during startup so Settings::Manager validates the complete
+            // defaults file before any loading-screen code reads them.
+            static_cast<void>(get<std::string>("script command mappings", "OpenNV Compatibility"));
+            static_cast<void>(get<bool>("defer loading input update", "OpenNV Compatibility"));
+        }
 
         for (const auto& [key, value] : originalDefaultSettings)
             if (!sInitialized.contains(key))
