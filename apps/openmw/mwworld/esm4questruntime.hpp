@@ -253,6 +253,8 @@ namespace MWWorld
 
         std::unordered_map<std::string, ESM::FormId> mReferenceIds;
         std::unordered_map<std::string, ESM::FormId> mFactionIds;
+        std::unordered_map<std::string, ESM::FormId> mInventoryItemIds;
+        std::unordered_map<std::string, ESM::FormId> mReputationIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
@@ -456,6 +458,8 @@ namespace MWWorld
         void flushCompiledExternalEffects(const std::vector<PendingExternalEffect>& effects);
         ESM::FormId resolveReference(std::string_view id);
         ESM::FormId resolveFaction(std::string_view id);
+        ESM::FormId resolveInventoryItem(std::string_view id);
+        ESM::FormId resolveReputation(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:

@@ -15,11 +15,13 @@
 #include <components/esm/formid.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
-#include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
@@ -846,6 +848,209 @@ TEST(ESM4QuestRuntimeTest, SurfacesUnsupportedCompiledOpcodeAndUsesWholeSourceFa
     ASSERT_EQ(runtime.getUnsupportedCompiledOpcodes(), std::vector<std::uint16_t>{ 0xbeef });
     ASSERT_NE(runtime.search(questId), nullptr);
     EXPECT_EQ(runtime.search(questId)->mObjectiveStatus.at(3), MWWorld::ESM4QuestState::Objective_Displayed);
+}
+
+TEST(ESM4QuestRuntimeTest, PreservesNativeQuestEffectsWhenMixedOpcodeStageUsesSourceFallback)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120130, .mContentFile = 0 };
+    const ESM::FormId scriptId{ .mIndex = 0x120131, .mContentFile = 0 };
+    const ESM::FormId rewardBookId{ .mIndex = 0x120132, .mContentFile = 0 };
+    const ESM::FormId removedBookId{ .mIndex = 0x120133, .mContentFile = 0 };
+    const ESM::FormId doorId{ .mIndex = 0x120134, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120135, .mContentFile = 0 };
+    const ESM::FormId reputationId{ .mIndex = 0x120136, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MixedFallbackQuest");
+    quest.mQuestScript = scriptId;
+    quest.mObjectives = {
+        { .mIndex = 10, .mDescription = "First objective" },
+        { .mIndex = 20, .mDescription = "Second objective" },
+    };
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = { 0xef, 0xbe, 0x03, 0x00, 0xaa, 0xbb, 0xcc };
+    entry.mScript.scriptSource
+        = "set MixedFallbackQuest.RewardCount to QuestRewardCount + 1\n"
+          "Player.AddItem RewardBook MixedFallbackQuest.RewardCount 1\n"
+          "Player.RemoveItem RemovedBook 1 0\n"
+          "RewardXP QuestXpGlobal\n"
+          "Player.RewardXP 25\n"
+          "AddReputation NCRReputation 1 2\n"
+          "Player.AddReputation NCRReputation 0 1\n"
+          "QuestDoor.Unlock\n"
+          "QuestTarget.Kill Player\n"
+          "QuestTarget.ResetAI\n"
+          "CompleteAllObjectives MixedFallbackQuest";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mEditorId = "MixedFallbackQuestScript";
+    script.mScript.localVarData = { { .index = 1, .variableName = "RewardCount" } };
+    store.overrideRecord(script);
+    store.overrideRecord(makeGlobal({ .mIndex = 0x120137, .mContentFile = 0 }, "QuestRewardCount", 1.f));
+    store.overrideRecord(makeGlobal({ .mIndex = 0x120138, .mContentFile = 0 }, "QuestXpGlobal", 100.f));
+
+    ESM4::Book rewardBook{};
+    rewardBook.mId = rewardBookId;
+    rewardBook.mEditorId = "RewardBook";
+    store.overrideRecord(rewardBook);
+    ESM4::Book removedBook{};
+    removedBook.mId = removedBookId;
+    removedBook.mEditorId = "RemovedBook";
+    store.overrideRecord(removedBook);
+
+    ESM4::Reference door{};
+    door.mId = doorId;
+    door.mEditorId = "QuestDoor";
+    store.overrideRecord(door);
+    ESM4::ActorCharacter target{};
+    target.mId = targetId;
+    target.mEditorId = "QuestTarget";
+    store.overrideRecord(target);
+
+    ESM4::Reputation reputation;
+    reputation.mId = reputationId;
+    reputation.mEditorId = "NCRReputation";
+    reputation.mMaximum = 100.f;
+    store.overrideRecord(reputation);
+
+    MWWorld::Globals globals;
+    globals.fill(store);
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store, &globals);
+
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, int>> addedItems;
+    std::vector<std::tuple<ESM::FormId, ESM::FormId, int>> removedItems;
+    std::vector<int> rewardedXp;
+    std::vector<std::tuple<ESM::FormId, bool, int>> reputationChanges;
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> referenceCommands;
+    runtime.setAddItemHandler([&](ESM::FormId owner, ESM::FormId item, int count) {
+        addedItems.emplace_back(owner, item, count);
+        return true;
+    });
+    runtime.setRemoveItemHandler([&](ESM::FormId owner, ESM::FormId item, int count) {
+        removedItems.emplace_back(owner, item, count);
+        return true;
+    });
+    runtime.setRewardXpHandler([&](int amount) {
+        rewardedXp.push_back(amount);
+        return true;
+    });
+    runtime.setAddReputationHandler([&](ESM::FormId id, bool fame, int bump) {
+        reputationChanges.emplace_back(id, fame, bump);
+        return true;
+    });
+    runtime.setReferenceCommandHandler([&](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId target) {
+        referenceCommands.emplace_back(command, target);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    const std::optional<float> rewardCount = runtime.getQuestVariable("MixedFallbackQuest", "RewardCount");
+    ASSERT_TRUE(rewardCount.has_value());
+    EXPECT_FLOAT_EQ(*rewardCount, 2.f);
+
+    ASSERT_EQ(addedItems.size(), 1);
+    EXPECT_EQ(addedItems[0], std::tuple(ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }, rewardBookId, 2));
+    ASSERT_EQ(removedItems.size(), 1);
+    EXPECT_EQ(removedItems[0], std::tuple(ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }, removedBookId, 1));
+    EXPECT_EQ(rewardedXp, (std::vector<int>{ 100, 25 }));
+    ASSERT_EQ(reputationChanges.size(), 2);
+    EXPECT_EQ(reputationChanges[0], std::tuple(reputationId, true, 2));
+    EXPECT_EQ(reputationChanges[1], std::tuple(reputationId, false, 1));
+    ASSERT_EQ(referenceCommands.size(), 3);
+    EXPECT_EQ(referenceCommands[0], std::pair(MWWorld::ESM4QuestReferenceCommand::Unlock, doorId));
+    EXPECT_EQ(referenceCommands[1], std::pair(MWWorld::ESM4QuestReferenceCommand::Kill, targetId));
+    EXPECT_EQ(referenceCommands[2], std::pair(MWWorld::ESM4QuestReferenceCommand::ResetAi, targetId));
+
+    const MWWorld::ESM4QuestState* const state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_NE(state->mObjectiveStatus.at(10) & MWWorld::ESM4QuestState::Objective_Completed, 0);
+    EXPECT_NE(state->mObjectiveStatus.at(20) & MWWorld::ESM4QuestState::Objective_Completed, 0);
+    EXPECT_EQ(runtime.getUnsupportedCompiledOpcodes(), (std::vector<std::uint16_t>{ 0xbeef }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, EvaluatesQuestActorAndInventoryFunctionsInSourceFallbackConditions)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverId{ .mIndex = 0x120140, .mContentFile = 0 };
+    const ESM::FormId runningId{ .mIndex = 0x120141, .mContentFile = 0 };
+    const ESM::FormId completedId{ .mIndex = 0x120142, .mContentFile = 0 };
+    const ESM::FormId deadActorId{ .mIndex = 0x120143, .mContentFile = 0 };
+    const ESM::FormId liveActorId{ .mIndex = 0x120144, .mContentFile = 0 };
+    const ESM::FormId inventoryActorId{ .mIndex = 0x120145, .mContentFile = 0 };
+    const ESM::FormId bookId{ .mIndex = 0x120146, .mContentFile = 0 };
+
+    ESM4::Quest driver = makeQuest(driverId, "ConditionFallbackDriver");
+    for (const std::int32_t objective : { 10, 20, 30, 40 })
+        driver.mObjectives.push_back({ .mIndex = objective, .mDescription = "Condition objective" });
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "if GetQuestRunning RunningQuest\n"
+          "  SetObjectiveDisplayed ConditionFallbackDriver 10 1\n"
+          "endif\n"
+          "if GetQuestCompleted CompletedQuest\n"
+          "  SetObjectiveDisplayed ConditionFallbackDriver 20 1\n"
+          "endif\n"
+          "if DeadActor.GetDead == 1 && GetDead LiveActor == 0\n"
+          "  SetObjectiveDisplayed ConditionFallbackDriver 30 1\n"
+          "endif\n"
+          "if Player.GetItemCount ConditionBook == 2 && InventoryActor.GetItemCount ConditionBook >= 3\n"
+          "  SetObjectiveDisplayed ConditionFallbackDriver 40 1\n"
+          "endif";
+    driver.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(driver);
+    store.overrideRecord(makeQuest(runningId, "RunningQuest"));
+    store.overrideRecord(makeQuest(completedId, "CompletedQuest"));
+
+    for (const auto& [id, editorId] : std::array{
+             std::pair{ deadActorId, std::string_view{ "DeadActor" } },
+             std::pair{ liveActorId, std::string_view{ "LiveActor" } },
+             std::pair{ inventoryActorId, std::string_view{ "InventoryActor" } },
+         })
+    {
+        ESM4::ActorCharacter actor{};
+        actor.mId = id;
+        actor.mEditorId = editorId;
+        store.overrideRecord(actor);
+    }
+    ESM4::Book book{};
+    book.mId = bookId;
+    book.mEditorId = "ConditionBook";
+    store.overrideRecord(book);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    runtime.setActorDeadHandler([&](ESM::FormId actor) -> std::optional<bool> {
+        if (actor == deadActorId)
+            return true;
+        if (actor == liveActorId)
+            return false;
+        return std::nullopt;
+    });
+    runtime.setItemCountHandler([&](ESM::FormId owner, ESM::FormId item) -> std::optional<int> {
+        if (item != bookId)
+            return std::nullopt;
+        if (owner.mIndex == 0x14)
+            return 2;
+        if (owner == inventoryActorId)
+            return 3;
+        return std::nullopt;
+    });
+
+    ASSERT_TRUE(runtime.startQuest(runningId));
+    ASSERT_TRUE(runtime.startQuest(completedId));
+    ASSERT_TRUE(runtime.completeQuest(completedId));
+    ASSERT_TRUE(runtime.setStage(driverId, 5));
+
+    const MWWorld::ESM4QuestState* const state = runtime.search(driverId);
+    ASSERT_NE(state, nullptr);
+    for (const std::int32_t objective : { 10, 20, 30, 40 })
+        EXPECT_NE(state->mObjectiveStatus.at(objective) & MWWorld::ESM4QuestState::Objective_Displayed, 0);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
 TEST(ESM4QuestRuntimeTest, MalformedCompiledStageFailsClosedWithoutSourceFallback)

@@ -980,14 +980,16 @@ namespace MWWorld
                 return true;
             });
         mESM4QuestRuntime.setItemCountHandler([this](ESM::FormId ownerId, ESM::FormId itemId) -> std::optional<int> {
-            if ((ownerId.mIndex != 0x7 && ownerId.mIndex != 0x14) || itemId.isZeroOrUnset())
+            if (ownerId.isZeroOrUnset() || itemId.isZeroOrUnset())
                 return std::nullopt;
             try
             {
-                const Ptr player = getPlayerPtr();
-                if (player.isEmpty())
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
                     return std::nullopt;
-                return player.getClass().getContainerStore(player).count(ESM::RefId(itemId));
+                return owner.getClass().getContainerStore(owner).count(ESM::RefId(itemId));
             }
             catch (const std::exception&)
             {

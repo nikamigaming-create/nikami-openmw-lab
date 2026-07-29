@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -43,6 +44,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/settings/settings.hpp>
 
@@ -669,6 +671,8 @@ namespace MWWorld
         mAmbiguousReferenceScriptEditorIds.clear();
         mReferenceIds.clear();
         mFactionIds.clear();
+        mInventoryItemIds.clear();
+        mReputationIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -3732,6 +3736,61 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveInventoryItem(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mInventoryItemIds.find(key); cached != mInventoryItemIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        const auto searchRecords = [&id, &result](const auto& records) {
+            for (const auto& record : records)
+            {
+                if (!Misc::StringUtils::ciEqual(record.mEditorId, id))
+                    continue;
+                result = record.mId;
+                return true;
+            }
+            return false;
+        };
+        if (mStore != nullptr
+            && !searchRecords(mStore->get<ESM4::Ammunition>())
+            && !searchRecords(mStore->get<ESM4::Armor>())
+            && !searchRecords(mStore->get<ESM4::Book>())
+            && !searchRecords(mStore->get<ESM4::Clothing>())
+            && !searchRecords(mStore->get<ESM4::Ingredient>())
+            && !searchRecords(mStore->get<ESM4::ItemMod>())
+            && !searchRecords(mStore->get<ESM4::Key>())
+            && !searchRecords(mStore->get<ESM4::Light>())
+            && !searchRecords(mStore->get<ESM4::MiscItem>())
+            && !searchRecords(mStore->get<ESM4::Potion>()))
+            searchRecords(mStore->get<ESM4::Weapon>());
+
+        mInventoryItemIds.emplace(key, result);
+        return result;
+    }
+
+    ESM::FormId ESM4QuestRuntime::resolveReputation(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mReputationIds.find(key); cached != mReputationIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Reputation& reputation : mStore->get<ESM4::Reputation>())
+            {
+                if (!Misc::StringUtils::ciEqual(reputation.mEditorId, id))
+                    continue;
+                result = reputation.mId;
+                break;
+            }
+        }
+        mReputationIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -3806,11 +3865,37 @@ namespace MWWorld
             if (ownerQuest && mStore != nullptr)
             {
                 const ESM4::Quest* const quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*ownerQuest));
-                return quest != nullptr ? valueFromQuest(*quest, normalised) : std::nullopt;
+                if (quest != nullptr)
+                    if (const std::optional<float> value = valueFromQuest(*quest, normalised))
+                        return value;
             }
             if (ownerActor)
-                return valueFromActor(*ownerActor, normalised);
-            return ownerReference ? valueFromReference(*ownerReference, normalised) : std::nullopt;
+                if (const std::optional<float> value = valueFromActor(*ownerActor, normalised))
+                    return value;
+            if (ownerReference)
+                if (const std::optional<float> value = valueFromReference(*ownerReference, normalised))
+                    return value;
+
+            // Stage source uses global editor IDs directly in expressions,
+            // including reward globals such as NVDLC03Act3XP and calendar
+            // values such as GameDaysPassed. Local variables shadow globals,
+            // matching the authored script scope.
+            if (mGlobals != nullptr)
+            {
+                const GlobalVariableName name(normalised);
+                if (mGlobals->getType(name) != ' ')
+                    return (*mGlobals)[name].getFloat();
+            }
+            if (mStore != nullptr)
+            {
+                for (const ESM4::GlobalVariable& global : mStore->get<ESM4::GlobalVariable>())
+                {
+                    if (!Misc::StringUtils::ciEqual(global.mEditorId, normalised))
+                        continue;
+                    return global.mValue;
+                }
+            }
+            return std::nullopt;
         };
 
         const std::string actionReference = normaliseSourceToken(actionReferenceArgument);
@@ -3896,6 +3981,82 @@ namespace MWWorld
                         = MWClass::ESM4Npc::getFurniturePlacement(actor);
                     return placement.mValid && placement.mFurnitureRef == furnitureRef ? 1.f : 0.f;
                 }
+                if (command == "getdead")
+                {
+                    const ESM::FormId actor = resolveReference(subject);
+                    if (actor.isZeroOrUnset() || !mActorDeadHandler)
+                        return std::nullopt;
+                    const std::optional<bool> dead = mActorDeadHandler(actor);
+                    return dead ? std::optional<float>(*dead ? 1.f : 0.f) : std::nullopt;
+                }
+                if (command == "getitemcount")
+                {
+                    if (index >= tokens.size() || !mItemCountHandler)
+                        return std::nullopt;
+                    const ESM::FormId owner = Misc::StringUtils::ciEqual(subject, "player")
+                        ? ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 }
+                        : resolveReference(subject);
+                    const ESM::FormId item = resolveInventoryItem(tokens[index++]);
+                    if (owner.isZeroOrUnset() || item.isZeroOrUnset())
+                        return std::nullopt;
+                    const std::optional<int> count = mItemCountHandler(owner, item);
+                    return count && *count >= 0 ? std::optional<float>(static_cast<float>(*count)) : std::nullopt;
+                }
+                if (command == "getdisabled" || command == "getdestroyed")
+                {
+                    const MWWorld::Ptr reference = resolveAuthoredReference(subject);
+                    if (reference.isEmpty())
+                        return std::nullopt;
+                    return command == "getdisabled"
+                        ? (reference.getRefData().isEnabled() ? 0.f : 1.f)
+                        : (reference.getRefData().isDestroyed() ? 1.f : 0.f);
+                }
+                if (command == "getincell")
+                {
+                    if (index >= tokens.size() || mStore == nullptr)
+                        return std::nullopt;
+                    const MWWorld::Ptr actor = resolveAuthoredReference(subject);
+                    const std::string_view cellEditorId = tokens[index++];
+                    if (actor.isEmpty() || !actor.isInCell())
+                        return 0.f;
+                    for (const ESM4::Cell& cell : mStore->get<ESM4::Cell>())
+                        if (Misc::StringUtils::ciEqual(cell.mEditorId, cellEditorId))
+                            return actor.getCell()->getCell()->getId() == cell.mId ? 1.f : 0.f;
+                    return std::nullopt;
+                }
+                if (command == "getinworldspace")
+                {
+                    if (index >= tokens.size() || mStore == nullptr)
+                        return std::nullopt;
+                    const MWWorld::Ptr actor = resolveAuthoredReference(subject);
+                    const std::string_view worldEditorId = tokens[index++];
+                    if (actor.isEmpty() || !actor.isInCell())
+                        return 0.f;
+                    for (const ESM4::World& world : mStore->get<ESM4::World>())
+                        if (Misc::StringUtils::ciEqual(world.mEditorId, worldEditorId))
+                            return actor.getCell()->getCell()->getWorldSpace() == ESM::RefId(world.mId) ? 1.f : 0.f;
+                    return std::nullopt;
+                }
+                if (command == "getdistance")
+                {
+                    if (index >= tokens.size())
+                        return std::nullopt;
+                    const MWWorld::Ptr actor = resolveAuthoredReference(subject);
+                    const MWWorld::Ptr target = resolveAuthoredReference(tokens[index++]);
+                    if (actor.isEmpty() || target.isEmpty() || !actor.isInCell() || !target.isInCell())
+                        return std::nullopt;
+                    if (actor.getCell() != target.getCell())
+                    {
+                        const auto* const actorCell = actor.getCell()->getCell();
+                        const auto* const targetCell = target.getCell()->getCell();
+                        if (!actorCell->isExterior() || !targetCell->isExterior()
+                            || actorCell->getWorldSpace() != targetCell->getWorldSpace())
+                            return std::nullopt;
+                    }
+                    return (actor.getRefData().getPosition().asVec3()
+                               - target.getRefData().getPosition().asVec3())
+                        .length();
+                }
             }
             if (token == "getstage")
             {
@@ -3918,6 +4079,29 @@ namespace MWWorld
                     return std::nullopt;
                 const auto found = state->mStageDone.find(static_cast<std::int16_t>(stage));
                 return found != state->mStageDone.end() && found->second ? 1.f : 0.f;
+            }
+            if (token == "getquestrunning" || token == "getqr" || token == "getquestcompleted")
+            {
+                if (index >= tokens.size())
+                    return std::nullopt;
+                const ESM4::Quest* const quest = resolveQuest(tokens[index++]);
+                const ESM4QuestState* const state = quest != nullptr ? findState(*quest) : nullptr;
+                if (state == nullptr)
+                    return std::nullopt;
+                const std::uint8_t flag = token == "getquestcompleted"
+                    ? ESM4QuestState::Flag_Completed
+                    : ESM4QuestState::Flag_Running;
+                return (state->mFlags & flag) != 0 ? 1.f : 0.f;
+            }
+            if (token == "getdead")
+            {
+                if (index >= tokens.size() || !mActorDeadHandler)
+                    return std::nullopt;
+                const ESM::FormId actor = resolveReference(tokens[index++]);
+                if (actor.isZeroOrUnset())
+                    return std::nullopt;
+                const std::optional<bool> dead = mActorDeadHandler(actor);
+                return dead ? std::optional<float>(*dead ? 1.f : 0.f) : std::nullopt;
             }
             if (token == "getobjectivedisplayed" || token == "getobjectivecompleted")
             {
@@ -3964,6 +4148,19 @@ namespace MWWorld
             if (operation == "*")
                 return *value * *operand;
             return *operand != 0.f ? std::optional<float>(*value / *operand) : std::nullopt;
+        };
+
+        const auto sourceInteger = [&sourceExpression](const SourceTokens& tokens, std::size_t& index)
+            -> std::optional<std::int32_t> {
+            const std::optional<float> value = sourceExpression(tokens, index);
+            if (!value || !std::isfinite(*value))
+                return std::nullopt;
+            const float rounded = std::round(*value);
+            if (std::abs(*value - rounded) > 0.0001f
+                || rounded < static_cast<float>(std::numeric_limits<std::int32_t>::min())
+                || rounded > static_cast<float>(std::numeric_limits<std::int32_t>::max()))
+                return std::nullopt;
+            return static_cast<std::int32_t>(rounded);
         };
 
         const auto evaluateSourceCondition = [&sourceExpression](const SourceTokens& condition) {
@@ -4366,7 +4563,85 @@ namespace MWWorld
                     return resolveReference(subject);
                 };
 
-                if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "MoveTo"))
+                const auto sourceOwnerId = [this, subject]() {
+                    if (Misc::StringUtils::ciEqual(subject, "player"))
+                        return ESM::FormId{ .mIndex = 0x14, .mContentFile = 0 };
+                    return this->resolveReference(subject);
+                };
+
+                if ((Misc::StringUtils::ciEqual(command, "AddItem")
+                        || Misc::StringUtils::ciEqual(command, "RemoveItem"))
+                    && tokens.size() >= 3 && tokens.size() <= 4)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    const std::optional<std::int32_t> count = sourceInteger(sourceTokens, argument);
+                    bool valid = count && *count > 0;
+                    if (valid && argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> silent = sourceInteger(sourceTokens, argument);
+                        valid = silent && (*silent == 0 || *silent == 1);
+                    }
+                    const ESM::FormId owner = sourceOwnerId();
+                    const ESM::FormId item = resolveInventoryItem(tokens[1]);
+                    if (valid && argument == sourceTokens.size() && !owner.isZeroOrUnset()
+                        && !item.isZeroOrUnset())
+                    {
+                        const bool add = Misc::StringUtils::ciEqual(command, "AddItem");
+                        const bool executed = add
+                            ? (mAddItemHandler && mAddItemHandler(owner, item, *count))
+                            : (mRemoveItemHandler && mRemoveItemHandler(owner, item, *count));
+                        if (executed)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 behavior: " << (add ? "AddItem" : "RemoveItem")
+                                             << " owner=" << subject << " item=" << tokens[1]
+                                             << " count=" << *count;
+                            continue;
+                        }
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "RewardXP")
+                    && Misc::StringUtils::ciEqual(subject, "player") && tokens.size() >= 2)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                    if (amount && *amount > 0 && argument == sourceTokens.size()
+                        && mRewardXpHandler && mRewardXpHandler(*amount))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: RewardXP amount=" << *amount;
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "AddReputation")
+                    && Misc::StringUtils::ciEqual(subject, "player") && tokens.size() == 4)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    const std::optional<std::int32_t> fame = sourceInteger(sourceTokens, argument);
+                    const std::optional<std::int32_t> bump = sourceInteger(sourceTokens, argument);
+                    const ESM::FormId reputation = resolveReputation(tokens[1]);
+                    if (fame && bump && *fame >= 0 && *fame <= 2 && *bump >= 1 && *bump <= 5
+                        && argument == sourceTokens.size() && !reputation.isZeroOrUnset()
+                        && mAddReputationHandler && mAddReputationHandler(reputation, *fame != 0, *bump))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: AddReputation reputation=" << tokens[1]
+                                         << " fame=" << (*fame != 0) << " bump=" << *bump;
+                        continue;
+                    }
+                }
+                else if (Misc::StringUtils::ciEqual(command, "Unlock") && tokens.size() == 1
+                    && executeReferenceCommand(ESM4QuestReferenceCommand::Unlock, subject))
+                    continue;
+                else if (Misc::StringUtils::ciEqual(command, "Kill")
+                    && (tokens.size() == 1
+                        || (tokens.size() == 2 && Misc::StringUtils::ciEqual(tokens[1], "player")))
+                    && executeReferenceCommand(ESM4QuestReferenceCommand::Kill, subject))
+                    continue;
+                else if (Misc::StringUtils::ciEqual(command, "ResetAI") && tokens.size() == 1
+                    && executeReferenceCommand(ESM4QuestReferenceCommand::ResetAi, subject))
+                    continue;
+                else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(command, "MoveTo"))
                 {
                     const std::string markerEditorId = removeQuotes(tokens[1]);
                     const MWWorld::Ptr actor = resolveActor();
@@ -4549,6 +4824,47 @@ namespace MWWorld
                 if (parseInt(tokens[2], objective) && parseInt(tokens[3], displayed)
                     && setObjectiveDisplayed(tokens[1], objective, displayed != 0))
                     continue;
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "RewardXP") && tokens.size() >= 2)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 1;
+                const std::optional<std::int32_t> amount = sourceInteger(sourceTokens, argument);
+                if (amount && *amount > 0 && argument == sourceTokens.size()
+                    && mRewardXpHandler && mRewardXpHandler(*amount))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: RewardXP amount=" << *amount;
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "AddReputation") && tokens.size() == 4)
+            {
+                const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                std::size_t argument = 2;
+                const std::optional<std::int32_t> fame = sourceInteger(sourceTokens, argument);
+                const std::optional<std::int32_t> bump = sourceInteger(sourceTokens, argument);
+                const ESM::FormId reputation = resolveReputation(tokens[1]);
+                if (fame && bump && *fame >= 0 && *fame <= 2 && *bump >= 1 && *bump <= 5
+                    && argument == sourceTokens.size() && !reputation.isZeroOrUnset()
+                    && mAddReputationHandler && mAddReputationHandler(reputation, *fame != 0, *bump))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: AddReputation reputation=" << tokens[1]
+                                     << " fame=" << (*fame != 0) << " bump=" << *bump;
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "CompleteAllObjectives") && tokens.size() == 2)
+            {
+                const ESM4::Quest* const quest = resolveQuest(tokens[1]);
+                ESM4QuestState* const state = quest != nullptr ? findState(*quest) : nullptr;
+                if (state != nullptr)
+                {
+                    for (auto& objective : state->mObjectiveStatus)
+                        objective.second |= ESM4QuestState::Objective_Completed;
+                    Log(Debug::Info) << "FNV/ESM4 behavior: CompleteAllObjectives quest="
+                                     << quest->mEditorId << " count=" << state->mObjectiveStatus.size();
+                    continue;
+                }
             }
             else if ((Misc::StringUtils::ciEqual(tokens[0], "Enable")
                          || Misc::StringUtils::ciEqual(tokens[0], "Disable"))
