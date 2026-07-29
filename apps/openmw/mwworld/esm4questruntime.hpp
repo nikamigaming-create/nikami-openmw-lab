@@ -449,6 +449,7 @@ namespace MWWorld
             SetOpenState,
             Kill,
             ResetAi,
+            ResetHealth,
             StopLook,
             Look,
             MoveTo,
