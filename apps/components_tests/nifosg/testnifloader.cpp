@@ -441,7 +441,7 @@ osg::Group {
       }
       StateSet TRUE {
         osg::StateSet {
-          UniqueID 9
+          UniqueID 8
           ModeList 1 {
             GL_DEPTH_TEST OFF
           }

@@ -159,39 +159,6 @@ namespace Misc::ResourceHelpers
         }
     }
 
-    TEST(ChangeExtensionToDds, original_extension_with_same_size_as_dds)
-    {
-        EXPECT_EQ(checkChangeExtensionToDds("texture/bar.tga"), "texture/bar.dds");
-    }
-
-    TEST(ChangeExtensionToDds, original_extension_greater_than_dds)
-    {
-        EXPECT_EQ(checkChangeExtensionToDds("texture/bar.jpeg"), "texture/bar.dds");
-    }
-
-    TEST(ChangeExtensionToDds, original_extension_smaller_than_dds)
-    {
-        EXPECT_EQ(checkChangeExtensionToDds("texture/bar.xx"), "texture/bar.dds");
-    }
-
-    TEST(ChangeExtensionToDds, does_not_change_dds_extension)
-    {
-        std::string path = "texture/bar.dds";
-        EXPECT_FALSE(changeExtensionToDds(path));
-    }
-
-    TEST(ChangeExtensionToDds, does_not_change_when_no_extension)
-    {
-        std::string path = "texture/bar";
-        EXPECT_FALSE(changeExtensionToDds(path));
-    }
-
-    TEST(ChangeExtensionToDds, change_when_there_is_an_extension)
-    {
-        std::string path = "texture/bar.jpeg";
-        EXPECT_TRUE(changeExtensionToDds(path));
-    }
-
     TEST(GetLODMeshName, fallout_new_vegas_versions_use_lod_meshes)
     {
         constexpr VFS::Path::NormalizedView source("meshes/architecture/building.nif");

@@ -557,7 +557,8 @@ MWWorld::ContainerStoreIterator MWWorld::ContainerStore::add(
     // we should not fire event for InventoryStore yet - it has some custom logic
     if (mListener && typeid(*this) == typeid(ContainerStore))
         mListener->itemAdded(item, count);
-    MWBase::Environment::get().getWindowManager()->inventoryUpdated(contPtr);
+    if (MWBase::WindowManager* const windowManager = MWBase::Environment::tryGetWindowManager())
+        windowManager->inventoryUpdated(contPtr);
 
     return it;
 }
@@ -836,7 +837,8 @@ int MWWorld::ContainerStore::remove(const Ptr& item, int count, bool equipReplac
     // we should not fire event for InventoryStore yet - it has some custom logic
     if (mListener && typeid(*this) == typeid(ContainerStore))
         mListener->itemRemoved(item, count - toRemove);
-    MWBase::Environment::get().getWindowManager()->inventoryUpdated(getPtr());
+    if (MWBase::WindowManager* const windowManager = MWBase::Environment::tryGetWindowManager())
+        windowManager->inventoryUpdated(getPtr());
 
     // number of removed items
     return count - toRemove;

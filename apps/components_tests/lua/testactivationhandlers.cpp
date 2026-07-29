@@ -15,11 +15,12 @@
 namespace
 {
     constexpr VFS::Path::NormalizedView sActivationHandlersPath("scripts/omw/activationhandlers.lua");
+    constexpr VFS::Path::NormalizedView sAuxUtilPath("openmw_aux/util.lua");
 
-    std::string readActivationHandlers()
+    std::string readDataFile(const std::filesystem::path& relativePath)
     {
         const std::filesystem::path path = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
-            / "scripts" / "omw" / "activationhandlers.lua";
+            / relativePath;
         std::ifstream stream(path, std::ios::binary);
         if (!stream)
             throw std::runtime_error("Unable to read " + path.string());
@@ -29,9 +30,10 @@ namespace
     class ActivationHandlersTest : public testing::Test
     {
     protected:
-        TestingOpenMW::VFSTestFile mActivationHandlers{ readActivationHandlers() };
-        std::unique_ptr<VFS::Manager> mVfs
-            = TestingOpenMW::createTestVFS({ { sActivationHandlersPath, &mActivationHandlers } });
+        TestingOpenMW::VFSTestFile mActivationHandlers{ readDataFile("scripts/omw/activationhandlers.lua") };
+        TestingOpenMW::VFSTestFile mAuxUtil{ readDataFile("openmw_aux/util.lua") };
+        std::unique_ptr<VFS::Manager> mVfs = TestingOpenMW::createTestVFS(
+            { { sActivationHandlersPath, &mActivationHandlers }, { sAuxUtilPath, &mAuxUtil } });
         LuaUtil::ScriptsConfiguration mConfiguration;
         LuaUtil::LuaState mLua{ mVfs.get(), &mConfiguration };
     };

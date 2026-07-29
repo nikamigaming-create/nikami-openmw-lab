@@ -219,8 +219,12 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                         // Fallout 3 DATA layout. It is not compatible with
                         // FNVData, so retain stream alignment without
                         // fabricating New Vegas actor statistics.
-                        reader.skipSubRecordData();
-                        break;
+                        if (subHdr.dataSize == 25)
+                        {
+                            reader.skipSubRecordData();
+                            break;
+                        }
+                        throw std::runtime_error("ESM4::NPC_::load - Fallout DATA size mismatch");
                     }
 
                     reader.get(mFNVData);

@@ -3143,7 +3143,7 @@ namespace NifOsg
             // - finding the correct emitter node for a particle system
             // - establishing connections to the animated collision shapes, which are handled in a separate loader
             // - finding a random child NiNode in NiBspArrayController
-            node->setUserValue("recIndex", nifNode->recIndex);
+            node->setUserValue("recordIndex", nifNode->recIndex);
             mNodesByNif[nifNode] = node.get();
             if (!nifNode->mName.empty())
                 mNodesByName[Misc::StringUtils::lowerCase(nifNode->mName)] = node.get();

@@ -120,6 +120,7 @@ namespace
     class TestLuaManager final : public MWBase::LuaManager
     {
     public:
+        void contentFilesLoaded() override {}
         void newGameStarted() override {}
         void gameLoaded() override {}
         void gameEnded() override {}
@@ -135,6 +136,10 @@ namespace
             std::string_view, std::string_view, float, std::uint32_t, bool) override
         {
         }
+        void animationEnded(const MWWorld::Ptr&, std::string_view, float, float, std::string_view, std::string_view)
+            override
+        {
+        }
         void jailTimeServed(const MWWorld::Ptr&, int) override {}
         void skillLevelUp(const MWWorld::Ptr&, ESM::RefId, std::string_view) override {}
         void skillUse(const MWWorld::Ptr&, ESM::RefId, int, float) override {}
@@ -144,10 +149,10 @@ namespace
         }
         void exteriorCreated(MWWorld::CellStore&) override {}
         void actorDied(const MWWorld::Ptr&) override {}
+        void onDialogueResponse(const MWWorld::Ptr&, const ESM::DialInfo&, const ESM::Dialogue&) override {}
         void questUpdated(const ESM::RefId&, int) override {}
         void uiModeChanged(const MWWorld::Ptr&) override {}
         void savePermanentStorage(const std::filesystem::path&) override {}
-        void vrRecentered(bool, bool) override {}
         void inputEvent(const InputEvent&) override {}
         ActorControls* getActorControls(const MWWorld::Ptr&) const override { return nullptr; }
         void clear() override {}
