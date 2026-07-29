@@ -1447,6 +1447,7 @@ namespace MWWorld
                 && instruction.opcode != 0x108b && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1111
+                && instruction.opcode != 0x114a
                 && instruction.opcode != 0x1177 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x1239
@@ -1931,6 +1932,20 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetNote;
                 command.mQuest = *note;
                 command.mValue = instruction.opcode == 0x117c;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x114a) // AddAchievement id
+            {
+                // All 63 base-master quest frames are global calls with one
+                // positive literal integer (the observed IDs are 1..50).
+                if (instruction.callingReferenceIndex || arguments.size() != 1 || !mAchievementHandler)
+                    return false;
+                const std::int32_t* achievement = std::get_if<std::int32_t>(&arguments[0]);
+                if (achievement == nullptr || *achievement <= 0)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::AddAchievement;
+                command.mObjective = *achievement;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x1239) // AddReputation reputation infamy/fame bump
@@ -2556,6 +2571,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::ShowMessage
             || command.mType == CompiledQuestCommandType::SetNote
+            || command.mType == CompiledQuestCommandType::AddAchievement
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
@@ -2663,6 +2679,7 @@ namespace MWWorld
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
             case CompiledQuestCommandType::SetNote:
+            case CompiledQuestCommandType::AddAchievement:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
@@ -2830,6 +2847,11 @@ namespace MWWorld
                     command = effect.mValue ? "AddNote " : "RemoveNote ";
                     executed = mNoteHandler && mNoteHandler(effect.mTarget, effect.mValue);
                     break;
+                case CompiledQuestCommandType::AddAchievement:
+                    command = "AddAchievement ";
+                    executed = mAchievementHandler
+                        && mAchievementHandler(static_cast<std::uint32_t>(effect.mCount));
+                    break;
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
                     executed = mSayToHandler && mSayToHandler(effect.mTarget, effect.mListener, effect.mTopic);
@@ -2905,6 +2927,8 @@ namespace MWWorld
                     + std::to_string(static_cast<int>(effect.mSecondaryValue)) + " "
                     + std::to_string(effect.mCount);
             else if (effect.mType == CompiledQuestCommandType::RewardXp)
+                command += std::to_string(effect.mCount);
+            else if (effect.mType == CompiledQuestCommandType::AddAchievement)
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
@@ -3209,6 +3233,10 @@ namespace MWWorld
                         case CompiledQuestCommandType::SetNote:
                             executed = mNoteHandler && mNoteHandler(command.mQuest, command.mValue);
                             break;
+                        case CompiledQuestCommandType::AddAchievement:
+                            executed = mAchievementHandler
+                                && mAchievementHandler(static_cast<std::uint32_t>(command.mObjective));
+                            break;
                         case CompiledQuestCommandType::SayTo:
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
@@ -3239,6 +3267,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
+                            || command.mType == CompiledQuestCommandType::AddAchievement
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
@@ -3267,6 +3296,8 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::SetNote)
                                 failure = std::string(command.mValue ? "AddNote " : "RemoveNote ")
                                     + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::AddAchievement)
+                                failure = "AddAchievement " + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

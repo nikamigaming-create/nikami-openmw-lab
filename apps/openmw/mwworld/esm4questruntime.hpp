@@ -430,6 +430,7 @@ namespace MWWorld
             EvaluatePackage,
             ShowMessage,
             SetNote,
+            AddAchievement,
             SayTo,
             RewardXp,
             AddReputation,

@@ -590,6 +590,79 @@ TEST(ESM4QuestRuntimeTest, RejectsCompiledNoteChangeForNonPlayerReceiver)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledAchievementAfterTransactionCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201fc, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledAchievementQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x4a, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x22, 0x00, 0x00, 0x00, // AddAchievement 34
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00 // SetStage 10
+    };
+    entry.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::uint32_t> achievements;
+    std::vector<std::uint8_t> stagesAtUnlock;
+    runtime.setAchievementHandler([&](std::uint32_t achievement) {
+        achievements.push_back(achievement);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtUnlock.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(achievements, (std::vector<std::uint32_t>{ 34 }));
+    EXPECT_EQ(stagesAtUnlock, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsInvalidCompiledAchievementWithoutMutatingQuest)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201fd, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "InvalidCompiledAchievementQuest");
+    ESM4::QuestStageEntry zeroId;
+    zeroId.mScript.compiledData
+        = { 0x4a, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00 };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(zeroId) } });
+    ESM4::QuestStageEntry referenceCalled;
+    referenceCalled.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0x4a, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    referenceCalled.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(referenceCalled) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int achievements = 0;
+    runtime.setAchievementHandler([&](std::uint32_t) {
+        ++achievements;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(achievements, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
