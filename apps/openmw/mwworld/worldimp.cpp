@@ -1,6 +1,7 @@
 #include "worldimp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -91,6 +92,7 @@
 
 #include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/scriptmanager.hpp"
@@ -1157,6 +1159,42 @@ namespace MWWorld
                                      << " canWait=" << canWait
                                      << " keepOnCellChange=" << keepOnCellChange;
                 return applied;
+            });
+        mESM4QuestRuntime.setPlayerControlsHandler(
+            [this](std::uint8_t controls, bool enable) {
+                constexpr std::array<std::pair<ESM4PlayerControl, std::string_view>, 7> controlSwitches = {{
+                    { ESM4PlayerControl::Movement, "playermovement" },
+                    { ESM4PlayerControl::PipBoy, "playerinterface" },
+                    { ESM4PlayerControl::Fighting, "playerfighting" },
+                    { ESM4PlayerControl::Pov, "playerviewswitch" },
+                    { ESM4PlayerControl::Looking, "playerlooking" },
+                    { ESM4PlayerControl::RolloverText, "playerrollover" },
+                    { ESM4PlayerControl::Sneaking, "playersneaking" },
+                }};
+                const auto selected = [controls](ESM4PlayerControl control) {
+                    return (controls & static_cast<std::uint8_t>(control)) != 0;
+                };
+
+                if (!enable && selected(ESM4PlayerControl::Fighting))
+                {
+                    const Ptr player = getPlayerPtr();
+                    if (!player.isEmpty())
+                    {
+                        player.getClass().getCreatureStats(player).setAttackingOrSpell(false);
+                        mPlayer->setDrawState(MWMechanics::DrawState::Nothing);
+                    }
+                }
+                if (!enable && selected(ESM4PlayerControl::Pov))
+                    mRendering->getCamera()->setMode(MWRender::Camera::Mode::FirstPerson, true);
+
+                MWBase::InputManager* const input = MWBase::Environment::get().getInputManager();
+                for (const auto& [control, controlSwitch] : controlSwitches)
+                    if (selected(control))
+                        input->toggleControlSwitch(controlSwitch, enable);
+                Log(Debug::Info) << "FNV/ESM4 quest: "
+                                 << (enable ? "EnablePlayerControls" : "DisablePlayerControls")
+                                 << " mask=" << static_cast<unsigned int>(controls);
+                return true;
             });
         mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
             try

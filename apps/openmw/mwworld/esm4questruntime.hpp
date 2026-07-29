@@ -150,6 +150,17 @@ namespace MWWorld
         Look,
     };
 
+    enum class ESM4PlayerControl : std::uint8_t
+    {
+        Movement = 0x01,
+        PipBoy = 0x02,
+        Fighting = 0x04,
+        Pov = 0x08,
+        Looking = 0x10,
+        RolloverText = 0x20,
+        Sneaking = 0x40,
+    };
+
     struct ESM4QuestFactionMembership
     {
         bool mMember = false;
@@ -229,6 +240,7 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using ActorNameCommandHandler
             = std::function<bool(ESM::FormId, std::string_view)>;
+        using PlayerControlsHandler = std::function<bool(std::uint8_t, bool)>;
 
     private:
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -408,6 +420,7 @@ namespace MWWorld
         ActorCommandHandler mActorCommandHandler;
         ActorEffectCommandHandler mActorEffectCommandHandler;
         ActorNameCommandHandler mActorNameCommandHandler;
+        PlayerControlsHandler mPlayerControlsHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -459,6 +472,7 @@ namespace MWWorld
             SetDestroyed,
             ShowMap,
             EnableFastTravel,
+            SetPlayerControls,
         };
 
         enum class CompiledConditionValueType : std::uint8_t
@@ -799,6 +813,10 @@ namespace MWWorld
         void setActorNameCommandHandler(ActorNameCommandHandler handler)
         {
             mActorNameCommandHandler = std::move(handler);
+        }
+        void setPlayerControlsHandler(PlayerControlsHandler handler)
+        {
+            mPlayerControlsHandler = std::move(handler);
         }
 
         bool startQuest(std::string_view id);

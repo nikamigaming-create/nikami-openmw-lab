@@ -118,6 +118,38 @@ namespace
         return parsed.ec == std::errc{} && parsed.ptr == end;
     }
 
+    constexpr std::uint8_t playerControlMask(MWWorld::ESM4PlayerControl control)
+    {
+        return static_cast<std::uint8_t>(control);
+    }
+
+    constexpr std::uint8_t AllPlayerControls = 0x7f;
+    constexpr std::uint8_t DefaultDisabledPlayerControls
+        = playerControlMask(MWWorld::ESM4PlayerControl::Movement)
+        | playerControlMask(MWWorld::ESM4PlayerControl::PipBoy)
+        | playerControlMask(MWWorld::ESM4PlayerControl::Fighting)
+        | playerControlMask(MWWorld::ESM4PlayerControl::Pov);
+
+    bool parseSourcePlayerControls(
+        const std::vector<std::string_view>& tokens, bool enable, std::uint8_t& controls)
+    {
+        if (tokens.empty() || tokens.size() > 8)
+            return false;
+        controls = enable ? AllPlayerControls : DefaultDisabledPlayerControls;
+        for (std::size_t index = 1; index < tokens.size(); ++index)
+        {
+            std::int32_t value = 0;
+            if (!parseInt(tokens[index], value) || (value != 0 && value != 1))
+                return false;
+            const std::uint8_t control = static_cast<std::uint8_t>(1u << (index - 1));
+            if (value != 0)
+                controls |= control;
+            else
+                controls &= ~control;
+        }
+        return true;
+    }
+
     bool parseFloat(std::string_view value, float& result)
     {
         const char* const begin = value.data();
@@ -1465,6 +1497,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1055 && instruction.opcode != 0x1059
                 && instruction.opcode != 0x105c
                 && instruction.opcode != 0x105d && instruction.opcode != 0x105e
+                && instruction.opcode != 0x1060 && instruction.opcode != 0x1061
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1072
                 && instruction.opcode != 0x1073
                 && instruction.opcode != 0x1078 && instruction.opcode != 0x1079
@@ -2057,7 +2090,34 @@ namespace MWWorld
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x1191) // ApplyImageSpaceModifier modifier
+            if (instruction.opcode == 0x1060 || instruction.opcode == 0x1061)
+            {
+                // Across the Fallout 3 and New Vegas base-master quest
+                // corpora, all 15 EnablePlayerControls (0x1060) and all 20
+                // DisablePlayerControls (0x1061) frames are global calls with
+                // zero to seven literal boolean arguments.
+                const bool enable = instruction.opcode == 0x1060;
+                if (instruction.callingReferenceIndex || arguments.size() > 7 || !mPlayerControlsHandler)
+                    return false;
+                std::uint8_t controls = enable ? AllPlayerControls : DefaultDisabledPlayerControls;
+                for (std::size_t index = 0; index < arguments.size(); ++index)
+                {
+                    const std::int32_t* value = std::get_if<std::int32_t>(&arguments[index]);
+                    if (value == nullptr || (*value != 0 && *value != 1))
+                        return false;
+                    const std::uint8_t control = static_cast<std::uint8_t>(1u << index);
+                    if (*value != 0)
+                        controls |= control;
+                    else
+                        controls &= ~control;
+                }
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetPlayerControls;
+                command.mObjective = controls;
+                command.mValue = enable;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1191) // ApplyImageSpaceModifier modifier
             {
                 // All 21 combined base-master frames are global calls with
                 // one IMAD reference and the command's default strength.
@@ -3169,7 +3229,8 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::AddReputation
             || command.mType == CompiledQuestCommandType::SetDestroyed
             || command.mType == CompiledQuestCommandType::ShowMap
-            || command.mType == CompiledQuestCommandType::EnableFastTravel)
+            || command.mType == CompiledQuestCommandType::EnableFastTravel
+            || command.mType == CompiledQuestCommandType::SetPlayerControls)
         {
             working.mExternalEffects.push_back(
                 { command.mType, command.mQuest, command.mTarget, command.mTopic,
@@ -3286,6 +3347,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetDestroyed:
             case CompiledQuestCommandType::ShowMap:
             case CompiledQuestCommandType::EnableFastTravel:
+            case CompiledQuestCommandType::SetPlayerControls:
                 return false;
         }
         return false;
@@ -3595,10 +3657,19 @@ namespace MWWorld
                         && mEnableFastTravelHandler(
                             effect.mValue, effect.mSecondaryValue, effect.mCount != 0);
                     break;
+                case CompiledQuestCommandType::SetPlayerControls:
+                    command = effect.mValue ? "EnablePlayerControls " : "DisablePlayerControls ";
+                    executed = effect.mCount >= 0 && effect.mCount <= AllPlayerControls
+                        && mPlayerControlsHandler
+                        && mPlayerControlsHandler(
+                            static_cast<std::uint8_t>(effect.mCount), effect.mValue);
+                    break;
                 default:
                     throw std::logic_error("non-external command queued as a Fallout quest external effect");
             }
-            if (effect.mType == CompiledQuestCommandType::EnableFastTravel)
+            if (effect.mType == CompiledQuestCommandType::SetPlayerControls)
+                command += std::to_string(effect.mCount);
+            else if (effect.mType == CompiledQuestCommandType::EnableFastTravel)
                 command += std::to_string(static_cast<int>(effect.mValue)) + " "
                     + std::to_string(static_cast<int>(effect.mSecondaryValue)) + " "
                     + std::to_string(effect.mCount);
@@ -4039,6 +4110,12 @@ namespace MWWorld
                                 && mEnableFastTravelHandler(
                                     command.mValue, command.mSecondaryValue, command.mObjective != 0);
                             break;
+                        case CompiledQuestCommandType::SetPlayerControls:
+                            executed = command.mObjective >= 0 && command.mObjective <= AllPlayerControls
+                                && mPlayerControlsHandler
+                                && mPlayerControlsHandler(
+                                    static_cast<std::uint8_t>(command.mObjective), command.mValue);
+                            break;
                     }
                     if (!executed)
                     {
@@ -4075,7 +4152,8 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::AddReputation
                             || command.mType == CompiledQuestCommandType::SetDestroyed
                             || command.mType == CompiledQuestCommandType::ShowMap
-                            || command.mType == CompiledQuestCommandType::EnableFastTravel)
+                            || command.mType == CompiledQuestCommandType::EnableFastTravel
+                            || command.mType == CompiledQuestCommandType::SetPlayerControls)
                         {
                             std::string failure;
                             if (command.mType == CompiledQuestCommandType::EvaluatePackage)
@@ -4187,6 +4265,10 @@ namespace MWWorld
                                 failure = "EnableFastTravel "
                                     + std::to_string(static_cast<int>(command.mValue)) + " "
                                     + std::to_string(static_cast<int>(command.mSecondaryValue)) + " "
+                                    + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::SetPlayerControls)
+                                failure = std::string(command.mValue
+                                        ? "EnablePlayerControls " : "DisablePlayerControls ")
                                     + std::to_string(command.mObjective);
                             else
                                 failure = "SayTo " + ESM::RefId(command.mQuest).serializeText();
@@ -7422,21 +7504,22 @@ namespace MWWorld
                 if (parseInt(tokens[1], value) && setAuthoredCharGenState(value))
                     continue;
             }
-            else if (Misc::StringUtils::ciEqual(tokens[0], "DisablePlayerControls"))
+            else if (Misc::StringUtils::ciEqual(tokens[0], "DisablePlayerControls")
+                || Misc::StringUtils::ciEqual(tokens[0], "EnablePlayerControls"))
             {
-                // The engine is already in character generation when a new game
-                // begins.  A later stage can therefore carry only the control
-                // lock while still relying on the original SetInCharGen intent to
-                // keep the presentation free of gameplay HUD and cursor widgets.
-                if (isAuthoredCharGenActive())
-                    setAuthoredGameplayOverlayVisible(false, "DisablePlayerControls-charGen");
-                continue;
-            }
-            else if (Misc::StringUtils::ciEqual(tokens[0], "EnablePlayerControls"))
-            {
-                if (!isAuthoredCharGenActive())
-                    setAuthoredGameplayOverlayVisible(true, "EnablePlayerControls");
-                continue;
+                const bool enable = Misc::StringUtils::ciEqual(tokens[0], "EnablePlayerControls");
+                std::uint8_t controls = 0;
+                if (parseSourcePlayerControls(tokens, enable, controls)
+                    && mPlayerControlsHandler && mPlayerControlsHandler(controls, enable))
+                {
+                    // Character generation owns the authored HUD presentation
+                    // separately from these independent input switches.
+                    if (!enable && isAuthoredCharGenActive())
+                        setAuthoredGameplayOverlayVisible(false, "DisablePlayerControls-charGen");
+                    else if (enable && !isAuthoredCharGenActive())
+                        setAuthoredGameplayOverlayVisible(true, "EnablePlayerControls");
+                    continue;
+                }
             }
             else if ((tokens.size() == 3 || tokens.size() == 5)
                 && Misc::StringUtils::ciEqual(tokens[0], "SetEnemy"))

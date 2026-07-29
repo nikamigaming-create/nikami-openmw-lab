@@ -1290,6 +1290,153 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledLookWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledAndSourcePlayerControlsThroughNativeHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120345, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledPlayerControlsQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // Fallout3.esm CG03 stage 5: DisablePlayerControls
+        0x61, 0x10, 0x02, 0x00, 0x00, 0x00,
+        // Fallout3.esm CG03 stage 70: EnablePlayerControls 1 1 0
+        0x60, 0x10, 0x11, 0x00, 0x03, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        // FalloutNV.esm VCG01 stage 110: DisablePlayerControls 1 1 1 1 1 1 1
+        0x61, 0x10, 0x25, 0x00, 0x07, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        // FalloutNV.esm VCG01 stage 110: EnablePlayerControls 1 0 0 1 1 1 0
+        0x60, 0x10, 0x25, 0x00, 0x07, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<std::uint8_t, bool>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setPlayerControlsHandler([&](std::uint8_t controls, bool enable) {
+        changes.emplace_back(controls, enable);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<std::uint8_t, bool>>{
+            { 0x0f, false },
+            { 0x7b, true },
+            { 0x7f, false },
+            { 0x39, true },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10, 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+
+    changes.clear();
+    stagesAtCommand.clear();
+    runtime.executeResultSource("DisablePlayerControls\nEnablePlayerControls 1 1 0\n");
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<std::uint8_t, bool>>{
+            { 0x0f, false },
+            { 0x7b, true },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedPlayerControlsWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120346, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedPlayerControlsQuest");
+    ESM4::QuestStageEntry referenceCalled;
+    referenceCalled.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x61, 0x10, 0x02, 0x00, 0x00, 0x00,
+    };
+    referenceCalled.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(referenceCalled) } });
+    ESM4::QuestStageEntry invalidBoolean;
+    invalidBoolean.mScript.compiledData = {
+        0x61, 0x10, 0x07, 0x00, 0x01, 0x00,
+        0x6e, 0x02, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(invalidBoolean) } });
+    ESM4::QuestStageEntry referenceArgument;
+    referenceArgument.mScript.compiledData = {
+        0x60, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+    };
+    referenceArgument.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(referenceArgument) } });
+    ESM4::QuestStageEntry tooManyArguments;
+    tooManyArguments.mScript.compiledData = {
+        0x61, 0x10, 0x2a, 0x00, 0x08, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(tooManyArguments) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setPlayerControlsHandler([&](std::uint8_t, bool) {
+        ++changes;
+        return true;
+    });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+
+    runtime.executeResultSource(
+        "DisablePlayerControls 1 2\n"
+        "EnablePlayerControls 1 1 1 1 1 1 1 1\n");
+    EXPECT_EQ(changes, 0);
+    EXPECT_EQ(runtime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{
+            "DisablePlayerControls 1 2",
+            "EnablePlayerControls 1 1 1 1 1 1 1 1",
+        }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledSetQuestObjectAfterCommit)
 {
     MWWorld::ESMStore store;
