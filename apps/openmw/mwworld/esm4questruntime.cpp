@@ -4961,6 +4961,30 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if (Misc::StringUtils::ciEqual(command, "PlayGroup")
+                    && tokens.size() >= 2 && tokens.size() <= 3)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 2;
+                    int mode = 0;
+                    bool valid = true;
+                    if (argument < sourceTokens.size())
+                    {
+                        const std::optional<std::int32_t> parsedMode = sourceInteger(sourceTokens, argument);
+                        valid = parsedMode && *parsedMode >= 0 && *parsedMode <= 2;
+                        if (valid)
+                            mode = *parsedMode;
+                    }
+                    const ESM::FormId reference = sourceOwnerId();
+                    if (valid && argument == sourceTokens.size() && !reference.isZeroOrUnset()
+                        && mReferenceAnimationGroupHandler
+                        && mReferenceAnimationGroupHandler(reference, tokens[1], mode))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: PlayGroup reference=" << subject
+                                         << " group=" << tokens[1] << " mode=" << mode;
+                        continue;
+                    }
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "AddItem")
                         || Misc::StringUtils::ciEqual(command, "RemoveItem"))
                     && tokens.size() >= 3 && tokens.size() <= 4)

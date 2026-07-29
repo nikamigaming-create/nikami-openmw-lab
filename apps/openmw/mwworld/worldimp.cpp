@@ -965,6 +965,25 @@ namespace MWWorld
                     << " idle=" << idle->mEditorId << " played=" << played;
                 return played;
             });
+        mESM4QuestRuntime.setReferenceAnimationGroupHandler(
+            [this](ESM::FormId referenceId, std::string_view group, int mode) {
+                const Ptr reference = searchPtr(ESM::RefId(referenceId), false, false);
+                MWBase::MechanicsManager* const mechanics
+                    = MWBase::Environment::get().getMechanicsManager();
+                if (reference.isEmpty() || !reference.getRefData().isEnabled() || group.empty()
+                    || mode < 0 || mode > 2 || mechanics == nullptr)
+                    return false;
+
+                // This is the same engine API used by MWScript PlayGroup. It
+                // dispatches to the native actor or object animation owner.
+                const bool played = mechanics->playAnimationGroup(
+                    reference, group, mode, std::numeric_limits<std::uint32_t>::max(), true);
+                Log(played ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 quest: PlayGroup reference="
+                    << ESM::RefId(referenceId).serializeText()
+                    << " group=" << group << " mode=" << mode << " played=" << played;
+                return played;
+            });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
                 const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);

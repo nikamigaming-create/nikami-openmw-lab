@@ -1287,6 +1287,43 @@ TEST(ESM4QuestRuntimeTest, RoutesPlayIdleThroughTheNativeActorIdleHandler)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesPlayGroupThroughTheNativeReferenceAnimationHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12016d, .mContentFile = 0 };
+    const ESM::FormId referenceId{ .mIndex = 0x12016e, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "PlayGroupQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "AnimatedReference.PlayGroup Forward 1\n"
+          "AnimatedReference.PlayGroup Backward";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference reference;
+    reference.mId = referenceId;
+    reference.mEditorId = "AnimatedReference";
+    store.overrideRecord(reference);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, std::string, int>> groups;
+    runtime.setReferenceAnimationGroupHandler(
+        [&](ESM::FormId referenceRef, std::string_view group, int mode) {
+            groups.emplace_back(referenceRef, group, mode);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(groups,
+        (std::vector<std::tuple<ESM::FormId, std::string, int>>{
+            { referenceId, "Forward", 1 },
+            { referenceId, "Backward", 0 },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
 {
     MWWorld::ESMStore store;
