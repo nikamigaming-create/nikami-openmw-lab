@@ -3120,10 +3120,18 @@ namespace MWWorld
             else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "ForceActiveQuest")
                 && forceActiveQuest(tokens[1]))
                 continue;
-            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "ApplyImageSpaceModifier")
+            // Fallout 3 / New Vegas source commonly uses the short-form
+            // `imod` / `rimod` spellings.  They are the same engine commands
+            // as ApplyImageSpaceModifier / RemoveImageSpaceModifier, so route
+            // both spellings through the renderer-backed implementation.
+            else if (tokens.size() >= 2
+                && (Misc::StringUtils::ciEqual(tokens[0], "ApplyImageSpaceModifier")
+                    || Misc::StringUtils::ciEqual(tokens[0], "imod"))
                 && applyImageSpaceModifier(removeQuotes(tokens[1])))
                 continue;
-            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "RemoveImageSpaceModifier")
+            else if (tokens.size() >= 2
+                && (Misc::StringUtils::ciEqual(tokens[0], "RemoveImageSpaceModifier")
+                    || Misc::StringUtils::ciEqual(tokens[0], "rimod"))
                 && removeImageSpaceModifier(removeQuotes(tokens[1])))
                 continue;
             else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "PlayBink"))

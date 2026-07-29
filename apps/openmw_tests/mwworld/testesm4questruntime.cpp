@@ -17,6 +17,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadscpt.hpp>
@@ -146,6 +147,38 @@ TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
         EXPECT_EQ(state->mCurrentStage, 0) << editorId;
         EXPECT_TRUE(state->mStageDone.empty()) << editorId;
     }
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesFalloutShortFormImageSpaceCommands)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1000f0, .mContentFile = 0 };
+    const ESM::FormId modifierId{ .mIndex = 0x1000f1, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "ImageSpaceQuest");
+    ESM4::QuestStageEntry applyEntry;
+    applyEntry.mScript.scriptSource = "imod IntroFade";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(applyEntry) } });
+    ESM4::QuestStageEntry removeEntry;
+    removeEntry.mScript.scriptSource = "rimod IntroFade";
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(removeEntry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ImageSpaceModifier modifier;
+    modifier.mId = modifierId;
+    modifier.mEditorId = "IntroFade";
+    store.overrideRecord(modifier);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage("ImageSpaceQuest", 5));
+    const std::vector<ESM4::ImageSpaceModifierRuntimeState> active = runtime.getActiveImageSpaceModifiers();
+    ASSERT_EQ(active.size(), 1);
+    EXPECT_EQ(active.front().mId, modifierId);
+
+    ASSERT_TRUE(runtime.setStage("ImageSpaceQuest", 10));
+    EXPECT_TRUE(runtime.getActiveImageSpaceModifiers().empty());
 }
 
 TEST(ESM4QuestRuntimeTest, FindsUnambiguousAuthoredOpeningPlacementFromStageZeroSource)
