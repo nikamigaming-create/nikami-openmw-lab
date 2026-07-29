@@ -444,6 +444,7 @@ namespace MWWorld
             SetQuestObject,
             AddAchievement,
             AddSpecialPoints,
+            RewardKarma,
             SayTo,
             RewardXp,
             AddReputation,
@@ -519,6 +520,7 @@ namespace MWWorld
         {
             bool mUseSourceFallback = false;
             bool mHasLiveCondition = false;
+            bool mHasLiveArgument = false;
             std::vector<CompiledQuestCommand> mCommands;
             std::vector<std::uint16_t> mUnsupportedOpcodes;
         };
@@ -579,7 +581,7 @@ namespace MWWorld
         bool isStateDirty(ESM::FormId id, const ESM4QuestState& state) const;
         bool prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const;
         bool stageContainsCompiledSetStage(const ESM4::QuestStage& stage) const;
-        bool stageContainsCompiledLiveCondition(const ESM4::QuestStage& stage) const;
+        bool stageRequiresCompiledTransaction(const ESM4::QuestStage& stage) const;
         bool areCompiledStageConditionsPure(const std::vector<ESM4::TargetCondition>& conditions) const;
         bool preflightPureCompiledStage(
             ESM::FormId id, std::uint8_t stage, std::vector<CompiledStageKey>& stack) const;
@@ -588,6 +590,8 @@ namespace MWWorld
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
         std::optional<bool> evaluateCompiledCondition(
             const CompiledQuestCondition& condition, const QuestStateMap& states) const;
+        std::optional<int> resolveCompiledIntegerVariable(
+            const CompiledQuestCommand& command, const QuestStateMap& states) const;
         bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
             std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);

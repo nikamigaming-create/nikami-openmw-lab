@@ -1457,6 +1457,7 @@ namespace MWWorld
                 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x117f && instruction.opcode != 0x1180
+                && instruction.opcode != 0x1204
                 && instruction.opcode != 0x1219
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
@@ -1834,6 +1835,62 @@ namespace MWWorld
                 command.mType = CompiledQuestCommandType::SetVariableFromItemCount;
                 command.mTarget = owner;
                 command.mTopic = item;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x1204) // [Player.]RewardKarma amount
+            {
+                // The 38 combined base-master frames contain 33 literal
+                // amounts and five Fallout 3 quest-variable amounts encoded
+                // as: 01 00 72 <quest-ref> 73 <local-index>.
+                if (!mRewardKarmaHandler || mStore == nullptr)
+                    return false;
+                if (instruction.callingReferenceIndex)
+                {
+                    const ESM::FormId receiver = script.references[*instruction.callingReferenceIndex - 1];
+                    if (receiver.mIndex != 0x7 && receiver.mIndex != 0x14)
+                        return false;
+                }
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::RewardKarma;
+                if (argumentPayload.size() == 8
+                    && argumentPayload[0] == 1 && argumentPayload[1] == 0
+                    && argumentPayload[2] == 0x72 && argumentPayload[5] == 0x73)
+                {
+                    const std::uint16_t questIndex = readUint16(argumentPayload, 3);
+                    const std::uint16_t variableIndex = readUint16(argumentPayload, 6);
+                    if (questIndex == 0 || questIndex > script.references.size())
+                        return false;
+                    command.mQuest = script.references[questIndex - 1];
+                    const ESM4::Quest* quest
+                        = mStore->get<ESM4::Quest>().search(ESM::RefId(command.mQuest));
+                    const ESM4::Script* questScript = quest == nullptr
+                        ? nullptr
+                        : mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript));
+                    if (quest == nullptr || findState(*quest) == nullptr || questScript == nullptr)
+                        return false;
+                    const auto variable = std::ranges::find(
+                        questScript->mScript.localVarData, variableIndex,
+                        &ESM4::ScriptLocalVariableData::index);
+                    if (variable == questScript->mScript.localVarData.end()
+                        || variable->variableName.empty())
+                        return false;
+                    command.mVariable = Misc::StringUtils::lowerCase(variable->variableName);
+                    prepared.mHasLiveArgument = true;
+                }
+                else
+                {
+                    std::vector<ESM4::ScriptBytecodeArgument> rewardArguments;
+                    if (!ESM4::decodeFalloutScriptArguments(
+                            argumentPayload, script.references, rewardArguments).succeeded()
+                        || rewardArguments.size() != 1)
+                        return false;
+                    const std::int32_t* amount = std::get_if<std::int32_t>(&rewardArguments[0]);
+                    if (amount == nullptr || *amount == 0)
+                        return false;
+                    command.mObjective = *amount;
+                }
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -2498,13 +2555,13 @@ namespace MWWorld
         return false;
     }
 
-    bool ESM4QuestRuntime::stageContainsCompiledLiveCondition(const ESM4::QuestStage& stage) const
+    bool ESM4QuestRuntime::stageRequiresCompiledTransaction(const ESM4::QuestStage& stage) const
     {
         for (const ESM4::QuestStageEntry& entry : stage.mEntries)
         {
             CompiledStageScript prepared;
             if (prepareStageScript(entry.mScript, prepared) && !prepared.mUseSourceFallback
-                && prepared.mHasLiveCondition)
+                && (prepared.mHasLiveCondition || prepared.mHasLiveArgument))
                 return true;
         }
         return false;
@@ -2718,6 +2775,25 @@ namespace MWWorld
         return stack.back() != 0.f;
     }
 
+    std::optional<int> ESM4QuestRuntime::resolveCompiledIntegerVariable(
+        const CompiledQuestCommand& command, const QuestStateMap& states) const
+    {
+        if (command.mVariable.empty())
+            return std::nullopt;
+        const auto state = states.find(command.mQuest);
+        if (state == states.end())
+            return std::nullopt;
+        const auto variable = state->second.mVariables.find(command.mVariable);
+        if (variable == state->second.mVariables.end())
+            return std::nullopt;
+        const double value = variable->second;
+        if (!std::isfinite(value) || std::trunc(value) != value || value == 0.0
+            || value < static_cast<double>(std::numeric_limits<int>::min())
+            || value > static_cast<double>(std::numeric_limits<int>::max()))
+            return std::nullopt;
+        return static_cast<int>(value);
+    }
+
     bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,
         const QuestStateMap& states, std::vector<CompiledConditionalFrame>& stack, bool& execute) const
     {
@@ -2777,6 +2853,17 @@ namespace MWWorld
     {
         if (command.mType == CompiledQuestCommandType::SetStage)
             return executePureCompiledStage(command.mQuest, command.mStage, working);
+        if (command.mType == CompiledQuestCommandType::RewardKarma && !command.mVariable.empty())
+        {
+            const std::optional<int> amount = resolveCompiledIntegerVariable(command, working.mStates);
+            if (!amount)
+                return false;
+            PendingExternalEffect effect;
+            effect.mType = command.mType;
+            effect.mCount = *amount;
+            working.mExternalEffects.push_back(std::move(effect));
+            return true;
+        }
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::StopLook
@@ -2790,6 +2877,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::SetQuestObject
             || command.mType == CompiledQuestCommandType::AddAchievement
             || command.mType == CompiledQuestCommandType::AddSpecialPoints
+            || command.mType == CompiledQuestCommandType::RewardKarma
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
@@ -2907,6 +2995,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SetQuestObject:
             case CompiledQuestCommandType::AddAchievement:
             case CompiledQuestCommandType::AddSpecialPoints:
+            case CompiledQuestCommandType::RewardKarma:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
@@ -3114,6 +3203,10 @@ namespace MWWorld
                     command = "AddSPECIALPoints ";
                     executed = mAddSpecialPointsHandler && mAddSpecialPointsHandler(effect.mCount);
                     break;
+                case CompiledQuestCommandType::RewardKarma:
+                    command = "RewardKarma ";
+                    executed = mRewardKarmaHandler && mRewardKarmaHandler(effect.mCount);
+                    break;
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
                     executed = mSayToHandler && mSayToHandler(effect.mTarget, effect.mListener, effect.mTopic);
@@ -3199,6 +3292,8 @@ namespace MWWorld
             else if (effect.mType == CompiledQuestCommandType::AddAchievement)
                 command += std::to_string(effect.mCount);
             else if (effect.mType == CompiledQuestCommandType::AddSpecialPoints)
+                command += std::to_string(effect.mCount);
+            else if (effect.mType == CompiledQuestCommandType::RewardKarma)
                 command += std::to_string(effect.mCount);
             else
                 command += ESM::RefId(effect.mTarget).serializeText();
@@ -3320,7 +3415,7 @@ namespace MWWorld
             Log(Debug::Info) << "FNV/ESM4 behavior: compiled SetStage transaction deferred to source fallback quest="
                              << quest->mEditorId << " stage=" << static_cast<unsigned int>(stageIndex);
         }
-        else if (stageContainsCompiledLiveCondition(*stage))
+        else if (stageRequiresCompiledTransaction(*stage))
             return executeCompiledStageTransaction(id, stageIndex);
 
         struct PreparedEntry
@@ -3556,6 +3651,15 @@ namespace MWWorld
                             executed = mAddSpecialPointsHandler
                                 && mAddSpecialPointsHandler(command.mObjective);
                             break;
+                        case CompiledQuestCommandType::RewardKarma:
+                        {
+                            std::optional<int> amount = command.mObjective;
+                            if (!command.mVariable.empty())
+                                amount = resolveCompiledIntegerVariable(command, mStates);
+                            executed = amount && mRewardKarmaHandler
+                                && mRewardKarmaHandler(*amount);
+                            break;
+                        }
                         case CompiledQuestCommandType::SayTo:
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
@@ -3594,6 +3698,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::SetQuestObject
                             || command.mType == CompiledQuestCommandType::AddAchievement
                             || command.mType == CompiledQuestCommandType::AddSpecialPoints
+                            || command.mType == CompiledQuestCommandType::RewardKarma
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
@@ -3648,6 +3753,11 @@ namespace MWWorld
                                 failure = "AddAchievement " + std::to_string(command.mObjective);
                             else if (command.mType == CompiledQuestCommandType::AddSpecialPoints)
                                 failure = "AddSPECIALPoints " + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::RewardKarma)
+                                failure = command.mVariable.empty()
+                                    ? "RewardKarma " + std::to_string(command.mObjective)
+                                    : "RewardKarma " + ESM::RefId(command.mQuest).serializeText()
+                                        + "." + command.mVariable;
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

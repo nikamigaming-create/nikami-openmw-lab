@@ -1476,6 +1476,132 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledActorFactionChangesWithoutMut
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledLiteralAndVariableKarmaAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverQuestId{ .mIndex = 0x12031b, .mContentFile = 0 };
+    const ESM::FormId rewardQuestId{ .mIndex = 0x12031c, .mContentFile = 0 };
+    const ESM::FormId rewardScriptId{ .mIndex = 0x12031d, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest rewardQuest = makeQuest(rewardQuestId, "KarmaRewardSourceQuest");
+    rewardQuest.mQuestScript = rewardScriptId;
+    store.overrideRecord(rewardQuest);
+    ESM4::Script rewardScript;
+    rewardScript.mId = rewardScriptId;
+    rewardScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 6, .variableName = "KarmaReward" },
+    };
+    store.overrideRecord(rewardScript);
+
+    ESM4::Quest driverQuest = makeQuest(driverQuestId, "CompiledRewardKarmaQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x04, 0x12, 0x07, 0x00, 0x01, 0x00, 0x6e, 0xce, 0xff, 0xff, 0xff,
+        0x1c, 0x00, 0x01, 0x00, 0x04, 0x12, 0x08, 0x00,
+        0x01, 0x00, 0x72, 0x02, 0x00, 0x73, 0x06, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00
+    };
+    entry.mScript.references = { playerId, rewardQuestId, driverQuestId };
+    driverQuest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    driverQuest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(driverQuest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setQuestVariable("KarmaRewardSourceQuest", "KarmaReward", -75.f));
+    std::vector<int> rewards;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setRewardKarmaHandler([&](int amount) {
+        rewards.push_back(amount);
+        const MWWorld::ESM4QuestState* state = runtime.search(driverQuestId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(driverQuestId, 5));
+    EXPECT_EQ(rewards, (std::vector<int>{ -50, -75 }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(driverQuestId), nullptr);
+    EXPECT_EQ(runtime.search(driverQuestId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsInvalidCompiledKarmaWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverQuestId{ .mIndex = 0x12031e, .mContentFile = 0 };
+    const ESM::FormId rewardQuestId{ .mIndex = 0x12031f, .mContentFile = 0 };
+    const ESM::FormId rewardScriptId{ .mIndex = 0x120320, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x120321, .mContentFile = 0 };
+
+    ESM4::Quest rewardQuest = makeQuest(rewardQuestId, "InvalidKarmaRewardSourceQuest");
+    rewardQuest.mQuestScript = rewardScriptId;
+    store.overrideRecord(rewardQuest);
+    ESM4::Script rewardScript;
+    rewardScript.mId = rewardScriptId;
+    rewardScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 6, .variableName = "KarmaReward" },
+    };
+    store.overrideRecord(rewardScript);
+
+    ESM4::Quest driverQuest = makeQuest(driverQuestId, "InvalidCompiledRewardKarmaQuest");
+    ESM4::QuestStageEntry fractionalVariable;
+    fractionalVariable.mScript.compiledData = {
+        0x04, 0x12, 0x08, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00, 0x73, 0x06, 0x00
+    };
+    fractionalVariable.mScript.references = { rewardQuestId };
+    driverQuest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(fractionalVariable) } });
+    ESM4::QuestStageEntry unknownVariable;
+    unknownVariable.mScript.compiledData = {
+        0x04, 0x12, 0x08, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00, 0x73, 0x07, 0x00
+    };
+    unknownVariable.mScript.references = { rewardQuestId };
+    driverQuest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(unknownVariable) } });
+    ESM4::QuestStageEntry nonPlayerReceiver;
+    nonPlayerReceiver.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x04, 0x12, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0xce, 0xff, 0xff, 0xff
+    };
+    nonPlayerReceiver.mScript.references = { actorId };
+    driverQuest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(nonPlayerReceiver) } });
+    ESM4::QuestStageEntry zero;
+    zero.mScript.compiledData = {
+        0x04, 0x12, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x00, 0x00, 0x00, 0x00
+    };
+    driverQuest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(zero) } });
+    store.overrideRecord(driverQuest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setQuestVariable("InvalidKarmaRewardSourceQuest", "KarmaReward", 12.5f));
+    int commands = 0;
+    runtime.setRewardKarmaHandler([&](int) {
+        ++commands;
+        return true;
+    });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(runtime.setStage(driverQuestId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(driverQuestId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    const std::optional<float> reward
+        = runtime.getQuestVariable("InvalidKarmaRewardSourceQuest", "KarmaReward");
+    ASSERT_TRUE(reward);
+    EXPECT_FLOAT_EQ(*reward, 12.5f);
+    EXPECT_EQ(commands, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
