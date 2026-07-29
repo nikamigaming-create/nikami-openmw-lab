@@ -1321,6 +1321,135 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledResetHealthWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledStartCombatThroughNativeMechanicsAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120357, .mContentFile = 0 };
+    const ESM::FormId attackerId{ .mIndex = 0x120358, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120359, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledStartCombatQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // Fallout3.esm FollowersHireFawkes stage 10:
+        // <placed actor>.StartCombat <placed actor>
+        0x1c, 0x00, 0x01, 0x00,
+        0x16, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { attackerId, targetId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    for (const ESM::FormId actorId : { attackerId, targetId })
+    {
+        ESM4::ActorCharacter actor;
+        actor.mId = actorId;
+        store.overrideRecord(actor);
+    }
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    using CombatCall = std::tuple<MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool>;
+    std::vector<CombatCall> calls;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setActorCommandHandler([&](MWWorld::ESM4QuestActorCommand command,
+                                       ESM::FormId actor, ESM::FormId target, bool flag) {
+        calls.emplace_back(command, actor, target, flag);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls,
+        (std::vector<CombatCall>{
+            { MWWorld::ESM4QuestActorCommand::StartCombat, attackerId, targetId, false },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledStartCombatWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12035a, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12035b, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x12035c, .mContentFile = 0 };
+    const ESM::FormId nonActorId{ .mIndex = 0x12035d, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedStartCombatQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData
+        = { 0x16, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    globalCall.mScript.references = { targetId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry missingTarget;
+    missingTarget.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x16, 0x10, 0x02, 0x00, 0x00, 0x00,
+    };
+    missingTarget.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(missingTarget) } });
+    ESM4::QuestStageEntry nonActorReceiver;
+    nonActorReceiver.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x16, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+    };
+    nonActorReceiver.mScript.references = { nonActorId, targetId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(nonActorReceiver) } });
+    ESM4::QuestStageEntry nonActorTarget;
+    nonActorTarget.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x16, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+    };
+    nonActorTarget.mScript.references = { actorId, nonActorId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(nonActorTarget) } });
+    ESM4::QuestStageEntry sameActor;
+    sameActor.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x16, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+    };
+    sameActor.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(sameActor) } });
+    store.overrideRecord(quest);
+
+    for (const ESM::FormId actorValue : { actorId, targetId })
+    {
+        ESM4::ActorCharacter actor;
+        actor.mId = actorValue;
+        store.overrideRecord(actor);
+    }
+    ESM4::Reference nonActor;
+    nonActor.mId = nonActorId;
+    store.overrideRecord(nonActor);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int calls = 0;
+    runtime.setActorCommandHandler(
+        [&](MWWorld::ESM4QuestActorCommand, ESM::FormId, ESM::FormId, bool) {
+            ++calls;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(calls, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledStopLookThroughNativeMechanicsAfterCommit)
 {
     MWWorld::ESMStore store;

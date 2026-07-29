@@ -1489,6 +1489,7 @@ namespace MWWorld
                 && instruction.opcode != 0x0018 && instruction.opcode != 0x0019
                 && instruction.opcode != 0x1002
                 && instruction.opcode != 0x100f
+                && instruction.opcode != 0x1016
                 && instruction.opcode != 0x101d
                 && instruction.opcode != 0x1021 && instruction.opcode != 0x1022
                 && instruction.opcode != 0x1034 && instruction.opcode != 0x1036
@@ -2675,6 +2676,29 @@ namespace MWWorld
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::ResetHealth, actor });
             }
+            else if (instruction.opcode == 0x1016) // actor.StartCombat target
+            {
+                // All eight Fallout 3 base-master quest frames are
+                // actor-qualified calls with one placed-actor target.
+                if (!instruction.callingReferenceIndex || arguments.size() != 1
+                    || !mActorCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const ESM::FormId* target = std::get_if<ESM::FormId>(&arguments[0]);
+                const auto actorExists = [this](ESM::FormId id) {
+                    return id.mIndex == 0x7 || id.mIndex == 0x14
+                        || mStore->get<ESM4::ActorCharacter>().search(id) != nullptr
+                        || mStore->get<ESM4::ActorCreature>().search(id) != nullptr;
+                };
+                if (target == nullptr || actor == *target
+                    || !actorExists(actor) || !actorExists(*target))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::StartCombat;
+                command.mQuest = actor;
+                command.mTarget = *target;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x105d) // actor.StopLook
             {
                 // All 27 base-master frames are actor-qualified and carry an
@@ -3273,6 +3297,7 @@ namespace MWWorld
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::ResetHealth
+            || command.mType == CompiledQuestCommandType::StartCombat
             || command.mType == CompiledQuestCommandType::StopLook
             || command.mType == CompiledQuestCommandType::Look
             || command.mType == CompiledQuestCommandType::MoveTo
@@ -3396,6 +3421,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::ResetHealth:
+            case CompiledQuestCommandType::StartCombat:
             case CompiledQuestCommandType::StopLook:
             case CompiledQuestCommandType::Look:
             case CompiledQuestCommandType::MoveTo:
@@ -3578,6 +3604,12 @@ namespace MWWorld
                     executed = mActorCommandHandler
                         && mActorCommandHandler(ESM4QuestActorCommand::ResetHealth,
                             effect.mTarget, ESM::FormId{}, false);
+                    break;
+                case CompiledQuestCommandType::StartCombat:
+                    command = "StartCombat ";
+                    executed = mActorCommandHandler
+                        && mActorCommandHandler(ESM4QuestActorCommand::StartCombat,
+                            effect.mTarget, effect.mListener, false);
                     break;
                 case CompiledQuestCommandType::StopLook:
                     command = "StopLook ";
@@ -3799,6 +3831,8 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::AddItemHealthPercent)
                 command += " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::MoveTo)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::StartCombat)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::Look)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
@@ -4105,6 +4139,11 @@ namespace MWWorld
                                 && mActorCommandHandler(ESM4QuestActorCommand::ResetHealth,
                                     command.mQuest, ESM::FormId{}, false);
                             break;
+                        case CompiledQuestCommandType::StartCombat:
+                            executed = mActorCommandHandler
+                                && mActorCommandHandler(ESM4QuestActorCommand::StartCombat,
+                                    command.mQuest, command.mTarget, false);
+                            break;
                         case CompiledQuestCommandType::StopLook:
                             executed = mActorCommandHandler
                                 && mActorCommandHandler(
@@ -4242,6 +4281,7 @@ namespace MWWorld
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::ResetHealth
+                            || command.mType == CompiledQuestCommandType::StartCombat
                             || command.mType == CompiledQuestCommandType::StopLook
                             || command.mType == CompiledQuestCommandType::Look
                             || command.mType == CompiledQuestCommandType::MoveTo
@@ -4285,6 +4325,9 @@ namespace MWWorld
                                 failure = "ResetAI " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ResetHealth)
                                 failure = "ResetHealth " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::StartCombat)
+                                failure = "StartCombat " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + ESM::RefId(command.mTarget).serializeText();
                             else if (command.mType == CompiledQuestCommandType::StopLook)
                                 failure = "StopLook " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::Look)

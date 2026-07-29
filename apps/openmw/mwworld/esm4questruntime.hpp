@@ -450,6 +450,7 @@ namespace MWWorld
             Kill,
             ResetAi,
             ResetHealth,
+            StartCombat,
             StopLook,
             Look,
             MoveTo,
