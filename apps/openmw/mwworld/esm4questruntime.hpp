@@ -429,6 +429,7 @@ namespace MWWorld
             RemoveItem,
             EvaluatePackage,
             ShowMessage,
+            SetNote,
             SayTo,
             RewardXp,
             AddReputation,

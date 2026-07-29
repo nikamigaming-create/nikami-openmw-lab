@@ -1447,7 +1447,8 @@ namespace MWWorld
                 && instruction.opcode != 0x108b && instruction.opcode != 0x109e
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x1111
-                && instruction.opcode != 0x1177
+                && instruction.opcode != 0x1177 && instruction.opcode != 0x117c
+                && instruction.opcode != 0x117d
                 && instruction.opcode != 0x1239
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
@@ -1908,6 +1909,28 @@ namespace MWWorld
                 CompiledQuestCommand command;
                 command.mType = CompiledQuestCommandType::RewardXp;
                 command.mObjective = *amount;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x117c || instruction.opcode == 0x117d) // AddNote / RemoveNote
+            {
+                // The combined Fallout 3 and New Vegas base-master quest
+                // corpus has 144 one-note frames. Calls are either global or
+                // explicitly player-qualified; no other receiver occurs.
+                if (arguments.size() != 1 || !mNoteHandler || mStore == nullptr)
+                    return false;
+                if (instruction.callingReferenceIndex)
+                {
+                    const ESM::FormId owner = script.references[*instruction.callingReferenceIndex - 1];
+                    if (owner.mIndex != 0x7 && owner.mIndex != 0x14)
+                        return false;
+                }
+                const ESM::FormId* note = std::get_if<ESM::FormId>(&arguments[0]);
+                if (note == nullptr || mStore->get<ESM4::Note>().search(*note) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetNote;
+                command.mQuest = *note;
+                command.mValue = instruction.opcode == 0x117c;
                 prepared.mCommands.push_back(std::move(command));
             }
             else if (instruction.opcode == 0x1239) // AddReputation reputation infamy/fame bump
@@ -2532,6 +2555,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::ShowMessage
+            || command.mType == CompiledQuestCommandType::SetNote
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
@@ -2638,6 +2662,7 @@ namespace MWWorld
             case CompiledQuestCommandType::RemoveItem:
             case CompiledQuestCommandType::EvaluatePackage:
             case CompiledQuestCommandType::ShowMessage:
+            case CompiledQuestCommandType::SetNote:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
@@ -2800,6 +2825,10 @@ namespace MWWorld
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
                     executed = mMessageHandler && mMessageHandler(effect.mTarget);
+                    break;
+                case CompiledQuestCommandType::SetNote:
+                    command = effect.mValue ? "AddNote " : "RemoveNote ";
+                    executed = mNoteHandler && mNoteHandler(effect.mTarget, effect.mValue);
                     break;
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
@@ -3177,6 +3206,9 @@ namespace MWWorld
                         case CompiledQuestCommandType::ShowMessage:
                             executed = mMessageHandler && mMessageHandler(command.mQuest);
                             break;
+                        case CompiledQuestCommandType::SetNote:
+                            executed = mNoteHandler && mNoteHandler(command.mQuest, command.mValue);
+                            break;
                         case CompiledQuestCommandType::SayTo:
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
@@ -3206,6 +3238,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::ShowMessage
+                            || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
@@ -3231,6 +3264,9 @@ namespace MWWorld
                                     + ESM::RefId(command.mTarget).serializeText();
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetNote)
+                                failure = std::string(command.mValue ? "AddNote " : "RemoveNote ")
+                                    + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

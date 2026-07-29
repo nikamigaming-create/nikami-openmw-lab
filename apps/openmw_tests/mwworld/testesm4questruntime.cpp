@@ -497,6 +497,99 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledMoveToWithoutMutatingQuest)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledPipBoyNoteChangesAfterTransactionCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201f6, .mContentFile = 0 };
+    const ESM::FormId firstNoteId{ .mIndex = 0x1201f7, .mContentFile = 0 };
+    const ESM::FormId secondNoteId{ .mIndex = 0x1201f8, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledNoteQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x7c, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00, // global AddNote
+        0x1c, 0x00, 0x02, 0x00, 0x7d, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x03, 0x00, // Player.RemoveNote
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x04, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00 // SetStage 10
+    };
+    entry.mScript.references = { firstNoteId, playerId, secondNoteId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Note firstNote;
+    firstNote.mId = firstNoteId;
+    firstNote.mEditorId = "FirstCompiledNote";
+    store.overrideRecord(firstNote);
+    ESM4::Note secondNote;
+    secondNote.mId = secondNoteId;
+    secondNote.mEditorId = "SecondCompiledNote";
+    store.overrideRecord(secondNote);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, bool>> changes;
+    std::vector<std::uint8_t> stagesAtChange;
+    runtime.setNoteHandler([&](ESM::FormId note, bool known) {
+        changes.emplace_back(note, known);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtChange.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<ESM::FormId, bool>>{
+            { firstNoteId, true },
+            { secondNoteId, false },
+        }));
+    EXPECT_EQ(stagesAtChange, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsCompiledNoteChangeForNonPlayerReceiver)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1201f9, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x1201fa, .mContentFile = 0 };
+    const ESM::FormId noteId{ .mIndex = 0x1201fb, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "InvalidNoteReceiverQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData
+        = { 0x1c, 0x00, 0x01, 0x00, 0x7c, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00 };
+    entry.mScript.references = { actorId, noteId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Note note;
+    note.mId = noteId;
+    store.overrideRecord(note);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setNoteHandler([&](ESM::FormId, bool) {
+        ++changes;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RejectsMalformedSignaturesForEveryNewNativeQuestOpcode)
 {
     constexpr std::array<std::uint16_t, 4> opcodes{ 0x11a2, 0x1037, 0x1036, 0x1071 };
