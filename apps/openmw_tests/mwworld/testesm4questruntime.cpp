@@ -1660,6 +1660,139 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledLookWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledPlayIdleThroughNativeAnimationAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12036a, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12036b, .mContentFile = 0 };
+    const ESM::FormId idleId{ .mIndex = 0x12036c, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledPlayIdleQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // FalloutNV.esm VCG01 stage 30:
+        // DocMitchellREF.PlayIdle VCG01DocGiveMirror
+        0x1c, 0x00, 0x01, 0x00, 0x90, 0x11, 0x16, 0x00,
+        0x01, 0x00, 0x12, 0x00,
+        0x56, 0x43, 0x47, 0x30, 0x31, 0x44, 0x6f, 0x63, 0x47,
+        0x69, 0x76, 0x65, 0x4d, 0x69, 0x72, 0x72, 0x6f, 0x72,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { actorId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::IdleAnimation idle;
+    idle.mId = idleId;
+    idle.mEditorId = "VCG01DocGiveMirror";
+    store.overrideRecord(idle);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, ESM::FormId>> calls;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setActorIdleHandler([&](ESM::FormId actorValue, ESM::FormId idleValue) {
+        calls.emplace_back(actorValue, idleValue);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(calls, (std::vector<std::pair<ESM::FormId, ESM::FormId>>{
+                         { actorId, idleId },
+                     }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledPlayIdleWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12036d, .mContentFile = 0 };
+    const ESM::FormId actorId{ .mIndex = 0x12036e, .mContentFile = 0 };
+    const ESM::FormId nonActorId{ .mIndex = 0x12036f, .mContentFile = 0 };
+    const ESM::FormId idleId{ .mIndex = 0x120370, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedPlayIdleQuest");
+    ESM4::QuestStageEntry globalCall;
+    globalCall.mScript.compiledData = {
+        0x90, 0x11, 0x16, 0x00, 0x01, 0x00, 0x12, 0x00,
+        0x56, 0x43, 0x47, 0x30, 0x31, 0x44, 0x6f, 0x63, 0x47,
+        0x69, 0x76, 0x65, 0x4d, 0x69, 0x72, 0x72, 0x6f, 0x72,
+    };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(globalCall) } });
+    ESM4::QuestStageEntry nonActorCall;
+    nonActorCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x90, 0x11, 0x16, 0x00,
+        0x01, 0x00, 0x12, 0x00,
+        0x56, 0x43, 0x47, 0x30, 0x31, 0x44, 0x6f, 0x63, 0x47,
+        0x69, 0x76, 0x65, 0x4d, 0x69, 0x72, 0x72, 0x6f, 0x72,
+    };
+    nonActorCall.mScript.references = { nonActorId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(nonActorCall) } });
+    ESM4::QuestStageEntry unknownIdle;
+    unknownIdle.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x90, 0x11, 0x0f, 0x00,
+        0x01, 0x00, 0x0b, 0x00,
+        0x4d, 0x69, 0x73, 0x73, 0x69, 0x6e, 0x67, 0x49, 0x64, 0x6c, 0x65,
+    };
+    unknownIdle.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(unknownIdle) } });
+    ESM4::QuestStageEntry emptyName;
+    emptyName.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x90, 0x11, 0x04, 0x00,
+        0x01, 0x00, 0x00, 0x00,
+    };
+    emptyName.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(emptyName) } });
+    ESM4::QuestStageEntry embeddedNull;
+    embeddedNull.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x90, 0x11, 0x07, 0x00,
+        0x01, 0x00, 0x03, 0x00, 0x41, 0x00, 0x42,
+    };
+    embeddedNull.mScript.references = { actorId };
+    quest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(embeddedNull) } });
+    store.overrideRecord(quest);
+
+    ESM4::ActorCharacter actor;
+    actor.mId = actorId;
+    store.overrideRecord(actor);
+    ESM4::Reference nonActor;
+    nonActor.mId = nonActorId;
+    store.overrideRecord(nonActor);
+    ESM4::IdleAnimation idle;
+    idle.mId = idleId;
+    idle.mEditorId = "VCG01DocGiveMirror";
+    store.overrideRecord(idle);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int calls = 0;
+    runtime.setActorIdleHandler([&](ESM::FormId, ESM::FormId) {
+        ++calls;
+        return true;
+    });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(calls, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledAndSourcePlayerControlsThroughNativeHandler)
 {
     MWWorld::ESMStore store;

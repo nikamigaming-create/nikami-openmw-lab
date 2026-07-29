@@ -1517,7 +1517,7 @@ namespace MWWorld
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x117f && instruction.opcode != 0x1180
                 && instruction.opcode != 0x1182
-                && instruction.opcode != 0x1191
+                && instruction.opcode != 0x1190 && instruction.opcode != 0x1191
                 && instruction.opcode != 0x1204
                 && instruction.opcode != 0x1219
                 && instruction.opcode != 0x1239
@@ -1981,6 +1981,45 @@ namespace MWWorld
                 command.mQuest = actor;
                 command.mObjective = actorValue;
                 command.mNumber = value;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x1190) // actor.PlayIdle idleEditorId
+            {
+                // All seven FalloutNV.esm quest frames are actor-qualified
+                // calls with one length-prefixed IDLE editor ID.
+                if (!instruction.callingReferenceIndex || !mActorIdleHandler
+                    || mStore == nullptr || argumentPayload.size() < 5
+                    || readUint16(argumentPayload, 0) != 1)
+                    return false;
+                const std::size_t idleNameSize = readUint16(argumentPayload, 2);
+                if (idleNameSize == 0 || idleNameSize != argumentPayload.size() - 4)
+                    return false;
+                const std::string_view idleName(
+                    reinterpret_cast<const char*>(argumentPayload.data() + 4), idleNameSize);
+                if (idleName.find('\0') != std::string_view::npos)
+                    return false;
+
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                ESM::FormId idle;
+                for (const ESM4::IdleAnimation& candidate : mStore->get<ESM4::IdleAnimation>())
+                {
+                    if (Misc::StringUtils::ciEqual(candidate.mEditorId, idleName))
+                    {
+                        idle = candidate.mId;
+                        break;
+                    }
+                }
+                if (!actorExists || idle.isZeroOrUnset())
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::PlayIdle;
+                command.mQuest = actor;
+                command.mTarget = idle;
                 prepared.mCommands.push_back(std::move(command));
                 continue;
             }
@@ -3359,6 +3398,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::StartCombat
             || command.mType == CompiledQuestCommandType::StopLook
             || command.mType == CompiledQuestCommandType::Look
+            || command.mType == CompiledQuestCommandType::PlayIdle
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -3483,6 +3523,7 @@ namespace MWWorld
             case CompiledQuestCommandType::StartCombat:
             case CompiledQuestCommandType::StopLook:
             case CompiledQuestCommandType::Look:
+            case CompiledQuestCommandType::PlayIdle:
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
@@ -3682,6 +3723,10 @@ namespace MWWorld
                     executed = mActorCommandHandler
                         && mActorCommandHandler(
                             ESM4QuestActorCommand::Look, effect.mTarget, effect.mListener, effect.mValue);
+                    break;
+                case CompiledQuestCommandType::PlayIdle:
+                    command = "PlayIdle ";
+                    executed = mActorIdleHandler && mActorIdleHandler(effect.mTarget, effect.mListener);
                     break;
                 case CompiledQuestCommandType::MoveTo:
                     command = "MoveTo ";
@@ -3905,6 +3950,8 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::Look)
                 command += " " + ESM::RefId(effect.mListener).serializeText() + " "
                     + std::to_string(static_cast<int>(effect.mValue));
+            if (effect.mType == CompiledQuestCommandType::PlayIdle)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetScriptPackage && effect.mValue)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
@@ -4223,6 +4270,10 @@ namespace MWWorld
                                 && mActorCommandHandler(
                                     ESM4QuestActorCommand::Look, command.mQuest, command.mTarget, command.mValue);
                             break;
+                        case CompiledQuestCommandType::PlayIdle:
+                            executed = mActorIdleHandler
+                                && mActorIdleHandler(command.mQuest, command.mTarget);
+                            break;
                         case CompiledQuestCommandType::MoveTo:
                             executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
                             break;
@@ -4362,6 +4413,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::StartCombat
                             || command.mType == CompiledQuestCommandType::StopLook
                             || command.mType == CompiledQuestCommandType::Look
+                            || command.mType == CompiledQuestCommandType::PlayIdle
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -4413,6 +4465,9 @@ namespace MWWorld
                                 failure = "Look " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText() + " "
                                     + std::to_string(static_cast<int>(command.mValue));
+                            else if (command.mType == CompiledQuestCommandType::PlayIdle)
+                                failure = "PlayIdle " + ESM::RefId(command.mQuest).serializeText()
+                                    + " " + ESM::RefId(command.mTarget).serializeText();
                             else if (command.mType == CompiledQuestCommandType::MoveTo)
                                 failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

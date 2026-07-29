@@ -453,6 +453,7 @@ namespace MWWorld
             StartCombat,
             StopLook,
             Look,
+            PlayIdle,
             MoveTo,
             SetScriptPackage,
             SetActorEffect,
