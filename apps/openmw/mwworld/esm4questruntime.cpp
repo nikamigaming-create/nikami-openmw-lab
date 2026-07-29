@@ -1463,6 +1463,7 @@ namespace MWWorld
                 && instruction.opcode != 0x1037
                 && instruction.opcode != 0x1039 && instruction.opcode != 0x1052
                 && instruction.opcode != 0x1055 && instruction.opcode != 0x1059
+                && instruction.opcode != 0x105c
                 && instruction.opcode != 0x105d && instruction.opcode != 0x105e
                 && instruction.opcode != 0x1071 && instruction.opcode != 0x1072
                 && instruction.opcode != 0x1073
@@ -2559,6 +2560,41 @@ namespace MWWorld
                     return false;
                 prepared.mCommands.push_back({ CompiledQuestCommandType::StopLook, actor });
             }
+            else if (instruction.opcode == 0x105c) // actor.Look target [rotateBody]
+            {
+                // The 20 combined base-master frames are actor-qualified.
+                // Nineteen carry one actor target; the sole optional second
+                // argument is the literal rotate-body flag 1.
+                if (!instruction.callingReferenceIndex
+                    || (arguments.size() != 1 && arguments.size() != 2)
+                    || !mActorCommandHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId actor = script.references[*instruction.callingReferenceIndex - 1];
+                const bool actorExists = actor.mIndex == 0x7 || actor.mIndex == 0x14
+                    || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                const ESM::FormId* target = std::get_if<ESM::FormId>(&arguments[0]);
+                const bool targetExists = target != nullptr
+                    && (target->mIndex == 0x7 || target->mIndex == 0x14
+                        || mStore->get<ESM4::ActorCharacter>().search(*target) != nullptr
+                        || mStore->get<ESM4::ActorCreature>().search(*target) != nullptr);
+                bool rotateBody = false;
+                if (arguments.size() == 2)
+                {
+                    const std::int32_t* flag = std::get_if<std::int32_t>(&arguments[1]);
+                    if (flag == nullptr || (*flag != 0 && *flag != 1))
+                        return false;
+                    rotateBody = *flag != 0;
+                }
+                if (!actorExists || !targetExists)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::Look;
+                command.mQuest = actor;
+                command.mTarget = *target;
+                command.mValue = rotateBody;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1097 || instruction.opcode == 0x1098)
             {
                 // Across the Fallout 3 and New Vegas base-master quest
@@ -3107,6 +3143,7 @@ namespace MWWorld
         if (command.mType == CompiledQuestCommandType::EvaluatePackage
             || command.mType == CompiledQuestCommandType::ResetAi
             || command.mType == CompiledQuestCommandType::StopLook
+            || command.mType == CompiledQuestCommandType::Look
             || command.mType == CompiledQuestCommandType::MoveTo
             || command.mType == CompiledQuestCommandType::SetScriptPackage
             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -3224,6 +3261,7 @@ namespace MWWorld
             case CompiledQuestCommandType::Kill:
             case CompiledQuestCommandType::ResetAi:
             case CompiledQuestCommandType::StopLook:
+            case CompiledQuestCommandType::Look:
             case CompiledQuestCommandType::MoveTo:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
@@ -3402,6 +3440,12 @@ namespace MWWorld
                     executed = mActorCommandHandler
                         && mActorCommandHandler(
                             ESM4QuestActorCommand::StopLook, effect.mTarget, ESM::FormId{}, false);
+                    break;
+                case CompiledQuestCommandType::Look:
+                    command = "Look ";
+                    executed = mActorCommandHandler
+                        && mActorCommandHandler(
+                            ESM4QuestActorCommand::Look, effect.mTarget, effect.mListener, effect.mValue);
                     break;
                 case CompiledQuestCommandType::MoveTo:
                     command = "MoveTo ";
@@ -3584,6 +3628,9 @@ namespace MWWorld
                 command += " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::MoveTo)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::Look)
+                command += " " + ESM::RefId(effect.mListener).serializeText() + " "
+                    + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::SetScriptPackage && effect.mValue)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetActorEffect)
@@ -3879,6 +3926,11 @@ namespace MWWorld
                                 && mActorCommandHandler(
                                     ESM4QuestActorCommand::StopLook, command.mQuest, ESM::FormId{}, false);
                             break;
+                        case CompiledQuestCommandType::Look:
+                            executed = mActorCommandHandler
+                                && mActorCommandHandler(
+                                    ESM4QuestActorCommand::Look, command.mQuest, command.mTarget, command.mValue);
+                            break;
                         case CompiledQuestCommandType::MoveTo:
                             executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
                             break;
@@ -3993,6 +4045,7 @@ namespace MWWorld
                         if (command.mType == CompiledQuestCommandType::EvaluatePackage
                             || command.mType == CompiledQuestCommandType::ResetAi
                             || command.mType == CompiledQuestCommandType::StopLook
+                            || command.mType == CompiledQuestCommandType::Look
                             || command.mType == CompiledQuestCommandType::MoveTo
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
@@ -4031,6 +4084,10 @@ namespace MWWorld
                                 failure = "ResetAI " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::StopLook)
                                 failure = "StopLook " + ESM::RefId(command.mQuest).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::Look)
+                                failure = "Look " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText() + " "
+                                    + std::to_string(static_cast<int>(command.mValue));
                             else if (command.mType == CompiledQuestCommandType::MoveTo)
                                 failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

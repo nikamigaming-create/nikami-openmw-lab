@@ -434,6 +434,7 @@ namespace MWWorld
             Kill,
             ResetAi,
             StopLook,
+            Look,
             MoveTo,
             SetScriptPackage,
             SetActorEffect,
