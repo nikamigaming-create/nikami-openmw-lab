@@ -1450,6 +1450,56 @@ TEST(ESM4QuestRuntimeTest, RoutesSetOwnershipToNativeReferenceState)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesSetCellOwnershipToNativeCellState)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120178, .mContentFile = 0 };
+    const ESM::FormId cellId{ .mIndex = 0x120179, .mContentFile = 0 };
+    const ESM::FormId npcOwnerId{ .mIndex = 0x12017a, .mContentFile = 0 };
+    const ESM::FormId factionOwnerId{ .mIndex = 0x12017b, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CellOwnershipQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "SetCellOwnership PlayerHouseCell HouseOwner\n"
+          "SetCellOwnership PlayerHouseCell HouseFaction\n"
+          "SetCellOwnership PlayerHouseCell";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Cell cell{};
+    cell.mId = ESM::RefId(cellId);
+    cell.mEditorId = "PlayerHouseCell";
+    cell.mCellFlags = ESM4::CELL_Interior;
+    store.overrideRecord(cell);
+    ESM4::Npc npc;
+    npc.mId = npcOwnerId;
+    npc.mEditorId = "HouseOwner";
+    store.overrideRecord(npc);
+    ESM4::Faction faction;
+    faction.mId = factionOwnerId;
+    faction.mEditorId = "HouseFaction";
+    store.overrideRecord(faction);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>> changes;
+    runtime.setCellOwnershipHandler(
+        [&](ESM::FormId target, std::optional<ESM::FormId> owner) {
+            changes.emplace_back(target, owner);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>>{
+            { cellId, npcOwnerId },
+            { cellId, factionOwnerId },
+            { cellId, std::nullopt },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesPersistentActorControlEquipmentAndInventoryCommandsFromSourceFallback)
 {
     MWWorld::ESMStore store;

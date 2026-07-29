@@ -714,6 +714,7 @@ namespace MWWorld
         mMessageIds.clear();
         mIdleAnimationIds.clear();
         mSoundIds.clear();
+        mCellIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -4016,6 +4017,28 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveCell(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mCellIds.find(key); cached != mCellIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        if (mStore != nullptr)
+        {
+            for (const ESM4::Cell& cell : mStore->get<ESM4::Cell>())
+            {
+                if (!Misc::StringUtils::ciEqual(cell.mEditorId, id))
+                    continue;
+                if (const ESM::FormId* const formId = cell.mId.getIf<ESM::FormId>())
+                    result = *formId;
+                break;
+            }
+        }
+        mCellIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -5753,6 +5776,28 @@ namespace MWWorld
                 if (mAutosaveHandler && mAutosaveHandler())
                 {
                     Log(Debug::Info) << "FNV/ESM4 behavior: Autosave";
+                    continue;
+                }
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "SetCellOwnership")
+                && tokens.size() >= 2 && tokens.size() <= 3)
+            {
+                const ESM::FormId cell = resolveCell(tokens[1]);
+                std::optional<ESM::FormId> owner;
+                bool valid = !cell.isZeroOrUnset();
+                if (tokens.size() == 3)
+                {
+                    const ESM::FormId resolved = resolveOwner(tokens[2]);
+                    valid = !resolved.isZeroOrUnset();
+                    if (valid)
+                        owner = resolved;
+                }
+                if (valid && mCellOwnershipHandler && mCellOwnershipHandler(cell, owner))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: SetCellOwnership cell=" << tokens[1]
+                                     << " owner="
+                                     << (owner ? ESM::RefId(*owner).serializeText()
+                                               : std::string("none"));
                     continue;
                 }
             }

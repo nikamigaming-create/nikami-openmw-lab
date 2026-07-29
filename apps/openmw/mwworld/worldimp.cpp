@@ -1040,6 +1040,16 @@ namespace MWWorld
                 reference.getCellRef().setOwner(owner);
                 return reference.getCellRef().getOwner() == owner;
             });
+        mESM4QuestRuntime.setCellOwnershipHandler(
+            [this](ESM::FormId cellId, std::optional<ESM::FormId> ownerId) {
+                CellStore* const cell = mWorldModel.findCell(ESM::RefId(cellId), false);
+                if (cell == nullptr)
+                    return false;
+
+                const ESM::RefId owner = ownerId ? ESM::RefId(*ownerId) : ESM::RefId{};
+                cell->setOwner(owner);
+                return cell->getOwner() == owner;
+            });
         mESM4QuestRuntime.setLockHandler(
             [this](ESM::FormId referenceId, std::optional<int> requestedLevel) {
                 const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);

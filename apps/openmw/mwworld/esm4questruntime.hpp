@@ -183,6 +183,8 @@ namespace MWWorld
         using AutosaveHandler = std::function<bool()>;
         using ReferenceOwnershipHandler
             = std::function<bool(ESM::FormId, std::optional<ESM::FormId>)>;
+        using CellOwnershipHandler
+            = std::function<bool(ESM::FormId, std::optional<ESM::FormId>)>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
@@ -350,6 +352,7 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mMessageIds;
         std::unordered_map<std::string, ESM::FormId> mIdleAnimationIds;
         std::unordered_map<std::string, ESM::FormId> mSoundIds;
+        std::unordered_map<std::string, ESM::FormId> mCellIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
@@ -368,6 +371,7 @@ namespace MWWorld
         SoundCommandHandler mSoundCommandHandler;
         AutosaveHandler mAutosaveHandler;
         ReferenceOwnershipHandler mReferenceOwnershipHandler;
+        CellOwnershipHandler mCellOwnershipHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
@@ -594,6 +598,7 @@ namespace MWWorld
         ESM::FormId resolveIdleAnimation(std::string_view id);
         ESM::FormId resolveSound(std::string_view id);
         ESM::FormId resolveOwner(std::string_view id);
+        ESM::FormId resolveCell(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:
@@ -656,6 +661,10 @@ namespace MWWorld
         void setReferenceOwnershipHandler(ReferenceOwnershipHandler handler)
         {
             mReferenceOwnershipHandler = std::move(handler);
+        }
+        void setCellOwnershipHandler(CellOwnershipHandler handler)
+        {
+            mCellOwnershipHandler = std::move(handler);
         }
         void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }
