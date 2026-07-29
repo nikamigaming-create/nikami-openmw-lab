@@ -472,6 +472,7 @@ namespace MWWorld
             SayTo,
             RewardXp,
             AddReputation,
+            SetCellOwnership,
             SetDestroyed,
             ShowMap,
             EnableFastTravel,

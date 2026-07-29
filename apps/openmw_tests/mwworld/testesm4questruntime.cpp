@@ -3553,6 +3553,136 @@ TEST(ESM4QuestRuntimeTest, RoutesSetOwnershipToNativeReferenceState)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledSetCellOwnershipAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12034b, .mContentFile = 0 };
+    const ESM::FormId playerCellId{ .mIndex = 0x12034c, .mContentFile = 0 };
+    const ESM::FormId factionCellId{ .mIndex = 0x12034d, .mContentFile = 0 };
+    const ESM::FormId factionOwnerId{ .mIndex = 0x12034e, .mContentFile = 0 };
+    const ESM::FormId playerBaseId{ .mIndex = 0x7, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledCellOwnershipQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        // FalloutNV.esm VMS16b stage 100: SetCellOwnership GSProspectorSaloonInterior
+        0x19, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+        // FalloutNV.esm VMS30 stage 105: SetCellOwnership CampForlornHopeMedCenter NCRFactionNV
+        0x19, 0x11, 0x08, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00, 0x72, 0x03, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x04, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { playerCellId, factionCellId, factionOwnerId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+
+    ESM4::Cell playerCell{};
+    playerCell.mId = ESM::RefId(playerCellId);
+    playerCell.mCellFlags = ESM4::CELL_Interior;
+    store.overrideRecord(playerCell);
+    ESM4::Cell factionCell{};
+    factionCell.mId = ESM::RefId(factionCellId);
+    factionCell.mCellFlags = ESM4::CELL_Interior;
+    store.overrideRecord(factionCell);
+    ESM4::Faction factionOwner;
+    factionOwner.mId = factionOwnerId;
+    store.overrideRecord(factionOwner);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>> changes;
+    std::vector<std::uint8_t> stagesAtCommand;
+    runtime.setCellOwnershipHandler(
+        [&](ESM::FormId cell, std::optional<ESM::FormId> owner) {
+            changes.emplace_back(cell, owner);
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            stagesAtCommand.push_back(state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(changes,
+        (std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>>{
+            { playerCellId, playerBaseId },
+            { factionCellId, factionOwnerId },
+        }));
+    EXPECT_EQ(stagesAtCommand, (std::vector<std::uint8_t>{ 10, 10 }));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledSetCellOwnershipWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12034f, .mContentFile = 0 };
+    const ESM::FormId cellId{ .mIndex = 0x120350, .mContentFile = 0 };
+    const ESM::FormId factionId{ .mIndex = 0x120351, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedCellOwnershipQuest");
+    ESM4::QuestStageEntry receiverCall;
+    receiverCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00,
+        0x19, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00,
+    };
+    receiverCall.mScript.references = { cellId, cellId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(receiverCall) } });
+    ESM4::QuestStageEntry missingCell;
+    missingCell.mScript.compiledData = {
+        0x19, 0x11, 0x02, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(missingCell) } });
+    ESM4::QuestStageEntry wrongCell;
+    wrongCell.mScript.compiledData = {
+        0x19, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+    };
+    wrongCell.mScript.references = { factionId };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(wrongCell) } });
+    ESM4::QuestStageEntry wrongOwner;
+    wrongOwner.mScript.compiledData = {
+        0x19, 0x11, 0x08, 0x00, 0x02, 0x00,
+        0x72, 0x01, 0x00, 0x72, 0x01, 0x00,
+    };
+    wrongOwner.mScript.references = { cellId };
+    quest.mStages.push_back({ .mIndex = 20, .mEntries = { std::move(wrongOwner) } });
+    ESM4::QuestStageEntry literalCell;
+    literalCell.mScript.compiledData = {
+        0x19, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 25, .mEntries = { std::move(literalCell) } });
+    store.overrideRecord(quest);
+
+    ESM4::Cell cell{};
+    cell.mId = ESM::RefId(cellId);
+    cell.mCellFlags = ESM4::CELL_Interior;
+    store.overrideRecord(cell);
+    ESM4::Faction faction;
+    faction.mId = factionId;
+    store.overrideRecord(faction);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setCellOwnershipHandler(
+        [&](ESM::FormId, std::optional<ESM::FormId>) {
+            ++changes;
+            return true;
+        });
+
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15, 20, 25 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, RoutesSetCellOwnershipToNativeCellState)
 {
     MWWorld::ESMStore store;
@@ -3560,6 +3690,7 @@ TEST(ESM4QuestRuntimeTest, RoutesSetCellOwnershipToNativeCellState)
     const ESM::FormId cellId{ .mIndex = 0x120179, .mContentFile = 0 };
     const ESM::FormId npcOwnerId{ .mIndex = 0x12017a, .mContentFile = 0 };
     const ESM::FormId factionOwnerId{ .mIndex = 0x12017b, .mContentFile = 0 };
+    const ESM::FormId playerBaseId{ .mIndex = 0x7, .mContentFile = 0 };
 
     ESM4::Quest quest = makeQuest(questId, "CellOwnershipQuest");
     ESM4::QuestStageEntry entry;
@@ -3598,7 +3729,7 @@ TEST(ESM4QuestRuntimeTest, RoutesSetCellOwnershipToNativeCellState)
         (std::vector<std::pair<ESM::FormId, std::optional<ESM::FormId>>>{
             { cellId, npcOwnerId },
             { cellId, factionOwnerId },
-            { cellId, std::nullopt },
+            { cellId, playerBaseId },
         }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }

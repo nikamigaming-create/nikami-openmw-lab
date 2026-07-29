@@ -1508,6 +1508,7 @@ namespace MWWorld
                 && instruction.opcode != 0x10cc
                 && instruction.opcode != 0x10dd
                 && instruction.opcode != 0x110d && instruction.opcode != 0x1111
+                && instruction.opcode != 0x1119
                 && instruction.opcode != 0x114a
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
                 && instruction.opcode != 0x117c
@@ -2532,6 +2533,37 @@ namespace MWWorld
                 command.mObjective = values[2] ? 1 : 0;
                 prepared.mCommands.push_back(std::move(command));
             }
+            else if (instruction.opcode == 0x1119) // SetCellOwnership cell [owner]
+            {
+                // All 13 Fallout 3/New Vegas base-master quest frames are
+                // global calls. Seven omit the owner (which means the Player
+                // base form), and six name an NPC base or faction owner.
+                if (instruction.callingReferenceIndex || arguments.empty() || arguments.size() > 2
+                    || !mCellOwnershipHandler || mStore == nullptr)
+                    return false;
+                const ESM::FormId* cell = std::get_if<ESM::FormId>(&arguments[0]);
+                if (cell == nullptr
+                    || mStore->get<ESM4::Cell>().search(ESM::RefId(*cell)) == nullptr)
+                    return false;
+
+                ESM::FormId owner{ .mIndex = 0x7, .mContentFile = 0 };
+                if (arguments.size() == 2)
+                {
+                    const ESM::FormId* explicitOwner = std::get_if<ESM::FormId>(&arguments[1]);
+                    if (explicitOwner == nullptr
+                        || (mStore->get<ESM4::Npc>().search(ESM::RefId(*explicitOwner)) == nullptr
+                            && mStore->get<ESM4::Faction>().search(ESM::RefId(*explicitOwner)) == nullptr))
+                        return false;
+                    owner = *explicitOwner;
+                }
+
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetCellOwnership;
+                command.mQuest = *cell;
+                command.mTarget = owner;
+                command.mValue = true;
+                prepared.mCommands.push_back(std::move(command));
+            }
             else if (instruction.opcode == 0x1034) // reference.SayTo listener topic
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mSayToHandler
@@ -3248,6 +3280,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::RemoveItem
             || command.mType == CompiledQuestCommandType::RewardXp
             || command.mType == CompiledQuestCommandType::AddReputation
+            || command.mType == CompiledQuestCommandType::SetCellOwnership
             || command.mType == CompiledQuestCommandType::SetDestroyed
             || command.mType == CompiledQuestCommandType::ShowMap
             || command.mType == CompiledQuestCommandType::EnableFastTravel
@@ -3366,6 +3399,7 @@ namespace MWWorld
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
+            case CompiledQuestCommandType::SetCellOwnership:
             case CompiledQuestCommandType::SetDestroyed:
             case CompiledQuestCommandType::ShowMap:
             case CompiledQuestCommandType::EnableFastTravel:
@@ -3673,6 +3707,13 @@ namespace MWWorld
                     executed = mAddReputationHandler
                         && mAddReputationHandler(effect.mTarget, effect.mValue, effect.mCount);
                     break;
+                case CompiledQuestCommandType::SetCellOwnership:
+                    command = "SetCellOwnership ";
+                    executed = mCellOwnershipHandler
+                        && mCellOwnershipHandler(effect.mTarget,
+                            effect.mValue ? std::optional<ESM::FormId>{ effect.mListener }
+                                          : std::nullopt);
+                    break;
                 case CompiledQuestCommandType::SetDestroyed:
                     command = "SetDestroyed ";
                     executed = mSetDestroyedHandler && mSetDestroyedHandler(effect.mTarget, effect.mValue);
@@ -3716,6 +3757,8 @@ namespace MWWorld
             if (effect.mType == CompiledQuestCommandType::AddReputation)
                 command += " " + std::to_string(static_cast<int>(effect.mValue)) + " "
                     + std::to_string(effect.mCount);
+            if (effect.mType == CompiledQuestCommandType::SetCellOwnership && effect.mValue)
+                command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::SetDestroyed)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
             if (effect.mType == CompiledQuestCommandType::SetOpenState)
@@ -4138,6 +4181,13 @@ namespace MWWorld
                             executed = mAddReputationHandler
                                 && mAddReputationHandler(command.mQuest, command.mValue, command.mObjective);
                             break;
+                        case CompiledQuestCommandType::SetCellOwnership:
+                            executed = mCellOwnershipHandler
+                                && mCellOwnershipHandler(command.mQuest,
+                                    command.mValue
+                                        ? std::optional<ESM::FormId>{ command.mTarget }
+                                        : std::nullopt);
+                            break;
                         case CompiledQuestCommandType::SetDestroyed:
                             executed = mSetDestroyedHandler && mSetDestroyedHandler(command.mQuest, command.mValue);
                             break;
@@ -4190,6 +4240,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::RemoveItem
                             || command.mType == CompiledQuestCommandType::RewardXp
                             || command.mType == CompiledQuestCommandType::AddReputation
+                            || command.mType == CompiledQuestCommandType::SetCellOwnership
                             || command.mType == CompiledQuestCommandType::SetDestroyed
                             || command.mType == CompiledQuestCommandType::ShowMap
                             || command.mType == CompiledQuestCommandType::EnableFastTravel
@@ -4298,6 +4349,11 @@ namespace MWWorld
                                 failure = "AddReputation " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + std::to_string(static_cast<int>(command.mValue)) + " "
                                     + std::to_string(command.mObjective);
+                            else if (command.mType == CompiledQuestCommandType::SetCellOwnership)
+                                failure = "SetCellOwnership " + ESM::RefId(command.mQuest).serializeText()
+                                    + (command.mValue
+                                            ? " " + ESM::RefId(command.mTarget).serializeText()
+                                            : "");
                             else if (command.mType == CompiledQuestCommandType::SetDestroyed)
                                 failure = "SetDestroyed " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + std::to_string(static_cast<int>(command.mValue));
@@ -6844,7 +6900,11 @@ namespace MWWorld
                 && tokens.size() >= 2 && tokens.size() <= 3)
             {
                 const ESM::FormId cell = resolveCell(tokens[1]);
-                std::optional<ESM::FormId> owner;
+                // GECK defines an omitted owner as the Player base form, not
+                // as unowned. This is how authored player-home rewards claim
+                // their interiors.
+                std::optional<ESM::FormId> owner
+                    = ESM::FormId{ .mIndex = 0x7, .mContentFile = 0 };
                 bool valid = !cell.isZeroOrUnset();
                 if (tokens.size() == 3)
                 {
