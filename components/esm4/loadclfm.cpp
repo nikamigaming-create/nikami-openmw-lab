@@ -60,6 +60,8 @@ void ESM4::Colour::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadclfm"))
+                    break;
                 throw std::runtime_error("ESM4::CLFM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

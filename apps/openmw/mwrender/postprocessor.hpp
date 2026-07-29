@@ -174,6 +174,9 @@ namespace MWRender
 
         void setUnderwaterFlag(bool underwater) { mUnderwater = underwater; }
 
+        void setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+            const osg::Vec4f& tint, const osg::Vec4f& fade);
+
         void toggleMode();
 
         std::shared_ptr<Fx::Technique> loadTechnique(VFS::Path::NormalizedView path, bool loadNextFrame = false);
@@ -232,6 +235,7 @@ namespace MWRender
         TechniqueList mTemplates;
         TechniqueList mQueuedTemplates;
         TechniqueList mInternalTechniques;
+        std::shared_ptr<Fx::Technique> mFalloutImageSpaceTechnique;
 
         std::unordered_set<VFS::Path::Normalized, VFS::Path::Hash, std::equal_to<>> mTechniqueFiles;
 

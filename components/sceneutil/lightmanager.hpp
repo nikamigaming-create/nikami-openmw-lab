@@ -355,6 +355,7 @@ namespace SceneUtil
             , SceneUtil::NodeCallback<LightListCallback, osg::Node*, osgUtil::CullVisitor*>(copy, copyop)
             , mLightManager(copy.mLightManager)
             , mLastFrameNumber(0)
+            , mParityLightSnapshotLogged(false)
             , mIgnoredLightSources(copy.mIgnoredLightSources)
         {
         }
@@ -370,6 +371,8 @@ namespace SceneUtil
     private:
         LightManager* mLightManager;
         size_t mLastFrameNumber;
+        bool mParityLightSnapshotLogged = false;
+        osgUtil::CullVisitor* mLastCV = nullptr;
         LightManager::LightList mLightList;
         std::set<SceneUtil::LightSource*> mIgnoredLightSources;
     };

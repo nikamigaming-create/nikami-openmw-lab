@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -130,6 +131,12 @@ namespace MWBase
         ///< Make an actor say some text.
         /// \param filename name of a sound file in the VFS
 
+        virtual void saySequence(
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames)
+            = 0;
+        ///< Replace the actor's speech with an authored sequence of voice files.
+        /// Each file begins only after the previous file finishes.
+
         virtual void say(VFS::Path::NormalizedView filename) = 0;
         ///< Say some text, without an actor ref
         /// \param filename name of a sound file in the VFS
@@ -147,6 +154,11 @@ namespace MWBase
         ///< Check the currently playing say sound for this actor
         /// and get an average loudness value (scale [0,1]) at the current time position.
         /// If the actor is not saying anything, returns 0.
+
+        virtual float getSaySoundFacialTrackValue(
+            const MWWorld::ConstPtr& reference, std::string_view trackName) const = 0;
+        ///< Evaluate a Fallout 3/New Vegas LIP facial target at the voice playback position.
+        /// If the actor has no authored LIP timeline or is not speaking, returns 0.
 
         virtual SoundStream* playTrack(const MWSound::DecoderPtr& decoder, Type type) = 0;
         ///< Play a 2D audio track, using a custom decoder. The caller is expected to call

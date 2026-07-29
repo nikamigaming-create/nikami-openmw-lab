@@ -168,6 +168,8 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadammo"))
+                    break;
                 throw std::runtime_error("ESM4::AMMO::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

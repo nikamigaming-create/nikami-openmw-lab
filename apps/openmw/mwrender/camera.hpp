@@ -20,6 +20,7 @@ namespace osg
 
 namespace MWRender
 {
+    class Animation;
     class NpcAnimation;
 
     /// \brief Camera control
@@ -91,7 +92,9 @@ namespace MWRender
         float getCameraDistance() const { return mCameraDistance; }
         void setPreferredCameraDistance(float v) { mPreferredCameraDistance = v; }
 
-        void setAnimation(NpcAnimation* anim);
+        /// Most gameplay uses an NpcAnimation camera rig.  Data-driven Fallout cinematics can instead expose an
+        /// authored camera target on a native ESM4 body Animation.
+        void setAnimation(Animation* anim);
 
         osg::Vec3d getTrackedPosition() const { return mTrackedPosition; }
         const osg::Vec3d& getPosition() const { return mPosition; }
@@ -106,23 +109,27 @@ namespace MWRender
         void calculateDeferredRotation();
         void setFirstPersonOffset(const osg::Vec3f& v) { mFirstPersonOffset = v; }
         osg::Vec3f getFirstPersonOffset() const { return mFirstPersonOffset; }
+        void setFirstPersonProfileOffset(const osg::Vec3f& v) { mFirstPersonProfileOffset = v; }
+        osg::Vec3f getFirstPersonProfileOffset() const { return mFirstPersonProfileOffset; }
 
         int getCollisionType() const { return mCollisionType; }
         void setCollisionType(int collisionType) { mCollisionType = collisionType; }
 
         const osg::Matrixf& getViewMatrix() const { return mViewMatrix; }
         const osg::Matrixf& getProjectionMatrix() const { return mProjectionMatrix; }
+        float getLodScale() const;
 
     private:
         MWWorld::Ptr mTrackingPtr;
         osg::ref_ptr<const osg::Node> mTrackingNode;
+        bool mFirstPersonUsesTrackingRoot = false;
         osg::Vec3d mTrackedPosition;
         float mHeightScale;
         int mCollisionType;
 
         osg::ref_ptr<osg::Camera> mCamera;
 
-        NpcAnimation* mAnimation;
+        Animation* mAnimation;
 
         // Always 'true' if mMode == `FirstPerson`. Also it is 'true' in `Vanity` or `Preview` modes if
         // the camera should return to `FirstPerson` view after it.
@@ -146,6 +153,9 @@ namespace MWRender
         float mCameraDistance, mPreferredCameraDistance;
 
         osg::Vec3f mFirstPersonOffset{ 0, 0, 0 };
+        // Persistent game-profile correction. Lua owns mFirstPersonOffset for head bobbing and
+        // resets it each frame, so profile-specific eye height must remain separate.
+        osg::Vec3f mFirstPersonProfileOffset{ 0, 0, 0 };
 
         osg::Vec2d mFocalPointCurrentOffset;
         osg::Vec2d mFocalPointTargetOffset;

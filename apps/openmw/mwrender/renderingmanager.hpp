@@ -9,13 +9,16 @@
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Light>
+#include <osg/Matrixf>
 #include <osg/ref_ptr>
 
 #include <osgUtil/IncrementalCompileOperation>
 
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 
 namespace osg
@@ -45,6 +48,11 @@ namespace ESM
     struct Cell;
     struct FormId;
     using RefNum = FormId;
+}
+
+namespace ESM4
+{
+    struct Npc;
 }
 
 namespace Terrain
@@ -86,6 +94,8 @@ namespace MWWorld
 {
     class GroundcoverStore;
     class Cell;
+    template <typename X>
+    struct LiveCellRef;
 }
 
 namespace Debug
@@ -101,6 +111,7 @@ namespace MWRender
     class ScreenshotManager;
     class FogManager;
     class SkyManager;
+    class Animation;
     class NpcAnimation;
     class Pathgrid;
     class Camera;
@@ -149,6 +160,8 @@ namespace MWRender
 
         const osg::Vec4f& getSunLightPosition() const { return mSunLight->getPosition(); }
         void setSunDirection(const osg::Vec3f& direction);
+        void setSunPosition(const osg::Vec3f& position);
+        void setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition);
         void setSunColour(const osg::Vec4f& diffuse, const osg::Vec4f& specular, float sunVis);
         void setNight(bool isNight) { mNight = isNight; }
 
@@ -215,6 +228,8 @@ namespace MWRender
         /// Clear all savegame-specific data
         void clear();
 
+        void clearLiveObjectsForShutdown();
+
         /// Clear all worldspace-specific data
         void notifyWorldSpaceChanged();
 
@@ -222,6 +237,15 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+
+        /// Return the visual animation that owns data-driven ESM4 script-package KFs. Fallout-family player
+        /// presentation keeps a legacy first-person rig alongside a native body proxy; authored package animation
+        /// belongs on the native proxy when one is present, while every other actor uses its normal animation.
+        Animation* getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr);
+
+        /// Select the authored Camera1st target while a data-driven ESM4 script package owns it. This is only
+        /// meaningful for the player, whose legacy camera rig and native body proxy are intentionally separate.
+        bool setESM4ScriptPackageCamera(const MWWorld::Ptr& ptr, bool active);
 
         PostProcessor* getPostProcessor();
 
@@ -251,6 +275,11 @@ namespace MWRender
 
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);
+        /// Temporarily override the complete projection contract. This is used when a source engine's
+        /// clip-space matrix is the oracle and recomputing it through another API would change float words.
+        void overrideProjectionMatrix(
+            const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip);
+        void resetProjectionMatrixOverride();
         void setFieldOfView(float val);
         float getFieldOfView() const;
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
@@ -356,6 +385,14 @@ namespace MWRender
         std::unique_ptr<Terrain::TerrainOccluder> mTerrainOccluder;
         std::unique_ptr<OcclusionCulling::OcclusionStorage> mOcclusionStorage;
         osg::ref_ptr<PostProcessor> mPostProcessor;
+        std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
+        osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
+        std::string mFalloutPlayerVisualGroup;
+        float mFalloutPlayerVisualGroupElapsed = 0.f;
+        bool mFalloutPlayerVisualCycleLogged = false;
+        osg::Vec3f mFalloutPlayerVisualPreviousPosition;
+        bool mFalloutPlayerVisualPreviousPositionValid = false;
+        std::optional<int> mESM4ScriptPackagePreviousCameraMode;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;
@@ -372,6 +409,8 @@ namespace MWRender
         float mViewDistance;
         bool mFieldOfViewOverridden;
         float mFieldOfViewOverride;
+        bool mProjectionMatrixOverridden;
+        osg::Matrixf mProjectionMatrixOverride;
         float mFieldOfView;
         float mFirstPersonFieldOfView;
         bool mUpdateProjectionMatrix = false;

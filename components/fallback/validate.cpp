@@ -9,10 +9,7 @@ static const std::set<std::string_view> allowedKeysInt
     = { "LightAttenuation_LinearMethod", "LightAttenuation_OutQuadInLin", "LightAttenuation_QuadraticMethod",
           "LightAttenuation_UseConstant", "LightAttenuation_UseLinear", "LightAttenuation_UseQuadratic",
           "Water_MaxNumberRipples", "Water_NearWaterRadius", "Water_NearWaterPoints", "Water_RippleFrameCount",
-          "Water_SurfaceTileCount", "Water_SurfaceFrameCount", "Weather_Ashstorm_Max_Raindrops",
-          "Weather_Blight_Max_Raindrops", "Weather_Blizzard_Max_Raindrops", "Weather_Clear_Max_Raindrops",
-          "Weather_Cloudy_Max_Raindrops", "Weather_Foggy_Max_Raindrops", "Weather_Overcast_Max_Raindrops",
-          "Weather_Rain_Max_Raindrops", "Weather_Snow_Max_Raindrops", "Weather_Thunderstorm_Max_Raindrops",
+          "Water_SurfaceTileCount", "Water_SurfaceFrameCount",
           "Weather_Clear_Using_Precip", "Weather_Cloudy_Using_Precip", "Weather_Foggy_Using_Precip",
           "Weather_Overcast_Using_Precip", "Weather_Rain_Using_Precip", "Weather_Thunderstorm_Using_Precip",
           "Weather_Ashstorm_Using_Precip", "Weather_Blight_Using_Precip", "Weather_Snow_Using_Precip",
@@ -35,6 +32,14 @@ static const std::set<std::string_view> allowedKeysFloat = { "General_Werewolf_F
     "Water_UnderwaterIndoorFog", "Water_UnderwaterNightFog", "Water_UnderwaterSunriseFog", "Water_UnderwaterSunsetFog",
     "Weather_Ambient_Post-Sunrise_Time", "Weather_Ambient_Post-Sunset_Time", "Weather_Ambient_Pre-Sunrise_Time",
     "Weather_Ambient_Pre-Sunset_Time", "Weather_Ashstorm_Clouds_Maximum_Percent", "Weather_Ashstorm_Cloud_Speed",
+    // Weather::Weather stores this value in a float fallback before converting
+    // it to its particle-count integer.  These keys were accidentally kept in
+    // the old integer map by the 0.51 merge, which made any Fallout startup
+    // fail as soon as the weather manager was constructed.
+    "Weather_Ashstorm_Max_Raindrops", "Weather_Blight_Max_Raindrops", "Weather_Blizzard_Max_Raindrops",
+    "Weather_Clear_Max_Raindrops", "Weather_Cloudy_Max_Raindrops", "Weather_Foggy_Max_Raindrops",
+    "Weather_Overcast_Max_Raindrops", "Weather_Rain_Max_Raindrops", "Weather_Snow_Max_Raindrops",
+    "Weather_Thunderstorm_Max_Raindrops",
     "Weather_Ashstorm_Flash_Decrement", "Weather_Ashstorm_Glare_View", "Weather_Ashstorm_Land_Fog_Day_Depth",
     "Weather_Ashstorm_Land_Fog_Night_Depth", "Weather_Ashstorm_Rain_Diameter", "Weather_Ashstorm_Rain_Entrance_Speed",
     "Weather_Ashstorm_Rain_Height_Max", "Weather_Ashstorm_Rain_Height_Min", "Weather_Ashstorm_Rain_Threshold",

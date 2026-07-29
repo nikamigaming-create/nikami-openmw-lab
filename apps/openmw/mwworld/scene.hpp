@@ -112,6 +112,9 @@ namespace MWWorld
 
         std::vector<osg::ref_ptr<SceneUtil::WorkItem>> mWorkItems;
 
+        std::set<ESM::RefNum> mTeleportDoorPreloadRequestsLogged;
+        std::set<ESM::RefNum> mTeleportDoorPreloadCompletionsLogged;
+
         std::optional<ChangeCellGridRequest> mChangeCellGridRequest;
 
         void insertCell(CellStore& cell, Loading::Listener* loadingListener,

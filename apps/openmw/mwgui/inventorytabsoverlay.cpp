@@ -2,11 +2,30 @@
 
 #include <MyGUI_Button.h>
 #include <MyGUI_ImageBox.h>
+#include <MyGUI_Widget.h>
 #include <MyGUI_Window.h>
+
+#include <algorithm>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+
+namespace
+{
+    void setClickThroughExceptTabs(MyGUI::Widget* widget, const std::vector<MyGUI::Button*>& tabs)
+    {
+        if (std::find(tabs.begin(), tabs.end(), widget) != tabs.end())
+        {
+            widget->setNeedMouseFocus(true);
+            return;
+        }
+
+        widget->setNeedMouseFocus(false);
+        for (size_t i = 0; i < widget->getChildCount(); ++i)
+            setClickThroughExceptTabs(widget->getChildAt(i), tabs);
+    }
+}
 
 namespace MWGui
 {
@@ -31,6 +50,8 @@ namespace MWGui
         getWidget(image, "BtnR2Image");
         image->setImageTexture(
             MWBase::Environment::get().getInputManager()->getControllerAxisIcon(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
+
+        setClickThroughExceptTabs(mMainWidget, mTabs);
     }
 
     int InventoryTabsOverlay::getHeight()

@@ -276,6 +276,11 @@ namespace VFS::Path
 
         std::string value() && { return std::move(mValue); }
 
+        // Compatibility name retained for Fallout loader code that used the
+        // filesystem-like spelling before VFS::Path::Normalized was tightened
+        // in 0.51. The stored value is already normalized with '/' separators.
+        const std::string& generic_string() const noexcept { return mValue; }
+
         std::string_view view() const { return mValue; }
 
         bool empty() const { return mValue.empty(); }

@@ -76,6 +76,8 @@ void ESM4::SoulGem::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadslgm"))
+                    break;
                 throw std::runtime_error("ESM4::SLGM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

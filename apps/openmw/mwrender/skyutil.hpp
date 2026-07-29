@@ -5,7 +5,10 @@
 #include <osg/Matrixf>
 #include <osg/Texture2D>
 #include <osg/Transform>
+#include <osg/Vec2f>
 #include <osg/Vec4f>
+
+#include <array>
 
 #include <osgParticle/ConstantRateCounter>
 #include <osgParticle/Shooter>
@@ -20,6 +23,11 @@ namespace Resource
     class SceneManager;
 }
 
+namespace VFS
+{
+    class Manager;
+}
+
 namespace MWRender
 {
     struct MoonUpdater;
@@ -29,6 +37,8 @@ namespace MWRender
 
     struct WeatherResult
     {
+        static constexpr std::size_t sFalloutCloudLayerCount = 4;
+
         std::string mCloudTexture;
         std::string mNextCloudTexture;
         float mCloudBlendFactor;
@@ -38,12 +48,19 @@ namespace MWRender
         osg::Vec4f mAmbientColor;
 
         osg::Vec4f mSkyColor;
+        osg::Vec4f mSkyLowerColor;
+        osg::Vec4f mSkyHorizonColor;
 
         // sun light color
         osg::Vec4f mSunColor;
 
         // alpha is the sun transparency
         osg::Vec4f mSunDiscColor;
+
+        // FNV SKYT/SKYSTARS vertex BlendColor inputs. The Sun disc uses mSunDiscColor as BlendColor[0], while the
+        // stars use this value; both share mSkyLowerColor and mSkyColor as BlendColor[1] and BlendColor[2].
+        bool mHasFalloutCelestialColors = false;
+        osg::Vec4f mFalloutStarsColor = osg::Vec4f(0.f, 0.f, 0.f, 0.f);
 
         float mFogDepth;
 
@@ -56,6 +73,14 @@ namespace MWRender
         float mNextWindSpeed;
 
         float mCloudSpeed;
+
+        bool mHasFalloutCloudLayers = false;
+        std::array<std::string, sFalloutCloudLayerCount> mFalloutCloudTextures;
+        std::array<float, sFalloutCloudLayerCount> mFalloutCloudSpeeds{};
+        std::array<osg::Vec4f, sFalloutCloudLayerCount> mFalloutCloudColors{};
+        // Fallout SKYTEX Params.y. This is the composed IMGS LuminanceRampNoTexture trait and multiplies both cloud
+        // and Sun RGB; alpha is deliberately unaffected.
+        float mFalloutCloudRgbMultiplier = 1.f;
 
         float mGlareView;
 
@@ -128,6 +153,9 @@ namespace MWRender
     {
     public:
         void setEmissionColor(const osg::Vec4f& emissionColor);
+        void setFalloutAtmosphereZGradient(float minZ, float maxZ);
+        void setFalloutAtmosphereGradientColors(
+            const osg::Vec4f& skyUpperColor, const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -135,6 +163,12 @@ namespace MWRender
 
     private:
         osg::Vec4f mEmissionColor;
+        osg::Vec2f mFalloutAtmosphereZRange = osg::Vec2f(0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyHorizonColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        bool mUseFalloutAtmosphereZGradient = false;
+        bool mHasFalloutAtmosphereGradientColors = false;
     };
 
     class AtmosphereNightUpdater : public SceneUtil::StateSetUpdater
@@ -143,6 +177,8 @@ namespace MWRender
         AtmosphereNightUpdater(Resource::ImageManager* imageManager);
 
         void setFade(float fade);
+        void setFalloutStarColors(const osg::Vec4f& starsColor, const osg::Vec4f& skyLowerColor,
+            const osg::Vec4f& skyUpperColor);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -151,6 +187,10 @@ namespace MWRender
 
     private:
         osg::Vec4f mColor;
+        osg::Vec4f mFalloutStarsColor = osg::Vec4f(0.f, 0.f, 0.f, 0.f);
+        osg::Vec4f mFalloutSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        bool mUseFalloutStarShader = false;
         osg::ref_ptr<osg::Texture2D> mTexture;
     };
 
@@ -160,9 +200,10 @@ namespace MWRender
         CloudUpdater();
 
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
-
         void setEmissionColor(const osg::Vec4f& emissionColor);
+        void setFalloutSkyColors(const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyUpperColor);
         void setOpacity(float opacity);
+        void setFalloutCloudShader(bool enabled);
         void setTextureCoord(float timer);
 
     protected:
@@ -172,7 +213,11 @@ namespace MWRender
     private:
         osg::ref_ptr<osg::Texture2D> mTexture;
         osg::Vec4f mEmissionColor;
+        osg::Vec4f mFalloutSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         float mOpacity;
+        bool mFalloutCloudShader = false;
+        bool mLoggedFalloutBinding = false;
         osg::Matrixf mTexMat;
     };
 
@@ -232,7 +277,10 @@ namespace MWRender
         void setVisible(bool visible);
 
     protected:
+        void setAvailable(bool available);
+
         unsigned int mVisibleMask;
+        bool mAvailable;
         static const float mDistance;
         osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         osg::ref_ptr<osg::Geometry> mGeom;
@@ -246,6 +294,7 @@ namespace MWRender
         ~Sun();
 
         void setColor(const osg::Vec4f& color);
+        void setFalloutRgbMultiplier(float multiplier);
         void adjustTransparency(const float ratio) override;
 
         void setDirection(const osg::Vec3f& direction);
@@ -257,7 +306,7 @@ namespace MWRender
         /// pixels.
         osg::ref_ptr<osg::OcclusionQueryNode> createOcclusionQueryNode(osg::Group* parent, bool queryVisible);
 
-        void createSunFlash(Resource::ImageManager& imageManager);
+        void createSunFlash(Resource::SceneManager& sceneManager);
         void destroySunFlash();
 
         void createSunGlare();
@@ -270,6 +319,7 @@ namespace MWRender
         osg::ref_ptr<SunGlareCallback> mSunGlareCallback;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryVisiblePixels;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryTotalPixels;
+        bool mFalloutSkyContent;
     };
 
     class Moon : public CelestialBody
@@ -295,7 +345,9 @@ namespace MWRender
     private:
         Type mType;
         MoonState::Phase mPhase;
+        const VFS::Manager* mVFS;
         osg::ref_ptr<MoonUpdater> mUpdater;
+        bool mFalloutSkyContent;
 
         void setPhase(const MoonState::Phase& phase);
     };

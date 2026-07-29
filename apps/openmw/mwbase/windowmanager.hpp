@@ -140,6 +140,18 @@ namespace MWBase
         virtual bool isPostProcessorHudVisible() const = 0;
         virtual bool isSettingsWindowVisible() const = 0;
         virtual bool isInteractiveMessageBoxActive() const = 0;
+        virtual void closeInteractiveMessageBoxWithDefaultButton() = 0;
+
+        /// Opens the engine's standalone character-appearance menu for an
+        /// authored ShowRaceMenu command. Unlike the Morrowind startup flow,
+        /// completing this menu returns control to the script that requested
+        /// it instead of advancing into unrelated class/birthsign dialogs.
+        virtual void showAuthoredRaceMenu() = 0;
+
+        /// Opens the isolated name handoff used by Fallout-family
+        /// GetPlayerName commands. It deliberately does not enter
+        /// Morrowind's full character-generation sequence.
+        virtual void showAuthoredNameMenu() = 0;
 
         virtual void toggleVisible(MWGui::GuiWindow wnd) = 0;
 
@@ -235,6 +247,12 @@ namespace MWBase
         virtual void showCrosshair(bool show) = 0;
         virtual bool setHudVisibility(bool show) = 0;
         virtual bool isHudVisible() const = 0;
+
+        /// Temporarily suppress the gameplay overlay while authored presentation
+        /// (for example a cinematic or character generation) owns the screen.
+        /// This is an effective-visibility override; callers retain their normal
+        /// HUD/cursor preferences and they become visible again when it is lifted.
+        virtual void setGameplayOverlaySuppressed(bool suppressed) = 0;
 
         virtual void disallowMouse() = 0;
         virtual void allowMouse() = 0;

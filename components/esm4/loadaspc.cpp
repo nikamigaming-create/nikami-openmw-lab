@@ -73,6 +73,8 @@ void ESM4::AcousticSpace::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadaspc"))
+                    break;
                 throw std::runtime_error("ESM4::ASPC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

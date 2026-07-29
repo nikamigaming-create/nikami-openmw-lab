@@ -106,6 +106,7 @@ namespace MWMechanics
         void writeState(ESM::SpellState& state) const;
 
         bool setSpells(const ESM::RefId& id);
+        void setSpells(const ESM::RefId& id, int actorType);
 
         void addAllToInstance(const std::vector<ESM::RefId>& spells);
     };

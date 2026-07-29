@@ -305,6 +305,13 @@ namespace MWMechanics
         return result;
     }
 
+    void Spells::setSpells(const ESM::RefId& actorId, int actorType)
+    {
+        mSpellList = std::make_shared<SpellList>(actorId, actorType);
+        mSpellList->addListener(this);
+        addAllToInstance(mSpellList->getSpells());
+    }
+
     void Spells::addAllToInstance(const std::vector<ESM::RefId>& spells)
     {
         for (const ESM::RefId& id : spells)

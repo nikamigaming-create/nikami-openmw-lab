@@ -13,7 +13,9 @@
 #include "../mwbase/world.hpp"
 
 #include "contentloader.hpp"
+#include "esm4questruntime.hpp"
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "globals.hpp"
 #include "groundcoverstore.hpp"
 #include "localscripts.hpp"
@@ -92,6 +94,8 @@ namespace MWWorld
         GroundcoverStore mGroundcoverStore;
         LocalScripts mLocalScripts;
         MWWorld::Globals mGlobalVariables;
+        MWWorld::ESM4QuestRuntime mESM4QuestRuntime;
+        MWWorld::FalloutPlayerRuntimeState mFalloutPlayerRuntimeState;
         Misc::Rng::Generator mPrng;
         WorldModel mWorldModel;
         std::vector<int> mESMVersions; // the versions of esm files
@@ -119,9 +123,36 @@ namespace MWWorld
 
         std::string mStartCell;
 
+        // Kept for OpenNV's opt-in authentic-start telemetry. These fields
+        // state whether a uniquely resolved authored opening placement was
+        // used, and distinguish it from the legacy generic fallback.
+        unsigned mLastNewGameGlobalScriptPasses = 0;
+        bool mLastNewGameUsedFallbackPlacement = false;
+        bool mLastNewGameUsedAuthoredStartPlacement = false;
+        bool mLastNewGameAuthoredStartStageExecuted = false;
+        bool mLastNewGameCinematicRequested = false;
+        std::string mLastNewGameCinematicAsset;
+        std::string mLastNewGameAuthoredStartQuestEditorId;
+        std::string mLastNewGameAuthoredStartMarkerEditorId;
+        std::string mLastNewGameAuthoredStartCinematicAsset;
+
         float mSwimHeightScale;
 
         float mDistanceToFocusObject;
+
+        struct ESM4ScriptPackageState
+        {
+            std::vector<ESM::FormId> mPackages;
+            MWRender::Animation* mAppliedAnimation = nullptr;
+            ESM::FormId mAppliedPackage;
+            bool mDirty = true;
+            // A package can legitimately have no playable animation. Only
+            // emit OnPackageDone after this exact authored package was seen
+            // playing and then stopped, so a missing asset never fabricates
+            // a gameplay transition.
+            bool mPlaybackObserved = false;
+        };
+        std::map<ESM::RefId, ESM4ScriptPackageState> mESM4ScriptPackages;
 
         bool mTeleportEnabled;
         bool mLevitationEnabled;
@@ -143,6 +174,7 @@ namespace MWWorld
         World& operator=(const World&) = delete;
 
         void updateWeather(float duration, bool paused = false);
+        void updateESM4ScriptPackages();
 
         void initObjectInCell(const Ptr& ptr, CellStore& cell, bool adjustPos);
         Ptr moveObjectToCell(const Ptr& ptr, CellStore* cell, ESM::Position pos, bool adjustPos);
@@ -189,6 +221,10 @@ namespace MWWorld
         WorldModel& getWorldModel() { return mWorldModel; }
         Scene& getWorldScene() { return *mWorldScene; }
 
+        // Explicit world-viewer compatibility hook. It is called only when the corresponding proof environment
+        // variable is present and does not alter normal OpenMW terrain loading.
+        void addWorldViewerFlatGround(float x, float y, float height);
+
         // FIXME
         void addContainerScripts(const Ptr& reference, CellStore* cell) override;
         void removeContainerScripts(const Ptr& reference) override;
@@ -210,6 +246,27 @@ namespace MWWorld
 
         void startNewGame(bool bypass) override;
         ///< \param bypass Bypass regular game start.
+
+        std::string_view getStartCell() const override { return mStartCell; }
+
+        unsigned getLastNewGameGlobalScriptPasses() const { return mLastNewGameGlobalScriptPasses; }
+        bool getLastNewGameUsedFallbackPlacement() const { return mLastNewGameUsedFallbackPlacement; }
+        bool getLastNewGameUsedAuthoredStartPlacement() const { return mLastNewGameUsedAuthoredStartPlacement; }
+        bool getLastNewGameAuthoredStartStageExecuted() const { return mLastNewGameAuthoredStartStageExecuted; }
+        bool getLastNewGameCinematicRequested() const { return mLastNewGameCinematicRequested; }
+        std::string_view getLastNewGameCinematicAsset() const { return mLastNewGameCinematicAsset; }
+        std::string_view getLastNewGameAuthoredStartQuestEditorId() const
+        {
+            return mLastNewGameAuthoredStartQuestEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartMarkerEditorId() const
+        {
+            return mLastNewGameAuthoredStartMarkerEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartCinematicAsset() const
+        {
+            return mLastNewGameAuthoredStartCinematicAsset;
+        }
 
         void clear() override;
 
@@ -240,6 +297,24 @@ namespace MWWorld
         MWWorld::ESMStore& getStore() override { return mStore; }
 
         const MWWorld::ESMStore& getStore() const override { return mStore; }
+
+        MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() override { return mESM4QuestRuntime; }
+
+        const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
+
+        bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) override;
+        bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) override;
+
+        const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
+        {
+            return mFalloutPlayerRuntimeState;
+        }
+
+        bool setFalloutPlayerSpecial(const std::array<float, 7>& values) override
+        {
+            return mFalloutPlayerRuntimeState.setCurrentSpecial(values)
+                == MWWorld::FalloutActorValueMutationResult::Applied;
+        }
 
         const std::vector<int>& getESMVersions() const override;
 
@@ -286,6 +361,9 @@ namespace MWWorld
         Ptr searchPtr(const ESM::RefId& name, bool activeOnly, bool searchInContainers = false) override;
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do not search inactive cells.
+
+        Ptr searchPtrByRefNum(ESM::RefNum refNum) override;
+        ///< Return the live reference with the exact placed-reference number.
 
         MWWorld::Ptr findContainer(const MWWorld::ConstPtr& ptr) override;
         ///< Return a pointer to a liveCellRef which contains \a ptr.
@@ -676,6 +754,7 @@ namespace MWWorld
         DateTimeManager* getTimeManager() override { return mTimeManager.get(); }
 
         void setActorActive(const MWWorld::Ptr& ptr, bool value) override;
+
     };
 }
 

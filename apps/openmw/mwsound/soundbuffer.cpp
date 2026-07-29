@@ -19,6 +19,7 @@ namespace MWSound
 {
     namespace
     {
+        constexpr unsigned int maxSoundReferenceDepth = 8;
         constexpr VFS::Path::NormalizedView soundDir("sound");
         constexpr VFS::Path::ExtensionView mp3("mp3");
 
@@ -38,6 +39,24 @@ namespace MWSound
             params.mAudioMinDistanceMult = settings.find("fAudioMinDistanceMult")->mValue.getFloat();
             params.mAudioMaxDistanceMult = settings.find("fAudioMaxDistanceMult")->mValue.getFloat();
             return params;
+        }
+
+        std::string resolveESM4SoundReferencePath(
+            const MWWorld::ESMStore& store, const ESM4::SoundReference& sound, unsigned int depth = 0)
+        {
+            if (!sound.mSoundFile.empty())
+                return sound.mSoundFile;
+
+            if (depth >= maxSoundReferenceDepth || sound.mSoundId.isZeroOrUnset())
+                return {};
+
+            if (const ESM4::SoundReference* linked = store.get<ESM4::SoundReference>().search(sound.mSoundId))
+                return resolveESM4SoundReferencePath(store, *linked, depth + 1);
+
+            if (const ESM4::Sound* linked = store.get<ESM4::Sound>().search(sound.mSoundId))
+                return linked->mSoundFile;
+
+            return {};
         }
     }
 
@@ -106,12 +125,34 @@ namespace MWSound
         if (mBufferNameMap.empty())
         {
             const MWWorld::ESMStore* esmstore = MWBase::Environment::get().getESMStore();
-            for (const ESM::Sound& sound : esmstore->get<ESM::Sound>())
-                insertSound(sound.mId, sound);
+            const bool falloutNewVegas = esmstore->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas;
+            if (!falloutNewVegas)
+            {
+                for (const ESM::Sound& sound : esmstore->get<ESM::Sound>())
+                    insertSound(sound.mId, sound);
+            }
+
+            std::size_t soundEditorIdAliases = 0;
             for (const ESM4::Sound& sound : esmstore->get<ESM4::Sound>())
-                insertSound(sound.mId, sound);
+            {
+                SoundBuffer* const buffer = insertSound(sound.mId, sound);
+                if (buffer != nullptr && !sound.mEditorId.empty())
+                    soundEditorIdAliases
+                        += mBufferNameMap.emplace(ESM::RefId::stringRefId(sound.mEditorId), buffer).second;
+            }
+
+            std::size_t soundReferenceEditorIdAliases = 0;
             for (const ESM4::SoundReference& sound : esmstore->get<ESM4::SoundReference>())
-                insertSound(sound.mId, sound);
+            {
+                SoundBuffer* const buffer = insertSound(sound.mId, sound);
+                if (buffer != nullptr && !sound.mEditorId.empty())
+                    soundReferenceEditorIdAliases
+                        += mBufferNameMap.emplace(ESM::RefId::stringRefId(sound.mEditorId), buffer).second;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 sound: registered editor-id aliases sounds=" << soundEditorIdAliases
+                             << " references=" << soundReferenceEditorIdAliases
+                             << " legacyEsm3Fallback=" << (falloutNewVegas ? "disabled" : "enabled");
         }
 
         SoundBuffer* sfx;
@@ -120,10 +161,23 @@ namespace MWSound
             sfx = it->second;
         else
         {
-            const ESM::Sound* sound = MWBase::Environment::get().getESMStore()->get<ESM::Sound>().search(soundId);
-            if (sound == nullptr)
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            const bool falloutNewVegas = store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas;
+            if (const ESM4::Sound* sound = store->get<ESM4::Sound>().search(soundId))
+                sfx = insertSound(soundId, *sound);
+            else if (const ESM4::SoundReference* sound = store->get<ESM4::SoundReference>().search(soundId))
+                sfx = insertSound(soundId, *sound);
+            else if (!falloutNewVegas)
+            {
+                if (const ESM::Sound* sound = store->get<ESM::Sound>().search(soundId))
+                    sfx = insertSound(soundId, *sound);
+                else
+                    return {};
+            }
+            else
                 return {};
-            sfx = insertSound(soundId, *sound);
+            if (sfx == nullptr)
+                return {};
         }
 
         return loadSfx(sfx);
@@ -201,8 +255,9 @@ namespace MWSound
 
     SoundBuffer* SoundBufferPool::insertSound(const ESM::RefId& soundId, const ESM4::Sound& sound)
     {
-        VFS::Path::Normalized path = Misc::ResourceHelpers::correctResourcePath({ { soundDir } },
-            VFS::Path::toNormalized(sound.mSoundFile), *MWBase::Environment::get().getResourceSystem()->getVFS(), mp3);
+        const VFS::Path::Normalized soundFile(sound.mSoundFile);
+        VFS::Path::Normalized path = Misc::ResourceHelpers::correctResourcePath({ { soundDir } }, soundFile,
+            *MWBase::Environment::get().getResourceSystem()->getVFS(), mp3);
         float volume = 1, min = 1, max = 255; // TODO: needs research
         SoundBuffer& sfx = mSoundBuffers.emplace_back(std::move(path), volume, min, max);
         mBufferNameMap.emplace(soundId, &sfx);
@@ -211,11 +266,18 @@ namespace MWSound
 
     SoundBuffer* SoundBufferPool::insertSound(const ESM::RefId& soundId, const ESM4::SoundReference& sound)
     {
-        VFS::Path::Normalized path = Misc::ResourceHelpers::correctResourcePath({ { soundDir } },
-            VFS::Path::toNormalized(sound.mSoundFile), *MWBase::Environment::get().getResourceSystem()->getVFS(), mp3);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const std::string soundFile = resolveESM4SoundReferencePath(*store, sound);
+        if (soundFile.empty())
+        {
+            Log(Debug::Warning) << "Unable to resolve ESM4 sound reference " << soundId << " to an audio file";
+            return nullptr;
+        }
+
+        const VFS::Path::Normalized normalizedSoundFile(soundFile);
+        VFS::Path::Normalized path = Misc::ResourceHelpers::correctResourcePath({ { soundDir } }, normalizedSoundFile,
+            *MWBase::Environment::get().getResourceSystem()->getVFS(), mp3);
         float volume = 1, min = 1, max = 255; // TODO: needs research
-        // TODO: sound.mSoundId can link to another SoundReference, probably we will need to add additional lookups to
-        // ESMStore.
         SoundBuffer& sfx = mSoundBuffers.emplace_back(std::move(path), volume, min, max);
         mBufferNameMap.emplace(soundId, &sfx);
         return &sfx;

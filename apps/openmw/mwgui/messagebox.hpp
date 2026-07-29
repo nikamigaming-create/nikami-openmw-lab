@@ -101,6 +101,12 @@ namespace MWGui
 
         bool exit() override { return false; }
 
+        /// Activate an authored choice without manufacturing a platform input
+        /// event. The engine's opt-in unattended proof driver uses this path;
+        /// normal interaction remains in the UI callbacks.
+        void closeButton(std::size_t buttonIndex);
+        void closeDefault();
+
         bool mMarkedToDelete;
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;

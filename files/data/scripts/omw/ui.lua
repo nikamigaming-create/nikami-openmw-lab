@@ -132,7 +132,17 @@ local function onUiModeChanged(changedByLua, arg)
     else
         core.sendGlobalEvent('Unpause', 'ui')
     end
-    self:sendEvent('UiModeChanged', {oldMode = oldMode, newMode = mode, arg = arg})
+    local eventData = {oldMode = oldMode, newMode = mode}
+    local argType = type(arg)
+    if argType == 'boolean' or argType == 'number' or argType == 'string' then
+        eventData.arg = arg
+    end
+    local ok, err = pcall(function()
+        self:sendEvent('UiModeChanged', eventData)
+    end)
+    if not ok then
+        print('Warning: UiModeChanged relay skipped: '..tostring(err))
+    end
     oldMode = mode
 end
 

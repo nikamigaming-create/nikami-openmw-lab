@@ -207,6 +207,7 @@ add_component_dir (esm4
     grouptype
     inventory
     lighting
+    lip
     loadachr
     loadacti
     loadalch
@@ -217,10 +218,12 @@ add_component_dir (esm4
     loadarma
     loadarmo
     loadaspc
+    loadavif
     loadbook
     loadbptd
     loadcell
     loadclas
+    loadclmt
     loadclfm
     loadclot
     loadcont
@@ -229,6 +232,7 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+    loadfact
     loadflor
     loadflst
     loadfurn
@@ -252,6 +256,7 @@ add_component_dir (esm4
     loadlvli
     loadlvln
     loadmato
+    loadmesg
     loadmisc
     loadmset
     loadmstt
@@ -262,11 +267,15 @@ add_component_dir (esm4
     loadnpc
     loadotft
     loadpack
+    loadperk
     loadpgrd
     loadpgre
     loadpwat
+    loadproj
     loadqust
     loadrace
+    loadrcct
+    loadrcpe
     loadrefr
     loadregn
     loadroad
@@ -285,6 +294,10 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+    loadwthr
+    loadimgs
+    loadimad
+    imagespacecomposition
     loadwrld
     magiceffectid
     reader
@@ -752,4 +765,24 @@ if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
 
         <boost/program_options/options_description.hpp>
     )
+endif()
+  
+if(BUILD_OPENMW_VR)
+    target_link_libraries(components openxr_loader)
+
+    # Preprocessor variables used to control code paths to vr code
+    if (WIN32)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_GRAPHICS_API_D3D11 -DXR_USE_PLATFORM_WIN32)
+    elseif(UNIX)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
+        target_link_libraries(components EGL)
+    endif()
+else()
+    target_link_libraries(components openmw_openxr_headers)
+endif()
+
+if (USE_SYSTEM_TINYXML)
+    target_link_libraries(components ${TinyXML_LIBRARIES})
+else()
+    target_link_libraries(components local_tinyxml)
 endif()

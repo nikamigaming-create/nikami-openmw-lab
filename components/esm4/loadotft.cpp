@@ -52,6 +52,8 @@ void ESM4::Outfit::load(ESM4::Reader& reader)
                 break;
             }
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadotft"))
+                    break;
                 throw std::runtime_error("ESM4::OTFT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

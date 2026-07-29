@@ -49,7 +49,9 @@ namespace ESM4
         std::string mEditorId;
 
         std::string mModelMale;
+        std::string mModelMaleWorld;
         std::string mModelFemale;
+        std::string mModelFemaleWorld;
 
         ESM::FormId mTextureMale;
         ESM::FormId mTextureFemale;
@@ -57,7 +59,9 @@ namespace ESM4
         ESM::FormId mRacePrimary;
         std::vector<ESM::FormId> mRaces; // TES5 only
 
-        BodyTemplate mBodyTemplate; // TES5
+        // FO3/FNV add-ons are allowed to omit BMDT. Keep an omitted template
+        // from contributing indeterminate biped slots and hiding valid hands/body.
+        BodyTemplate mBodyTemplate{};
 
         std::uint8_t mMalePriority = 0;
         std::uint8_t mFemalePriority = 0;

@@ -101,9 +101,13 @@ void ESM4::Header::load(ESM4::Reader& reader)
             case ESM::fourCC("DELE"): // Oblivion only?
             case ESM::fourCC("TNAM"): // Fallout 4 (CK only)
             case ESM::fourCC("MMSB"): // Fallout 76
+            case ESM::fourCC("BNAM"): // Starfield
+            case ESM::fourCC("CHGL"): // Starfield changelist
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadtes4"))
+                    break;
                 throw std::runtime_error("ESM4::Header::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

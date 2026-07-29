@@ -10,11 +10,171 @@
 #include <components/debug/debuglog.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 namespace SceneUtil
 {
+    namespace
+    {
+        struct NormalizedNodeName
+        {
+            std::string mCanonical;
+            std::string mSemantic;
+            bool mHasSkeletonPrefix = false;
+            bool mHasRootSuffix = false;
+        };
+
+        std::string_view removeExporterIndex(std::string_view value)
+        {
+            const std::size_t colon = value.find_last_of(':');
+            if (colon == std::string_view::npos || colon + 1 == value.size())
+                return value;
+
+            for (std::size_t i = colon + 1; i < value.size(); ++i)
+                if (!std::isdigit(static_cast<unsigned char>(value[i])))
+                    return value;
+            return value.substr(0, colon);
+        }
+
+        NormalizedNodeName normalizeNodeName(std::string_view value)
+        {
+            NormalizedNodeName result;
+            value = removeExporterIndex(value);
+            result.mCanonical.reserve(value.size());
+            for (unsigned char c : value)
+                if (std::isalnum(c))
+                    result.mCanonical.push_back(static_cast<char>(std::tolower(c)));
+
+            result.mSemantic = result.mCanonical;
+            if (result.mSemantic.starts_with("bip"))
+            {
+                std::size_t prefixEnd = 3;
+                while (prefixEnd < result.mSemantic.size()
+                    && std::isdigit(static_cast<unsigned char>(result.mSemantic[prefixEnd])))
+                    ++prefixEnd;
+                if (prefixEnd > 3)
+                {
+                    result.mHasSkeletonPrefix = true;
+                    result.mSemantic.erase(0, prefixEnd);
+                }
+            }
+
+            if (result.mSemantic.size() > 4 && result.mSemantic.ends_with("root"))
+            {
+                result.mHasRootSuffix = true;
+                result.mSemantic.resize(result.mSemantic.size() - 4);
+            }
+            return result;
+        }
+
+        struct NumericSuffix
+        {
+            std::string_view mPrefix;
+            std::string_view mDigits;
+        };
+
+        NumericSuffix splitNumericSuffix(std::string_view value)
+        {
+            std::size_t start = value.size();
+            while (start > 0 && std::isdigit(static_cast<unsigned char>(value[start - 1])))
+                --start;
+            return { value.substr(0, start), value.substr(start) };
+        }
+
+        std::string_view trimNumericZeroes(std::string_view value)
+        {
+            while (value.size() > 1 && value.front() == '0')
+                value.remove_prefix(1);
+            return value;
+        }
+
+        bool numericSuffixEquivalent(std::string_view lhs, std::string_view rhs)
+        {
+            const NumericSuffix left = splitNumericSuffix(lhs);
+            const NumericSuffix right = splitNumericSuffix(rhs);
+            return !left.mDigits.empty() && !right.mDigits.empty() && left.mPrefix == right.mPrefix
+                && trimNumericZeroes(left.mDigits) == trimNumericZeroes(right.mDigits);
+        }
+
+        bool numericSuffixReversed(std::string_view lhs, std::string_view rhs)
+        {
+            const NumericSuffix left = splitNumericSuffix(lhs);
+            const NumericSuffix right = splitNumericSuffix(rhs);
+            return left.mDigits.size() > 1 && left.mDigits.size() == right.mDigits.size()
+                && left.mPrefix == right.mPrefix
+                && std::equal(left.mDigits.begin(), left.mDigits.end(), right.mDigits.rbegin());
+        }
+
+        bool defaultIndexEquivalent(std::string_view lhs, std::string_view rhs)
+        {
+            const NumericSuffix left = splitNumericSuffix(lhs);
+            const NumericSuffix right = splitNumericSuffix(rhs);
+            if (left.mPrefix != right.mPrefix)
+                return false;
+            if (left.mDigits.empty() == right.mDigits.empty())
+                return false;
+            const std::string_view digits = left.mDigits.empty() ? right.mDigits : left.mDigits;
+            return trimNumericZeroes(digits) == "1";
+        }
+    }
+
+    NodeNameMatch matchNodeName(std::string_view requested, std::string_view candidate)
+    {
+        if (requested.empty() || candidate.empty())
+            return {};
+        if (Misc::StringUtils::ciEqual(requested, candidate))
+            return { NodeNameMatchKind::Exact, 900 };
+
+        const NormalizedNodeName request = normalizeNodeName(requested);
+        const NormalizedNodeName match = normalizeNodeName(candidate);
+        if (request.mCanonical.empty() || match.mCanonical.empty())
+            return {};
+
+        const int structuralBonus = (request.mHasSkeletonPrefix == match.mHasSkeletonPrefix ? 4 : 0)
+            + (request.mHasRootSuffix == match.mHasRootSuffix ? 1 : 0);
+        if (request.mCanonical == match.mCanonical)
+            return { NodeNameMatchKind::Canonical, 800 + structuralBonus };
+        if (!request.mSemantic.empty() && request.mSemantic == match.mSemantic)
+            return { NodeNameMatchKind::Semantic, 700 + structuralBonus };
+        if (numericSuffixEquivalent(request.mCanonical, match.mCanonical))
+            return { NodeNameMatchKind::NumericEquivalent, 650 + structuralBonus };
+        if (numericSuffixReversed(request.mCanonical, match.mCanonical))
+            return { NodeNameMatchKind::NumericReversed, 600 + structuralBonus };
+        if (numericSuffixEquivalent(request.mSemantic, match.mSemantic))
+            return { NodeNameMatchKind::NumericEquivalent, 550 + structuralBonus };
+        if (numericSuffixReversed(request.mSemantic, match.mSemantic))
+            return { NodeNameMatchKind::NumericReversed, 500 + structuralBonus };
+        if (defaultIndexEquivalent(request.mSemantic, match.mSemantic))
+            return { NodeNameMatchKind::DefaultIndex, 400 + structuralBonus };
+        return {};
+    }
+
+    std::string_view getNodeNameMatchKindName(NodeNameMatchKind kind)
+    {
+        switch (kind)
+        {
+            case NodeNameMatchKind::Exact:
+                return "exact";
+            case NodeNameMatchKind::Canonical:
+                return "canonical";
+            case NodeNameMatchKind::Semantic:
+                return "semantic";
+            case NodeNameMatchKind::NumericEquivalent:
+                return "numeric-equivalent";
+            case NodeNameMatchKind::NumericReversed:
+                return "numeric-reversed";
+            case NodeNameMatchKind::DefaultIndex:
+                return "default-index";
+            case NodeNameMatchKind::None:
+                return "none";
+        }
+        return "none";
+    }
+
     bool FindByNameVisitor::checkGroup(osg::Group& group)
     {
         if (Misc::StringUtils::ciEqual(group.getName(), mNameToFind))

@@ -194,7 +194,9 @@ namespace MWScript
         // make list of global scripts to be added
         std::vector<ESM::RefId> scripts;
 
-        scripts.emplace_back(ESM::RefId::stringRefId("main"));
+        const ESM::RefId mainScript = ESM::RefId::stringRefId("main");
+        if (mStore.get<ESM::Script>().search(mainScript) != nullptr)
+            scripts.push_back(mainScript);
 
         for (MWWorld::Store<ESM::StartScript>::iterator iter = mStore.get<ESM::StartScript>().begin();
              iter != mStore.get<ESM::StartScript>().end(); ++iter)

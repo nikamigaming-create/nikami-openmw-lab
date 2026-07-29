@@ -1,14 +1,19 @@
 #include "hud.hpp"
 
+#include <cmath>
+#include <cstdlib>
+
 #include <MyGUI_Button.h>
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_ProgressBar.h>
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_ScrollView.h>
+#include <MyGUI_TextBox.h>
 
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
@@ -19,6 +24,7 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -32,6 +38,33 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        bool compatibilityUiTelemetryEnabled()
+        {
+            return std::getenv("OPENMW_COMPAT_UI_TELEMETRY") != nullptr;
+        }
+
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            if (!MWBase::Environment::get().getWorld())
+                return false;
+
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                    return true;
+            }
+
+            return false;
+        }
+
+        constexpr bool isVr = false;
+    }
+
     HUD::HUD(CustomMarkerCollection& customMarkers, DragAndDrop* dragAndDrop, MWRender::LocalMap* localMapRender)
         : WindowBase("openmw_hud.layout")
         , LocalMapBase(customMarkers, localMapRender, Settings::map().mLocalMapHudFogOfWar)
@@ -52,6 +85,28 @@ namespace MWGui
         healthFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
         magickaFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
         fatigueFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
+
+        bool falloutContent = hasFalloutContent();
+
+        if (falloutContent)
+        {
+            if (mHealth)
+            {
+                mHealth->changeWidgetSkin("MW_EnergyBar_Green");
+                mHealth->setColour(MyGUI::Colour(0.25f, 1.f, 0.25f, 1.f));
+            }
+            if (mMagicka)
+            {
+                mMagicka->changeWidgetSkin("MW_EnergyBar_Green");
+                mMagicka->setColour(MyGUI::Colour(0.25f, 1.f, 0.25f, 1.f));
+            }
+            if (mStamina) { mStamina->changeWidgetSkin("MW_EnergyBar_Green"); }
+            if (fatigueFrame && falloutContent) fatigueFrame->setVisible(false);
+            if (mStamina && falloutContent && isVr) mStamina->setVisible(false);
+            Log(Debug::Info) << "FNV/ESM4 proof: HUD Fallout bars applied HP/AP"
+                             << (isVr ? "/stamina wrist" : "")
+                             << " green theme";
+        }
 
         // Drowning bar
         getWidget(mDrowningBar, "DrowningBar");
@@ -90,10 +145,83 @@ namespace MWGui
 
         getWidget(mCellNameBox, "CellName");
         getWidget(mWeaponSpellBox, "WeaponSpellName");
+        try
+        {
+            getWidget(mCompassHeading, "CompassHeading");
+        }
+        catch (const MyGUI::Exception& e)
+        {
+            mCompassHeading = nullptr;
+            Log(Debug::Info) << "FNV/ESM4 proof: optional CompassHeading HUD widget unavailable: " << e.what();
+        }
 
         getWidget(mCrosshair, "Crosshair");
 
         LocalMapBase::init(mMinimap, mCompass);
+
+        if (falloutContent && isVr)
+        {
+            mLocalMapZoom = 0.82f;
+            if (mMinimapBox->getChildCount() > 0)
+            {
+                mMinimapBox->getChildAt(0)->setAlpha(0.8f);
+                mMinimapBox->getChildAt(0)->setCoord(0, 0, 150, 150);
+            }
+            mMinimapBox->setCoord(8, 82, 150, 150);
+            mMinimap->setCoord(5, 5, 140, 140);
+            mCompass->setCoord(39, 39, 72, 72);
+            mCompass->setColour(MyGUI::Colour(0.25f, 1.f, 0.25f, 1.f));
+            mCompass->setVisible(false);
+            if (mCompassHeading != nullptr)
+            {
+                mCompassHeading->setVisible(true);
+                mCompassHeading->setCoord(39, 63, 72, 24);
+            }
+            mMinimapButton->setCoord(0, 0, 140, 140);
+            Log(Debug::Info) << "FNV/ESM4 proof: using square Fallout local map on VR wrist HUD zoom="
+                             << mLocalMapZoom;
+        }
+        else if (falloutContent && !isVr)
+        {
+            const int margin = 18;
+            const int barWidth = 160;
+            const int barHeight = 18;
+            const int barGap = 7;
+            const int mapSize = 150;
+            const int mapInset = 5;
+            const int iconSize = 54;
+            const int iconStatusHeight = 7;
+
+            const int barTop = viewSize.height - margin - (barHeight * 2 + barGap);
+            mHealthFrame->setCoord(margin, barTop, barWidth, barHeight);
+            mHealth->setCoord(0, 0, barWidth, barHeight);
+            magickaFrame->setCoord(margin, barTop + barHeight + barGap, barWidth, barHeight);
+            mMagicka->setCoord(0, 0, barWidth, barHeight);
+
+            const int iconTop = viewSize.height - margin - iconSize - iconStatusHeight;
+            mWeapBox->setCoord(margin + barWidth + 18, iconTop, iconSize, iconSize + iconStatusHeight);
+            mSpellBox->setCoord(margin + barWidth + 18 + iconSize + 8, iconTop, iconSize, iconSize + iconStatusHeight);
+            mSneakBox->setCoord(margin + barWidth + 18 + (iconSize + 8) * 2, iconTop, iconSize, iconSize);
+
+            mMinimapBox->setCoord(viewSize.width - margin - mapSize, viewSize.height - margin - mapSize, mapSize, mapSize);
+            if (mMinimapBox->getChildCount() > 0)
+                mMinimapBox->getChildAt(0)->setCoord(0, 0, mapSize, mapSize);
+            mMinimap->setCoord(mapInset, mapInset, mapSize - mapInset * 2, mapSize - mapInset * 2);
+            mCompass->setCoord((mapSize - 72) / 2, (mapSize - 72) / 2, 72, 72);
+            mMinimapButton->setCoord(0, 0, mapSize - mapInset * 2, mapSize - mapInset * 2);
+
+            mEffectBox->setPosition(viewSize.width - margin - mapSize - 28, viewSize.height - margin - 24);
+
+            mHealthManaStaminaBaseLeft = mHealthFrame->getLeft();
+            mWeapBoxBaseLeft = mWeapBox->getLeft();
+            mSpellBoxBaseLeft = mSpellBox->getLeft();
+            mSneakBoxBaseLeft = mSneakBox->getLeft();
+            mMinimapBoxBaseRight = viewSize.width - mMinimapBox->getRight();
+            mEffectBoxBaseRight = viewSize.width - mEffectBox->getRight();
+            Log(Debug::Info) << "FNV/ESM4 proof: flat Fallout HUD scaled HP/AP and compass to "
+                             << barWidth << "x" << barHeight << " bars, " << mapSize << "x" << mapSize
+                             << " minimap";
+        }
 
         mMainWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onWorldClicked);
         mMainWidget->eventMouseMove += MyGUI::newDelegate(this, &HUD::onWorldMouseOver);
@@ -125,6 +253,12 @@ namespace MWGui
             mHealth->setProgressPosition(std::max(0, current));
             getWidget(w, "HealthFrame");
             w->setUserString("Caption_HealthDescription", "#{sHealthDesc}\n" + valStr);
+            if (isVr && hasFalloutContent())
+            {
+                MyGUI::TextBox* valueText;
+                getWidget(valueText, "HealthValue");
+                valueText->setCaption(valStr);
+            }
         }
         else if (id == "MBar")
         {
@@ -132,6 +266,12 @@ namespace MWGui
             mMagicka->setProgressPosition(std::max(0, current));
             getWidget(w, "MagickaFrame");
             w->setUserString("Caption_HealthDescription", "#{sMagDesc}\n" + valStr);
+            if (isVr && hasFalloutContent())
+            {
+                MyGUI::TextBox* valueText;
+                getWidget(valueText, "MagickaValue");
+                valueText->setCaption(valStr);
+            }
         }
         else if (id == "FBar")
         {
@@ -139,6 +279,24 @@ namespace MWGui
             mStamina->setProgressPosition(std::max(0, current));
             getWidget(w, "FatigueFrame");
             w->setUserString("Caption_HealthDescription", "#{sFatDesc}\n" + valStr);
+            if (isVr && hasFalloutContent())
+            {
+                MyGUI::TextBox* valueText;
+                getWidget(valueText, "StaminaValue");
+                valueText->setCaption("");
+                valueText->setVisible(false);
+            }
+        }
+
+        if (isVr && hasFalloutContent())
+        {
+            static int logged = 0;
+            if (logged < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: wrist HUD stat feed id=" << id
+                                 << " value=" << current << "/" << modified;
+                ++logged;
+            }
         }
     }
 
@@ -290,9 +448,59 @@ namespace MWGui
         }
     }
 
+    void HUD::setPlayerDir(float x, float y)
+    {
+        LocalMapBase::setPlayerDir(x, y);
+
+        if (!isVr || !hasFalloutContent() || mCompassHeading == nullptr)
+            return;
+
+        static constexpr const char* headings[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+        constexpr float pi = 3.14159265358979323846f;
+        const float angle = std::atan2(x, y);
+        int index = static_cast<int>(std::floor((angle + pi / 8.f) / (pi / 4.f)));
+        index = (index % 8 + 8) % 8;
+        mCompassHeading->setCaption(headings[index]);
+        mCompassHeading->setVisible(true);
+    }
+
     void HUD::onFrame(float dt)
     {
         LocalMapBase::onFrame(dt);
+
+        if (isVr && hasFalloutContent())
+        {
+            if (!MWBase::Environment::get().getWorld()->getPlayerPtr().isEmpty())
+            {
+                const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                MyGUI::TextBox* ammoText;
+                getWidget(ammoText, "ArmorValue");
+                MWWorld::InventoryStore& inv = player.getClass().getInventoryStore(player);
+                MWWorld::ContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+                ammoText->setCaption(ammo != inv.end()
+                        ? "AMMO " + MyGUI::utility::toString(ammo->getCellRef().getCount())
+                        : "AMMO --");
+            }
+
+            static int loggedFalloutVrHudFrames = 0;
+            if (loggedFalloutVrHudFrames < 16)
+            {
+                ++loggedFalloutVrHudFrames;
+                MyGUI::Widget *healthFrame, *magickaFrame, *fatigueFrame;
+                getWidget(healthFrame, "HealthFrame");
+                getWidget(magickaFrame, "MagickaFrame");
+                getWidget(fatigueFrame, "FatigueFrame");
+                Log(Debug::Verbose) << "FNV/ESM4 diag: wrist HUD widgets healthFrame=" << healthFrame->getVisible()
+                                 << " health=" << mHealth->getVisible()
+                                 << " apFrame=" << magickaFrame->getVisible()
+                                 << " ap=" << mMagicka->getVisible()
+                                 << " staminaFrame=" << fatigueFrame->getVisible()
+                                 << " stamina=" << mStamina->getVisible()
+                                 << " minimapBox=" << mMinimapBox->getVisible()
+                                 << " mapVisible=" << mMapVisible
+                                 << " cellName=" << mCellNameBox->getVisible();
+            }
+        }
 
         mCellNameTimer -= dt;
         mWeaponSpellTimer -= dt;
@@ -454,6 +662,8 @@ namespace MWGui
     void HUD::setCrosshairVisible(bool visible)
     {
         mCrosshair->setVisible(visible);
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: crosshair visible=" << visible;
     }
 
     void HUD::setCrosshairOwned(bool owned)
@@ -470,10 +680,24 @@ namespace MWGui
 
     void HUD::setHmsVisible(bool visible)
     {
+        MyGUI::Widget *healthFrame, *magickaFrame, *fatigueFrame;
+        getWidget(healthFrame, "HealthFrame");
+        getWidget(magickaFrame, "MagickaFrame");
+        getWidget(fatigueFrame, "FatigueFrame");
+        // Cinematics and character generation own HUD visibility. Fallout
+        // content must honor that regular UI contract rather than restoring
+        // fallback widgets over the authored scene.
+        const bool falloutVr = isVr && hasFalloutContent();
+        healthFrame->setVisible(visible);
+        magickaFrame->setVisible(visible);
+        fatigueFrame->setVisible(falloutVr ? false : visible);
         mHealth->setVisible(visible);
         mMagicka->setVisible(visible);
-        mStamina->setVisible(visible);
+        mStamina->setVisible(falloutVr ? false : visible);
         updatePositions();
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: HMS visible=" << visible
+                             << " staminaVisible=" << (falloutVr ? false : visible) << " falloutVr=" << falloutVr;
     }
 
     void HUD::setWeapVisible(bool visible)
@@ -502,8 +726,12 @@ namespace MWGui
 
     void HUD::setMinimapVisible(bool visible)
     {
+        // Keep visibility with the gameplay/UI state. A cinematic or
+        // character-generation sequence must not leak the minimap.
         mMinimapBox->setVisible(visible);
         updatePositions();
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: minimap visible=" << visible;
     }
 
     void HUD::updatePositions()
@@ -531,7 +759,6 @@ namespace MWGui
         mSneakBox->setPosition(mSneakBoxBaseLeft - sneakDx, mSneakBox->getTop());
 
         const MyGUI::IntSize& viewSize = MyGUI::RenderManager::getInstance().getViewSize();
-
         // effect box can have variable width -> variable left coordinate
         int effectsDx = 0;
         if (!mMinimapBox->getVisible())

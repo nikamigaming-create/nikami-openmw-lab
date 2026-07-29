@@ -1,7 +1,9 @@
 #include "aitravel.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/aisequence.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -91,7 +93,24 @@ namespace MWMechanics
         if (!isWithinMaxRange(targetPos, actorPos))
             return mHidden;
 
-        if (pathTo(actor, targetPos, duration, characterController.getSupportedMovementDirections()))
+        const bool reached
+            = pathTo(actor, targetPos, duration, characterController.getSupportedMovementDirections());
+        if (std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY") != nullptr)
+        {
+            static unsigned int sTravelTelemetryLines = 0;
+            if (sTravelTelemetryLines < 240)
+            {
+                ++sTravelTelemetryLines;
+                Log(Debug::Info) << "World viewer actor travel: ref=" << actor.getCellRef().getRefNum().toString("FormId:")
+                                 << " base=" << actor.getCellRef().getRefId()
+                                 << " pos=(" << actorPos.x() << "," << actorPos.y() << "," << actorPos.z() << ")"
+                                 << " target=(" << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
+                                 << ") distance=" << (targetPos - actorPos).length()
+                                 << " horizontalDistance=" << distanceIgnoreZ(actorPos, targetPos)
+                                 << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached;
+            }
+        }
+        if (reached)
         {
             actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
             return true;

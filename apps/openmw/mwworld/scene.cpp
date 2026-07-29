@@ -1,8 +1,13 @@
 #include "scene.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <cstdint>
 #include <limits>
+#include <string_view>
 
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
@@ -15,9 +20,17 @@
 #include <components/esm/esmterrain.hpp>
 #include <components/esm/records.hpp>
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
+#include <components/esm4/script.hpp>
+#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadfurn.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
+#include <components/nif/extra.hpp>
+#include <components/nif/node.hpp>
+#include <components/resource/niffilemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -31,6 +44,10 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvfurnitureplacement.hpp"
+#include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwrender/landmanager.hpp"
 #include "../mwrender/postprocessor.hpp"
@@ -51,14 +68,24 @@
 #include "localscripts.hpp"
 #include "player.hpp"
 #include "worldimp.hpp"
+#include "worldmodel.hpp"
 
 namespace
 {
     using MWWorld::RotationOrder;
 
-    osg::Quat makeActorOsgQuat(const ESM::Position& position)
+    osg::Quat makeActorOsgQuat(const MWWorld::Ptr& ptr)
     {
-        return osg::Quat(position.rot[2], osg::Vec3(0, 0, -1));
+        const ESM::Position& position = ptr.getRefData().getPosition();
+        float yaw = position.rot[2];
+        if (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
+        {
+            // TES3 actors and the imported Fallout/TES4-family actor skeletons use different local forward axes.
+            // Retail transform telemetry requires a quarter-turn relative to the TES3 actor convention. Keep the
+            // gameplay yaw unchanged and convert only the rendered/physics model basis here.
+            yaw += osg::PI_2;
+        }
+        return osg::Quat(yaw, osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -74,13 +101,13 @@ namespace
     osg::Quat makeInverseNodeRotation(const MWWorld::Ptr& ptr)
     {
         const auto& pos = ptr.getRefData().getPosition();
-        return ptr.getClass().isActor() ? makeActorOsgQuat(pos) : makeInversedOrderObjectOsgQuat(pos);
+        return ptr.getClass().isActor() ? makeActorOsgQuat(ptr) : makeInversedOrderObjectOsgQuat(pos);
     }
 
     osg::Quat makeDirectNodeRotation(const MWWorld::Ptr& ptr)
     {
         const auto& pos = ptr.getRefData().getPosition();
-        return ptr.getClass().isActor() ? makeActorOsgQuat(pos) : Misc::Convert::makeOsgQuat(pos);
+        return ptr.getClass().isActor() ? makeActorOsgQuat(ptr) : Misc::Convert::makeOsgQuat(pos);
     }
 
     osg::Quat makeNodeRotation(const MWWorld::Ptr& ptr, RotationOrder order)
@@ -103,6 +130,539 @@ namespace
         return ptr.getClass().getCorrectedModel(ptr);
     }
 
+    bool fnvPackageHasExplicitTime(const ESM4::AIPackage& package)
+    {
+        return package.mSchedule.time != 0xff && package.mSchedule.duration != 0;
+    }
+
+    bool fnvPackageCoversHour(const ESM4::AIPackage& package, float hour)
+    {
+        if (!fnvPackageHasExplicitTime(package))
+            return false;
+
+        const float start = static_cast<float>(package.mSchedule.time);
+        const float duration = static_cast<float>(std::min<std::uint32_t>(package.mSchedule.duration, 24));
+        const float end = std::fmod(start + duration, 24.f);
+        if (duration >= 24.f)
+            return true;
+        if (start <= end)
+            return hour >= start && hour < end;
+        return hour >= start || hour < end;
+    }
+
+    const ESM4::Reference* resolveFnvPackageReference(
+        const MWWorld::ESMStore& store, const ESM4::AIPackage::PLDT& location)
+    {
+        if (location.type != 0 && location.type != 4)
+            return nullptr;
+        return store.get<ESM4::Reference>().search(ESM::FormId::fromUint32(location.location));
+    }
+
+    float getFnvPackageHour(const MWWorld::World& world, bool& usedHourOverride)
+    {
+        usedHourOverride = false;
+        float hour = world.getTimeStamp().getHour();
+        if (const char* env = std::getenv("OPENMW_FNV_PROCEDURE_HOUR"))
+        {
+            char* end = nullptr;
+            const float overrideHour = std::strtof(env, &end);
+            if (end != env && std::isfinite(overrideHour))
+            {
+                hour = std::fmod(std::max(0.f, overrideHour), 24.f);
+                usedHourOverride = true;
+            }
+        }
+        return hour;
+    }
+
+    enum class FnvPackagePrePlacement
+    {
+        None,
+        SameCell,
+        MovedToPackageCell
+    };
+
+    struct FnvFurnitureMarkerPlacement
+    {
+        osg::Vec3f mOffset;
+        float mHeading = 0.f;
+        std::uint16_t mType = 0;
+        std::uint16_t mEntryPoint = 0;
+        std::uint8_t mPositionRef = 0;
+        std::uint8_t mMarkerIndex = 0xff;
+        bool mLegacy = false;
+        bool mFound = false;
+    };
+
+    bool parseFnvIntEnv(const char* name, int& value)
+    {
+        const char* env = std::getenv(name);
+        if (env == nullptr || env[0] == '\0')
+            return false;
+
+        char* end = nullptr;
+        const long parsed = std::strtol(env, &end, 10);
+        if (end == env)
+            return false;
+
+        value = static_cast<int>(parsed);
+        return true;
+    }
+
+    int getViewerEsm4CellGridRadius()
+    {
+        int radius = Constants::ESM4CellGridRadius;
+        int requested = radius;
+        if (parseFnvIntEnv("OPENMW_WORLD_VIEWER_ESM4_GRID_RADIUS", requested))
+        {
+            if (requested < 0)
+                requested = 0;
+            if (requested > 8)
+                requested = 8;
+            radius = requested;
+        }
+
+        static int loggedRadius = -1;
+        if (loggedRadius != radius)
+        {
+            loggedRadius = radius;
+            Log(Debug::Info) << "World viewer: ESM4 exterior grid radius=" << radius
+                             << " source="
+                             << (std::getenv("OPENMW_WORLD_VIEWER_ESM4_GRID_RADIUS") != nullptr ? "env" : "default");
+        }
+
+        return radius;
+    }
+
+    bool envEnabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+
+    bool worldViewerDiagnosticFilterEnabled()
+    {
+        return envEnabled("OPENMW_WORLD_VIEWER_HIDE_DIAGNOSTIC_MODELS")
+            || envEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+    }
+
+    bool worldViewerFreezeEsm4ActorMechanics()
+    {
+        return envEnabled("OPENMW_WORLD_VIEWER_FREEZE_ESM4_ACTOR_MECHANICS");
+    }
+
+    bool isEsm4Actor(const MWWorld::Ptr& ptr)
+    {
+        return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4;
+    }
+
+    bool contains(std::string_view value, std::string_view needle)
+    {
+        return value.find(needle) != std::string_view::npos;
+    }
+
+    bool isWorldViewerDiagnosticModel(std::string_view value)
+    {
+        return contains(value, "meshes/markers/")
+            || contains(value, "/editormarkers/")
+            || contains(value, "staticcollectionpivotdummy")
+            || contains(value, "fill_planes/")
+            || contains(value, "fillplane_")
+            || contains(value, "occlusion")
+            || contains(value, "occluder")
+            || contains(value, "portalmarker")
+            || contains(value, "roommarker")
+            || contains(value, "loadmarker")
+            || contains(value, "xmarker")
+            || contains(value, "headingmarker")
+            || contains(value, "triggerbox")
+            || contains(value, "collisionmarker")
+            || contains(value, "water/water");
+    }
+
+    bool skipWorldViewerDiagnosticObject(const MWWorld::Ptr& ptr, const VFS::Path::Normalized& model)
+    {
+        if (model.empty() || !worldViewerDiagnosticFilterEnabled() || !isWorldViewerDiagnosticModel(model.value()))
+            return false;
+
+        static std::atomic<int> skipLogCount{ 0 };
+        const int logIndex = skipLogCount.fetch_add(1);
+        if (logIndex < 240)
+        {
+            Log(Debug::Info) << "World viewer: skipped diagnostic scene object base="
+                             << ptr.getCellRef().getRefId().toDebugString()
+                             << " type=" << ptr.getTypeDescription()
+                             << " model=" << model.value()
+                             << " ptr=" << ptr.toString();
+        }
+        else if (logIndex == 240)
+            Log(Debug::Info) << "World viewer: further diagnostic scene object skip logs suppressed";
+
+        return true;
+    }
+
+    osg::Vec3f transformFnvFurnitureMarkerOffsetForProof(osg::Vec3f offset)
+    {
+        const char* mode = std::getenv("OPENMW_FNV_FURNITURE_MARKER_OFFSET_MODE");
+        if (mode == nullptr || mode[0] == '\0')
+            return offset;
+
+        const std::string_view value(mode);
+        if (value == "negx")
+            return osg::Vec3f(-offset.x(), offset.y(), offset.z());
+        if (value == "negy")
+            return osg::Vec3f(offset.x(), -offset.y(), offset.z());
+        if (value == "negxy")
+            return osg::Vec3f(-offset.x(), -offset.y(), offset.z());
+        if (value == "swapxy")
+            return osg::Vec3f(offset.y(), offset.x(), offset.z());
+        if (value == "swapxynegx")
+            return osg::Vec3f(-offset.y(), offset.x(), offset.z());
+        if (value == "swapxynegy")
+            return osg::Vec3f(offset.y(), -offset.x(), offset.z());
+        if (value == "swapxynegxy")
+            return osg::Vec3f(-offset.y(), -offset.x(), offset.z());
+        return offset;
+    }
+
+    void collectFnvFurnitureMarkers(const Nif::NiObjectNET& object, std::vector<FnvFurnitureMarkerPlacement>& result)
+    {
+        for (const Nif::ExtraPtr& extra : object.getExtraList())
+        {
+            if (extra.empty() || extra->recType != Nif::RC_BSFurnitureMarker)
+                continue;
+
+            const auto* marker = static_cast<const Nif::BSFurnitureMarker*>(extra.getPtr());
+            for (const Nif::BSFurnitureMarker::LegacyFurniturePosition& legacy : marker->mLegacyMarkers)
+            {
+                FnvFurnitureMarkerPlacement placement;
+                placement.mOffset = legacy.mOffset;
+                placement.mHeading = static_cast<float>(legacy.mOrientation) / 1000.f;
+                placement.mPositionRef = legacy.mPositionRef;
+                placement.mLegacy = true;
+                placement.mFound = true;
+                result.push_back(placement);
+            }
+            for (const Nif::BSFurnitureMarker::FurniturePosition& current : marker->mMarkers)
+            {
+                FnvFurnitureMarkerPlacement placement;
+                placement.mOffset = current.mOffset;
+                placement.mHeading = current.mHeading;
+                placement.mType = current.mType;
+                placement.mEntryPoint = current.mEntryPoint;
+                placement.mFound = true;
+                result.push_back(placement);
+            }
+        }
+
+        if (const auto* node = dynamic_cast<const Nif::NiNode*>(&object))
+        {
+            for (const Nif::NiAVObjectPtr& child : node->mChildren)
+            {
+                if (child.empty())
+                    continue;
+                if (const auto* childObject = dynamic_cast<const Nif::NiObjectNET*>(child.getPtr()))
+                    collectFnvFurnitureMarkers(*childObject, result);
+            }
+        }
+    }
+
+    FnvFurnitureMarkerPlacement getFnvFurnitureMarkerPlacement(
+        const MWWorld::ESMStore& store, const ESM4::Reference& target)
+    {
+        FnvFurnitureMarkerPlacement fallback;
+        const ESM4::Furniture* furniture = store.get<ESM4::Furniture>().search(target.mBaseObj);
+        if (furniture == nullptr || furniture->mModel.empty())
+            return fallback;
+
+        try
+        {
+            VFS::Path::Normalized model = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(furniture->mModel));
+            Resource::ResourceSystem* resourceSystem = MWBase::Environment::get().getResourceSystem();
+            Nif::NIFFilePtr nif = resourceSystem->getNifFileManager()->get(model);
+            Nif::FileView file(*nif);
+
+            std::vector<FnvFurnitureMarkerPlacement> markers;
+            for (std::size_t i = 0; i < file.numRoots(); ++i)
+            {
+                if (const auto* root = dynamic_cast<const Nif::NiObjectNET*>(file.getRoot(i)))
+                    collectFnvFurnitureMarkers(*root, markers);
+            }
+
+            Log(Debug::Verbose) << "FNV/ESM4 diag: furniture marker scan targetRef=" << target.mEditorId
+                             << " base=" << target.mBaseObj << " model=" << model.value()
+                             << " activeMarkers=0x" << std::hex << furniture->mActiveMarkerFlags << std::dec
+                             << " markers=" << markers.size();
+
+            for (std::size_t i = 0; i < markers.size(); ++i)
+            {
+                markers[i].mMarkerIndex = static_cast<std::uint8_t>(std::min<std::size_t>(i, 0xff));
+                const FnvFurnitureMarkerPlacement& marker = markers[i];
+                Log(Debug::Verbose) << "FNV/ESM4 diag: furniture marker candidate index=" << i
+                                 << " offset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
+                                 << marker.mOffset.z() << ") heading=" << marker.mHeading
+                                 << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
+                                 << " positionRef=" << static_cast<int>(marker.mPositionRef)
+                                 << " legacy=" << marker.mLegacy;
+            }
+
+            auto markerLess = [](const FnvFurnitureMarkerPlacement& left, const FnvFurnitureMarkerPlacement& right) {
+                return std::abs(left.mOffset.x()) < std::abs(right.mOffset.x());
+            };
+            if (!markers.empty())
+            {
+                int markerIndex = -1;
+                if (parseFnvIntEnv("OPENMW_FNV_FURNITURE_MARKER_INDEX", markerIndex) && markerIndex >= 0
+                    && markerIndex < static_cast<int>(markers.size()))
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: selected furniture marker by proof index " << markerIndex;
+                    return markers[static_cast<std::size_t>(markerIndex)];
+                }
+
+                int positionRef = -1;
+                if (parseFnvIntEnv("OPENMW_FNV_FURNITURE_MARKER_POSITION_REF", positionRef))
+                {
+                    for (const FnvFurnitureMarkerPlacement& marker : markers)
+                    {
+                        if (static_cast<int>(marker.mPositionRef) == positionRef)
+                        {
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: selected furniture marker by proof positionRef "
+                                             << positionRef;
+                            return marker;
+                        }
+                    }
+                }
+
+                // FO3/FNV MNAM is a marker-index bitfield. Retail Easy Pete telemetry, for
+                // example, reports markerIndex=2 for activeMarkers=0x40000004. High bits may
+                // carry furniture capabilities, so only compare indices that exist in the NIF.
+                for (std::size_t i = 0; i < markers.size() && i < 32; ++i)
+                {
+                    if ((furniture->mActiveMarkerFlags & (std::uint32_t{ 1 } << i)) != 0)
+                    {
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: selected active furniture marker index " << i;
+                        return markers[i];
+                    }
+                }
+
+                const auto centered = std::min_element(markers.begin(), markers.end(), markerLess);
+                return centered != markers.end() ? *centered : markers.front();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: furniture marker scan failed targetRef=" << target.mEditorId
+                                << " error=" << e.what();
+        }
+
+        return fallback;
+    }
+
+    osg::Vec3f rotateFnvPackageOffset(const osg::Vec3f& offset, float rotZ)
+    {
+        const char* sign = std::getenv("OPENMW_FNV_FURNITURE_MARKER_ROTATION_SIGN");
+        const float zSign = (sign != nullptr && std::string_view(sign) == "positive") ? 1.f : -1.f;
+        const osg::Matrix rotation = osg::Matrix::rotate(osg::Quat(rotZ, osg::Vec3f(0.f, 0.f, zSign)));
+        const osg::Vec3d transformed = osg::Vec3d(offset) * rotation;
+        return osg::Vec3f(transformed.x(), transformed.y(), transformed.z());
+    }
+
+    float applyFnvFurnitureMarkerHeading(float targetRotZ, float markerHeading)
+    {
+        const char* mode = std::getenv("OPENMW_FNV_FURNITURE_MARKER_HEADING_MODE");
+        if (mode == nullptr || mode[0] == '\0' || std::string_view(mode) == "add")
+            return targetRotZ + markerHeading;
+        if (std::string_view(mode) == "subtract")
+            return targetRotZ - markerHeading;
+        if (std::string_view(mode) == "none")
+            return targetRotZ;
+        if (std::string_view(mode) == "marker")
+            return markerHeading;
+        return targetRotZ + markerHeading;
+    }
+
+    bool fnvPackageConditionsPass(const ESM4::AIPackage& package)
+    {
+        if (package.mConditions.empty())
+            return true;
+        return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().evaluateConditions(package.mConditions);
+    }
+
+    FnvPackagePrePlacement applyFnvPackagePrePlacement(const MWWorld::Ptr& ptr, const MWWorld::World& world)
+    {
+        if (std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PREPLACEMENT") != nullptr
+            || std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
+            return FnvPackagePrePlacement::None;
+
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* packageRecord = MWClass::ESM4Npc::getAIPackageRecord(ptr);
+        if (packageRecord == nullptr || packageRecord->mAIPackages.empty())
+            return FnvPackagePrePlacement::None;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        bool usedHourOverride = false;
+        const float hour = getFnvPackageHour(world, usedHourOverride);
+        const auto& packageStore = store->get<ESM4::AIPackage>();
+
+        const ESM4::AIPackage* selected = nullptr;
+        const ESM4::AIPackage* unscheduledFallback = nullptr;
+        for (ESM::FormId packageId : packageRecord->mAIPackages)
+        {
+            const ESM4::AIPackage* package = packageStore.search(packageId);
+            if (package == nullptr || !fnvPackageConditionsPass(*package))
+                continue;
+
+            if (fnvPackageCoversHour(*package, hour))
+            {
+                selected = package;
+                break;
+            }
+
+            // Fallout's permanently-active fallback packages deliberately have
+            // no PSDT time window.  The runtime AI selector uses the first
+            // eligible one when no scheduled package applies; scene insertion
+            // must make the identical choice so its furniture marker/entry
+            // data is available before the actor controller starts.  Without
+            // this, Doc Mitchell reaches the chair's origin as a standing
+            // actor and the later furniture package has no placement to own.
+            if (unscheduledFallback == nullptr && !fnvPackageHasExplicitTime(*package))
+                unscheduledFallback = package;
+        }
+
+        if (selected == nullptr)
+            selected = unscheduledFallback;
+
+        if (selected == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Reference* target = resolveFnvPackageReference(*store, selected->mLocation);
+        if (target == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
+        const MWClass::FalloutFurnitureState furnitureState = MWClass::ESM4Npc::getFurnitureState(ptr);
+        const MWClass::FalloutFurniturePlacement furniturePlacement = MWClass::ESM4Npc::getFurniturePlacement(ptr);
+        const bool retainFurnitureClaim = furnitureTarget && MWClass::shouldRetainFalloutFurnitureClaim(furnitureState,
+            furniturePlacement.mValid, furniturePlacement.mFurnitureRef == target->mId);
+        if (!retainFurnitureClaim)
+        {
+            MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::None);
+            MWClass::ESM4Npc::setFurniturePlacement(ptr, {});
+        }
+
+        const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        const bool sameCell = target->mParent == currentCellId;
+        Log(Debug::Verbose) << "FNV/ESM4 diag: package pre-placement " << selected->mEditorId
+                         << " hour=" << hour << " override=" << usedHourOverride
+                         << " targetRef=" << target->mEditorId << " targetParent=" << target->mParent
+                         << " currentCell=" << currentCellId << " sameCell=" << sameCell << " for "
+                         << traits->mEditorId;
+
+        if (retainFurnitureClaim)
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 diag: retained active furniture claim package="
+                                << selected->mEditorId << " targetRef=" << target->mEditorId << " state="
+                                << static_cast<int>(furnitureState) << " for " << traits->mEditorId;
+            return FnvPackagePrePlacement::None;
+        }
+
+        // A scheduled package describes an AI goal, not a license to teleport a
+        // persistent actor into an unloaded interior while its exterior cell is
+        // being inserted.  Keep the authored reference in its current cell and
+        // let the runtime package/pathing code perform an actual transition.
+        // The legacy behavior remains available only to focused compatibility
+        // captures that explicitly request it.
+        if (!sameCell && !envEnabled("OPENMW_FNV_ENABLE_CROSS_CELL_PACKAGE_PREPLACEMENT"))
+        {
+            Log(Debug::Verbose) << "FNV/ESM4: deferred cross-cell package goal " << selected->mEditorId
+                                << " actor=" << traits->mEditorId << " targetCell=" << target->mParent
+                                << " currentCell=" << currentCellId;
+            return FnvPackagePrePlacement::None;
+        }
+
+        ESM::Position position = ptr.getRefData().getPosition();
+        position.pos[0] = target->mPos.pos[0];
+        position.pos[1] = target->mPos.pos[1];
+        position.pos[2] = target->mPos.pos[2];
+        position.rot[0] = 0.f;
+        position.rot[1] = 0.f;
+        position.rot[2] = target->mPos.rot[2];
+
+        const MWClass::FalloutFurniturePlacement resolvedFurniturePlacement = furnitureTarget
+            ? MWClass::makeFalloutFurniturePlacement(*store, *target)
+            : MWClass::FalloutFurniturePlacement{};
+        if (resolvedFurniturePlacement.mValid)
+        {
+            const bool entryMarkerPlacement = envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
+            MWClass::ESM4Npc::setFurniturePlacement(ptr, resolvedFurniturePlacement);
+            MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Approaching);
+
+            position.pos[0] = resolvedFurniturePlacement.mEntryPosition.x();
+            position.pos[1] = resolvedFurniturePlacement.mEntryPosition.y();
+            position.pos[2] = resolvedFurniturePlacement.mEntryPosition.z();
+            position.rot[2] = resolvedFurniturePlacement.mEntryYaw;
+
+            if (sameCell && !entryMarkerPlacement)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: deferred same-cell furniture placement to runtime package "
+                                    << selected->mEditorId << " targetRef=" << target->mEditorId
+                                    << " markerIndex=" << static_cast<unsigned int>(resolvedFurniturePlacement.mMarkerIndex)
+                                    << " enterGroup=" << resolvedFurniturePlacement.mEnterGroup
+                                    << " exitGroup=" << resolvedFurniturePlacement.mExitGroup << " for " << traits->mEditorId;
+                return FnvPackagePrePlacement::None;
+            }
+            Log(Debug::Verbose) << "FNV/ESM4 diag: applied furniture marker package placement "
+                                << selected->mEditorId << " targetRef=" << target->mEditorId
+                                << " markerIndex=" << static_cast<unsigned int>(resolvedFurniturePlacement.mMarkerIndex)
+                                << " positionRef=" << static_cast<int>(resolvedFurniturePlacement.mPositionRef)
+                                << " state=entry finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
+                                << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
+                                << traits->mEditorId;
+        }
+
+        if (!sameCell)
+        {
+            MWWorld::CellStore* targetCell
+                = MWBase::Environment::get().getWorldModel()->findCell(target->mParent, true);
+            if (targetCell == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: package pre-placement target cell not found "
+                                    << target->mParent << " for " << selected->mEditorId << " actor "
+                                    << traits->mEditorId;
+                return FnvPackagePrePlacement::None;
+            }
+
+            ptr.getRefData().setPosition(position);
+            MWWorld::Ptr movedPtr = ptr.getCell()->moveTo(ptr, targetCell);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: applied cross-cell package pre-placement "
+                             << selected->mEditorId << " actor=" << traits->mEditorId
+                             << " targetRef=" << target->mEditorId << " fromCell=" << currentCellId
+                             << " toCell=" << targetCell->getCell()->getId()
+                             << " toName='" << targetCell->getCell()->getNameId()
+                             << "' toDesc='" << targetCell->getCell()->getDescription() << "' pos=("
+                             << position.pos[0] << "," << position.pos[1] << "," << position.pos[2]
+                             << ") rotZ=" << position.rot[2]
+                             << " movedPtrCell=" << movedPtr.getCell()->getCell()->getId();
+            return FnvPackagePrePlacement::MovedToPackageCell;
+        }
+
+        ptr.getRefData().setPosition(position);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: applied same-cell package pre-placement " << selected->mEditorId
+                         << " targetRef=" << target->mEditorId << " pos=(" << position.pos[0] << ","
+                         << position.pos[1] << "," << position.pos[2] << ") rotZ=" << position.rot[2] << " for "
+                         << traits->mEditorId;
+        return FnvPackagePrePlacement::SameCell;
+    }
+
     // Null node meant to distinguish objects that aren't in the scene from paged objects
     // TODO: find a more clever way to make paging exclusion more reliable?
     static osg::ref_ptr<SceneUtil::PositionAttitudeTransform> pagedNode = new SceneUtil::PositionAttitudeTransform;
@@ -116,18 +676,49 @@ namespace
             return;
         }
 
+        const FnvPackagePrePlacement fnvPackagePrePlacement = applyFnvPackagePrePlacement(ptr, world);
+        if (fnvPackagePrePlacement == FnvPackagePrePlacement::MovedToPackageCell)
+            return;
+
         const VFS::Path::Normalized model = getModel(ptr);
         const auto rotation = makeDirectNodeRotation(ptr);
 
+        if (skipWorldViewerDiagnosticObject(ptr, model))
+            return;
+
         ESM::RefNum refnum = ptr.getCellRef().getRefNum();
-        if (!refnum.hasContentFile() || !std::binary_search(pagedRefs.begin(), pagedRefs.end(), refnum))
+        const bool pagedRef = refnum.hasContentFile() && std::binary_search(pagedRefs.begin(), pagedRefs.end(), refnum);
+        const bool forceEsm4ActorRender = pagedRef && isEsm4Actor(ptr) && ptr.getClass().isActor();
+        if (!pagedRef || forceEsm4ActorRender)
+        {
+            if (forceEsm4ActorRender && envEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY"))
+                Log(Debug::Info) << "World viewer actor ledger: phase=paged-ref-actor-promote"
+                                 << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                 << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                 << " type=\"" << ptr.getTypeDescription() << "\"";
             ptr.getClass().insertObjectRendering(ptr, model, rendering);
+        }
         else
             ptr.getRefData().setBaseNode(pagedNode);
         setNodeRotation(ptr, rendering, rotation);
+        if (fnvPackagePrePlacement == FnvPackagePrePlacement::SameCell && ptr.getRefData().getBaseNode())
+        {
+            const osg::Vec3f scenePos = ptr.getRefData().getBaseNode()->getPosition();
+            const ESM::Position& refPos = ptr.getRefData().getPosition();
+            Log(Debug::Verbose) << "FNV/ESM4 diag: finalized package scene placement "
+                             << ptr.getCellRef().getRefId() << " refPos=(" << refPos.pos[0] << ","
+                             << refPos.pos[1] << "," << refPos.pos[2] << ") scenePos=(" << scenePos.x() << ","
+                             << scenePos.y() << "," << scenePos.z() << ") rotZ=" << refPos.rot[2];
+        }
 
-        if (ptr.getClass().useAnim())
+        const bool freezeEsm4Actor = worldViewerFreezeEsm4ActorMechanics() && isEsm4Actor(ptr) && ptr.getClass().isActor();
+        if (ptr.getClass().useAnim() && !freezeEsm4Actor)
             MWBase::Environment::get().getMechanicsManager()->add(ptr);
+        else if (freezeEsm4Actor && envEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY"))
+        {
+            Log(Debug::Info) << "World viewer actor ledger: phase=mechanics-skip ref=\"" << ptr.getCellRef().getRefId()
+                             << "\" type=" << ptr.getType() << " reason=\"proof static ESM4 actor\"";
+        }
 
         if (ptr.getClass().isActor())
             rendering.addWaterRippleEmitter(ptr);
@@ -208,6 +799,19 @@ namespace
             if (!navigator.addAgent(agentBounds))
                 Log(Debug::Warning) << "Agent bounds are not supported by navigator for " << ptr.toString() << ": "
                                     << agentBounds;
+        }
+    }
+
+    void applyEsm4OpenByDefaultDoorAfterNavigation(const MWWorld::Ptr& ptr, MWWorld::World& world)
+    {
+        // ESM4 ONAM means "Open By Default".  This must happen after the second
+        // scene insertion phase: that phase creates the navigator DoorShapes
+        // connection through the doorway.  Opening before it removes the ESM4
+        // collision object, causing the navigator to lose the authored route.
+        if (ptr.getType() == ESM::REC_DOOR4 && ptr.getCellRef().isEsm4OpenByDefault()
+            && !ptr.getRefData().getCustomData())
+        {
+            world.activateDoor(ptr);
         }
     }
 
@@ -543,6 +1147,8 @@ namespace MWWorld
         mLowestPoint = std::numeric_limits<float>::max();
 
         mPreloader->clear();
+        mTeleportDoorPreloadRequestsLogged.clear();
+        mTeleportDoorPreloadCompletionsLogged.clear();
     }
 
     osg::Vec4i Scene::gridCenterToBounds(const osg::Vec2i& centerCell) const
@@ -615,7 +1221,7 @@ namespace MWWorld
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)
     {
         const int halfGridSize
-            = isEsm4Ext(playerCellIndex.mWorldspace) ? Constants::ESM4CellGridRadius : Constants::CellGridRadius;
+            = isEsm4Ext(playerCellIndex.mWorldspace) ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         auto navigatorUpdateGuard = mNavigator.makeUpdateGuard();
         const int playerCellX = playerCellIndex.mX;
         const int playerCellY = playerCellIndex.mY;
@@ -848,7 +1454,7 @@ namespace MWWorld
 
     void Scene::changePlayerCell(CellStore& cell, const ESM::Position& pos, bool adjustPlayerPos)
     {
-        mHalfGridSize = cell.getCell()->isEsm4() ? Constants::ESM4CellGridRadius : Constants::CellGridRadius;
+        mHalfGridSize = cell.getCell()->isEsm4() ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         mCurrentCell = &cell;
 
         mRendering.enableTerrain(cell.isExterior(), cell.getCell()->getWorldSpace());
@@ -1029,13 +1635,30 @@ namespace MWWorld
         CellStore& cell, Loading::Listener* loadingListener, const DetourNavigator::UpdateGuard* navigatorUpdateGuard)
     {
         const bool isInterior = !cell.isExterior();
+        const bool skipDistantEsm4Actors = envEnabled("OPENMW_WORLD_VIEWER_SKIP_DISTANT_ESM4_ACTORS")
+            && cell.isExterior() && cell.getCell()->isEsm4()
+            && osg::Vec2i(cell.getCell()->getGridX(), cell.getCell()->getGridY()) != mCurrentGridCenter;
+        std::size_t skippedDistantEsm4Actors = 0;
         InsertVisitor insertVisitor(cell, loadingListener);
         cell.forEach(insertVisitor);
-        insertVisitor.insert(
-            [&](const MWWorld::Ptr& ptr) { addObject(ptr, mWorld, mPagedRefs, *mPhysics, mRendering); });
         insertVisitor.insert([&](const MWWorld::Ptr& ptr) {
-            addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator, navigatorUpdateGuard);
+            if (skipDistantEsm4Actors && isEsm4Actor(ptr) && ptr.getClass().isActor())
+            {
+                ++skippedDistantEsm4Actors;
+                return;
+            }
+            addObject(ptr, mWorld, mPagedRefs, *mPhysics, mRendering);
         });
+        insertVisitor.insert([&](const MWWorld::Ptr& ptr) {
+            if (skipDistantEsm4Actors && isEsm4Actor(ptr) && ptr.getClass().isActor())
+                return;
+            addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator, navigatorUpdateGuard);
+            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
+        });
+        if (skippedDistantEsm4Actors != 0)
+            Log(Debug::Info) << "World viewer: kept connected ESM4 exterior geometry while deferring "
+                             << skippedDistantEsm4Actors << " actor(s) in distant cell "
+                             << cell.getCell()->getDescription();
     }
 
     void Scene::addObjectToScene(const Ptr& ptr)
@@ -1045,6 +1668,7 @@ namespace MWWorld
         {
             addObject(ptr, mWorld, mPagedRefs, *mPhysics, mRendering);
             addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator);
+            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
             mWorld.scaleObject(ptr, ptr.getCellRef().getScale());
         }
         catch (std::exception& e)
@@ -1165,23 +1789,44 @@ namespace MWWorld
 
     void Scene::preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
     {
-        std::vector<MWWorld::ConstPtr> teleportDoors;
+        struct TeleportDoorCandidate
+        {
+            MWWorld::ConstPtr mDoor;
+            std::string_view mFormat;
+        };
+
+        std::vector<TeleportDoorCandidate> teleportDoors;
         for (const MWWorld::CellStore* cellStore : mActiveCells)
         {
-            typedef MWWorld::CellRefList<ESM::Door>::List DoorList;
-            const DoorList& doors = cellStore->getReadOnlyDoors().mList;
-            for (auto& door : doors)
-            {
-                if (!door.mRef.getTeleport())
-                {
-                    continue;
-                }
-                teleportDoors.emplace_back(&door, cellStore);
-            }
+            const auto appendTeleportDoors = [&](const auto& doors, std::string_view format) {
+                forEachTeleportDoor(doors.mList, [&](const auto& door) {
+                    teleportDoors.push_back({ MWWorld::ConstPtr(&door, cellStore), format });
+                });
+            };
+            appendTeleportDoors(cellStore->getReadOnlyDoors(), "esm3");
+            appendTeleportDoors(cellStore->getReadOnlyEsm4Doors(), "esm4");
         }
 
-        for (const MWWorld::ConstPtr& door : teleportDoors)
+        const bool telemetryEnabled = [] {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_DOOR_PRELOAD_TELEMETRY");
+            return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+        }();
+        const auto preloadStateName = [](CellPreloader::PreloadState state) {
+            switch (state)
+            {
+                case CellPreloader::PreloadState::NotRequested:
+                    return "not-requested";
+                case CellPreloader::PreloadState::Pending:
+                    return "pending";
+                case CellPreloader::PreloadState::Complete:
+                    return "complete";
+            }
+            return "unknown";
+        };
+
+        for (const TeleportDoorCandidate& candidate : teleportDoors)
         {
+            const MWWorld::ConstPtr& door = candidate.mDoor;
             float sqrDistToPlayer = (playerPos - door.getRefData().getPosition().asVec3()).length2();
             sqrDistToPlayer
                 = std::min(sqrDistToPlayer, (predictedPos - door.getRefData().getPosition().asVec3()).length2());
@@ -1190,7 +1835,29 @@ namespace MWWorld
             {
                 try
                 {
-                    preloadCellWithSurroundings(mWorld.getWorldModel().getCell(door.getCellRef().getDestCell()));
+                    MWWorld::CellStore& destination = mWorld.getWorldModel().getCell(door.getCellRef().getDestCell());
+                    const CellPreloader::PreloadState stateBefore = mPreloader->getPreloadState(destination);
+                    preloadCellWithSurroundings(destination);
+                    const CellPreloader::PreloadState stateAfter = mPreloader->getPreloadState(destination);
+                    const ESM::RefNum doorId = door.getCellRef().getRefNum();
+
+                    if (telemetryEnabled && mTeleportDoorPreloadRequestsLogged.insert(doorId).second)
+                    {
+                        Log(Debug::Info) << "Teleport door preload telemetry: phase=requested format="
+                                         << candidate.mFormat << " door=" << ESM::RefId(doorId).toDebugString()
+                                         << " destCell=" << door.getCellRef().getDestCell().toDebugString()
+                                         << " distance=" << std::sqrt(sqrDistToPlayer)
+                                         << " stateBefore=" << preloadStateName(stateBefore)
+                                         << " stateAfter=" << preloadStateName(stateAfter);
+                    }
+                    if (telemetryEnabled && stateAfter == CellPreloader::PreloadState::Complete
+                        && mTeleportDoorPreloadCompletionsLogged.insert(doorId).second)
+                    {
+                        Log(Debug::Info) << "Teleport door preload telemetry: phase=complete format="
+                                         << candidate.mFormat << " door=" << ESM::RefId(doorId).toDebugString()
+                                         << " destCell=" << door.getCellRef().getDestCell().toDebugString()
+                                         << " distance=" << std::sqrt(sqrDistToPlayer);
+                    }
                 }
                 catch (const std::exception& e)
                 {

@@ -25,6 +25,7 @@
 #define OPENMW_COMPONENTS_NIF_RECORD_HPP
 
 #include <string>
+#include <utility>
 
 namespace Nif
 {
@@ -97,6 +98,7 @@ namespace Nif
         RC_BSEffectShaderPropertyFloatController,
         RC_BSExtraData,
         RC_BSEyeCenterExtraData,
+        RC_BSFaceFX,
         RC_BSFrustumFOVController,
         RC_BSFurnitureMarker,
         RC_BSInvMarker,
@@ -149,6 +151,8 @@ namespace Nif
         RC_BSWaterShaderProperty,
         RC_BSWindModifier,
         RC_BSXFlags,
+        RC_BoneModifierExtra,
+        RC_BoneTranslations,
         RC_DistantLODShaderProperty,
         RC_HairShaderProperty,
         RC_hkPackedNiTriStripsData,
@@ -220,6 +224,8 @@ namespace Nif
         RC_NiMorphData,
         RC_NiMultiTargetTransformController,
         RC_NiNode,
+        RC_BSFaceGenNiNode,
+        RC_CsNiNode,
         RC_NiPalette,
         RC_NiParticleBomb,
         RC_NiParticleColorModifier,
@@ -313,6 +319,7 @@ namespace Nif
         RC_NiWireframeProperty,
         RC_NiZBufferProperty,
         RC_RootCollisionNode,
+        RC_SkinAttach,
         RC_SkyShaderProperty,
         RC_TallGrassShaderProperty,
         RC_TileShaderProperty,
@@ -327,7 +334,51 @@ namespace Nif
         std::string mRecordName;
         unsigned int mRecordIndex{ ~0u };
 
+        // The Fallout compatibility loader was authored against the pre-0.51
+        // record member names. Keep real aliases rather than duplicate state:
+        // NIF parsing and the compatibility paths must always see the same
+        // type, name, and index for a record.
+        RecordType& recType{ mRecordType };
+        std::string& recName{ mRecordName };
+        unsigned int& recIndex{ mRecordIndex };
+
         Record() = default;
+
+        Record(const Record& other)
+            : mRecordType(other.mRecordType)
+            , mRecordName(other.mRecordName)
+            , mRecordIndex(other.mRecordIndex)
+            , recType(mRecordType)
+            , recName(mRecordName)
+            , recIndex(mRecordIndex)
+        {
+        }
+
+        Record(Record&& other) noexcept
+            : mRecordType(other.mRecordType)
+            , mRecordName(std::move(other.mRecordName))
+            , mRecordIndex(other.mRecordIndex)
+            , recType(mRecordType)
+            , recName(mRecordName)
+            , recIndex(mRecordIndex)
+        {
+        }
+
+        Record& operator=(const Record& other)
+        {
+            mRecordType = other.mRecordType;
+            mRecordName = other.mRecordName;
+            mRecordIndex = other.mRecordIndex;
+            return *this;
+        }
+
+        Record& operator=(Record&& other) noexcept
+        {
+            mRecordType = other.mRecordType;
+            mRecordName = std::move(other.mRecordName);
+            mRecordIndex = other.mRecordIndex;
+            return *this;
+        }
 
         /// Parses the record from file
         virtual void read(NIFStream* nif) = 0;

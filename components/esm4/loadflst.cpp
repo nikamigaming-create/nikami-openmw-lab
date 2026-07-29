@@ -51,6 +51,8 @@ void ESM4::FormIdList::load(ESM4::Reader& reader)
                 reader.getFormId(mObjects.emplace_back());
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadflst"))
+                    break;
                 throw std::runtime_error("ESM4::FLST::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

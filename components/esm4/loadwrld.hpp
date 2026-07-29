@@ -103,6 +103,7 @@ namespace ESM4
         ESM::FormId mParent; // parent worldspace formid
         std::uint8_t mWorldFlags;
         ESM::FormId mClimate;
+        ESM::FormId mImageSpace;
         ESM::FormId mWater;
         float mLandLevel;
         float mWaterLevel;

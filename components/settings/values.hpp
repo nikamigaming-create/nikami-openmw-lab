@@ -24,6 +24,7 @@
 #include "categories/stereoview.hpp"
 #include "categories/terrain.hpp"
 #include "categories/video.hpp"
+#include "categories/vr.hpp"
 #include "categories/water.hpp"
 #include "categories/windows.hpp"
 #include "settingvalue.hpp"
@@ -63,6 +64,13 @@ namespace Settings
         StereoCategory mStereo{ mIndex };
         StereoViewCategory mStereoView{ mIndex };
         PostProcessingCategory mPostProcessing{ mIndex };
+        // The desktop candidate does not build the legacy XR runtime, but its
+        // inherited defaults.bin still declares the VR and VR Debug settings.
+        // Keep their typed declarations registered so Settings::Manager can
+        // validate the complete defaults file during startup.  This is data
+        // compatibility only; it does not enable any XR code path.
+        VRCategory mVr{ mIndex };
+        VRDebugCategory mVrDebug{ mIndex };
     };
 
     class StaticValues
@@ -217,6 +225,16 @@ namespace Settings
     inline PostProcessingCategory& postProcessing()
     {
         return values().mPostProcessing;
+    }
+
+    inline VRCategory& vr()
+    {
+        return values().mVr;
+    }
+
+    inline VRDebugCategory& vrDebug()
+    {
+        return values().mVrDebug;
     }
 
     template <class T>

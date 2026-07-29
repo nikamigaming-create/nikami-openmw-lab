@@ -67,11 +67,11 @@ namespace ESM4
 
     struct RadioStationData
     {
-        float rangeRadius;
+        float rangeRadius = 0.f;
         // 0 radius, 1 everywhere, 2 worldspace and linked int, 3 linked int, 4 current cell only
-        std::uint32_t broadcastRange;
-        float staticPercentage;
-        ESM::FormId posReference; // only used if broadcastRange == 0
+        std::uint32_t broadcastRange = 0;
+        float staticPercentage = 0.f;
+        ESM::FormId posReference{}; // only used if broadcastRange == 0
     };
 
     struct Reference
@@ -96,6 +96,10 @@ namespace ESM4
         bool mIsMapMarker = false;
         std::uint16_t mMapMarker;
 
+        // ONAM is a zero-sized subrecord on a placed door.  It declares that
+        // the reference starts open, independently of the base DOOR record.
+        bool mOpenByDefault = false;
+
         EnableParent mEsp;
 
         std::int32_t mCount = 1; // only if > 1
@@ -105,8 +109,11 @@ namespace ESM4
         RadioStationData mRadio;
 
         TeleportDest mDoor;
-        bool mIsLocked;
-        std::int8_t mLockLevel;
+        // XLOC is optional. References without it are ordinary unlocked objects.
+        // Leaving these fields indeterminate made unlocked ESM4 doors randomly
+        // return OpenMW's LockedDoor failure action instead of their XTEL action.
+        bool mIsLocked = false;
+        std::int8_t mLockLevel = 0;
         ESM::FormId mKey;
 
         ESM::FormId mTargetRef;

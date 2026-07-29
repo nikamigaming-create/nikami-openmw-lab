@@ -224,8 +224,13 @@ void ESM4::Race::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DNAM"):
             {
-                reader.getFormId(mDefaultHair[0]); // male
-                reader.getFormId(mDefaultHair[1]); // female
+                if (subHdr.dataSize == 8)
+                {
+                    reader.getFormId(mDefaultHair[0]); // male
+                    reader.getFormId(mDefaultHair[1]); // female
+                }
+                else
+                    reader.skipSubRecordData();
 
                 break;
             }
@@ -784,6 +789,8 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadrace"))
+                    break;
                 throw std::runtime_error("ESM4::RACE::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

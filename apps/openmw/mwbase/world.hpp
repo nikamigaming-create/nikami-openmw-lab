@@ -3,12 +3,15 @@
 
 #include "rotationflags.hpp"
 
+#include <array>
 #include <deque>
 #include <set>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include <components/esm/formid.hpp>
+#include <components/esm3/refnum.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -91,6 +94,8 @@ namespace MWWorld
     class LocalScripts;
     class TimeStamp;
     class ESMStore;
+    class ESM4QuestRuntime;
+    class FalloutPlayerRuntimeState;
     class RefData;
     class Cell;
     class DateTimeManager;
@@ -128,6 +133,9 @@ namespace MWBase
         virtual void startNewGame(bool bypass) = 0;
         ///< \param bypass Bypass regular game start.
 
+        virtual std::string_view getStartCell() const = 0;
+        ///< Return the explicit command-line start cell, if one was requested.
+
         virtual void clear() = 0;
 
         virtual size_t countSavedGameRecords() const = 0;
@@ -151,6 +159,20 @@ namespace MWBase
 
         virtual MWWorld::ESMStore& getStore() = 0;
         virtual const MWWorld::ESMStore& getStore() const = 0;
+
+        virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
+        virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
+
+        /// Apply or clear a data-driven ESM4 actor script-package stack. The target is a live actor reference;
+        /// package interpretation stays in the world implementation where content records and rendering are present.
+        virtual bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
+        virtual bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) = 0;
+
+        virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
+
+        /// Apply a complete Fallout SPECIAL allocation atomically to the
+        /// authoritative native Player runtime state.
+        virtual bool setFalloutPlayerSpecial(const std::array<float, 7>& values) = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
@@ -195,6 +217,10 @@ namespace MWBase
         virtual MWWorld::Ptr searchPtr(const ESM::RefId& name, bool activeOnly, bool searchInContainers = true) = 0;
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do non search inactive cells.
+
+        virtual MWWorld::Ptr searchPtrByRefNum(ESM::RefNum refNum) = 0;
+        ///< Return the live reference with the exact placed-reference number.
+        /// This is distinct from searchPtr(), whose RefId denotes a base object.
 
         virtual MWWorld::Ptr findContainer(const MWWorld::ConstPtr& ptr) = 0;
         ///< Return a pointer to a liveCellRef which contains \a ptr.
@@ -577,7 +603,8 @@ namespace MWBase
         virtual DetourNavigator::Navigator* getNavigator() const = 0;
 
         virtual void updateActorPath(const MWWorld::ConstPtr& actor, const std::deque<osg::Vec3f>& path,
-            const DetourNavigator::AgentBounds& agentBounds, const osg::Vec3f& start, const osg::Vec3f& end) const = 0;
+            const DetourNavigator::AgentBounds& agentBounds, const osg::Vec3f& start, const osg::Vec3f& end) const
+            = 0;
 
         virtual void removeActorPath(const MWWorld::ConstPtr& actor) const = 0;
 
@@ -586,7 +613,8 @@ namespace MWBase
         virtual DetourNavigator::AgentBounds getPathfindingAgentBounds(const MWWorld::ConstPtr& actor) const = 0;
 
         virtual bool hasCollisionWithDoor(
-            const MWWorld::ConstPtr& door, const osg::Vec3f& position, const osg::Vec3f& destination) const = 0;
+            const MWWorld::ConstPtr& door, const osg::Vec3f& position, const osg::Vec3f& destination) const
+            = 0;
 
         virtual bool isAreaOccupiedByOtherActor(const MWWorld::ConstPtr& actor, const osg::Vec3f& position) const = 0;
 
@@ -603,6 +631,7 @@ namespace MWBase
         virtual MWWorld::DateTimeManager* getTimeManager() = 0;
 
         virtual void setActorActive(const MWWorld::Ptr& ptr, bool value) = 0;
+
     };
 }
 

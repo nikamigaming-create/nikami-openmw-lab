@@ -24,6 +24,12 @@ local function getPlayerLevel()
 end
 
 local function spawnFish(cell)
+    -- Nikami ESM4 proof runtime: the stock Morrowind fish spawner can dereference
+    -- incompatible Fallout exterior/leveled-creature data and crash before captures.
+    if true then
+        return
+    end
+
     if (cell.worldSpaceId ~= 'sys::default') then
         return
     end

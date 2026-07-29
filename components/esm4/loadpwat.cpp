@@ -52,6 +52,8 @@ void ESM4::PlaceableWater::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadpwat"))
+                    break;
                 throw std::runtime_error("ESM4::PWAT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -3,8 +3,13 @@
 
 #include <osg/Geometry>
 #include <osg/Matrixf>
+#include <osg/NodeVisitor>
 
+#include <array>
+#include <atomic>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace SceneUtil
 {
@@ -60,7 +65,32 @@ namespace SceneUtil
 
         void setRootBone(std::string_view name);
 
+        std::string_view getRootBone() const;
+        std::size_t getBoneCount() const;
+        std::string_view getBoneName(std::size_t index) const;
+        bool getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,
+            std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
+            osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const;
+        bool isFalloutCharacterRig() const;
+        void setFalloutFlagSkinning(bool enabled);
+        void setFalloutCharacterSkinning(bool enabled);
+        void setSourceFrameSkinning(bool enabled);
+        void setInverseSkinToSkeletonMatrix(bool enabled);
+        bool getFalloutFingerVertexWeights(
+            std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
+        bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
+
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
+        osg::Geometry* getRenderGeometry(unsigned int index) const;
+        osg::Geometry* getLastFrameGeometry() const;
+        unsigned int getLastCullTraversalNumber() const
+        {
+            return mLastCullTraversalNumber.load(std::memory_order_acquire);
+        }
+        bool hasResolvedParentSkeleton() const { return mSkeleton != nullptr; }
+        bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
+        void forceNextUpdate();
+        bool refreshFalloutSkinningForCurrentPose();
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
@@ -105,7 +135,35 @@ namespace SceneUtil
         std::vector<Bone*> mNodes;
 
         unsigned int mLastFrameNumber{ 0 };
+        // mLastFrameNumber is also reset by forceNextUpdate() so the double-buffered
+        // geometry is refreshed after an animation/IK change.  Keep actual cull
+        // evidence separate; otherwise a proof gate sampled during the following
+        // update traversal observes zero even though this drawable was rendered.
+        std::atomic_uint mLastCullTraversalNumber{ 0 };
         bool mBoundsFirstFrame{ true };
+        bool mLoggedFalloutRigInit{ false };
+        bool mLoggedFalloutCullTraversal{ false };
+        bool mHaveFalloutMatrixBaseline{ false };
+        bool mLoggedFalloutMatrixChange{ false };
+        bool mLoggedFalloutVertexSkinning{ false };
+        bool mLoggedFalloutInfluenceSummary{ false };
+        bool mLoggedFalloutSkinningModes{ false };
+        bool mLoggedFalloutPoseSanity{ false };
+        bool mLoggedFalloutCullInitRecovery{ false };
+        bool mFalloutDerivedInvBindComputed{ false };
+        bool mLoggedFalloutDerivedInvBind{ false };
+        bool mFalloutFallbackDecided{ false };
+        bool mFalloutUseSourceFallback{ false };
+        bool mFalloutFlagSkinning{ false };
+        bool mFalloutCharacterSkinning{ false };
+        bool mSourceFrameSkinning{ false };
+        bool mInverseSkinToSkeletonMatrix{ false };
+        bool mLoggedFalloutFlagSkinning{ false };
+        bool mLoggedInvalidSkinningData{ false };
+        mutable bool mFalloutCharacterRigComputed{ false };
+        mutable bool mFalloutCharacterRig{ false };
+        std::vector<osg::Matrixf> mFalloutMatrixBaseline;
+        std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 

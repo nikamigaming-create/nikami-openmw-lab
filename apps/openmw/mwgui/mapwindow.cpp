@@ -1,5 +1,7 @@
 #include "mapwindow.hpp"
 
+#include <algorithm>
+
 #include <osg/Texture2D>
 
 #include <MyGUI_Button.h>
@@ -16,7 +18,11 @@
 
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
+#include <components/esm/util.hpp>
+#include <components/debug/debuglog.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
+#include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -38,8 +44,42 @@
 namespace
 {
 
-    constexpr int cellSize = Constants::CellSizeInUnits;
     constexpr float speed = 1.08f; // the zoom speed, it should be greater than 1
+
+    bool isFalloutContentLoaded()
+    {
+        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+        {
+            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                return true;
+        }
+
+        return false;
+    }
+
+    std::string getFalloutWorldMapTexture()
+    {
+        const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        return Misc::ResourceHelpers::correctTexturePath(
+            VFS::Path::Normalized("textures\\interface\\worldmap\\wasteland_nv_1024_no_map.png"), *vfs);
+    }
+
+    const char* getFalloutMapModeLabel(bool global)
+    {
+        return global ? "MOJAVE" : "LOCAL MAP";
+    }
+
+    const char* getFalloutMapToggleLabel(bool global)
+    {
+        return global ? "LOCAL MAP" : "MOJAVE";
+    }
 
     enum LocalMapWidgetDepth
     {
@@ -266,13 +306,15 @@ namespace MWGui
 
         if (mActiveCell->isExterior())
         {
-            ESM::ExteriorCellLocation cellPos = ESM::positionToExteriorCellLocation(worldX, worldY);
+            const ESM::RefId worldspace = mActiveCell->getWorldSpace();
+            const int activeCellSize = ESM::getCellSize(worldspace);
+            ESM::ExteriorCellLocation cellPos = ESM::positionToExteriorCellLocation(worldX, worldY, worldspace);
             cellIndex.x() = cellPos.mX;
             cellIndex.y() = cellPos.mY;
 
-            nX = (worldX - cellSize * cellIndex.x()) / cellSize;
+            nX = (worldX - activeCellSize * cellIndex.x()) / activeCellSize;
             // Image space is -Y up, cells are Y up
-            nY = 1 - (worldY - cellSize * cellIndex.y()) / cellSize;
+            nY = 1 - (worldY - activeCellSize * cellIndex.y()) / activeCellSize;
         }
         else
             mLocalMapRender->worldToInteriorMapPosition({ worldX, worldY }, nX, nY, cellIndex.x(), cellIndex.y());
@@ -515,6 +557,14 @@ namespace MWGui
     void LocalMapBase::setPlayerPos(int cellX, int cellY, const float nx, const float ny)
     {
         MyGUI::IntPoint pos = getPosition(cellX, cellY, nx, ny) - MyGUI::IntPoint{ 16, 16 };
+        static bool loggedFalloutLocalTracking = false;
+        if (!loggedFalloutLocalTracking && isFalloutContentLoaded())
+        {
+            loggedFalloutLocalTracking = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: local map tracks player cell=(" << cellX << "," << cellY
+                             << ") norm=(" << nx << "," << ny << ") arrow=(" << pos.left << "," << pos.top
+                             << ")";
+        }
 
         if (pos != mCompass->getPosition())
         {
@@ -522,7 +572,8 @@ namespace MWGui
 
             mCompass->setPosition(pos);
         }
-        osg::Vec2f curPos((cellX + nx) * cellSize, (cellY + 1 - ny) * cellSize);
+        const int activeCellSize = mActiveCell ? ESM::getCellSize(mActiveCell->getWorldSpace()) : Constants::CellSizeInUnits;
+        osg::Vec2f curPos((cellX + nx) * activeCellSize, (cellY + 1 - ny) * activeCellSize);
         if ((curPos - mCurPos).length2() > 0.001)
         {
             mCurPos = curPos;
@@ -621,20 +672,55 @@ namespace MWGui
             if (!entry.mMapTexture)
             {
                 if (mActiveCell->isExterior())
+                {
+                    const ESM::RefId worldspace = mActiveCell->getWorldSpace();
                     requestMapRender(&MWBase::Environment::get().getWorldModel()->getExterior(
-                        ESM::ExteriorCellLocation(entry.mCellX, entry.mCellY, ESM::Cell::sDefaultWorldspaceId)));
+                        ESM::ExteriorCellLocation(entry.mCellX, entry.mCellY, worldspace)));
+                }
 
                 osg::ref_ptr<osg::Texture2D> texture = mLocalMapRender->getMapTexture(entry.mCellX, entry.mCellY);
                 if (texture)
                 {
                     entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(texture);
                     entry.mMapWidget->setRenderItemTexture(entry.mMapTexture.get());
-                    // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
+                    entry.mMapWidget->setColour(MyGUI::Colour::White);
                     entry.mMapWidget->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
                     needRedraw = true;
+                    if (isFalloutContentLoaded())
+                    {
+                        static int loggedHits = 0;
+                        if (loggedHits < 12)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 proof: local map tile texture ready cell=("
+                                             << entry.mCellX << "," << entry.mCellY << ") widget="
+                                             << entry.mMapWidget->getCoord().left << ","
+                                             << entry.mMapWidget->getCoord().top << ","
+                                             << entry.mMapWidget->getCoord().width << ","
+                                             << entry.mMapWidget->getCoord().height;
+                            ++loggedHits;
+                        }
+                    }
                 }
                 else
-                    entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(std::string(), nullptr);
+                {
+                    if (isFalloutContentLoaded())
+                    {
+                        entry.mMapWidget->setImageTexture("black");
+                        entry.mMapWidget->setColour(MyGUI::Colour(0.04f, 0.22f, 0.08f, 0.85f));
+                        needRedraw = true;
+                        static int loggedMisses = 0;
+                        if (loggedMisses < 12)
+                        {
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: local map tile texture pending cell=("
+                                             << entry.mCellX << "," << entry.mCellY << ") visible="
+                                             << entry.mMapWidget->getVisible() << " localVisible="
+                                             << mLocalMap->getVisible();
+                            ++loggedMisses;
+                        }
+                    }
+                    if (!isFalloutContentLoaded())
+                        entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(std::string(), nullptr);
+                }
             }
             if (!entry.mFogTexture && mFogOfWarToggled && mFogOfWarEnabled)
             {
@@ -648,7 +734,10 @@ namespace MWGui
                 }
                 else
                 {
-                    entry.mFogWidget->setImageTexture("black");
+                    if (isFalloutContentLoaded())
+                        entry.mFogWidget->setVisible(false);
+                    else
+                        entry.mFogWidget->setImageTexture("black");
                     entry.mFogTexture = std::make_unique<MyGUIPlatform::OSGTexture>(std::string(), nullptr);
                 }
                 needRedraw = true;
@@ -833,9 +922,34 @@ namespace MWGui
         getWidget(mButton, "WorldButton");
         mButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MapWindow::onWorldButtonClicked);
 
+        bool falloutContent = isFalloutContentLoaded();
+        if (falloutContent)
+            Settings::map().mGlobal.set(true);
         const bool global = Settings::map().mGlobal;
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        if (falloutContent)
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map toggle label applied " << getFalloutMapModeLabel(global)
+                             << " button=" << getFalloutMapToggleLabel(global);
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+            mGlobalMapTexture->loadFromFile(mapTexture);
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture;
+        }
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
 
         getWidget(mEventBoxGlobal, "EventBoxGlobal");
         mEventBoxGlobal->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
@@ -924,8 +1038,9 @@ namespace MWGui
         }
         else
         {
-            worldPos.x() = (x + nX) * cellSize;
-            worldPos.y() = (y + (1.0f - nY)) * cellSize;
+            const int activeCellSize = ESM::getCellSize(mActiveCell->getWorldSpace());
+            worldPos.x() = (x + nX) * activeCellSize;
+            worldPos.y() = (y + (1.0f - nY)) * activeCellSize;
         }
 
         mEditingMarker.mWorldX = worldPos.x();
@@ -1018,6 +1133,17 @@ namespace MWGui
 
     void MapWindow::updateGlobalMap()
     {
+        if (isFalloutContentLoaded())
+        {
+            mGlobalMapZoom = 1.f;
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(496, 496));
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         resizeGlobalMap();
 
         float x = mCurPos.x(), y = mCurPos.y();
@@ -1211,6 +1337,30 @@ namespace MWGui
 
     void MapWindow::worldPosToGlobalMapImageSpace(float x, float y, float& imageX, float& imageY) const
     {
+        if (isFalloutContentLoaded())
+        {
+            constexpr float minCellX = -20.f;
+            constexpr float maxCellX = 16.f;
+            constexpr float minCellY = -16.f;
+            constexpr float maxCellY = 16.f;
+            constexpr float mapSize = 1024.f;
+
+            const float cellX = x / static_cast<float>(Constants::CellSizeInUnits);
+            const float cellY = y / static_cast<float>(Constants::CellSizeInUnits);
+            imageX = std::clamp((cellX - minCellX) / (maxCellX - minCellX), 0.f, 1.f) * mapSize * mGlobalMapZoom;
+            imageY = std::clamp((maxCellY - cellY) / (maxCellY - minCellY), 0.f, 1.f) * mapSize * mGlobalMapZoom;
+
+            static int loggedFalloutMapProjection = 0;
+            if (loggedFalloutMapProjection < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map projection world=(" << x << "," << y
+                                 << ") cell=(" << cellX << "," << cellY << ") image=(" << imageX << ","
+                                 << imageY << ")";
+                ++loggedFalloutMapProjection;
+            }
+            return;
+        }
+
         mGlobalMapRender->worldPosToImageSpace(x, y, imageX, imageY);
         imageX *= mGlobalMapZoom;
         imageY *= mGlobalMapZoom;
@@ -1259,7 +1409,16 @@ namespace MWGui
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        bool falloutContent = isFalloutContentLoaded();
+
+        if (falloutContent)
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map toggle label applied " << getFalloutMapModeLabel(global)
+                             << " button=" << getFalloutMapToggleLabel(global);
+        }
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
         mControllerButtons.mX = global ? "#{Interface:Local}" : "#{Interface:World}";
         MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
     }
@@ -1307,6 +1466,12 @@ namespace MWGui
 
     void MapWindow::centerView()
     {
+        if (isFalloutContentLoaded() && Settings::map().mGlobal)
+        {
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         LocalMapBase::centerView();
         // set the view offset so that player is in the center
         MyGUI::IntSize viewsize = mGlobalMap->getSize();
@@ -1321,6 +1486,14 @@ namespace MWGui
         float x, y;
         worldPosToGlobalMapImageSpace(worldX, worldY, x, y);
         mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(static_cast<int>(x - 16), static_cast<int>(y - 16)));
+        static bool loggedFalloutGlobalTracking = false;
+        if (!loggedFalloutGlobalTracking && isFalloutContentLoaded())
+        {
+            loggedFalloutGlobalTracking = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: global map tracks player world=(" << worldX << "," << worldY
+                             << ") image=(" << x << "," << y << ") arrow=(" << mPlayerArrowGlobal->getLeft()
+                             << "," << mPlayerArrowGlobal->getTop() << ")";
+        }
     }
 
     void MapWindow::setGlobalMapPlayerDir(const float x, const float y)
@@ -1334,6 +1507,31 @@ namespace MWGui
 
     void MapWindow::ensureGlobalMapLoaded()
     {
+        if (isFalloutContentLoaded())
+        {
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            if (!mGlobalMapTexture)
+            {
+                mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                    mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+                mGlobalMapTexture->loadFromFile(mapTexture);
+            }
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            mGlobalMap->getParent()->_updateChilds();
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture refreshed " << mapTexture;
+            return;
+        }
+
         if (!mGlobalMapTexture.get())
         {
             // The generated unexplored map and explored map RTT images are Y-up so the UVs are inverted

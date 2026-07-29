@@ -52,6 +52,7 @@ namespace MWGui
         void onFrame(float dt) override;
 
         void setCellName(const std::string& cellName);
+        void setPlayerDir(float x, float y);
 
         bool getWorldMouseOver() { return mWorldMouseOver; }
 
@@ -64,21 +65,22 @@ namespace MWGui
         void dropDraggedItem(float mouseX, float mouseY);
 
     private:
-        MyGUI::ProgressBar *mHealth = nullptr, *mMagicka = nullptr, *mStamina = nullptr, *mEnemyHealth = nullptr,
-                           *mDrowning = nullptr;
-        MyGUI::Widget* mHealthFrame = nullptr;
-        MyGUI::Widget *mWeapBox = nullptr, *mSpellBox = nullptr, *mSneakBox = nullptr;
-        ItemWidget* mWeapImage = nullptr;
-        SpellWidget* mSpellImage = nullptr;
-        MyGUI::ProgressBar *mWeapStatus = nullptr, *mSpellStatus = nullptr;
-        MyGUI::Widget *mEffectBox = nullptr, *mMinimapBox = nullptr;
-        MyGUI::Button* mMinimapButton = nullptr;
-        MyGUI::ScrollView* mMinimap = nullptr;
-        MyGUI::ImageBox* mCrosshair = nullptr;
-        MyGUI::TextBox* mCellNameBox = nullptr;
-        MyGUI::TextBox* mWeaponSpellBox = nullptr;
-        MyGUI::Widget *mDrowningBar = nullptr, *mDrowningFrame = nullptr, *mDrowningFlash = nullptr;
         DragAndDrop* mDragAndDrop;
+        MyGUI::ProgressBar *mHealth, *mMagicka, *mStamina, *mEnemyHealth, *mDrowning;
+        MyGUI::Widget* mHealthFrame;
+        MyGUI::Widget *mWeapBox, *mSpellBox, *mSneakBox;
+        ItemWidget* mWeapImage;
+        SpellWidget* mSpellImage;
+        MyGUI::ProgressBar *mWeapStatus, *mSpellStatus;
+        MyGUI::Widget *mEffectBox, *mMinimapBox;
+        MyGUI::Button* mMinimapButton;
+        MyGUI::ScrollView* mMinimap;
+        MyGUI::ImageBox* mCrosshair;
+        MyGUI::TextBox* mCellNameBox;
+        MyGUI::TextBox* mWeaponSpellBox;
+        MyGUI::TextBox* mCompassHeading;
+        MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
+
         std::string mCellName;
         std::string mWeaponName;
         std::string mSpellName;

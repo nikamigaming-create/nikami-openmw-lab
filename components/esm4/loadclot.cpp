@@ -93,6 +93,8 @@ void ESM4::Clothing::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadclot"))
+                    break;
                 throw std::runtime_error("ESM4::CLOT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

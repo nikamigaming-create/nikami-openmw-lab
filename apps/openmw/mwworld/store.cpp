@@ -9,6 +9,7 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/records.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/rng.hpp>
@@ -78,6 +79,12 @@ namespace MWWorld
         record.load(esm, isDeleted);
         auto idx = record.mIndex;
         mStatic.insert_or_assign(idx, std::move(record));
+    }
+    template <typename T>
+    T* IndexedStore<T>::insertStatic(const T& item)
+    {
+        auto [it, inserted] = mStatic.insert_or_assign(item.mIndex, item);
+        return &it->second;
     }
     template <typename T>
     size_t IndexedStore<T>::getSize() const
@@ -1092,6 +1099,15 @@ namespace MWWorld
         return true;
     }
 
+    ESM::Dialogue* Store<ESM::Dialogue>::insertStatic(const ESM::Dialogue& dialogue)
+    {
+        auto [it, inserted] = mStatic.insert_or_assign(dialogue.mId, dialogue);
+        if (inserted)
+            mShared.push_back(&it->second);
+        mKeywordSearchModFlag = true;
+        return &it->second;
+    }
+
     void Store<ESM::Dialogue>::listIdentifier(std::vector<ESM::RefId>& list) const
     {
         list.reserve(list.size() + getSize());
@@ -1241,21 +1257,35 @@ template class MWWorld::TypedDynamicStore<ESM4::ActorCharacter, ESM::FormId>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorCreature, ESM::FormId>;
 
 template class MWWorld::TypedDynamicStore<ESM4::Activator>;
+template class MWWorld::TypedDynamicStore<ESM4::AnimObject>;
+template class MWWorld::TypedDynamicStore<ESM4::AIPackage>;
 template class MWWorld::TypedDynamicStore<ESM4::Ammunition>;
 template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;
 template class MWWorld::TypedDynamicStore<ESM4::Book>;
+template class MWWorld::TypedDynamicStore<ESM4::BodyPartData>;
 template class MWWorld::TypedDynamicStore<ESM4::Cell>;
+template class MWWorld::TypedDynamicStore<ESM4::Class>;
+template class MWWorld::TypedDynamicStore<ESM4::Climate>;
+template class MWWorld::TypedDynamicStore<ESM4::Colour>;
 template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;
+template class MWWorld::TypedDynamicStore<ESM4::Dialogue>;
+template class MWWorld::TypedDynamicStore<ESM4::DialogInfo>;
 template class MWWorld::TypedDynamicStore<ESM4::Door>;
+template class MWWorld::TypedDynamicStore<ESM4::Eyes>;
 template class MWWorld::TypedDynamicStore<ESM4::Flora>;
+template class MWWorld::TypedDynamicStore<ESM4::FormIdList>;
 template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
+template class MWWorld::TypedDynamicStore<ESM4::GlobalVariable>;
 template class MWWorld::TypedDynamicStore<ESM4::Hair>;
 template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleAnimation>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleMarker>;
 template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
 template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
+template class MWWorld::TypedDynamicStore<ESM4::Key>;
 template class MWWorld::TypedDynamicStore<ESM4::Land>;
 template class MWWorld::TypedDynamicStore<ESM4::LandTexture>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledCreature>;
@@ -1263,17 +1293,32 @@ template class MWWorld::TypedDynamicStore<ESM4::LevelledItem>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledNpc>;
 template class MWWorld::TypedDynamicStore<ESM4::Light>;
 template class MWWorld::TypedDynamicStore<ESM4::MiscItem>;
+template class MWWorld::TypedDynamicStore<ESM4::Message>;
 template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;
+template class MWWorld::TypedDynamicStore<ESM4::Note>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
 template class MWWorld::TypedDynamicStore<ESM4::Potion>;
+template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
+template class MWWorld::TypedDynamicStore<ESM4::ActorValueInformation>;
+template class MWWorld::TypedDynamicStore<ESM4::Faction>;
+template class MWWorld::TypedDynamicStore<ESM4::Perk>;
+template class MWWorld::TypedDynamicStore<ESM4::RecipeCategory>;
+template class MWWorld::TypedDynamicStore<ESM4::Recipe>;
+template class MWWorld::TypedDynamicStore<ESM4::Quest>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
+template class MWWorld::TypedDynamicStore<ESM4::Region>;
+template class MWWorld::TypedDynamicStore<ESM4::Script>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
 template class MWWorld::TypedDynamicStore<ESM4::Static>;
 template class MWWorld::TypedDynamicStore<ESM4::StaticCollection>;
 template class MWWorld::TypedDynamicStore<ESM4::Terminal>;
 template class MWWorld::TypedDynamicStore<ESM4::TextureSet>;
+template class MWWorld::TypedDynamicStore<ESM4::TalkingActivator>;
 template class MWWorld::TypedDynamicStore<ESM4::Tree>;
 template class MWWorld::TypedDynamicStore<ESM4::Weapon>;
+template class MWWorld::TypedDynamicStore<ESM4::Weather>;
+template class MWWorld::TypedDynamicStore<ESM4::ImageSpace>;
+template class MWWorld::TypedDynamicStore<ESM4::ImageSpaceModifier>;
 template class MWWorld::TypedDynamicStore<ESM4::World>;

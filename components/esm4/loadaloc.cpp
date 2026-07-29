@@ -117,6 +117,8 @@ void ESM4::MediaLocationController::load(ESM4::Reader& reader)
                 break;
             }
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadaloc"))
+                    break;
                 throw std::runtime_error("ESM4::ALOC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

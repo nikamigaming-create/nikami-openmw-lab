@@ -99,6 +99,7 @@ namespace MWWorld
         iterator findIter(int index) const { return mStatic.find(index); }
 
         void load(ESM::ESMReader& esm);
+        T* insertStatic(const T& item);
 
         size_t getSize() const;
         void setUp();
@@ -523,6 +524,7 @@ namespace MWWorld
         size_t getSize() const override;
 
         bool eraseStatic(const ESM::RefId& id) override;
+        ESM::Dialogue* insertStatic(const ESM::Dialogue& dialogue);
 
         RecordId load(ESM::ESMReader& esm) override;
 

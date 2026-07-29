@@ -19,21 +19,38 @@
 
 #include "character.hpp"
 
+#include <algorithm>
 #include <array>
-#include <unordered_set>
+#include <cstdlib>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <components/esm/records.hpp>
+#include <components/esm/defs.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadweap.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/conversion.hpp>
+#include <components/resource/resourcesystem.hpp>
 
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/fallouthitreaction.hpp"
+#include "../mwrender/falloutweaponanimation.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
@@ -42,15 +59,23 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvfurniturelifecycle.hpp"
+
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
 #include "../mwworld/spellcaststate.hpp"
 
+#include "../mwphysics/collisiontype.hpp"
+#include "../mwphysics/raycasting.hpp"
+
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
 #include "creaturestats.hpp"
+#include "damagesourcetype.hpp"
+#include "falloutcombat.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
 #include "security.hpp"
@@ -59,6 +84,84 @@
 
 namespace
 {
+    bool isFalloutActor(const MWWorld::Ptr& ptr)
+    {
+        return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
+    }
+
+    MWClass::FalloutFurnitureState getFalloutFurnitureState(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() == ESM::REC_NPC_4)
+            return MWClass::ESM4Npc::getFurnitureState(ptr);
+
+        MWBase::World* const world = MWBase::Environment::tryGetWorld();
+        if (world != nullptr && ptr == world->getPlayerPtr() && world->getPlayer().hasFalloutFurniture())
+            return MWClass::FalloutFurnitureState::Seated;
+
+        return MWClass::FalloutFurnitureState::None;
+    }
+
+    bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+        static_assert(MWRender::FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
+        const std::vector<const ESM4::Armor*>& armor = MWClass::ESM4Npc::getEquippedArmor(ptr);
+        return std::any_of(armor.begin(), armor.end(), [](const ESM4::Armor* item) {
+            return item != nullptr && MWRender::hasFonvPowerArmorGeneralFlag(item->mGeneralFlags);
+        });
+    }
+
+    std::optional<int> getFalloutNpcActiveWeaponType(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return std::nullopt;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
+            return std::nullopt;
+
+        const MWMechanics::DrawState drawState = ptr.getClass().getCreatureStats(ptr).getDrawState();
+        if (drawState == MWMechanics::DrawState::Spell)
+            return ESM::Weapon::Spell;
+        if (drawState != MWMechanics::DrawState::Weapon)
+            return ESM::Weapon::None;
+
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
+        if (weapon == nullptr)
+            return MWMechanics::getFalloutWeaponType(0).value();
+        return MWMechanics::getFalloutWeaponType(weapon->mData.animationType).value_or(ESM::Weapon::None);
+    }
+
+    std::string_view getFalloutFlyingMovementFallback(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
+    {
+        if (ptr.getType() != ESM4::Creature::sRecordId || !ptr.getClass().canFly(ptr)
+            || ptr.getClass().isBipedal(ptr))
+            return {};
+
+        static constexpr std::array<std::string_view, 12> groups = {
+            "flyforward",
+            "flightforward",
+            "flight",
+            "flapforward",
+            "flap",
+            "hoverforward",
+            "hover",
+            "forward",
+            "walkforward",
+            "idle",
+            "idle2",
+            "idle3",
+        };
+
+        for (std::string_view group : groups)
+        {
+            if (animation.hasAnimation(group))
+                return group;
+        }
+
+        return {};
+    }
 
     std::string_view getBestAttack(const ESM::Weapon* weapon)
     {
@@ -403,10 +506,22 @@ namespace MWMechanics
             resetCurrentIdleState();
         }
 
-        if (!mPtr.getClass().isNpc() && mUpperBodyState > UpperBodyState::WeaponEquipped)
+        if (mUpperBodyState > UpperBodyState::WeaponEquipped)
         {
-            recovery = false;
-            stats.setHitRecovery(false);
+            bool isFonvCreature = false;
+            if (mPtr.getType() == ESM4::Creature::sRecordId)
+            {
+                const auto* live = mPtr.get<ESM4::Creature>();
+                isFonvCreature = live != nullptr && live->mBase != nullptr && live->mBase->mIsFONV;
+            }
+            const bool hasBoundHitReaction = mAnimation != nullptr
+                && mAnimation->hasAnimation(MWRender::FonvCreatureHitReactionSemanticGroup);
+            if (MWRender::shouldClearHitRecoveryDuringActiveAction(
+                    charClass.isNpc(), isFonvCreature, hasBoundHitReaction))
+            {
+                recovery = false;
+                stats.setHitRecovery(false);
+            }
         }
 
         if (mHitState != CharState_None)
@@ -444,6 +559,11 @@ namespace MWMechanics
         }
         else if (recovery)
         {
+            if (!mAnimation->prepareFalloutHitReaction())
+            {
+                stats.setHitRecovery(false);
+                return;
+            }
             mHitState = isSwimming ? CharState_SwimHit : CharState_Hit;
             priority = Priority_Hit;
         }
@@ -572,8 +692,11 @@ namespace MWMechanics
         }
     }
 
-    std::string_view CharacterController::getWeaponAnimation(int weaponType) const
+    std::string_view CharacterController::getWeaponAnimation(int weaponType)
     {
+        if (isFalloutWeaponType(weaponType))
+            return getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+
         std::string_view weaponGroup = getWeaponType(weaponType)->mLongGroup;
         if (isRealWeapon(weaponType) && !mAnimation->hasAnimation(weaponGroup))
         {
@@ -594,6 +717,112 @@ namespace MWMechanics
         return weaponGroup;
     }
 
+    std::string_view CharacterController::getFalloutWeaponActionGroup(
+        int weaponType, MWRender::FonvWeaponAction action)
+    {
+        const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+        if (!animationType)
+        {
+            Log(Debug::Error) << "FNV mechanics rejected non-Fallout weapon type " << weaponType
+                              << " for semantic action " << static_cast<unsigned int>(action);
+            return {};
+        }
+
+        std::uint8_t reloadAnimation = 0;
+        if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+            reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
+        else if (mPtr.getType() == ESM::REC_NPC_4)
+        {
+            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+                reloadAnimation = weapon->mData.reloadAnim;
+        }
+        const std::optional<MWRender::FonvWeaponActionSource> source
+            = MWRender::getFonvWeaponActionSource(*animationType, reloadAnimation, action);
+        if (!source)
+        {
+            Log(Debug::Error) << "FNV mechanics has no exact DNAM action mapping: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action);
+            return {};
+        }
+        if (!mAnimation->prepareFalloutWeaponAnimation(*animationType, reloadAnimation, action))
+            return {};
+        if (!mAnimation->hasAnimation(source->mSemanticGroup))
+        {
+            Log(Debug::Error) << "FNV mechanics required action group is not loaded: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                              << " group=" << source->mSemanticGroup << " path=" << source->mPath;
+            return {};
+        }
+        const std::string selectedSource = mAnimation->getAnimationSourceName(source->mSemanticGroup);
+        const bool powerArmor = usesFonvPowerArmorAnimationFamily(mPtr);
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        const MWRender::FonvAnimationFamilyResolution resolution = MWRender::resolveFonvAnimationFamily(
+            { source->mPath }, powerArmor, [vfs](std::string_view path) {
+                return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
+            });
+        if (!MWRender::matchesFonvWeaponActionSource(
+                *source, source->mSemanticGroup, selectedSource, resolution.mPath))
+        {
+            Log(Debug::Error) << "FNV mechanics rejected stale or foreign action source: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                               << " group=" << source->mSemanticGroup << " expectedPath=" << source->mPath
+                               << " selectedPath=" << selectedSource << " resolvedPath=" << resolution.mPath
+                               << " selection=" << MWRender::getFonvAnimationFamilySelectionName(resolution.mSelection)
+                               << " powerArmor=" << powerArmor;
+            return {};
+        }
+        return source->mSemanticGroup;
+    }
+
+    bool CharacterController::playFalloutWeaponAction(
+        int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon)
+    {
+        const std::string_view group = getFalloutWeaponActionGroup(weaponType, action);
+        if (group.empty())
+            return false;
+
+        if (!mCurrentWeapon.empty() && mCurrentWeapon != group)
+            mAnimation->disable(mCurrentWeapon);
+        mCurrentWeapon = group;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        mAnimation->setWeaponGroup(mCurrentWeapon, relativeDuration);
+        playBlendedAnimation(
+            mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start", "stop", 0.f, 0);
+        const bool playing = mAnimation->isPlaying(mCurrentWeapon);
+        const char* telemetry = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        if (telemetry != nullptr && std::string_view(telemetry) != "0")
+        {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+            Log(playing ? Debug::Info : Debug::Error)
+                << "FNV mechanics exact weapon action: actor=" << mPtr.toString()
+                << " animationType="
+                << (animationType ? std::to_string(static_cast<unsigned int>(*animationType)) : "invalid")
+                << " action=" << static_cast<unsigned int>(action) << " group=" << mCurrentWeapon
+                << " exact=1 status=" << (playing ? "pass" : "fail");
+        }
+        return playing;
+    }
+
+    bool CharacterController::restoreFalloutPrimaryWeaponGroup(int weaponType)
+    {
+        const std::string_view primary
+            = getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+        if (primary.empty())
+        {
+            mCurrentWeapon.clear();
+            mAnimation->setWeaponGroup({}, false);
+            return false;
+        }
+
+        mCurrentWeapon = primary;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        mAnimation->setWeaponGroup(mCurrentWeapon, relativeDuration);
+        return true;
+    }
+
     std::string_view CharacterController::getWeaponShortGroup(int weaponType) const
     {
         if (weaponType == ESM::Weapon::HandToHand && !mPtr.getClass().isBipedal(mPtr))
@@ -604,6 +833,9 @@ namespace MWMechanics
     std::string CharacterController::fallbackShortWeaponGroup(
         const std::string& baseGroupName, MWRender::Animation::BlendMask* blendMask) const
     {
+        if (isFalloutWeaponType(mWeaponType))
+            return baseGroupName;
+
         if (!isRealWeapon(mWeaponType))
         {
             if (blendMask != nullptr)
@@ -702,12 +934,32 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
+                if (std::string_view flyingMovement = getFalloutFlyingMovementFallback(mPtr, *mAnimation);
+                    !flyingMovement.empty())
+                {
+                    if (isFalloutActor(mPtr))
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: using '" << flyingMovement
+                                         << "' as flying movement fallback for " << mPtr.getCellRef().getRefId()
+                                         << " requested='" << movementAnimName << "'";
+                    movementAnimName = std::string(flyingMovement);
+                }
+            }
+
+            if (!mAnimation->hasAnimation(movementAnimName))
+            {
+                if (isFalloutActor(mPtr) && mLastMissingMovementAnimation != movementAnimName)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 diag: movement animation missing for "
+                                        << mPtr.getCellRef().getRefId() << " group '" << movementAnimName << "'";
+                    mLastMissingMovementAnimation = movementAnimName;
+                }
                 if (!mCurrentMovement.empty())
                     resetCurrentIdleState();
                 resetCurrentMovementState();
                 return;
             }
         }
+        mLastMissingMovementAnimation.clear();
 
         // If we're playing the same animation, start it from the point it ended
         float startpoint = 0.f;
@@ -762,6 +1014,16 @@ namespace MWMechanics
 
     void CharacterController::refreshIdleAnims(CharacterState idle, bool force)
     {
+        if (isFalloutActor(mPtr) && std::getenv("OPENMW_FNV_BIND_POSE_PROOF") != nullptr)
+        {
+            if (!mCurrentIdle.empty())
+                clearStateAnimation(mCurrentIdle);
+            resetCurrentIdleState();
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
+                             << mPtr.getCellRef().getRefId();
+            return;
+        }
+
         // FIXME: if one of the below states is close to their last animation frame (i.e. will be disabled in the coming
         // update), the idle animation should be displayed
         if (((mUpperBodyState != UpperBodyState::None && mUpperBodyState != UpperBodyState::WeaponEquipped)
@@ -772,7 +1034,11 @@ namespace MWMechanics
             return;
         }
 
-        if (!force && idle == mIdleState && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
+        const MWClass::FalloutFurnitureState falloutFurnitureState = getFalloutFurnitureState(mPtr);
+        const bool falloutFurnitureIdleRefresh
+            = MWClass::needsFalloutFurnitureIdleRefresh(falloutFurnitureState, mCurrentIdle);
+        if (!force && !falloutFurnitureIdleRefresh && idle == mIdleState
+            && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
             return;
 
         mIdleState = idle;
@@ -786,6 +1052,8 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
+        const bool falloutFurnitureSeated = falloutFurnitureState == MWClass::FalloutFurnitureState::Seated;
+        const bool falloutFurnitureActive = falloutFurnitureState != MWClass::FalloutFurnitureState::None;
 
         // Only play "idleswim" or "idlesneak" if they exist. Otherwise, fallback to
         // "idle"+weapon or "idle".
@@ -796,7 +1064,20 @@ namespace MWMechanics
             idleGroup = idleStateToAnimGroup(CharState_Idle);
         }
 
-        if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
+        if (falloutFurnitureSeated && mAnimation->hasAnimation("chairsit"))
+        {
+            fallback = false;
+            priority = getIdlePriority(CharState_Idle);
+            idleGroup = "chairsit";
+            numLoops = std::numeric_limits<uint32_t>::max();
+        }
+        else if (falloutFurnitureSeated && mLastMissingIdleAnimation != "chairsit")
+        {
+            Log(Debug::Warning) << "FNV/ESM4 furniture animation missing: actor="
+                                << mPtr.getCellRef().getRefId() << " group=chairsit";
+            mLastMissingIdleAnimation = "chairsit";
+        }
+        else if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
         {
             std::string_view weapShortGroup = getWeaponShortGroup(mWeaponType);
             if (!weapShortGroup.empty())
@@ -814,11 +1095,37 @@ namespace MWMechanics
             }
         }
 
+        if (isFalloutActor(mPtr))
+        {
+            if (const char* forcedIdleGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
+            {
+                std::string forced = Misc::StringUtils::lowerCase(forcedIdleGroup);
+                if (forced == "idle" || forced == "chairsit" || forced == "chairsitenter"
+                    || forced == "sitchairlisten" || forced == "sitchairtalk" || forced == "sitchaireat")
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
+                                     << mPtr.getCellRef().getRefId();
+                    idleGroup = std::move(forced);
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: ignoring invalid OPENMW_FNV_FORCE_IDLE_GROUP='"
+                                        << forcedIdleGroup << "'";
+            }
+        }
+
         if (!mAnimation->hasAnimation(idleGroup))
         {
+            if (isFalloutActor(mPtr) && mLastMissingIdleAnimation != idleGroup)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: idle animation missing for " << mPtr.getCellRef().getRefId()
+                                    << " group '" << idleGroup << "'";
+                mLastMissingIdleAnimation = idleGroup;
+            }
             resetCurrentIdleState();
             return;
         }
+        if (!falloutFurnitureSeated || mAnimation->hasAnimation("chairsit"))
+            mLastMissingIdleAnimation.clear();
 
         float startPoint = 0.f;
         // There is no need to restart anim if the new and old anims are the same.
@@ -828,8 +1135,129 @@ namespace MWMechanics
 
         clearStateAnimation(mCurrentIdle);
         mCurrentIdle = std::move(idleGroup);
-        playBlendedAnimation(mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint,
-            static_cast<uint32_t>(numLoops), true);
+        if (isFalloutActor(mPtr))
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController playing idle for "
+                             << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
+        playBlendedAnimation(
+            mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit")
+        {
+            Log(Debug::Info) << "FNV/ESM4 furniture animation selected: actor="
+                             << mPtr.getCellRef().getRefId() << " group=chairsit playing="
+                             << mAnimation->isPlaying(mCurrentIdle);
+        }
+
+        if (isFalloutActor(mPtr))
+        {
+            const bool hideEquippedWeaponForProof
+                = std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr;
+            const DrawState drawState = mPtr.getClass().getCreatureStats(mPtr).getDrawState();
+            const bool weaponDrawn = drawState == DrawState::Weapon;
+            if (mAnimation->hasAnimation("weaponpose") && weaponDrawn && !falloutFurnitureActive
+                && !hideEquippedWeaponForProof)
+            {
+                MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
+                weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                if (mAnimation->isPlaying("weaponpose"))
+                    mAnimation->disable("weaponpose");
+                Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
+                                 << mPtr.getCellRef().getRefId();
+                // Live FNV blend telemetry gives locomotion priority 30 over aim 25 on the lower body, locomotion
+                // 31 over aim 30 on the torso/neck/head, aim 35 over locomotion 31 on both arm branches, and aim 45
+                // on Weapon. Replacing the full upper body with 2hraim therefore freezes the walking torso and
+                // produces the persistent head/neck offset seen by the retail transform oracle.
+                const int weaponPoseMask = MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+                playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
+                    0.f, std::numeric_limits<uint32_t>::max(), true);
+            }
+            else if ((!weaponDrawn || falloutFurnitureActive || hideEquippedWeaponForProof)
+                && mAnimation->isPlaying("weaponpose"))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing standing weapon pose for "
+                                 << mPtr.getCellRef().getRefId() << " reason="
+                                 << (!weaponDrawn ? "weapon-holstered"
+                                                 : (falloutFurnitureActive ? "furniture-seated"
+                                                                           : "proof-weapon-hidden"));
+                mAnimation->disable("weaponpose");
+            }
+
+            if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
+            {
+                std::string overlayGroup = Misc::StringUtils::lowerCase(forcedOverlayGroup);
+                if (!overlayGroup.empty())
+                {
+                    if (mAnimation->hasAnimation(overlayGroup))
+                    {
+                        MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
+                        int overlayMask = MWRender::BlendMask_RightArm;
+                        const bool fullBodyOverlay
+                            = std::getenv("OPENMW_FNV_FORCED_OVERLAY_FULL_BODY") != nullptr;
+                        if (fullBodyOverlay && (!falloutFurnitureSeated || mCurrentIdle != "chairsit"))
+                        {
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: deferring forced full-body overlay group '"
+                                             << overlayGroup << "' until seated chairsit for "
+                                             << mPtr.getCellRef().getRefId();
+                            return;
+                        }
+                        if (fullBodyOverlay)
+                        {
+                            overlayPriority = Priority_Weapon;
+                            overlayMask = MWRender::BlendMask_All;
+                        }
+                        else
+                            overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced "
+                                         << (fullBodyOverlay ? "full-body" : "right-arm") << " overlay group '"
+                                         << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
+                        playBlendedAnimation(overlayGroup, overlayPriority, overlayMask, false, 1.0f, "start", "stop",
+                            0.f, numLoops, true);
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 diag: forced overlay group missing for "
+                                            << mPtr.getCellRef().getRefId() << " group '" << overlayGroup << "'";
+                }
+            }
+        }
+
+        const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk")
+            && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit"
+            && mAnimation->hasAnimation("sitchairlisten")
+            && !hasFalloutSitTalk
+            && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+        {
+            MWRender::Animation::AnimPriority listenPriority(Priority_Default);
+            listenPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+            listenPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
+                             << mPtr.getCellRef().getRefId();
+            playBlendedAnimation("sitchairlisten",
+                listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
+                "stop", 0.f, numLoops, true);
+        }
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit" && hasFalloutSitTalk
+            && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+        {
+            MWRender::Animation::AnimPriority talkPriority(Priority_Default);
+            talkPriority[MWRender::BoneGroup_Head] = Priority_Weapon;
+            int talkMask = MWRender::BlendMask_Head;
+            if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_TORSO") != nullptr)
+            {
+                talkPriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
+                talkMask |= MWRender::BlendMask_Torso;
+            }
+            if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_ARMS") != nullptr)
+            {
+                talkPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                talkMask |= MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+            }
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
+                             << mPtr.getCellRef().getRefId();
+            playBlendedAnimation("sitchairtalk",
+                talkPriority, talkMask, false, 1.0f, "start", "stop", 0.f, numLoops, true);
+        }
     }
 
     void CharacterController::refreshCurrentAnims(
@@ -925,13 +1353,56 @@ namespace MWMechanics
              * handle knockout and death which moves the character down. */
             mAnimation->setAccumulation(osg::Vec3f(1.0f, 1.0f, 0.0f));
 
-            if (cls.hasInventoryStore(mPtr))
+            if (const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr))
             {
-                getActiveWeapon(mPtr, &mWeaponType);
+                mFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+                mWeaponType = *falloutWeaponType;
                 if (mWeaponType != ESM::Weapon::None)
                 {
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType))
+                {
+                    if (mCurrentWeapon.empty())
+                    {
+                        mAnimation->showWeapons(false);
+                        mWeaponType = ESM::Weapon::None;
+                        mUpperBodyState = UpperBodyState::None;
+                        mAnimation->setWeaponGroup({}, false);
+                    }
+                    else
+                    {
+                        mAnimation->showWeapons(true);
+                        const bool useRelativeDuration
+                            = getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+                        mAnimation->setWeaponGroup(mCurrentWeapon, useRelativeDuration);
+                    }
+                }
+            }
+            else if (cls.hasInventoryStore(mPtr))
+            {
+                MWWorld::InventoryStore& inventory = cls.getInventoryStore(mPtr);
+                MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &mWeaponType);
+                if (weapon != inventory.end())
+                {
+                    mWeapon = *weapon;
+                    if (mWeapon.getType() == ESM4::Weapon::sRecordId)
+                        mFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
+                }
+                if (mWeaponType != ESM::Weapon::None)
+                {
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType) && mCurrentWeapon.empty())
+                {
+                    mAnimation->showWeapons(false);
+                    mWeaponType = ESM::Weapon::None;
+                    mUpperBodyState = UpperBodyState::None;
+                    mAnimation->setWeaponGroup({}, false);
                 }
 
                 if (mWeaponType != ESM::Weapon::None && mWeaponType != ESM::Weapon::Spell
@@ -1111,7 +1582,7 @@ namespace MWMechanics
                 mReadyToHit = false;
             }
         }
-        else if (isRandomAttackAnimation(groupname) && action == "start")
+        else if (isLegacyRandomAttackAnimation(groupname) && action == "start")
         {
             std::multimap<float, std::string>::const_iterator hitKey = key;
 
@@ -1234,7 +1705,7 @@ namespace MWMechanics
     float CharacterController::calculateWindUp() const
     {
         if (!mAnimation || mCurrentWeapon.empty() || mWeaponType == ESM::Weapon::PickProbe
-            || isRandomAttackAnimation(mCurrentWeapon))
+            || isLegacyRandomAttackAnimation(mCurrentWeapon))
             return -1.f;
 
         float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -1270,6 +1741,273 @@ namespace MWMechanics
         mReadyToHit = true;
     }
 
+    bool CharacterController::updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
+        const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon)
+    {
+        bool forceStateUpdate = false;
+        const auto failVisualClosed = [&]() {
+            mAnimation->showWeapons(false);
+            mUpperBodyState = UpperBodyState::None;
+            mWeaponType = ESM::Weapon::None;
+            mFalloutWeapon = nullptr;
+            mCurrentWeapon.clear();
+            mAnimation->setWeaponGroup(std::string{}, false);
+        };
+        const auto updateAiming = [&]() {
+            const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
+            const bool ranged = isFalloutWeaponType(mWeaponType)
+                && (getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged
+                    || getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Thrown);
+            mAnimation->setPitchFactor(actionPlaying && ranged ? 1.f : 0.f);
+            mAnimation->setAccurateAiming(actionPlaying && ranged);
+        };
+
+        const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
+            || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
+        float complete = 0.f;
+        const bool actionStateExists
+            = semanticActionPlaying && !mCurrentWeapon.empty() && mAnimation->getInfo(mCurrentWeapon, &complete);
+        const MWRender::FonvWeaponActionProgress actionProgress
+            = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
+        if (semanticActionPlaying && actionProgress == MWRender::FonvWeaponActionProgress::Running)
+        {
+            updateAiming();
+            return false;
+        }
+
+        if (semanticActionPlaying)
+        {
+            if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
+            {
+                Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
+                                  << " group=" << mCurrentWeapon;
+                failVisualClosed();
+                updateAiming();
+                return true;
+            }
+            mAnimation->disable(mCurrentWeapon);
+            switch (mUpperBodyState)
+            {
+                case UpperBodyState::Equipping:
+                    mAnimation->showWeapons(true);
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                    {
+                        failVisualClosed();
+                        updateAiming();
+                        return true;
+                    }
+                    break;
+                case UpperBodyState::Unequipping:
+                    failVisualClosed();
+                    break;
+                case UpperBodyState::AttackEnd:
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                    {
+                        failVisualClosed();
+                        updateAiming();
+                        return true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            forceStateUpdate = true;
+        }
+
+        bool currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        const bool requestedIsFalloutWeapon = isFalloutWeaponType(requestedWeaponType);
+
+        // Controllers created by an older build can still hold a legacy attack state. Normalize it before making an
+        // exact transition; never let a Fallout attack group fall through to Morrowind's random-melee state machine.
+        if (currentIsFalloutWeapon && mUpperBodyState != UpperBodyState::WeaponEquipped)
+        {
+            if (!mCurrentWeapon.empty())
+                mAnimation->disable(mCurrentWeapon);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+            {
+                failVisualClosed();
+                updateAiming();
+                return true;
+            }
+            forceStateUpdate = true;
+        }
+
+        if (currentIsFalloutWeapon
+            && shouldTransitionFalloutWeaponState(requestedWeaponType, mWeaponType, weaponChanged))
+        {
+            setAttackingOrSpell(false);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Unequip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Unequipping;
+            else
+            {
+                // Missing exact data fails the visual action closed; it never selects another family or attack group.
+                failVisualClosed();
+            }
+            updateAiming();
+            return true;
+        }
+
+        currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        if (!currentIsFalloutWeapon && requestedIsFalloutWeapon)
+        {
+            if (!mCurrentWeapon.empty())
+                mAnimation->disable(mCurrentWeapon);
+            mWeaponType = requestedWeaponType;
+            mFalloutWeapon = requestedWeapon;
+            mAnimation->showWeapons(false);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Equipping;
+            else
+            {
+                // Do not replace or skip a missing exact equip action. Keeping the weapon hidden makes bad data
+                // observable without substituting another family or silently presenting an impossible pose.
+                failVisualClosed();
+            }
+            updateAiming();
+            return true;
+        }
+
+        if (!currentIsFalloutWeapon)
+        {
+            updateAiming();
+            return forceStateUpdate;
+        }
+
+        if (getAttackingOrSpell() && mUpperBodyState == UpperBodyState::WeaponEquipped
+            && (mHitState == CharState_None || mHitState == CharState_Block))
+        {
+            mAttackStrength = -1.f;
+            mReadyToHit = false;
+            mAttackSuccess = false;
+            mAttackVictim = MWWorld::Ptr();
+            mAttackHitPos = osg::Vec3f();
+            MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon))
+            {
+                fireFalloutWeapon();
+                mUpperBodyState = UpperBodyState::AttackEnd;
+            }
+            else
+                setAttackingOrSpell(false);
+
+            if (mIdleState != CharState_IdleSneak && mIdleState != CharState_IdleSwim)
+                resetCurrentIdleState();
+        }
+
+        updateAiming();
+        return forceStateUpdate;
+    }
+
+    bool CharacterController::fireFalloutWeapon()
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV combat shot rejected: actor=" << mPtr.toString()
+                              << " weapon="
+                              << (mFalloutWeapon != nullptr ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                                            : std::string("none"))
+                              << " reason=" << reason << " exact=1";
+            return false;
+        };
+
+        if (mFalloutWeapon == nullptr)
+            return fail("missing-weapon");
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (world == nullptr || store == nullptr)
+            return fail("missing-world-store");
+
+        std::vector<ESM::FormId> ammoCandidates;
+        if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
+            ammoCandidates.push_back(mFalloutWeapon->mAmmo);
+        else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
+        {
+            ammoCandidates = list->mObjects;
+        }
+        else
+            return fail("invalid-ammo-reference");
+
+        MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
+        const auto ammo = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
+            [&](ESM::FormId candidate) {
+                return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
+            },
+            [&](ESM::FormId candidate) {
+                return inventory.count(ESM::RefId::formIdRefId(candidate));
+            });
+        if (!ammo)
+            return fail("insufficient-authored-ammo");
+
+        const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
+        if (projectile == nullptr)
+            return fail("missing-projectile-record");
+
+        FalloutShotFailure contractFailure = FalloutShotFailure::None;
+        const std::optional<FalloutShotContract> contract
+            = buildFalloutHitscanContract(*mFalloutWeapon, *projectile, *ammo, contractFailure);
+        if (!contract)
+            return fail(getFalloutShotFailureName(contractFailure));
+
+        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+        std::vector<MWWorld::Ptr> targetActors;
+        if (mPtr != getPlayer())
+            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
+
+        osg::Vec3f direction;
+        if (!targetActors.empty())
+            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        else
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
+                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
+            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
+        }
+        if (direction.normalize() == 0.f)
+            return fail("zero-shot-direction");
+
+        const osg::Vec3f destination = origin + direction * contract->mProjectileRange;
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+
+        const ESM::RefId ammoRefId = ESM::RefId::formIdRefId(contract->mAmmo);
+        const int ammoBefore = inventory.count(ammoRefId);
+        const int removed = inventory.remove(ammoRefId, contract->mAmmoUse);
+        const int ammoAfter = inventory.count(ammoRefId);
+        if (removed != contract->mAmmoUse || ammoBefore - ammoAfter != contract->mAmmoUse)
+            return fail("ammo-transaction-mismatch");
+
+        const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+
+        float healthBefore = -1.f;
+        float healthAfter = -1.f;
+        bool actorHit = false;
+        if (result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor())
+        {
+            actorHit = true;
+            healthBefore = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
+            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", contract->mDamage } },
+                ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
+            healthAfter = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
+        }
+
+        Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                         << " ammo=" << ammoRefId << " ammoBefore=" << ammoBefore << " ammoAfter=" << ammoAfter
+                         << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
+                         << " projectileRange=" << contract->mProjectileRange << " damage=" << contract->mDamage
+                         << " rayHit=" << result.mHit << " actorHit=" << actorHit
+                         << " hitObject=" << (result.mHitObject.isEmpty() ? std::string("none") : result.mHitObject.toString())
+                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter << " exact=1 status=pass";
+        return true;
+    }
+
     bool CharacterController::updateWeaponState()
     {
         // If the current animation is scripted, we can't do anything here.
@@ -1292,9 +2030,17 @@ namespace MWMechanics
 
         const ESM::RefId* downSoundId = nullptr;
         bool weaponChanged = false;
+        const ESM4::Weapon* requestedFalloutWeapon = nullptr;
         bool ammunition = true;
         float weapSpeed = 1.f;
-        if (cls.hasInventoryStore(mPtr))
+        const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr);
+        if (falloutWeaponType)
+        {
+            weaptype = *falloutWeaponType;
+            requestedFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
+        }
+        else if (cls.hasInventoryStore(mPtr))
         {
             MWWorld::InventoryStore& inv = cls.getInventoryStore(mPtr);
             MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &weaptype);
@@ -1317,6 +2063,9 @@ namespace MWMechanics
                 mWeapon = newWeapon;
                 weaponChanged = true;
             }
+
+            if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+                requestedFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
 
             if (stats.getDrawState() == DrawState::Weapon && !mWeapon.isEmpty()
                 && mWeapon.getType() == ESM::Weapon::sRecordId)
@@ -1354,6 +2103,13 @@ namespace MWMechanics
             // For non-bipeds, movement takes priority
             priorityWeapon = Priority_Weapon;
             priorityWeapon[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        }
+
+        if (shouldUseFalloutWeaponState(weaptype, mWeaponType))
+        {
+            if (!MWRender::canAdvanceFonvWeaponState(isKnockedOut(), isKnockedDown(), isRecovery()))
+                return false;
+            return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon);
         }
 
         bool forcestateupdate = false;
@@ -1529,7 +2285,7 @@ namespace MWMechanics
 
                 // Randomize attacks for non-bipedal creatures
                 if (!cls.isBipedal(mPtr)
-                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isRandomAttackAnimation(mCurrentWeapon)))
+                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isLegacyRandomAttackAnimation(mCurrentWeapon)))
                 {
                     mCurrentWeapon = chooseRandomAttackAnimation();
                 }
@@ -1627,7 +2383,7 @@ namespace MWMechanics
 
                             std::string startKey;
                             std::string stopKey;
-                            if (isRandomAttackAnimation(mCurrentWeapon))
+                            if (isLegacyRandomAttackAnimation(mCurrentWeapon))
                             {
                                 startKey = "start";
                                 stopKey = "stop";
@@ -1670,7 +2426,7 @@ namespace MWMechanics
                         = MWBase::Environment::get().getLuaManager()->getActorControls(mPtr);
                     const bool aiInactive
                         = actorControls->mDisableAI || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
-                    if (mWeaponType != ESM::Weapon::PickProbe && !isRandomAttackAnimation(mCurrentWeapon))
+                    if (mWeaponType != ESM::Weapon::PickProbe && !isLegacyRandomAttackAnimation(mCurrentWeapon))
                     {
                         if (weapclass == ESM::WeaponType::Ranged || weapclass == ESM::WeaponType::Thrown)
                             mAttackType = "shoot";
@@ -1723,7 +2479,7 @@ namespace MWMechanics
         // Random attack and pick/probe animations never have wind up and are played to their end.
         // Other animations must be released when the attack state is unset.
         if (mUpperBodyState == UpperBodyState::AttackWindUp
-            && (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon)
+            && (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon)
                 || !getAttackingOrSpell()))
         {
             mUpperBodyState = UpperBodyState::AttackRelease;
@@ -1754,7 +2510,7 @@ namespace MWMechanics
                 prepareHit();
             }
 
-            if (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon))
+            if (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon))
                 mUpperBodyState = UpperBodyState::AttackEnd;
         }
 
@@ -1872,7 +2628,7 @@ namespace MWMechanics
 
             // A smooth transition can be provided if a pre-wind-up section is defined. Random attack animations never
             // have one.
-            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isRandomAttackAnimation(mCurrentWeapon))
+            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isLegacyRandomAttackAnimation(mCurrentWeapon))
             {
                 float currentTime = mAnimation->getCurrentTime(mCurrentWeapon);
                 float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -2008,7 +2764,6 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
-
             // Force Jump Logic
 
             bool isMoving
@@ -2450,31 +3205,59 @@ namespace MWMechanics
         osg::Vec3f movementFromAnimation
             = mAnimation->runAnimation(mSkipAnim && !isScriptedAnimPlaying() ? 0.f : duration);
 
-        if (mPtr.getClass().isActor() && !isScriptedAnimPlaying())
+        const MWClass::FalloutFurnitureState falloutFurnitureState = getFalloutFurnitureState(mPtr);
+        const bool falloutFurnitureTransition
+            = falloutFurnitureState == MWClass::FalloutFurnitureState::Entering
+            || falloutFurnitureState == MWClass::FalloutFurnitureState::Exiting;
+        if (mPtr.getClass().isActor() && (!isScriptedAnimPlaying() || falloutFurnitureTransition))
         {
             if (isMovementAnimationControlled())
             {
                 if (duration != 0.f && movementFromAnimation != osg::Vec3f())
                 {
-                    movementFromAnimation /= duration;
-
-                    // Ensure we're moving in the right general direction.
-                    // In vanilla, all horizontal movement is taken from animations, even when moving diagonally (which
-                    // doesn't have a corresponding animation). So to achieve diagonal movement, we have to rotate the
-                    // movement taken from the animation to the intended direction.
-                    //
-                    // Note that while a complete movement animation cycle will have a well defined direction, no
-                    // individual frame will, and therefore we have to determine the direction based on the currently
-                    // playing cycle instead.
-                    if (speed > 0.f)
+                    if (falloutFurnitureTransition)
                     {
-                        float animMovementAngle = getAnimationMovementDirection();
-                        float targetMovementAngle = std::atan2(-movement.x(), movement.y());
-                        float diff = targetMovementAngle - animMovementAngle;
-                        movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        const float actorYaw = mPtr.getRefData().getPosition().rot[2];
+                        const osg::Vec3f localDelta = movementFromAnimation;
+                        const osg::Vec2f worldPlanarDelta = Misc::rotateVec2f(
+                            osg::Vec2f(localDelta.x(), localDelta.y()), -actorYaw);
+                        const ESM::Position& actorPosition = mPtr.getRefData().getPosition();
+                        world->moveObject(mPtr, osg::Vec3f(actorPosition.pos[0] + worldPlanarDelta.x(),
+                                                    actorPosition.pos[1] + worldPlanarDelta.y(),
+                                                    actorPosition.pos[2] + localDelta.z()));
+                        if (std::getenv("OPENMW_FNV_AUDIT_FURNITURE_ROOT_MOTION") != nullptr)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 furniture: root motion state="
+                                             << static_cast<int>(falloutFurnitureState) << " actor="
+                                             << mPtr.getCellRef().getRefId() << " duration=" << duration << " yaw="
+                                             << actorYaw << " localDelta=(" << localDelta.x() << "," << localDelta.y()
+                                             << "," << localDelta.z() << ") worldDelta=(" << worldPlanarDelta.x()
+                                             << "," << worldPlanarDelta.y() << "," << localDelta.z() << ")";
+                        }
+                        movement = osg::Vec3f();
                     }
+                    else
+                    {
+                        movementFromAnimation /= duration;
 
-                    movement = movementFromAnimation;
+                        // Ensure we're moving in the right general direction.
+                        // In vanilla, all horizontal movement is taken from animations, even when moving diagonally
+                        // (which doesn't have a corresponding animation). So to achieve diagonal movement, we have to
+                        // rotate the movement taken from the animation to the intended direction.
+                        //
+                        // Note that while a complete movement animation cycle will have a well defined direction, no
+                        // individual frame will, and therefore we have to determine the direction based on the currently
+                        // playing cycle instead.
+                        if (speed > 0.f)
+                        {
+                            float animMovementAngle = getAnimationMovementDirection();
+                            float targetMovementAngle = std::atan2(-movement.x(), movement.y());
+                            float diff = targetMovementAngle - animMovementAngle;
+                            movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        }
+
+                        movement = movementFromAnimation;
+                    }
                 }
                 else
                 {
@@ -2656,6 +3439,17 @@ namespace MWMechanics
             playAnimQueue(mode == 2);
 
         return true;
+    }
+
+    std::string CharacterController::getAnimationGroupFromSource(
+        std::string_view sourceName, std::string_view groupPrefix) const
+    {
+        return mAnimation != nullptr ? mAnimation->getAnimationGroupFromSource(sourceName, groupPrefix) : std::string();
+    }
+
+    bool CharacterController::setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup)
+    {
+        return mAnimation != nullptr && mAnimation->setFalloutAnimatedObject(model, activeGroup);
     }
 
     bool CharacterController::playGroupLua(std::string_view groupname, float speed, std::string_view startKey,
@@ -2906,6 +3700,11 @@ namespace MWMechanics
             || group == "attack3" || group == "swimattack3");
     }
 
+    bool CharacterController::isLegacyRandomAttackAnimation(std::string_view group) const
+    {
+        return !isFalloutWeaponType(mWeaponType) && isRandomAttackAnimation(group);
+    }
+
     bool CharacterController::isAttackPreparing() const
     {
         return mUpperBodyState == UpperBodyState::AttackWindUp;
@@ -3031,6 +3830,11 @@ namespace MWMechanics
         mHeadTrackTarget = target;
     }
 
+    void CharacterController::updateDialogueHeadTracking(float duration)
+    {
+        updateHeadTracking(duration);
+    }
+
     void CharacterController::playSwishSound() const
     {
         static ESM::RefId weaponSwish = ESM::RefId::stringRefId("Weapon Swish");
@@ -3089,6 +3893,13 @@ namespace MWMechanics
 
     void CharacterController::updateHeadTracking(float duration)
     {
+        if (isFalloutActor(mPtr) && std::getenv("OPENMW_FNV_PROOF_DISABLE_HEAD_TRACKING") != nullptr)
+        {
+            mAnimation->setHeadPitch(0.f);
+            mAnimation->setHeadYaw(0.f);
+            return;
+        }
+
         const osg::Node* head = mAnimation->getNode("Bip01 Head");
         if (!head)
             return;
