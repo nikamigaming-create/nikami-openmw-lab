@@ -178,6 +178,8 @@ namespace MWWorld
         using ActorIdleHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
         using ReferenceAnimationGroupHandler
             = std::function<bool(ESM::FormId, std::string_view, int)>;
+        using SoundCommandHandler
+            = std::function<bool(ESM::FormId, std::optional<ESM::FormId>, bool)>;
         using LockHandler = std::function<bool(ESM::FormId, std::optional<int>)>;
         using ActorDeadHandler = std::function<std::optional<bool>(ESM::FormId)>;
         using RewardXpHandler = std::function<bool(int)>;
@@ -344,6 +346,7 @@ namespace MWWorld
         std::unordered_map<std::string, ESM::FormId> mSpellIds;
         std::unordered_map<std::string, ESM::FormId> mMessageIds;
         std::unordered_map<std::string, ESM::FormId> mIdleAnimationIds;
+        std::unordered_map<std::string, ESM::FormId> mSoundIds;
         ReferenceCommandHandler mReferenceCommandHandler;
         MessageHandler mMessageHandler;
         SayToHandler mSayToHandler;
@@ -359,6 +362,7 @@ namespace MWWorld
         ReferenceActivationHandler mReferenceActivationHandler;
         ActorIdleHandler mActorIdleHandler;
         ReferenceAnimationGroupHandler mReferenceAnimationGroupHandler;
+        SoundCommandHandler mSoundCommandHandler;
         LockHandler mLockHandler;
         ActorDeadHandler mActorDeadHandler;
         RewardXpHandler mRewardXpHandler;
@@ -583,6 +587,7 @@ namespace MWWorld
         ESM::FormId resolveSpell(std::string_view id);
         ESM::FormId resolveMessage(std::string_view id);
         ESM::FormId resolveIdleAnimation(std::string_view id);
+        ESM::FormId resolveSound(std::string_view id);
         bool executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id);
 
     public:
@@ -633,6 +638,10 @@ namespace MWWorld
         void setReferenceAnimationGroupHandler(ReferenceAnimationGroupHandler handler)
         {
             mReferenceAnimationGroupHandler = std::move(handler);
+        }
+        void setSoundCommandHandler(SoundCommandHandler handler)
+        {
+            mSoundCommandHandler = std::move(handler);
         }
         void setLockHandler(LockHandler handler) { mLockHandler = std::move(handler); }
         void setActorDeadHandler(ActorDeadHandler handler) { mActorDeadHandler = std::move(handler); }

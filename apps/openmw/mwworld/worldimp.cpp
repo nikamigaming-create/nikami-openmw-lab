@@ -56,6 +56,8 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadrepu.hpp>
+#include <components/esm4/loadsndr.hpp>
+#include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -982,6 +984,37 @@ namespace MWWorld
                     << "FNV/ESM4 quest: PlayGroup reference="
                     << ESM::RefId(referenceId).serializeText()
                     << " group=" << group << " mode=" << mode << " played=" << played;
+                return played;
+            });
+        mESM4QuestRuntime.setSoundCommandHandler(
+            [this](ESM::FormId soundId, std::optional<ESM::FormId> sourceId, bool positional) {
+                const bool knownSound
+                    = mStore.get<ESM4::Sound>().search(ESM::RefId(soundId)) != nullptr
+                    || mStore.get<ESM4::SoundReference>().search(ESM::RefId(soundId)) != nullptr;
+                MWBase::SoundManager* const soundManager
+                    = MWBase::Environment::get().getSoundManager();
+                if (!knownSound || soundManager == nullptr || (positional && !sourceId))
+                    return false;
+
+                bool played = false;
+                if (positional)
+                {
+                    Ptr source = searchPtr(ESM::RefId(*sourceId), false, false);
+                    if (source.isEmpty())
+                        source = searchPtrByRefNum(*sourceId);
+                    if (source.isEmpty())
+                        return false;
+                    played = soundManager->playSound3D(source, ESM::RefId(soundId), 1.f, 1.f) != nullptr;
+                }
+                else
+                {
+                    played = soundManager->playSound(ESM::RefId(soundId), 1.f, 1.f,
+                                 MWSound::Type::Sfx, MWSound::PlayMode::NoEnv)
+                        != nullptr;
+                }
+                Log(played ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 quest: PlaySound sound=" << ESM::RefId(soundId).serializeText()
+                    << " positional=" << positional << " played=" << played;
                 return played;
             });
         mESM4QuestRuntime.setLockHandler(

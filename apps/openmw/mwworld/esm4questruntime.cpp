@@ -48,6 +48,8 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadsndr.hpp>
+#include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/misc/strings/algorithm.hpp>
@@ -711,6 +713,7 @@ namespace MWWorld
         mSpellIds.clear();
         mMessageIds.clear();
         mIdleAnimationIds.clear();
+        mSoundIds.clear();
     }
 
     std::map<std::string, std::string, std::less<>> ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
@@ -3979,6 +3982,29 @@ namespace MWWorld
         return result;
     }
 
+    ESM::FormId ESM4QuestRuntime::resolveSound(std::string_view id)
+    {
+        const std::string key = Misc::StringUtils::lowerCase(id);
+        if (const auto cached = mSoundIds.find(key); cached != mSoundIds.end())
+            return cached->second;
+
+        ESM::FormId result;
+        const auto searchRecords = [&id, &result](const auto& records) {
+            for (const auto& sound : records)
+            {
+                if (!Misc::StringUtils::ciEqual(sound.mEditorId, id))
+                    continue;
+                result = sound.mId;
+                return true;
+            }
+            return false;
+        };
+        if (mStore != nullptr && !searchRecords(mStore->get<ESM4::Sound>()))
+            searchRecords(mStore->get<ESM4::SoundReference>());
+        mSoundIds.emplace(key, result);
+        return result;
+    }
+
     bool ESM4QuestRuntime::executeReferenceCommand(ESM4QuestReferenceCommand command, std::string_view id)
     {
         const ESM::FormId reference = resolveReference(id);
@@ -4985,6 +5011,21 @@ namespace MWWorld
                         continue;
                     }
                 }
+                else if ((Misc::StringUtils::ciEqual(command, "PlaySound")
+                             || Misc::StringUtils::ciEqual(command, "PlaySound3D"))
+                    && tokens.size() == 2)
+                {
+                    const ESM::FormId reference = sourceOwnerId();
+                    const ESM::FormId sound = resolveSound(tokens[1]);
+                    const bool positional = Misc::StringUtils::ciEqual(command, "PlaySound3D");
+                    if (!reference.isZeroOrUnset() && !sound.isZeroOrUnset() && mSoundCommandHandler
+                        && mSoundCommandHandler(sound, reference, positional))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: " << command
+                                         << " reference=" << subject << " sound=" << tokens[1];
+                        continue;
+                    }
+                }
                 else if ((Misc::StringUtils::ciEqual(command, "AddItem")
                         || Misc::StringUtils::ciEqual(command, "RemoveItem"))
                     && tokens.size() >= 3 && tokens.size() <= 4)
@@ -5662,6 +5703,16 @@ namespace MWWorld
                 if (parseInt(tokens[2], objective) && parseInt(tokens[3], displayed)
                     && setObjectiveDisplayed(tokens[1], objective, displayed != 0))
                     continue;
+            }
+            else if (Misc::StringUtils::ciEqual(tokens[0], "PlaySound") && tokens.size() == 2)
+            {
+                const ESM::FormId sound = resolveSound(tokens[1]);
+                if (!sound.isZeroOrUnset() && mSoundCommandHandler
+                    && mSoundCommandHandler(sound, std::nullopt, false))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 behavior: PlaySound sound=" << tokens[1];
+                    continue;
+                }
             }
             else if (Misc::StringUtils::ciEqual(tokens[0], "RewardXP") && tokens.size() >= 2)
             {

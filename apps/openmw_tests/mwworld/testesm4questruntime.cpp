@@ -35,6 +35,8 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadsndr.hpp>
+#include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -1320,6 +1322,57 @@ TEST(ESM4QuestRuntimeTest, RoutesPlayGroupThroughTheNativeReferenceAnimationHand
         (std::vector<std::tuple<ESM::FormId, std::string, int>>{
             { referenceId, "Forward", 1 },
             { referenceId, "Backward", 0 },
+        }));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RoutesFalloutSoundCommandsThroughTheNativeSoundHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12016f, .mContentFile = 0 };
+    const ESM::FormId referenceId{ .mIndex = 0x120170, .mContentFile = 0 };
+    const ESM::FormId uiSoundId{ .mIndex = 0x120171, .mContentFile = 0 };
+    const ESM::FormId localSoundId{ .mIndex = 0x120172, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "SoundCommandQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource
+        = "PlaySound UISound\n"
+          "SoundMarker.PlaySound UISound\n"
+          "SoundMarker.PlaySound3D LocalSound";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+
+    ESM4::Reference reference;
+    reference.mId = referenceId;
+    reference.mEditorId = "SoundMarker";
+    store.overrideRecord(reference);
+    ESM4::Sound uiSound{};
+    uiSound.mId = uiSoundId;
+    uiSound.mEditorId = "UISound";
+    uiSound.mSoundFile = "sound\\fx\\ui\\sound.wav";
+    store.overrideRecord(uiSound);
+    ESM4::SoundReference localSound{};
+    localSound.mId = localSoundId;
+    localSound.mEditorId = "LocalSound";
+    localSound.mSoundFile = "sound\\fx\\local\\sound.wav";
+    store.overrideRecord(localSound);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool>> sounds;
+    runtime.setSoundCommandHandler(
+        [&](ESM::FormId sound, std::optional<ESM::FormId> source, bool positional) {
+            sounds.emplace_back(sound, source, positional);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    EXPECT_EQ(sounds,
+        (std::vector<std::tuple<ESM::FormId, std::optional<ESM::FormId>, bool>>{
+            { uiSoundId, std::nullopt, false },
+            { uiSoundId, referenceId, false },
+            { localSoundId, referenceId, true },
         }));
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
