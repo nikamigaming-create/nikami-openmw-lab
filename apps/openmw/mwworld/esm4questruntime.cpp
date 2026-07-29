@@ -774,7 +774,16 @@ namespace MWWorld
             Log(Debug::Warning) << "FNV/ESM4 behavior: ApplyImageSpaceModifier could not resolve id=" << id;
             return false;
         }
+        return applyImageSpaceModifier(modifier->mId);
+    }
 
+    bool ESM4QuestRuntime::applyImageSpaceModifier(ESM::FormId id)
+    {
+        const ESM4::ImageSpaceModifier* const modifier = mStore == nullptr
+            ? nullptr
+            : mStore->get<ESM4::ImageSpaceModifier>().search(ESM::RefId(id));
+        if (modifier == nullptr)
+            return false;
         const auto active = std::find_if(mActiveImageSpaceModifiers.begin(), mActiveImageSpaceModifiers.end(),
             [modifier](const ActiveImageSpaceModifier& entry) { return entry.mState.mId == modifier->mId; });
         if (active != mActiveImageSpaceModifiers.end())
@@ -1469,6 +1478,7 @@ namespace MWWorld
                 && instruction.opcode != 0x117c
                 && instruction.opcode != 0x117d
                 && instruction.opcode != 0x117f && instruction.opcode != 0x1180
+                && instruction.opcode != 0x1191
                 && instruction.opcode != 0x1204
                 && instruction.opcode != 0x1219
                 && instruction.opcode != 0x1239
@@ -2046,7 +2056,22 @@ namespace MWWorld
                 && !ESM4::decodeFalloutScriptArguments(argumentPayload, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x1002) // reference.AddItem item count
+            if (instruction.opcode == 0x1191) // ApplyImageSpaceModifier modifier
+            {
+                // All 21 combined base-master frames are global calls with
+                // one IMAD reference and the command's default strength.
+                if (instruction.callingReferenceIndex || arguments.size() != 1 || mStore == nullptr)
+                    return false;
+                const ESM::FormId* modifier = std::get_if<ESM::FormId>(&arguments[0]);
+                if (modifier == nullptr
+                    || mStore->get<ESM4::ImageSpaceModifier>().search(ESM::RefId(*modifier)) == nullptr)
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::ApplyImageSpaceModifier;
+                command.mQuest = *modifier;
+                prepared.mCommands.push_back(std::move(command));
+            }
+            else if (instruction.opcode == 0x1002) // reference.AddItem item count
             {
                 if (!instruction.callingReferenceIndex || arguments.size() != 2 || !mAddItemHandler
                     || mStore == nullptr)
@@ -3094,6 +3119,7 @@ namespace MWWorld
             || command.mType == CompiledQuestCommandType::AddAchievement
             || command.mType == CompiledQuestCommandType::AddSpecialPoints
             || command.mType == CompiledQuestCommandType::RewardKarma
+            || command.mType == CompiledQuestCommandType::ApplyImageSpaceModifier
             || command.mType == CompiledQuestCommandType::SayTo
             || command.mType == CompiledQuestCommandType::Enable
             || command.mType == CompiledQuestCommandType::Disable
@@ -3215,6 +3241,7 @@ namespace MWWorld
             case CompiledQuestCommandType::AddAchievement:
             case CompiledQuestCommandType::AddSpecialPoints:
             case CompiledQuestCommandType::RewardKarma:
+            case CompiledQuestCommandType::ApplyImageSpaceModifier:
             case CompiledQuestCommandType::SayTo:
             case CompiledQuestCommandType::RewardXp:
             case CompiledQuestCommandType::AddReputation:
@@ -3440,6 +3467,10 @@ namespace MWWorld
                 case CompiledQuestCommandType::RewardKarma:
                     command = "RewardKarma ";
                     executed = mRewardKarmaHandler && mRewardKarmaHandler(effect.mCount);
+                    break;
+                case CompiledQuestCommandType::ApplyImageSpaceModifier:
+                    command = "ApplyImageSpaceModifier ";
+                    executed = applyImageSpaceModifier(effect.mTarget);
                     break;
                 case CompiledQuestCommandType::SayTo:
                     command = "SayTo ";
@@ -3931,6 +3962,9 @@ namespace MWWorld
                                 && mRewardKarmaHandler(*amount);
                             break;
                         }
+                        case CompiledQuestCommandType::ApplyImageSpaceModifier:
+                            executed = applyImageSpaceModifier(command.mQuest);
+                            break;
                         case CompiledQuestCommandType::SayTo:
                             executed = mSayToHandler
                                 && mSayToHandler(command.mQuest, command.mTarget, command.mTopic);
@@ -3972,6 +4006,7 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::AddAchievement
                             || command.mType == CompiledQuestCommandType::AddSpecialPoints
                             || command.mType == CompiledQuestCommandType::RewardKarma
+                            || command.mType == CompiledQuestCommandType::ApplyImageSpaceModifier
                             || command.mType == CompiledQuestCommandType::SayTo
                             || command.mType == CompiledQuestCommandType::SetAlly
                             || command.mType == CompiledQuestCommandType::SetEnemy
@@ -4042,6 +4077,9 @@ namespace MWWorld
                                     ? "RewardKarma " + std::to_string(command.mObjective)
                                     : "RewardKarma " + ESM::RefId(command.mQuest).serializeText()
                                         + "." + command.mVariable;
+                            else if (command.mType == CompiledQuestCommandType::ApplyImageSpaceModifier)
+                                failure = "ApplyImageSpaceModifier "
+                                    + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetAlly)
                                 failure = "SetAlly " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();

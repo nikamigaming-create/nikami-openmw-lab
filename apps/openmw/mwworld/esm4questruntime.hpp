@@ -451,6 +451,7 @@ namespace MWWorld
             AddAchievement,
             AddSpecialPoints,
             RewardKarma,
+            ApplyImageSpaceModifier,
             SayTo,
             RewardXp,
             AddReputation,
@@ -609,6 +610,7 @@ namespace MWWorld
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
         const ESM4::ImageSpaceModifier* resolveImageSpaceModifier(std::string_view id) const;
         bool applyImageSpaceModifier(std::string_view id);
+        bool applyImageSpaceModifier(ESM::FormId id);
         bool removeImageSpaceModifier(std::string_view id);
         void updateImageSpaceModifiers(float duration);
         void executeStageSource(std::string_view source, std::optional<ESM::FormId> ownerQuest = {},

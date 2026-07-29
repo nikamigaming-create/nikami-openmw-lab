@@ -1578,6 +1578,96 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledIgnoreCrimeWithoutMutation)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledImageSpaceModifierAfterCommit)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120338, .mContentFile = 0 };
+    const ESM::FormId modifierId{ .mIndex = 0x120339, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "CompiledImageSpaceModifierQuest");
+    ESM4::QuestStageEntry entry;
+    entry.mScript.compiledData = {
+        0x91, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    entry.mScript.references = { modifierId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(entry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    store.overrideRecord(quest);
+    ESM4::ImageSpaceModifier modifier;
+    modifier.mId = modifierId;
+    modifier.mEditorId = "CompiledImageSpaceModifier";
+    modifier.mAdapterFlags = 1;
+    modifier.mDuration = 1.f;
+    store.overrideRecord(modifier);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.getActiveImageSpaceModifiers().empty());
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    const std::vector<ESM4::ImageSpaceModifierRuntimeState> active
+        = runtime.getActiveImageSpaceModifiers();
+    ASSERT_EQ(active.size(), 1);
+    EXPECT_EQ(active.front().mId, modifierId);
+    EXPECT_FLOAT_EQ(active.front().mTime, 0.f);
+    EXPECT_FLOAT_EQ(active.front().mStrength, 1.f);
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledImageSpaceModifierWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12033a, .mContentFile = 0 };
+    const ESM::FormId modifierId{ .mIndex = 0x12033b, .mContentFile = 0 };
+    const ESM::FormId nonModifierId{ .mIndex = 0x12033c, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedImageSpaceModifierQuest");
+    ESM4::QuestStageEntry receiverCall;
+    receiverCall.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x91, 0x11, 0x05, 0x00,
+        0x01, 0x00, 0x72, 0x02, 0x00,
+    };
+    receiverCall.mScript.references = { nonModifierId, modifierId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(receiverCall) } });
+    ESM4::QuestStageEntry wrongRecord;
+    wrongRecord.mScript.compiledData = {
+        0x91, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00,
+    };
+    wrongRecord.mScript.references = { nonModifierId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(wrongRecord) } });
+    ESM4::QuestStageEntry wrongArgument;
+    wrongArgument.mScript.compiledData = {
+        0x91, 0x11, 0x07, 0x00, 0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(wrongArgument) } });
+    store.overrideRecord(quest);
+    ESM4::ImageSpaceModifier modifier;
+    modifier.mId = modifierId;
+    modifier.mAdapterFlags = 1;
+    modifier.mDuration = 1.f;
+    store.overrideRecord(modifier);
+    ESM4::Reference nonModifier;
+    nonModifier.mId = nonModifierId;
+    store.overrideRecord(nonModifier);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    for (const std::uint8_t stage : { 5, 10, 15 })
+        EXPECT_FALSE(runtime.setStage(questId, stage));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 10, 15 })
+        EXPECT_FALSE(state->mStageDone.at(stage));
+    EXPECT_TRUE(runtime.getActiveImageSpaceModifiers().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledConditionedItemsWithLiveGlobalCountAfterCommit)
 {
     MWWorld::ESMStore store;
