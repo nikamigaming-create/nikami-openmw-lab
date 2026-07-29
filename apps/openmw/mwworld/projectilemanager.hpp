@@ -138,19 +138,9 @@ namespace MWWorld
             std::set<ESM::RefId> mSoundIds;
         };
 
-        struct ProjectileState : public State
-        {
-            // RefID of the bow or crossbow the actor was using when this projectile was fired (may be empty)
-            ESM::RefId mBowId;
-
-            osg::Vec3f mVelocity;
-            float mAttackStrength;
-        };
-
-        struct FalloutProjectileState : public State
+        struct FalloutProjectileData
         {
             ESM::FormId mProjectile;
-            osg::Vec3f mVelocity;
             osg::Vec3f mRotationVelocity;
             osg::Vec3f mPreviousPosition;
             float mGravity = 0.f;
@@ -165,6 +155,17 @@ namespace MWWorld
             MWMechanics::FalloutProjectileImpactContract mImpact;
         };
 
+        struct ProjectileState : public State
+        {
+            // RefID of the bow or crossbow the actor was using when this projectile was fired (may be empty)
+            ESM::RefId mBowId;
+
+            osg::Vec3f mVelocity;
+            float mAttackStrength = 0.f;
+            // Absent for native ESM3 arrows; present only for Fallout record semantics.
+            std::unique_ptr<FalloutProjectileData> mFallout;
+        };
+
         struct FalloutHitscanTracerState : public State
         {
             osg::Vec3f mOrigin;
@@ -175,11 +176,9 @@ namespace MWWorld
 
         std::vector<MagicBoltState> mMagicBolts;
         std::vector<ProjectileState> mProjectiles;
-        std::vector<FalloutProjectileState> mFalloutProjectiles;
         std::vector<FalloutHitscanTracerState> mFalloutHitscanTracers;
 
         void cleanupProjectile(ProjectileState& state);
-        void cleanupFalloutProjectile(FalloutProjectileState& state);
         void cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state);
         void cleanupMagicBolt(MagicBoltState& state);
         void periodicCleanup(float dt);
@@ -187,8 +186,8 @@ namespace MWWorld
         void moveProjectiles(float dt);
         void moveFalloutProjectiles(float dt);
         void moveFalloutHitscanTracers(float dt);
-        bool bounceFalloutProjectile(FalloutProjectileState& state, const ESM4::Projectile& projectile,
-            const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
+        bool bounceFalloutProjectile(ProjectileState& state, FalloutProjectileData& fallout,
+            const ESM4::Projectile& projectile, const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
         void moveMagicBolts(float dt);
 
         void createModel(State& state, VFS::Path::NormalizedView model, const osg::Vec3f& pos, const osg::Quat& orient,
