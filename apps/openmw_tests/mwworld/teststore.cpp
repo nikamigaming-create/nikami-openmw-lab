@@ -871,7 +871,7 @@ namespace
         EXPECT_THAT(dialogue->mInfo, ElementsAre(HasIdEqualTo("info0"), HasIdEqualTo("info2")));
     }
 
-    TEST(MWWorldStoreTest, shouldIndexEsm4ClothingAndKeys)
+    TEST(MWWorldStoreTest, shouldIndexEsm4ClothingKeysAndAcousticSpaces)
     {
         ESM4::Clothing clothing;
         clothing.mId = ESM::FormId::fromUint32(0x01000001);
@@ -879,19 +879,28 @@ namespace
         ESM4::Key key;
         key.mId = ESM::FormId::fromUint32(0x01000002);
 
+        ESM4::AcousticSpace acousticSpace;
+        acousticSpace.mId = ESM::FormId::fromUint32(0x01000003);
+
         MWWorld::ESMStore store;
         auto& clothingStore = const_cast<MWWorld::Store<ESM4::Clothing>&>(store.get<ESM4::Clothing>());
         auto& keyStore = const_cast<MWWorld::Store<ESM4::Key>&>(store.get<ESM4::Key>());
+        auto& acousticSpaceStore
+            = const_cast<MWWorld::Store<ESM4::AcousticSpace>&>(store.get<ESM4::AcousticSpace>());
         clothingStore.insertStatic(clothing);
         keyStore.insertStatic(key);
+        acousticSpaceStore.insertStatic(acousticSpace);
         store.setUp();
 
         const ESM::RefId clothingId = ESM::RefId::formIdRefId(clothing.mId);
         const ESM::RefId keyId = ESM::RefId::formIdRefId(key.mId);
+        const ESM::RefId acousticSpaceId = ESM::RefId::formIdRefId(acousticSpace.mId);
 
         EXPECT_EQ(store.find(clothingId), ESM::REC_CLOT4);
         EXPECT_EQ(store.findStatic(clothingId), ESM::REC_CLOT4);
         EXPECT_EQ(store.find(keyId), ESM::REC_KEYM4);
         EXPECT_EQ(store.findStatic(keyId), ESM::REC_KEYM4);
+        EXPECT_EQ(store.find(acousticSpaceId), ESM::REC_ASPC4);
+        EXPECT_EQ(store.findStatic(acousticSpaceId), ESM::REC_ASPC4);
     }
 }

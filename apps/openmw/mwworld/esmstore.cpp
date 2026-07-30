@@ -825,6 +825,7 @@ namespace MWWorld
             case ESM::REC_AMMO4:
             case ESM::REC_ARMA4:
             case ESM::REC_ARMO4:
+            case ESM::REC_ASPC4:
             case ESM::REC_BOOK4:
             case ESM::REC_CLOT4:
             case ESM::REC_CONT4:

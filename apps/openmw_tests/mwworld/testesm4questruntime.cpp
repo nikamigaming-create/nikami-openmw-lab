@@ -498,6 +498,110 @@ TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledMoveToWithoutMutatingQuest)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RoutesCompiledAndSourceSetScaleThroughOneEngineHandler)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1208f0, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "SetScaleQuest");
+    ESM4::QuestStageEntry compiledEntry;
+    // Player.SetScale 0.4 uses the retail 0x7a double-literal frame,
+    // followed by SetStage 10 to exercise transaction commit ordering.
+    compiledEntry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x3c, 0x11, 0x0b, 0x00, 0x01, 0x00,
+        0x7a, 0x9a, 0x99, 0x99, 0x99, 0x99, 0x99, 0xd9, 0x3f,
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x02, 0x00,
+        0x6e, 0x0a, 0x00, 0x00, 0x00,
+    };
+    compiledEntry.mScript.references = { playerId, questId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(compiledEntry) } });
+    quest.mStages.push_back({ .mIndex = 10 });
+    ESM4::QuestStageEntry sourceEntry;
+    sourceEntry.mScript.scriptSource = "player.SetScale .4";
+    quest.mStages.push_back({ .mIndex = 15, .mEntries = { std::move(sourceEntry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    std::vector<std::pair<ESM::FormId, float>> scales;
+    std::vector<std::uint8_t> stagesAtScale;
+    runtime.setReferenceScaleHandler([&](ESM::FormId reference, float scale) {
+        scales.emplace_back(reference, scale);
+        const MWWorld::ESM4QuestState* state = runtime.search(questId);
+        stagesAtScale.push_back(state != nullptr ? state->mCurrentStage : 0);
+        return true;
+    });
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 10);
+    ASSERT_TRUE(runtime.setStage(questId, 15));
+    EXPECT_EQ(scales,
+        (std::vector<std::pair<ESM::FormId, float>>{
+            { playerId, 0.4f },
+            { playerId, 0.4f },
+        }));
+    EXPECT_EQ(stagesAtScale, (std::vector<std::uint8_t>{ 10, 15 }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsMalformedCompiledAndSourceSetScale)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1208f1, .mContentFile = 0 };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "MalformedSetScaleQuest");
+    ESM4::QuestStageEntry wrongLiteralType;
+    wrongLiteralType.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x3c, 0x11, 0x07, 0x00,
+        0x01, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+    };
+    wrongLiteralType.mScript.references = { playerId };
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(wrongLiteralType) } });
+    ESM4::QuestStageEntry zeroScale;
+    zeroScale.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0x3c, 0x11, 0x0b, 0x00, 0x01, 0x00,
+        0x7a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    zeroScale.mScript.references = { playerId };
+    quest.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(zeroScale) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    int changes = 0;
+    runtime.setReferenceScaleHandler([&](ESM::FormId, float) {
+        ++changes;
+        return true;
+    });
+
+    EXPECT_FALSE(runtime.setStage(questId, 5));
+    EXPECT_FALSE(runtime.setStage(questId, 10));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0);
+    EXPECT_EQ(state->mCurrentStage, 0);
+    EXPECT_FALSE(state->mStageDone.at(5));
+    EXPECT_FALSE(state->mStageDone.at(10));
+    EXPECT_EQ(changes, 0);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+
+    runtime.executeResultSource(
+        "player.SetScale 0\n"
+        "player.SetScale nan\n"
+        "player.SetScale .4 1\n");
+    EXPECT_EQ(changes, 0);
+    EXPECT_EQ(runtime.getUnsupportedStageCommands(),
+        (std::vector<std::string>{
+            "player.SetScale 0",
+            "player.SetScale nan",
+            "player.SetScale .4 1",
+        }));
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesCompiledPipBoyNoteChangesAfterTransactionCommit)
 {
     MWWorld::ESMStore store;
@@ -858,6 +962,85 @@ TEST(ESM4QuestRuntimeTest, ExecutesRetailCg00ActorLocalWritesBeforeBirthPackage)
             { 1, 0.f },
             { 2, 4.f },
         }));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesExactRetailCg00FamilyAppearanceFrameWithLiveBlend)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x01f388, .mContentFile = 0 };
+    const std::array<ESM::FormId, 4> dadIds{
+        ESM::FormId{ .mIndex = 0x02ea4d, .mContentFile = 6 },
+        ESM::FormId{ .mIndex = 0x0300ef, .mContentFile = 6 },
+        ESM::FormId{ .mIndex = 0x01ce3a, .mContentFile = 6 },
+        ESM::FormId{ .mIndex = 0x019d09, .mContentFile = 6 },
+    };
+    const ESM::FormId playerId{ .mIndex = 0x14, .mContentFile = 0 };
+    const ESM::FormId matchGlobalId{ .mIndex = 0x071f09, .mContentFile = 7 };
+
+    ESM4::Quest quest = makeQuest(questId, "CG00");
+    ESM4::QuestStageEntry entry;
+    // Fallout3.esm CG00 stage 65 entry 0, byte-for-byte: four
+    // MatchRace player calls followed by four MatchFaceGeometry player
+    // CGMatchFace calls. SCRO order is the four Dad refs, player, global.
+    entry.mScript.compiledData = {
+        0x1c, 0x00, 0x01, 0x00, 0xe5, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x05, 0x00,
+        0x1c, 0x00, 0x02, 0x00, 0xe5, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x05, 0x00,
+        0x1c, 0x00, 0x03, 0x00, 0xe5, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x05, 0x00,
+        0x1c, 0x00, 0x04, 0x00, 0xe5, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x05, 0x00,
+        0x1c, 0x00, 0x01, 0x00, 0xdf, 0x11, 0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x47, 0x06, 0x00,
+        0x1c, 0x00, 0x02, 0x00, 0xdf, 0x11, 0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x47, 0x06, 0x00,
+        0x1c, 0x00, 0x03, 0x00, 0xdf, 0x11, 0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x47, 0x06, 0x00,
+        0x1c, 0x00, 0x04, 0x00, 0xdf, 0x11, 0x08, 0x00, 0x02, 0x00, 0x72, 0x05, 0x00, 0x47, 0x06, 0x00,
+    };
+    entry.mScript.references.assign(dadIds.begin(), dadIds.end());
+    entry.mScript.references.push_back(playerId);
+    entry.mScript.references.push_back(matchGlobalId);
+    quest.mStages.push_back({ .mIndex = 65, .mEntries = { std::move(entry) } });
+    store.overrideRecord(quest);
+    for (const ESM::FormId dadId : dadIds)
+    {
+        ESM4::ActorCharacter dad;
+        dad.mId = dadId;
+        store.overrideRecord(dad);
+    }
+    store.overrideRecord(makeGlobal(matchGlobalId, "CGMatchFace", 50.f));
+
+    MWWorld::Globals globals;
+    globals.fill(store);
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store, &globals);
+    std::vector<std::tuple<MWWorld::ESM4QuestActorAppearanceCommand, ESM::FormId,
+        ESM::FormId, float, std::uint8_t>> calls;
+    runtime.setActorAppearanceCommandHandler(
+        [&](MWWorld::ESM4QuestActorAppearanceCommand command, ESM::FormId actor,
+            ESM::FormId source, float percentage) {
+            const MWWorld::ESM4QuestState* state = runtime.search(questId);
+            calls.emplace_back(command, actor, source, percentage,
+                state != nullptr ? state->mCurrentStage : 0);
+            return true;
+        });
+
+    ASSERT_TRUE(runtime.setStage(questId, 65));
+    ASSERT_EQ(calls.size(), 8);
+    for (std::size_t index = 0; index < dadIds.size(); ++index)
+    {
+        EXPECT_EQ(std::get<0>(calls[index]),
+            MWWorld::ESM4QuestActorAppearanceCommand::MatchRace);
+        EXPECT_EQ(std::get<1>(calls[index]), dadIds[index]);
+        EXPECT_EQ(std::get<2>(calls[index]), playerId);
+        EXPECT_FLOAT_EQ(std::get<3>(calls[index]), 100.f);
+        EXPECT_EQ(std::get<4>(calls[index]), 65);
+
+        const auto& face = calls[index + dadIds.size()];
+        EXPECT_EQ(std::get<0>(face),
+            MWWorld::ESM4QuestActorAppearanceCommand::MatchFaceGeometry);
+        EXPECT_EQ(std::get<1>(face), dadIds[index]);
+        EXPECT_EQ(std::get<2>(face), playerId);
+        EXPECT_FLOAT_EQ(std::get<3>(face), 50.f);
+        EXPECT_EQ(std::get<4>(face), 65);
+    }
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }

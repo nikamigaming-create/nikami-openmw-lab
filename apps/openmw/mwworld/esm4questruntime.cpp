@@ -5,6 +5,7 @@
 #include "esmstore.hpp"
 #include "fnvplayerruntimestate.hpp"
 #include "globals.hpp"
+#include "worldmodel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1092,17 +1093,18 @@ namespace MWWorld
         if (playerCell == nullptr || playerCell->getCell() == nullptr)
             return;
         const ESM::RefId playerCellId = playerCell->getCell()->getId();
+        MWWorld::WorldModel* const worldModel = MWBase::Environment::get().getWorldModel();
 
         // GameMode blocks attached to placed actors have their own local
-        // scope. Execute only the subset whose actor is live in the player's
-        // current cell; that is the engine lifecycle for a local scripted
-        // scene and prevents records in a different loaded cell from running
-        // merely because their data is available. The record index remains
-        // data-owned and no opening/campaign IDs are embedded here.
+        // scope. Resolve through the live-object registry rather than the
+        // load-capable world lookup: a per-frame script pass must never stream
+        // an inactive actor's owning cell merely to discover that the actor is
+        // elsewhere. Comparing the live cell also preserves script-driven
+        // moves without trusting the record's original parent.
         for (const auto& [actorId, state] : mActorScriptStates)
         {
-            MWWorld::Ptr actor = world->searchPtr(ESM::RefId(actorId), false, false);
-            if (actor.isEmpty() || !actor.getClass().isActor() || state.mCell != playerCellId)
+            const MWWorld::Ptr actor = worldModel->getPtr(actorId);
+            if (actor.isEmpty() || actor.getCell() != playerCell || !actor.getClass().isActor())
                 continue;
             executeStageSource(state.mSource, {}, duration, actorId);
         }
@@ -1116,15 +1118,8 @@ namespace MWWorld
         {
             if (!state.mHasGameMode || state.mCell != playerCellId)
                 continue;
-            // ESM4 placed references can be indexed either by the FormID
-            // RefId path or the legacy RefNum map depending on their base
-            // type.  Trigger volumes commonly use the former, so accept both
-            // just as the participant resolver does; otherwise an intact
-            // source state can never observe its own volume.
-            MWWorld::Ptr reference = world->searchPtr(ESM::RefId(referenceId), false, false);
-            if (reference.isEmpty())
-                reference = world->searchPtrByRefNum(referenceId);
-            if (reference.isEmpty() || reference.getCell() == nullptr)
+            const MWWorld::Ptr reference = worldModel->getPtr(referenceId);
+            if (reference.isEmpty() || reference.getCell() != playerCell)
                 continue;
             executeStageSource(state.mSource, {}, duration, {}, "gamemode", {}, referenceId);
         }
@@ -1181,38 +1176,13 @@ namespace MWWorld
         // authored bounds determine the volume.  This makes both player and
         // actor scene entry visible to the same source runtime, with no
         // quest/cell/editor-ID exception embedded in the engine.
-        const auto resolveTriggerParticipant = [this, world, &player](std::string_view editorId) -> MWWorld::Ptr {
+        const auto resolveTriggerParticipant
+            = [this, worldModel, &player](std::string_view editorId) -> MWWorld::Ptr {
             if (editorId.empty() || Misc::StringUtils::ciEqual(editorId, "player"))
                 return player;
 
-            if (mStore != nullptr)
-            {
-                const auto findPlacedReference = [world, editorId](const auto& references) -> MWWorld::Ptr {
-                    for (const auto& reference : references)
-                    {
-                        if (!Misc::StringUtils::ciEqual(reference.mEditorId, editorId))
-                            continue;
-                        // ESM4 placed actors are indexed through the normal
-                        // world reference map; static trigger objects may be
-                        // reached through the RefNum map.  A trigger's named
-                        // participant is allowed to be either kind.
-                        if (MWWorld::Ptr ptr = world->searchPtr(ESM::RefId(reference.mId), false, false);
-                            !ptr.isEmpty())
-                            return ptr;
-                        if (MWWorld::Ptr ptr = world->searchPtrByRefNum(reference.mId); !ptr.isEmpty())
-                            return ptr;
-                    }
-                    return {};
-                };
-
-                if (MWWorld::Ptr ptr = findPlacedReference(mStore->get<ESM4::Reference>()); !ptr.isEmpty())
-                    return ptr;
-                if (MWWorld::Ptr ptr = findPlacedReference(mStore->get<ESM4::ActorCharacter>()); !ptr.isEmpty())
-                    return ptr;
-                if (MWWorld::Ptr ptr = findPlacedReference(mStore->get<ESM4::ActorCreature>()); !ptr.isEmpty())
-                    return ptr;
-            }
-            return world->searchPtr(ESM::RefId::stringRefId(std::string(editorId)), false, false);
+            const ESM::FormId participant = resolveReference(editorId);
+            return participant.isZeroOrUnset() ? MWWorld::Ptr{} : worldModel->getPtr(participant);
         };
         const bool routeTrace = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr;
         for (auto& [referenceId, state] : mReferenceScriptStates)
@@ -1220,13 +1190,10 @@ namespace MWWorld
             if (state.mTriggerParticipants.empty())
                 continue;
 
-            // Trigger volumes can be placed ESM4 references indexed through
-            // the FormID RefId path rather than the legacy RefNum map.  Use
-            // both world indexes, matching the named-participant resolver,
-            // so a valid registered volume can dispatch its own events.
-            MWWorld::Ptr reference = world->searchPtr(ESM::RefId(referenceId), false, false);
-            if (reference.isEmpty())
-                reference = world->searchPtrByRefNum(referenceId);
+            // Trigger polling is a live-cell operation. Looking up the
+            // instance by RefNum in the registry finds both actors and static
+            // volumes without force-loading every authored trigger cell.
+            const MWWorld::Ptr reference = worldModel->getPtr(referenceId);
             if (reference.isEmpty() || reference.getCell() == nullptr)
             {
                 if (routeTrace && state.mCell == playerCellId && !state.mLoggedUnresolvedForRoute)
@@ -1510,6 +1477,7 @@ namespace MWWorld
                 && instruction.opcode != 0x10dd
                 && instruction.opcode != 0x110d && instruction.opcode != 0x1111
                 && instruction.opcode != 0x1119
+                && instruction.opcode != 0x113c
                 && instruction.opcode != 0x114a
                 && instruction.opcode != 0x1150
                 && instruction.opcode != 0x1176 && instruction.opcode != 0x1177
@@ -1524,6 +1492,8 @@ namespace MWWorld
                 && instruction.opcode != 0x11a2
                 && instruction.opcode != 0x11a3 && instruction.opcode != 0x11ad && instruction.opcode != 0x11dd
                 && instruction.opcode != 0x11bc
+                && instruction.opcode != 0x11df
+                && instruction.opcode != 0x11e5
                 && instruction.opcode != 0x11fa)
             {
                 prepared.mUseSourceFallback = true;
@@ -2168,6 +2138,108 @@ namespace MWWorld
                         [](std::uint8_t value) { return value == 0; }))
                     return false;
                 argumentPayload = argumentPayload.first(encodedArgumentBytes);
+            }
+            if (instruction.opcode == 0x113c) // reference.SetScale scale
+            {
+                // The Fallout 3 CG01 handoff uses the command's retail
+                // double-literal frame: one argument (0x7a) followed by an
+                // IEEE-754 little-endian double. Keep this decoder exact so a
+                // different expression encoding cannot be mistaken for a
+                // scale and corrupt actor physics.
+                if (!instruction.callingReferenceIndex || !mReferenceScaleHandler || mStore == nullptr
+                    || argumentPayload.size() != 11 || readUint16(argumentPayload, 0) != 1
+                    || argumentPayload[2] != 0x7a)
+                    return false;
+                const ESM::FormId reference = script.references[*instruction.callingReferenceIndex - 1];
+                const bool exists = reference.mIndex == 0x7 || reference.mIndex == 0x14
+                    || mStore->get<ESM4::Reference>().search(reference) != nullptr
+                    || mStore->get<ESM4::ActorCharacter>().search(reference) != nullptr
+                    || mStore->get<ESM4::ActorCreature>().search(reference) != nullptr;
+                const double decodedScale = std::bit_cast<double>(readUint64(argumentPayload, 3));
+                if (!exists || !std::isfinite(decodedScale) || decodedScale <= 0.0
+                    || decodedScale > static_cast<double>(std::numeric_limits<float>::max()))
+                    return false;
+                CompiledQuestCommand command;
+                command.mType = CompiledQuestCommandType::SetScale;
+                command.mQuest = reference;
+                command.mNumber = static_cast<float>(decodedScale);
+                prepared.mCommands.push_back(std::move(command));
+                continue;
+            }
+            if (instruction.opcode == 0x11e5 || instruction.opcode == 0x11df)
+            {
+                // Fallout 3 authors MatchRace as one actor reference and
+                // MatchFaceGeometry as an actor plus a 0..100 percentage.
+                // The opening uses a live GLOB (`CGMatchFace`), encoded with
+                // token 0x47 rather than the ordinary SCRO token 0x72.
+                if (!instruction.callingReferenceIndex || !mActorAppearanceCommandHandler
+                    || mStore == nullptr || argumentPayload.size() < 5)
+                    return false;
+
+                const auto actorExists = [this](ESM::FormId actor) {
+                    return actor.mIndex == 0x7 || actor.mIndex == 0x14
+                        || mStore->get<ESM4::ActorCharacter>().search(actor) != nullptr
+                        || mStore->get<ESM4::ActorCreature>().search(actor) != nullptr;
+                };
+                const ESM::FormId actor
+                    = script.references[*instruction.callingReferenceIndex - 1];
+                if (readUint16(argumentPayload, 0)
+                        != (instruction.opcode == 0x11e5 ? 1 : 2)
+                    || argumentPayload[2] != 0x72)
+                    return false;
+                const std::uint16_t sourceIndex = readUint16(argumentPayload, 3);
+                if (sourceIndex == 0 || sourceIndex > script.references.size())
+                    return false;
+                const ESM::FormId source = script.references[sourceIndex - 1];
+                if (!actorExists(actor) || !actorExists(source))
+                    return false;
+
+                CompiledQuestCommand command;
+                command.mType = instruction.opcode == 0x11e5
+                    ? CompiledQuestCommandType::MatchRace
+                    : CompiledQuestCommandType::MatchFaceGeometry;
+                command.mQuest = actor;
+                command.mTarget = source;
+                command.mNumber = 100.f;
+                if (instruction.opcode == 0x11e5)
+                {
+                    if (argumentPayload.size() != 5)
+                        return false;
+                }
+                else if (argumentPayload.size() == 8 && argumentPayload[5] == 0x47)
+                {
+                    const std::uint16_t globalIndex = readUint16(argumentPayload, 6);
+                    if (globalIndex == 0 || globalIndex > script.references.size())
+                        return false;
+                    command.mTopic = script.references[globalIndex - 1];
+                    if (mStore->get<ESM4::GlobalVariable>().search(
+                            ESM::RefId(command.mTopic)) == nullptr)
+                        return false;
+                    prepared.mHasLiveArgument = true;
+                }
+                else if (argumentPayload.size() == 10 && argumentPayload[5] == 0x6e)
+                {
+                    command.mNumber = static_cast<float>(
+                        std::bit_cast<std::int32_t>(readUint32(argumentPayload, 6)));
+                }
+                else if (argumentPayload.size() == 14 && argumentPayload[5] == 0x7a)
+                {
+                    const double percentage
+                        = std::bit_cast<double>(readUint64(argumentPayload, 6));
+                    if (!std::isfinite(percentage)
+                        || percentage < -static_cast<double>(std::numeric_limits<float>::max())
+                        || percentage > static_cast<double>(std::numeric_limits<float>::max()))
+                        return false;
+                    command.mNumber = static_cast<float>(percentage);
+                }
+                else
+                    return false;
+
+                if (!std::isfinite(command.mNumber)
+                    || command.mNumber < 0.f || command.mNumber > 100.f)
+                    return false;
+                prepared.mCommands.push_back(std::move(command));
+                continue;
             }
             std::vector<ESM4::ScriptBytecodeArgument> arguments;
             // Zero-argument reference functions such as EVP, ResetHealth, and ResetAI have an empty frame rather
@@ -3310,6 +3382,31 @@ namespace MWWorld
         return static_cast<int>(value);
     }
 
+    std::optional<float> ESM4QuestRuntime::resolveCompiledFaceMatchPercent(
+        const CompiledQuestCommand& command) const
+    {
+        float value = command.mNumber;
+        if (!command.mTopic.isZeroOrUnset())
+        {
+            if (mStore == nullptr)
+                return std::nullopt;
+            const ESM4::GlobalVariable* const global
+                = mStore->get<ESM4::GlobalVariable>().search(ESM::RefId(command.mTopic));
+            if (global == nullptr)
+                return std::nullopt;
+            value = global->mValue;
+            if (mGlobals != nullptr && !global->mEditorId.empty())
+            {
+                const GlobalVariableName name{ global->mEditorId };
+                if (mGlobals->getType(name) != ' ')
+                    value = (*mGlobals)[name].getFloat();
+            }
+        }
+        if (!std::isfinite(value) || value < 0.f || value > 100.f)
+            return std::nullopt;
+        return value;
+    }
+
     bool ESM4QuestRuntime::updateCompiledConditionalState(const CompiledQuestCommand& command,
         const QuestStateMap& states, std::vector<CompiledConditionalFrame>& stack, bool& execute) const
     {
@@ -3393,6 +3490,15 @@ namespace MWWorld
             working.mExternalEffects.push_back(std::move(effect));
             return true;
         }
+        if (command.mType == CompiledQuestCommandType::SetScale)
+        {
+            PendingExternalEffect effect;
+            effect.mType = command.mType;
+            effect.mTarget = command.mQuest;
+            effect.mNumber = command.mNumber;
+            working.mExternalEffects.push_back(std::move(effect));
+            return true;
+        }
         if (command.mType == CompiledQuestCommandType::AddItemHealthPercent)
         {
             const std::optional<int> count = resolveCompiledItemCountArgument(command);
@@ -3415,6 +3521,23 @@ namespace MWWorld
             PendingExternalEffect effect;
             effect.mType = command.mType;
             effect.mCount = *amount;
+            working.mExternalEffects.push_back(std::move(effect));
+            return true;
+        }
+        if (command.mType == CompiledQuestCommandType::MatchRace
+            || command.mType == CompiledQuestCommandType::MatchFaceGeometry)
+        {
+            const std::optional<float> percentage
+                = command.mType == CompiledQuestCommandType::MatchRace
+                ? std::optional<float>{ 100.f }
+                : resolveCompiledFaceMatchPercent(command);
+            if (!percentage)
+                return false;
+            PendingExternalEffect effect;
+            effect.mType = command.mType;
+            effect.mTarget = command.mQuest;
+            effect.mListener = command.mTarget;
+            effect.mNumber = *percentage;
             working.mExternalEffects.push_back(std::move(effect));
             return true;
         }
@@ -3553,12 +3676,15 @@ namespace MWWorld
             case CompiledQuestCommandType::Look:
             case CompiledQuestCommandType::PlayIdle:
             case CompiledQuestCommandType::MoveTo:
+            case CompiledQuestCommandType::SetScale:
             case CompiledQuestCommandType::SetScriptPackage:
             case CompiledQuestCommandType::SetActorEffect:
             case CompiledQuestCommandType::SetActorValue:
             case CompiledQuestCommandType::RestoreActorValue:
             case CompiledQuestCommandType::SetActorFlag:
             case CompiledQuestCommandType::SetActorFaction:
+            case CompiledQuestCommandType::MatchRace:
+            case CompiledQuestCommandType::MatchFaceGeometry:
             case CompiledQuestCommandType::AddItem:
             case CompiledQuestCommandType::AddItemHealthPercent:
             case CompiledQuestCommandType::RemoveItem:
@@ -3764,6 +3890,11 @@ namespace MWWorld
                     command = "MoveTo ";
                     executed = mMoveToHandler && mMoveToHandler(effect.mTarget, effect.mListener);
                     break;
+                case CompiledQuestCommandType::SetScale:
+                    command = "SetScale ";
+                    executed = mReferenceScaleHandler
+                        && mReferenceScaleHandler(effect.mTarget, effect.mNumber);
+                    break;
                 case CompiledQuestCommandType::SetScriptPackage:
                     command = effect.mValue ? "AddScriptPackage " : "RemoveScriptPackage ";
                     executed = mScriptPackageHandler
@@ -3803,6 +3934,19 @@ namespace MWWorld
                     executed = mActorFactionCommandHandler
                         && mActorFactionCommandHandler(effect.mTarget, effect.mListener,
                             effect.mValue ? std::optional<int>{ effect.mCount } : std::nullopt);
+                    break;
+                case CompiledQuestCommandType::MatchRace:
+                    command = "MatchRace ";
+                    executed = mActorAppearanceCommandHandler
+                        && mActorAppearanceCommandHandler(ESM4QuestActorAppearanceCommand::MatchRace,
+                            effect.mTarget, effect.mListener, 100.f);
+                    break;
+                case CompiledQuestCommandType::MatchFaceGeometry:
+                    command = "MatchFaceGeometry ";
+                    executed = mActorAppearanceCommandHandler
+                        && mActorAppearanceCommandHandler(
+                            ESM4QuestActorAppearanceCommand::MatchFaceGeometry,
+                            effect.mTarget, effect.mListener, effect.mNumber);
                     break;
                 case CompiledQuestCommandType::ShowMessage:
                     command = "ShowMessage ";
@@ -3980,6 +4124,8 @@ namespace MWWorld
                 command += " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::MoveTo)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
+            if (effect.mType == CompiledQuestCommandType::SetScale)
+                command += " " + std::to_string(effect.mNumber);
             if (effect.mType == CompiledQuestCommandType::StartCombat)
                 command += " " + ESM::RefId(effect.mListener).serializeText();
             if (effect.mType == CompiledQuestCommandType::Look)
@@ -4001,6 +4147,13 @@ namespace MWWorld
                 command += " " + ESM::RefId(effect.mListener).serializeText();
                 if (effect.mValue)
                     command += " " + std::to_string(effect.mCount);
+            }
+            if (effect.mType == CompiledQuestCommandType::MatchRace
+                || effect.mType == CompiledQuestCommandType::MatchFaceGeometry)
+            {
+                command += " " + ESM::RefId(effect.mListener).serializeText();
+                if (effect.mType == CompiledQuestCommandType::MatchFaceGeometry)
+                    command += " " + std::to_string(effect.mNumber);
             }
             if (effect.mType == CompiledQuestCommandType::SetQuestObject)
                 command += " " + std::to_string(static_cast<int>(effect.mValue));
@@ -4316,6 +4469,10 @@ namespace MWWorld
                         case CompiledQuestCommandType::MoveTo:
                             executed = mMoveToHandler && mMoveToHandler(command.mQuest, command.mTarget);
                             break;
+                        case CompiledQuestCommandType::SetScale:
+                            executed = mReferenceScaleHandler
+                                && mReferenceScaleHandler(command.mQuest, command.mNumber);
+                            break;
                         case CompiledQuestCommandType::SetScriptPackage:
                             executed = mScriptPackageHandler
                                 && mScriptPackageHandler(command.mQuest,
@@ -4355,6 +4512,22 @@ namespace MWWorld
                                 && mActorFactionCommandHandler(command.mQuest, command.mTarget,
                                     command.mValue ? std::optional<int>{ command.mObjective } : std::nullopt);
                             break;
+                        case CompiledQuestCommandType::MatchRace:
+                            executed = mActorAppearanceCommandHandler
+                                && mActorAppearanceCommandHandler(
+                                    ESM4QuestActorAppearanceCommand::MatchRace,
+                                    command.mQuest, command.mTarget, 100.f);
+                            break;
+                        case CompiledQuestCommandType::MatchFaceGeometry:
+                        {
+                            const std::optional<float> percentage
+                                = resolveCompiledFaceMatchPercent(command);
+                            executed = percentage && mActorAppearanceCommandHandler
+                                && mActorAppearanceCommandHandler(
+                                    ESM4QuestActorAppearanceCommand::MatchFaceGeometry,
+                                    command.mQuest, command.mTarget, *percentage);
+                            break;
+                        }
                         case CompiledQuestCommandType::AddItem:
                             executed = mAddItemHandler
                                 && mAddItemHandler(command.mQuest, command.mTarget, command.mObjective);
@@ -4455,12 +4628,15 @@ namespace MWWorld
                             || command.mType == CompiledQuestCommandType::Look
                             || command.mType == CompiledQuestCommandType::PlayIdle
                             || command.mType == CompiledQuestCommandType::MoveTo
+                            || command.mType == CompiledQuestCommandType::SetScale
                             || command.mType == CompiledQuestCommandType::SetScriptPackage
                             || command.mType == CompiledQuestCommandType::SetActorEffect
                             || command.mType == CompiledQuestCommandType::SetActorValue
                             || command.mType == CompiledQuestCommandType::RestoreActorValue
                             || command.mType == CompiledQuestCommandType::SetActorFlag
                             || command.mType == CompiledQuestCommandType::SetActorFaction
+                            || command.mType == CompiledQuestCommandType::MatchRace
+                            || command.mType == CompiledQuestCommandType::MatchFaceGeometry
                             || command.mType == CompiledQuestCommandType::ShowMessage
                             || command.mType == CompiledQuestCommandType::SetNote
                             || command.mType == CompiledQuestCommandType::SetPerk
@@ -4515,6 +4691,9 @@ namespace MWWorld
                             else if (command.mType == CompiledQuestCommandType::MoveTo)
                                 failure = "MoveTo " + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::SetScale)
+                                failure = "SetScale " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + std::to_string(command.mNumber);
                             else if (command.mType == CompiledQuestCommandType::SetScriptPackage)
                                 failure = std::string(command.mValue ? "AddScriptPackage " : "RemoveScriptPackage ")
                                     + ESM::RefId(command.mQuest).serializeText()
@@ -4545,6 +4724,19 @@ namespace MWWorld
                                     + ESM::RefId(command.mQuest).serializeText() + " "
                                     + ESM::RefId(command.mTarget).serializeText()
                                     + (command.mValue ? " " + std::to_string(command.mObjective) : "");
+                            else if (command.mType == CompiledQuestCommandType::MatchRace)
+                                failure = "MatchRace " + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText();
+                            else if (command.mType == CompiledQuestCommandType::MatchFaceGeometry)
+                            {
+                                const std::optional<float> percentage
+                                    = resolveCompiledFaceMatchPercent(command);
+                                failure = "MatchFaceGeometry "
+                                    + ESM::RefId(command.mQuest).serializeText() + " "
+                                    + ESM::RefId(command.mTarget).serializeText() + " "
+                                    + (percentage ? std::to_string(*percentage)
+                                                  : std::string("<unresolved>"));
+                            }
                             else if (command.mType == CompiledQuestCommandType::ShowMessage)
                                 failure = "ShowMessage " + ESM::RefId(command.mQuest).serializeText();
                             else if (command.mType == CompiledQuestCommandType::SetNote)
@@ -5124,9 +5316,11 @@ namespace MWWorld
         const auto found = state->mVariables.find(Misc::StringUtils::lowerCase(variable));
         if (found == state->mVariables.end())
             return false;
+        if (found->second == value)
+            return true;
         found->second = value;
-        Log(Debug::Info) << "FNV/ESM4 behavior: SetQuestVariable quest=" << quest->mEditorId
-                         << " variable=" << variable << " value=" << value;
+        Log(Debug::Verbose) << "FNV/ESM4 behavior: SetQuestVariable quest=" << quest->mEditorId
+                            << " variable=" << variable << " value=" << value;
         return true;
     }
 
@@ -6992,6 +7186,23 @@ namespace MWWorld
                     Log(Debug::Warning) << "FNV/ESM4 behavior: MoveTo failed reference=" << subject
                                         << " marker=" << removeQuotes(tokens[1]);
                 }
+                else if (Misc::StringUtils::ciEqual(command, "SetScale") && tokens.size() >= 2)
+                {
+                    const SourceTokens sourceTokens = normaliseSourceTokens(tokens);
+                    std::size_t argument = 1;
+                    const std::optional<float> scale = sourceExpression(sourceTokens, argument);
+                    const ESM::FormId reference = sourceOwnerId();
+                    if (scale && std::isfinite(*scale) && *scale > 0.f
+                        && argument == sourceTokens.size() && !reference.isZeroOrUnset()
+                        && mReferenceScaleHandler && mReferenceScaleHandler(reference, *scale))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 behavior: SetScale reference=" << subject
+                                         << " scale=" << *scale;
+                        continue;
+                    }
+
+                    Log(Debug::Warning) << "FNV/ESM4 behavior: SetScale failed reference=" << subject;
+                }
                 else if (tokens.size() == 2 && Misc::StringUtils::ciEqual(command, "AddScriptPackage")
                     && mStore != nullptr)
                 {
@@ -8093,8 +8304,12 @@ namespace MWWorld
         if (found == state->mVariables.end())
             return false;
         found->second = value;
-        Log(Debug::Info) << "FNV/ESM4 behavior: SetActorScriptVariable actor=" << state->mEditorId
-                         << " variable=" << variable << " value=" << value;
+        // Actor scripts commonly update timer locals every frame. Keep the
+        // assignment exact, but make raw variable tracing opt-in so normal
+        // diagnostics retain semantic events without unbounded frame spam.
+        if (std::getenv("OPENMW_FNV_SCRIPT_VARIABLE_TRACE") != nullptr)
+            Log(Debug::Verbose) << "FNV/ESM4 behavior: SetActorScriptVariable actor=" << state->mEditorId
+                                << " variable=" << variable << " value=" << value;
         return true;
     }
 
@@ -8130,8 +8345,8 @@ namespace MWWorld
         if (found == state->mVariables.end())
             return false;
         found->second = value;
-        Log(Debug::Info) << "FNV/ESM4 behavior: SetReferenceScriptVariable reference=" << state->mEditorId
-                         << " variable=" << variable << " value=" << value;
+        Log(Debug::Verbose) << "FNV/ESM4 behavior: SetReferenceScriptVariable reference=" << state->mEditorId
+                            << " variable=" << variable << " value=" << value;
         return true;
     }
 

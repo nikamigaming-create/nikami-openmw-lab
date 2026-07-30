@@ -98,7 +98,7 @@ void MWMechanics::AiPackage::reset()
 
 bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f& dest, float duration,
     MWWorld::MovementDirectionFlags supportedMovementDirections, float destTolerance, float endTolerance,
-    PathType pathType)
+    PathType pathType, bool requireDestinationTolerance)
 {
     const Misc::TimerStatus timerStatus = mReaction.update(duration);
 
@@ -190,7 +190,10 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
     if (timerStatus == Misc::TimerStatus::Elapsed)
         updateFlags |= PathFinder::UpdateFlag_RemoveLoops;
 
-    mPathFinder.update(position, pointTolerance, DEFAULT_TOLERANCE, updateFlags, agentBounds, getNavigatorFlags(actor));
+    const float finalPointTolerance
+        = requireDestinationTolerance ? std::max(0.f, destTolerance) : DEFAULT_TOLERANCE;
+    mPathFinder.update(
+        position, pointTolerance, finalPointTolerance, updateFlags, agentBounds, getNavigatorFlags(actor));
 
     if (isDestReached || mPathFinder.checkPathCompleted()) // if path is finished
     {

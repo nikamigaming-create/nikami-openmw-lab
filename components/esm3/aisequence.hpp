@@ -89,6 +89,9 @@ namespace ESM
             AiTravelData mData;
             bool mHidden;
             bool mRepeat;
+            // Optional exact completion radius for data-driven travel.
+            // A negative value preserves legacy Morrowind arrival behavior.
+            float mDestinationTolerance = -1.f;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;

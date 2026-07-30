@@ -152,6 +152,12 @@ namespace MWWorld
         Look,
     };
 
+    enum class ESM4QuestActorAppearanceCommand : std::uint8_t
+    {
+        MatchRace,
+        MatchFaceGeometry,
+    };
+
     enum class ESM4PlayerControl : std::uint8_t
     {
         Movement = 0x01,
@@ -189,6 +195,7 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using ReferenceActivationHandler = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using MoveToHandler = std::function<bool(ESM::FormId, ESM::FormId)>;
+        using ReferenceScaleHandler = std::function<bool(ESM::FormId, float)>;
         // A package value adds one authored PACK through the engine package
         // stack; nullopt removes the actor's scripted package stack.
         using ScriptPackageHandler
@@ -242,6 +249,8 @@ namespace MWWorld
             = std::function<bool(ESM::FormId, ESM::FormId, bool)>;
         using ActorNameCommandHandler
             = std::function<bool(ESM::FormId, std::string_view)>;
+        using ActorAppearanceCommandHandler = std::function<bool(
+            ESM4QuestActorAppearanceCommand, ESM::FormId, ESM::FormId, float)>;
         using PlayerControlsHandler = std::function<bool(std::uint8_t, bool)>;
 
     private:
@@ -388,6 +397,7 @@ namespace MWWorld
         EquipmentCommandHandler mEquipmentCommandHandler;
         ReferenceActivationHandler mReferenceActivationHandler;
         MoveToHandler mMoveToHandler;
+        ReferenceScaleHandler mReferenceScaleHandler;
         ScriptPackageHandler mScriptPackageHandler;
         ActorIdleHandler mActorIdleHandler;
         ReferenceAnimationGroupHandler mReferenceAnimationGroupHandler;
@@ -422,6 +432,7 @@ namespace MWWorld
         ActorCommandHandler mActorCommandHandler;
         ActorEffectCommandHandler mActorEffectCommandHandler;
         ActorNameCommandHandler mActorNameCommandHandler;
+        ActorAppearanceCommandHandler mActorAppearanceCommandHandler;
         PlayerControlsHandler mPlayerControlsHandler;
 
         enum class CompiledQuestCommandType : std::uint8_t
@@ -456,12 +467,15 @@ namespace MWWorld
             Look,
             PlayIdle,
             MoveTo,
+            SetScale,
             SetScriptPackage,
             SetActorEffect,
             SetActorValue,
             RestoreActorValue,
             SetActorFlag,
             SetActorFaction,
+            MatchRace,
+            MatchFaceGeometry,
             AddItem,
             AddItemHealthPercent,
             RemoveItem,
@@ -629,6 +643,8 @@ namespace MWWorld
             const CompiledQuestCommand& command) const;
         std::optional<int> resolveCompiledItemCountArgument(
             const CompiledQuestCommand& command) const;
+        std::optional<float> resolveCompiledFaceMatchPercent(
+            const CompiledQuestCommand& command) const;
         bool updateCompiledConditionalState(const CompiledQuestCommand& command, const QuestStateMap& states,
             std::vector<CompiledConditionalFrame>& stack, bool& execute) const;
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
@@ -705,6 +721,10 @@ namespace MWWorld
         void setMoveToHandler(MoveToHandler handler)
         {
             mMoveToHandler = std::move(handler);
+        }
+        void setReferenceScaleHandler(ReferenceScaleHandler handler)
+        {
+            mReferenceScaleHandler = std::move(handler);
         }
         void setScriptPackageHandler(ScriptPackageHandler handler)
         {
@@ -823,6 +843,10 @@ namespace MWWorld
         void setActorNameCommandHandler(ActorNameCommandHandler handler)
         {
             mActorNameCommandHandler = std::move(handler);
+        }
+        void setActorAppearanceCommandHandler(ActorAppearanceCommandHandler handler)
+        {
+            mActorAppearanceCommandHandler = std::move(handler);
         }
         void setPlayerControlsHandler(PlayerControlsHandler handler)
         {

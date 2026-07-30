@@ -3482,7 +3482,8 @@ namespace NifOsg
                     if (visctrl->mData.empty() && visctrl->mInterpolator.empty())
                         continue;
                     if (!visctrl->mInterpolator.empty()
-                        && visctrl->mInterpolator->mRecordType != Nif::RC_NiBoolInterpolator)
+                        && visctrl->mInterpolator->mRecordType != Nif::RC_NiBoolInterpolator
+                        && visctrl->mInterpolator->mRecordType != Nif::RC_NiBlendBoolInterpolator)
                     {
                         Log(Debug::Error)
                             << "Unsupported interpolator type for NiVisController " << visctrl->mRecordIndex << " in "

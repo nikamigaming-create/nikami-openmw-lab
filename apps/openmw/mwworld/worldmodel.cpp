@@ -427,6 +427,13 @@ MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
             return ptr;
         if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCreature>()); !ptr.isEmpty())
             return ptr;
+
+        // FormId is an ESM4 identity. If it is not a live/generated pointer
+        // and none of the ESM4 placement stores owns it, an ESM3 cell scan
+        // cannot possibly resolve it. Besides doing unnecessary work, that
+        // scan loads every legacy cell and turns unrelated unsupported
+        // references into a wall of diagnostics.
+        return {};
     }
 
     // Now try the other cells

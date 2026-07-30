@@ -39,4 +39,15 @@ namespace
         EXPECT_TRUE(MWMechanics::isOwnershipAllowed(ownership, {}, {}, &factions));
         EXPECT_FALSE(MWMechanics::isOwnershipAllowed(ownership, {}, {}, nullptr));
     }
+
+    TEST(OwnershipTest, AllowsPersonalOwnerByGeneratedRuntimeReference)
+    {
+        const ESM::FormId actorReference{ .mIndex = 0x101, .mContentFile = -1 };
+        MWMechanics::Ownership ownership;
+        ownership.mOwner = ESM::RefId::generated(actorReference.mIndex);
+
+        bool allowed = false;
+        EXPECT_NO_THROW(allowed = MWMechanics::isOwnershipAllowed(ownership, {}, actorReference, nullptr));
+        EXPECT_TRUE(allowed);
+    }
 }

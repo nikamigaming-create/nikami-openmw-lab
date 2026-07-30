@@ -10,6 +10,18 @@
 
 namespace MWMechanics
 {
+    namespace
+    {
+        ESM::RefId refIdFromRuntimeFormId(ESM::FormId value)
+        {
+            if (value.isZeroOrUnset())
+                return {};
+            if (value.hasContentFile())
+                return ESM::RefId::formIdRefId(value);
+            return ESM::RefId::generated(value.mIndex);
+        }
+    }
+
     Ownership resolveOwnership(const MWWorld::Ptr& target, const MWWorld::ESMStore& store)
     {
         Ownership result;
@@ -44,7 +56,7 @@ namespace MWMechanics
         ESM::FormId actorReference, const std::map<ESM::RefId, int>* actorFactions)
     {
         if (!ownership.mOwner.empty() && !ownership.mOwnerIsFaction
-            && ownership.mOwner != ESM::RefId(actorReference)
+            && ownership.mOwner != refIdFromRuntimeFormId(actorReference)
             && ownership.mOwner != actorBase && ownership.mOwner != "Player")
             return false;
 

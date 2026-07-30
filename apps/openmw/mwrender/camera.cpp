@@ -117,6 +117,12 @@ namespace MWRender
     void Camera::updateCamera(osg::Camera* cam)
     {
         osg::Quat orient = getOrient();
+        if (mUseTrackingNodeTransform && mTrackingNode)
+        {
+            const osg::NodePathList nodePaths = mTrackingNode->getParentalNodePaths();
+            if (!nodePaths.empty())
+                orient = osg::computeLocalToWorld(nodePaths.front()).getRotate();
+        }
         osg::Vec3d forward = orient * osg::Vec3d(0, 1, 0);
         osg::Vec3d up = orient * osg::Vec3d(0, 0, 1);
 
@@ -155,6 +161,9 @@ namespace MWRender
 
     osg::Vec3d Camera::calculateFirstPersonPosition(const osg::Vec3d& trackedPosition) const
     {
+        if (mUseTrackingNodeTransform)
+            return trackedPosition;
+
         osg::Vec3d res = trackedPosition;
         const osg::Vec3f totalOffset = mFirstPersonOffset + mFirstPersonProfileOffset;
         osg::Vec2f horizontalOffset
@@ -346,9 +355,13 @@ namespace MWRender
         mPosition = pos;
     }
 
-    void Camera::setAnimation(Animation* anim)
+    void Camera::setAnimation(Animation* anim, bool useTrackingNodeTransform)
     {
+        if (mAnimation == anim && mUseTrackingNodeTransform == useTrackingNodeTransform)
+            return;
+
         mAnimation = anim;
+        mUseTrackingNodeTransform = useTrackingNodeTransform;
         mProcessViewChange = true;
     }
 

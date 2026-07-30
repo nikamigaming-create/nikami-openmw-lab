@@ -726,6 +726,17 @@ namespace MWWorld
             && ref.mRadio.broadcastRange <= 4 && std::isfinite(ref.mRadio.staticPercentage);
     }
 
+    bool isFalloutSpatialMetadataReference(const ESM4::Reference& ref)
+    {
+        // Fallout 3/New Vegas use reserved hardcoded NAME values for
+        // model-less room-bound metadata. 0x17 carries occlusion planes
+        // (XOCP) and 0x20 carries portal planes (XPOD); both describe their
+        // bounds through XPRM/XMBO and intentionally have no base record to
+        // instantiate. Keep them in the ESM4 reference store, but do not
+        // report them as missing gameplay objects.
+        return ref.mHasPrimitive && (ref.mBaseObj.mIndex == 0x17 || ref.mBaseObj.mIndex == 0x20);
+    }
+
     template <typename X>
     void CellRefList<X>::load(const ESM4::Reference& ref, const MWWorld::ESMStore& esmStore)
     {
@@ -1242,6 +1253,13 @@ namespace MWWorld
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
         if (foundType == 0)
         {
+            if (isFalloutSpatialMetadataReference(ref))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained non-live spatial metadata reference "
+                                    << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
+                                    << " in parent cell " << ref.mParent;
+                return;
+            }
             // IDLM references are authored, invisible AI interaction points. They stay in the
             // ESM4 reference store for sandbox-package discovery and deliberately have no live
             // render/physics object in the cell's reference lists.
@@ -1254,6 +1272,16 @@ namespace MWWorld
             }
             Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
                                 << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
+        if (foundType == ESM::REC_ASPC4)
+        {
+            // Placed ASPC references select a local sound environment. They are data-owned spatial metadata, not
+            // renderable or collidable world objects. Keep the base record available for the sound system without
+            // manufacturing a live object for its placement.
+            Log(Debug::Verbose) << "FNV/ESM4 diag: retained non-live acoustic-space reference "
+                                << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
                                 << " in parent cell " << ref.mParent;
             return;
         }

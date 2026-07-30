@@ -174,6 +174,10 @@ namespace MWClass
     class ESM4NpcCustomData : public MWWorld::TypedCustomData<ESM4NpcCustomData>
     {
     public:
+        // MatchRace/MatchFaceGeometry are reference-local runtime mutations.
+        // Keep an owned traits copy so the immutable ESM store remains shared
+        // and every other actor using the same NPC_ base remains untouched.
+        std::optional<ESM4::Npc> mAppearanceTraits;
         const ESM4::Npc* mTraits = nullptr;
         const ESM4::Npc* mFactions = nullptr;
         const ESM4::Npc* mModel = nullptr;
@@ -184,6 +188,7 @@ namespace MWClass
         const ESM4::Npc* mBaseData = nullptr;
         const ESM4::Race* mRace = nullptr;
         bool mIsFemale = false;
+        bool mUsesDefaultFaceTexture = false;
         MWMechanics::CreatureStats mCreatureStats;
         MWMechanics::Movement mMovement;
         std::unique_ptr<ESM4NpcContainerStore> mContainerStore;
@@ -219,7 +224,8 @@ namespace MWClass
     }
 
     ESM4NpcCustomData::ESM4NpcCustomData(const ESM4NpcCustomData& other)
-        : mTraits(other.mTraits)
+        : mAppearanceTraits(other.mAppearanceTraits)
+        , mTraits(other.mTraits)
         , mFactions(other.mFactions)
         , mModel(other.mModel)
         , mAIPackage(other.mAIPackage)
@@ -229,6 +235,7 @@ namespace MWClass
         , mBaseData(other.mBaseData)
         , mRace(other.mRace)
         , mIsFemale(other.mIsFemale)
+        , mUsesDefaultFaceTexture(other.mUsesDefaultFaceTexture)
         , mCreatureStats(other.mCreatureStats)
         , mMovement(other.mMovement)
         , mContainerStore(other.mContainerStore ? other.mContainerStore->cloneForNpc()
@@ -245,6 +252,8 @@ namespace MWClass
         , mFurnitureState(other.mFurnitureState)
         , mFurniturePlacement(other.mFurniturePlacement)
     {
+        if (mAppearanceTraits)
+            mTraits = &*mAppearanceTraits;
     }
 
     namespace
@@ -1205,21 +1214,33 @@ namespace MWClass
                                  << traits->mEditorId;
                 return;
             }
-            const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
-            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance && !notifyCompletion)
+            const std::optional<float> arrivalDistance = furnitureTarget
+                ? std::optional<float>{ 128.f }
+                : getFnvTravelCompletionRadius(package->mLocation.radius);
+            if (arrivalDistance
+                && dx * dx + dy * dy + dz * dz < *arrivalDistance * *arrivalDistance && !notifyCompletion)
             {
                 data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
                                  << " furnitureTarget=" << furnitureTarget
-                                 << " arrivalDistance=" << arrivalDistance << " for " << traits->mEditorId;
+                                 << " arrivalDistance=" << *arrivalDistance << " for " << traits->mEditorId;
                 return;
             }
 
-            MWMechanics::AiTravel travel(
-                target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], !notifyCompletion);
-            sequence.stack(travel, ptr, true);
+            if (arrivalDistance)
+            {
+                MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2],
+                    !notifyCompletion, *arrivalDistance);
+                sequence.stack(travel, ptr, true);
+            }
+            else
+            {
+                MWMechanics::AiTravel travel(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], !notifyCompletion);
+                sequence.stack(travel, ptr, true);
+            }
             data.mFnvAiSequenceInitialised = true;
             data.mFnvPackageCompletionPackage = notifyCompletion ? package->mId : ESM::FormId{};
             data.mFnvPackageCompletionPending = notifyCompletion;
@@ -1227,7 +1248,9 @@ namespace MWClass
                 Log(Debug::Info) << "FNV/ESM4 route AI: travel queued actor=" << ptr.getCellRef().getRefId()
                                  << " package=" << package->mEditorId << " target=" << target->mEditorId
                                  << " notifyCompletion=" << notifyCompletion << " delta=(" << dx << ',' << dy
-                                 << ',' << dz << ')';
+                                 << ',' << dz << ") completionRadius="
+                                 << (arrivalDistance ? *arrivalDistance : -1.f)
+                                 << " completionMode=" << (arrivalDistance ? "authored-radius" : "reachable-endpoint");
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " targetRef=" << target->mEditorId << " pos=("
@@ -2096,6 +2119,112 @@ namespace MWClass
     bool ESM4Npc::isFemale(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mIsFemale;
+    }
+
+    bool ESM4Npc::matchRace(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId
+            || sourceTraits.mRace.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mTraits == nullptr)
+            return false;
+        const bool targetIsFallout = data.mTraits->mIsFO3 || data.mTraits->mIsFONV;
+        const bool sourceIsFallout = sourceTraits.mIsFO3 || sourceTraits.mIsFONV;
+        const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
+        const ESM4::Race* const sourceRace
+            = store != nullptr ? store->get<ESM4::Race>().search(ESM::RefId(sourceTraits.mRace)) : nullptr;
+        if (!targetIsFallout || !sourceIsFallout || sourceRace == nullptr)
+            return false;
+
+        if (!data.mAppearanceTraits)
+            data.mAppearanceTraits.emplace(*data.mTraits);
+        ESM4::Npc& traits = *data.mAppearanceTraits;
+        traits.mRace = sourceTraits.mRace;
+        traits.mFgRace = sourceTraits.mFgRace;
+        // Retail MatchRace selects the new race's default facial texture.
+        // Geometry remains independently mutable by MatchFaceGeometry.
+        traits.mSymTextureModeCoefficients.clear();
+        traits.mTintLayers.clear();
+        data.mTraits = &traits;
+        data.mRace = sourceRace;
+        data.mUsesDefaultFaceTexture = true;
+        Log(Debug::Info) << "FNV/ESM4 behavior: MatchRace actor="
+                         << ptr.getCellRef().getRefId() << " source=" << sourceTraits.mEditorId
+                         << " race=" << ESM::RefId(sourceTraits.mRace)
+                         << " texture=runtime-race-default";
+        return true;
+    }
+
+    bool ESM4Npc::matchFaceGeometry(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits,
+        const ESM4::Race* sourceRace, bool sourceFemale, float percentage)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId
+            || !std::isfinite(percentage) || percentage < 0.f || percentage > 100.f)
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mTraits == nullptr || data.mRace == nullptr || sourceRace == nullptr)
+            return false;
+        const bool targetIsFallout = data.mTraits->mIsFO3 || data.mTraits->mIsFONV;
+        const bool sourceIsFallout = sourceTraits.mIsFO3 || sourceTraits.mIsFONV;
+        if (!targetIsFallout || !sourceIsFallout)
+            return false;
+
+        // Copy both operands before materialising the target's owned override:
+        // source and target are allowed to be the same reference.
+        const ESM4::Npc targetBefore = *data.mTraits;
+        const ESM4::Npc sourceBefore = sourceTraits;
+        const float blend = percentage / 100.f;
+        const auto raceCoefficients = [](const ESM4::Race& race, bool female, bool symmetric)
+            -> const std::vector<float>& {
+            if (symmetric)
+                return female ? race.mSymShapeModeCoeffFemale : race.mSymShapeModeCoefficients;
+            return female ? race.mAsymShapeModeCoeffFemale : race.mAsymShapeModeCoefficients;
+        };
+        const auto blendGeometry = [blend](const std::vector<float>& target,
+                                       const std::vector<float>& targetRace,
+                                       const std::vector<float>& source,
+                                       const std::vector<float>& sourceRace) {
+            const std::size_t size
+                = std::max({ target.size(), targetRace.size(), source.size(), sourceRace.size() });
+            std::vector<float> result(size, 0.f);
+            const auto valueAt = [](const std::vector<float>& values, std::size_t index) {
+                return index < values.size() ? values[index] : 0.f;
+            };
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                const float targetBaseline = valueAt(targetRace, index);
+                const float targetEffective = valueAt(target, index) + targetBaseline;
+                const float sourceEffective = valueAt(source, index) + valueAt(sourceRace, index);
+                result[index] = targetEffective + (sourceEffective - targetEffective) * blend
+                    - targetBaseline;
+            }
+            return result;
+        };
+
+        if (!data.mAppearanceTraits)
+            data.mAppearanceTraits.emplace(targetBefore);
+        ESM4::Npc& traits = *data.mAppearanceTraits;
+        traits.mSymShapeModeCoefficients = blendGeometry(targetBefore.mSymShapeModeCoefficients,
+            raceCoefficients(*data.mRace, data.mIsFemale, true),
+            sourceBefore.mSymShapeModeCoefficients,
+            raceCoefficients(*sourceRace, sourceFemale, true));
+        traits.mAsymShapeModeCoefficients = blendGeometry(targetBefore.mAsymShapeModeCoefficients,
+            raceCoefficients(*data.mRace, data.mIsFemale, false),
+            sourceBefore.mAsymShapeModeCoefficients,
+            raceCoefficients(*sourceRace, sourceFemale, false));
+        data.mTraits = &traits;
+        Log(Debug::Info) << "FNV/ESM4 behavior: MatchFaceGeometry actor="
+                         << ptr.getCellRef().getRefId() << " source=" << sourceTraits.mEditorId
+                         << " percentage=" << percentage << " geometryOnly=true"
+                         << " symmetric=" << traits.mSymShapeModeCoefficients.size()
+                         << " asymmetric=" << traits.mAsymShapeModeCoefficients.size();
+        return true;
+    }
+
+    bool ESM4Npc::usesDefaultFaceTexture(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mUsesDefaultFaceTexture;
     }
 
     std::string_view ESM4Npc::chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale)

@@ -77,6 +77,8 @@ namespace ESM
             esm.getHNT(mHidden, "HIDD");
             mRepeat = false;
             esm.getHNOT(mRepeat, "REPT");
+            mDestinationTolerance = -1.f;
+            esm.getHNOT(mDestinationTolerance, "DTOL");
         }
 
         void AiTravel::save(ESMWriter& esm) const
@@ -85,6 +87,8 @@ namespace ESM
             esm.writeHNT("HIDD", mHidden);
             if (mRepeat)
                 esm.writeHNT("REPT", mRepeat);
+            if (mDestinationTolerance >= 0.f)
+                esm.writeHNT("DTOL", mDestinationTolerance);
         }
 
         void AiEscort::load(ESMReader& esm)

@@ -92,9 +92,10 @@ namespace MWRender
         float getCameraDistance() const { return mCameraDistance; }
         void setPreferredCameraDistance(float v) { mPreferredCameraDistance = v; }
 
-        /// Most gameplay uses an NpcAnimation camera rig.  Data-driven Fallout cinematics can instead expose an
-        /// authored camera target on a native ESM4 body Animation.
-        void setAnimation(Animation* anim);
+        /// Most gameplay uses an NpcAnimation camera rig. Data-driven Fallout cinematics can instead expose an
+        /// authored camera transform on a native ESM4 body Animation. In that case the target owns both position
+        /// and orientation; gameplay eye offsets and player look angles must not be layered over it.
+        void setAnimation(Animation* anim, bool useTrackingNodeTransform = false);
 
         osg::Vec3d getTrackedPosition() const { return mTrackedPosition; }
         const osg::Vec3d& getPosition() const { return mPosition; }
@@ -130,6 +131,7 @@ namespace MWRender
         osg::ref_ptr<osg::Camera> mCamera;
 
         Animation* mAnimation;
+        bool mUseTrackingNodeTransform = false;
 
         // Always 'true' if mMode == `FirstPerson`. Also it is 'true' in `Vanity` or `Preview` modes if
         // the camera should return to `FirstPerson` view after it.

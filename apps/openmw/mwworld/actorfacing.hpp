@@ -11,6 +11,10 @@ namespace MWWorld
         if (tes4Npc)
             return gameplayYaw + osg::PI_2f;
         if (falloutActor)
+            // Fallout's actor mesh/skeleton basis is a quarter turn from the
+            // gameplay heading stored on the reference. Keep this correction
+            // at the render/physics boundary; AI must continue to steer from
+            // the unmodified authored heading.
             return gameplayYaw - osg::PI_2f;
         return gameplayYaw;
     }

@@ -9996,6 +9996,10 @@ namespace MWRender
             logWorldViewerActorLedger(mPtr, "part-template-null", details.str());
             return nullptr;
         }
+        FalloutPartShapeSummaryVisitor rigProbe;
+        const_cast<osg::Node*>(templateNode.get())->accept(rigProbe);
+        std::string nifPrn;
+        templateNode->getUserValue("OpenMW.NifPrn", nifPrn);
         if (tes5StaticPart && tes5UnstableFaceSurfaceQuarantineEnabled()
             && isTes5UnstableStaticFaceSurfaceModel(model))
         {
@@ -10169,6 +10173,26 @@ namespace MWRender
                                     << " hand=" << static_cast<bool>(hand) << " for "
                                     << mPtr.getCellRef().getRefId();
         }
+        const bool authoredRigidAttachment = falloutHumanPart && preferredBone.empty()
+            && !headAttachedStaticPart && !bareHandSurfacePart && rigProbe.mRigGeometryCount == 0
+            && !nifPrn.empty();
+        if (authoredRigidAttachment)
+        {
+            if (osg::Group* authoredNode = findBestAttachmentNode(nodeMap, { nifPrn }))
+            {
+                attachNode = authoredNode;
+                Log(Debug::Info) << "FNV/ESM4 equipment: using authored Prn attachment model="
+                                 << correctedModel.value() << " bone=\"" << nifPrn << "\" actor="
+                                 << mPtr.getCellRef().getRefId();
+            }
+            else
+            {
+                Log(Debug::Warning) << "FNV/ESM4 equipment: authored Prn attachment bone is absent model="
+                                    << correctedModel.value() << " bone=\"" << nifPrn << "\" actor="
+                                    << mPtr.getCellRef().getRefId();
+                return nullptr;
+            }
+        }
         if (attachNode == mObjectRoot.get())
         {
             auto bip01 = nodeMap.find("Bip01");
@@ -10184,8 +10208,6 @@ namespace MWRender
 
         Log(Debug::Verbose) << "FNV/ESM4 diag: rig-aware attaching NPC model part " << correctedModel.value()
                             << " to " << mPtr.getCellRef().getRefId() << " at " << attachNode->getName();
-        FalloutPartShapeSummaryVisitor rigProbe;
-        const_cast<osg::Node*>(attachTemplateNode.get())->accept(rigProbe);
         const std::size_t rigBoneMatches = countRigBoneMatches(nodeMap, rigProbe.mFirstRigBoneNames);
         const bool tes4RiggedPart = tes4Part && rigProbe.mRigGeometryCount > 0;
         if (tes4RiggedPart)
@@ -11179,9 +11201,14 @@ namespace MWRender
         // Fallout's exported *_0 face asset is a modulation/detail map over the
         // race diffuse, not a replacement diffuse.  Bodymods use the same
         // neutral-at-0.5 modulation convention, often as a uniform 8x8 map.
+        const bool useDefaultRaceFaceTexture = MWClass::ESM4Npc::usesDefaultFaceTexture(mPtr);
         const std::string npcFaceTexture;
-        const std::string npcFaceDetailTexture = findFonvNpcFaceDetailTexture(mResourceSystem, traits);
-        const std::string npcFaceNormalTexture = findFonvNpcFaceNormalTexture(mResourceSystem, traits);
+        const std::string npcFaceDetailTexture = useDefaultRaceFaceTexture
+            ? std::string{}
+            : findFonvNpcFaceDetailTexture(mResourceSystem, traits);
+        const std::string npcFaceNormalTexture = useDefaultRaceFaceTexture
+            ? std::string{}
+            : findFonvNpcFaceNormalTexture(mResourceSystem, traits);
         const std::string npcBodyTexture = findFonvNpcBodyTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyDetailTexture = findFonvNpcBodyDetailTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyNormalTexture = findFonvNpcBodyNormalTexture(mResourceSystem, traits, isFemale);

@@ -25,6 +25,13 @@ USE_SERIALIZER_WRAPPER_LIBRARY(osg)
 
 namespace
 {
+    constexpr VFS::Path::NormalizedView sFalloutCursor("textures/interface/icons/misc/cursor.dds");
+
+    bool isLegacyCursorPath(VFS::Path::NormalizedView path)
+    {
+        return path == "textures/tx_cursor.dds" || path == "textures/tx_cursormove.dds"
+            || path == "textures/cursor_drop_ground.dds";
+    }
 
     osg::ref_ptr<osg::Image> createWarningImage()
     {
@@ -107,9 +114,15 @@ namespace Resource
         else
         {
             Files::IStreamPtr stream;
+            VFS::Path::NormalizedView resolvedPath = path;
+            if (!mVFS->exists(path) && isLegacyCursorPath(path) && mVFS->exists(sFalloutCursor))
+            {
+                resolvedPath = sFalloutCursor;
+                Log(Debug::Info) << "Using native Fallout cursor " << resolvedPath << " for " << path;
+            }
             try
             {
-                stream = mVFS->get(path);
+                stream = mVFS->get(resolvedPath);
             }
             catch (std::exception& e)
             {
@@ -118,7 +131,7 @@ namespace Resource
                 return mWarningImage;
             }
 
-            const std::string ext(Misc::getFileExtension(path.value()));
+            const std::string ext(Misc::getFileExtension(resolvedPath.value()));
             osgDB::ReaderWriter* reader = osgDB::Registry::instance()->getReaderWriterForExtension(ext);
             if (!reader)
             {

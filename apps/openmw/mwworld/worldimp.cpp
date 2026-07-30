@@ -939,16 +939,26 @@ namespace MWWorld
                 return false;
 
             // MoveTo is a script adapter around OpenMW's ordinary object
-            // movement. Cell transfer, scene insertion, physics, and actor
-            // state therefore remain owned by the engine.
-            const Ptr moved = moveObject(reference, marker.getCell(),
-                marker.getRefData().getPosition().asVec3(), true, true);
+            // movement and rotation. Bethesda marker references author both
+            // halves of the destination transform; retaining only position
+            // leaves actors and the first-person camera facing an unrelated
+            // pre-teleport direction.
+            const ESM::Position markerPosition = marker.getRefData().getPosition();
+            const Ptr moved = moveObject(reference, marker.getCell(), markerPosition.asVec3(), true, true);
+            rotateObject(moved, markerPosition.asRotationVec3(), MWBase::RotationFlag_none);
 
             // Authored player markers are not guaranteed to be exactly on the
             // collision surface. Reuse the engine's normal grounding pass
             // after the native move, as is done when restoring a player.
             if (reference == getPlayerPtr())
+            {
                 adjustPosition(moved, true);
+                // A teleport is an instantaneous view transition. Clear any
+                // preview/orbit residue and align the native camera with the
+                // marker-authored player rotation before the next frame.
+                if (mRendering && mRendering->getCamera())
+                    mRendering->getCamera()->instantTransition();
+            }
 
             const ESM::Position& position = moved.getRefData().getPosition();
             Log(Debug::Info) << "FNV/ESM4 quest: MoveTo reference="
@@ -956,7 +966,31 @@ namespace MWWorld
                              << " marker=" << ESM::RefId(markerId).serializeText()
                              << " cell=" << marker.getCell()->getCell()->getId()
                              << " position=(" << position.pos[0] << "," << position.pos[1] << ","
-                             << position.pos[2] << ")";
+                             << position.pos[2] << ") rotation=(" << position.rot[0] << ","
+                             << position.rot[1] << "," << position.rot[2] << ")";
+            return true;
+        });
+        mESM4QuestRuntime.setReferenceScaleHandler([this](ESM::FormId referenceId, float scale) {
+            if (!std::isfinite(scale) || scale <= 0.f)
+                return false;
+
+            Ptr reference;
+            if (referenceId.mIndex == 0x7 || referenceId.mIndex == 0x14)
+                reference = getPlayerPtr();
+            else
+            {
+                reference = searchPtr(ESM::RefId(referenceId), false, false);
+                if (reference.isEmpty())
+                    reference = searchPtrByRefNum(referenceId);
+            }
+            if (reference.isEmpty())
+                return false;
+
+            // Reuse the engine's scale path so render, physics, and navigator
+            // state remain synchronized for actors and ordinary references.
+            scaleObject(reference, scale);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetScale reference="
+                             << ESM::RefId(referenceId).serializeText() << " scale=" << scale;
             return true;
         });
         mESM4QuestRuntime.setScriptPackageHandler(
@@ -1445,6 +1479,76 @@ namespace MWWorld
                     mechanics->forceStateUpdate(actor);
                 Log(Debug::Info) << "FNV/ESM4 quest: SetActorFullName actor="
                                  << actor.getCellRef().getRefId() << " name=\"" << name << "\"";
+                return true;
+            });
+        mESM4QuestRuntime.setActorAppearanceCommandHandler(
+            [this](ESM4QuestActorAppearanceCommand command, ESM::FormId actorId,
+                ESM::FormId sourceId, float percentage) {
+                const auto resolveActor = [this](ESM::FormId id) {
+                    const bool player = id.mIndex == 0x7 || id.mIndex == 0x14;
+                    Ptr actor = player ? getPlayerPtr() : searchPtr(ESM::RefId(id), false, false);
+                    if (actor.isEmpty() && !player)
+                        actor = searchPtrByRefNum(id);
+                    return actor;
+                };
+
+                Ptr actor = resolveActor(actorId);
+                if (actor.isEmpty() || actor.getType() != ESM4::Npc::sRecordId)
+                    return false;
+
+                const bool sourceIsPlayer = sourceId.mIndex == 0x7 || sourceId.mIndex == 0x14;
+                const ESM4::Npc* sourceTraits = nullptr;
+                const ESM4::Race* sourceRace = nullptr;
+                bool sourceFemale = false;
+                if (sourceIsPlayer)
+                {
+                    if (const std::optional<FalloutPlayerState>& playerState
+                        = mStore.getFalloutPlayerState())
+                    {
+                        sourceTraits = mStore.get<ESM4::Npc>().search(
+                            ESM::RefId(playerState->mTraitsRecord));
+                    }
+                    if (sourceTraits == nullptr)
+                    {
+                        for (const ESM4::Npc& candidate : mStore.get<ESM4::Npc>())
+                        {
+                            if (Misc::StringUtils::ciEqual(candidate.mEditorId, "Player"))
+                            {
+                                sourceTraits = &candidate;
+                                break;
+                            }
+                        }
+                    }
+                    const Ptr player = getPlayerPtr();
+                    const ESM::NPC* const proxy
+                        = !player.isEmpty() ? player.get<ESM::NPC>()->mBase : nullptr;
+                    sourceFemale = proxy != nullptr && !proxy->isMale();
+                    sourceRace = sourceTraits != nullptr
+                        ? mStore.get<ESM4::Race>().search(ESM::RefId(sourceTraits->mRace))
+                        : nullptr;
+                }
+                else
+                {
+                    const Ptr source = resolveActor(sourceId);
+                    if (!source.isEmpty() && source.getType() == ESM4::Npc::sRecordId)
+                    {
+                        sourceTraits = MWClass::ESM4Npc::getTraitsRecord(source);
+                        sourceRace = MWClass::ESM4Npc::getRace(source);
+                        sourceFemale = MWClass::ESM4Npc::isFemale(source);
+                    }
+                }
+                if (sourceTraits == nullptr || sourceRace == nullptr)
+                    return false;
+
+                const bool applied = command == ESM4QuestActorAppearanceCommand::MatchRace
+                    ? MWClass::ESM4Npc::matchRace(actor, *sourceTraits)
+                    : MWClass::ESM4Npc::matchFaceGeometry(
+                        actor, *sourceTraits, sourceRace, sourceFemale, percentage);
+                if (!applied)
+                    return false;
+                if (!mRendering->refreshESM4NpcAppearance(actor))
+                    Log(Debug::Warning) << "FNV/ESM4 behavior: appearance changed but active actor render refresh "
+                                        << "failed actor=" << actor.getCellRef().getRefId();
                 return true;
             });
         mESM4QuestRuntime.setActorFlagCommandHandler(

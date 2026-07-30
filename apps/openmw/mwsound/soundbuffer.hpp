@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <deque>
 #include <unordered_map>
+#include <vector>
 
 #include <components/esm/refid.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -34,11 +35,12 @@ namespace MWSound
     {
     public:
         template <class T>
-        SoundBuffer(T&& resname, float volume, float mindist, float maxdist)
+        SoundBuffer(T&& resname, float volume, float mindist, float maxdist, ESM::RefId sourceId = {})
             : mResourceName(std::forward<T>(resname))
             , mVolume(volume)
             , mMinDist(mindist)
             , mMaxDist(maxdist)
+            , mSourceId(std::move(sourceId))
         {
         }
 
@@ -52,11 +54,14 @@ namespace MWSound
 
         float getMaxDist() const noexcept { return mMaxDist; }
 
+        const ESM::RefId& getSourceId() const noexcept { return mSourceId; }
+
     private:
         VFS::Path::Normalized mResourceName;
         float mVolume;
         float mMinDist;
         float mMaxDist;
+        ESM::RefId mSourceId;
         Sound_Handle mHandle = nullptr;
         std::size_t mUses = 0;
 
@@ -79,6 +84,9 @@ namespace MWSound
         /// Lookup a sound by file name for its sound data (resource name, local volume,
         /// minRange, and maxRange)
         SoundBuffer* lookup(VFS::Path::NormalizedView fileName) const;
+
+        /// Return true when this buffer is one of the authored variants of soundId.
+        bool matches(const ESM::RefId& soundId, const SoundBuffer& buffer) const;
 
         /// Lookup a soundId for its sound data (resource name, local volume,
         /// minRange, and maxRange), and ensure it's ready for use.
@@ -108,9 +116,11 @@ namespace MWSound
     private:
         SoundBuffer* loadSfx(SoundBuffer* sfx);
 
+        using SoundBufferList = std::vector<SoundBuffer*>;
+
         SoundOutput* mOutput;
         std::deque<SoundBuffer> mSoundBuffers;
-        std::unordered_map<ESM::RefId, SoundBuffer*> mBufferNameMap;
+        std::unordered_map<ESM::RefId, SoundBufferList> mBufferNameMap;
         std::unordered_map<VFS::Path::Normalized, SoundBuffer*, VFS::Path::Hash, std::equal_to<>> mBufferFileNameMap;
         std::size_t mBufferCacheMax;
         std::size_t mBufferCacheMin;
@@ -125,6 +135,11 @@ namespace MWSound
 
         inline void unloadUnused();
     };
+
+    /// Resolve an ESM4 FNAM to its exact VFS resource, or to every immediate
+    /// audio child when the authored FNAM names a directory.
+    std::vector<VFS::Path::Normalized> resolveESM4SoundResourcePaths(
+        std::string_view authoredPath, const VFS::Manager& vfs);
 }
 
 #endif /* GAME_SOUND_SOUNDBUFFER_H */

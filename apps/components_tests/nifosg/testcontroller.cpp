@@ -187,6 +187,32 @@ namespace
         EXPECT_FLOAT_EQ(*transform.mScale, interpolator.mDefaultValue.mScale);
     }
 
+    TEST(NifOsgControllerTest, shouldApplySerializedBlendBoolVisibility)
+    {
+        Nif::NiBlendBoolInterpolator interpolator;
+        interpolator.recType = Nif::RC_NiBlendBoolInterpolator;
+        interpolator.mValue = 0;
+
+        Nif::NiVisController nifController;
+        nifController.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+
+        osg::ref_ptr<NifOsg::VisController> controller = new NifOsg::VisController(&nifController, 0u);
+        controller->setSource(std::make_shared<ConstantControllerSource>(0.f));
+        osg::ref_ptr<osg::Group> node = new osg::Group;
+        node->addUpdateCallback(controller);
+
+        osg::NodeVisitor visitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
+        ASSERT_TRUE(node->getUpdateCallback()->run(node, &visitor));
+        EXPECT_EQ(node->getNodeMask(), 0u);
+
+        interpolator.mValue = 1;
+        controller = new NifOsg::VisController(&nifController, 0u);
+        controller->setSource(std::make_shared<ConstantControllerSource>(0.f));
+        node->setUpdateCallback(controller);
+        ASSERT_TRUE(node->getUpdateCallback()->run(node, &visitor));
+        EXPECT_EQ(node->getNodeMask(), ~0u);
+    }
+
     TEST(NifOsgControllerTest, shouldPreferAuthoredXYZRotationKeysOverInterpolatorDefault)
     {
         Nif::NiKeyframeData keyData;

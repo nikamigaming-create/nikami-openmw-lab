@@ -450,7 +450,9 @@ public:
         const osg::Matrixf world = local * parentWorld;
         mWorldByNode[&node] = world;
 
-        const bool keep = !node.getName().empty() && Misc::StringUtils::ciStartsWith(node.getName(), "Bip01");
+        const bool keep = !node.getName().empty()
+            && (Misc::StringUtils::ciStartsWith(node.getName(), "Bip01")
+                || Misc::StringUtils::ciEqual(node.getName(), "Camera1st"));
         if (keep)
         {
             TransformDumpNode item;
@@ -484,6 +486,7 @@ private:
 bool isImportantFNVHumanBone(const std::string& lowerName)
 {
     static const std::set<std::string> sImportant = {
+        "camera1st",
         "bip01",
         "bip01 nonaccum",
         "bip01 pelvis",

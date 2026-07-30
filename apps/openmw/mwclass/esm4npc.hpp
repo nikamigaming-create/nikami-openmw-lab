@@ -124,6 +124,10 @@ namespace MWClass
         static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
         static bool isFemale(const MWWorld::Ptr& ptr);
+        static bool matchRace(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits);
+        static bool matchFaceGeometry(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits,
+            const ESM4::Race* sourceRace, bool sourceFemale, float percentage);
+        static bool usesDefaultFaceTexture(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Clothing*>& getEquippedClothing(const MWWorld::Ptr& ptr);
         static const ESM4::Weapon* getEquippedWeapon(const MWWorld::Ptr& ptr);

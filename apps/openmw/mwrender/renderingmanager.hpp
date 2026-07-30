@@ -241,6 +241,7 @@ namespace MWRender
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
         Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
         bool refreshFalloutPlayerEquipment(const MWWorld::Ptr& player);
+        bool refreshESM4NpcAppearance(const MWWorld::Ptr& ptr);
 
         /// Return the visual animation that owns data-driven ESM4 script-package KFs. Fallout-family player
         /// presentation keeps a legacy first-person rig alongside a native body proxy; authored package animation
@@ -397,6 +398,9 @@ namespace MWRender
         osg::Vec3f mFalloutPlayerVisualPreviousPosition;
         bool mFalloutPlayerVisualPreviousPositionValid = false;
         std::optional<int> mESM4ScriptPackagePreviousCameraMode;
+        Animation* mESM4ScriptPackageCameraAnimation = nullptr;
+        bool mESM4ScriptPackageCameraActive = false;
+        bool mESM4AuthoredCharGenCameraLockActive = false;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;

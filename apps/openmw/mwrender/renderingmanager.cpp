@@ -76,6 +76,7 @@
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/globals.hpp"
 #include "../mwworld/groundcoverstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/livecellref.hpp"
@@ -1557,13 +1558,38 @@ namespace MWRender
             mUpdateProjectionMatrix = false;
             updateProjectionMatrix();
         }
+        bool esm4AuthoredCharGenActive = false;
+        if (mFalloutPlayerVisualAnimation)
+        {
+            if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+                esm4AuthoredCharGenActive
+                    = world->getGlobalInt(MWWorld::Globals::sCharGenState) != -1;
+        }
+        if (esm4AuthoredCharGenActive && mCamera->getMode() != Camera::Mode::FirstPerson)
+        {
+            // Fallout's SetInCharGen presentation is first person. The script
+            // separately controls whether looking and POV switching are
+            // enabled; this guard prevents a stale preview/vanity mode from
+            // exposing the compatibility body or producing an orbit camera.
+            mCamera->setMode(Camera::Mode::FirstPerson);
+            mCamera->processViewChange();
+            mCamera->instantTransition();
+        }
+        if (esm4AuthoredCharGenActive != mESM4AuthoredCharGenCameraLockActive)
+        {
+            Log(Debug::Info) << "FNV/ESM4 character generation: first-person presentation "
+                             << (esm4AuthoredCharGenActive ? "engaged" : "released");
+            mESM4AuthoredCharGenCameraLockActive = esm4AuthoredCharGenActive;
+        }
+
         mCamera->update(dt, paused);
 
         if (mFalloutPlayerVisualAnimation)
         {
             const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
                 || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
-            const bool showThirdPersonPlayer = !proofHidePlayerVisual && mCamera->getMode() != Camera::Mode::FirstPerson;
+            const bool showThirdPersonPlayer = !proofHidePlayerVisual && !esm4AuthoredCharGenActive
+                && mCamera->getMode() != Camera::Mode::FirstPerson;
             if (osg::Group* playerVisualRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
             {
                 // The native Fallout proxy supplies the player-facing Camera1st target as well as its visible body.
@@ -2018,6 +2044,21 @@ namespace MWRender
         return true;
     }
 
+    bool RenderingManager::refreshESM4NpcAppearance(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+        // An unloaded actor will consume its reference-local appearance data
+        // when its cell is inserted. Rebuild only an already-rendered actor,
+        // keeping the immutable base record and authored placement untouched.
+        if (mObjects->getAnimation(ptr) == nullptr)
+            return true;
+        if (!mObjects->removeObject(ptr))
+            return false;
+        mObjects->insertNPC(ptr);
+        return mObjects->getAnimation(ptr) != nullptr;
+    }
+
     MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr() && mFalloutPlayerVisualAnimation)
@@ -2039,6 +2080,11 @@ namespace MWRender
             usingAuthoredTarget = true;
         }
 
+        const bool cameraChanged = mESM4ScriptPackageCameraAnimation != cameraAnimation;
+        const bool stateChanged = mESM4ScriptPackageCameraActive != usingAuthoredTarget;
+        if (!cameraChanged && !stateChanged)
+            return usingAuthoredTarget;
+
         // A package that carries an authored Camera1st controller is explicitly a first-person presentation.
         // Preserve the player's selected view while it runs, then restore it when the package releases the camera.
         // The decision is based solely on the loaded package/KF target and therefore applies to every Fallout-family
@@ -2056,11 +2102,14 @@ namespace MWRender
             mCamera->setMode(restoreMode);
         }
 
-        mCamera->setAnimation(cameraAnimation);
-        mCamera->attachTo(ptr);
+        mCamera->setAnimation(cameraAnimation, usingAuthoredTarget);
+        if (mCamera->getTrackingPtr() != ptr)
+            mCamera->attachTo(ptr);
         mCamera->processViewChange();
         mCamera->instantTransition();
-        Log(Debug::Info) << "FNV/ESM4 scripted package: camera actor=" << ptr.getCellRef().getRefId()
+        mESM4ScriptPackageCameraAnimation = cameraAnimation;
+        mESM4ScriptPackageCameraActive = usingAuthoredTarget;
+        Log(Debug::Info) << "FNV/ESM4 scripted package: camera transition actor=" << ptr.getCellRef().getRefId()
                          << " authoredTarget=" << usingAuthoredTarget
                          << " mode=" << static_cast<int>(mCamera->getMode());
         return usingAuthoredTarget;
@@ -2092,6 +2141,8 @@ namespace MWRender
 
     void RenderingManager::renderPlayer(const MWWorld::Ptr& player)
     {
+        mESM4ScriptPackageCameraAnimation = nullptr;
+        mESM4ScriptPackageCameraActive = false;
         mFalloutPlayerVisualAnimation = nullptr;
         mFalloutPlayerVisualRef.reset();
         mFalloutPlayerVisualGroup.clear();

@@ -239,9 +239,9 @@ namespace MWGui
             return false;
         }
 
-        bool isCaptureVideoTarget(std::string_view asset)
+        bool isConfiguredVideoTarget(std::string_view asset, const char* variable)
         {
-            const char* const configuredAsset = std::getenv("OPENMW_CAPTURE_VIDEO_MATCH");
+            const char* const configuredAsset = std::getenv(variable);
             return configuredAsset != nullptr && *configuredAsset != '\0' && equalNoCase(asset, configuredAsset);
         }
 
@@ -333,6 +333,8 @@ namespace MWGui
         , mWaitDialog(nullptr)
         , mVideoBackground(nullptr)
         , mVideoWidget(nullptr)
+        , mVideoPlaying(false)
+        , mVideoSkippable(false)
         , mWerewolfFader(nullptr)
         , mBlindnessFader(nullptr)
         , mHitFader(nullptr)
@@ -1681,12 +1683,15 @@ namespace MWGui
 
     void WindowManager::setCursorVisible(bool visible)
     {
-        mCursorVisible = visible && !mGameplayOverlaySuppressed;
+        // SetInCharGen suppresses gameplay HUD/crosshair presentation, not
+        // interactive modal UI. Character choices and message-box buttons
+        // still own a cursor while that gameplay overlay is hidden.
+        mCursorVisible = visible && (!mGameplayOverlaySuppressed || isGuiMode());
     }
 
     void WindowManager::setCursorActive(bool active)
     {
-        mCursorActive = active && !mGameplayOverlaySuppressed;
+        mCursorActive = active && (!mGameplayOverlaySuppressed || isGuiMode());
     }
 
     void WindowManager::onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result)
@@ -1856,6 +1861,8 @@ namespace MWGui
         // ESM4 script instead of entering the Morrowind chargen sequence.
         mCharGen->beginAuthoredRaceMenu();
         pushGuiMode(GM_Race);
+        setCursorVisible(true);
+        setCursorActive(true);
         Log(Debug::Info) << "FNV/ESM4 behavior: ShowRaceMenu opened authored character appearance menu";
     }
 
@@ -1866,6 +1873,8 @@ namespace MWGui
 
         mCharGen->beginAuthoredNameMenu();
         pushGuiMode(GM_Name);
+        setCursorVisible(true);
+        setCursorActive(true);
         Log(Debug::Info) << "FNV/ESM4 behavior: GetPlayerName opened authored name menu";
     }
 
@@ -2597,6 +2606,21 @@ namespace MWGui
     {
         mVideoWidget->playVideo("video\\" + std::string{ name });
 
+        struct VideoPlaybackStateGuard
+        {
+            bool& mPlaying;
+            bool& mSkippable;
+
+            ~VideoPlaybackStateGuard()
+            {
+                mPlaying = false;
+                mSkippable = false;
+            }
+        };
+        mVideoPlaying = true;
+        mVideoSkippable = allowSkipping;
+        const VideoPlaybackStateGuard videoPlaybackStateGuard{ mVideoPlaying, mVideoSkippable };
+
         mVideoWidget->eventKeyButtonPressed.clear();
         mVideoBackground->eventKeyButtonPressed.clear();
         if (allowSkipping)
@@ -2623,7 +2647,12 @@ namespace MWGui
         setHudVisibility(false);
         showCrosshair(false);
 
-        const bool captureVideoTarget = isCaptureVideoTarget(name);
+        const bool presentationVideoTarget
+            = isConfiguredVideoTarget(name, "OPENNV_PRESENTATION_VIDEO_MATCH");
+        const double presentationVideoLimitSeconds = presentationVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENNV_PRESENTATION_VIDEO_MAX_SECONDS")
+            : 0.0;
+        const bool captureVideoTarget = isConfiguredVideoTarget(name, "OPENMW_CAPTURE_VIDEO_MATCH");
         const double captureVideoLimitSeconds = captureVideoTarget
             ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_MAX_SECONDS")
             : 0.0;
@@ -2651,6 +2680,15 @@ namespace MWGui
             = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
         while (mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
         {
+            if (presentationVideoLimitSeconds > 0.0
+                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
+                    >= presentationVideoLimitSeconds)
+            {
+                Log(Debug::Info) << "OpenNV presentation: limiting authored video asset=\"" << name
+                                 << "\" seconds=" << presentationVideoLimitSeconds;
+                mVideoWidget->stop();
+                break;
+            }
             if (captureVideoLimitSeconds > 0.0
                 && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
                     >= captureVideoLimitSeconds)
@@ -3123,6 +3161,18 @@ namespace MWGui
 
     bool WindowManager::injectKeyPress(MyGUI::KeyCode key, unsigned int text, bool repeat)
     {
+        // Video playback owns Escape before GUI keyboard navigation gets an
+        // opportunity to consume it. This is an explicit player cancellation,
+        // even for a movie whose authored flags suppress incidental skipping;
+        // playback is never stopped merely because a normal launch elapsed.
+        if (mVideoPlaying && key == MyGUI::KeyCode::Escape)
+        {
+            Log(Debug::Info) << "OpenNV video: player cancelled active cinematic with Escape"
+                             << " authoredSkippable=" << mVideoSkippable;
+            mVideoWidget->stop();
+            return true;
+        }
+
         if (!mKeyboardNavigation->injectKeyPress(key, text, repeat))
         {
             MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();

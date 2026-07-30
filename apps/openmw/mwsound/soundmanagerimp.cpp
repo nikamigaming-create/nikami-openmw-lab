@@ -810,7 +810,8 @@ namespace MWSound
         {
             for (SoundBufferRefPair& snd : snditer->second.mList)
             {
-                if (snd.second == sfx)
+                if (snd.second == sfx
+                    || (!sfx->getSourceId().empty() && snd.second->getSourceId() == sfx->getSourceId()))
                     mOutput->finishSound(snd.first.get());
             }
         }
@@ -821,11 +822,14 @@ namespace MWSound
         if (!mOutput->isInitialized())
             return;
 
-        SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
-        if (!sfx)
+        SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer == mActiveSounds.end())
             return;
-
-        stopSound(sfx, ptr);
+        for (SoundBufferRefPair& snd : snditer->second.mList)
+        {
+            if (mSoundBuffers.matches(soundId, *snd.second))
+                mOutput->finishSound(snd.first.get());
+        }
     }
 
     void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView fileName)
@@ -895,12 +899,9 @@ namespace MWSound
         SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
         if (snditer != mActiveSounds.end())
         {
-            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
-            if (sfx == nullptr)
-                return;
             for (SoundBufferRefPair& sndbuf : snditer->second.mList)
             {
-                if (sndbuf.second == sfx)
+                if (mSoundBuffers.matches(soundId, *sndbuf.second))
                     sndbuf.first->setFadeout(duration);
             }
         }
@@ -929,13 +930,10 @@ namespace MWSound
         SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
         if (snditer != mActiveSounds.end())
         {
-            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
-            if (!sfx)
-                return false;
-
             return std::find_if(snditer->second.mList.cbegin(), snditer->second.mList.cend(),
-                       [this, sfx](const SoundBufferRefPair& snd) -> bool {
-                           return snd.second == sfx && mOutput->isSoundPlaying(snd.first.get());
+                       [this, &soundId](const SoundBufferRefPair& snd) -> bool {
+                           return mSoundBuffers.matches(soundId, *snd.second)
+                               && mOutput->isSoundPlaying(snd.first.get());
                        })
                 != snditer->second.mList.cend();
         }
@@ -1078,7 +1076,8 @@ namespace MWSound
                         [this](const SoundBufferRefPairList::value_type& item) -> bool {
                             return mNearWaterSound == item.first.get();
                         });
-                    if (pairiter != snditer->second.mList.end() && pairiter->second != sfx)
+                    if (pairiter != snditer->second.mList.end()
+                        && !mSoundBuffers.matches(update.mId, *pairiter->second))
                         soundIdChanged = true;
                 }
             }

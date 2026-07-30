@@ -25,6 +25,12 @@ namespace MWMechanics
 
         AiTravel(float x, float y, float z, bool repeat);
 
+        /// Use the shared travel/pathfinding implementation but require the
+        /// actor to enter the supplied authored radius before completion.
+        /// This is opt-in so legacy Morrowind travel keeps its generous
+        /// "close enough for two seconds" behavior.
+        AiTravel(float x, float y, float z, bool repeat, float destinationTolerance);
+
         explicit AiTravel(const ESM::AiSequence::AiTravel* travel);
 
         /// Simulates the passing of time
@@ -55,11 +61,13 @@ namespace MWMechanics
         const bool mHidden;
 
         float mDestinationTimer;
+        float mDestinationTolerance;
 
         // Route diagnostics only.  Keep per-package rather than global state so
         // an unattended compatibility trace can establish whether the actual
         // one-shot package is being executed without flooding the log.
         unsigned int mRouteTraceExecutions = 0;
+        bool mRouteTraceCompletionLogged = false;
     };
 
     struct AiInternalTravel final : public AiTravel

@@ -4817,19 +4817,22 @@ namespace MWRender
             const std::vector<std::string> explicitAliases
                 = isFonvAnim ? getFonvBoneAliases(authoredBonename) : std::vector<std::string>{};
             std::string resolutionKind = "missing";
-            NodeMap::const_iterator found = nodeMap.find(bonename);
-            if (found != nodeMap.end())
+            const NodeMap& targetNodeMap
+                = scriptedFalloutCamera ? mFalloutScriptPackageCameraNodes : nodeMap;
+            NodeMap::const_iterator found = targetNodeMap.find(bonename);
+            if (found != targetNodeMap.end())
             {
                 bonename = found->first;
-                resolutionKind = "exact";
+                resolutionKind = scriptedFalloutCamera ? "first-person-exact" : "exact";
                 ++exactControllers;
             }
-            if (found == nodeMap.end() && isFonvAnim)
+            if (found == targetNodeMap.end() && isFonvAnim)
             {
-                found = findFonvAnimationBone(nodeMap, authoredBonename, bonename);
-                if (found != nodeMap.end())
+                found = findFonvAnimationBone(targetNodeMap, authoredBonename, bonename);
+                if (found != targetNodeMap.end())
                 {
-                    resolutionKind = "explicit-alias";
+                    resolutionKind
+                        = scriptedFalloutCamera ? "first-person-explicit-alias" : "explicit-alias";
                     ++aliasedControllers;
                     Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << authoredBonename << "' to '"
                                      << bonename << "' for " << kfname;
@@ -4837,7 +4840,7 @@ namespace MWRender
             }
             const bool requiredSkeletonTarget
                 = !isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename);
-            if (found == nodeMap.end() && !requiredSkeletonTarget)
+            if (found == targetNodeMap.end() && !requiredSkeletonTarget)
                 resolutionKind = "deferred-visual";
             if (auditFalloutControllerTargets)
             {
@@ -4848,13 +4851,13 @@ namespace MWRender
                         aliases << ',';
                     aliases << explicitAliases[aliasIndex];
                 }
-                Log(found != nodeMap.end() ? Debug::Info : Debug::Warning)
+                Log(found != targetNodeMap.end() ? Debug::Info : Debug::Warning)
                     << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='" << authoredBonename
                     << "' resolution=" << resolutionKind << " resolved='"
-                    << (found != nodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
+                    << (found != targetNodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
                     << aliases.str() << ']';
             }
-            if (found == nodeMap.end())
+            if (found == targetNodeMap.end())
             {
                 if (isFonvAnim && !requiredSkeletonTarget)
                 {
@@ -4875,6 +4878,7 @@ namespace MWRender
                 }
                 continue;
             }
+            const std::string transformBasisBone = bonename;
             const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
             if (isFonvActorAnim && shouldSkipFalloutSyntheticAttachmentHelperControllers(mPtr)
                 && isFalloutSyntheticAttachmentHelperName(lowerResolvedBone)
@@ -4892,6 +4896,14 @@ namespace MWRender
                 continue;
             }
             osg::Node* node = found->second;
+            if (scriptedFalloutCamera)
+            {
+                // Controller maps resolve through the animation's shared node
+                // map. Give dedicated first-person nodes stable internal keys
+                // so later non-cinematic sources still bind to the visible rig.
+                bonename = "__fallout_script_package_camera__/" + bonename;
+                mNodeMap.emplace(bonename, found->second);
+            }
 
             // FO3/FNV author the held-weapon transform as a root-level "Weapon" KF target. The scene-node match
             // can resolve through a synthetic attachment helper, so the authored controller-map key is the stable
@@ -4917,7 +4929,7 @@ namespace MWRender
                     if (const auto* nifTarget = dynamic_cast<const NifOsg::MatrixTransform*>(found->second.get()))
                         bindScale = nifTarget->mScale;
                     nifController->setFalloutActorTransformBasis(
-                        bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
+                        transformBasisBone, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
                         bindScale);
                     if (std::getenv("OPENMW_FNV_CONTROLLER_KEY_AUDIT") != nullptr)
                     {
@@ -5235,24 +5247,18 @@ namespace MWRender
         if (!mObjectRoot)
             return false;
 
-        if (getNodeMap().find("Camera1st") != getNodeMap().end())
+        if (mFalloutScriptPackageCameraNodes.find("Camera1st") != mFalloutScriptPackageCameraNodes.end())
         {
             mFalloutScriptPackageCameraTarget = true;
             return true;
         }
 
-        // The shipped Fallout first-person skeleton owns the Camera1st branch. Import that exact branch from the
-        // active VFS instead of manufacturing a transform from an opening cell, a player height, or a guessed
-        // offset. This lets any package with an authored Camera1st controller inherit the same bind basis the
-        // retail asset declares while leaving the visible third-person skeleton untouched.
-        const NodeMap& nodeMap = getNodeMap();
-        const NodeMap::const_iterator nonAccum = nodeMap.find("Bip01 NonAccum");
-        if (nonAccum == nodeMap.end())
-        {
-            Log(Debug::Warning) << "FNV/ESM4 scripted package: missing Bip01 NonAccum for authored Camera1st target "
-                                << mPtr.getCellRef().getRefId();
-            return false;
-        }
+        // The shipped Fallout first-person skeleton owns Camera1st beneath its
+        // Bip01 hierarchy. Import that complete authored hierarchy. Cinematic
+        // KFs animate `Bip` (the short dialect alias for Bip01), NonAccum, neck,
+        // and Camera1st together; cloning only the lower branch drops the root
+        // track and points the camera away from the authored subject.
+        (void)getNodeMap();
 
         if (mResourceSystem == nullptr)
             return false;
@@ -5270,42 +5276,56 @@ namespace MWRender
         {
             osg::ref_ptr<osg::Node> sourceSkeleton
                 = mResourceSystem->getSceneManager()->getInstance(firstPersonSkeleton);
-            SceneUtil::FindByNameVisitor sourceNonAccumVisitor("Bip01 NonAccum");
-            sourceSkeleton->accept(sourceNonAccumVisitor);
-            NifOsg::MatrixTransform* const sourceNonAccum
-                = dynamic_cast<NifOsg::MatrixTransform*>(sourceNonAccumVisitor.mFoundNode);
-            if (sourceNonAccum == nullptr)
+            SceneUtil::FindByNameVisitor sourceRootVisitor("Bip01");
+            sourceSkeleton->accept(sourceRootVisitor);
+            NifOsg::MatrixTransform* const sourceRoot
+                = dynamic_cast<NifOsg::MatrixTransform*>(sourceRootVisitor.mFoundNode);
+            if (sourceRoot == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton has no NIF "
-                                    << "Bip01 NonAccum branch for " << mPtr.getCellRef().getRefId();
+                                    << "Bip01 root for " << mPtr.getCellRef().getRefId();
                 return false;
             }
 
             osg::ref_ptr<osg::Node> clonedBranch
-                = static_cast<osg::Node*>(sourceNonAccum->clone(osg::CopyOp::DEEP_COPY_NODES));
-            NifOsg::MatrixTransform* const cameraNonAccum
+                = static_cast<osg::Node*>(sourceRoot->clone(osg::CopyOp::DEEP_COPY_NODES));
+            NifOsg::MatrixTransform* const cameraRoot
                 = dynamic_cast<NifOsg::MatrixTransform*>(clonedBranch.get());
             SceneUtil::FindByNameVisitor targetVisitor("Camera1st");
             clonedBranch->accept(targetVisitor);
             NifOsg::MatrixTransform* const target
                 = dynamic_cast<NifOsg::MatrixTransform*>(targetVisitor.mFoundNode);
-            if (cameraNonAccum == nullptr || target == nullptr)
+            if (cameraRoot == nullptr || target == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton lacks a usable "
                                     << "Camera1st branch for " << mPtr.getCellRef().getRefId();
                 return false;
             }
 
-            mObjectRoot->addChild(cameraNonAccum);
-            mNodeMap.find("Bip01 NonAccum")->second = cameraNonAccum;
-            mNodeMap.emplace(target->getName(), target);
+            mObjectRoot->addChild(cameraRoot);
+            mFalloutScriptPackageCameraNodes.clear();
+            SceneUtil::NodeMapVisitor cameraNodeVisitor(mFalloutScriptPackageCameraNodes);
+            cameraRoot->accept(cameraNodeVisitor);
+            if (mFalloutScriptPackageCameraNodes.find("Bip01") == mFalloutScriptPackageCameraNodes.end()
+                || mFalloutScriptPackageCameraNodes.find("Bip01 NonAccum")
+                    == mFalloutScriptPackageCameraNodes.end()
+                || mFalloutScriptPackageCameraNodes.find("Camera1st")
+                    == mFalloutScriptPackageCameraNodes.end())
+            {
+                mObjectRoot->removeChild(cameraRoot);
+                mFalloutScriptPackageCameraNodes.clear();
+                Log(Debug::Warning) << "FNV/ESM4 scripted package: cloned first-person hierarchy is incomplete for "
+                                    << mPtr.getCellRef().getRefId();
+                return false;
+            }
             mFalloutScriptPackageCameraTarget = true;
-            Log(Debug::Info) << "FNV/ESM4 scripted package: materialised retail first-person Camera1st branch for "
-                             << mPtr.getCellRef().getRefId() << " parent=Bip01 NonAccum source="
-                             << firstPersonSkeleton.value() << " parentLocal=("
-                             << cameraNonAccum->getMatrix().getTrans().x() << ","
-                             << cameraNonAccum->getMatrix().getTrans().y() << ","
-                             << cameraNonAccum->getMatrix().getTrans().z() << ") targetLocal=("
+            Log(Debug::Info) << "FNV/ESM4 scripted package: materialised complete retail first-person Camera1st rig for "
+                             << mPtr.getCellRef().getRefId() << " root=Bip01 source="
+                             << firstPersonSkeleton.value() << " targetCount="
+                             << mFalloutScriptPackageCameraNodes.size() << " rootLocal=("
+                             << cameraRoot->getMatrix().getTrans().x() << ","
+                             << cameraRoot->getMatrix().getTrans().y() << ","
+                             << cameraRoot->getMatrix().getTrans().z() << ") targetLocal=("
                              << target->getMatrix().getTrans().x() << "," << target->getMatrix().getTrans().y()
                              << "," << target->getMatrix().getTrans().z() << ")";
             return true;
@@ -7370,6 +7390,8 @@ namespace MWRender
 
         mNodeMap.clear();
         mNodeMapCreated = false;
+        mFalloutScriptPackageCameraNodes.clear();
+        mFalloutScriptPackageCameraTarget = false;
         mAccumRoot = nullptr;
         mAccumCtrl = nullptr;
 
@@ -7757,6 +7779,14 @@ namespace MWRender
 
     const osg::Node* Animation::getNode(std::string_view name) const
     {
+        if (mFalloutScriptPackageCameraTarget && Misc::StringUtils::ciEqual(name, "Camera1st"))
+        {
+            const NodeMap::const_iterator camera
+                = mFalloutScriptPackageCameraNodes.find("Camera1st");
+            if (camera != mFalloutScriptPackageCameraNodes.end())
+                return camera->second;
+        }
+
         const NodeMap& nodeMap = getNodeMap();
         NodeMap::const_iterator found = nodeMap.find(name);
         if (found == nodeMap.end() && isFalloutActor(mPtr))

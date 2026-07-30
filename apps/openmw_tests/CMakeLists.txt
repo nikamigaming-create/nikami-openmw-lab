@@ -56,6 +56,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwmechanics/testownership.cpp
 
     mwsound/testsaysequence.cpp
+    mwsound/testsoundbuffer.cpp
 
     mwscript/testscripts.cpp
 )

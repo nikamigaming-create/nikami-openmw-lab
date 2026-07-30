@@ -445,6 +445,7 @@ namespace NifOsg
     private:
         std::shared_ptr<std::vector<std::pair<float, bool>>> mData;
         BoolInterpolator mInterpolator;
+        std::optional<bool> mConstant;
         unsigned int mMask{ 0u };
 
         bool calculate(float time) const;

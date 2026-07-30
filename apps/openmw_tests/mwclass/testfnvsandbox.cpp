@@ -10,6 +10,7 @@
 #include <components/esm3/aisequence.hpp>
 
 #include "apps/openmw/mwclass/fnvsandbox.hpp"
+#include "apps/openmw/mwclass/fnvaipackage.hpp"
 #include "apps/openmw/mwmechanics/aisequence.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 
@@ -82,6 +83,14 @@ namespace
         EXPECT_FALSE(MWClass::tryClaimFalloutSandboxMarker(markerId));
         MWClass::releaseFalloutSandboxMarker(markerId);
         EXPECT_FALSE(MWClass::isFalloutSandboxMarkerClaimed(markerId));
+    }
+
+    TEST(FnvPackageTest, PreservesAuthoredTravelRadiusWithSafeExactMinimum)
+    {
+        EXPECT_FALSE(MWClass::getFnvTravelCompletionRadius(-1).has_value());
+        EXPECT_FALSE(MWClass::getFnvTravelCompletionRadius(0).has_value());
+        EXPECT_FLOAT_EQ(*MWClass::getFnvTravelCompletionRadius(4), 8.f);
+        EXPECT_FLOAT_EQ(*MWClass::getFnvTravelCompletionRadius(25), 25.f);
     }
 
     TEST(FnvSandboxTest, SaveFallbackRoundTripsAuthoredPackageParameters)

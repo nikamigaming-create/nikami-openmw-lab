@@ -272,6 +272,11 @@ namespace MWRender
         bool mProofPreviewGameplayAudit;
         int mBethesdaBoneLodLevel;
         bool mFalloutScriptPackageCameraTarget = false;
+        // Camera1st is parented beneath the retail first-person Bip01 rig.
+        // Keep a dedicated target map for that authored hierarchy so a
+        // cinematic KF's Bip/neck/root controllers do not get split between
+        // the first-person camera branch and the visible third-person body.
+        NodeMap mFalloutScriptPackageCameraNodes;
 
         const NodeMap& getNodeMap() const;
 

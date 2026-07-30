@@ -60,6 +60,7 @@
 
 #include "esm4base.hpp"
 #include "fnvactorstate.hpp"
+#include "fnvaipackage.hpp"
 
 namespace MWClass
 {
@@ -958,19 +959,31 @@ namespace MWClass
             const float dy = actorPos.pos[1] - target->mPos.pos[1];
             const float dz = actorPos.pos[2] - target->mPos.pos[2];
             const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
-            const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
-            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
+            const std::optional<float> arrivalDistance = furnitureTarget
+                ? std::optional<float>{ 128.f }
+                : getFnvTravelCompletionRadius(package->mLocation.radius);
+            if (arrivalDistance && dx * dx + dy * dy + dz * dz < *arrivalDistance * *arrivalDistance)
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI travel package "
                                  << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
                                  << " furnitureTarget=" << furnitureTarget
-                                 << " arrivalDistance=" << arrivalDistance << " for " << creature.mEditorId;
+                                 << " arrivalDistance=" << *arrivalDistance << " for " << creature.mEditorId;
                 return;
             }
 
-            MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
-            sequence.stack(travel, ptr, true);
+            if (arrivalDistance)
+            {
+                MWMechanics::AiTravel travel(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true, *arrivalDistance);
+                sequence.stack(travel, ptr, true);
+            }
+            else
+            {
+                MWMechanics::AiTravel travel(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
+                sequence.stack(travel, ptr, true);
+            }
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI travel from FNV package "
                              << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                              << " hour=" << hour << " override=" << usedHourOverride
