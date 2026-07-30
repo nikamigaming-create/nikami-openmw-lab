@@ -144,6 +144,7 @@ namespace
 
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
+        store.setUp();
 
         const auto& notes = store.get<ESM4::Note>();
         ASSERT_EQ(notes.getSize(), 2);

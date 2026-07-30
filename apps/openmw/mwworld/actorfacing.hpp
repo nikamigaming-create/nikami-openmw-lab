@@ -2,34 +2,21 @@
 #define GAME_MWWORLD_ACTORFACING_H
 
 #include <osg/Math>
-#include <osg/Vec3f>
 
 namespace MWWorld
 {
     /// Convert gameplay yaw to the model/physics basis used by an imported actor.
-    [[nodiscard]] inline float getActorModelYaw(
-        float gameplayYaw, bool tes4Npc, bool falloutNpc, bool falloutCreature) noexcept
+    [[nodiscard]] inline float getActorModelYaw(float gameplayYaw, bool tes4Npc, bool falloutActor) noexcept
     {
-        // Imported humanoid rigs author forward on local +X. OSG applies the basis conversion around -Z, so
-        // +90 degrees maps the rendered front to the gameplay +Y forward used by movement and combat.
-        if (tes4Npc || falloutNpc)
+        if (tes4Npc)
             return gameplayYaw + osg::PI_2f;
-
-        // FNV creature rigs use the opposite authored planar basis from humanoids.
-        if (falloutCreature)
+        if (falloutActor)
+            // Fallout's actor mesh/skeleton basis is a quarter turn from the
+            // gameplay heading stored on the reference. Keep this correction
+            // at the render/physics boundary; AI must continue to steer from
+            // the unmodified authored heading.
             return gameplayYaw - osg::PI_2f;
         return gameplayYaw;
-    }
-
-    /// Return the authored visual-front axis consumed by the model-basis yaw conversion above.
-    [[nodiscard]] inline osg::Vec3f getActorModelLocalForward(
-        bool tes4Npc, bool falloutNpc, bool falloutCreature) noexcept
-    {
-        if (tes4Npc || falloutNpc)
-            return osg::Vec3f(-1.f, 0.f, 0.f);
-        if (falloutCreature)
-            return osg::Vec3f(1.f, 0.f, 0.f);
-        return osg::Vec3f(0.f, 1.f, 0.f);
     }
 }
 

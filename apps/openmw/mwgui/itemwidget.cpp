@@ -60,7 +60,6 @@ namespace MWGui
         , mFrame(nullptr)
         , mControllerBorder(nullptr)
         , mText(nullptr)
-        , mName(nullptr)
     {
     }
 
@@ -84,40 +83,20 @@ namespace MWGui
         assignWidget(mText, "Text");
         if (mText)
             mText->setNeedMouseFocus(false);
-        assignWidget(mName, "Name");
-        if (mName)
-            mName->setNeedMouseFocus(false);
-        assignWidget(mControllerBorder, "ControllerBorder");
-        if (mControllerBorder)
-            mControllerBorder->setNeedMouseFocus(false);
+        if (Settings::gui().mControllerMenus)
+        {
+            assignWidget(mControllerBorder, "ControllerBorder");
+            if (mControllerBorder)
+                mControllerBorder->setNeedMouseFocus(false);
+        }
 
         Base::initialiseOverride();
     }
 
     void ItemWidget::setControllerFocus(bool focus)
     {
-        mControllerFocused = focus;
-        updateFocusHighlight();
-    }
-
-    void ItemWidget::onMouseSetFocus(MyGUI::Widget* oldWidget)
-    {
-        mMouseFocused = true;
-        updateFocusHighlight();
-        Base::onMouseSetFocus(oldWidget);
-    }
-
-    void ItemWidget::onMouseLostFocus(MyGUI::Widget* newWidget)
-    {
-        mMouseFocused = false;
-        updateFocusHighlight();
-        Base::onMouseLostFocus(newWidget);
-    }
-
-    void ItemWidget::updateFocusHighlight()
-    {
         if (mControllerBorder)
-            mControllerBorder->setVisible(mControllerFocused || mMouseFocused);
+            mControllerBorder->setVisible(focus);
     }
 
     void ItemWidget::setCount(int count)
@@ -142,11 +121,6 @@ namespace MWGui
 
     void ItemWidget::setFrame(const std::string& frame, const MyGUI::IntCoord& coord)
     {
-//## VR_PATCH BEGIN
-// VR-TODO: Explain this
-        mCurrentFrameCoords = coord;
-
-//## VR_PATCH END
         if (mFrame)
         {
             mFrame->setImageTile(MyGUI::IntSize(coord.width, coord.height)); // Why is this needed? MyGUI bug?
@@ -162,25 +136,17 @@ namespace MWGui
 
     void ItemWidget::setIcon(const MWWorld::Ptr& ptr)
     {
+        constexpr VFS::Path::NormalizedView defaultIcon("default icon.tga");
         std::string_view icon = ptr.getClass().getInventoryIcon(ptr);
         if (icon.empty())
-            icon = "default icon.tga";
+            icon = defaultIcon.value();
         const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
-        std::string invIcon = Misc::ResourceHelpers::correctIconPath(icon, vfs);
+        std::string invIcon = Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(icon), *vfs);
         if (!vfs->exists(invIcon))
         {
-            // TES3 inventory icons live below icons/, while Fallout 3/New Vegas record paths point below
-            // interface/icons/ inside the textures/ namespace.  Preserve the TES3 lookup first, then try the
-            // texture namespace before displaying an error marker.
-            const std::string textureIcon = Misc::ResourceHelpers::correctTexturePath(icon, vfs);
-            if (vfs->exists(textureIcon))
-                invIcon = textureIcon;
-            else
-            {
-                Log(Debug::Error) << "Failed to open image: '" << invIcon << "' or '" << textureIcon
-                                  << "' not found, falling back to 'default-icon.tga'";
-                invIcon = Misc::ResourceHelpers::correctIconPath("default icon.tga", vfs);
-            }
+            Log(Debug::Error) << "Failed to open image: '" << invIcon << "' not found, falling back to '"
+                              << defaultIcon.value() << "'";
+            invIcon = Misc::ResourceHelpers::correctIconPath(defaultIcon, *vfs);
         }
         setIcon(invIcon);
     }
@@ -198,8 +164,6 @@ namespace MWGui
                 mItemShadow->setImageTexture({});
             mItem->setImageTexture({});
             mText->setCaption({});
-            if (mName)
-                mName->setCaption({});
             mCurrentIcon.clear();
             mCurrentFrame.clear();
             return;
@@ -225,17 +189,6 @@ namespace MWGui
         if (!backgroundTex.empty())
             backgroundTex += ".dds";
 
-        // Fallout inventory screens reuse ItemWidget but do not ship the Morrowind
-        // menu_icon_equip/menu_icon_barter frame textures.  Use OpenMW's bundled
-        // selection frame instead of issuing a failed VFS image request for every
-        // equipped or barter item.
-        if (!backgroundTex.empty())
-        {
-            const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
-            if (!vfs->exists(VFS::Path::toNormalized(backgroundTex)))
-                backgroundTex = "textures\\omw_menu_icon_active.dds";
-        }
-
         float scale = 1.f;
         if (!backgroundTex.empty())
         {
@@ -255,21 +208,14 @@ namespace MWGui
                 scale = found->second;
         }
 
+        const int diameter = static_cast<int>(44 * scale);
         if (state == Barter && !isMagic)
-            setFrame(backgroundTex, MyGUI::IntCoord(2 * scale, 2 * scale, 44 * scale, 44 * scale));
+            setFrame(backgroundTex,
+                MyGUI::IntCoord(static_cast<int>(2 * scale), static_cast<int>(2 * scale), diameter, diameter));
         else
-            setFrame(backgroundTex, MyGUI::IntCoord(0, 0, 44 * scale, 44 * scale));
+            setFrame(backgroundTex, MyGUI::IntCoord(0, 0, diameter, diameter));
 
         setIcon(ptr);
-        if (mName)
-        {
-            std::string name(ptr.getClass().getName(ptr));
-            if (name.empty())
-                name = ptr.getCellRef().getRefId().toDebugString();
-            if (state == Equip)
-                name.insert(0, "[E] ");
-            mName->setCaption(name);
-        }
     }
 
     void SpellWidget::setSpellIcon(std::string_view icon)

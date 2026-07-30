@@ -75,7 +75,7 @@ namespace ESM4
             TES4_NoCorpseCheck = 0x100000 // opposite of npc_
         };
 
-        enum ACBS_FO3
+        enum ActorBaseFlagsFo3
         {
             FO3_Biped = 0x00000001,
             FO3_Essential = 0x00000002,

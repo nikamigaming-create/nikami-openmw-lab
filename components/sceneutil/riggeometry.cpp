@@ -11,12 +11,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include <osg/MatrixTransform>
 #include <osg/LineWidth>
 #include <osg/Material>
+#include <osg/MatrixTransform>
 #include <osg/PolygonMode>
 #include <osg/Transform>
-#include <osg/Uniform>
 
 #include <osgUtil/CullVisitor>
 
@@ -104,8 +103,11 @@ namespace SceneUtil
         }
 
         std::string_view getFalloutSkinningMode(
-            std::string_view name, std::string_view rootBone, bool /* inventoryPaperDoll */)
+            std::string_view name, std::string_view rootBone, bool inventoryPaperDoll)
         {
+            if (inventoryPaperDoll)
+                return "source";
+
             if (isFalloutHandRig(name, rootBone))
             {
                 if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_HAND_SKINNING_MODE", "OPENMW_FNV_VR_HAND_SKINNING_MODE"))
@@ -218,10 +220,6 @@ namespace SceneUtil
     {
         setNumChildrenRequiringUpdateTraversal(1);
         // update done in accept(NodeVisitor&)
-//## VR_PATCH BEGIN
-// VR-TODO: What was the motivation for this?
-        //setCullingActive(false);
-//## VR_PATCH END
     }
 
     RigGeometry::RigGeometry(const RigGeometry& copy, const osg::CopyOp& copyop)
@@ -404,14 +402,8 @@ namespace SceneUtil
             mFalloutVatsOriginalStateSet = nullptr;
             mFalloutVatsHighlightActive = false;
         }
-        if (!enabled || !mData || !mSourceGeometry || targetBones.empty())
-            return false;
-
-        // The actor object root also owns separately attached weapons and props. Those
-        // meshes can be skinned to ordinary hand/arm bones, so matching a VATS target
-        // bone alone is not enough to identify anatomy. Only actor-classified rigs
-        // participate in the body overlay.
-        if (!isFalloutCharacterRig())
+        if (!enabled || !mData || !mSourceGeometry || mSourceGeometry->getVertexArray() == nullptr
+            || targetBones.empty() || !isFalloutCharacterRig())
             return false;
 
         std::vector<bool> selectedBoneMask(mData->mBones.size(), false);
@@ -421,33 +413,17 @@ namespace SceneUtil
             const std::string_view boneName = mData->mBones[boneIndex].mName;
             for (const std::string_view targetBone : targetBones)
             {
-                if (!Misc::StringUtils::ciEqual(boneName, targetBone))
-                    continue;
-                hasTargetBone = true;
-                break;
+                if (Misc::StringUtils::ciEqual(boneName, targetBone))
+                {
+                    hasTargetBone = true;
+                    break;
+                }
             }
             if (Misc::StringUtils::ciEqual(boneName, selectedBone))
                 selectedBoneMask[boneIndex] = true;
         }
-        // A character is assembled from several skinned drawables. Every body drawable that contains any authored
-        // VATS bone must receive the amber whole-body pass even when the currently selected bone lives in a different
-        // drawable. Only the drawable carrying the selected bone contributes green vertices.
         if (!hasTargetBone)
-        {
-            if (getEsm4RuntimeEnv("OPENMW_FNV_VATS_PROOF", "OPENMW_ESM4_VATS_PROOF") != nullptr)
-            {
-                std::ostringstream bones;
-                for (std::size_t index = 0; index < mData->mBones.size(); ++index)
-                {
-                    if (index != 0)
-                        bones << ',';
-                    bones << mData->mBones[index].mName;
-                }
-                Log(Debug::Info) << "FNV VATS rig mismatch: geometry=" << getName()
-                                 << " selected=" << selectedBone << " rigBones=[" << bones.str() << ']';
-            }
             return false;
-        }
 
         const std::size_t vertexCount = mSourceGeometry->getVertexArray()->getNumElements();
         if (vertexCount == 0)
@@ -468,8 +444,6 @@ namespace SceneUtil
             }
         }
 
-        // Emissive values deliberately exceed one so HDR/bloom produces the retail Pip-Boy glow instead of a
-        // flat vertex tint. The whole target remains amber; only vertices weighted to the selected limb turn green.
         const osg::Vec4f vatsAmber(1.35f, 0.52f, 0.06f, 1.f);
         const osg::Vec4f vatsGreen(0.10f, 3.5f, 0.24f, 1.f);
         for (std::size_t index = 0; index < std::size(mGeometry); ++index)
@@ -879,12 +853,6 @@ namespace SceneUtil
 
         mSkeleton->updateBoneMatrices(traversalNumber);
 
-//## VR_PATCH BEGIN
-        // Tracking in VR updates bone matrices out of order, and forces bounds to be recalculated during cull.
-        if (mSkeleton->isTracked())
-            updateBounds(nv);
-
-//## VR_PATCH END
         // skinning
         const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
         const osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
@@ -904,6 +872,8 @@ namespace SceneUtil
         const bool falloutSourceSkinning = falloutRig
             && (mSourceFrameSkinning || falloutSkinningMode == "source" || sourceSkinOnly
                 || (falloutAutoMode && mFalloutUseSourceFallback));
+        const bool falloutNearestBindFallback = falloutRig
+            && std::getenv("OPENMW_WORLD_VIEWER_FO4_MISSING_BONE_NEAREST_BIND") != nullptr;
 
         std::vector<osg::Matrixf> boneMatrices(mNodes.size());
         std::vector<Bone*>::const_iterator bone = mNodes.begin();
@@ -918,6 +888,51 @@ namespace SceneUtil
             }
             ++bone;
             ++boneInfo;
+        }
+
+        if (falloutNearestBindFallback)
+        {
+            std::vector<osg::Vec3f> bindPositions(mData->mBones.size());
+            std::vector<bool> validBindPositions(mData->mBones.size(), false);
+            for (std::size_t i = 0; i < mData->mBones.size(); ++i)
+            {
+                osg::Matrixf bindMatrix;
+                if (bindMatrix.invert(mData->mBones[i].mInvBindMatrix))
+                {
+                    bindPositions[i] = bindMatrix.getTrans();
+                    validBindPositions[i] = true;
+                }
+            }
+
+            for (std::size_t missing = 0; missing < mNodes.size(); ++missing)
+            {
+                if (mNodes[missing] != nullptr || !validBindPositions[missing])
+                    continue;
+
+                std::size_t nearest = mNodes.size();
+                float nearestDistance2 = std::numeric_limits<float>::max();
+                for (std::size_t candidate = 0; candidate < mNodes.size(); ++candidate)
+                {
+                    if (mNodes[candidate] == nullptr || !validBindPositions[candidate])
+                        continue;
+                    const float distance2 = (bindPositions[missing] - bindPositions[candidate]).length2();
+                    if (distance2 < nearestDistance2)
+                    {
+                        nearest = candidate;
+                        nearestDistance2 = distance2;
+                    }
+                }
+
+                if (nearest != mNodes.size())
+                {
+                    boneMatrices[missing] = boneMatrices[nearest];
+                    if (!mLoggedFalloutInfluenceSummary)
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: data-driven missing skin bone fallback "
+                                            << mData->mBones[missing].mName << " -> "
+                                            << mData->mBones[nearest].mName << " bindDistance="
+                                            << std::sqrt(nearestDistance2);
+                }
+            }
         }
 
         if (falloutRig)
@@ -1152,7 +1167,7 @@ namespace SceneUtil
                     ++invalidBoneInfluences;
                     continue;
                 }
-                if (mNodes[index] == nullptr)
+                if (mNodes[index] == nullptr && !falloutNearestBindFallback)
                     continue;
                 const float* boneMatPtr = boneMatrices[index].ptr();
                 float* resultMatPtr = resultMat.ptr();
@@ -1440,28 +1455,6 @@ namespace SceneUtil
         mData->mBones = std::move(bones);
     }
 
-    void RigGeometry::setInfluences(const std::vector<VertexWeights>& influences)
-    {
-        if (!mData)
-            mData = new InfluenceData;
-
-        std::unordered_map<unsigned short, BoneWeights> vertexToInfluences;
-        size_t index = 0;
-        for (const auto& influence : influences)
-        {
-            for (const auto& [vertex, weight] : influence)
-                vertexToInfluences[vertex].emplace_back(index, weight);
-            index++;
-        }
-
-        std::map<BoneWeights, VertexList> influencesToVertices;
-        for (const auto& [vertex, weights] : vertexToInfluences)
-            influencesToVertices[weights].emplace_back(vertex);
-
-        mData->mInfluences.reserve(influencesToVertices.size());
-        mData->mInfluences.assign(influencesToVertices.begin(), influencesToVertices.end());
-    }
-
     void RigGeometry::setInfluences(const std::vector<BoneWeights>& influences)
     {
         if (!mData)
@@ -1470,6 +1463,7 @@ namespace SceneUtil
         std::map<BoneWeights, VertexList> influencesToVertices;
         for (size_t i = 0; i < influences.size(); i++)
             influencesToVertices[influences[i]].emplace_back(static_cast<VertexList::value_type>(i));
+        influencesToVertices.erase(BoneWeights());
 
         mData->mInfluences.reserve(influencesToVertices.size());
         mData->mInfluences.assign(influencesToVertices.begin(), influencesToVertices.end());

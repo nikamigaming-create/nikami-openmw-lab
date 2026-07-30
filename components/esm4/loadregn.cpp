@@ -37,6 +37,7 @@ void ESM4::Region::load(ESM4::Reader& reader)
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
     std::size_t activeWeatherBlock = static_cast<std::size_t>(-1);
+    std::size_t activeSoundBlock = static_cast<std::size_t>(-1);
 
     while (reader.getSubRecordHeader())
     {
@@ -82,6 +83,13 @@ void ESM4::Region::load(ESM4::Reader& reader)
                 }
                 else
                     activeWeatherBlock = static_cast<std::size_t>(-1);
+                if (mData.type == RDAT_Sound)
+                {
+                    mSoundBlocks.push_back({ mData, {} });
+                    activeSoundBlock = mSoundBlocks.size() - 1;
+                }
+                else
+                    activeSoundBlock = static_cast<std::size_t>(-1);
                 break;
             case ESM::fourCC("RDMP"):
             {
@@ -116,10 +124,27 @@ void ESM4::Region::load(ESM4::Reader& reader)
                     throw std::runtime_error(
                         "ESM4::REGN::load - unexpected data type " + ESM::printName(subHdr.typeId));
 
-                std::size_t numSounds = subHdr.dataSize / sizeof(RegionSound);
-                mSounds.resize(numSounds);
+                constexpr std::size_t entrySize
+                    = sizeof(ESM::FormId32) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
+                if (activeSoundBlock == static_cast<std::size_t>(-1) || subHdr.dataSize % entrySize != 0)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+
+                RegionSoundBlock& block = mSoundBlocks.at(activeSoundBlock);
+                const std::size_t numSounds = subHdr.dataSize / entrySize;
+                block.mEntries.reserve(block.mEntries.size() + numSounds);
+                mSounds.reserve(mSounds.size() + numSounds);
                 for (std::size_t i = 0; i < numSounds; ++i)
-                    reader.get(mSounds.at(i));
+                {
+                    RegionSound value;
+                    reader.getFormId(value.mSound);
+                    reader.get(value.mFlags);
+                    reader.get(value.mChance);
+                    block.mEntries.push_back(value);
+                    mSounds.push_back(std::move(value));
+                }
 
                 break;
             }

@@ -6,6 +6,7 @@
 #include <components/esm3/inventorystate.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/npcstats.hpp"
@@ -16,31 +17,23 @@
 
 void MWWorld::InventoryStore::copySlots(const InventoryStore& store)
 {
-    // some const-trickery, required because of a flaw in the handling of MW-references and the
-    // resulting workarounds
-    for (std::vector<ContainerStoreIterator>::const_iterator iter(const_cast<InventoryStore&>(store).mSlots.begin());
-         iter != const_cast<InventoryStore&>(store).mSlots.end(); ++iter)
+    for (const MWWorld::ContainerStoreIterator& it : store.mSlots)
     {
-        std::size_t distance = std::distance(const_cast<InventoryStore&>(store).begin(), *iter);
-
+        if (it == store.end())
+        {
+            mSlots.push_back(end());
+            continue;
+        }
+        const std::ptrdiff_t distance = store.index(it);
         ContainerStoreIterator slot = begin();
-
         std::advance(slot, distance);
-
         mSlots.push_back(slot);
     }
-
-    // some const-trickery, required because of a flaw in the handling of MW-references and the
-    // resulting workarounds
-    std::size_t distance = std::distance(
-        const_cast<InventoryStore&>(store).begin(), const_cast<InventoryStore&>(store).mSelectedEnchantItem);
-    ContainerStoreIterator slot = begin();
-    std::advance(slot, distance);
-    mSelectedEnchantItem = slot;
 }
 
 void MWWorld::InventoryStore::initSlots(TSlots& slots)
 {
+    slots.reserve(Slots);
     for (int i = 0; i < Slots; ++i)
         slots.push_back(end());
 }
@@ -48,23 +41,21 @@ void MWWorld::InventoryStore::initSlots(TSlots& slots)
 void MWWorld::InventoryStore::storeEquipmentState(
     const MWWorld::LiveCellRefBase& ref, size_t index, ESM::InventoryState& inventory) const
 {
+    MWWorld::ContainerStore::storeEquipmentState(ref, index, inventory);
+
     for (int32_t i = 0; i < MWWorld::InventoryStore::Slots; ++i)
     {
         if (mSlots[i].getType() != -1 && mSlots[i]->getBase() == &ref)
             inventory.mEquipmentSlots[static_cast<uint32_t>(index)] = i;
     }
-
-    if (mSelectedEnchantItem.getType() != -1 && mSelectedEnchantItem->getBase() == &ref)
-        inventory.mSelectedEnchantItem = static_cast<uint32_t>(index);
 }
 
 void MWWorld::InventoryStore::readEquipmentState(
     const MWWorld::ContainerStoreIterator& iter, size_t index, const ESM::InventoryState& inventory)
 {
-    if (index == inventory.mSelectedEnchantItem)
-        mSelectedEnchantItem = iter;
+    MWWorld::ContainerStore::readEquipmentState(iter, index, inventory);
 
-    auto found = inventory.mEquipmentSlots.find(index);
+    auto found = inventory.mEquipmentSlots.find(static_cast<uint32_t>(index));
     if (found != inventory.mEquipmentSlots.end())
     {
         if (found->second < 0 || found->second >= MWWorld::InventoryStore::Slots)
@@ -92,46 +83,61 @@ void MWWorld::InventoryStore::readEquipmentState(
 }
 
 MWWorld::InventoryStore::InventoryStore()
-    : ContainerStore()
-    , mInventoryListener(nullptr)
-    , mUpdatesEnabled(true)
-    , mFirstAutoEquip(true)
-    , mSelectedEnchantItem(end())
 {
     initSlots(mSlots);
 }
 
-MWWorld::InventoryStore::InventoryStore(const InventoryStore& store)
+MWWorld::InventoryStore::InventoryStore(const MWWorld::InventoryStore& store)
     : ContainerStore(store)
     , mInventoryListener(store.mInventoryListener)
     , mUpdatesEnabled(store.mUpdatesEnabled)
     , mFirstAutoEquip(store.mFirstAutoEquip)
-    , mSelectedEnchantItem(end())
-    , mFalloutAmmoSelections(store.mFalloutAmmoSelections)
-    , mFalloutLoadedAmmo(store.mFalloutLoadedAmmo)
 {
     copySlots(store);
+}
+
+MWWorld::InventoryStore::InventoryStore(MWWorld::InventoryStore&& store)
+{
+    *this = std::move(store);
 }
 
 MWWorld::InventoryStore& MWWorld::InventoryStore::operator=(const InventoryStore& store)
 {
     if (this == &store)
         return *this;
-
-    mListener = store.mListener;
-    mInventoryListener = store.mInventoryListener;
-    mFirstAutoEquip = store.mFirstAutoEquip;
-    mRechargingItemsUpToDate = false;
     ContainerStore::operator=(store);
+    mInventoryListener = store.mInventoryListener;
+    mUpdatesEnabled = store.mUpdatesEnabled;
+    mFirstAutoEquip = store.mFirstAutoEquip;
     mSlots.clear();
     copySlots(store);
-    mFalloutAmmoSelections = store.mFalloutAmmoSelections;
-    mFalloutLoadedAmmo = store.mFalloutLoadedAmmo;
+    return *this;
+}
+
+MWWorld::InventoryStore& MWWorld::InventoryStore::operator=(InventoryStore&& store)
+{
+    mInventoryListener = store.mInventoryListener;
+    mUpdatesEnabled = store.mUpdatesEnabled;
+    mFirstAutoEquip = store.mFirstAutoEquip;
+    mSlots.clear();
+    std::array<std::ptrdiff_t, Slots> distances;
+    for (int i = 0; i < Slots; ++i)
+    {
+        distances[i] = store.index(store.mSlots[i]);
+    }
+    ContainerStore::operator=(std::move(store));
+    for (int i = 0; i < Slots; ++i)
+    {
+        if (distances[i] == -1)
+            mSlots.push_back(end());
+        else
+            std::advance(mSlots.emplace_back(begin()), distances[i]);
+    }
     return *this;
 }
 
 MWWorld::ContainerStoreIterator MWWorld::InventoryStore::add(
-    const Ptr& itemPtr, int count, bool allowAutoEquip, bool resolve)
+    const ConstPtr& itemPtr, int count, bool allowAutoEquip, bool resolve)
 {
     const MWWorld::ContainerStoreIterator& retVal
         = MWWorld::ContainerStore::add(itemPtr, count, allowAutoEquip, resolve);
@@ -148,6 +154,7 @@ MWWorld::ContainerStoreIterator MWWorld::InventoryStore::add(
 
     if (mListener)
         mListener->itemAdded(*retVal, count);
+    MWBase::Environment::get().getWindowManager()->inventoryUpdated(actor);
 
     return retVal;
 }
@@ -557,60 +564,6 @@ bool MWWorld::InventoryStore::stacks(const ConstPtr& ptr1, const ConstPtr& ptr2)
     return true;
 }
 
-void MWWorld::InventoryStore::setSelectedEnchantItem(const ContainerStoreIterator& iterator)
-{
-    mSelectedEnchantItem = iterator;
-}
-
-MWWorld::ContainerStoreIterator MWWorld::InventoryStore::getSelectedEnchantItem()
-{
-    return mSelectedEnchantItem;
-}
-
-void MWWorld::InventoryStore::setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo)
-{
-    if (weapon.empty() || ammo.empty())
-        throw std::invalid_argument("Fallout ammo selection requires non-empty weapon and ammo IDs");
-    mFalloutAmmoSelections[weapon] = ammo;
-}
-
-std::optional<ESM::RefId> MWWorld::InventoryStore::getFalloutAmmoSelection(const ESM::RefId& weapon) const
-{
-    const auto found = mFalloutAmmoSelections.find(weapon);
-    if (found == mFalloutAmmoSelections.end())
-        return std::nullopt;
-    return found->second;
-}
-
-void MWWorld::InventoryStore::setFalloutLoadedAmmo(const ESM::RefId& weapon, int count)
-{
-    if (weapon.empty() || count < 0)
-        throw std::invalid_argument("Fallout loaded ammo requires a weapon ID and non-negative count");
-    mFalloutLoadedAmmo[weapon] = count;
-}
-
-std::optional<int> MWWorld::InventoryStore::getFalloutLoadedAmmo(const ESM::RefId& weapon) const
-{
-    const auto found = mFalloutLoadedAmmo.find(weapon);
-    if (found == mFalloutLoadedAmmo.end())
-        return std::nullopt;
-    return found->second;
-}
-
-void MWWorld::InventoryStore::writeState(ESM::InventoryState& state) const
-{
-    ContainerStore::writeState(state);
-    state.mFalloutAmmoSelections = mFalloutAmmoSelections;
-    state.mFalloutLoadedAmmo = mFalloutLoadedAmmo;
-}
-
-void MWWorld::InventoryStore::readState(const ESM::InventoryState& state)
-{
-    ContainerStore::readState(state);
-    mFalloutAmmoSelections = state.mFalloutAmmoSelections;
-    mFalloutLoadedAmmo = state.mFalloutLoadedAmmo;
-}
-
 int MWWorld::InventoryStore::remove(const Ptr& item, int count, bool equipReplacement, bool resolve)
 {
     int retCount = ContainerStore::remove(item, count, equipReplacement, resolve);
@@ -644,13 +597,9 @@ int MWWorld::InventoryStore::remove(const Ptr& item, int count, bool equipReplac
             autoEquip();
     }
 
-    if (item.getCellRef().getCount() == 0 && mSelectedEnchantItem != end() && *mSelectedEnchantItem == item)
-    {
-        mSelectedEnchantItem = end();
-    }
-
     if (mListener)
         mListener->itemRemoved(item, retCount);
+    MWBase::Environment::get().getWindowManager()->inventoryUpdated(actor);
 
     return retCount;
 }
@@ -767,8 +716,6 @@ void MWWorld::InventoryStore::clear()
 {
     mSlots.clear();
     initSlots(mSlots);
-    mFalloutAmmoSelections.clear();
-    mFalloutLoadedAmmo.clear();
     ContainerStore::clear();
 }
 

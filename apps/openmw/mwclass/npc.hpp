@@ -76,20 +76,14 @@ namespace MWClass
 
         bool hasInventoryStore(const MWWorld::ConstPtr& ptr) const override { return true; }
 
-        // ## VR_PATCH BEGIN
-        //  split evaluateHit into evaluateHit and findMeleeVictim so VR realistic combat can provide
-        //  its victim as a parameter.
-        std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> findMeleeVictim(const MWWorld::Ptr& ptr) const override;
-
-        MWWorld::MeleeHit evaluateHit(
-            const MWWorld::Ptr& ptr, std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> victim) const override;
-        // ## VR_PATCH END
+        bool evaluateHit(const MWWorld::Ptr& ptr, MWWorld::Ptr& victim, osg::Vec3f& hitPosition) const override;
 
         void hit(const MWWorld::Ptr& ptr, float attackStrength, int type, const MWWorld::Ptr& victim,
-            const osg::Vec3f& hitPosition, bool success, bool ignoreReach) const override;
+            const osg::Vec3f& hitPosition, bool success) const override;
 
         void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
-            const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const override;
+            const MWWorld::Ptr& attacker, bool successful,
+            const MWMechanics::DamageSourceType sourceType) const override;
 
         void getModelsToPreload(const MWWorld::ConstPtr& ptr, std::vector<std::string_view>& models) const override;
         ///< Get a list of models to preload that this object may use (directly or indirectly). default implementation:

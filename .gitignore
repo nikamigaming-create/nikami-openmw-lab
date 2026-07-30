@@ -11,7 +11,6 @@ prebuilt
 ##windows build process
 /deps
 /MSVC*
-.vs
 
 ## doxygen
 Doxygen

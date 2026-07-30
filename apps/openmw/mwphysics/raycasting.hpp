@@ -1,10 +1,10 @@
 #ifndef OPENMW_MWPHYSICS_RAYCASTING_H
 #define OPENMW_MWPHYSICS_RAYCASTING_H
 
+#include <osg/Vec3f>
+
 #include <string>
 #include <vector>
-
-#include <osg/Vec3f>
 
 #include "../mwworld/ptr.hpp"
 

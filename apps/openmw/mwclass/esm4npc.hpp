@@ -3,11 +3,12 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadweap.hpp>
-#include <components/misc/rng.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include <osg/Vec3f>
 
@@ -22,11 +23,6 @@
 
 #include "actor.hpp"
 #include "esm4base.hpp"
-
-namespace MWBase
-{
-    class World;
-}
 
 namespace MWClass
 {
@@ -89,7 +85,8 @@ namespace MWClass
         {
             if (ESM4Impl::worldViewerDisableEsm4Actors())
                 return;
-            Actor::insertObject(ptr, model.empty() ? std::string(getModel(ptr)) : model, rotation, physics);
+            (void)rotation;
+            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }
@@ -103,9 +100,6 @@ namespace MWClass
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
         MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
-        void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
-            const MWWorld::Ptr& attacker, bool successful,
-            MWMechanics::DamageSourceType sourceType) const override;
         float getCapacity(const MWWorld::Ptr& ptr) const override;
         float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
         float getWalkSpeed(const MWWorld::Ptr& ptr) const override;
@@ -116,6 +110,7 @@ namespace MWClass
         int getBaseGold(const MWWorld::ConstPtr& ptr) const override;
         std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         bool isPersistent(const MWWorld::ConstPtr& ptr) const override;
+        bool isEssential(const MWWorld::ConstPtr& ptr) const override;
         bool isBipedal(const MWWorld::ConstPtr& ptr) const override;
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
@@ -124,13 +119,15 @@ namespace MWClass
         static const ESM4::Npc* getFactionsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getModelRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getAIDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getStatsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
-        /// Materialize the resolved Traits death-item list once for a dead FNV NPC.
-        static bool materializeFnvDeathItem(const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel,
-            MWBase::World* world = nullptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
         static bool isFemale(const MWWorld::Ptr& ptr);
+        static bool matchRace(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits);
+        static bool matchFaceGeometry(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits,
+            const ESM4::Race* sourceRace, bool sourceFemale, float percentage);
+        static bool usesDefaultFaceTexture(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Clothing*>& getEquippedClothing(const MWWorld::Ptr& ptr);
         static const ESM4::Weapon* getEquippedWeapon(const MWWorld::Ptr& ptr);
@@ -143,6 +140,12 @@ namespace MWClass
         static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon);
+        static bool equipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item);
+        static bool unequipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item);
+        static bool clearFalloutEquipment(const MWWorld::Ptr& ptr);
+        static bool applyFalloutEquipmentOverride(
+            const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& items, bool requireInventory = true);
+        static bool resetFalloutInventory(const MWWorld::Ptr& ptr);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
 

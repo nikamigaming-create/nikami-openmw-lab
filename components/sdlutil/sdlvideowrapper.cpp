@@ -3,7 +3,6 @@
 #include <components/debug/debuglog.hpp>
 #include <components/sdlutil/sdlgraphicswindow.hpp>
 #include <components/settings/settings.hpp>
-#include <components/vr/vr.hpp>
 
 #include <osgViewer/Viewer>
 
@@ -27,10 +26,7 @@ namespace SDLUtil
         SDL_SetWindowFullscreen(mWindow, 0);
 
         // If user hasn't touched the defaults no need to restore
-//## VR_PATCH BEGIN
-// Should not manage gamma in VR
-        if (mHasSetGammaContrast && !VR::getVR())
-//## VR_PATCH END
+        if (mHasSetGammaContrast)
             SDL_SetWindowGammaRamp(mWindow, mOldSystemGammaRamp, &mOldSystemGammaRamp[256], &mOldSystemGammaRamp[512]);
     }
 
@@ -60,11 +56,6 @@ namespace SDLUtil
 
         mHasSetGammaContrast = true;
 
-//## VR_PATCH BEGIN
-// Should not manage gamma in VR
-        if (VR::getVR())
-            return;
-//## VR_PATCH END
         Uint16 red[256], green[256], blue[256];
         for (int i = 0; i < 256; i++)
         {

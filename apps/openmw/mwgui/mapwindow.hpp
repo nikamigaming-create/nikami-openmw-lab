@@ -48,6 +48,7 @@ namespace SceneUtil
 
 namespace MWGui
 {
+    class MarkerWidget;
 
     class CustomMarkerCollection
     {
@@ -124,7 +125,6 @@ namespace MWGui
         MyGUI::ScrollView* mLocalMap = nullptr;
         MyGUI::ImageBox* mCompass = nullptr;
         float mLocalMapZoom = 1.f;
-        bool mHasALastActiveCell = false;
         bool mFogOfWarToggled = true;
         bool mFogOfWarEnabled;
         bool mNeedDoorMarkersUpdate = false;
@@ -152,14 +152,14 @@ namespace MWGui
         std::vector<MapEntry> mMaps;
 
         // Keep track of created marker widgets, just to easily remove them later.
-        std::vector<MyGUI::Widget*> mExteriorDoorMarkerWidgets;
-        std::map<std::pair<int, int>, std::vector<MyGUI::Widget*>> mExteriorDoorsByCell;
-        std::vector<MyGUI::Widget*> mInteriorDoorMarkerWidgets;
+        std::vector<MarkerWidget*> mExteriorDoorMarkerWidgets;
+        std::map<std::pair<int, int>, std::vector<MarkerWidget*>> mExteriorDoorsByCell;
+        std::vector<MarkerWidget*> mInteriorDoorMarkerWidgets;
         std::vector<MyGUI::Widget*> mMagicMarkerWidgets;
         std::vector<MyGUI::Widget*> mCustomMarkerWidgets;
-        std::vector<MyGUI::Widget*> mDoorMarkersToRecycle;
+        std::vector<MarkerWidget*> mDoorMarkersToRecycle;
 
-        std::vector<MyGUI::Widget*>& currentDoorMarkersWidgets();
+        std::vector<MarkerWidget*>& currentDoorMarkersWidgets();
 
         virtual void updateCustomMarkers();
 
@@ -168,13 +168,12 @@ namespace MWGui
         MyGUI::IntPoint getPosition(int cellX, int cellY, float nx, float ny) const;
         MyGUI::IntPoint getMarkerPosition(float worldX, float worldY, MarkerUserData& markerPos) const;
         MyGUI::IntCoord getMarkerCoordinates(
-            float worldX, float worldY, MarkerUserData& markerPos, size_t markerSize) const;
-        MyGUI::Widget* createDoorMarker(const std::string& name, float x, float y) const;
-        MyGUI::IntCoord getMarkerCoordinates(MyGUI::Widget* widget, size_t markerSize) const;
+            float worldX, float worldY, MarkerUserData& markerPos, unsigned short markerSize) const;
+        MarkerWidget* createDoorMarker(const std::string& name, float x, float y) const;
+        void updateMarkerCoordinates(MyGUI::Widget* widget, unsigned short markerSize) const;
 
         virtual void notifyPlayerUpdate() {}
         virtual void centerView();
-        virtual void notifyMapChanged() {}
 
         virtual void customMarkerCreated(MyGUI::Widget* marker) {}
         virtual void doorMarkerCreated(MyGUI::Widget* marker) {}
@@ -190,7 +189,6 @@ namespace MWGui
         MWGui::LocalMapBase::MapEntry& addMapEntry();
 
         MyGUI::IntRect mGrid{ -1, -1, 1, 1 };
-        int mExtCellDistance = 0;
         float mMarkerUpdateTimer = 0.f;
 
         float mLastDirectionX = 0.f;
@@ -230,7 +228,7 @@ namespace MWGui
         MyGUI::Button* mDeleteButton;
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
-        int mControllerFocus = 0;
+        size_t mControllerFocus = 0;
     };
 
     class MapWindow : public MWGui::WindowPinnableBase, public LocalMapBase, public NoDrop

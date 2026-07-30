@@ -7,10 +7,10 @@
    and retrieving information from the Gui.
 **/
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
-#include <osg/Vec4>
 #include <osg/ref_ptr>
 
 #include "../mwbase/windowmanager.hpp"
@@ -88,22 +88,8 @@ namespace Gui
     class FontLoader;
 }
 
-//## VR_PATCH BEGIN
-namespace Gui
-{
-    class VirtualKeyboardManager;
-}
-namespace MWVR
-{
-    class VrMetaMenu;
-    class RadialMenu;
-}
-//## VR_PATCH END
-
 namespace MWGui
 {
-    struct FalloutDialogueCameraState;
-
     class HUD;
     class MapWindow;
     class MainMenu;
@@ -145,7 +131,7 @@ namespace MWGui
         WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
             Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
             const std::filesystem::path& logpath, bool consoleOnlyScripts, Translation::Storage& translationDataStorage,
-            ToUTF8::FromType encoding, bool exportFonts, const std::string& versionDescription, bool useShaders,
+            ToUTF8::FromType encoding, bool exportFonts, const std::string& versionDescription,
             Files::ConfigurationManager& cfgMgr);
         virtual ~WindowManager();
 
@@ -182,6 +168,8 @@ namespace MWGui
         bool isSettingsWindowVisible() const override;
         bool isInteractiveMessageBoxActive() const override;
         void closeInteractiveMessageBoxWithDefaultButton() override;
+        void showAuthoredRaceMenu() override;
+        void showAuthoredNameMenu() override;
 
         void toggleVisible(GuiWindow wnd) override;
 
@@ -250,7 +238,6 @@ namespace MWGui
 
         /// activate selected quick key
         void activateQuickKey(int index) override;
-        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) override;
         /// update activated quick key state (if action executing was delayed for some reason)
         void updateActivatedQuickKey() override;
 
@@ -270,7 +257,7 @@ namespace MWGui
         /// Turn visibility of HUD on or off
         bool setHudVisibility(bool show) override;
         bool isHudVisible() const override { return mHudEnabled; }
-        void setLegacyHudSuppressed(bool suppress) override;
+        void setGameplayOverlaySuppressed(bool suppressed) override;
 
         void disallowMouse() override;
         void allowMouse() override;
@@ -300,7 +287,7 @@ namespace MWGui
         int readPressedButton() override; ///< returns the index of the pressed button or -1 if no button was pressed
                                           ///< (->MessageBoxmanager->InteractiveMessageBox)
 
-        void update(float duration) override;
+        void update(float duration);
 
         /**
          * Fetches a GMST string from the store, if there is no setting with the given
@@ -353,7 +340,7 @@ namespace MWGui
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) override;
         void readRecord(ESM::ESMReader& reader, uint32_t type) override;
-        int countSavedGameRecords() const override;
+        size_t countSavedGameRecords() const override;
 
         /// Does the current stack of GUI-windows permit saving?
         bool isSavingAllowed() const override;
@@ -416,7 +403,7 @@ namespace MWGui
         WindowBase* getActiveControllerWindow() override;
         int getControllerMenuHeight() override;
         void cycleActiveControllerWindow(bool next) override;
-        void setActiveControllerWindow(GuiMode mode, int activeIndex) override;
+        void setActiveControllerWindow(GuiMode mode, size_t activeIndex) override;
         bool getControllerTooltipVisible() const override { return mControllerTooltipVisible; }
         void setControllerTooltipVisible(bool visible) override;
         bool getControllerTooltipEnabled() const override { return mControllerTooltipEnabled; }
@@ -431,8 +418,6 @@ namespace MWGui
         std::vector<std::string_view> getAllWindowIds() const override;
         std::vector<std::string_view> getAllowedWindowIds(GuiMode mode) const override;
         const std::map<MWGui::GuiMode, std::string_view>& guiModeToName() const override;
-
-        void skipVideo() override;
 
     private:
         unsigned int mOldUpdateMask;
@@ -488,6 +473,8 @@ namespace MWGui
         std::unique_ptr<SoulgemDialog> mSoulgemDialog;
         MyGUI::ImageBox* mVideoBackground;
         VideoWidget* mVideoWidget;
+        bool mVideoPlaying;
+        bool mVideoSkippable;
         ScreenFader* mWerewolfFader;
         ScreenFader* mBlindnessFader;
         ScreenFader* mHitFader;
@@ -511,9 +498,21 @@ namespace MWGui
         MyGUI::Widget* mInputBlocker;
 
         bool mHudEnabled;
-        bool mLegacyHudSuppressed;
+        bool mGameplayOverlaySuppressed;
         bool mCursorVisible;
         bool mCursorActive;
+
+        // Enabled only by the canonical native-frame capture environment; it
+        // retains the authored post-Bink scene without changing normal play.
+        float mPostVideoNativeCaptureRemaining = 0.f;
+        float mPostVideoNativeCaptureUntilNextFrame = -1.f;
+        float mPostVideoNativeCaptureInterval = 0.f;
+        std::chrono::steady_clock::time_point mPostVideoNativeCaptureLastUpdate;
+
+        // Enabled only by OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS. It advances
+        // the existing message-box callback for unattended compatibility proof without
+        // desktop keyboard or mouse injection.
+        float mAuthoredDefaultChoiceDelay = -1.f;
 
         int mPlayerBounty;
 
@@ -538,9 +537,8 @@ namespace MWGui
         std::map<GuiMode, GuiModeState> mGuiModeStates;
         // The currently active stack of GUI modes (top mode is the one we are in).
         std::vector<GuiMode> mGuiModes;
-        std::unique_ptr<FalloutDialogueCameraState> mFalloutDialogueCamera;
         // The active window for controller mode for each GUI mode.
-        std::map<GuiMode, int> mActiveControllerWindows;
+        std::map<GuiMode, size_t> mActiveControllerWindows;
         // Current tooltip visibility state (can be disabled by mouse movement)
         bool mControllerTooltipVisible = false;
         // User preference for tooltips (persists across mouse/controller switches)
@@ -636,9 +634,6 @@ namespace MWGui
         void handleScheduledMessageBoxes();
 
         void pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg, bool force);
-        void beginFalloutDialogueCamera(const MWWorld::Ptr& target);
-        void updateFalloutDialogueCamera();
-        void endFalloutDialogueCamera();
 
         void setCullMask(uint32_t mask) override;
         uint32_t getCullMask() override;
@@ -646,25 +641,9 @@ namespace MWGui
         void setActiveMap(const MWWorld::Cell& cell);
         ///< set the indices of the map texture that should be used
 
-        Files::ConfigurationManager& mCfgMgr;
+        void inventoryUpdated(const MWWorld::Ptr& ptr) const override;
 
-//## VR_PATCH BEGIN
-    public:
-        bool isPlayingVideo(void) const override;
-        DragAndDrop& getDragAndDrop(void) override;
-        void viewerTraversals() override;
-        void enterVoid() override;
-        bool isInVoid() override;
-        void exitVoid() override;
-    private:
-        osg::Vec4 mOldClearColor;
-        bool mVRMode;
-        MWVR::VrMetaMenu* mVrMetaMenu;
-        MWVR::RadialMenu* mRadialMenu;
-        Gui::VirtualKeyboardManager* mVirtualKeyboardManager;
-        bool mVideoEnabled;
-        bool mTheVoid = false;
-//## VR_PATCH END
+        Files::ConfigurationManager& mCfgMgr;
     };
 }
 

@@ -229,6 +229,26 @@ void ESM4::Note::load(ESM4::Reader& reader)
                 readZString(reader, value.mIcon, "ICON");
                 phase = Phase::Icon;
                 break;
+            case ESM::fourCC("YNAM"):
+                // TTW's converted DLC03WQ03HolyWaterPamphlet carries the
+                // legacy Fallout 3 pickup sound between ICON and DATA.
+                if (phase != Phase::EditorId && phase != Phase::Bounds && phase != Phase::FullName
+                    && phase != Phase::Model && phase != Phase::BoundRadius && phase != Phase::Icon)
+                    fail("YNAM is duplicated or out of order");
+                if (!value.mPickUpSound.isZeroOrUnset())
+                    fail("YNAM is duplicated");
+                requireSize(header, 4);
+                value.mPickUpSound = readFormId(reader, "YNAM");
+                break;
+            case ESM::fourCC("ZNAM"):
+                if (phase != Phase::EditorId && phase != Phase::Bounds && phase != Phase::FullName
+                    && phase != Phase::Model && phase != Phase::BoundRadius && phase != Phase::Icon)
+                    fail("ZNAM is duplicated or out of order");
+                if (!value.mDropSound.isZeroOrUnset())
+                    fail("ZNAM is duplicated");
+                requireSize(header, 4);
+                value.mDropSound = readFormId(reader, "ZNAM");
+                break;
             case ESM::fourCC("DATA"):
                 if (phase != Phase::EditorId && phase != Phase::Bounds && phase != Phase::FullName
                     && phase != Phase::Model && phase != Phase::BoundRadius && phase != Phase::Icon)

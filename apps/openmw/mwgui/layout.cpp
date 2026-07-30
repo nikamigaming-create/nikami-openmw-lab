@@ -2,17 +2,10 @@
 
 #include <MyGUI_Gui.h>
 #include <MyGUI_LayoutManager.h>
-#include <MyGUI_OverlappedLayer.h>
-#include <MyGUI_SharedLayer.h>
 #include <MyGUI_TextBox.h>
 #include <MyGUI_UString.h>
 #include <MyGUI_Widget.h>
 #include <MyGUI_Window.h>
-
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-#include "../mwvr/vrgui.hpp"
-//## VR_PATCH END
 
 namespace MWGui
 {
@@ -49,20 +42,9 @@ namespace MWGui
         mMainWidget->setCoord(x, y, w, h);
     }
 
-//## VR_PATCH BEGIN
-    void Layout::setCoordf(float x, float y, float w, float h)
-    {
-        mMainWidget->setRealCoord(x, y, w, h);
-    }
-//## VR_PATCH END
-
     void Layout::setVisible(bool b)
     {
         mMainWidget->setVisible(b);
-//## VR_PATCH BEGIN
-        if(VR::getVR())
-            MWVR::VRGUIManager::instance().setVisible(this, b);
-//## VR_PATCH END
     }
 
     void Layout::setText(std::string_view name, std::string_view caption)
@@ -80,7 +62,7 @@ namespace MWGui
             window->setCaptionWithReplacing(MyGUI::UString(title));
     }
 
-    MyGUI::Widget* Layout::getWidget(std::string_view name)
+    MyGUI::Widget* Layout::getWidget(std::string_view name) const
     {
         std::string target = mPrefix;
         target += name;

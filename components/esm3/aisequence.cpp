@@ -34,6 +34,22 @@ namespace ESM
         f(v.mX, v.mY, v.mZ, v.mDuration);
     }
 
+    namespace
+    {
+        void loadActorId(ESMReader& esm, ESM::NAME name, RefNum& refNum)
+        {
+            if (esm.getFormatVersion() <= MaxActorIdSaveGameFormatVersion)
+            {
+                refNum.mIndex = static_cast<uint32_t>(-1);
+                esm.getHNOT(refNum.mIndex, name);
+            }
+            else if (esm.peekNextSub(name))
+                refNum = esm.getFormId(true, name);
+            else
+                refNum = {};
+        }
+    }
+
     namespace AiSequence
     {
         void AiWander::load(ESMReader& esm)
@@ -61,6 +77,8 @@ namespace ESM
             esm.getHNT(mHidden, "HIDD");
             mRepeat = false;
             esm.getHNOT(mRepeat, "REPT");
+            mDestinationTolerance = -1.f;
+            esm.getHNOT(mDestinationTolerance, "DTOL");
         }
 
         void AiTravel::save(ESMWriter& esm) const
@@ -69,14 +87,15 @@ namespace ESM
             esm.writeHNT("HIDD", mHidden);
             if (mRepeat)
                 esm.writeHNT("REPT", mRepeat);
+            if (mDestinationTolerance >= 0.f)
+                esm.writeHNT("DTOL", mDestinationTolerance);
         }
 
         void AiEscort::load(ESMReader& esm)
         {
             esm.getNamedComposite("DATA", mData);
             mTargetId = esm.getHNRefId("TARG");
-            mTargetActorId = -1;
-            esm.getHNOT(mTargetActorId, "TAID");
+            loadActorId(esm, "TAID", mTargetActor);
             esm.getHNT(mRemainingDuration, "DURA");
             mCellId = esm.getHNOString("CELL");
             mRepeat = false;
@@ -87,7 +106,7 @@ namespace ESM
                 // The exact value of mDuration only matters for repeating packages.
                 // Previously mRemainingDuration could be negative even when mDuration was 0. Checking for > 0 should
                 // fix old saves.
-                mData.mDuration = std::max<float>(mRemainingDuration > 0, mRemainingDuration);
+                mData.mDuration = static_cast<int16_t>(std::max<float>(mRemainingDuration > 0, mRemainingDuration));
             }
         }
 
@@ -95,7 +114,8 @@ namespace ESM
         {
             esm.writeNamedComposite("DATA", mData);
             esm.writeHNRefId("TARG", mTargetId);
-            esm.writeHNT("TAID", mTargetActorId);
+            if (esm.getFormatVersion() > MaxActorIdSaveGameFormatVersion)
+                esm.writeFormId(mTargetActor, true, "TAID");
             esm.writeHNT("DURA", mRemainingDuration);
             if (!mCellId.empty())
                 esm.writeHNString("CELL", mCellId);
@@ -107,8 +127,7 @@ namespace ESM
         {
             esm.getNamedComposite("DATA", mData);
             mTargetId = esm.getHNRefId("TARG");
-            mTargetActorId = -1;
-            esm.getHNOT(mTargetActorId, "TAID");
+            loadActorId(esm, "TAID", mTargetActor);
             esm.getHNT(mRemainingDuration, "DURA");
             mCellId = esm.getHNOString("CELL");
             esm.getHNT(mAlwaysFollow, "ALWY");
@@ -124,7 +143,7 @@ namespace ESM
                 // The exact value of mDuration only matters for repeating packages.
                 // Previously mRemainingDuration could be negative even when mDuration was 0. Checking for > 0 should
                 // fix old saves.
-                mData.mDuration = std::max<float>(mRemainingDuration > 0, mRemainingDuration);
+                mData.mDuration = static_cast<int16_t>(std::max<float>(mRemainingDuration > 0, mRemainingDuration));
             }
         }
 
@@ -132,7 +151,8 @@ namespace ESM
         {
             esm.writeNamedComposite("DATA", mData);
             esm.writeHNRefId("TARG", mTargetId);
-            esm.writeHNT("TAID", mTargetActorId);
+            if (esm.getFormatVersion() > MaxActorIdSaveGameFormatVersion)
+                esm.writeFormId(mTargetActor, true, "TAID");
             esm.writeHNT("DURA", mRemainingDuration);
             if (!mCellId.empty())
                 esm.writeHNString("CELL", mCellId);
@@ -160,22 +180,22 @@ namespace ESM
 
         void AiCombat::load(ESMReader& esm)
         {
-            esm.getHNT(mTargetActorId, "TARG");
+            loadActorId(esm, "TARG", mTargetActor);
         }
 
         void AiCombat::save(ESMWriter& esm) const
         {
-            esm.writeHNT("TARG", mTargetActorId);
+            esm.writeFormId(mTargetActor, true, "TARG");
         }
 
         void AiPursue::load(ESMReader& esm)
         {
-            esm.getHNT(mTargetActorId, "TARG");
+            loadActorId(esm, "TARG", mTargetActor);
         }
 
         void AiPursue::save(ESMWriter& esm) const
         {
-            esm.writeHNT("TARG", mTargetActorId);
+            esm.writeFormId(mTargetActor, true, "TARG");
         }
 
         void AiSequence::save(ESMWriter& esm) const
@@ -217,6 +237,7 @@ namespace ESM
 
         void AiSequence::load(ESMReader& esm)
         {
+            mActorIdConverter = esm.mActorIdConverter;
             int count = 0;
             while (esm.isNextSub("AIPK"))
             {

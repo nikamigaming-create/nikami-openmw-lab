@@ -177,6 +177,7 @@ namespace
 
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
+        store.setUp();
 
         const auto& factions = store.get<ESM4::Faction>();
         ASSERT_EQ(factions.getSize(), 2);
@@ -264,6 +265,7 @@ namespace
         auto reader = makeReader(plugin, "FalloutNV.esm", 1);
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
+        store.setUp();
 
         const ESM4::Creature* loaded
             = store.get<ESM4::Creature>().search(ESM::RefId(ESM::FormId::fromUint32(0x0111d584)));

@@ -10,20 +10,6 @@ local Player = require('openmw.types').Player
 local I = require('openmw.interfaces')
 
 local settings = storage.playerSection('SettingsOMWControls')
-local falloutInputState = storage.playerSection('FNVInputState')
-local falloutNewVegas = core.contentFiles and core.contentFiles.has
-    and core.contentFiles.has('FalloutNV.esm') or false
-
--- Existing OpenMW profiles predate FNV support and therefore persist the
--- Morrowind walk-first default. Migrate each FNV player profile once so its
--- normal W input matches retail Fallout's run-first control semantics; the
--- Always Run trigger remains user-toggleable afterward.
--- This must happen from onFrame, after the menu-context settings registry has
--- installed defaults. Doing it while the player script loads can be overwritten
--- later by that registry and silently leaves Fallout in the walk stance.
-local falloutRunDefaultPending = falloutNewVegas
-    and falloutInputState:get('runDefaultInitializedV2') ~= true
-local falloutRunStateAnnounced = false
 
 do
     local rangeActions = {
@@ -101,24 +87,7 @@ local attemptToJump = false
 local function processMovement()
     local movement = input.getRangeActionValue('MoveForward') - input.getRangeActionValue('MoveBackward')
     local sideMovement = input.getRangeActionValue('MoveRight') - input.getRangeActionValue('MoveLeft')
-    local alwaysRun = settings:get('alwaysRun')
-    if falloutRunDefaultPending then
-        settings:set('alwaysRun', true)
-        alwaysRun = true
-        if settings:get('alwaysRun') == true then
-            falloutInputState:set('runDefaultInitializedV2', true)
-            falloutRunDefaultPending = false
-            print('FNV input: run-first profile migration applied alwaysRun=1 phase=frame')
-        end
-    end
-    local runAction = input.getBooleanActionValue('Run')
-    local run = runAction ~= alwaysRun
-    if falloutNewVegas and movement ~= 0 and not falloutRunStateAnnounced then
-        falloutRunStateAnnounced = true
-        print(string.format(
-            'FNV input: locomotion state movement=%.3f runAction=%d alwaysRun=%d run=%d',
-            movement, runAction and 1 or 0, alwaysRun and 1 or 0, run and 1 or 0))
-    end
+    local run = input.getBooleanActionValue('Run') ~= settings:get('alwaysRun')
 
     if movement ~= 0 then
         autoMove = false
@@ -130,10 +99,6 @@ local function processMovement()
     self.controls.sideMovement = sideMovement
     self.controls.run = run
     self.controls.jump = attemptToJump
-
-    if not settings:get('toggleSneak') then
-        self.controls.sneak = input.getBooleanActionValue('Sneak')
-    end
 end
 
 local function controlsAllowed()
@@ -143,7 +108,14 @@ local function controlsAllowed()
 end
 
 local function movementAllowed()
-    return controlsAllowed() and not movementControlsOverridden
+    return controlsAllowed()
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Movement)
+        and not movementControlsOverridden
+end
+
+local function sneakingAllowed()
+    return controlsAllowed()
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Sneaking)
 end
 
 input.registerTriggerHandler('Jump', async:callback(function()
@@ -152,7 +124,10 @@ input.registerTriggerHandler('Jump', async:callback(function()
 end))
 
 input.registerTriggerHandler('ToggleSneak', async:callback(function()
-    if not movementAllowed() then return end
+    if not sneakingAllowed() then
+        self.controls.sneak = false
+        return
+    end
     if settings:get('toggleSneak') then
         self.controls.sneak = not self.controls.sneak
     end
@@ -201,12 +176,15 @@ end))
 local function processAttacking()
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
-    if Actor.getStance(self) == Actor.STANCE.Spell then
-        self.controls.use = startUse and 1 or 0
-    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') then
-        self.controls.use = 1
+    if Actor.getStance(self) == Actor.STANCE.Spell
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Magic) then
+        self.controls.use = startUse and self.ATTACK_TYPE.Any or self.ATTACK_TYPE.NoAttack
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
+        and input.getBooleanActionValue('Use') then
+        self.controls.use = self.ATTACK_TYPE.Any
     else
-        self.controls.use = 0
+        self.controls.use = self.ATTACK_TYPE.NoAttack
     end
     startUse = false
 end
@@ -214,7 +192,9 @@ end
 local uiControlsOverridden = false
 
 local function uiAllowed()
-    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls) and not uiControlsOverridden
+    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls)
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Interface)
+        and not uiControlsOverridden
 end
 
 input.registerTriggerHandler('Inventory', async:callback(function()
@@ -257,6 +237,11 @@ local function onFrame(_)
         self.controls.movement = 0
         self.controls.sideMovement = 0
         self.controls.jump = false
+    end
+    if not sneakingAllowed() then
+        self.controls.sneak = false
+    elseif not settings:get('toggleSneak') then
+        self.controls.sneak = input.getBooleanActionValue('Sneak')
     end
     if combatAllowed() then
         processAttacking()

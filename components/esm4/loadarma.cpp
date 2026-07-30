@@ -39,8 +39,6 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
     std::uint32_t esmVer = reader.esmVersion();
     const bool isFo3OrFonv = (esmVer == ESM::VER_094 && !reader.hasFormVersion())
         || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
-    const bool isTes5 = reader.hasFormVersion()
-        && (esmVer == ESM::VER_094 || esmVer == ESM::VER_170 || esmVer == ESM::VER_171);
 
     while (reader.getSubRecordHeader())
     {
@@ -82,7 +80,12 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 reader.getFormId(mRacePrimary);
                 break;
             case ESM::fourCC("MODL"):
-                if (isTes5 && subHdr.dataSize == sizeof(ESM::FormId32))
+                // Modern TES5+ ARMA records (including Fallout 4) store an
+                // additional-race FormID here. Legacy FO3/FNV ARMA records do
+                // not carry a form version and use MODL for the male biped
+                // model. Treating FO4's four binary FormID bytes as a string
+                // corrupts the already-loaded MOD2 actor mesh path.
+                if (reader.hasFormVersion() && subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mRaces.emplace_back());
                 else
                     reader.getZString(mModelMale); // FO3/FNV male biped model

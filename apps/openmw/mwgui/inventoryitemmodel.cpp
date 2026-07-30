@@ -10,10 +10,12 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/inventorystore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/manualref.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/world.hpp"
 
 namespace MWGui
 {
@@ -39,7 +41,7 @@ namespace MWGui
 
     ItemModel::ModelIndex InventoryItemModel::getIndex(const ItemStack& item)
     {
-        size_t i = 0;
+        ModelIndex i = 0;
         for (ItemStack& itemStack : mItems)
         {
             if (itemStack == item)
@@ -53,7 +55,7 @@ namespace MWGui
     {
         if (item.mBase.getContainerStore() == &mActor.getClass().getContainerStore(mActor))
             throw std::runtime_error("Item to add needs to be from a different container!");
-        return *mActor.getClass().getContainerStore(mActor).add(item.mBase, count, allowAutoEquip);
+        return *mActor.getClass().getContainerStore(mActor).add(item.mBase, static_cast<int>(count), allowAutoEquip);
     }
 
     MWWorld::Ptr InventoryItemModel::copyItem(const ItemStack& item, size_t count, bool allowAutoEquip)
@@ -61,8 +63,9 @@ namespace MWGui
         if (item.mBase.getContainerStore() == &mActor.getClass().getContainerStore(mActor))
             throw std::runtime_error("Item to copy needs to be from a different container!");
 
-        MWWorld::ManualRef newRef(*MWBase::Environment::get().getESMStore(), item.mBase, count);
-        return *mActor.getClass().getContainerStore(mActor).add(newRef.getPtr(), count, allowAutoEquip);
+        MWWorld::ManualRef newRef(*MWBase::Environment::get().getESMStore(), item.mBase, static_cast<int>(count));
+        return *mActor.getClass().getContainerStore(mActor).add(
+            newRef.getPtr(), static_cast<int>(count), allowAutoEquip);
     }
 
     void InventoryItemModel::removeItem(const ItemStack& item, size_t count)
@@ -72,12 +75,12 @@ namespace MWGui
         if (mActor.getClass().hasInventoryStore(mActor))
         {
             MWWorld::InventoryStore& store = mActor.getClass().getInventoryStore(mActor);
-            removed = store.remove(item.mBase, count, true);
+            removed = store.remove(item.mBase, static_cast<int>(count), true);
         }
         else
         {
             MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
-            removed = store.remove(item.mBase, count);
+            removed = store.remove(item.mBase, static_cast<int>(count));
         }
 
         std::stringstream error;
@@ -100,7 +103,7 @@ namespace MWGui
     {
         // Can't move conjured items: This is a general fix that also takes care of issues with taking conjured items
         // via the 'Take All' button.
-        if (item.mFlags & ItemStack::Flag_Bound)
+        if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
             return MWWorld::Ptr();
 
         return ItemModel::moveItem(item, count, otherModel, allowAutoEquip);
@@ -109,6 +112,8 @@ namespace MWGui
     void InventoryItemModel::update()
     {
         MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
+        MWBase::World* const world = MWBase::Environment::tryGetWorld();
+        const bool playerInventory = world != nullptr && mActor == world->getPlayerPtr();
 
         mItems.clear();
 
@@ -128,6 +133,12 @@ namespace MWGui
                 continue;
 
             ItemStack newItem(item, this, item.getCellRef().getCount());
+            if (playerInventory)
+            {
+                const ESM::FormId* const formId = item.getCellRef().getRefId().getIf<ESM::FormId>();
+                if (formId != nullptr && world->getFalloutPlayerRuntimeState().isQuestObject(*formId))
+                    newItem.mFlags |= ItemStack::Flag_Quest;
+            }
 
             if (mActor.getClass().hasInventoryStore(mActor))
             {

@@ -207,17 +207,6 @@ namespace MWWorld
             // Retail FO3/FNV default. Keep malformed test content deterministic without changing non-Fallout paths.
             return 0.5f;
         }
-
-        float getFalloutFogDayStrength(float gameHour, const TimeOfDaySettings& timeSettings)
-        {
-            if (gameHour <= timeSettings.mNightEnd || gameHour >= timeSettings.mNightStart)
-                return 0.f;
-            if (gameHour < timeSettings.mDayStart)
-                return (gameHour - timeSettings.mNightEnd) / (timeSettings.mDayStart - timeSettings.mNightEnd);
-            if (gameHour <= timeSettings.mDayEnd)
-                return 1.f;
-            return (timeSettings.mNightStart - gameHour) / (timeSettings.mNightStart - timeSettings.mDayEnd);
-        }
     }
 
     osg::Vec4f sampleFalloutWeatherColor(
@@ -833,7 +822,6 @@ namespace MWWorld
         , mFalloutWeatherStart(0)
         , mFalloutWeatherInitialized(false)
         , mFalloutWeatherSource()
-        , mFalloutImageSpaceModifierInstances()
         , mMasser("Masser")
         , mSecunda("Secunda")
         , mWindSpeed(0.f)
@@ -910,6 +898,12 @@ namespace MWWorld
     WeatherManager::~WeatherManager()
     {
         stopSounds();
+    }
+
+    void WeatherManager::setFalloutScriptImageSpaceModifiers(
+        std::span<const ESM4::ImageSpaceModifierRuntimeState> modifiers)
+    {
+        mFalloutScriptImageSpaceModifiers.assign(modifiers.begin(), modifiers.end());
     }
 
     const Weather* WeatherManager::getWeather(size_t index) const
@@ -1071,18 +1065,6 @@ namespace MWWorld
     void WeatherManager::update(float duration, bool paused, const TimeStamp& time, bool isExterior)
     {
         MWWorld::ConstPtr player = MWMechanics::getPlayer();
-
-        if (!paused && std::isfinite(duration) && duration > 0.f)
-        {
-            for (FalloutImageSpaceModifierInstance& instance : mFalloutImageSpaceModifierInstances)
-                instance.mElapsed += duration;
-        }
-        std::erase_if(mFalloutImageSpaceModifierInstances, [&](const FalloutImageSpaceModifierInstance& instance) {
-            const ESM4::ImageSpaceModifier* modifier
-                = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(instance.mModifier));
-            return modifier == nullptr || !std::isfinite(modifier->mDuration) || modifier->mDuration <= 0.f
-                || !std::isfinite(instance.mElapsed) || instance.mElapsed > modifier->mDuration;
-        });
 
         // FO3/FNV do not use OpenMW's synthetic Morrowind "Clear" slot. Exterior CELL
         // XCLR regions provide the primary authored weather list (REGN RDAT/RDWT);
@@ -1273,15 +1255,12 @@ namespace MWWorld
         else
             mNightDayMode = Default;
 
-        const auto applyFalloutImageSpace = [&]() {
-            // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
-            // Other Creation Engine games retain their parsed records for their own adapters.
-            if (!usesFallout3Weather(mStore.getESM4Game()))
-            {
-                mRendering.getPostProcessor()->clearFalloutImageSpace();
-                return;
-            }
-
+        // CELL.XCIM is the authored baseline image space for both interior and exterior
+        // Fallout cells.  Weather modifiers are an exterior concern, but returning before
+        // resolving XCIM leaves every indoor Fallout cell on whatever post-process state
+        // happened to be active previously.  Keep the resolution/composition path shared
+        // so interiors remain content-driven and receive their own baked lighting profile.
+        const auto applyFalloutImageSpace = [&](bool includeWeatherModifiers) {
             ESM::RefId imageSpaceId;
             if (const char* proofImageSpace = std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID"))
             {
@@ -1293,25 +1272,30 @@ namespace MWWorld
                 && player.getCell()->getCell()->isEsm4())
             {
                 const ESM4::Cell& cell = player.getCell()->getCell()->getEsm4();
-                const ESM4::World* parentWorld = cell.isExterior()
-                    ? mStore.get<ESM4::World>().search(ESM::RefId(cell.mParent))
-                    : nullptr;
-                imageSpaceId = ESM::RefId(ESM4::resolveCellImageSpace(cell, parentWorld));
+                ESM::FormId cellImageSpaceId = cell.mImageSpace;
+                if (!cellImageSpaceId.isSet() && cell.isExterior())
+                {
+                    if (const ESM4::World* world = mStore.get<ESM4::World>().search(ESM::RefId(cell.mParent)))
+                        cellImageSpaceId = world->mImageSpace;
+                }
+                imageSpaceId = ESM::RefId(cellImageSpaceId);
             }
 
-            const ESM4::ImageSpace* base = mStore.get<ESM4::ImageSpace>().search(imageSpaceId);
+            // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
+            // Other Creation Engine games retain their parsed image-space records for their own adapters.
+            const ESM4::ImageSpace* base = usesFallout3Weather(mStore.getESM4Game())
+                ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
+                : nullptr;
             if (base == nullptr)
             {
-                // Never retain a prior exterior grade when an interior has no valid XCIM.
                 mRendering.getPostProcessor()->clearFalloutImageSpace();
                 return;
             }
 
             std::vector<ESM4::ImageSpaceModifierContribution> modifiers;
-            FalloutWeatherTimeBlend timeBlend;
-            if (isExterior)
+            if (includeWeatherModifiers)
             {
-                timeBlend = getFalloutWeatherTimeBlend(
+                const FalloutWeatherTimeBlend timeBlend = getFalloutWeatherTimeBlend(
                     time.getHour(), mTimeSettings, mFalloutDaytimeColorExtension);
                 const auto addWeatherModifiers = [&](const Weather& falloutWeather, float weatherStrength) {
                     const auto addModifier = [&](ESM4::Weather::Time timeIndex, float timeStrength) {
@@ -1332,20 +1316,19 @@ namespace MWWorld
                     addWeatherModifiers(mWeatherSettings[mNextWeather], 1.f - mTransitionFactor);
             }
 
-            for (const FalloutImageSpaceModifierInstance& instance : mFalloutImageSpaceModifierInstances)
+            for (const ESM4::ImageSpaceModifierRuntimeState& state : mFalloutScriptImageSpaceModifiers)
             {
+                if (!state.mId.isSet() || !std::isfinite(state.mTime) || !std::isfinite(state.mStrength)
+                    || state.mStrength <= 0.f)
+                    continue;
                 if (const ESM4::ImageSpaceModifier* modifier
-                    = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(instance.mModifier)))
-                {
-                    modifiers.push_back({ modifier,
-                        ESM4::normalizeImageSpaceModifierTime(instance.mElapsed, modifier->mDuration),
-                        instance.mStrength });
-                }
+                    = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(state.mId)))
+                    modifiers.push_back({ modifier, state.mTime, state.mStrength });
             }
 
             const ESM4::ComposedImageSpace composed = ESM4::composeImageSpace(*base, modifiers);
             const float sunlightDimmer = composed.mTraits[ESM4::ImageSpace::Trait_SunlightDimmer];
-            if (isExterior)
+            if (includeWeatherModifiers)
             {
                 mResult.mFalloutCloudRgbMultiplier
                     = composed.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture];
@@ -1357,8 +1340,9 @@ namespace MWWorld
                 osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_TargetLuminance],
                     composed.mTraits[ESM4::ImageSpace::Trait_BrightScale],
                     composed.mTraits[ESM4::ImageSpace::Trait_BrightClamp],
-                    isExterior ? composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior]
-                               : composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior]),
+                    player.getCell()->isExterior()
+                        ? composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior]
+                        : composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior]),
                 osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrast],
@@ -1367,23 +1351,20 @@ namespace MWWorld
                 osg::Vec4f(composed.mFade[0], composed.mFade[1], composed.mFade[2], composed.mFade[3]),
                 composed.mBlurRadius);
 
-            if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+            if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr
+                || std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr)
             {
                 static int imageSpaceLogs = 0;
                 if (imageSpaceLogs++ < 12)
                 {
                     Log(Debug::Info) << "FNV/ESM4 proof: composed image space base=" << base->mId
-                                     << " exterior=" << (isExterior ? 1 : 0)
                                      << " weather=" << mWeatherSettings[mCurrentWeather].mId
-                                     << " modifiers=" << modifiers.size() << " timeSlots=("
-                                     << static_cast<std::size_t>(timeBlend.mPrimary) << ":"
-                                     << timeBlend.mPrimaryStrength << ","
-                                     << static_cast<std::size_t>(timeBlend.mSecondary) << ":"
-                                     << (1.f - timeBlend.mPrimaryStrength) << ")"
+                                     << " modifiers=" << modifiers.size()
+                                     << " scriptModifiers=" << mFalloutScriptImageSpaceModifiers.size()
+                                     << " includeWeatherModifiers=" << (includeWeatherModifiers ? 1 : 0)
                                      << " skinDimmer="
                                      << composed.mTraits[ESM4::ImageSpace::Trait_SkinDimmer]
-                                     << " cloudRgbMultiplier="
-                                     << composed.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture]
+                                     << " cloudRgbMultiplier=" << mResult.mFalloutCloudRgbMultiplier
                                      << " sunlightDimmer=" << sunlightDimmer << " cinematic=("
                                      << composed.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] << ","
                                      << composed.mTraits[
@@ -1398,10 +1379,6 @@ namespace MWWorld
 
         if (!isExterior)
         {
-            // Keep interiors on OpenMW's established CELL ambient/directional/fog lighting path. The current
-            // Fallout image-space shader is validated for exterior weather modifiers only; applying it to XCIM
-            // records crushes interior colour and luminance. Clearing here also prevents an exterior grade from
-            // leaking across the door transition.
             mRendering.getPostProcessor()->clearFalloutImageSpace();
             mRendering.setSkyEnabled(false);
             stopSounds();
@@ -1412,7 +1389,7 @@ namespace MWWorld
         }
 
         calculateWeatherResult(time.getHour(), duration, paused);
-        applyFalloutImageSpace();
+        applyFalloutImageSpace(true);
         if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
         {
             static int proofWeatherLogs = 0;
@@ -1579,11 +1556,8 @@ namespace MWWorld
             mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
         }
 
-        if (mResult.mHasFalloutFogRange)
-            mRendering.configureFog(mResult.mFalloutFogNear, mResult.mFalloutFogFar, underwaterFog, mResult.mFogColor);
-        else
-            mRendering.configureFog(mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor,
-                mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
+        mRendering.configureFog(
+            mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
         mRendering.setAmbientColour(mResult.mAmbientColor);
         mRendering.setSunColour(mResult.mSunColor, mResult.mSunColor, mResult.mGlareView * glareFade);
 
@@ -1770,29 +1744,15 @@ namespace MWWorld
     {
         stopSounds();
 
+        mFalloutScriptImageSpaceModifiers.clear();
+
         mCurrentRegion = ESM::RefId();
         mTimePassed = 0.0f;
         mWeatherUpdateTime = 0.0f;
         mFalloutWeatherSource = ESM::RefId();
-        mFalloutImageSpaceModifierInstances.clear();
         forceWeather(0);
         mRegions.clear();
         importRegions();
-    }
-
-    bool WeatherManager::playFalloutImageSpaceModifier(ESM::FormId modifierId, float strength)
-    {
-        if (!usesFallout3Weather(mStore.getESM4Game()) || modifierId.isZeroOrUnset()
-            || !std::isfinite(strength) || strength <= 0.f)
-            return false;
-
-        const ESM4::ImageSpaceModifier* modifier
-            = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(modifierId));
-        if (modifier == nullptr || !std::isfinite(modifier->mDuration) || modifier->mDuration <= 0.f)
-            return false;
-
-        mFalloutImageSpaceModifierInstances.push_back({ modifierId, 0.f, strength });
-        return true;
     }
 
     inline void WeatherManager::addWeather(
@@ -1865,8 +1825,6 @@ namespace MWWorld
             weather.mCloudSpeed = static_cast<float>(source.mData.lowerCloudSpeed) / 255.f;
             weather.mGlareView = static_cast<float>(source.mData.sunGlare) / 255.f;
             weather.mFalloutImageSpaceModifiers = source.mImageSpaceModifiers;
-            if (source.mHasFogDistance)
-                weather.mFalloutFogDistance = source.mFogDistance;
             weather.mFalloutCloudTextures = source.mCloudTextures;
             std::array<float, 4> cloudSpeeds{};
             std::array<FalloutWeatherColorSamples, 4> cloudColors{};
@@ -1992,7 +1950,7 @@ namespace MWWorld
         }
     }
 
-    void WeatherManager::forceWeather(const int weatherID)
+    inline void WeatherManager::forceWeather(const int weatherID)
     {
         mTransitionFactor = 0.0f;
         mCurrentWeather = weatherID;
@@ -2110,29 +2068,6 @@ namespace MWWorld
         }
 
         mResult.mFogDepth = current.mLandFogDepth.getValue(gameHour, mTimeSettings, "Fog");
-        mResult.mHasFalloutFogRange = current.mFalloutFogDistance.has_value();
-        if (mResult.mHasFalloutFogRange)
-        {
-            const std::array<float, ESM4::Weather::sTimeCount>& fogDistance = *current.mFalloutFogDistance;
-            const float dayStrength = std::clamp(getFalloutFogDayStrength(gameHour, mTimeSettings), 0.f, 1.f);
-            mResult.mFalloutFogNear = lerp(fogDistance[2], fogDistance[0], dayStrength);
-            mResult.mFalloutFogFar = lerp(fogDistance[3], fogDistance[1], dayStrength);
-            mResult.mFalloutFogPower = lerp(fogDistance[5], fogDistance[4], dayStrength);
-
-            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
-            {
-                static int proofFogLogs = 0;
-                if (proofFogLogs < 12)
-                {
-                    const float range = mResult.mFalloutFogFar - mResult.mFalloutFogNear;
-                    Log(Debug::Info) << "FNV/ESM4 fog proof: mode=authored-fnam near="
-                                     << mResult.mFalloutFogNear << " far=" << mResult.mFalloutFogFar
-                                     << " power=" << mResult.mFalloutFogPower << " range=" << range
-                                     << " denominator=" << range;
-                    ++proofFogLogs;
-                }
-            }
-        }
         mResult.mFogColor = current.mFalloutFogColors
             ? sampleFalloutWeatherColor(
                 *current.mFalloutFogColors, gameHour, mTimeSettings, mFalloutDaytimeColorExtension)
@@ -2237,13 +2172,6 @@ namespace MWWorld
             = current.mHasFalloutCelestialColors && other.mHasFalloutCelestialColors;
         mResult.mFalloutStarsColor = lerp(current.mFalloutStarsColor, other.mFalloutStarsColor, factor);
         mResult.mFogDepth = lerp(current.mFogDepth, other.mFogDepth, factor);
-        mResult.mHasFalloutFogRange = current.mHasFalloutFogRange && other.mHasFalloutFogRange;
-        if (mResult.mHasFalloutFogRange)
-        {
-            mResult.mFalloutFogNear = lerp(current.mFalloutFogNear, other.mFalloutFogNear, factor);
-            mResult.mFalloutFogFar = lerp(current.mFalloutFogFar, other.mFalloutFogFar, factor);
-            mResult.mFalloutFogPower = lerp(current.mFalloutFogPower, other.mFalloutFogPower, factor);
-        }
         mResult.mDLFogFactor = lerp(current.mDLFogFactor, other.mDLFogFactor, factor);
         mResult.mDLFogOffset = lerp(current.mDLFogOffset, other.mDLFogOffset, factor);
 

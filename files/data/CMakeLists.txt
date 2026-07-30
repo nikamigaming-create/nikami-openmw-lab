@@ -3,6 +3,7 @@ if (NOT DEFINED OPENMW_RESOURCES_ROOT)
 endif()
 
 set(BUILTIN_DATA_FILES
+    textures/omw_map_color_palette.dds
     textures/omw_menu_scroll_down.dds
     textures/omw_menu_scroll_up.dds
     textures/omw_menu_scroll_left.dds
@@ -89,10 +90,6 @@ set(BUILTIN_DATA_FILES
     l10n/OMWControls/ru.yaml
     l10n/OMWControls/sv.yaml
     l10n/OMWControls/pl.yaml
-    
-    l10n/OMWVRInput/en.yaml
-    l10n/OMWVRTutorial/en.yaml
-    l10n/OMWVRUI/en.yaml
 
     # L10n for OpenMW menus and non-game-specific messages
     l10n/OMWEngine/de.yaml
@@ -129,36 +126,28 @@ set(BUILTIN_DATA_FILES
     openmw_aux/obscript/parser.lua
     openmw_aux/obscript/runtime.lua
     openmw_aux/obscript/transpiler.lua
-    openmw_aux/obscript/ui_bridge.lua
 
     builtin.omwscripts
 
     scripts/omw/activationhandlers.lua
     scripts/omw/ai.lua
-    scripts/omw/cellhandlers.lua
     scripts/omw/camera/camera.lua
     scripts/omw/camera/head_bobbing.lua
     scripts/omw/camera/third_person.lua
     scripts/omw/camera/settings.lua
     scripts/omw/camera/move360.lua
     scripts/omw/camera/first_person_auto_switch.lua
-    scripts/omw/combat/common.lua
-    scripts/omw/combat/global.lua
-    scripts/omw/combat/local.lua
-    scripts/omw/combat/menu.lua
     scripts/omw/console/global.lua
     scripts/omw/console/local.lua
     scripts/omw/console/player.lua
     scripts/omw/console/menu.lua
+    scripts/omw/combat/interface.lua
     scripts/omw/mechanics/actorcontroller.lua
     scripts/omw/mechanics/animationcontroller.lua
     scripts/omw/mechanics/globalcontroller.lua
     scripts/omw/mechanics/playercontroller.lua
     scripts/omw/settings/menu.lua
     scripts/omw/music/actor.lua
-    scripts/omw/music/helpers.lua
-    scripts/omw/music/music.lua
-    scripts/omw/music/settings.lua
     scripts/omw/settings/player.lua
     scripts/omw/settings/global.lua
     scripts/omw/settings/common.lua
@@ -180,18 +169,7 @@ set(BUILTIN_DATA_FILES
     scripts/omw/input/actionbindings.lua
     scripts/omw/input/smoothmovement.lua
     scripts/omw/input/gamepadcontrols.lua
-    scripts/omw/fnv/compat/directinput.lua
-    scripts/omw/fnv/compat/jam_sprint.lua
     scripts/omw/obscript.lua
-    scripts/omw/vr/spaces.lua
-    scripts/omw/vr/ui/common.lua
-    scripts/omw/vr/ui/menu.lua
-    scripts/omw/vr/ui/player.lua
-    scripts/omw/vr/inputs/player.lua
-    scripts/omw/vr/inputs/common.lua
-    scripts/omw/vr/inputs/defaultBindingsLeftHanded.lua
-    scripts/omw/vr/inputs/defaultBindingsRightHanded.lua
-    scripts/omw/vr/inputs/menu.lua
     
     shaders/adjustments.omwfx
     shaders/bloomlinear.omwfx
@@ -258,7 +236,6 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_trade_window.layout
     mygui/openmw_spell_buying_window.layout
     mygui/openmw_windows.skin.xml
-    mygui/openmw_windows_vr.skin.xml
     mygui/openmw_quickkeys_menu.layout
     mygui/openmw_quickkeys_menu_assign.layout
     mygui/openmw_itemselection_dialog.layout
@@ -289,25 +266,6 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_jail_screen.layout
     mygui/OpenMWResourcePlugin.xml
     mygui/skins.xml
-    mygui/skins_vr.xml
-	
-    mygui/core_vr.xml
-    mygui/openmw_alchemy_window_vr.layout
-    mygui/openmw_container_window_vr.layout
-    mygui/openmw_dialogue_window_vr.layout
-    mygui/openmw_hud_vr.layout
-    mygui/openmw_inventory_window_vr.layout
-    mygui/openmw_layers_vr.xml
-    mygui/openmw_map_window_vr.layout
-    mygui/openmw_settings_window_vr.layout
-    mygui/openmw_spell_window_vr.layout
-    mygui/openmw_stats_window_vr.layout
-    mygui/openmw_tooltips_vr.layout
-    mygui/openmw_trade_window_vr.layout
-    mygui/openmw_vr_listbox.layout
-    mygui/openmw_vr_metamenu.layout
-    mygui/openmw_vr_virtual_keyboard.layout
-    mygui/openmw_vr_radial_menu.layout
 )
 
 foreach (f ${BUILTIN_DATA_FILES})

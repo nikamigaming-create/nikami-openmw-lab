@@ -41,8 +41,10 @@ namespace MWMechanics
         MissingBallistics,
         ProjectileMismatch,
         MissingProjectileData,
+        UnsupportedProjectile,
         InvalidAmmoUse,
         InvalidProjectileCount,
+        UnsupportedProjectileCount,
         InvalidRange,
         InvalidSpread,
     };
@@ -136,13 +138,6 @@ namespace MWMechanics
         InvalidNormal,
         InvalidBounciness,
         InvalidResult,
-    };
-
-    enum class FalloutImpactOrientation : std::uint32_t
-    {
-        SurfaceNormal = 0,
-        ProjectileVector = 1,
-        ProjectileReflection = 2,
     };
 
     enum class FalloutBallisticAimFailure
@@ -547,7 +542,6 @@ namespace MWMechanics
         // Retained for record diagnostics only. FNV does not use WEAP.DNAM Spread when firing; Min Spread is the
         // authored weapon-spread input.
         float mLegacySpread = 0.f;
-        float mTracerChance = 0.f;
         bool mAuthoredHitscan = false;
         bool mConsumesWeapon = false;
 
@@ -609,11 +603,6 @@ namespace MWMechanics
         std::span<const ESM4::ActorFaction> victimFactions,
         std::optional<ESM4::Faction::GroupCombatReaction> reaction) noexcept;
 
-    /// Match an actor against the exact faction selected by SendAssaultAlarm. Rank is irrelevant, but zero/unset
-    /// faction ids never match.
-    [[nodiscard]] bool isFalloutActorInFaction(
-        std::span<const ESM4::ActorFaction> actorFactions, ESM::FormId faction) noexcept;
-
     /// Apply Fallout's categorical aggression contract: 0 never initiates, 1 attacks enemies, 2 attacks enemies and
     /// neutrals, and 3 attacks anyone. Invalid aggression or an unknown required reaction fails closed.
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(
@@ -630,6 +619,11 @@ namespace MWMechanics
 
     /// Validate and preserve the serialized WEAP -> PROJ contract used by hitscan rays and moving projectiles.
     [[nodiscard]] std::optional<FalloutShotContract> buildFalloutRayShotContract(const ESM4::Weapon& weapon,
+        const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure);
+
+    /// Compatibility entry point for the initial single-ray 0.51 weapon path. The full runtime uses
+    /// buildFalloutRayShotContract, while this API deliberately rejects moving and multi-projectile shots.
+    [[nodiscard]] std::optional<FalloutShotContract> buildFalloutHitscanContract(const ESM4::Weapon& weapon,
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure);
 
     /// Build the trigger cadence authored by Fallout's WEAP DNAM. Semi-automatic weapons are edge-triggered and do
@@ -679,12 +673,6 @@ namespace MWMechanics
     /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
     [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
         const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure);
-
-    /// Resolve the IPCT.DATA orientation vector used to pose an authored impact model. Projectile reflection is a
-    /// unit reflection of the incoming shot direction; unlike projectile bounce it does not apply bounciness.
-    [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutImpactDirection(
-        FalloutImpactOrientation orientation, const osg::Vec3f& projectileDirection,
-        const osg::Vec3f& collisionNormal) noexcept;
 
     /// Aim a constant-speed Fallout projectile at a fixed world-space displacement while preserving the exact
     /// downward acceleration used by ProjectileManager. The low trajectory is selected so V.A.T.S. and AI lobbed
@@ -817,11 +805,6 @@ namespace MWMechanics
     [[nodiscard]] bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept;
 
-    /// Mirror the physical Flat "Use" binding into the native FNV weapon controller only while ordinary gameplay
-    /// owns input. This keeps Pip-Boy dismissal, disabled controls, holstered weapons, and V.A.T.S. from firing.
-    [[nodiscard]] bool shouldApplyFalloutPlayerUseInput(FalloutVatsPhase vatsPhase, bool controlsEnabled,
-        bool fightingEnabled, bool guiMode, bool weaponDrawn, bool useDown) noexcept;
-
     /// Select the authored KF event that delivers a non-V.A.T.S. attack. Melee clips author Hit; hand-thrown and
     /// placed explosive clips author Release; non-hitscan gun/launcher clips author Hit. Automatic and hitscan
     /// weapons continue to use trigger cadence directly so an action clip cannot collapse a firing loop to one hit.
@@ -864,16 +847,6 @@ namespace MWMechanics
     /// Build an intrinsic creature attack from the winning FNV CREA DATA damage/combatSkill/strength payload.
     [[nodiscard]] std::optional<FalloutMeleeContract> buildFalloutCreatureMeleeContract(float authoredDamage,
         float combatSkill, float strength, const FalloutMeleeTuning& tuning, FalloutMeleeFailure& failure);
-
-    /// FNV PROJ.DATA stores tracer chance as a closed authored probability in the [0, 1] range. Invalid authored
-    /// values and invalid random rolls fail closed rather than inventing a visible projectile.
-    [[nodiscard]] bool doesFalloutHitscanSpawnTracer(float tracerChance, float probabilityRoll) noexcept;
-
-    /// Convert the authored contact reach into a center-origin physics ray length. FNV AI compares reach against
-    /// the gap between actor bounds, while the delivery ray begins inside the attacker's collision shape, so the
-    /// attacker's forward half-extent must be restored for both decisions to describe the same contact point.
-    [[nodiscard]] std::optional<float> resolveFalloutMeleeRayReach(
-        float authoredReach, float attackerForwardHalfExtent) noexcept;
 
     [[nodiscard]] bool isFalloutMeleeAnimationType(std::uint8_t animationType) noexcept;
 

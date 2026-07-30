@@ -34,8 +34,8 @@ namespace MWRender
     void PingPongCull::operator()(osg::Node* node, osgUtil::CullVisitor* cv)
     {
         osgUtil::RenderStage* renderStage = cv->getCurrentRenderStage();
-        size_t frame = cv->getTraversalNumber();
-        size_t frameId = frame % 2;
+        unsigned frame = cv->getTraversalNumber();
+        unsigned frameId = frame % 2;
 
         if (Stereo::getStereo())
         {
@@ -59,15 +59,14 @@ namespace MWRender
         }
         else
         {
-//## VR_PATCH BEGIN
-// VR branch bases itself on my build of osg that doesn't have this bug
-            if (mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId)
-                != renderStage->getMultisampleResolveFramebufferObject())
-                renderStage->setMultisampleResolveFramebufferObject(
-                    mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId));
-            if (mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId) != renderStage->getFrameBufferObject())
-                renderStage->setFrameBufferObject(mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId));
-//## VR_PATCH END
+            renderStage->setMultisampleResolveFramebufferObject(
+                mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId));
+            renderStage->setFrameBufferObject(mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId));
+
+            // The MultiView patch has a bug where it does not update resolve layers if the resolve framebuffer is
+            // changed. So we do blit manually in this case
+            if (Stereo::getMultiview() && !renderStage->getDrawCallback())
+                Stereo::setMultiviewMSAAResolveCallback(renderStage);
         }
 
         if (mViewportStateset)

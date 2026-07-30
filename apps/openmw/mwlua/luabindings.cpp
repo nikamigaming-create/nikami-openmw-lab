@@ -11,6 +11,7 @@
 #include "animationbindings.hpp"
 #include "camerabindings.hpp"
 #include "cellbindings.hpp"
+#include "contentbindings.hpp"
 #include "corebindings.hpp"
 #include "debugbindings.hpp"
 #include "inputbindings.hpp"
@@ -25,10 +26,6 @@
 #include "uibindings.hpp"
 #include "vfsbindings.hpp"
 #include "worldbindings.hpp"
-
-//## VR_PATCH BEGIN
-#include "vrbindings.hpp"
-//## VR_PATCH END
 
 namespace MWLua
 {
@@ -87,9 +84,6 @@ namespace MWLua
             { "openmw.input", initInputPackage(context) },
             { "openmw.postprocessing", initPostprocessingPackage(context) },
             { "openmw.ui", initUserInterfacePackage(context) },
-//## VR_PATCH BEGIN
-            { "openmw.vr", initVRPackage(context) },
-//## VR_PATCH END
         };
     }
 
@@ -101,9 +95,14 @@ namespace MWLua
             { "openmw.ui", initUserInterfacePackage(context) },
             { "openmw.menu", initMenuPackage(context) },
             { "openmw.input", initInputPackage(context) },
-            // ## VR_PATCH BEGIN
-            { "openmw.vr", initVRPackage(context) },
-            // ## VR_PATCH END
+        };
+    }
+
+    std::map<std::string, sol::object> initLoadPackages(const Context& context)
+    {
+        return {
+            { "openmw.core", initCorePackage(context) },
+            { "openmw.content", initContentPackage(context) },
         };
     }
 }

@@ -298,25 +298,29 @@ namespace MWWorld
             return cellStore;
 
         // try named exteriors
-        const ESM::Cell* cell = mStore.get<ESM::Cell>().searchExtByName(name);
+        const ESM::Cell* cell = nullptr;
+        const Store<ESM::Cell>& cells = mStore.get<ESM::Cell>();
+        const Store<ESM::GameSetting>& gmsts = mStore.get<ESM::GameSetting>();
+        const Store<ESM::Region>& regions = mStore.get<ESM::Region>();
+        static const std::string& defaultName = gmsts.find("sDefaultCellname")->mValue.getString();
 
-        if (cell == nullptr)
+        for (auto it = cells.extBegin(); it != cells.extEnd(); ++it)
         {
-            // treat "Wilderness" like an empty string
-            static const std::string& defaultName
-                = mStore.get<ESM::GameSetting>().find("sDefaultCellname")->mValue.getString();
-            if (Misc::StringUtils::ciEqual(name, defaultName))
-                cell = mStore.get<ESM::Cell>().searchExtByName({});
-        }
+            std::string_view resolvedName = defaultName;
+            if (!it->mName.empty())
+                resolvedName = it->mName;
+            else if (!it->mRegion.empty())
+            {
+                const ESM::Region* region = regions.search(it->mRegion);
+                if (region != nullptr)
+                    resolvedName = !region->mName.empty() ? region->mName : region->mId.getRefIdString();
+            }
 
-        if (cell == nullptr)
-        {
-            // now check for regions
-            const Store<ESM::Region>& regions = mStore.get<ESM::Region>();
-            const auto region = std::find_if(regions.begin(), regions.end(),
-                [&](const ESM::Region& v) { return Misc::StringUtils::ciEqual(name, v.mName); });
-            if (region != regions.end())
-                cell = mStore.get<ESM::Cell>().searchExtByRegion(region->mId);
+            if (Misc::StringUtils::ciEqual(resolvedName, name))
+            {
+                cell = &(*it);
+                break;
+            }
         }
 
         if (cell != nullptr)
@@ -423,6 +427,13 @@ MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
             return ptr;
         if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCreature>()); !ptr.isEmpty())
             return ptr;
+
+        // FormId is an ESM4 identity. If it is not a live/generated pointer
+        // and none of the ESM4 placement stores owns it, an ESM3 cell scan
+        // cannot possibly resolve it. Besides doing unnecessary work, that
+        // scan loads every legacy cell and turns unrelated unsupported
+        // references into a wall of diagnostics.
+        return {};
     }
 
     // Now try the other cells
@@ -490,7 +501,7 @@ std::vector<MWWorld::Ptr> MWWorld::WorldModel::getAll(const ESM::RefId& id)
     return result;
 }
 
-int MWWorld::WorldModel::countSavedGameRecords() const
+size_t MWWorld::WorldModel::countSavedGameRecords() const
 {
     return std::count_if(mCells.begin(), mCells.end(), [](const auto& v) { return v.second.hasState(); });
 }

@@ -56,6 +56,12 @@ namespace MWWorld
 
         bool mJumping;
 
+        // Fallout's ESM4 furniture scripts query the player separately from
+        // ordinary ESM4 NPCs.  Keep the currently claimed furniture reference
+        // on the player wrapper so the scripted condition sees the same actor
+        // state that a normal player activation established.
+        ESM::FormId mFalloutFurnitureRef;
+
     public:
         Player(const ESM::NPC* player);
 
@@ -99,14 +105,17 @@ namespace MWWorld
         void setJumping(bool jumping);
         bool getJumping() const;
 
+        bool hasFalloutFurniture() const { return !mFalloutFurnitureRef.isZeroOrUnset(); }
+        bool isOnFalloutFurniture(ESM::FormId furniture) const
+        {
+            return hasFalloutFurniture() && mFalloutFurnitureRef == furniture;
+        }
+        void setFalloutFurnitureRef(ESM::FormId furniture) { mFalloutFurnitureRef = furniture; }
+        void clearFalloutFurniture() { mFalloutFurnitureRef = ESM::FormId(); }
+
         /// Checks all nearby actors to see if anyone has an aipackage against you
         bool isInCombat();
 
-//## VR_PATCH BEGIN
-        /// Checks if the player is currently in a state where he cannot act
-        bool isDisabled();
-
-//## VR_PATCH END
         bool enemiesNearby();
 
         void clear();

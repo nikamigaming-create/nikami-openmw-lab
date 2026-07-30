@@ -31,17 +31,11 @@
 #include "sortfilteritemmodel.hpp"
 #include "tooltips.hpp"
 
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-//## VR_PATCH END
-
 namespace MWGui
 {
 
     ContainerWindow::ContainerWindow(DragAndDrop& dragAndDrop, ItemTransfer& itemTransfer)
-//## VR_PATCH BEGIN
-        : WindowBase(VR::getVR() ? "openmw_container_window_vr.layout" : "openmw_container_window.layout")
-//## VR_PATCH END
+        : WindowBase("openmw_container_window.layout")
         , mDragAndDrop(&dragAndDrop)
         , mItemTransfer(&itemTransfer)
         , mSortModel(nullptr)
@@ -90,7 +84,7 @@ namespace MWGui
         }
 
         MWWorld::Ptr object = item.mBase;
-        int count = item.mCount;
+        size_t count = item.mCount;
         bool shift = MyGUI::InputManager::getInstance().isShiftPressed();
         if (MyGUI::InputManager::getInstance().isControlPressed())
             count = 1;
@@ -102,7 +96,7 @@ namespace MWGui
             CountDialog* dialog = MWBase::Environment::get().getWindowManager()->getCountDialog();
             std::string name{ object.getClass().getName(object) };
             name += MWGui::ToolTips::getSoulString(object.getCellRef());
-            dialog->openCountDialog(name, "#{sTake}", count);
+            dialog->openCountDialog(name, "#{sTake}", static_cast<int>(count));
             dialog->eventOkClicked.clear();
             if (Settings::gui().mControllerMenus || MyGUI::InputManager::getInstance().isAltPressed())
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &ContainerWindow::transferItem);
@@ -122,7 +116,7 @@ namespace MWGui
 
         const ItemStack item = mModel->getItem(mSelectedItem);
 
-        if (!mModel->onTakeItem(item.mBase, count))
+        if (!mModel->onTakeItem(item.mBase, static_cast<int>(count)))
             return;
 
         mDragAndDrop->startDrag(mSelectedItem, mSortModel, mModel, mItemView, count);
@@ -135,7 +129,7 @@ namespace MWGui
 
         const ItemStack item = mModel->getItem(mSelectedItem);
 
-        if (!mModel->onTakeItem(item.mBase, count))
+        if (!mModel->onTakeItem(item.mBase, static_cast<int>(count)))
             return;
 
         mItemTransfer->apply(item, count, *mItemView);
@@ -146,7 +140,7 @@ namespace MWGui
         if (mModel == nullptr)
             return;
 
-        bool success = mModel->onDropItem(mDragAndDrop->mItem.mBase, mDragAndDrop->mDraggedCount);
+        bool success = mModel->onDropItem(mDragAndDrop->mItem.mBase, static_cast<int>(mDragAndDrop->mDraggedCount));
 
         if (success)
             mDragAndDrop->drop(mModel, mItemView);
@@ -196,8 +190,6 @@ namespace MWGui
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mCloseButton);
 
         setTitle(container.getClass().getName(container));
-
-        mPtr.getClass().getContainerStore(mPtr).setContListener(this);
     }
 
     void ContainerWindow::resetReference()
@@ -254,7 +246,7 @@ namespace MWGui
             MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
             for (size_t i = 0; i < mModel->getItemCount(); ++i)
             {
-                const ItemStack& item = mModel->getItem(i);
+                const ItemStack& item = mModel->getItem(static_cast<ItemModel::ModelIndex>(i));
                 if (invStore.isEquipped(item.mBase) == false)
                     continue;
 
@@ -269,14 +261,14 @@ namespace MWGui
             if (i == 0)
             {
                 // play the sound of the first object
-                MWWorld::Ptr item = mModel->getItem(i).mBase;
+                MWWorld::Ptr item = mModel->getItem(static_cast<ItemModel::ModelIndex>(i)).mBase;
                 const ESM::RefId& sound = item.getClass().getUpSoundId(item);
                 MWBase::Environment::get().getWindowManager()->playSound(sound);
             }
 
-            const ItemStack item = mModel->getItem(i);
+            const ItemStack item = mModel->getItem(static_cast<ItemModel::ModelIndex>(i));
 
-            if (!mModel->onTakeItem(item.mBase, item.mCount))
+            if (!mModel->onTakeItem(item.mBase, static_cast<int>(item.mCount)))
                 break;
 
             mModel->moveItem(item, item.mCount, playerModel);
@@ -318,7 +310,7 @@ namespace MWGui
                     // Clean up summoned creatures as well
                     auto& creatureMap = creatureStats.getSummonedCreatureMap();
                     for (const auto& creature : creatureMap)
-                        MWBase::Environment::get().getMechanicsManager()->cleanupSummonedCreature(ptr, creature.second);
+                        MWBase::Environment::get().getMechanicsManager()->cleanupSummonedCreature(creature.second);
                     creatureMap.clear();
 
                     // Check if we are a summon and inform our master we've bit the dust
@@ -329,7 +321,7 @@ namespace MWGui
                             const auto& summoner = package->getTarget();
                             auto& summons = summoner.getClass().getCreatureStats(summoner).getSummonedCreatureMap();
                             auto it = std::find_if(summons.begin(), summons.end(),
-                                [&](const auto& entry) { return entry.second == creatureStats.getActorId(); });
+                                [&](const auto& entry) { return entry.second == ptr.getCellRef().getRefNum(); });
                             if (it != summons.end())
                             {
                                 auto summon = *it;
@@ -416,13 +408,9 @@ namespace MWGui
         }
     }
 
-    void ContainerWindow::itemAdded(const MWWorld::ConstPtr& item, int count)
+    void ContainerWindow::onInventoryUpdate(const MWWorld::Ptr& ptr)
     {
-        mUpdateNextFrame = true;
-    }
-
-    void ContainerWindow::itemRemoved(const MWWorld::ConstPtr& item, int count)
-    {
-        mUpdateNextFrame = true;
+        if (ptr == mPtr)
+            mUpdateNextFrame = true;
     }
 }

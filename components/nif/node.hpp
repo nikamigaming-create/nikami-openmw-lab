@@ -245,6 +245,8 @@ namespace Nif
         {
             float mMinRange;
             float mMaxRange;
+
+            void read(NIFStream* nif);
         };
 
         osg::Vec3f mLODCenter;
@@ -404,6 +406,7 @@ namespace Nif
         NiAlphaPropertyPtr mAlphaProperty;
         BSVertexDesc mVertDesc;
         uint32_t mDataSize;
+        uint16_t mNumVertices;
         std::vector<BSVertexData> mVertData;
         std::vector<unsigned short> mTriangles;
         uint32_t mParticleDataSize;

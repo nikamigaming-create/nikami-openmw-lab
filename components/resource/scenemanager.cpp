@@ -149,9 +149,9 @@ namespace Resource
     class SharedStateManager : public osgDB::SharedStateManager
     {
     public:
-        unsigned int getNumSharedTextures() const { return _sharedTextureList.size(); }
+        size_t getNumSharedTextures() const { return _sharedTextureList.size(); }
 
-        unsigned int getNumSharedStateSets() const { return _sharedStateSetList.size(); }
+        size_t getNumSharedStateSets() const { return _sharedStateSetList.size(); }
 
         void clearCache()
         {
@@ -166,7 +166,7 @@ namespace Resource
     {
     public:
         SetFilterSettingsControllerVisitor(
-            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, int maxAnisotropy)
+            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, float maxAnisotropy)
             : mMinFilter(minFilter)
             , mMagFilter(magFilter)
             , mMaxAnisotropy(maxAnisotropy)
@@ -177,10 +177,8 @@ namespace Resource
         {
             if (NifOsg::FlipController* flipctrl = dynamic_cast<NifOsg::FlipController*>(&ctrl))
             {
-                for (std::vector<osg::ref_ptr<osg::Texture2D>>::iterator it = flipctrl->getTextures().begin();
-                     it != flipctrl->getTextures().end(); ++it)
+                for (const osg::ref_ptr<osg::Texture2D>& tex : flipctrl->getTextures())
                 {
-                    osg::Texture* tex = *it;
                     tex->setFilter(osg::Texture::MIN_FILTER, mMinFilter);
                     tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
                     tex->setMaxAnisotropy(mMaxAnisotropy);
@@ -191,7 +189,7 @@ namespace Resource
     private:
         osg::Texture::FilterMode mMinFilter;
         osg::Texture::FilterMode mMagFilter;
-        int mMaxAnisotropy;
+        float mMaxAnisotropy;
     };
 
     /// Set texture filtering settings on textures contained in StateSets.
@@ -199,7 +197,7 @@ namespace Resource
     {
     public:
         SetFilterSettingsVisitor(
-            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, int maxAnisotropy)
+            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, float maxAnisotropy)
             : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
             , mMinFilter(minFilter)
             , mMagFilter(magFilter)
@@ -241,7 +239,7 @@ namespace Resource
     private:
         osg::Texture::FilterMode mMinFilter;
         osg::Texture::FilterMode mMagFilter;
-        int mMaxAnisotropy;
+        float mMaxAnisotropy;
     };
 
     // Check Collada extra descriptions
@@ -460,30 +458,18 @@ namespace Resource
         , mBgsmFileManager(bgsmFileManager)
         , mMinFilter(osg::Texture::LINEAR_MIPMAP_LINEAR)
         , mMagFilter(osg::Texture::LINEAR)
-        , mMaxAnisotropy(1)
+        , mMaxAnisotropy(1.f)
         , mParticleSystemMask(~0u)
-        , mLightingMethod(SceneUtil::LightingMethod::FFP)
+        , mLightingMethod(SceneUtil::LightingMethod::PerObjectUniform)
     {
     }
 
-    void SceneManager::setForceShaders(bool force)
-    {
-        mForceShaders = force;
-    }
-
-    bool SceneManager::getForceShaders() const
-    {
-        return mForceShaders;
-    }
-
-    void SceneManager::recreateShaders(osg::ref_ptr<osg::Node> node, const std::string& shaderPrefix,
-        bool forceShadersForNode, const osg::Program* programTemplate)
+    void SceneManager::recreateShaders(
+        osg::ref_ptr<osg::Node> node, const std::string& shaderPrefix, const osg::Program* programTemplate)
     {
         osg::ref_ptr<Shader::ShaderVisitor> shaderVisitor(createShaderVisitor(shaderPrefix));
         shaderVisitor->setAllowedToModifyStateSets(false);
         shaderVisitor->setProgramTemplate(programTemplate);
-        if (forceShadersForNode)
-            shaderVisitor->setForceShaders(true);
         node->accept(*shaderVisitor);
     }
 
@@ -492,16 +478,6 @@ namespace Resource
         osg::ref_ptr<Shader::ReinstateRemovedStateVisitor> reinstateRemovedStateVisitor
             = new Shader::ReinstateRemovedStateVisitor(false);
         node->accept(*reinstateRemovedStateVisitor);
-    }
-
-    void SceneManager::setClampLighting(bool clamp)
-    {
-        mClampLighting = clamp;
-    }
-
-    bool SceneManager::getClampLighting() const
-    {
-        return mClampLighting;
     }
 
     void SceneManager::setAutoUseNormalMaps(bool use)
@@ -527,11 +503,6 @@ namespace Resource
     void SceneManager::setSpecularMapPattern(const std::string& pattern)
     {
         mSpecularMapPattern = pattern;
-    }
-
-    void SceneManager::setApplyLightingToEnvMaps(bool apply)
-    {
-        mApplyLightingToEnvMaps = apply;
     }
 
     void SceneManager::setSupportedLightingMethods(const SceneUtil::LightManager::SupportedMethods& supported)
@@ -1286,8 +1257,6 @@ namespace Resource
                 "Arrow",
                 "Camera",
                 "Collision",
-                "ProjectileNode",
-                "ShellCasingNode",
                 "Right_Wrist",
                 "Left_Wrist",
                 "Shield_Bone",
@@ -1386,7 +1355,8 @@ namespace Resource
 
             // NPC skeleton files can not be optimized because of keyframes added in post
             // (most of them are usually named like 'xbase_anim.nif' anyway, but not all of them :( )
-            if (basename.starts_with("base_anim") || basename.starts_with("skin"))
+            if (basename.starts_with("base_anim") || basename.starts_with("skin")
+                || basename.starts_with("skeleton"))
                 return false;
         }
 
@@ -1437,10 +1407,20 @@ namespace Resource
 
     osg::ref_ptr<osg::Node> SceneManager::loadErrorMarker()
     {
+        constexpr VFS::Path::ExtensionView meshTypes[] = {
+            VFS::Path::ExtensionView("nif"),
+            VFS::Path::ExtensionView("osg"),
+            VFS::Path::ExtensionView("osgt"),
+            VFS::Path::ExtensionView("osgb"),
+            VFS::Path::ExtensionView("osgx"),
+            VFS::Path::ExtensionView("osg2"),
+            VFS::Path::ExtensionView("dae"),
+        };
+
         try
         {
             VFS::Path::Normalized path("meshes/marker_error.****");
-            for (const auto meshType : { "nif", "osg", "osgt", "osgb", "osgx", "osg2", "dae" })
+            for (const VFS::Path::ExtensionView meshType : meshTypes)
             {
                 path.changeExtension(meshType);
                 if (mVFS->exists(path))
@@ -1615,7 +1595,7 @@ namespace Resource
     }
 
     void SceneManager::setFilterSettings(
-        const std::string& magfilter, const std::string& minfilter, const std::string& mipmap, int maxAnisotropy)
+        const std::string& magfilter, const std::string& minfilter, const std::string& mipmap, float maxAnisotropy)
     {
         osg::Texture::FilterMode min = osg::Texture::LINEAR;
         osg::Texture::FilterMode mag = osg::Texture::LINEAR;
@@ -1649,7 +1629,7 @@ namespace Resource
 
         mMinFilter = min;
         mMagFilter = mag;
-        mMaxAnisotropy = std::max(1, maxAnisotropy);
+        mMaxAnisotropy = std::max(1.f, maxAnisotropy);
 
         SetFilterSettingsControllerVisitor setFilterSettingsControllerVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
         SetFilterSettingsVisitor setFilterSettingsVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
@@ -1711,13 +1691,16 @@ namespace Resource
         if (mIncrementalCompileOperation)
         {
             std::lock_guard<OpenThreads::Mutex> lock(*mIncrementalCompileOperation->getToCompiledMutex());
-            stats->setAttribute(frameNumber, "Compiling", mIncrementalCompileOperation->getToCompile().size());
+            stats->setAttribute(
+                frameNumber, "Compiling", static_cast<double>(mIncrementalCompileOperation->getToCompile().size()));
         }
 
         {
             std::lock_guard<std::mutex> lock(mSharedStateMutex);
-            stats->setAttribute(frameNumber, "Texture", mSharedStateManager->getNumSharedTextures());
-            stats->setAttribute(frameNumber, "StateSet", mSharedStateManager->getNumSharedStateSets());
+            stats->setAttribute(
+                frameNumber, "Texture", static_cast<double>(mSharedStateManager->getNumSharedTextures()));
+            stats->setAttribute(
+                frameNumber, "StateSet", static_cast<double>(mSharedStateManager->getNumSharedStateSets()));
         }
 
         Resource::reportStats("Node", frameNumber, mCache->getStats(), *stats);
@@ -1727,13 +1710,11 @@ namespace Resource
     {
         osg::ref_ptr<Shader::ShaderVisitor> shaderVisitor(
             new Shader::ShaderVisitor(*mShaderManager.get(), *mImageManager, shaderPrefix));
-        shaderVisitor->setForceShaders(mForceShaders);
         shaderVisitor->setAutoUseNormalMaps(mAutoUseNormalMaps);
         shaderVisitor->setNormalMapPattern(mNormalMapPattern);
         shaderVisitor->setNormalHeightMapPattern(mNormalHeightMapPattern);
         shaderVisitor->setAutoUseSpecularMaps(mAutoUseSpecularMaps);
         shaderVisitor->setSpecularMapPattern(mSpecularMapPattern);
-        shaderVisitor->setApplyLightingToEnvMaps(mApplyLightingToEnvMaps);
         shaderVisitor->setConvertAlphaTestToAlphaToCoverage(mConvertAlphaTestToAlphaToCoverage);
         shaderVisitor->setAdjustCoverageForAlphaTest(mAdjustCoverageForAlphaTest);
         shaderVisitor->setSupportsNormalsRT(mSupportsNormalsRT);

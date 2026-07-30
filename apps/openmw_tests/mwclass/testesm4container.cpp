@@ -9,17 +9,17 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/loadachr.hpp>
-#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrace.hpp>
-#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -31,17 +31,13 @@
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 #include "apps/openmw/mwclass/esm4npc.hpp"
-#include "apps/openmw/mwclass/fnvaipackage.hpp"
-
-#include "apps/openmw/mwgui/tradeitemmodel.hpp"
 
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
-#include "apps/openmw/mwmechanics/movement.hpp"
+#include "apps/openmw/mwmechanics/ownership.hpp"
 
-#include "apps/openmw/mwworld/actiondoor.hpp"
 #include "apps/openmw/mwworld/actionopen.hpp"
-#include "apps/openmw/mwworld/actiontalk.hpp"
+#include "apps/openmw/mwworld/actiondoor.hpp"
 #include "apps/openmw/mwworld/actionteleport.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/failedaction.hpp"
@@ -50,66 +46,30 @@
 
 #include <components/loadinglistener/loadinglistener.hpp>
 
-#include <algorithm>
-#include <array>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <map>
-#include <memory>
 #include <optional>
 #include <sstream>
-#include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
 
 namespace
 {
-    class ScopedEnvironmentVariable
+    TEST(FnvActorLevelTest, FixedLevelUsesAuthoredValue)
     {
-    public:
-        ScopedEnvironmentVariable(std::string name, const char* value)
-            : mName(std::move(name))
-        {
-            if (const char* previous = std::getenv(mName.c_str()))
-                mPrevious = previous;
-            set(value);
-        }
+        ESM4::ACBS_FO3 config{};
+        config.levelOrMult = 14;
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, false, 50), 14);
+    }
 
-        ~ScopedEnvironmentVariable()
-        {
-            set(mPrevious ? mPrevious->c_str() : nullptr);
-        }
-
-        ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
-        ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
-
-    private:
-        void set(const char* value) const
-        {
-#ifdef _WIN32
-            _putenv_s(mName.c_str(), value != nullptr ? value : "");
-#else
-            if (value != nullptr)
-                setenv(mName.c_str(), value, 1);
-            else
-                unsetenv(mName.c_str());
-#endif
-        }
-
-        std::string mName;
-        std::optional<std::string> mPrevious;
-    };
-
-    TEST(ESM4NamedActivationTest, OverridesGenericNullActivationForPickupRecords)
+    TEST(FnvActorLevelTest, PlayerMultiplierUsesThousandthsAndAuthoredBounds)
     {
-        using PickupClass = MWClass::ESM4Named<ESM4::MiscItem>;
-        using PickupActivation = std::unique_ptr<MWWorld::Action> (PickupClass::*)(
-            const MWWorld::Ptr&, const MWWorld::Ptr&) const;
-
-        EXPECT_TRUE((std::is_same_v<decltype(&PickupClass::activate), PickupActivation>));
+        ESM4::ACBS_FO3 config{};
+        config.levelOrMult = 1500;
+        config.calcMinlevel = 8;
+        config.calcMaxlevel = 20;
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 4), 8);
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 10), 15);
+        EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 30), 20);
     }
 
     constexpr std::uint32_t sSaloonContainerRef = 0x0110873e;
@@ -139,121 +99,7 @@ namespace
     constexpr std::uint32_t sDoorRef = 0x01108744;
     constexpr std::uint32_t sDoorDestRef = 0x01108745;
     constexpr std::uint32_t sDoorDestCell = 0x01104c11;
-    constexpr std::uint32_t sCapsBase = 0x0100000f;
-    constexpr std::uint32_t sBarterPocketBase = 0x01103b30;
-    constexpr std::uint32_t sBarterPocketRef = 0x01108746;
-    constexpr std::uint32_t sBarterChestBase = 0x01103b31;
-    constexpr std::uint32_t sBarterChestRef = 0x01108747;
-    constexpr std::uint32_t sBarterPlayerBase = 0x01103b32;
-    constexpr std::uint32_t sBarterPlayerRef = 0x01108748;
-    constexpr std::uint32_t sCreatureDeathItemBase = 0x01103b33;
-    constexpr std::uint32_t sNpcDeathItemBase = 0x01103b34;
-
-    class BarterTestItemModel final : public MWGui::ItemModel
-    {
-    public:
-        explicit BarterTestItemModel(std::vector<MWWorld::Ptr> sources)
-            : mSources(std::move(sources))
-        {
-        }
-
-        MWGui::ItemStack getItem(ModelIndex index) override { return mItems.at(static_cast<std::size_t>(index)); }
-        std::size_t getItemCount() override { return mItems.size(); }
-
-        ModelIndex getIndex(const MWGui::ItemStack& item) override
-        {
-            for (std::size_t index = 0; index < mItems.size(); ++index)
-            {
-                if (mItems[index].mBase == item.mBase)
-                    return static_cast<ModelIndex>(index);
-            }
-            return -1;
-        }
-
-        void update() override
-        {
-            mItems.clear();
-            for (const MWWorld::Ptr& source : mSources)
-            {
-                MWWorld::ContainerStore& store = source.getClass().getContainerStore(source);
-                for (MWWorld::Ptr item : store)
-                {
-                    if (!item.getClass().showsInInventory(item))
-                        continue;
-
-                    const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
-                        return stack.mBase.getCellRef().getRefId() == item.getCellRef().getRefId();
-                    });
-                    if (existing != mItems.end())
-                    {
-                        existing->mCount += item.getCellRef().getCount();
-                        continue;
-                    }
-
-                    MWGui::ItemStack stack;
-                    stack.mBase = item;
-                    stack.mCreator = this;
-                    stack.mCount = item.getCellRef().getCount();
-                    mItems.push_back(std::move(stack));
-                }
-            }
-        }
-
-        MWWorld::Ptr addItem(
-            const MWGui::ItemStack& item, std::size_t count, bool /*allowAutoEquip*/ = true) override
-        {
-            const ESM::RefId id = item.mBase.getCellRef().getRefId();
-            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
-                return stack.mBase.getCellRef().getRefId() == id;
-            });
-            if (existing != mItems.end())
-                existing->mCount += count;
-            else
-            {
-                MWGui::ItemStack added = item;
-                added.mCreator = this;
-                added.mCount = count;
-                mItems.push_back(std::move(added));
-            }
-            return item.mBase;
-        }
-
-        MWWorld::Ptr copyItem(
-            const MWGui::ItemStack& item, std::size_t count, bool allowAutoEquip = true) override
-        {
-            return addItem(item, count, allowAutoEquip);
-        }
-
-        void removeItem(const MWGui::ItemStack& item, std::size_t count) override
-        {
-            const ESM::RefId id = item.mBase.getCellRef().getRefId();
-            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
-                return stack.mBase.getCellRef().getRefId() == id;
-            });
-            if (existing == mItems.end() || existing->mCount < count)
-                throw std::runtime_error("barter test source did not contain the requested item count");
-            existing->mCount -= count;
-            if (existing->mCount == 0)
-                mItems.erase(existing);
-        }
-
-        std::size_t count(const ESM::RefId& id) const
-        {
-            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
-                return stack.mBase.getCellRef().getRefId() == id;
-            });
-            return existing == mItems.end() ? 0 : existing->mCount;
-        }
-
-        bool usesContainer(const MWWorld::Ptr& container) override
-        {
-            return std::find(mSources.begin(), mSources.end(), container) != mSources.end();
-        }
-
-    private:
-        std::vector<MWWorld::Ptr> mSources;
-        std::vector<MWGui::ItemStack> mItems;
-    };
+    constexpr std::uint32_t sNpcWeaponBase = 0x01103b2e;
 
     TEST(FnvCreatureAiPolicyTest, FlyAndWalkSandboxRetainsAuthoredPerch)
     {
@@ -281,8 +127,8 @@ namespace
     class TestLuaManager final : public MWBase::LuaManager
     {
     public:
+        void contentFilesLoaded() override {}
         void newGameStarted() override {}
-        void prepareGameLoad() override {}
         void gameLoaded() override {}
         void gameEnded() override {}
         void noGame() override {}
@@ -297,6 +143,10 @@ namespace
             std::string_view, std::string_view, float, std::uint32_t, bool) override
         {
         }
+        void animationEnded(const MWWorld::Ptr&, std::string_view, float, float, std::string_view, std::string_view)
+            override
+        {
+        }
         void jailTimeServed(const MWWorld::Ptr&, int) override {}
         void skillLevelUp(const MWWorld::Ptr&, ESM::RefId, std::string_view) override {}
         void skillUse(const MWWorld::Ptr&, ESM::RefId, int, float) override {}
@@ -306,10 +156,10 @@ namespace
         }
         void exteriorCreated(MWWorld::CellStore&) override {}
         void actorDied(const MWWorld::Ptr&) override {}
+        void onDialogueResponse(const MWWorld::Ptr&, const ESM::DialInfo&, const ESM::Dialogue&) override {}
         void questUpdated(const ESM::RefId&, int) override {}
         void uiModeChanged(const MWWorld::Ptr&) override {}
         void savePermanentStorage(const std::filesystem::path&) override {}
-        void vrRecentered(bool, bool) override {}
         void inputEvent(const InputEvent&) override {}
         ActorControls* getActorControls(const MWWorld::Ptr&) const override { return nullptr; }
         void clear() override {}
@@ -537,7 +387,7 @@ namespace
             return actor;
         }
 
-        static void populateCreatureWorldStore(MWWorld::ESMStore& store, std::uint32_t deathItem = 0)
+        static void populateCreatureWorldStore(MWWorld::ESMStore& store)
         {
             ESM4::MiscItem bottle{};
             bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
@@ -558,7 +408,6 @@ namespace
             ESM4::Creature creature = makeCreature();
             creature.mBaseConfig.fo3.levelOrMult = 1;
             creature.mInventory.push_back(ESM4::InventoryItem{ sLevelledItemBase, 2 });
-            creature.mDeathItem = ESM::FormId::fromUint32(deathItem);
             store.overrideRecord(creature);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
@@ -566,7 +415,8 @@ namespace
             store.setUp();
         }
 
-        static void populateNpcWorldStore(MWWorld::ESMStore& store, std::uint32_t deathItem = 0)
+        static void populateNpcWorldStore(
+            MWWorld::ESMStore& store, bool includeWeapon = false, bool weaponInInventory = true)
         {
             ESM4::MiscItem bottle{};
             bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
@@ -582,7 +432,18 @@ namespace
 
             store.overrideRecord(makeNpcRace());
             ESM4::Npc npc = makeNpc();
-            npc.mDeathItem = ESM::FormId::fromUint32(deathItem);
+            if (includeWeapon)
+            {
+                ESM4::Weapon weapon{};
+                weapon.mId = ESM::FormId::fromUint32(sNpcWeaponBase);
+                weapon.mEditorId = "GoodspringsNpcStateWeapon";
+                weapon.mFullName = "NPC State Weapon";
+                weapon.mModel = "Weapons\\GoodspringsNpcStateWeapon.nif";
+                weapon.mData.damage = 12;
+                store.overrideRecord(weapon);
+                if (weaponInInventory)
+                    npc.mInventory.push_back(ESM4::InventoryItem{ sNpcWeaponBase, 1 });
+            }
             store.overrideRecord(npc);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCharacter>&>(store.get<ESM4::ActorCharacter>())
@@ -737,231 +598,12 @@ namespace
         }
     };
 
-    TEST(FnvCreatureAiPolicyTest, SupportsPatrolAndPreservesAuthoredSmallRadiusSandbox)
+    TEST(FnvCreatureAiPolicyTest, UnsupportedPatrolLeavesSmallRadiusSandboxEligible)
     {
-        EXPECT_TRUE(MWClass::fnvCreatureAiPackageProcedureSupported(13));
+        EXPECT_FALSE(MWClass::fnvCreatureAiPackageProcedureSupported(13));
         EXPECT_TRUE(MWClass::fnvCreatureAiPackageProcedureSupported(12));
-        EXPECT_EQ(MWClass::fnvCreatureWanderDistance(16), 16);
-        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(16), 2u);
-        EXPECT_EQ(MWClass::fnvCreatureWanderDistance(0), 256);
-        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(256), 32u);
-    }
-
-    TEST(FnvCreatureAiPolicyTest, NativePatrolRoutesLoopWithoutCompletingTheirPackage)
-    {
-        const MWClass::FnvCreatureRouteAdvance middle = MWClass::fnvAdvanceCreatureRoute(
-            4, 11, MWClass::FnvCreatureRouteEndBehavior::Loop);
-        EXPECT_EQ(middle.mPointIndex, 5u);
-        EXPECT_FALSE(middle.mHolding);
-
-        const MWClass::FnvCreatureRouteAdvance terminal = MWClass::fnvAdvanceCreatureRoute(
-            10, 11, MWClass::FnvCreatureRouteEndBehavior::Loop);
-        EXPECT_EQ(terminal.mPointIndex, 0u);
-        EXPECT_FALSE(terminal.mHolding);
-    }
-
-    TEST(FnvCreatureAiPolicyTest, EditorLocationRouteHoldsItsReturnAnchor)
-    {
-        const MWClass::FnvCreatureRouteAdvance terminal = MWClass::fnvAdvanceCreatureRoute(
-            0, 1, MWClass::FnvCreatureRouteEndBehavior::Hold);
-        EXPECT_EQ(terminal.mPointIndex, 0u);
-        EXPECT_TRUE(terminal.mHolding);
-
-        const MWClass::FnvCreatureRouteAdvance empty = MWClass::fnvAdvanceCreatureRoute(
-            0, 0, MWClass::FnvCreatureRouteEndBehavior::Hold);
-        EXPECT_EQ(empty.mPointIndex, 0u);
-        EXPECT_FALSE(empty.mHolding);
-    }
-
-    TEST_F(ESM4ContainerTest, PatrolSelectionFallsThroughUntilPlacedXlkrRouteIsRunnable)
-    {
-        constexpr std::uint32_t worldId = 0x01000db0;
-        constexpr std::uint32_t foreignWorldId = 0x01000db1;
-        constexpr std::uint32_t actorCellId = 0x01104c30;
-        constexpr std::uint32_t foreignCellId = 0x01104c31;
-        constexpr std::uint32_t patrolPackageId = 0x01104c32;
-        constexpr std::uint32_t sandboxPackageId = 0x01104c33;
-        constexpr std::uint32_t validMarkerId = 0x01104c34;
-        constexpr std::uint32_t cyclicMarkerId = 0x01104c35;
-        constexpr std::uint32_t foreignMarkerId = 0x01104c36;
-        constexpr std::uint32_t unresolvedActorId = 0x01104c37;
-        constexpr std::uint32_t validActorId = 0x01104c38;
-        constexpr std::uint32_t cyclicActorId = 0x01104c39;
-        constexpr std::uint32_t foreignActorId = 0x01104c3a;
-
-        ESM4::Cell actorCell{};
-        actorCell.mId = ESM::RefId(ESM::FormId::fromUint32(actorCellId));
-        actorCell.mParent = ESM::RefId(ESM::FormId::fromUint32(worldId));
-        mStore.overrideRecord(actorCell);
-
-        ESM4::Cell foreignCell{};
-        foreignCell.mId = ESM::RefId(ESM::FormId::fromUint32(foreignCellId));
-        foreignCell.mParent = ESM::RefId(ESM::FormId::fromUint32(foreignWorldId));
-        mStore.overrideRecord(foreignCell);
-
-        ESM4::AIPackage patrol{};
-        patrol.mId = ESM::FormId::fromUint32(patrolPackageId);
-        patrol.mEditorId = "SyntheticPatrol";
-        patrol.mData.type = 13;
-        patrol.mSchedule.time = 0xff;
-        mStore.overrideRecord(patrol);
-
-        ESM4::AIPackage sandbox{};
-        sandbox.mId = ESM::FormId::fromUint32(sandboxPackageId);
-        sandbox.mEditorId = "SyntheticSandbox";
-        sandbox.mData.type = 12;
-        sandbox.mSchedule.time = 0xff;
-        sandbox.mLocation.type = 3;
-        sandbox.mLocation.radius = 512;
-        mStore.overrideRecord(sandbox);
-
-        auto marker = [&](std::uint32_t id, const ESM::RefId& cell) {
-            ESM4::Reference reference{};
-            reference.mId = ESM::FormId::fromUint32(id);
-            reference.mParent = cell;
-            return reference;
-        };
-
-        mStore.overrideRecord(marker(validMarkerId, actorCell.mId));
-        ESM4::Reference cyclicMarker = marker(cyclicMarkerId, actorCell.mId);
-        cyclicMarker.mLinkedReference = cyclicMarker.mId;
-        mStore.overrideRecord(cyclicMarker);
-        mStore.overrideRecord(marker(foreignMarkerId, foreignCell.mId));
-
-        auto placedActor = [&](std::uint32_t id, std::uint32_t linkedMarker) {
-            ESM4::ActorCreature actor{};
-            actor.mId = ESM::FormId::fromUint32(id);
-            actor.mParent = actorCell.mId;
-            actor.mLinkedReference = ESM::FormId::fromUint32(linkedMarker);
-            return actor;
-        };
-
-        auto& actors = const_cast<MWWorld::Store<ESM4::ActorCreature>&>(mStore.get<ESM4::ActorCreature>());
-        actors.insertStatic(placedActor(unresolvedActorId, 0));
-        actors.insertStatic(placedActor(validActorId, validMarkerId));
-        actors.insertStatic(placedActor(cyclicActorId, cyclicMarkerId));
-        actors.insertStatic(placedActor(foreignActorId, foreignMarkerId));
-
-        const std::vector<ESM::FormId> packageIds{ patrol.mId, sandbox.mId };
-        const auto select = [&](std::uint32_t actorId) {
-            return MWClass::selectFnvCreaturePackage(mStore, packageIds, 12.f,
-                ESM::FormId::fromUint32(actorId), actorCell.mId);
-        };
-
-        const ESM4::AIPackage* unresolvedSelection = select(unresolvedActorId);
-        ASSERT_NE(unresolvedSelection, nullptr);
-        EXPECT_EQ(unresolvedSelection->mId, sandbox.mId);
-        const ESM4::AIPackage* cyclicSelection = select(cyclicActorId);
-        ASSERT_NE(cyclicSelection, nullptr);
-        EXPECT_EQ(cyclicSelection->mId, sandbox.mId);
-        const ESM4::AIPackage* foreignSelection = select(foreignActorId);
-        ASSERT_NE(foreignSelection, nullptr);
-        EXPECT_EQ(foreignSelection->mId, sandbox.mId);
-        const ESM4::AIPackage* validSelection = select(validActorId);
-        ASSERT_NE(validSelection, nullptr);
-        EXPECT_EQ(validSelection->mId, patrol.mId);
-    }
-
-    TEST_F(ESM4ContainerTest, ResolvesExactBoundedVictorPatrolWithinOneWorldspace)
-    {
-        constexpr std::uint32_t worldId = 0x01000da7;
-        constexpr std::array<std::uint32_t, 3> cellIds{ 0x01104c20, 0x01104c21, 0x01104c22 };
-        for (std::size_t index = 0; index < cellIds.size(); ++index)
-        {
-            ESM4::Cell cell{};
-            cell.mId = ESM::RefId(ESM::FormId::fromUint32(cellIds[index]));
-            cell.mParent = ESM::RefId(ESM::FormId::fromUint32(worldId));
-            cell.mEditorId = "SyntheticVictorPatrolCell" + std::to_string(index);
-            cell.mX = static_cast<std::int32_t>(index);
-            mStore.overrideRecord(cell);
-        }
-
-        constexpr std::array<std::uint32_t, 11> markerIds{ 0x0116adc6, 0x0116adc7, 0x0116adc8,
-            0x0116adcc, 0x0116adce, 0x0116adcf, 0x0116adcd, 0x0116adc9, 0x0116adca, 0x0116adcb,
-            0x01154154 };
-        constexpr std::array<std::array<float, 3>, 11> positions{ {
-            { -71370.422f, 2131.071f, 8371.142f },
-            { -66739.336f, 2942.334f, 8371.142f },
-            { -66144.289f, 5613.587f, 8446.199f },
-            { -62775.902f, 10359.241f, 9761.637f },
-            { -62254.207f, 12785.296f, 10264.f },
-            { -63754.926f, 9666.817f, 9417.408f },
-            { -70165.922f, 7881.824f, 8496.f },
-            { -70336.977f, 5223.771f, 8414.835f },
-            { -71903.633f, 991.477f, 8414.835f },
-            { -72299.93f, -3123.941f, 8142.937f },
-            { -72320.f, -6000.f, 8320.f },
-        } };
-
-        auto makeMarker = [&](std::size_t index) {
-            ESM4::Reference marker{};
-            marker.mId = ESM::FormId::fromUint32(markerIds[index]);
-            marker.mParent = ESM::RefId(ESM::FormId::fromUint32(cellIds[index / 4]));
-            marker.mBaseObj = ESM::FormId::fromUint32(index == 4 || index == 10 ? 0x01000034 : 0x0100003b);
-            marker.mPos.pos[0] = positions[index][0];
-            marker.mPos.pos[1] = positions[index][1];
-            marker.mPos.pos[2] = positions[index][2];
-            if (index + 1 < markerIds.size())
-                marker.mLinkedReference = ESM::FormId::fromUint32(markerIds[index + 1]);
-            if (index == 4)
-            {
-                marker.mPos.rot[2] = 0.8f;
-                marker.mPatrolIdleTime = 3.f;
-                marker.mHasPatrolIdleTime = true;
-                marker.mIsPatrolIdleScriptMarker = true;
-            }
-            else if (index == 10)
-            {
-                marker.mPatrolIdleTime = 1.f;
-                marker.mHasPatrolIdleTime = true;
-                marker.mIsPatrolIdleScriptMarker = true;
-            }
-            return marker;
-        };
-
-        for (std::size_t index = 0; index < markerIds.size(); ++index)
-            mStore.overrideRecord(makeMarker(index));
-
-        const std::optional<std::vector<MWClass::FnvCreaturePatrolPoint>> route
-            = MWClass::collectFnvCreaturePatrolRoute(
-                mStore, ESM::FormId::fromUint32(markerIds.front()), markerIds.size());
-        ASSERT_TRUE(route);
-        ASSERT_EQ(route->size(), markerIds.size());
-        for (std::size_t index = 0; index < markerIds.size(); ++index)
-        {
-            EXPECT_EQ((*route)[index].mReference, ESM::FormId::fromUint32(markerIds[index]));
-            EXPECT_EQ((*route)[index].mWorldspace, ESM::RefId(ESM::FormId::fromUint32(worldId)));
-            EXPECT_FLOAT_EQ((*route)[index].mPosition.x(), positions[index][0]);
-            EXPECT_FLOAT_EQ((*route)[index].mPosition.y(), positions[index][1]);
-            EXPECT_FLOAT_EQ((*route)[index].mPosition.z(), positions[index][2]);
-        }
-        EXPECT_TRUE((*route)[4].mUsesAuthoredHeading);
-        EXPECT_FLOAT_EQ((*route)[4].mYaw, 0.8f);
-        EXPECT_FLOAT_EQ((*route)[4].mWaitSeconds, 3.f);
-        EXPECT_TRUE((*route)[4].mIsPatrolIdleScriptMarker);
-        EXPECT_TRUE((*route)[10].mUsesAuthoredHeading);
-        EXPECT_FLOAT_EQ((*route)[10].mWaitSeconds, 1.f);
-        EXPECT_TRUE((*route)[10].mIsPatrolIdleScriptMarker);
-
-        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
-            mStore, ESM::FormId::fromUint32(markerIds.front()), markerIds.size() - 1));
-
-        ESM4::Reference cyclicTerminal = makeMarker(markerIds.size() - 1);
-        cyclicTerminal.mLinkedReference = ESM::FormId::fromUint32(markerIds.front());
-        mStore.overrideRecord(cyclicTerminal);
-        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
-            mStore, ESM::FormId::fromUint32(markerIds.front()), 32));
-
-        constexpr std::uint32_t foreignWorldId = 0x01000da8;
-        ESM4::Cell foreignCell{};
-        foreignCell.mId = ESM::RefId(ESM::FormId::fromUint32(0x01104c23));
-        foreignCell.mParent = ESM::RefId(ESM::FormId::fromUint32(foreignWorldId));
-        mStore.overrideRecord(foreignCell);
-        ESM4::Reference foreignTerminal = makeMarker(markerIds.size() - 1);
-        foreignTerminal.mParent = foreignCell.mId;
-        mStore.overrideRecord(foreignTerminal);
-        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
-            mStore, ESM::FormId::fromUint32(markerIds.front()), 32));
+        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(64), 8u);
+        EXPECT_LT(MWClass::fnvCreatureWanderDestinationTolerance(64), 64u);
     }
 
     TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)
@@ -1379,6 +1021,83 @@ namespace
         EXPECT_EQ(restored.getRefData().getCustomData(), nullptr);
     }
 
+    TEST_F(ESM4ContainerTest, CellOwnershipOverrideUsesNativeStateAndPersistsExplicitClear)
+    {
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId authoredOwner(ESM::FormId::fromUint32(sNpcBase));
+        MWWorld::ESMStore store;
+        ESM4::Cell authoredCell = makeCreatureCell();
+        authoredCell.mOwner = ESM::FormId::fromUint32(sNpcBase);
+        store.overrideRecord(authoredCell);
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        EXPECT_EQ(sourceCell->getOwner(), authoredOwner);
+        EXPECT_FALSE(sourceCell->hasState());
+
+        sourceCell->setOwner({});
+        EXPECT_TRUE(sourceCell->getOwner().empty());
+        EXPECT_TRUE(sourceCell->hasState());
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        EXPECT_EQ(restoredCell->getOwner(), authoredOwner);
+
+        readWorldState(std::move(stream), restoredModel);
+        EXPECT_TRUE(restoredCell->getOwner().empty());
+    }
+
+    TEST_F(ESM4ContainerTest, OwnershipResolutionInheritsCellOwnerUnlessReferenceOverridesIt)
+    {
+        const ESM::FormId factionId = ESM::FormId::fromUint32(0x01104c6e);
+        MWWorld::ESMStore store;
+        ESM4::Faction faction;
+        faction.mId = factionId;
+        faction.mEditorId = "GoodspringsFaction";
+        store.overrideRecord(faction);
+        store.setUp();
+        mEnvironment.setESMStore(store);
+
+        ESM4::Cell authoredCell = makeCreatureCell();
+        authoredCell.mOwner = factionId;
+        ESM::ReadersCache readers;
+        MWWorld::CellStore cell(MWWorld::Cell(authoredCell), store, readers);
+
+        ESM4::MiscItem base{};
+        base.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
+        ESM4::Reference inheritedReference{};
+        inheritedReference.mId = ESM::FormId::fromUint32(sSaloonContainerRef);
+        inheritedReference.mParent = authoredCell.mId;
+        inheritedReference.mBaseObj = base.mId;
+        MWWorld::LiveCellRef<ESM4::MiscItem> inheritedLive(inheritedReference, &base);
+        const MWWorld::Ptr inherited(&inheritedLive, &cell);
+
+        const MWMechanics::Ownership cellOwnership = MWMechanics::resolveOwnership(inherited, store);
+        EXPECT_EQ(cellOwnership.mOwner, ESM::RefId(factionId));
+        EXPECT_EQ(cellOwnership.mFaction, ESM::RefId(factionId));
+        EXPECT_TRUE(cellOwnership.mOwnerIsFaction);
+        EXPECT_EQ(cellOwnership.mRequiredFactionRank, -1);
+
+        ESM4::Reference explicitReference = inheritedReference;
+        explicitReference.mId = ESM::FormId::fromUint32(sKeyHolderRef);
+        explicitReference.mOwner = ESM::FormId::fromUint32(sNpcBase);
+        MWWorld::LiveCellRef<ESM4::MiscItem> explicitLive(explicitReference, &base);
+        const MWWorld::Ptr explicitOwner(&explicitLive, &cell);
+
+        const MWMechanics::Ownership referenceOwnership = MWMechanics::resolveOwnership(explicitOwner, store);
+        EXPECT_EQ(referenceOwnership.mOwner, ESM::RefId(ESM::FormId::fromUint32(sNpcBase)));
+        EXPECT_TRUE(referenceOwnership.mFaction.empty());
+        EXPECT_FALSE(referenceOwnership.mOwnerIsFaction);
+    }
+
     TEST_F(ESM4ContainerTest, CreatureCstaRoundTripFromUnloadedCellsRetainsMutableInventoryHealthAndDeath)
     {
         MWWorld::ESMStore store;
@@ -1404,11 +1123,15 @@ namespace
         ASSERT_EQ(sourceStore.remove(bottleId, 2, false, false), 2);
 
         MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        const ESM::FormId scriptedFaction{ .mIndex = 0x12345, .mContentFile = 0 };
+        const ESM::FormId removedFaction{ .mIndex = 0x12346, .mContentFile = 0 };
+        ASSERT_TRUE(stats.setFalloutActorValueOverride(13, 650.f));
+        ASSERT_TRUE(stats.setFalloutFactionOverride(scriptedFaction, 2));
+        ASSERT_TRUE(stats.setFalloutFactionOverride(removedFaction, std::nullopt));
         ESM::CreatureStats deadState;
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
         deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
         deadState.mDied = true;
         stats.readState(deadState);
         ASSERT_TRUE(stats.isDead());
@@ -1431,255 +1154,12 @@ namespace
         const MWMechanics::CreatureStats& restoredStats = restored.getClass().getCreatureStats(restored);
         EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
         EXPECT_TRUE(restoredStats.isDead());
-        EXPECT_TRUE(restoredStats.isDeathAnimationFinished());
         EXPECT_TRUE(restoredStats.hasDied());
+        EXPECT_EQ(restoredStats.getFalloutActorValueOverride(13), std::optional<float>(650.f));
+        EXPECT_EQ(restoredStats.getFalloutFactionOverrides().at(scriptedFaction), 2);
+        EXPECT_EQ(restoredStats.getFalloutFactionOverrides().at(removedFaction),
+            MWMechanics::CreatureStats::FalloutFactionRemoved);
         EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
-    }
-
-    TEST_F(ESM4ContainerTest, DisablingAuthoredPackagesDoesNotDisableCreatureAggression)
-    {
-        constexpr std::uint32_t wanderPackageId = 0x01104c40;
-        MWWorld::ESMStore store;
-
-        ESM4::AIPackage wander{};
-        wander.mId = ESM::FormId::fromUint32(wanderPackageId);
-        wander.mEditorId = "SyntheticCreatureWander";
-        wander.mData.type = 5;
-        wander.mSchedule.time = 0xff;
-        wander.mLocation.radius = 256;
-        store.overrideRecord(wander);
-
-        ESM4::Creature creature = makeCreature();
-        creature.mHasFNVAIData = true;
-        creature.mFNVAIData.aggression = 1;
-        creature.mAIPackages.push_back(wander.mId);
-        store.overrideRecord(creature);
-        store.overrideRecord(makeCreatureCell());
-        const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
-            .insertStatic(makePlacedCreature());
-        store.setUp();
-
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr ptr = findPlacedCreature(*cell);
-        ASSERT_FALSE(ptr.isEmpty());
-
-        ASSERT_EQ(MWClass::selectFnvCreaturePackage(store, creature.mAIPackages, 12.f,
-                      ptr.getCellRef().getRefNum(), cell->getCell()->getId()),
-            store.get<ESM4::AIPackage>().search(wander.mId));
-        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
-
-        const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
-
-        EXPECT_EQ(stats.getAiSetting(MWMechanics::AiSetting::Fight).getBase(), 1);
-        EXPECT_TRUE(stats.getAiSequence().isEmpty());
-    }
-
-    TEST_F(ESM4ContainerTest, ResetAiClearsNpcMovementAndFurnitureState)
-    {
-        MWWorld::ESMStore store;
-        populateNpcWorldStore(store);
-
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr ptr = findPlacedNpc(*cell);
-        ASSERT_FALSE(ptr.isEmpty());
-
-        // This fixture deliberately has no MWBase::World, so package selection
-        // is disabled while the actor-side reset contract is exercised.
-        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
-        MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
-        ASSERT_TRUE(stats.getAiSequence().isEmpty());
-        MWMechanics::Movement& movement = ptr.getClass().getMovementSettings(ptr);
-        movement.mPosition[0] = 1.f;
-        movement.mRotation[2] = 0.5f;
-        MWClass::FalloutFurniturePlacement placement;
-        placement.mFurnitureRef = ESM::FormId::fromUint32(0x01104c42);
-        placement.mValid = true;
-        MWClass::ESM4Npc::setFurniturePlacement(ptr, placement);
-        MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Seated);
-
-        ASSERT_TRUE(MWClass::resetFnvAiState(ptr));
-        EXPECT_EQ(MWClass::ESM4Npc::getFurnitureState(ptr), MWClass::FalloutFurnitureState::None);
-        EXPECT_FALSE(MWClass::ESM4Npc::getFurniturePlacement(ptr).mValid);
-        EXPECT_FLOAT_EQ(movement.mPosition[0], 0.f);
-        EXPECT_FLOAT_EQ(movement.mRotation[2], 0.f);
-        EXPECT_TRUE(stats.getAiSequence().isEmpty());
-    }
-
-    TEST_F(ESM4ContainerTest, NpcKeepsSelectedFalloutWeaponAndAmmoBundleTogether)
-    {
-        constexpr std::uint32_t weaponId = 0x01105001;
-        constexpr std::uint32_t ammoId = 0x01105002;
-        constexpr std::uint32_t withAmmoListId = 0x01105003;
-        constexpr std::uint32_t weaponChoiceListId = 0x01105004;
-
-        MWWorld::ESMStore store;
-        store.overrideRecord(makeNpcRace());
-
-        ESM4::Weapon weapon{};
-        weapon.mId = ESM::FormId::fromUint32(weaponId);
-        weapon.mEditorId = "SyntheticLaserRcw";
-        weapon.mFullName = "Laser RCW";
-        weapon.mModel = "weapons\\2handhandle\\laserrcw.nif";
-        weapon.mData.damage = 12;
-        store.overrideRecord(weapon);
-
-        ESM4::Ammunition ammo{};
-        ammo.mId = ESM::FormId::fromUint32(ammoId);
-        ammo.mEditorId = "SyntheticElectronChargePack";
-        ammo.mFullName = "Electron Charge Pack";
-        store.overrideRecord(ammo);
-
-        store.overrideRecord(makeLevelledItem(withAmmoListId, 0x04,
-            { makeLevelledEntry(1, weaponId), makeLevelledEntry(1, ammoId, 10) }));
-        store.overrideRecord(
-            makeLevelledItem(weaponChoiceListId, 0, { makeLevelledEntry(1, withAmmoListId) }));
-
-        ESM4::Npc npc = makeNpc();
-        npc.mInventory.clear();
-        npc.mInventory.push_back(ESM4::InventoryItem{ weaponChoiceListId, 1 });
-        store.overrideRecord(npc);
-        store.overrideRecord(makeCreatureCell());
-        const_cast<MWWorld::Store<ESM4::ActorCharacter>&>(store.get<ESM4::ActorCharacter>())
-            .insertStatic(makePlacedNpc());
-        store.setUp();
-
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr ptr = findPlacedNpc(*cell);
-        ASSERT_FALSE(ptr.isEmpty());
-
-        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
-        MWWorld::ContainerStore& inventory = ptr.getClass().getContainerStore(ptr);
-        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(weaponId))), 1);
-        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(ammoId))), 10);
-        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(withAmmoListId))), 0);
-        EXPECT_EQ(inventory.count(ESM::RefId(ESM::FormId::fromUint32(weaponChoiceListId))), 0);
-        ASSERT_NE(MWClass::ESM4Npc::getEquippedWeapon(ptr), nullptr);
-        EXPECT_EQ(MWClass::ESM4Npc::getEquippedWeapon(ptr)->mId, ESM::FormId::fromUint32(weaponId));
-    }
-
-    TEST_F(ESM4ContainerTest, ResetAiClearsCreatureMovementState)
-    {
-        MWWorld::ESMStore store;
-        populateCreatureWorldStore(store);
-
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr ptr = findPlacedCreature(*cell);
-        ASSERT_FALSE(ptr.isEmpty());
-
-        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
-        MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
-        ASSERT_TRUE(stats.getAiSequence().isEmpty());
-        MWMechanics::Movement& movement = ptr.getClass().getMovementSettings(ptr);
-        movement.mPosition[1] = 0.75f;
-
-        ASSERT_TRUE(MWClass::resetFnvAiState(ptr));
-        EXPECT_FLOAT_EQ(movement.mPosition[1], 0.f);
-        EXPECT_TRUE(stats.getAiSequence().isEmpty());
-    }
-
-    TEST_F(ESM4ContainerTest, CreatureDeathItemMaterializesOnceAndRoundTripsWithoutDuplication)
-    {
-        MWWorld::ESMStore store;
-        store.overrideRecord(makeLevelledItem(sCreatureDeathItemBase, 0x04,
-            { makeLevelledEntry(1, sSaloonKeyBase, 2) }));
-        populateCreatureWorldStore(store, sCreatureDeathItemBase);
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel sourceModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(sourceModel);
-
-        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
-        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
-        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
-        ASSERT_NE(sourceCell, nullptr);
-        sourceCell->load();
-        MWWorld::Ptr source = findPlacedCreature(*sourceCell);
-        ASSERT_FALSE(source.isEmpty());
-        sourceModel.registerPtr(source);
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 0);
-
-        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
-        ESM::CreatureStats deadState;
-        stats.writeState(deadState);
-        deadState.mDynamic[0].mCurrent = 0.f;
-        deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
-        deadState.mDied = true;
-        stats.readState(deadState);
-
-        Misc::Rng::Generator prng(0x330);
-        EXPECT_TRUE(MWClass::ESM4Creature::materializeFnvDeathItem(source, prng, 1));
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 2);
-        EXPECT_FALSE(MWClass::ESM4Creature::materializeFnvDeathItem(source, prng, 1));
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 2);
-
-        auto stream = writeWorldState(sourceModel);
-        MWWorld::WorldModel restoredModel(store, readers);
-        mEnvironment.setWorldModel(restoredModel);
-        readWorldState(std::move(stream), restoredModel);
-        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sCreatureRef));
-        ASSERT_FALSE(restored.isEmpty());
-        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 2);
-
-        Misc::Rng::Generator reloadPrng(0x331);
-        EXPECT_FALSE(MWClass::ESM4Creature::materializeFnvDeathItem(restored, reloadPrng, 1));
-        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 2);
-    }
-
-    TEST_F(ESM4ContainerTest, DeadCreatureActivatesAsLootContainer)
-    {
-        MWWorld::ESMStore store;
-        populateCreatureWorldStore(store);
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr creature = findPlacedCreature(*cell);
-        ASSERT_FALSE(creature.isEmpty());
-
-        MWMechanics::CreatureStats& stats = creature.getClass().getCreatureStats(creature);
-        ESM::CreatureStats deadState;
-        stats.writeState(deadState);
-        deadState.mDynamic[0].mCurrent = 0.f;
-        deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
-        stats.readState(deadState);
-
-        std::unique_ptr<MWWorld::Action> action = creature.getClass().activate(creature, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(action.get()), nullptr);
     }
 
     TEST_F(ESM4ContainerTest, CreatureStateDropsItemsWhoseContentFileWasRemoved)
@@ -1989,7 +1469,14 @@ namespace
     TEST_F(ESM4ContainerTest, NpcCstaRoundTripFromUnloadedCellsRetainsOuterInventoryHealthDeathAndEmptyAi)
     {
         MWWorld::ESMStore store;
-        populateNpcWorldStore(store);
+        populateNpcWorldStore(store, true);
+        const ESM::FormId scriptedEffectId{ .mIndex = 0x103b30, .mContentFile = 0 };
+        ESM4::Spell scriptedEffect;
+        scriptedEffect.mId = scriptedEffectId;
+        scriptedEffect.mEditorId = "GoodspringsNpcPersistentActorEffect";
+        scriptedEffect.mData.present = true;
+        scriptedEffect.mData.type = ESM4::Spell::Type::Ability;
+        store.overrideRecord(scriptedEffect);
         ESM::ReadersCache readers;
         MWWorld::WorldModel sourceModel(store, readers);
         mEnvironment.setESMStore(store);
@@ -1998,6 +1485,7 @@ namespace
         const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
         const ESM::RefNum npcRef = ESM::FormId::fromUint32(sNpcRef);
         const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
         MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
         ASSERT_NE(sourceCell, nullptr);
         ASSERT_EQ(sourceCell->getState(), MWWorld::CellStore::State_Unloaded);
@@ -2012,11 +1500,18 @@ namespace
 
         MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
         ASSERT_TRUE(stats.getAiSequence().isEmpty());
+        const ESM::FormId lookTarget = ESM::FormId::fromUint32(sCreatureRef);
+        ASSERT_TRUE(stats.setFalloutRuntimeFlag(0x3f, true));
+        ASSERT_TRUE(stats.setFalloutLookTarget(lookTarget, true));
+        ASSERT_TRUE(MWClass::ESM4Npc::equipFalloutItem(source, weaponId));
+        ASSERT_TRUE(stats.setFalloutActorEffect(scriptedEffectId, true));
+        ASSERT_TRUE(stats.setFalloutFullName("Dog"));
+        ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
+        ASSERT_EQ(stats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
         ESM::CreatureStats deadState;
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
         deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
         deadState.mDied = true;
         stats.readState(deadState);
 
@@ -2046,9 +1541,20 @@ namespace
         const MWMechanics::CreatureStats& restoredStats = restored.getClass().getCreatureStats(restored);
         EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
         EXPECT_TRUE(restoredStats.isDead());
-        EXPECT_TRUE(restoredStats.isDeathAnimationFinished());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_TRUE(restoredStats.getAiSequence().isEmpty());
+        EXPECT_EQ(restoredStats.getFalloutRuntimeFlags(), 0x3fu);
+        EXPECT_EQ(restoredStats.getFalloutLookTarget(), lookTarget);
+        EXPECT_TRUE(restoredStats.getFalloutLookRotateBody());
+        EXPECT_TRUE(restoredStats.hasFalloutEquipmentOverride());
+        EXPECT_EQ(restoredStats.getFalloutEquippedItems(), std::vector<ESM::FormId>{ weaponId });
+        EXPECT_TRUE(restoredStats.hasFalloutActorEffectOverride());
+        EXPECT_EQ(restoredStats.getFalloutActorEffects(), std::vector<ESM::FormId>{ scriptedEffectId });
+        EXPECT_EQ(restoredStats.getFalloutFullName(), std::optional<std::string>("Dog"));
+        EXPECT_EQ(restored.getClass().getName(restored), "Dog");
+        const ESM4::Weapon* restoredWeapon = MWClass::ESM4Npc::getEquippedWeapon(restored);
+        ASSERT_NE(restoredWeapon, nullptr);
+        EXPECT_EQ(restoredWeapon->mId, weaponId);
         EXPECT_EQ(restored.getCellRef().getCount(false), 2);
         EXPECT_FLOAT_EQ(restored.getCellRef().getScale(), 1.25f);
         EXPECT_EQ(restored.getCellRef().getPosition(), savedPosition);
@@ -2057,59 +1563,10 @@ namespace
         EXPECT_EQ(restored.getCellRef().getRefNum(), npcRef);
     }
 
-    TEST_F(ESM4ContainerTest, NpcDeathItemMaterializesOnceAndRoundTripsWithoutDuplication)
+    TEST_F(ESM4ContainerTest, ResetInventoryRestoresAuthoredNpcStacksAndEquipmentWithoutResettingActorState)
     {
         MWWorld::ESMStore store;
-        store.overrideRecord(
-            makeLevelledItem(sNpcDeathItemBase, 0x04, { makeLevelledEntry(1, sSaloonKeyBase, 3) }));
-        populateNpcWorldStore(store, sNpcDeathItemBase);
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel sourceModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(sourceModel);
-
-        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
-        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
-        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
-        ASSERT_NE(sourceCell, nullptr);
-        sourceCell->load();
-        MWWorld::Ptr source = findPlacedNpc(*sourceCell);
-        ASSERT_FALSE(source.isEmpty());
-        sourceModel.registerPtr(source);
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 0);
-
-        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
-        ESM::CreatureStats deadState;
-        stats.writeState(deadState);
-        deadState.mDynamic[0].mCurrent = 0.f;
-        deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
-        deadState.mDied = true;
-        stats.readState(deadState);
-
-        Misc::Rng::Generator prng(0x332);
-        EXPECT_TRUE(MWClass::ESM4Npc::materializeFnvDeathItem(source, prng, 1));
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 3);
-        EXPECT_FALSE(MWClass::ESM4Npc::materializeFnvDeathItem(source, prng, 1));
-        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 3);
-
-        auto stream = writeWorldState(sourceModel);
-        MWWorld::WorldModel restoredModel(store, readers);
-        mEnvironment.setWorldModel(restoredModel);
-        readWorldState(std::move(stream), restoredModel);
-        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sNpcRef));
-        ASSERT_FALSE(restored.isEmpty());
-        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 3);
-
-        Misc::Rng::Generator reloadPrng(0x333);
-        EXPECT_FALSE(MWClass::ESM4Npc::materializeFnvDeathItem(restored, reloadPrng, 1));
-        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 3);
-    }
-
-    TEST_F(ESM4ContainerTest, CreatureActivationTalksWhileAliveRejectsKnockdownAndOpensLootWhenDead)
-    {
-        MWWorld::ESMStore store;
-        populateCreatureWorldStore(store);
+        populateNpcWorldStore(store, true);
         ESM::ReadersCache readers;
         MWWorld::WorldModel worldModel(store, readers);
         mEnvironment.setESMStore(store);
@@ -2119,33 +1576,37 @@ namespace
             = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
         ASSERT_NE(cell, nullptr);
         cell->load();
-        MWWorld::Ptr creature = findPlacedCreature(*cell);
-        ASSERT_FALSE(creature.isEmpty());
+        MWWorld::Ptr actor = findPlacedNpc(*cell);
+        ASSERT_FALSE(actor.isEmpty());
+        worldModel.registerPtr(actor);
 
-        std::unique_ptr<MWWorld::Action> talk = creature.getClass().activate(creature, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionTalk*>(talk.get()), nullptr);
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
+        MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+        ASSERT_EQ(inventory.count(bottleId), 6);
+        ASSERT_EQ(inventory.remove(bottleId, 5, false, false), 5);
+        ASSERT_TRUE(MWClass::ESM4Npc::unequipFalloutItem(actor, weaponId));
+        MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+        auto health = stats.getHealth();
+        health.setCurrent(37.f);
+        stats.setHealth(health);
+        ASSERT_TRUE(stats.setFalloutFullName("Persistent Name"));
+        ASSERT_TRUE(stats.hasFalloutEquipmentOverride());
 
-        MWMechanics::CreatureStats& stats = creature.getClass().getCreatureStats(creature);
-        stats.setKnockedDown(true);
-        std::unique_ptr<MWWorld::Action> unavailable = creature.getClass().activate(creature, {});
-        EXPECT_NE(dynamic_cast<MWWorld::FailedAction*>(unavailable.get()), nullptr);
-        stats.setKnockedDown(false);
-
-        ESM::CreatureStats deadState;
-        stats.writeState(deadState);
-        deadState.mDynamic[0].mCurrent = 0.f;
-        deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
-        stats.readState(deadState);
-
-        std::unique_ptr<MWWorld::Action> loot = creature.getClass().activate(creature, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(loot.get()), nullptr);
+        ASSERT_TRUE(MWClass::ESM4Npc::resetFalloutInventory(actor));
+        EXPECT_EQ(actor.getClass().getContainerStore(actor).count(bottleId), 6);
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actor);
+        ASSERT_NE(weapon, nullptr);
+        EXPECT_EQ(weapon->mId, weaponId);
+        EXPECT_FALSE(stats.hasFalloutEquipmentOverride());
+        EXPECT_FLOAT_EQ(stats.getHealth().getCurrent(), 37.f);
+        EXPECT_EQ(actor.getClass().getName(actor), "Persistent Name");
     }
 
-    TEST_F(ESM4ContainerTest, NpcActivationTalksWhileAliveAndOpensLootWhenDead)
+    TEST_F(ESM4ContainerTest, FalloutVisualEquipmentOverrideCanUsePlayerInventoryOwnedOutsideProxy)
     {
         MWWorld::ESMStore store;
-        populateNpcWorldStore(store);
+        populateNpcWorldStore(store, true, false);
         ESM::ReadersCache readers;
         MWWorld::WorldModel worldModel(store, readers);
         mEnvironment.setESMStore(store);
@@ -2155,22 +1616,16 @@ namespace
             = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
         ASSERT_NE(cell, nullptr);
         cell->load();
-        MWWorld::Ptr npc = findPlacedNpc(*cell);
-        ASSERT_FALSE(npc.isEmpty());
-
-        std::unique_ptr<MWWorld::Action> talk = npc.getClass().activate(npc, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionTalk*>(talk.get()), nullptr);
-
-        MWMechanics::CreatureStats& stats = npc.getClass().getCreatureStats(npc);
-        ESM::CreatureStats deadState;
-        stats.writeState(deadState);
-        deadState.mDynamic[0].mCurrent = 0.f;
-        deadState.mDead = true;
-        deadState.mDeathAnimationFinished = true;
-        stats.readState(deadState);
-
-        std::unique_ptr<MWWorld::Action> loot = npc.getClass().activate(npc, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(loot.get()), nullptr);
+        MWWorld::Ptr proxy = findPlacedNpc(*cell);
+        ASSERT_FALSE(proxy.isEmpty());
+        const ESM::FormId weaponId = ESM::FormId::fromUint32(sNpcWeaponBase);
+        EXPECT_EQ(proxy.getClass().getContainerStore(proxy).count(ESM::RefId(weaponId)), 0);
+        EXPECT_FALSE(MWClass::ESM4Npc::equipFalloutItem(proxy, weaponId));
+        ASSERT_TRUE(MWClass::ESM4Npc::applyFalloutEquipmentOverride(
+            proxy, std::vector<ESM::FormId>{ weaponId }, false));
+        const ESM4::Weapon* equipped = MWClass::ESM4Npc::getEquippedWeapon(proxy);
+        ASSERT_NE(equipped, nullptr);
+        EXPECT_EQ(equipped->mId, weaponId);
     }
 
     TEST_F(ESM4ContainerTest, NpcStateDropsItemsWhoseContentFileWasRemoved)
@@ -2788,159 +2243,6 @@ namespace
         EXPECT_EQ(restoredStore.count(bottleId), 4);
         EXPECT_EQ(&restored.getClass().getContainerStore(restored), &restoredStore);
         EXPECT_EQ(restoredStore.count(bottleId), 4);
-    }
-
-    TEST_F(ESM4ContainerTest, FlatFalloutBarterFiltersCapsAndAcceptsSupportedInventory)
-    {
-        ESM4::MiscItem caps{};
-        caps.mId = ESM::FormId::fromUint32(sCapsBase);
-        caps.mEditorId = "Caps001";
-        caps.mFullName = "Bottle Cap";
-        mStore.overrideRecord(caps);
-
-        ESM4::Npc merchant = makeNpc();
-        ESM4::ActorCharacter merchantReference = makePlacedNpc();
-        MWWorld::LiveCellRef<ESM4::Npc> merchantRef(merchantReference, &merchant);
-        MWWorld::Ptr merchantPtr(&merchantRef);
-        ASSERT_TRUE(MWGui::isFlatFalloutMerchant(merchantPtr));
-
-        const ESM::RefId capsId(ESM::FormId::fromUint32(sCapsBase));
-        EXPECT_EQ(MWGui::findFlatFalloutCurrency(mStore), capsId);
-
-        ESM4::Container inventory{};
-        inventory.mId = ESM::FormId::fromUint32(sBarterPocketBase);
-        inventory.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 40 });
-        inventory.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 2 });
-        ESM4::Reference inventoryReference{};
-        inventoryReference.mId = ESM::FormId::fromUint32(sBarterPocketRef);
-        inventoryReference.mBaseObj = inventory.mId;
-        inventoryReference.mCount = 1;
-        MWWorld::LiveCellRef<ESM4::Container> inventoryRef(inventoryReference, &inventory);
-        MWWorld::Ptr inventoryPtr(&inventoryRef);
-
-        auto sourceModel = std::make_unique<BarterTestItemModel>(std::vector<MWWorld::Ptr>{ inventoryPtr });
-        MWGui::TradeItemModel model(std::move(sourceModel), merchantPtr, capsId);
-        model.update();
-        ASSERT_EQ(model.getItemCount(), 1u);
-        EXPECT_EQ(model.getItem(0).mBase.getCellRef().getRefId(),
-            ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase)));
-        EXPECT_TRUE(MWGui::isItemAcceptedForBarter(model.getItem(0).mBase, merchantPtr, 0));
-
-        ESM4::Static marker{};
-        marker.mId = ESM::FormId::fromUint32(0x01103b33);
-        ESM4::Reference markerReference{};
-        markerReference.mId = ESM::FormId::fromUint32(0x01108749);
-        markerReference.mBaseObj = marker.mId;
-        markerReference.mCount = 1;
-        MWWorld::LiveCellRef<ESM4::Static> markerRef(markerReference, &marker);
-        EXPECT_FALSE(MWGui::isItemAcceptedForBarter(MWWorld::Ptr(&markerRef), merchantPtr, 0));
-    }
-
-    TEST_F(ESM4ContainerTest, FlatFalloutBarterAcceptCancelAndCapsPreflightStayCoherent)
-    {
-        ESM4::MiscItem caps{};
-        caps.mId = ESM::FormId::fromUint32(sCapsBase);
-        caps.mEditorId = "Caps001";
-        caps.mFullName = "Bottle Cap";
-        mStore.overrideRecord(caps);
-
-        ESM4::Npc merchant = makeNpc();
-        ESM4::ActorCharacter merchantReference = makePlacedNpc();
-        MWWorld::LiveCellRef<ESM4::Npc> merchantRef(merchantReference, &merchant);
-        MWWorld::Ptr merchantPtr(&merchantRef);
-
-        ESM4::Container pocket{};
-        pocket.mId = ESM::FormId::fromUint32(sBarterPocketBase);
-        pocket.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 10 });
-        pocket.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 2 });
-        ESM4::Reference pocketReference{};
-        pocketReference.mId = ESM::FormId::fromUint32(sBarterPocketRef);
-        pocketReference.mBaseObj = pocket.mId;
-        pocketReference.mCount = 1;
-        MWWorld::LiveCellRef<ESM4::Container> pocketRef(pocketReference, &pocket);
-        MWWorld::Ptr pocketPtr(&pocketRef);
-
-        ESM4::Container chest{};
-        chest.mId = ESM::FormId::fromUint32(sBarterChestBase);
-        chest.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 40 });
-        ESM4::Reference chestReference{};
-        chestReference.mId = ESM::FormId::fromUint32(sBarterChestRef);
-        chestReference.mBaseObj = chest.mId;
-        chestReference.mCount = 1;
-        MWWorld::LiveCellRef<ESM4::Container> chestRef(chestReference, &chest);
-        MWWorld::Ptr chestPtr(&chestRef);
-
-        ESM4::Container player{};
-        player.mId = ESM::FormId::fromUint32(sBarterPlayerBase);
-        player.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 100 });
-        player.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 1 });
-        ESM4::Reference playerReference{};
-        playerReference.mId = ESM::FormId::fromUint32(sBarterPlayerRef);
-        playerReference.mBaseObj = player.mId;
-        playerReference.mCount = 1;
-        MWWorld::LiveCellRef<ESM4::Container> playerRef(playerReference, &player);
-        MWWorld::Ptr playerPtr(&playerRef);
-
-        const ESM::RefId capsId(ESM::FormId::fromUint32(sCapsBase));
-        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
-        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
-        const std::vector<MWWorld::Ptr> merchantSources{ pocketPtr, chestPtr };
-        const std::vector<MWWorld::Ptr> playerSources{ playerPtr };
-
-        auto merchantSource = std::make_unique<BarterTestItemModel>(merchantSources);
-        BarterTestItemModel* merchantInventory = merchantSource.get();
-        MWGui::TradeItemModel merchantModel(std::move(merchantSource), merchantPtr, capsId);
-        auto playerSource = std::make_unique<BarterTestItemModel>(playerSources);
-        BarterTestItemModel* playerInventory = playerSource.get();
-        MWGui::TradeItemModel playerModel(std::move(playerSource), merchantPtr, capsId);
-        const auto update = [&] {
-            merchantModel.update();
-            playerModel.update();
-        };
-        const auto find = [](MWGui::TradeItemModel& model, const ESM::RefId& id) {
-            for (std::size_t index = 0; index < model.getItemCount(); ++index)
-            {
-                if (model.getItem(static_cast<int>(index)).mBase.getCellRef().getRefId() == id)
-                    return static_cast<int>(index);
-            }
-            return -1;
-        };
-
-        update();
-        const int merchantBottle = find(merchantModel, bottleId);
-        const int playerKey = find(playerModel, keyId);
-        ASSERT_GE(merchantBottle, 0);
-        ASSERT_GE(playerKey, 0);
-        EXPECT_EQ(find(merchantModel, capsId), -1);
-        EXPECT_EQ(find(playerModel, capsId), -1);
-
-        playerModel.borrowItemToUs(merchantBottle, &merchantModel, 1);
-        merchantModel.borrowItemFromUs(merchantBottle, 1);
-        merchantModel.borrowItemToUs(playerKey, &playerModel, 1);
-        playerModel.borrowItemFromUs(playerKey, 1);
-        playerModel.abort();
-        merchantModel.abort();
-        EXPECT_EQ(pocketPtr.getClass().getContainerStore(pocketPtr).count(bottleId), 2);
-        EXPECT_EQ(playerPtr.getClass().getContainerStore(playerPtr).count(keyId), 1);
-
-        update();
-        playerModel.borrowItemToUs(find(merchantModel, bottleId), &merchantModel, 1);
-        merchantModel.borrowItemFromUs(find(merchantModel, bottleId), 1);
-        merchantModel.borrowItemToUs(find(playerModel, keyId), &playerModel, 1);
-        playerModel.borrowItemFromUs(find(playerModel, keyId), 1);
-        merchantModel.transferItems();
-        playerModel.transferItems();
-        EXPECT_EQ(merchantInventory->count(bottleId), 1);
-        EXPECT_EQ(playerInventory->count(bottleId), 1);
-        EXPECT_EQ(merchantInventory->count(keyId), 1);
-        EXPECT_EQ(playerInventory->count(keyId), 0);
-
-        EXPECT_EQ(MWGui::countBarterCurrency(merchantSources, capsId), 50);
-        EXPECT_EQ(MWGui::countBarterCurrency(playerSources, capsId), 100);
-        EXPECT_TRUE(MWGui::transferBarterCurrency(merchantSources, playerSources, capsId, 0));
-        EXPECT_FALSE(MWGui::transferBarterCurrency(merchantSources, playerSources, capsId, 51));
-        EXPECT_EQ(MWGui::countBarterCurrency(merchantSources, capsId), 50);
-        EXPECT_EQ(MWGui::countBarterCurrency(playerSources, capsId), 100);
     }
 
     TEST_F(ESM4ContainerTest, ESM3CellRefStateStillReplacesAllMutableFields)

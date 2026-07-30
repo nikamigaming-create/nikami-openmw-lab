@@ -58,16 +58,16 @@ namespace ESM4
             return header + ": code " + std::to_string(errorCode) + ", " + std::string(msg != nullptr ? msg : "(null)");
         }
 
-        std::u8string_view getStringsSuffix(LocalizedStringType type)
+        std::string_view getStringsSuffix(LocalizedStringType type)
         {
             switch (type)
             {
                 case LocalizedStringType::Strings:
-                    return u8".STRINGS";
+                    return ".STRINGS";
                 case LocalizedStringType::ILStrings:
-                    return u8".ILSTRINGS";
+                    return ".ILSTRINGS";
                 case LocalizedStringType::DLStrings:
-                    return u8".DLSTRINGS";
+                    return ".DLSTRINGS";
             }
 
             throw std::logic_error("Unsupported LocalizedStringType: " + std::to_string(static_cast<int>(type)));
@@ -165,12 +165,6 @@ namespace ESM4
             if (value == nullptr || *value == '\0')
                 return 200;
             return std::atoi(value);
-        }
-
-        bool fallout76UnknownSubrecordToleranceEnabled()
-        {
-            const char* value = std::getenv("OPENMW_FO76_ESM4_TOLERANT");
-            return value != nullptr && value[0] == '1';
         }
     }
 
@@ -319,29 +313,35 @@ namespace ESM4
         if ((mHeader.mFlags & Rec_ESM) == 0 || (mHeader.mFlags & Rec_Localized) == 0)
             return;
 
-        const std::u8string prefix = mCtx.filename.stem().filename().u8string();
+        const std::string prefix = Files::pathToUnicodeString(mCtx.filename.stem().filename());
 
         buildLStringIndex(LocalizedStringType::Strings, prefix);
         buildLStringIndex(LocalizedStringType::ILStrings, prefix);
         buildLStringIndex(LocalizedStringType::DLStrings, prefix);
     }
 
-    void Reader::buildLStringIndex(LocalizedStringType stringType, const std::u8string& prefix)
+    void Reader::buildLStringIndex(LocalizedStringType stringType, std::string_view prefix)
     {
-        static const std::filesystem::path strings("Strings");
-        const std::u8string language(u8"_En");
-        const std::u8string altLanguage(u8"_English");
-        const std::u8string suffix(getStringsSuffix(stringType));
-        std::filesystem::path path = strings / (prefix + language + suffix);
+        const std::string_view suffix = getStringsSuffix(stringType);
+        constexpr std::string_view language("_En");
+        constexpr std::string_view altLanguage("_English");
         if (mVFS != nullptr)
         {
-            VFS::Path::Normalized vfsPath(Files::pathToUnicodeString(path));
+            constexpr VFS::Path::NormalizedView strings("strings");
+            std::string fileName(prefix);
+            fileName += language;
+            fileName += suffix;
+            VFS::Path::Normalized vfsPath(strings);
+            vfsPath /= fileName;
             Files::IStreamPtr stream = mVFS->find(vfsPath);
 
             if (stream == nullptr)
             {
-                path = strings / (prefix + altLanguage + suffix);
-                vfsPath = VFS::Path::Normalized(Files::pathToUnicodeString(path));
+                fileName = prefix;
+                fileName += altLanguage;
+                fileName += suffix;
+                vfsPath = strings;
+                vfsPath /= fileName;
                 stream = mVFS->find(vfsPath);
             }
 
@@ -352,28 +352,33 @@ namespace ESM4
             }
 
             if (mIgnoreMissingLocalizedStrings)
-            {
                 Log(Debug::Warning) << "Ignore missing VFS strings file: " << vfsPath;
+        }
+        else
+        {
+            static const std::filesystem::path strings("Strings");
+            std::string fileName(prefix);
+            fileName += language;
+            fileName += suffix;
+            std::filesystem::path fsPath = mCtx.filename.parent_path() / strings / fileName;
+            if (!std::filesystem::exists(fsPath))
+            {
+                fileName = prefix;
+                fileName += altLanguage;
+                fileName += suffix;
+                fsPath = mCtx.filename.parent_path() / strings / fileName;
+            }
+
+            if (std::filesystem::exists(fsPath))
+            {
+                const Files::IStreamPtr stream = Files::openConstrainedFileStream(fsPath);
+                buildLStringIndex(stringType, *stream);
                 return;
             }
-        }
 
-        std::filesystem::path fsPath = mCtx.filename.parent_path() / path;
-        if (!std::filesystem::exists(fsPath))
-        {
-            path = strings / (prefix + altLanguage + suffix);
-            fsPath = mCtx.filename.parent_path() / path;
+            if (mIgnoreMissingLocalizedStrings)
+                Log(Debug::Warning) << "Ignore missing strings file: " << fsPath;
         }
-
-        if (std::filesystem::exists(fsPath))
-        {
-            const Files::IStreamPtr stream = Files::openConstrainedFileStream(fsPath);
-            buildLStringIndex(stringType, *stream);
-            return;
-        }
-
-        if (mIgnoreMissingLocalizedStrings)
-            Log(Debug::Warning) << "Ignore missing strings file: " << fsPath;
     }
 
     void Reader::buildLStringIndex(LocalizedStringType stringType, std::istream& stream)
@@ -641,19 +646,14 @@ namespace ESM4
 
     bool Reader::skipUnknownStarfieldSubRecordData(std::string_view owner)
     {
-        const bool isStarfield = esmVersionF() >= 0.959f && esmVersionF() <= 0.961f;
-        // FO76 uses a 266.0 HEDR version. Keep its tolerant path opt-in so
-        // normal FO76 loading remains strict outside the asset-viewer probe.
-        const bool isFallout76 = esmVersionF() == 266.f && fallout76UnknownSubrecordToleranceEnabled();
-        if (!isStarfield && !isFallout76)
+        if (esmVersionF() < 0.959f || esmVersionF() > 0.961f)
             return false;
 
         static int skipped = 0;
         const int logLimit = starfieldUnknownSkipLogLimit();
-        const char* game = isFallout76 ? "FO76" : "Starfield";
         if (logLimit < 0 || skipped < logLimit)
         {
-            Log(Debug::Warning) << "ESM4 " << game << " tolerant skip: owner=" << owner
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: owner=" << owner
                                 << " record=" << ESM::printName(mCtx.recordHeader.record.typeId)
                                 << " id=" << mCtx.recordHeader.record.getFormId().toString()
                                 << " subrecord=" << ESM::printName(mCtx.subRecordHeader.typeId)
@@ -661,7 +661,7 @@ namespace ESM4
         }
         else if (skipped == logLimit)
         {
-            Log(Debug::Warning) << "ESM4 " << game << " tolerant skip: further unknown subrecord logs suppressed; set "
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: further unknown subrecord logs suppressed; set "
                                    "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
         }
         ++skipped;
@@ -986,7 +986,7 @@ namespace ESM4
     std::string printLabel(const GroupLabel& label, const std::uint32_t type)
     {
         std::ostringstream ss;
-        ss << sGroupType[std::min<std::size_t>(type, std::size(sGroupType))]; // avoid out of range
+        ss << sGroupType[std::min<std::size_t>(type, std::size(sGroupType) - 1)]; // avoid out of range
 
         switch (type)
         {

@@ -195,32 +195,6 @@ namespace
         EXPECT_EQ(value["right"].get<sol::table>()["left"].get<sol::table>()["value"].get<int>(), 2);
     }
 
-    TEST_F(ObScriptParserTest, XnvseDeclarationsAssignmentsAndIndexing)
-    {
-        sol::table ast = parse(
-            "scn JAM\n"
-            "array_var values\n"
-            "string_var label\n"
-            "reference target\n"
-            "begin GameMode\n"
-            "let values[0x2] := 0b101\n"
-            "label += $values[2]\n"
-            "end\n");
-        sol::table variables = ast["variables"];
-        ASSERT_EQ(variables.size(), 3);
-        EXPECT_EQ(variables[1].get<sol::table>()["type"].get<std::string>(), "array_var");
-        EXPECT_EQ(variables[2].get<sol::table>()["type"].get<std::string>(), "string_var");
-        EXPECT_EQ(variables[3].get<sol::table>()["type"].get<std::string>(), "ref");
-
-        sol::table body = ast["blocks"].get<sol::table>()[1].get<sol::table>()["body"];
-        sol::table first = body[1];
-        EXPECT_EQ(first["kind"].get<std::string>(), "ExprStatement");
-        sol::table assignment = first["expr"];
-        EXPECT_EQ(assignment["kind"].get<std::string>(), "AssignExpr");
-        EXPECT_EQ(assignment["target"].get<sol::table>()["kind"].get<std::string>(), "Index");
-        EXPECT_EQ(assignment["value"].get<sol::table>()["value"].get<int>(), 5);
-    }
-
     TEST_F(ObScriptParserTest, ErrorHandling)
     {
         const VFS::Path::Normalized path(driverPath);

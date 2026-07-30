@@ -20,9 +20,6 @@
 #include <components/files/configurationmanager.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/conversion.hpp>
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-//## VR_PATCH END
 
 namespace Settings
 {
@@ -96,8 +93,6 @@ namespace Settings
         {
             switch (value)
             {
-                case SceneUtil::LightingMethod::FFP:
-                    return "legacy";
                 case SceneUtil::LightingMethod::PerObjectUniform:
                     return "shaders compatibility";
                 case SceneUtil::LightingMethod::SingleUBO:
@@ -126,9 +121,6 @@ namespace Settings
 
     CategorySettingValueMap Manager::mDefaultSettings = CategorySettingValueMap();
     CategorySettingValueMap Manager::mUserSettings = CategorySettingValueMap();
-//## VR_PATCH BEGIN
-    CategorySettingValueMap Manager::mSettingsOverrides = CategorySettingValueMap();
-//## VR_PATCH END
     CategorySettingVector Manager::mChangedSettings = CategorySettingVector();
     std::set<std::pair<std::string_view, std::string_view>> Manager::sInitialized;
 
@@ -139,9 +131,6 @@ namespace Settings
         mDefaultSettings.clear();
         mUserSettings.clear();
         mChangedSettings.clear();
-//## VR_PATCH BEGIN
-        mSettingsOverrides.clear();
-//## VR_PATCH END
     }
 
     std::filesystem::path Manager::load(const Files::ConfigurationManager& cfgMgr, bool loadEditorSettings)
@@ -194,20 +183,18 @@ namespace Settings
         if (std::filesystem::exists(settingspath))
             parser.loadSettingsFile(settingspath, mUserSettings, false, false);
 
-//## VR_PATCH BEGIN
-        if (VR::getVR())
-        {
-            auto overridesFile = paths.front() / "overrides.bin";
-            if (std::filesystem::exists(overridesFile))
-                parser.loadSettingsFile(overridesFile, mSettingsOverrides, true, false);
-            else
-                throw std::runtime_error(
-                    "No settings overrides file found! Make sure the file \"overrides.bin\" was properly installed.");
-        }
-
-//## VR_PATCH END
         if (!loadEditorSettings)
+        {
             Settings::StaticValues::init();
+
+            // These compatibility settings are intentionally queried through
+            // Manager rather than a static category because they map authored
+            // Fallout data to engine-owned semantics.  Register both defaults
+            // during startup so Settings::Manager validates the complete
+            // defaults file before any loading-screen code reads them.
+            static_cast<void>(get<std::string>("script command mappings", "OpenNV Compatibility"));
+            static_cast<void>(get<bool>("defer loading input update", "OpenNV Compatibility"));
+        }
 
         for (const auto& [key, value] : originalDefaultSettings)
             if (!sInitialized.contains(key))
@@ -225,13 +212,7 @@ namespace Settings
     const std::string& Manager::getString(std::string_view setting, std::string_view category)
     {
         const auto key = std::make_pair(category, setting);
-//## VR_PATCH BEGIN
-        CategorySettingValueMap::iterator it = mSettingsOverrides.find(key);
-        if (it != mSettingsOverrides.end())
-            return it->second;
-
-        it = mUserSettings.find(key);
-//## VR_PATCH END
+        CategorySettingValueMap::iterator it = mUserSettings.find(key);
         if (it != mUserSettings.end())
             return it->second;
 
@@ -576,8 +557,6 @@ namespace Settings
 
     SceneUtil::LightingMethod parseLightingMethod(std::string_view value)
     {
-        if (value == "legacy")
-            return SceneUtil::LightingMethod::FFP;
         if (value == "shaders compatibility")
             return SceneUtil::LightingMethod::PerObjectUniform;
         if (value == "shaders")

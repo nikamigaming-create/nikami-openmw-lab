@@ -189,16 +189,7 @@ void ESM4::LevelledItem::load(ESM4::Reader& reader)
                 }
                 else if (subHdr.dataSize != sizeof(lvlo))
                 {
-                    if (subHdr.dataSize == 4)
-                    {
-                        // FO76 form-version 174+ stores only the referenced
-                        // item/list in LVLO. Its omitted level/count fields
-                        // are neutral for the asset viewer.
-                        reader.get(lvlo.item);
-                        lvlo.level = 1;
-                        lvlo.count = 1;
-                    }
-                    else if (subHdr.dataSize == 8)
+                    if (subHdr.dataSize == 8)
                     {
                         reader.get(lvlo.level);
                         reader.get(lvlo.item);

@@ -40,7 +40,6 @@ namespace MWGui
         void onClose() override;
 
         void activateQuickKey(int index);
-        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item);
         void updateActivatedQuickKey();
 
         void write(ESM::ESMWriter& writer);
@@ -49,9 +48,7 @@ namespace MWGui
 
         std::string_view getWindowIdForLua() const override { return "QuickKeys"; }
 
-//## VR_PATCH BEGIN
-// Public keyData
-// QuickKeysMenu destructor
+    private:
         struct keyData
         {
             int index = -1;
@@ -60,10 +57,7 @@ namespace MWGui
             ESM::RefId id;
             std::string name;
         };
-        const keyData* keyAt(int index) const;
-        ~QuickKeysMenu();
-//## VR_PATCH END
-    private:
+
         std::vector<keyData> mKey;
         std::vector<MWWorld::ManualRef> mTemp;
         keyData* mSelected;
@@ -102,7 +96,7 @@ namespace MWGui
         QuickKeysMenu* mParent;
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
-        int mControllerFocus = 0;
+        size_t mControllerFocus = 0;
     };
 
     class MagicSelectionDialog : public WindowModal
@@ -112,6 +106,8 @@ namespace MWGui
 
         void onOpen() override;
         bool exit() override;
+
+        void setActiveControllerWindow(bool active) override;
 
     private:
         MyGUI::Button* mCancelButton;
@@ -123,7 +119,6 @@ namespace MWGui
         void onModelIndexSelected(SpellModel::ModelIndex index);
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
-        int mControllerFocus = 0;
     };
 }
 

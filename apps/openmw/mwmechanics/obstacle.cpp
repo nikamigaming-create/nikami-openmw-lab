@@ -5,6 +5,7 @@
 
 #include <components/detournavigator/agentbounds.hpp>
 #include <components/esm3/loaddoor.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -55,7 +56,11 @@ namespace MWMechanics
 
         GetNearbyDoorVisitor(const MWWorld::Ptr& actor, const float minDist)
             : mPos(actor.getRefData().getPosition().asVec3())
-            , mDir(actor.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0, 1, 0))
+            // Actor scene nodes may carry a format-specific model-axis
+            // correction. Door search is gameplay logic, so derive its
+            // direction from the authored reference heading instead.
+            , mDir(osg::Quat(actor.getRefData().getPosition().rot[2], -osg::Z_AXIS)
+                    * osg::Vec3f(0, 1, 0))
             , mMinDist(minDist)
         {
             mPos.z() = 0;
@@ -64,18 +69,18 @@ namespace MWMechanics
 
         bool operator()(const MWWorld::Ptr& ptr)
         {
-            MWWorld::LiveCellRef<ESM::Door>& ref = *static_cast<MWWorld::LiveCellRef<ESM::Door>*>(ptr.getBase());
-            if (!ptr.getRefData().isEnabled() || ref.isDeleted())
+            if (!ptr.getRefData().isEnabled() || ptr.mRef->isDeleted())
                 return true;
 
             if (ptr.getClass().getDoorState(ptr) != MWWorld::DoorState::Idle)
                 return true;
 
-            const float doorRot = ref.mData.getPosition().rot[2] - ptr.getCellRef().getPosition().rot[2];
+            const float doorRot
+                = ptr.getRefData().getPosition().rot[2] - ptr.getCellRef().getPosition().rot[2];
             if (doorRot != 0)
                 return true;
 
-            osg::Vec3f doorPos(ref.mData.getPosition().asVec3());
+            osg::Vec3f doorPos(ptr.getRefData().getPosition().asVec3());
             doorPos.z() = 0;
 
             osg::Vec3f actorToDoor = doorPos - mPos;
@@ -103,6 +108,8 @@ namespace MWMechanics
     {
         GetNearbyDoorVisitor visitor(actor, minDist);
         actor.getCell()->forEachType<ESM::Door>(visitor);
+        if (visitor.mResult.isEmpty())
+            actor.getCell()->forEachType<ESM4::Door>(visitor);
         return visitor.mResult;
     }
 

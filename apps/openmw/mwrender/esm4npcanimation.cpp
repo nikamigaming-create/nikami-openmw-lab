@@ -10,7 +10,6 @@
 #include <components/esm4/loadhair.hpp>
 #include <components/esm4/loadhdpt.hpp>
 #include <components/esm4/loadidle.hpp>
-#include <components/esm4/script.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
@@ -22,11 +21,12 @@
 #include <components/esm4/loadweap.hpp>
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <set>
-#include <stdexcept>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -54,6 +54,7 @@
 #include <osg/FrontFace>
 #include <osg/Geode>
 #include <osg/Geometry>
+#include <osg/LightModel>
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/NodeCallback>
@@ -79,15 +80,12 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwclass/esm4npc.hpp"
-#include "../mwdialogue/esm4dialogueutils.hpp"
 #include "../mwclass/fnvsandbox.hpp"
 #include "../mwworld/cell.hpp"
+#include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/timestamp.hpp"
 #include "falloutweaponanimation.hpp"
-#include "fonvpackageanimation.hpp"
-#include "npcanimation.hpp"
-#include "playervisualpolicy.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
@@ -95,58 +93,26 @@ namespace MWRender
 {
     namespace
     {
-        class FirstPersonArmorArmsOnlyVisitor final : public osg::NodeVisitor
-        {
-        public:
-            FirstPersonArmorArmsOnlyVisitor()
-                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-            {
-            }
-
-            void apply(osg::Geode& geode) override
-            {
-                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
-                {
-                    osg::Drawable* drawable = geode.getDrawable(i);
-                    if (drawable != nullptr)
-                        filter(*drawable);
-                }
-                traverse(geode);
-            }
-
-            void apply(osg::Drawable& drawable) override { filter(drawable); }
-
-            std::size_t mKept = 0;
-            std::size_t mHidden = 0;
-
-        private:
-            void filter(osg::Drawable& drawable)
-            {
-                if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) == nullptr)
-                    return;
-
-                const std::string name = Misc::StringUtils::lowerCase(drawable.getName());
-                const bool keep = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
-                if (keep)
-                    ++mKept;
-                else
-                {
-                    drawable.setNodeMask(0u);
-                    ++mHidden;
-                }
-            }
-        };
-
         bool worldViewerEnvEnabled(const char* name)
         {
             const char* value = std::getenv(name);
             return value != nullptr && *value != '\0' && value[0] != '0';
         }
 
+        bool esm4MaterialTelemetryEnabled()
+        {
+            // This is a diagnostic-only switch intended for normal playable
+            // Fallout sessions. It deliberately does not share the proof or
+            // world-viewer prefixes, which launchers clear before a player
+            // starts a regular game.
+            return worldViewerEnvEnabled("OPENMW_ESM4_MATERIAL_TELEMETRY");
+        }
+
         bool worldViewerActorTelemetryEnabled()
         {
             return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
-                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY")
+                || esm4MaterialTelemetryEnabled();
         }
 
         bool worldViewerSkipMissingActorParts()
@@ -636,6 +602,166 @@ namespace MWRender
             logWorldViewerActorLedger(ptr, "fullbright-actor-material", details.str());
         }
 
+        struct SkyrimAuthoredPose
+        {
+            osg::Vec3f mTranslation;
+            osg::Quat mRotation;
+            osg::Vec3f mScale;
+        };
+
+        struct SkyrimAuthoredTrack
+        {
+            std::string mBone;
+            std::vector<SkyrimAuthoredPose> mPoses;
+        };
+
+        struct SkyrimAuthoredClip
+        {
+            std::string mName;
+            float mDuration = 0.f;
+            float mFrameDuration = 0.f;
+            std::uint32_t mFrames = 0;
+            std::vector<SkyrimAuthoredTrack> mTracks;
+        };
+
+        struct SkyrimAuthoredStream
+        {
+            std::string mPath;
+            std::vector<SkyrimAuthoredClip> mClips;
+            float mDuration = 0.f;
+            bool mLoadAttempted = false;
+        };
+
+        template <class T>
+        bool readSkyrimAuthoredValue(std::istream& stream, T& value)
+        {
+            return static_cast<bool>(stream.read(reinterpret_cast<char*>(&value), sizeof(value)));
+        }
+
+        bool readSkyrimAuthoredString(std::istream& stream, std::string& value)
+        {
+            std::uint16_t length = 0;
+            if (!readSkyrimAuthoredValue(stream, length) || length > 4096)
+                return false;
+            value.resize(length);
+            return length == 0 || static_cast<bool>(stream.read(value.data(), length));
+        }
+
+        SkyrimAuthoredStream& getSkyrimAuthoredStream()
+        {
+            static SkyrimAuthoredStream result;
+            const char* envPath = std::getenv("OPENMW_PROOF_SKYRIM_AUTHORED_ANIMATION_DATA");
+            const std::string path = envPath != nullptr ? envPath : "";
+            if (result.mLoadAttempted && result.mPath == path)
+                return result;
+
+            result = SkyrimAuthoredStream{};
+            result.mPath = path;
+            result.mLoadAttempted = true;
+            if (path.empty())
+                return result;
+
+            std::ifstream stream(path, std::ios::binary);
+            std::array<char, 8> magic{};
+            std::uint32_t version = 0;
+            std::uint32_t clipCount = 0;
+            if (!stream.read(magic.data(), magic.size()) || std::string_view(magic.data(), magic.size()) != "NIKDRGN1"
+                || !readSkyrimAuthoredValue(stream, version) || version != 1
+                || !readSkyrimAuthoredValue(stream, clipCount) || clipCount == 0 || clipCount > 64)
+            {
+                Log(Debug::Error) << "TES5 authored animation: invalid stream " << path;
+                return result;
+            }
+
+            for (std::uint32_t clipIndex = 0; clipIndex < clipCount; ++clipIndex)
+            {
+                SkyrimAuthoredClip clip;
+                std::uint32_t trackCount = 0;
+                if (!readSkyrimAuthoredString(stream, clip.mName)
+                    || !readSkyrimAuthoredValue(stream, clip.mDuration)
+                    || !readSkyrimAuthoredValue(stream, clip.mFrameDuration)
+                    || !readSkyrimAuthoredValue(stream, clip.mFrames)
+                    || !readSkyrimAuthoredValue(stream, trackCount)
+                    || clip.mDuration <= 0.f || clip.mFrameDuration <= 0.f || clip.mFrames == 0
+                    || clip.mFrames > 4096 || trackCount == 0 || trackCount > 512)
+                {
+                    Log(Debug::Error) << "TES5 authored animation: invalid clip header in " << path;
+                    result.mClips.clear();
+                    result.mDuration = 0.f;
+                    return result;
+                }
+                clip.mTracks.reserve(trackCount);
+                for (std::uint32_t trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+                {
+                    SkyrimAuthoredTrack track;
+                    if (!readSkyrimAuthoredString(stream, track.mBone))
+                    {
+                        result.mClips.clear();
+                        result.mDuration = 0.f;
+                        return result;
+                    }
+                    track.mPoses.resize(clip.mFrames);
+                    for (SkyrimAuthoredPose& pose : track.mPoses)
+                    {
+                        std::array<float, 10> values{};
+                        if (!stream.read(reinterpret_cast<char*>(values.data()), sizeof(values)))
+                        {
+                            Log(Debug::Error) << "TES5 authored animation: truncated pose data in " << path;
+                            result.mClips.clear();
+                            result.mDuration = 0.f;
+                            return result;
+                        }
+                        pose.mTranslation.set(values[0], values[1], values[2]);
+                        pose.mRotation.set(values[3], values[4], values[5], values[6]);
+                        pose.mScale.set(values[7], values[8], values[9]);
+                    }
+                    clip.mTracks.push_back(std::move(track));
+                }
+                result.mDuration += clip.mDuration;
+                result.mClips.push_back(std::move(clip));
+            }
+            Log(Debug::Info) << "TES5 authored animation: loaded stream=" << path
+                             << " clips=" << result.mClips.size() << " duration=" << result.mDuration;
+            return result;
+        }
+
+        void applyWorldViewerPortraitActorFill(osg::Node* root, const MWWorld::Ptr& ptr, std::string_view phase)
+        {
+            if (!worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_PORTRAIT_ACTOR_FILL") || root == nullptr)
+                return;
+
+            // Keep the native textured Bethesda shader intact. A modest
+            // emissive floor prevents portraits in strongly backlit cells
+            // from becoming silhouettes without replacing their materials.
+            osg::ref_ptr<osg::Material> material = new osg::Material;
+            material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+            material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.82f, 0.82f, 0.82f, 1.f));
+            material->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.24f, 0.24f, 0.24f, 1.f));
+            material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.08f, 0.08f, 0.08f, 1.f));
+            material->setShininess(osg::Material::FRONT_AND_BACK, 8.f);
+            osg::StateSet* stateSet = root->getOrCreateStateSet();
+            // FO4's skin shader takes its ambient term directly from
+            // gl_LightModel.ambient (matching retail SKIN2002), so a material
+            // emission override cannot rescue a backlit face. Install a local
+            // ambient floor on the actor root while preserving every native
+            // shader, texture, and per-part material below it.
+            osg::ref_ptr<osg::LightModel> lightModel = new osg::LightModel;
+            lightModel->setAmbientIntensity(osg::Vec4f(0.38f, 0.38f, 0.38f, 1.f));
+            stateSet->setAttributeAndModes(
+                lightModel, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet->setAttributeAndModes(
+                material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet->addUniform(new osg::Uniform("falloutSlsMode", 0),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+
+            std::ostringstream details;
+            details << "phase=\"" << phase
+                    << "\" emission=0.24 materialAmbient=0.82 lightModelAmbient=0.38"
+                       " nativeShader=1 falloutSlsMode=0";
+            logWorldViewerActorLedger(ptr, "portrait-actor-fill", details.str());
+        }
+
 
         class ActorVisualAuditVisitor : public osg::NodeVisitor
         {
@@ -1067,7 +1193,14 @@ namespace MWRender
             bool mLogged = false;
         };
 
-        osg::Vec4f getHairTint(const ESM4::Npc& traits)
+        struct ResolvedHairTint
+        {
+            osg::Vec4f mColor{ 1.f, 1.f, 1.f, 1.f };
+            float mRemappingIndex = 0.f;
+            bool mUsesRemappingIndex = false;
+        };
+
+        ResolvedHairTint getHairTint(const ESM4::Npc& traits)
         {
             if (!traits.mHairColourId.isZeroOrUnset())
             {
@@ -1077,13 +1210,29 @@ namespace MWRender
                     if (const ESM4::Colour* colour
                         = searchEsm4ViewerRecordWithLocalFallback<ESM4::Colour>(*store, traits.mHairColourId))
                     {
-                        return osg::Vec4f(colour->mColour.red / 255.f, colour->mColour.green / 255.f,
-                            colour->mColour.blue / 255.f, 1.f);
+                        // FO4 CLFM records can store a float lookup coordinate
+                        // in CNAM (FNAM bit 1) instead of four color bytes.
+                        // Preserve that authored mode so the hair shader can
+                        // sample its LGrad palette rather than displaying the
+                        // float's raw bytes as fluorescent RGB.
+                        if (traits.mIsFO4 && (colour->mPlayable & 0x2u) != 0)
+                        {
+                            const std::uint32_t bits = std::uint32_t(colour->mColour.red)
+                                | (std::uint32_t(colour->mColour.green) << 8u)
+                                | (std::uint32_t(colour->mColour.blue) << 16u)
+                                | (std::uint32_t(colour->mColour.custom) << 24u);
+                            return { osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+                                std::clamp(std::bit_cast<float>(bits), 0.f, 1.f), true };
+                        }
+                        return { osg::Vec4f(colour->mColour.red / 255.f, colour->mColour.green / 255.f,
+                                     colour->mColour.blue / 255.f, 1.f),
+                            0.f, false };
                     }
                 }
             }
-            return osg::Vec4f(traits.mHairColour.red / 255.f, traits.mHairColour.green / 255.f,
-                traits.mHairColour.blue / 255.f, 1.f);
+            return { osg::Vec4f(traits.mHairColour.red / 255.f, traits.mHairColour.green / 255.f,
+                         traits.mHairColour.blue / 255.f, 1.f),
+                0.f, false };
         }
 
         bool isFonvMiscHeadPart(const ESM4::HeadPart& part)
@@ -1360,8 +1509,8 @@ namespace MWRender
             const VFS::Manager* vfs = resourceSystem->getVFS();
             for (const std::string& texture : candidates)
             {
-                const VFS::Path::Normalized correctedTexture
-                    = Misc::ResourceHelpers::correctTexturePath(texture, vfs);
+                const VFS::Path::Normalized correctedTexture = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(texture), *vfs);
                 if (vfs->exists(correctedTexture))
                     return texture;
             }
@@ -1374,12 +1523,24 @@ namespace MWRender
             if (texture.empty())
                 return nullptr;
 
-            const VFS::Path::Normalized correctedTexture
-                = Misc::ResourceHelpers::correctTexturePath(texture, resourceSystem->getVFS());
+            const VFS::Path::Normalized correctedTexture = Misc::ResourceHelpers::correctTexturePath(
+                VFS::Path::toNormalized(texture), *resourceSystem->getVFS());
             if (!resourceSystem->getVFS()->exists(correctedTexture))
                 return nullptr;
 
             return resourceSystem->getImageManager()->getImage(correctedTexture);
+        }
+
+        std::string findTes4NpcFaceTexture(
+            Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool ears)
+        {
+            if (!traits.mIsTES4)
+                return {};
+            std::ostringstream form;
+            form << std::hex << std::nouppercase << std::setfill('0') << std::setw(8)
+                 << (traits.mId.mIndex & 0x00ffffffu);
+            return findExistingTexture(resourceSystem,
+                { "textures/faces/oblivion.esm/" + form.str() + (ears ? "_1.dds" : "_0.dds") });
         }
 
         bool isFullSizeSkinDiffuse(Resource::ResourceSystem* resourceSystem, std::string_view texture)
@@ -1397,18 +1558,8 @@ namespace MWRender
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            std::vector<std::string> candidates;
-            // Fallout 3's player-relative NPCs (notably Dad) export one FaceGen
-            // texture per race.  Those files use m<RACE>_<NPC> rather than the
-            // ordinary <NPC> stem used by FO3's fixed actors and by FNV.
-            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
-            {
-                candidates.emplace_back("textures/characters/facemods/" + pluginDirectory + "/m"
-                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + "_0.dds");
-            }
-            candidates.emplace_back(
-                "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_0.dds");
-            const std::string texture = findExistingTexture(resourceSystem, candidates);
+            const std::string texture = findExistingTexture(resourceSystem,
+                { "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_0.dds" });
             if (texture.empty())
                 return {};
 
@@ -1423,19 +1574,9 @@ namespace MWRender
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            std::vector<std::string> candidates;
-            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
-            {
-                const std::string composite = "textures/characters/facemods/" + pluginDirectory + "/m"
-                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex;
-                candidates.emplace_back(composite + "_1.dds");
-                candidates.emplace_back(composite + "_n.dds");
-            }
-            const std::string simple
-                = "textures/characters/facemods/" + pluginDirectory + "/" + formIndex;
-            candidates.emplace_back(simple + "_1.dds");
-            candidates.emplace_back(simple + "_n.dds");
-            return findExistingTexture(resourceSystem, candidates);
+            return findExistingTexture(resourceSystem,
+                { "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_1.dds",
+                    "textures/characters/facemods/" + pluginDirectory + "/" + formIndex + "_n.dds" });
         }
 
         std::string findFonvNpcBodyTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
@@ -1443,15 +1584,8 @@ namespace MWRender
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale.dds" : "modbodymale.dds";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            std::vector<std::string> candidates;
-            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
-            {
-                candidates.emplace_back("textures/characters/bodymods/" + pluginDirectory + "/"
-                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix);
-            }
-            candidates.emplace_back(
-                "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix);
-            const std::string texture = findExistingTexture(resourceSystem, candidates);
+            const std::string texture = findExistingTexture(
+                resourceSystem, { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix });
             if (texture.empty())
                 return {};
 
@@ -1471,15 +1605,8 @@ namespace MWRender
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale.dds" : "modbodymale.dds";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            std::vector<std::string> candidates;
-            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
-            {
-                candidates.emplace_back("textures/characters/bodymods/" + pluginDirectory + "/"
-                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix);
-            }
-            candidates.emplace_back(
-                "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix);
-            const std::string texture = findExistingTexture(resourceSystem, candidates);
+            const std::string texture = findExistingTexture(
+                resourceSystem, { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix });
             if (texture.empty())
                 return {};
 
@@ -1533,15 +1660,12 @@ namespace MWRender
             if (!traits.mIsFONV)
                 return nullptr;
 
-            // FNV does not feed the exported 8x8 DXT1 bodymod tile directly to
-            // SKIN2002.  Retail expands the actor input to a generated 32x32
-            // A8R8G8B8 FaceGenMap1 containing BGRA (62,65,62,64).  Both the
-            // Easy Pete and Sunny Smiles retail draw ledgers bind this exact
-            // payload hash (0x7AF89DC5).  Feeding Sunny's raw (126,115,115)
-            // bodymod texels to the shader's 4 * FaceGenMap1 term is the source
-            // of the red/orange blowout.  Recreate the measured GPU input for
-            // every FNV NPC that has the tiny exported bodymod marker; actor
-            // complexion remains record-specific in FaceGenMap0.
+            // FNV feeds the actor's authored 8x8 DXT1 bodymod tile directly to
+            // FaceGenMap0. Retail also binds this common generated 32x32
+            // A8R8G8B8 FaceGenMap1 containing BGRA (62,65,62,64). Easy Pete
+            // and Sunny Smiles both use the same FaceGenMap1 payload hash
+            // (0x7AF89DC5), while retaining their own actor-specific bodymod
+            // texture in FaceGenMap0.
             osg::ref_ptr<osg::Image> image = new osg::Image;
             image->allocateImage(32, 32, 1, GL_RGBA, GL_UNSIGNED_BYTE);
             const osg::Vec4f color(62.f / 255.f, 65.f / 255.f, 62.f / 255.f, 64.f / 255.f);
@@ -1552,51 +1676,15 @@ namespace MWRender
             return image;
         }
 
-        osg::ref_ptr<osg::Image> makeMeasuredFonvSkinFaceGen0(const ESM4::Npc& traits)
-        {
-            if (!traits.mIsFONV)
-                return nullptr;
-
-            // Retail's SKIN2000 hand draw binds a generated 32x32 A8R8G8B8
-            // FaceGenMap0 at D3D sampler s2. Every texel in all six mip levels is
-            // BGRA (103,104,102,127), whose complete mip-chain FNV-1a32 is
-            // 0x86EE2541. OSG samples GL_RGBA, so write the decoded channel order
-            // RGBA (102,104,103,127). This is the measured shared skin input, not
-            // an NPC-specific complexion texture; heads continue to use their
-            // authored facemod FaceGenMap0.
-            constexpr std::array<unsigned char, 4> rgba = { 102, 104, 103, 127 };
-            constexpr std::array<unsigned int, 5> mipOffsets = { 4096, 5120, 5376, 5440, 5456 };
-            constexpr std::size_t pixelCount = 32 * 32 + 16 * 16 + 8 * 8 + 4 * 4 + 2 * 2 + 1;
-            auto* data = new unsigned char[pixelCount * rgba.size()];
-            for (std::size_t pixel = 0; pixel < pixelCount; ++pixel)
-                std::copy(rgba.begin(), rgba.end(), data + pixel * rgba.size());
-
-            osg::ref_ptr<osg::Image> image = new osg::Image;
-            image->setImage(32, 32, 1, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, data, osg::Image::USE_NEW_DELETE);
-            image->setMipmapLevels(osg::Image::MipmapDataType(mipOffsets.begin(), mipOffsets.end()));
-            image->setFileName("runtime/falloutnv/generated-skin-facegen0/d3d9-86ee2541");
-            return image;
-        }
-
         std::string findFonvNpcBodyNormalTexture(
             Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
             const std::string suffix = isFemale ? "modbodyfemale" : "modbodymale";
             const std::string pluginDirectory = getFalloutFacegenPluginDirectory(traits);
-            std::vector<std::string> candidates;
-            if (traits.mIsFO3 && !traits.mRace.isZeroOrUnset())
-            {
-                const std::string composite = "textures/characters/bodymods/" + pluginDirectory + "/"
-                    + formatFalloutFormIndex(traits.mRace) + "_" + formIndex + suffix;
-                candidates.emplace_back(composite + "_n.dds");
-                candidates.emplace_back(composite + "_1.dds");
-            }
-            const std::string simple
-                = "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix;
-            candidates.emplace_back(simple + "_n.dds");
-            candidates.emplace_back(simple + "_1.dds");
-            return findExistingTexture(resourceSystem, candidates);
+            return findExistingTexture(resourceSystem,
+                { "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix + "_n.dds",
+                    "textures/characters/bodymods/" + pluginDirectory + "/" + formIndex + suffix + "_1.dds" });
         }
 
         void overrideTextureSlot(std::string_view texture, std::string_view textureType, unsigned int unit,
@@ -1605,8 +1693,8 @@ namespace MWRender
             if (texture.empty())
                 return;
 
-            const VFS::Path::Normalized correctedTexture
-                = Misc::ResourceHelpers::correctTexturePath(texture, resourceSystem->getVFS());
+            const VFS::Path::Normalized correctedTexture = Misc::ResourceHelpers::correctTexturePath(
+                VFS::Path::toNormalized(texture), *resourceSystem->getVFS());
             osg::ref_ptr<osg::Texture2D> tex
                 = new osg::Texture2D(resourceSystem->getImageManager()->getImage(correctedTexture));
             tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -1899,6 +1987,15 @@ namespace MWRender
             std::vector<std::vector<osg::Vec3f>> mAsymmetricModes;
         };
 
+        struct FaceGenEgt
+        {
+            std::uint32_t mWidth = 0;
+            std::uint32_t mHeight = 0;
+            std::vector<float> mScales;
+            // Each mode is stored in the authored planar R, G, B order.
+            std::vector<std::vector<std::int8_t>> mModes;
+        };
+
         struct FaceGenTri
         {
             std::uint32_t mVertexCount = 0;
@@ -2001,6 +2098,171 @@ namespace MWRender
                              << " basis=" << geometryBasisVersion;
             sCache.emplace(cacheKey, egm);
             return egm;
+        }
+
+        std::shared_ptr<const FaceGenEgt> loadFaceGenEgt(Resource::ResourceSystem* resourceSystem, std::string_view model)
+        {
+            std::string egtPath(model);
+            const std::size_t dot = egtPath.find_last_of('.');
+            if (dot == std::string::npos)
+                return nullptr;
+            egtPath.replace(dot, std::string::npos, ".egt");
+
+            const VFS::Path::Normalized correctedPath
+                = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(egtPath));
+            const std::string cacheKey = correctedPath.value();
+            static std::map<std::string, std::shared_ptr<const FaceGenEgt>> sCache;
+            if (const auto found = sCache.find(cacheKey); found != sCache.end())
+                return found->second;
+
+            const VFS::Manager* vfs = resourceSystem->getVFS();
+            if (!vfs->exists(correctedPath))
+            {
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            auto stream = vfs->get(correctedPath);
+            char magic[8] = {};
+            stream->read(magic, sizeof(magic));
+            if (!*stream || std::string_view(magic, sizeof(magic)) != "FREGT003")
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: unsupported FaceGen EGT " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::uint32_t width = 0;
+            std::uint32_t height = 0;
+            std::uint32_t symmetricCount = 0;
+            std::uint32_t asymmetricCount = 0;
+            std::uint32_t textureBasisVersion = 0;
+            if (!readBinary(*stream, width) || !readBinary(*stream, height)
+                || !readBinary(*stream, symmetricCount) || !readBinary(*stream, asymmetricCount)
+                || !readBinary(*stream, textureBasisVersion) || width == 0 || height == 0
+                || width > 4096 || height > 4096 || symmetricCount > 256 || asymmetricCount != 0)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: invalid FaceGen EGT header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            // The remaining fixed header is reserved by FaceGen. FREGT003 mode
+            // payloads begin at byte 64 and contain a float scale followed by
+            // signed-byte R, G, and B planes.
+            stream->ignore(36);
+            const std::size_t pixelCount = static_cast<std::size_t>(width) * height;
+            auto egt = std::make_shared<FaceGenEgt>();
+            egt->mWidth = width;
+            egt->mHeight = height;
+            egt->mScales.resize(symmetricCount);
+            egt->mModes.resize(symmetricCount);
+            for (std::uint32_t mode = 0; mode < symmetricCount; ++mode)
+            {
+                if (!readBinary(*stream, egt->mScales[mode]))
+                    break;
+                egt->mModes[mode].resize(pixelCount * 3);
+                stream->read(reinterpret_cast<char*>(egt->mModes[mode].data()),
+                    static_cast<std::streamsize>(egt->mModes[mode].size()));
+                if (!*stream)
+                    break;
+            }
+
+            if (!*stream || egt->mModes.size() != symmetricCount
+                || std::any_of(egt->mModes.begin(), egt->mModes.end(),
+                    [pixelCount](const auto& mode) { return mode.size() != pixelCount * 3; }))
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen EGT " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            Log(Debug::Verbose) << "FNV/ESM4 diag: loaded FaceGen EGT " << cacheKey << " size=" << width << "x"
+                                << height << " symmetric=" << symmetricCount << " basis=" << textureBasisVersion;
+            sCache.emplace(cacheKey, egt);
+            return egt;
+        }
+
+        osg::ref_ptr<osg::Image> makeTes4FaceGenTexture(Resource::ResourceSystem* resourceSystem,
+            std::string_view model, std::string_view baseTexture, const ESM4::Npc& traits)
+        {
+            if (!traits.mIsTES4 || baseTexture.empty() || traits.mSymTextureModeCoefficients.empty())
+                return nullptr;
+
+            const std::shared_ptr<const FaceGenEgt> egt = loadFaceGenEgt(resourceSystem, model);
+            osg::ref_ptr<osg::Image> base = getExistingTextureImage(resourceSystem, baseTexture);
+            if (!egt || base == nullptr || base->s() <= 0 || base->t() <= 0)
+                return nullptr;
+
+            const std::size_t pixelCount = static_cast<std::size_t>(egt->mWidth) * egt->mHeight;
+            std::vector<osg::Vec4f> colors(pixelCount);
+            for (std::uint32_t y = 0; y < egt->mHeight; ++y)
+            {
+                const int sourceY = static_cast<int>((static_cast<std::uint64_t>(y) * base->t()) / egt->mHeight);
+                for (std::uint32_t x = 0; x < egt->mWidth; ++x)
+                {
+                    const int sourceX = static_cast<int>((static_cast<std::uint64_t>(x) * base->s()) / egt->mWidth);
+                    colors[static_cast<std::size_t>(y) * egt->mWidth + x] = base->getColor(sourceX, sourceY, 0);
+                }
+            }
+
+            const std::size_t modeCount
+                = std::min(egt->mModes.size(), traits.mSymTextureModeCoefficients.size());
+            for (std::size_t mode = 0; mode < modeCount; ++mode)
+            {
+                const float weight = traits.mSymTextureModeCoefficients[mode] * egt->mScales[mode] / 255.f;
+                if (weight == 0.f)
+                    continue;
+                const std::vector<std::int8_t>& deltas = egt->mModes[mode];
+                for (std::uint32_t y = 0; y < egt->mHeight; ++y)
+                {
+                    // EGT rows are authored top-to-bottom. Match them to the
+                    // decoded base texture's declared origin before emitting an
+                    // image with that same origin.
+                    for (std::uint32_t x = 0; x < egt->mWidth; ++x)
+                    {
+                        const std::size_t pixel = static_cast<std::size_t>(y) * egt->mWidth + x;
+                        const std::size_t egtPixel = pixel;
+                        colors[pixel].x() += static_cast<float>(deltas[egtPixel]) * weight;
+                        colors[pixel].y() += static_cast<float>(deltas[pixelCount + egtPixel]) * weight;
+                        colors[pixel].z() += static_cast<float>(deltas[pixelCount * 2 + egtPixel]) * weight;
+                    }
+                }
+            }
+
+            osg::ref_ptr<osg::Image> generated = new osg::Image;
+            generated->allocateImage(
+                static_cast<int>(egt->mWidth), static_cast<int>(egt->mHeight), 1, GL_RGBA, GL_UNSIGNED_BYTE);
+            generated->setOrigin(base->getOrigin());
+            std::uint32_t hash = 2166136261u;
+            for (std::uint32_t y = 0; y < egt->mHeight; ++y)
+            {
+                for (std::uint32_t x = 0; x < egt->mWidth; ++x)
+                {
+                    osg::Vec4f color = colors[static_cast<std::size_t>(y) * egt->mWidth + x];
+                    color.x() = std::clamp(color.x(), 0.f, 1.f);
+                    color.y() = std::clamp(color.y(), 0.f, 1.f);
+                    color.z() = std::clamp(color.z(), 0.f, 1.f);
+                    color.w() = std::clamp(color.w(), 0.f, 1.f);
+                    generated->setColor(color, static_cast<int>(x), static_cast<int>(y), 0);
+                    for (int channel = 0; channel < 4; ++channel)
+                    {
+                        const auto byte = static_cast<std::uint8_t>(std::lround(color[channel] * 255.f));
+                        hash = (hash ^ byte) * 16777619u;
+                    }
+                }
+            }
+            generated->setFileName("runtime/oblivion/facegen/" + traits.mEditorId + "/" + std::string(model));
+            float textureCoefficientSumAbs = 0.f;
+            for (float coefficient : traits.mSymTextureModeCoefficients)
+                textureCoefficientSumAbs += std::abs(coefficient);
+            Log(Debug::Info) << "ESM4 diag: generated authored TES4 FGTS texture actor=" << traits.mEditorId
+                             << " model=" << model << " base=" << baseTexture << " modes=" << modeCount
+                             << " npcTextureSumAbs=" << textureCoefficientSumAbs
+                             << " size=" << egt->mWidth << "x" << egt->mHeight
+                             << " origin=" << (base->getOrigin() == osg::Image::TOP_LEFT ? "top-left" : "bottom-left")
+                             << " finalFNV1a32=" << hash;
+            return generated;
         }
 
         std::shared_ptr<const FaceGenTri> loadFaceGenTri(Resource::ResourceSystem* resourceSystem, std::string_view model)
@@ -3700,19 +3962,6 @@ namespace MWRender
                     m.deltas = deltas;
                     mMorphs.push_back(std::move(m));
                 }
-                if (std::getenv("OPENMW_FNV_PROOF_LIP_MORPH_LIST") != nullptr)
-                {
-                    std::ostringstream names;
-                    for (std::size_t i = 0; i < mMorphs.size(); ++i)
-                    {
-                        if (i != 0)
-                            names << ',';
-                        names << mMorphs[i].name;
-                    }
-                    Log(Debug::Info) << "FNV/ESM4 LIP MORPHS actor=" << mActor.getCellRef().getRefId()
-                                     << " model=\"" << mModel << "\" count=" << mMorphs.size()
-                                     << " names=" << names.str();
-                }
                 mLastValues.resize(mMorphs.size(), -1.f);
             }
 
@@ -3730,33 +3979,6 @@ namespace MWRender
                 values.reserve(mMorphs.size());
                 float dominantLipValue = 0.f;
                 std::string_view dominantLipTarget;
-                const std::optional<MWDialogue::Esm4DialogueExpression> expression
-                    = MWBase::Environment::get().getSoundManager()->sayActive(mActor)
-                    ? MWDialogue::getEsm4DialogueExpression(mActor.mRef)
-                    : std::nullopt;
-                const auto expressionMorph = [](std::uint32_t type) -> std::string_view {
-                    switch (type)
-                    {
-                        case ESM4::EMO_Neutral:
-                            return "MoodNeutral";
-                        case ESM4::EMO_Anger:
-                            return "Anger";
-                        case ESM4::EMO_Disgust:
-                            return "Disgust";
-                        case ESM4::EMO_Fear:
-                            return "Fear";
-                        case ESM4::EMO_Sad:
-                            return "Sad";
-                        case ESM4::EMO_Happy:
-                            return "Happy";
-                        case ESM4::EMO_Surprise:
-                            return "Surprise";
-                        case ESM4::EMO_Pained:
-                            return "Pained";
-                    }
-                    return {};
-                };
-                const std::string_view expressionTarget = expression ? expressionMorph(expression->mType) : std::string_view{};
 
                 for (const Morph& morph : mMorphs)
                 {
@@ -3764,8 +3986,6 @@ namespace MWRender
                     const float lipValue
                         = MWBase::Environment::get().getSoundManager()->getSaySoundFacialTrackValue(mActor, morph.name);
                     val += lipValue;
-                    if (expression && morph.name == expressionTarget)
-                        val += expression->mWeight;
                     if (std::abs(lipValue) > std::abs(dominantLipValue))
                     {
                         dominantLipValue = lipValue;
@@ -3785,9 +4005,7 @@ namespace MWRender
                                          << " frame=" << frame << " target="
                                          << (dominantLipTarget.empty() ? std::string_view("<neutral>")
                                                                       : dominantLipTarget)
-                                         << " value=" << dominantLipValue << " expression="
-                                         << (expressionTarget.empty() ? std::string_view("<none>") : expressionTarget)
-                                         << " expressionValue=" << (expression ? expression->mWeight : 0.f);
+                                         << " value=" << dominantLipValue;
                     }
                 }
 
@@ -4225,6 +4443,39 @@ namespace MWRender
             return result;
         }
 
+        std::string loweredAssetBasename(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            const std::size_t separator = lowered.find_last_of("/\\");
+            return separator == std::string::npos ? lowered : lowered.substr(separator + 1);
+        }
+
+        bool isScalpHairAssetPath(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            const std::string basename = loweredAssetBasename(lowered);
+            return lowered.find("/hair/") != std::string::npos
+                || lowered.find("\\hair\\") != std::string::npos
+                || lowered.find("/hairs/") != std::string::npos
+                || lowered.find("\\hairs\\") != std::string::npos
+                || basename.rfind("hair", 0) == 0 || basename.find("hairline") != std::string::npos;
+        }
+
+        bool isFaceHairAssetPath(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            const std::string basename = loweredAssetBasename(lowered);
+            return lowered.find("/beards/") != std::string::npos
+                || lowered.find("\\beards\\") != std::string::npos
+                || lowered.find("/facial/") != std::string::npos
+                || lowered.find("\\facial\\") != std::string::npos
+                || basename.rfind("beard", 0) == 0 || basename.rfind("humanbeard", 0) == 0
+                || basename.rfind("facial", 0) == 0;
+        }
+
         bool shouldAttachFalloutStaticPartToHead(std::string_view model)
         {
             std::string lowered(model);
@@ -4235,7 +4486,7 @@ namespace MWRender
                 || lowered.find("characters\\head\\head") != std::string::npos
                 || lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos || lowered.find("eye") != std::string::npos
-                || lowered.find("hair") != std::string::npos || lowered.find("beard") != std::string::npos
+                || isScalpHairAssetPath(lowered) || isFaceHairAssetPath(lowered)
                 || lowered.find("brow") != std::string::npos || lowered.find("headgear") != std::string::npos
                 || lowered.find("hat") != std::string::npos;
         }
@@ -4260,24 +4511,14 @@ namespace MWRender
             return lowered.find("characters/_male/lefthand.nif") != std::string::npos
                 || lowered.find("characters\\_male\\lefthand.nif") != std::string::npos
                 || lowered.find("characters/_male/righthand.nif") != std::string::npos
-                || lowered.find("characters\\_male\\righthand.nif") != std::string::npos
-                || lowered.find("characters/_male/lefthand1st.nif") != std::string::npos
-                || lowered.find("characters\\_male\\lefthand1st.nif") != std::string::npos
-                || lowered.find("characters/_male/righthand1st.nif") != std::string::npos
-                || lowered.find("characters\\_male\\righthand1st.nif") != std::string::npos
-                || lowered.find("characters/_male/femalelefthand1st.nif") != std::string::npos
-                || lowered.find("characters\\_male\\femalelefthand1st.nif") != std::string::npos
-                || lowered.find("characters/_male/femalerighthand1st.nif") != std::string::npos
-                || lowered.find("characters\\_male\\femalerighthand1st.nif") != std::string::npos;
+                || lowered.find("characters\\_male\\righthand.nif") != std::string::npos;
         }
 
         bool isFalloutLeftHandSurfaceModel(std::string_view model)
         {
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("lefthand.nif") != std::string::npos
-                || lowered.find("lefthand1st.nif") != std::string::npos
-                || lowered.find("lefthandpipboyglove1st.nif") != std::string::npos;
+            return lowered.find("lefthand.nif") != std::string::npos;
         }
 
         bool isFalloutStaticHeadgearPart(std::string_view model)
@@ -4338,16 +4579,14 @@ namespace MWRender
 
         bool isFalloutFaceHairModel(std::string_view model)
         {
-            std::string lowered(model);
-            Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("beard") != std::string::npos || lowered.find("facial") != std::string::npos;
+            return isFaceHairAssetPath(model);
         }
 
         bool isFalloutScalpHairModel(std::string_view model)
         {
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("hair") != std::string::npos && !isFalloutBrowModel(lowered)
+            return isScalpHairAssetPath(lowered) && !isFalloutBrowModel(lowered)
                 && !isFalloutFaceHairModel(lowered);
         }
 
@@ -5119,14 +5358,7 @@ namespace MWRender
         void logFalloutAttachmentBounds(osg::Node* attached, osg::Group* attachNode, osg::Group* headNode,
             std::string_view model, const MWWorld::Ptr& ptr)
         {
-            // Computing an attachment's full scene-graph bounds is intentionally expensive.  It was originally
-            // added for actor-part diagnostics, but doing it unconditionally means ordinary gameplay repeats the
-            // traversal every time a package animation attaches its authored object (for example, every rake idle
-            // cycle in Goodsprings).  Keep both the traversal and its high-volume log output behind an explicit
-            // telemetry request.
-            if (attached == nullptr
-                || (!worldViewerEnvEnabled("OPENMW_FNV_ATTACHMENT_BOUNDS_AUDIT")
-                    && !worldViewerActorTelemetryEnabled()))
+            if (attached == nullptr)
                 return;
 
             osg::ComputeBoundsVisitor boundsVisitor;
@@ -6860,29 +7092,59 @@ namespace MWRender
             if (!worldViewerEnvEnabled("OPENMW_FNV_IDLE_ARM_RELAX_IK")
                 && !worldViewerEnvEnabled("OPENMW_ESM4_IDLE_ARM_RELAX_IK"))
                 return false;
-            if (!traits.mIsFO3 && !traits.mIsFONV && !traits.mIsFO4)
-                return false;
-
+            static std::set<std::string> sLoggedIdleRelaxEntry;
+            const std::string idleRelaxGame = worldViewerNpcGameTag(traits);
+            if (sLoggedIdleRelaxEntry.insert(idleRelaxGame).second)
+                Log(Debug::Info) << "FNV/ESM4 proof: idle arm relax IK entered game=" << idleRelaxGame
+                                 << " actor=" << traits.mEditorId << " nodes=" << nodeMap.size();
             const auto findMatrix = [&](std::initializer_list<std::string_view> names) {
                 return dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, names));
             };
 
-            osg::MatrixTransform* pelvis = findMatrix({ "Bip01 Pelvis", "bip01 pelvis", "Pelvis", "COM" });
+            osg::MatrixTransform* pelvis = findMatrix(
+                { "Bip01 Pelvis", "bip01 pelvis", "Pelvis", "COM", "NPC Pelvis [Pelv]" });
             osg::MatrixTransform* leftUpper
-                = findMatrix({ "Bip01 L UpperArm", "bip01 l upperarm", "LArm_UpperArm" });
+                = findMatrix({ "Bip01 L UpperArm", "bip01 l upperarm", "LArm_UpperArm",
+                    "NPC L UpperArm [LUar]" });
             osg::MatrixTransform* leftForearm
-                = findMatrix({ "Bip01 L Forearm", "bip01 l forearm", "LArm_ForeArm1" });
+                = findMatrix({ "Bip01 L Forearm", "bip01 l forearm", "LArm_ForeArm1",
+                    "NPC L Forearm [LLar]" });
             osg::MatrixTransform* leftHand
-                = findMatrix({ "Bip01 L Hand", "bip01 l hand", "LArm_Hand" });
+                = findMatrix({ "Bip01 L Hand", "bip01 l hand", "LArm_Hand", "NPC L Hand [LHnd]" });
             osg::MatrixTransform* rightUpper
-                = findMatrix({ "Bip01 R UpperArm", "bip01 r upperarm", "RArm_UpperArm" });
+                = findMatrix({ "Bip01 R UpperArm", "bip01 r upperarm", "RArm_UpperArm",
+                    "NPC R UpperArm [RUar]" });
             osg::MatrixTransform* rightForearm
-                = findMatrix({ "Bip01 R Forearm", "bip01 r forearm", "RArm_ForeArm1" });
+                = findMatrix({ "Bip01 R Forearm", "bip01 r forearm", "RArm_ForeArm1",
+                    "NPC R Forearm [RLar]" });
             osg::MatrixTransform* rightHand
-                = findMatrix({ "Bip01 R Hand", "bip01 r hand", "RArm_Hand" });
+                = findMatrix({ "Bip01 R Hand", "bip01 r hand", "RArm_Hand", "NPC R Hand [RHnd]" });
             if (pelvis == nullptr || leftUpper == nullptr || leftForearm == nullptr || leftHand == nullptr
                 || rightUpper == nullptr || rightForearm == nullptr || rightHand == nullptr)
+            {
+                static std::set<std::string> sLoggedIdleRelaxMissingRig;
+                const std::string game = worldViewerNpcGameTag(traits);
+                if (sLoggedIdleRelaxMissingRig.insert(game).second)
+                {
+                    std::ostringstream names;
+                    for (const auto& [name, node] : nodeMap)
+                    {
+                        if (names.tellp() > 0)
+                            names << ',';
+                        names << name;
+                    }
+                    Log(Debug::Warning) << "FNV/ESM4 proof: idle arm relax IK missing rig nodes game=" << game
+                                        << " missing=(pelvis=" << (pelvis == nullptr)
+                                        << ",leftUpper=" << (leftUpper == nullptr)
+                                        << ",leftForearm=" << (leftForearm == nullptr)
+                                        << ",leftHand=" << (leftHand == nullptr)
+                                        << ",rightUpper=" << (rightUpper == nullptr)
+                                        << ",rightForearm=" << (rightForearm == nullptr)
+                                        << ",rightHand=" << (rightHand == nullptr) << ")"
+                                        << " nodes=[" << names.str() << ']';
+                }
                 return false;
+            }
 
             const osg::Matrix originalLeftUpperWorld = getNodeWorldMatrix(leftUpper);
             const osg::Matrix originalLeftForearmWorld = getNodeWorldMatrix(leftForearm);
@@ -6922,13 +7184,23 @@ namespace MWRender
             const float handSpreadRatio = handSpan / std::max(1.f, shoulderSpan);
             const float handMidDrop = shoulderMid.z() - handMid.z();
             const float handMidPelvisZ = handMid.z() - pelvisOrigin.z();
+            const bool tes5Rig = findBestAttachmentNode(nodeMap, { "NPC L UpperArm [LUar]" }) != nullptr;
             const bool wideHighArmPose = traits.mIsFO4
                 ? handSpan > std::max(45.f, shoulderSpan * 1.5f)
                     && elbowSpan > std::max(34.f, shoulderSpan * 1.2f)
                     && handMidPelvisZ > 8.f && handMidDrop < 30.f
+                : tes5Rig
+                ? handSpreadRatio > 1.75f && elbowSpan > shoulderSpan * 1.35f
                 : handSpan > std::max(58.f, shoulderSpan * 2.1f)
                     && elbowSpan > std::max(42.f, shoulderSpan * 1.55f)
                     && handMidPelvisZ > 35.f && handMidDrop < 8.f;
+            static std::set<std::string> sLoggedIdleRelaxProbe;
+            if (sLoggedIdleRelaxProbe.insert(idleRelaxGame).second)
+                Log(Debug::Info) << "FNV/ESM4 proof: idle arm relax IK probe game=" << idleRelaxGame
+                                 << " shoulderSpan=" << shoulderSpan << " elbowSpan=" << elbowSpan
+                                 << " handSpan=" << handSpan << " handMidDrop=" << handMidDrop
+                                 << " handMidPelvisZ=" << handMidPelvisZ
+                                 << " triggered=" << wideHighArmPose;
             if (traits.mIsFO4 && Misc::StringUtils::ciEqual(traits.mEditorId, "Player"))
             {
                 static bool sLoggedFo4PlayerBindProbe = false;
@@ -6960,12 +7232,9 @@ namespace MWRender
             const float minReach = std::min(leftReach, rightReach);
             const float maxDrop = std::max(20.f, std::min(34.f, minReach - 2.f));
             const float armDrop = std::clamp(shoulderMid.z() - pelvisOrigin.z() - 4.f, 20.f, maxDrop);
-            const float sideInset = std::clamp(shoulderSpan * 0.10f, 2.5f, 4.5f);
-            const float forwardOffset = std::clamp(shoulderSpan * 0.12f, 2.5f, 4.5f);
-            const osg::Vec3f leftTarget = leftShoulder + bodyRight * sideInset + bodyForward * forwardOffset
-                - up * armDrop;
-            const osg::Vec3f rightTarget = rightShoulder - bodyRight * sideInset + bodyForward * forwardOffset
-                - up * armDrop;
+            const float forwardOffset = std::clamp(shoulderSpan * 0.25f, 5.f, 8.f);
+            const osg::Vec3f leftTarget = leftShoulder + bodyForward * forwardOffset - up * armDrop;
+            const osg::Vec3f rightTarget = rightShoulder + bodyForward * forwardOffset - up * armDrop;
 
             unsigned int solved = 0;
             float leftError = -1.f;
@@ -7067,7 +7336,6 @@ namespace MWRender
                     << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
                     << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
                     << " armDrop=" << armDrop
-                    << " sideInset=" << sideInset
                     << " forwardOffset=" << forwardOffset
                     << " solved=" << solved
                     << " reachable=(" << leftReachable << "," << rightReachable << ")"
@@ -7547,8 +7815,10 @@ namespace MWRender
         void logFalloutFaceDrawableAudit(
             osg::Node* attached, std::string_view model, const MWWorld::Ptr& ptr, std::string_view phase = "insert")
         {
-            if (attached == nullptr || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") == nullptr
-                || (!isFalloutHeadRelativeModel(model) && !isFonvRaceSkinSurface(model)))
+            const bool materialTelemetry = esm4MaterialTelemetryEnabled();
+            if (attached == nullptr
+                || (std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") == nullptr && !materialTelemetry)
+                || (!materialTelemetry && !isFalloutHeadRelativeModel(model) && !isFonvRaceSkinSurface(model)))
                 return;
 
             FalloutFaceDrawableAuditVisitor visitor(model, ptr, phase);
@@ -7689,6 +7959,13 @@ namespace MWRender
 
                 if (faceSurface && !mFaceDetailTexture.empty())
                     overrideTextureSlot(mFaceDetailTexture, "faceGenMap0", 4, mResourceSystem, *localStateSet);
+                else if (mGeneratedFaceGen1 != nullptr && !mBodyDetailTexture.empty())
+                {
+                    // FNV's exported *modbody*.dds is the actor-specific body
+                    // FaceGenMap0. Retail expands it before the final skin draw;
+                    // sampling the authored tile here preserves the same values.
+                    overrideTextureSlot(mBodyDetailTexture, "faceGenMap0", 4, mResourceSystem, *localStateSet);
+                }
                 else if (mGeneratedSkinFaceGen0 != nullptr)
                     overrideTextureSlot(mGeneratedSkinFaceGen0.get(), "faceGenMap0", 4, mResourceSystem, *localStateSet);
 
@@ -7805,6 +8082,25 @@ namespace MWRender
             return stream.str();
         }
 
+        std::string getFonvWeaponIdlePoseKf(const ESM4::Weapon* weapon)
+        {
+            if (weapon == nullptr)
+                return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
+
+            const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
+            if (!prefix.empty())
+                return "meshes/characters/_male/" + std::string(prefix) + "aim.kf";
+
+            std::string label = weapon->mEditorId + " " + weapon->mModel;
+            Misc::StringUtils::lowerCaseInPlace(label);
+            if (containsAny(label, { "rifle", "shotgun", "sniper", "launcher", "2hand", "2hr", "varmint" }))
+                return "meshes/characters/_male/2hraim.kf";
+            if (containsAny(label, { "pistol", "revolver", "357", "10mm", "9mm", "1hand", "1hp" }))
+                return "meshes/characters/_male/idleanims/dlcanch1hpistolpose.kf";
+
+            return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
+        }
+
         bool actorUsesFonvPowerArmor(const MWWorld::Ptr& ptr)
         {
             static_assert(FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
@@ -7826,25 +8122,6 @@ namespace MWRender
                 stream << candidates[index];
             }
             return stream.str();
-        }
-
-        std::string getFonvWeaponIdlePoseKf(const ESM4::Weapon* weapon)
-        {
-            if (weapon == nullptr)
-                return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
-
-            const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
-            if (!prefix.empty())
-                return "meshes/characters/_male/" + std::string(prefix) + "aim.kf";
-
-            std::string label = weapon->mEditorId + " " + weapon->mModel;
-            Misc::StringUtils::lowerCaseInPlace(label);
-            if (containsAny(label, { "rifle", "shotgun", "sniper", "launcher", "2hand", "2hr", "varmint" }))
-                return "meshes/characters/_male/2hraim.kf";
-            if (containsAny(label, { "pistol", "revolver", "357", "10mm", "9mm", "1hand", "1hp" }))
-                return "meshes/characters/_male/idleanims/dlcanch1hpistolpose.kf";
-
-            return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
         }
 
         std::string normalizeFonvAnimationPath(std::string path)
@@ -7898,15 +8175,6 @@ namespace MWRender
             const std::vector<ESM::FormId>& packageIds)
         {
             std::vector<std::string> result;
-            // OPENMW_FNV_DISABLE_AI_PACKAGES must disable the animation assets selected by those packages too.
-            // Otherwise a neutralized actor can keep a package-only sleep/sit KF as its highest-priority generic
-            // `idle` source even though the package that owns that procedure is no longer running.
-            if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
-            {
-                Log(Debug::Verbose) << "FNV/ESM4 diag: package-selected IDLE animation disabled by proof env for "
-                                    << traits.mEditorId;
-                return result;
-            }
             const auto& packageStore = store.get<ESM4::AIPackage>();
             const auto& idleStore = store.get<ESM4::IdleAnimation>();
             const auto& markerStore = store.get<ESM4::IdleMarker>();
@@ -8046,6 +8314,14 @@ namespace MWRender
             return hour >= start || hour < end;
         }
 
+        bool fonvPackageConditionsPass(const ESM4::AIPackage& package)
+        {
+            if (package.mConditions.empty())
+                return true;
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            return world != nullptr && world->getESM4QuestRuntime().evaluateConditions(package.mConditions);
+        }
+
         const ESM4::Reference* resolvePackageReference(
             const MWWorld::ESMStore& store, const ESM4::AIPackage::PLDT& location)
         {
@@ -8103,6 +8379,22 @@ namespace MWRender
                 result.push_back(std::move(path));
         }
 
+        void addChairTransitionSources(std::vector<std::string>& result, const VFS::Manager& vfs)
+        {
+            static constexpr std::array<std::string_view, 8> paths{
+                "meshes/characters/_male/idleanims/chair_forwardenter.kf",
+                "meshes/characters/_male/idleanims/chair_forwardexit.kf",
+                "meshes/characters/_male/idleanims/chair_backenter.kf",
+                "meshes/characters/_male/idleanims/chair_backexit.kf",
+                "meshes/characters/_male/idleanims/chair_leftenter.kf",
+                "meshes/characters/_male/idleanims/chair_leftexit.kf",
+                "meshes/characters/_male/idleanims/chair_rightenter.kf",
+                "meshes/characters/_male/idleanims/chair_rightexit.kf",
+            };
+            for (std::string_view path : paths)
+                addProcedureSourceIfPresent(result, vfs, std::string(path));
+        }
+
         std::vector<std::string> collectFonvPackageProcedureAnimationSources(const MWWorld::Ptr& ptr,
             const MWWorld::ESMStore& store, Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits,
             const std::vector<ESM::FormId>& packageIds)
@@ -8131,15 +8423,30 @@ namespace MWRender
             }
 
             const ESM4::AIPackage* selected = nullptr;
+            const ESM4::AIPackage* unscheduledFallback = nullptr;
             for (ESM::FormId packageId : packageIds)
             {
                 const ESM4::AIPackage* package = packageStore.search(packageId);
-                if (package != nullptr && fonvPackageCoversHour(*package, hour))
+                if (package == nullptr || !fonvPackageConditionsPass(*package))
+                    continue;
+
+                if (fonvPackageCoversHour(*package, hour))
                 {
                     selected = package;
                     break;
                 }
+                // Fallout's always-active furniture procedures have no PSDT
+                // schedule.  The AI runtime chooses the first such eligible
+                // package if no timed procedure applies, so preload the same
+                // package's idle/entry clips here.  Otherwise the actor state
+                // reaches Seated while the renderer has only a standing idle
+                // to play (the Doc Mitchell opening-chair regression).
+                if (unscheduledFallback == nullptr && !fonvPackageHasExplicitTime(*package))
+                    unscheduledFallback = package;
             }
+
+            if (selected == nullptr)
+                selected = unscheduledFallback;
 
             if (isEasyPeteProofActor(traits))
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: package procedure currentHour=" << hour
@@ -8154,9 +8461,54 @@ namespace MWRender
 
             const VFS::Manager* vfs = resourceSystem->getVFS();
             const std::string furnitureModel = getPackageReferenceFurnitureModel(store, *selected);
-            for (std::string_view path
-                : getFonvPackageProcedureAnimationCandidates(selected->mData.type, furnitureModel))
-                addProcedureSourceIfPresent(result, *vfs, std::string(path));
+            std::string lowerFurniture = furnitureModel;
+            Misc::StringUtils::lowerCaseInPlace(lowerFurniture);
+            const bool usesTableSeat = lowerFurniture.find("dinerbooth") != std::string::npos
+                || lowerFurniture.find("table") != std::string::npos;
+            const bool usesChairSeat = lowerFurniture.find("chair") != std::string::npos || usesTableSeat;
+            switch (selected->mData.type)
+            {
+                case 3: // Eat
+                    if (usesChairSeat)
+                        addChairTransitionSources(result, *vfs);
+                    if (usesTableSeat)
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/sittablechaireata.kf");
+                    else
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/sitchaireata.kf");
+                    if (usesChairSeat)
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                    else
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
+                    break;
+                case 4: // Sleep
+                    addProcedureSourceIfPresent(
+                        result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sleep.kf");
+                    break;
+                case 6: // Travel-to-ref, used by Pete's scheduled chair packages.
+                case 8: // Use item at / furniture.
+                    if (!furnitureModel.empty())
+                    {
+                        if (usesChairSeat)
+                            addChairTransitionSources(result, *vfs);
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/sitchairlistena.kf");
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/sitchairtalktoplayera.kf");
+                        if (usesChairSeat)
+                            addProcedureSourceIfPresent(
+                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                        else
+                            addProcedureSourceIfPresent(
+                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
+                    }
+                    break;
+                default:
+                    break;
+            }
 
             for (const std::string& path : result)
                 Log(Debug::Verbose) << "FNV/ESM4 diag: package procedure animation source " << path << " from "
@@ -8184,187 +8536,31 @@ namespace MWRender
 
     }
 
-    void ESM4NpcAnimation::initializeFirstPerson(const FirstPersonState& state)
-    {
-        constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
-        // Retail composes the camera-space pose from the movement idle's
-        // pelvis/camera frame and the active weapon family's aim overlay. H2HAim
-        // is reserved for a truly unarmed actor. Aim overlays intentionally omit
-        // Bip01 Pelvis; playing one alone leaks the skeleton bind pose into the arms.
-        constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
-        constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
-        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
-        if (traits == nullptr || !traits->mIsFONV)
-            throw std::runtime_error("native first-person profile requires an FNV NPC");
-        if (!std::isfinite(state.mFieldOfView) || state.mFieldOfView <= 0.f || state.mFieldOfView >= 180.f)
-            throw std::runtime_error("native first-person profile received an invalid FOV");
-        if (state.mSaveWornArmorModels.empty())
-            throw std::runtime_error(
-                "native first-person profile requires an equipped upper-body Arms partition");
-
-        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
-        std::string aimOverlay = equippedWeapon != nullptr
-            ? getFonvFirstPersonWeaponAnimationKf(
-                getFonvWeaponAnimationKf(equippedWeapon->mData.animationType, "aim"))
-            : std::string(h2hAimOverlay);
-
-        const bool female = MWClass::ESM4Npc::isFemale(mPtr);
-        const std::string rightHand = female ? "meshes/characters/_male/femalerighthand1st.nif"
-                                             : "meshes/characters/_male/righthand1st.nif";
-        const std::string leftHand = !state.mSaveWornLeftHandModel.empty()
-            ? state.mSaveWornLeftHandModel
-            : (female ? "meshes/characters/_male/femalelefthand1st.nif"
-                      : "meshes/characters/_male/lefthand1st.nif");
-        const std::string pipBoy = female ? "meshes/pipboy3000/pipboyarmfemale.nif"
-                                          : "meshes/pipboy3000/pipboyarm.nif";
-        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
-        if (vfs == nullptr)
-            throw std::runtime_error("native first-person profile has no VFS");
-
-        const auto requireAsset
-            = [&](std::string_view role, std::string_view path, bool saveWorn, bool correctMeshPath = false) {
-            const VFS::Path::Normalized selected = correctMeshPath
-                ? Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(path))
-                : VFS::Path::toNormalized(path);
-            const bool exists = vfs->exists(selected);
-            Log(exists ? Debug::Info : Debug::Error)
-                << "FNV first-person asset: actor=" << traits->mEditorId << " role=" << role
-                << " saveWorn=" << saveWorn << " selected=" << path << " corrected=" << selected.value()
-                << " exists=" << exists;
-            if (!exists)
-                throw std::runtime_error("missing required native FNV first-person asset " + std::string(path));
-        };
-
-        requireAsset("skeleton", skeleton, false);
-        requireAsset("base-idle-kf", baseIdle, false);
-        if (equippedWeapon == nullptr)
-            requireAsset("h2h-aim-overlay-kf", aimOverlay, false);
-        else
-        {
-            const bool aimExists = !aimOverlay.empty() && vfs->exists(VFS::Path::toNormalized(aimOverlay));
-            Log(aimExists ? Debug::Info : Debug::Error)
-                << "FNV first-person asset: actor=" << traits->mEditorId
-                << " role=weapon-aim-overlay-kf saveWorn=1 selected=" << aimOverlay
-                << " exists=" << aimExists << " weapon=" << equippedWeapon->mEditorId
-                << " animationType=" << static_cast<unsigned int>(equippedWeapon->mData.animationType);
-            if (!aimExists)
-                aimOverlay.clear();
-        }
-        for (const std::string& armorModel : state.mSaveWornArmorModels)
-            requireAsset("armor-composite", armorModel, true, true);
-        if (state.mPipBoy)
-            requireAsset("pipboy-arm", pipBoy, true);
-        requireAsset("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty());
-        requireAsset("right-hand", rightHand, false);
-
-        setObjectRoot(std::string(skeleton), true, true, false);
-        if (mObjectRoot == nullptr)
-            throw std::runtime_error("native FNV first-person skeleton produced no render root");
-        mObjectRoot->setName("FNV Native First Person Root");
-        mObjectRoot->setUserValue("OpenMW.ActorEditorId", traits->mEditorId);
-
-        const auto attach = [&](std::string_view role, std::string_view path, bool saveWorn,
-                                bool actorSpace, std::string_view preferredBone = {}) {
-            std::string recordModel(path);
-            constexpr std::string_view meshPrefix = "meshes/";
-            if (Misc::StringUtils::ciStartsWith(recordModel, meshPrefix))
-                recordModel.erase(0, meshPrefix.size());
-            osg::ref_ptr<osg::Node> attachedNode = preferredBone.empty()
-                ? insertPart(recordModel, nullptr, {}, {}, actorSpace)
-                : insertAttachedPart(recordModel, preferredBone);
-            const bool attached = attachedNode != nullptr;
-            if (attached && role == "armor-composite")
-            {
-                FirstPersonArmorArmsOnlyVisitor armsOnly;
-                attachedNode->accept(armsOnly);
-                const bool exactArmPartition = armsOnly.mKept == 1 && armsOnly.mHidden == 5;
-                Log(exactArmPartition ? Debug::Info : Debug::Error)
-                    << "FNV first-person armor filter: actor=" << traits->mEditorId
-                    << " selected=" << path << " keptArms=" << armsOnly.mKept
-                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=1/5";
-                if (!exactArmPartition)
-                    throw std::runtime_error("native FNV first-person armor did not expose the exact Arms partition");
-            }
-            if (attached)
-                ++mFirstPersonAttachedPartCount;
-            Log(attached ? Debug::Info : Debug::Error)
-                << "FNV first-person attachment: actor=" << traits->mEditorId << " role=" << role
-                << " saveWorn=" << saveWorn << " selected=" << path << " recordModel=" << recordModel
-                << " attached=" << attached << " actorSpace=" << actorSpace
-                << " preferredBone=" << preferredBone
-                << " attachedNodeCount=" << mFirstPersonAttachedPartCount;
-            if (!attached)
-                throw std::runtime_error("failed to attach required native FNV first-person asset "
-                    + std::string(path));
-        };
-
-        for (const std::string& armorModel : state.mSaveWornArmorModels)
-            attach("armor-composite", armorModel, true, true);
-        if (state.mPipBoy)
-            // PipBoyArm is a rigid PRN component, not a skin.  Its authored parent
-            // is Bip01 L ForeTwist; no calibration transform is needed.
-            attach("pipboy-arm", pipBoy, true, false, "Bip01 L ForeTwist");
-        attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty(), true);
-        attach("right-hand", rightHand, false, true);
-
-        mNodeMap.clear();
-        mNodeMapCreated = false;
-        const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
-            std::string(baseIdle), std::string(skeleton), false, aimOverlay, "idle");
-        const std::string selectedIdleSource = getAnimationSourceName("idle");
-        const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
-        Log(idleBound ? Debug::Info : Debug::Error)
-            << "FNV first-person animation: actor=" << traits->mEditorId << " semantic=idle base=" << baseIdle
-            << " overlay=" << aimOverlay << " weapon="
-            << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
-            << " bound=" << idleBound
-            << " semanticSource=" << selectedIdleSource;
-        if (!idleBound)
-            throw std::runtime_error("failed to bind native FNV first-person base-plus-H2H pose");
-
-        play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f, "start", "stop", 0.f,
-            std::numeric_limits<std::uint32_t>::max(), true);
-        configureFirstPersonActorRoot(*mObjectRoot, state.mFieldOfView);
-
-        const bool weaponAttached = equippedWeapon == nullptr || refreshFalloutWeaponPart();
-        const bool weaponFamilyPrepared = equippedWeapon == nullptr
-            || prepareFalloutWeaponAnimation(equippedWeapon->mData.animationType,
-                equippedWeapon->mData.reloadAnim, FonvWeaponAction::Equip);
-        Log(Debug::Info) << "FNV first-person profile: actor=" << traits->mEditorId << " saveWorn="
-                         << state.mSaveWornArmorModels.size() + static_cast<std::size_t>(state.mPipBoy)
-                                + static_cast<std::size_t>(state.mPipBoyGlove)
-                         << " attachedNodeCount=" << mFirstPersonAttachedPartCount << " fov=" << state.mFieldOfView
-                         << " weapon="
-                         << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
-                         << " weaponAttached=" << weaponAttached
-                         << " weaponFamilyPrepared=" << weaponFamilyPrepared
-                         << " mask=0x" << std::hex << mObjectRoot->getNodeMask() << std::dec
-                         << " profile=flat-first-person-mtidle-plus-h2haim";
-    }
-
     ESM4NpcAnimation::ESM4NpcAnimation(
         const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem)
-        : ESM4NpcAnimation(ptr, std::move(parentNode), resourceSystem, std::nullopt)
-    {
-    }
-
-    ESM4NpcAnimation::ESM4NpcAnimation(
-        const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem,
-        std::optional<FirstPersonState> firstPerson)
         : Animation(ptr, std::move(parentNode), resourceSystem)
     {
-        if (firstPerson)
-        {
-            mFirstPersonView = true;
-            initializeFirstPerson(*firstPerson);
-            return;
-        }
-
         std::string skeletonModel = mPtr.getClass().getCorrectedModel(mPtr);
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         const ESM4::Npc* modelRecord = MWClass::ESM4Npc::getModelRecord(mPtr);
         const ESM4::Race* race = MWClass::ESM4Npc::getRace(mPtr);
         const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        if (traits != nullptr && race != nullptr && race->mIsTES5 && vfs != nullptr)
+        {
+            const std::string& authoredRaceSkeleton
+                = MWClass::ESM4Npc::isFemale(mPtr) ? race->mModelFemale : race->mModelMale;
+            if (!authoredRaceSkeleton.empty())
+            {
+                const VFS::Path::Normalized corrected = Misc::ResourceHelpers::correctMeshPath(
+                    VFS::Path::Normalized(authoredRaceSkeleton));
+                if (vfs->exists(corrected))
+                {
+                    skeletonModel = corrected.value();
+                    Log(Debug::Info) << "TES5 actor root: using race-authored skeleton " << skeletonModel
+                                     << " race=" << race->mEditorId << " actor=" << traits->mEditorId;
+                }
+            }
+        }
         if (traits != nullptr && traits->mIsStarfield && vfs != nullptr)
         {
             const std::string faceBonesSkeleton = MWClass::ESM4Npc::isFemale(mPtr)
@@ -8542,11 +8738,15 @@ namespace MWRender
                                                    std::string_view falloutSemanticGroup = {}) {
                 if (kfPath.empty())
                     return false;
-
                 Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
                                  << " for " << traits->mEditorId;
                 auto source = addSingleAnimSource(
                     kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf, falloutSemanticGroup);
+                if (falloutProcedureIdle)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 furniture animation source: actor=" << traits->mEditorId
+                                     << " path=" << kfPath << " bound=" << (source != nullptr);
+                }
                 if (worldViewerActorTelemetryEnabled())
                 {
                     std::ostringstream details;
@@ -8637,17 +8837,11 @@ namespace MWRender
 
                 float sandboxRadius = 0.f;
                 const auto& packageStore = store->get<ESM4::AIPackage>();
-                // A sandbox marker is still package-owned animation authority.  Proof actors with packages
-                // disabled must not inherit a nearby marker's idle merely because their staged position falls
-                // inside the authored sandbox radius.
-                if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") == nullptr)
+                for (ESM::FormId packageId : packageIds)
                 {
-                    for (ESM::FormId packageId : packageIds)
-                    {
-                        const ESM4::AIPackage* package = packageStore.search(packageId);
-                        if (package != nullptr && (package->mData.type == 11 || package->mData.type == 12))
-                            sandboxRadius = std::max(sandboxRadius, MWClass::getFalloutSandboxRadius(*package));
-                    }
+                    const ESM4::AIPackage* package = packageStore.search(packageId);
+                    if (package != nullptr && (package->mData.type == 11 || package->mData.type == 12))
+                        sandboxRadius = std::max(sandboxRadius, MWClass::getFalloutSandboxRadius(*package));
                 }
                 if (sandboxRadius > 0.f && mPtr.getCell() != nullptr && mPtr.getCell()->getCell() != nullptr)
                 {
@@ -8656,21 +8850,18 @@ namespace MWRender
                         = MWClass::collectFalloutSandboxMarkers(*store, mPtr.getCell()->getCell()->getId(),
                             osg::Vec3f(actorPosition.pos[0], actorPosition.pos[1], actorPosition.pos[2]),
                             sandboxRadius);
-                    std::set<std::string> sandboxGroups;
+                    std::set<std::string> sandboxSources;
                     for (const MWClass::FalloutSandboxMarker& marker : sandboxMarkers)
                     {
                         for (const MWClass::FalloutSandboxIdle& idle : marker.mIdles)
                         {
-                            const std::string group = MWClass::getFalloutSandboxAnimationGroup(idle);
-                            if (sandboxGroups.insert(group).second)
-                            {
-                                addFonvAnimationSource(idle.mModel, "sandbox IDLM", false, false, {}, group);
-                            }
+                            if (sandboxSources.insert(idle.mModel).second)
+                                addFonvAnimationSource(idle.mModel, "sandbox IDLM", false);
                         }
                     }
                     Log(Debug::Verbose) << "FNV/ESM4 sandbox: actor=" << traits->mEditorId
                                      << " radius=" << sandboxRadius << " markers=" << sandboxMarkers.size()
-                                     << " idleSources=" << sandboxGroups.size();
+                                     << " idleSources=" << sandboxSources.size();
                 }
                 procedureIdleSources
                     = collectFonvPackageProcedureAnimationSources(mPtr, *store, mResourceSystem, *traits, packageIds);
@@ -8850,6 +9041,21 @@ namespace MWRender
 
             addFalloutProofDialoguePose(getNodeMap(), mPtr, *traits);
         }
+
+        // ESM4 world-viewer actors can be rendered without entering the mechanics
+        // actor set, so their authored KF sources never receive the normal
+        // CharacterController::refreshIdleAnims() play request. Keep this opt-in
+        // and proof-only: ordinary gameplay continues to be driven exclusively by
+        // the mechanics controller.
+        if (traits != nullptr && traits->mIsTES4
+            && worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_AUTOPLAY_NPC_IDLE")
+            && hasAnimation("idle"))
+        {
+            play("idle", 1, BlendMask::BlendMask_All, false, 1.f, "start", "stop", 0.f,
+                std::numeric_limits<uint32_t>::max(), true);
+            Log(Debug::Info) << "World viewer: started authored TES4 idle animation actor=\""
+                             << traits->mEditorId << "\" source=\"" << getAnimationSourceName("idle") << "\"";
+        }
     }
 
     bool ESM4NpcAnimation::setWeaponHolsterAttachment(std::string_view frameName,
@@ -8953,14 +9159,6 @@ namespace MWRender
 
         if (!showWeapon)
         {
-            // A camera-space weapon is never transferred to a body holster.
-            // Keep the first-person arms resident and hide only the weapon
-            // until the live draw state exposes it again.
-            if (mFirstPersonView)
-            {
-                mFalloutWeaponPart->setNodeMask(0);
-                return;
-            }
             if (mFalloutWeaponHolsterFrame == nullptr)
             {
                 mFalloutWeaponPart->setNodeMask(0);
@@ -9126,10 +9324,8 @@ namespace MWRender
             return true;
         }
 
-        const std::string_view weaponModel = selectFalloutWeaponViewModel(
-            mFalloutActionWeapon->mModel, mFalloutActionWeapon->mFirstPersonModel, mFirstPersonView);
         std::string authoredParent;
-        mFalloutWeaponPart = insertAttachedPart(weaponModel, {}, &authoredParent);
+        mFalloutWeaponPart = insertAttachedPart(mFalloutActionWeapon->mModel, {}, &authoredParent);
         if (!authoredParent.empty())
             mFalloutWeaponDrawBone = authoredParent;
 
@@ -9139,8 +9335,6 @@ namespace MWRender
         {
             if (mFalloutWeaponsShown)
                 showWeapons(true);
-            else if (mFirstPersonView)
-                mFalloutWeaponPart->setNodeMask(0);
             else if (!applyRetailWeaponHolsterContract(*mFalloutActionWeapon))
                 mFalloutWeaponPart->setNodeMask(0);
         }
@@ -9150,16 +9344,9 @@ namespace MWRender
             << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
             << " weapon=" << mFalloutActionWeapon->mEditorId
             << " animationType=" << static_cast<unsigned int>(mFalloutActionWeapon->mData.animationType)
-            << " model=" << weaponModel << " worldModel=" << mFalloutActionWeapon->mModel
-            << " firstPersonModel=" << mFalloutActionWeapon->mFirstPersonModel
-            << " firstPerson=" << mFirstPersonView << " attached=" << (mFalloutWeaponPart != nullptr)
+            << " model=" << mFalloutActionWeapon->mModel << " attached=" << (mFalloutWeaponPart != nullptr)
             << " renderable=" << renderable << " gate=dynamic-weapon-family";
         return renderable;
-    }
-
-    osg::Node* ESM4NpcAnimation::getEquippedWeaponNode()
-    {
-        return mFalloutWeaponPart.get();
     }
 
     bool ESM4NpcAnimation::prepareFalloutWeaponAnimation(
@@ -9189,26 +9376,20 @@ namespace MWRender
         const auto exists = [vfs](std::string_view path) {
             return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
         };
-        const std::string baseModel = mFirstPersonView
-            ? std::string("meshes/characters/_1stperson/skeleton.nif")
-            : mPtr.getClass().getCorrectedModel(mPtr).value();
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
         bool requiredSourcesAvailable = true;
         for (const FonvWeaponActionSource& source : manifest)
         {
-            const std::string sourcePath = mFirstPersonView
-                ? getFonvFirstPersonWeaponAnimationKf(source.mPath)
-                : source.mPath;
             const FonvAnimationFamilyResolution resolution
-                = resolveFonvAnimationFamily({ sourcePath }, powerArmor, exists);
+                = resolveFonvAnimationFamily({ source.mPath }, powerArmor, exists);
             if (resolution.mPath.empty())
             {
                 if (source.mRequired)
                     requiredSourcesAvailable = false;
                 Log(source.mRequired ? Debug::Error : Debug::Verbose)
                     << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
-                    << " firstPerson=" << mFirstPersonView
                     << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
-                    << " candidates=[" << formatFonvAnimationCandidates({ sourcePath }, powerArmor) << ']'
+                    << " candidates=[" << formatFonvAnimationCandidates({ source.mPath }, powerArmor) << ']'
                     << " selection=missing required=" << source.mRequired
                     << " status=" << (source.mRequired ? "fail" : "optional-missing");
                 continue;
@@ -9235,7 +9416,6 @@ namespace MWRender
             requiredSourcesAvailable = requiredSourcesAvailable && (exact || !source.mRequired);
             Log(exact ? Debug::Info : (source.mRequired ? Debug::Error : Debug::Warning))
                 << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
-                << " firstPerson=" << mFirstPersonView
                 << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
                 << " selection=" << getFonvAnimationFamilySelectionName(resolution.mSelection)
                 << " selectedPath=" << resolution.mPath << " finalSource=" << selected
@@ -9466,13 +9646,111 @@ namespace MWRender
     void ESM4NpcAnimation::applyPostManualFalloutActorPose()
     {
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
-        if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV && !traits->mIsFO4)
-            || mObjectRoot == nullptr)
+        if (traits == nullptr || mObjectRoot == nullptr)
             return;
 
         applyFalloutIdleArmRelaxIk(getNodeMap(), mSkeleton, mPtr, *traits);
-        if (mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon)
+        if ((traits->mIsFO3 || traits->mIsFONV || traits->mIsFO4)
+            && mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon)
             applyFalloutWeaponGripIk(getNodeMap(), mObjectRoot.get(), mSkeleton, mPtr, *traits);
+    }
+
+    bool applySkyrimAuthoredProofAnimation(const Animation::NodeMap& nodeMap, SceneUtil::Skeleton* skeleton,
+        float elapsed, bool& logged)
+    {
+        SkyrimAuthoredStream& stream = getSkyrimAuthoredStream();
+        if (stream.mClips.empty() || stream.mDuration <= 0.f || skeleton == nullptr)
+            return false;
+
+        // Select by the authored dragon skeleton signature. This intentionally
+        // has no NPC/editor-ID list, so every compatible dragon rig follows the
+        // same animation data.
+        if (findBestAttachmentNode(nodeMap, { "NPC Tail8" }) == nullptr
+            || findBestAttachmentNode(nodeMap, { "NPC LUpArm2" }) == nullptr
+            || findBestAttachmentNode(nodeMap, { "NPC RUpArm2" }) == nullptr)
+            return false;
+
+        const float delay = std::max(0.f,
+            readFalloutProofFloat("OPENMW_PROOF_SKYRIM_AUTHORED_ANIMATION_START_DELAY", 0.f));
+        float sequenceTime = std::max(0.f, elapsed - delay);
+        if (worldViewerEnvEnabled("OPENMW_PROOF_SKYRIM_AUTHORED_ANIMATION_LOOP"))
+            sequenceTime = std::fmod(sequenceTime, stream.mDuration);
+        else
+            sequenceTime = std::min(sequenceTime, stream.mDuration);
+
+        const SkyrimAuthoredClip* clip = &stream.mClips.back();
+        float clipTime = clip->mDuration;
+        float cursor = 0.f;
+        for (const SkyrimAuthoredClip& candidate : stream.mClips)
+        {
+            if (sequenceTime < cursor + candidate.mDuration)
+            {
+                clip = &candidate;
+                clipTime = sequenceTime - cursor;
+                break;
+            }
+            cursor += candidate.mDuration;
+        }
+
+        const float framePosition = clip->mFrameDuration > 0.f ? clipTime / clip->mFrameDuration : 0.f;
+        const std::uint32_t frame0 = std::min<std::uint32_t>(
+            static_cast<std::uint32_t>(std::floor(framePosition)), clip->mFrames - 1);
+        const std::uint32_t frame1 = std::min<std::uint32_t>(frame0 + 1, clip->mFrames - 1);
+        const float alpha = std::clamp(framePosition - static_cast<float>(frame0), 0.f, 1.f);
+
+        unsigned int applied = 0;
+        unsigned int missing = 0;
+        unsigned int disabledConflictingCallbacks = 0;
+        for (const SkyrimAuthoredTrack& track : clip->mTracks)
+        {
+            osg::MatrixTransform* transform = dynamic_cast<osg::MatrixTransform*>(
+                findBestAttachmentNode(nodeMap, { track.mBone }));
+            if (transform == nullptr || track.mPoses.size() <= frame1)
+            {
+                ++missing;
+                continue;
+            }
+            // TES5 has no behavior graph player here, but the imported NIF
+            // bones can still carry UpdateBone callbacks that restore their
+            // bind matrices during OSG update traversal.  Once an authored
+            // HKX stream owns this dragon rig, those callbacks conflict with
+            // the decoded local transforms and must yield to the stream.
+            if (transform->getUpdateCallback() != nullptr)
+            {
+                transform->setUpdateCallback(nullptr);
+                ++disabledConflictingCallbacks;
+            }
+            const SkyrimAuthoredPose& left = track.mPoses[frame0];
+            const SkyrimAuthoredPose& right = track.mPoses[frame1];
+            const osg::Vec3f translation = left.mTranslation * (1.f - alpha) + right.mTranslation * alpha;
+            const osg::Vec3f scale = left.mScale * (1.f - alpha) + right.mScale * alpha;
+            osg::Quat rotation;
+            rotation.slerp(alpha, left.mRotation, right.mRotation);
+            const osg::Matrix local = osg::Matrix::scale(scale) * osg::Matrix::rotate(rotation)
+                * osg::Matrix::translate(translation);
+            transform->setMatrix(local);
+            transform->dirtyBound();
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(transform))
+            {
+                if (osgAnimation::Bone* parent = bone->getBoneParent())
+                    bone->setMatrixInSkeletonSpace(local * parent->getMatrixInSkeletonSpace());
+                else
+                    bone->setMatrixInSkeletonSpace(local);
+            }
+            ++applied;
+        }
+        skeleton->markBoneMatriceDirty();
+        skeleton->updateBoneMatrices(0);
+        if (!logged)
+        {
+            logged = true;
+            Log(applied > 70 && missing < 10 ? Debug::Info : Debug::Warning)
+                << "TES5 authored dragon animation: clip=" << clip->mName
+                << " tracks=" << clip->mTracks.size() << " applied=" << applied << " missing=" << missing
+                << " disabledCallbacks=" << disabledConflictingCallbacks
+                << " sequenceDuration=" << stream.mDuration << " source=" << stream.mPath;
+        }
+        return applied > 0;
     }
 
     osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)
@@ -9482,13 +9760,22 @@ namespace MWRender
             && !isPlaying(mFalloutAnimatedObjectGroup))
             setFalloutAnimatedObject({}, {});
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
-        if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV && !traits->mIsFO4)
-            || mObjectRoot == nullptr)
+        if (traits == nullptr || mObjectRoot == nullptr)
+            return movement;
+
+        const float authoredFrameSeconds = readFalloutProofFloat(
+            "OPENMW_PROOF_SKYRIM_AUTHORED_ANIMATION_SECONDS_PER_FRAME", duration);
+        mSkyrimAuthoredAnimationElapsed += std::max(0.f, authoredFrameSeconds);
+        applySkyrimAuthoredProofAnimation(getNodeMap(), mSkeleton, mSkyrimAuthoredAnimationElapsed,
+            mSkyrimAuthoredAnimationLogged);
+
+        const bool falloutActor = traits->mIsFO3 || traits->mIsFONV || traits->mIsFO4;
+        const bool idleArmRelaxed = applyFalloutIdleArmRelaxIk(getNodeMap(), mSkeleton, mPtr, *traits);
+        if (!falloutActor)
             return movement;
 
         const bool weaponDrawn
             = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
-        const bool idleArmRelaxed = applyFalloutIdleArmRelaxIk(getNodeMap(), mSkeleton, mPtr, *traits);
         const bool weaponIkSupported = weaponDrawn
             && applyFalloutWeaponGripIk(getNodeMap(), mObjectRoot.get(), mSkeleton, mPtr, *traits);
 
@@ -9517,10 +9804,8 @@ namespace MWRender
                 getNodeMap(), { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand", "bip01 r hand" });
             if (weaponFrame != nullptr)
             {
-                const std::string_view weaponModel = selectFalloutWeaponViewModel(
-                    weapon->mModel, weapon->mFirstPersonModel, mFirstPersonView);
                 const VFS::Path::Normalized correctedModel
-                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(weaponModel));
+                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(weapon->mModel));
                 logFalloutWeaponMeshAudit(
                     weaponFrame, weaponFrame, getNodeMap(), correctedModel.value(), "Weapon", mPtr, "runtime");
             }
@@ -9586,8 +9871,10 @@ namespace MWRender
             // Full HKX/behavior animation is not implemented here.
             updatePartsTES5(*traits);
         }
+        applyFalloutIdleArmRelaxIk(getNodeMap(), mSkeleton, mPtr, *traits);
         applyWorldViewerFlatActorMaterials(mObjectRoot.get(), mPtr, "parts-end");
         applyWorldViewerFullbrightActorMaterials(mObjectRoot.get(), mPtr, "parts-end");
+        applyWorldViewerPortraitActorFill(mObjectRoot.get(), mPtr, "parts-end");
         {
             std::ostringstream details;
             details << "branch=" << branch << " game=" << worldViewerNpcGameTag(*traits)
@@ -9601,7 +9888,7 @@ namespace MWRender
 
     osg::ref_ptr<osg::Node> ESM4NpcAnimation::insertPart(
         std::string_view model, const osg::Vec4f* tint, std::string_view diffuseTexture,
-        std::string_view preferredBone, bool forceActorSpace)
+        std::string_view preferredBone, const float* colorRemappingIndex, bool applyTes4RigidHeadBasis)
     {
         if (model.empty())
         {
@@ -9625,6 +9912,7 @@ namespace MWRender
         const bool modelExists = vfs != nullptr && vfs->exists(correctedModel);
         const ESM4::Npc* traitsRecord = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         const bool falloutHumanPart = traitsRecord != nullptr && isFallout3OrNewVegas(*traitsRecord);
+        const bool fallout4Part = traitsRecord != nullptr && traitsRecord->mIsFO4;
         const bool tes4Part = traitsRecord != nullptr && traitsRecord->mIsTES4;
         const bool tes4HeadSurfacePart = tes4Part
             && Misc::StringUtils::ciEndsWith(correctedModel.value(), "headhuman.nif");
@@ -9708,6 +9996,10 @@ namespace MWRender
             logWorldViewerActorLedger(mPtr, "part-template-null", details.str());
             return nullptr;
         }
+        FalloutPartShapeSummaryVisitor rigProbe;
+        const_cast<osg::Node*>(templateNode.get())->accept(rigProbe);
+        std::string nifPrn;
+        templateNode->getUserValue("OpenMW.NifPrn", nifPrn);
         if (tes5StaticPart && tes5UnstableFaceSurfaceQuarantineEnabled()
             && isTes5UnstableStaticFaceSurfaceModel(model))
         {
@@ -9819,11 +10111,20 @@ namespace MWRender
         if (tes5StaticPart && isFalloutStaticFaceChildPart(model) && attachNode == mObjectRoot.get()
             && tes5StaticFaceSurfaceFallbackEnabled(model))
         {
-            attachNode = makeTes5StaticFaceSurfaceFrameHelper(*mObjectRoot, model);
-            tes5StaticFaceSurfaceFallback = true;
-            Log(Debug::Info) << "World viewer: TES5 static face surface fallback model=" << correctedModel.value()
+            osg::Group* authoredHead = findBestAttachmentNode(
+                nodeMap, { "NPC Head [Head]", "NPC Head", "Head", "head bone" });
+            if (authoredHead != nullptr)
+                attachNode = authoredHead;
+            else
+            {
+                attachNode = makeTes5StaticFaceSurfaceFrameHelper(*mObjectRoot, model);
+                tes5StaticFaceSurfaceFallback = true;
+            }
+            Log(authoredHead != nullptr ? Debug::Info : Debug::Warning)
+                << "World viewer: TES5 static face surface attachment model=" << correctedModel.value()
                              << " actor=" << (traitsRecord != nullptr ? traitsRecord->mEditorId : std::string())
                              << " attachNode=" << attachNode->getName()
+                             << " source=" << (authoredHead != nullptr ? "authored-head-bone" : "legacy-fallback")
                              << " nodeMap=" << nodeMap.size();
         }
         else if (!tes5StaticPart && isFalloutStaticFaceChildPart(model) && attachNode != nullptr
@@ -9839,7 +10140,7 @@ namespace MWRender
                     << " nodeMap=" << nodeMap.size();
             logWorldViewerActorLedger(mPtr, "head-attach-direct", details.str());
         }
-        if (bareHandSurfacePart && !forceActorSpace)
+        if (bareHandSurfacePart)
         {
             osg::Group* bip01 = nullptr;
             if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
@@ -9872,9 +10173,27 @@ namespace MWRender
                                     << " hand=" << static_cast<bool>(hand) << " for "
                                     << mPtr.getCellRef().getRefId();
         }
-        if (forceActorSpace)
-            attachNode = mObjectRoot.get();
-        else if (attachNode == mObjectRoot.get())
+        const bool authoredRigidAttachment = falloutHumanPart && preferredBone.empty()
+            && !headAttachedStaticPart && !bareHandSurfacePart && rigProbe.mRigGeometryCount == 0
+            && !nifPrn.empty();
+        if (authoredRigidAttachment)
+        {
+            if (osg::Group* authoredNode = findBestAttachmentNode(nodeMap, { nifPrn }))
+            {
+                attachNode = authoredNode;
+                Log(Debug::Info) << "FNV/ESM4 equipment: using authored Prn attachment model="
+                                 << correctedModel.value() << " bone=\"" << nifPrn << "\" actor="
+                                 << mPtr.getCellRef().getRefId();
+            }
+            else
+            {
+                Log(Debug::Warning) << "FNV/ESM4 equipment: authored Prn attachment bone is absent model="
+                                    << correctedModel.value() << " bone=\"" << nifPrn << "\" actor="
+                                    << mPtr.getCellRef().getRefId();
+                return nullptr;
+            }
+        }
+        if (attachNode == mObjectRoot.get())
         {
             auto bip01 = nodeMap.find("Bip01");
             if (bip01 != nodeMap.end())
@@ -9889,8 +10208,6 @@ namespace MWRender
 
         Log(Debug::Verbose) << "FNV/ESM4 diag: rig-aware attaching NPC model part " << correctedModel.value()
                             << " to " << mPtr.getCellRef().getRefId() << " at " << attachNode->getName();
-        FalloutPartShapeSummaryVisitor rigProbe;
-        const_cast<osg::Node*>(attachTemplateNode.get())->accept(rigProbe);
         const std::size_t rigBoneMatches = countRigBoneMatches(nodeMap, rigProbe.mFirstRigBoneNames);
         const bool tes4RiggedPart = tes4Part && rigProbe.mRigGeometryCount > 0;
         if (tes4RiggedPart)
@@ -9968,28 +10285,17 @@ namespace MWRender
         }
         bool staticizedHeadPartRig = false;
         bool staticizedBareHandPartRig = false;
-        // Fallout 76 creature meshes use the FO4 rig format, but their bones are not yet mapped into the
-        // viewer's character skeleton.  For a static world-viewer presentation, retain the authored source
-        // geometry and material state while bypassing only that unavailable skinning pass.  Mounting the
-        // resulting mesh in actor space preserves the NIF's bind-pose placement rather than inheriting an
-        // arbitrary partial skeleton bone.
-        const bool staticizeFo76RiggedPart = traitsRecord != nullptr && traitsRecord->mIsFO4
-            && rigProbe.mRigGeometryCount > 0
-            && worldViewerEnvEnabled("OPENMW_FO76_STATICIZE_RIGGED_NPC_PARTS");
-        if (staticizeFo76RiggedPart)
-            attachNode = mObjectRoot.get();
         const bool staticizeTes5Hair = tes5StaticPart && isFalloutScalpHairModel(correctedModel.value())
             && rigProbe.mRigGeometryCount > 0
             && worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_STATICIZE_TES5_HAIR");
         const bool wantsStaticizedHeadPartRig = staticizeTes5Hair
-            || staticizeFo76RiggedPart
             || (headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
                 && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HEAD_PARTS") != nullptr
                 && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr);
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
             && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
-        if ((falloutHumanPart || tes4RiggedPart) && rigProbe.mRigGeometryCount > 0)
+        if ((falloutHumanPart || fallout4Part || tes4RiggedPart) && rigProbe.mRigGeometryCount > 0)
         {
             // Mark the cached template before SceneManager clones it.  RigGeometry's copy constructor preserves
             // this bit, so the very first update/cull traversal uses the Fallout skinning convention instead of
@@ -10063,8 +10369,7 @@ namespace MWRender
         osg::ref_ptr<osg::Node> attached;
         osg::Group* rigPartMaster = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
         if ((staticizedHeadPartRig || staticizedBareHandPartRig)
-            && (staticizeTes5Hair || staticizeFo76RiggedPart
-                || std::getenv("OPENMW_FNV_DIRECT_ATTACH_STATICIZED_RIG_PARTS") != nullptr))
+            && (staticizeTes5Hair || std::getenv("OPENMW_FNV_DIRECT_ATTACH_STATICIZED_RIG_PARTS") != nullptr))
         {
             attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
             attachNode->addChild(attached);
@@ -10137,7 +10442,8 @@ namespace MWRender
                 if (!rigidPartAttitude.zeroRotation())
                     attitude = &rigidPartAttitude;
             }
-            else if (tes4Part && !tes4RiggedPart && Misc::StringUtils::ciEqual(preferredBone, "Bip01 Head"))
+            else if (tes4Part && !tes4RiggedPart && applyTes4RigidHeadBasis
+                && Misc::StringUtils::ciEqual(preferredBone, "Bip01 Head"))
             {
                 // SceneUtil::attach consumes the root transform of an attached model. Retail Oblivion retains the
                 // +90-degree Y local transform on each rigid child beneath BSFaceGenNiNodeBiped (and beneath the
@@ -10273,7 +10579,15 @@ namespace MWRender
                              << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
             overrideFalloutPartDiffuseTexture(diffuseTexture, mResourceSystem, *attached);
         }
-        if (tint != nullptr && attached != nullptr)
+        if (colorRemappingIndex != nullptr && attached != nullptr)
+        {
+            osg::StateSet* stateSet = attached->getOrCreateStateSet();
+            stateSet->addUniform(new osg::Uniform("falloutHairPaletteMode", true),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet->addUniform(new osg::Uniform("falloutHairColorIndex", *colorRemappingIndex),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        }
+        else if (tint != nullptr && attached != nullptr)
         {
             const bool hairTintModel = isBethesdaHairTintModel(correctedModel.value());
             const bool falloutHairTint = falloutHumanPart && hairTintModel;
@@ -10498,6 +10812,36 @@ namespace MWRender
         return !model.empty() && Misc::StringUtils::ciEndsWith(model, ".nif");
     }
 
+    static uint32_t falloutAppearanceSourceSlot(uint32_t flags)
+    {
+        for (uint32_t slot = 0; slot < 32; ++slot)
+            if ((flags & (uint32_t(1) << slot)) != 0)
+                return slot;
+        return std::numeric_limits<uint32_t>::max();
+    }
+
+    static void stampFalloutAppearanceSource(
+        osg::Node* root, ESM::FormId sourceForm, uint32_t sourceSlot, std::string_view role)
+    {
+        if (root == nullptr || sourceForm.isZeroOrUnset()
+            || sourceSlot == std::numeric_limits<uint32_t>::max() || role.empty())
+            return;
+        root->setUserValue("OpenMW.FalloutAppearanceRole", std::string(role));
+        root->setUserValue("OpenMW.FalloutAppearanceSourceForm", sourceForm.toUint32());
+        root->setUserValue("OpenMW.FalloutAppearanceSourceSlot", sourceSlot);
+    }
+
+    static std::string_view falloutAppearanceHeadPartRole(uint32_t type)
+    {
+        if (type == ESM4::HeadPart::Type_Hair)
+            return "hair";
+        if (type == ESM4::HeadPart::Type_Eyes || type == ESM4::HeadPart::Type_LeftEye)
+            return "eyes";
+        if (type == ESM4::HeadPart::Type_Face)
+            return "face";
+        return "headPart";
+    }
+
     static bool isAvailableFonvActorModel(Resource::ResourceSystem* resourceSystem, std::string_view model)
     {
         if (!isRenderableFonvActorModel(model))
@@ -10644,6 +10988,14 @@ namespace MWRender
         uint32_t coveredEquipmentSlots = coveredArmorSlots;
         for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(mPtr))
             coveredEquipmentSlots |= clothing->mClothingFlags;
+        const bool clothedTorsoAndLegs
+            = (coveredEquipmentSlots & ESM4::Armor::TES4_UpperBody) != 0
+            && (coveredEquipmentSlots & ESM4::Armor::TES4_LowerBody) != 0;
+        Log(Debug::Info) << "ESM4 diag: TES4 equipment gate actor=" << traits.mEditorId
+                         << " armor=" << MWClass::ESM4Npc::getEquippedArmor(mPtr).size()
+                         << " clothing=" << MWClass::ESM4Npc::getEquippedClothing(mPtr).size()
+                         << " slots=0x" << std::hex << coveredEquipmentSlots << std::dec
+                         << " clothed=" << clothedTorsoAndLegs;
 
         const std::vector<ESM4::Race::BodyPart>& raceBodyParts
             = isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale;
@@ -10679,9 +11031,20 @@ namespace MWRender
             else
                 Log(Debug::Error) << "Eyes not found: " << ESM::RefId(traits.mEyes);
         }
+        const bool applyTes4FaceGenMorphs
+            = !worldViewerEnvEnabled("OPENMW_TES4_DISABLE_FACEGEN_MORPHS");
+        const bool useTes4CleanBaseFace
+            = worldViewerEnvEnabled("OPENMW_TES4_CLEAN_BASE_FACE");
+        const std::string bakedTes4HeadTexture = findTes4NpcFaceTexture(mResourceSystem, traits, false);
+        const std::string bakedTes4EarTexture = findTes4NpcFaceTexture(mResourceSystem, traits, true);
         for (std::size_t i = 0; i < race->mHeadParts.size(); ++i)
         {
             if (worldViewerEnvEnabled("OPENMW_TES4_HIDE_FACE_SURFACES_PROBE"))
+                continue;
+            if (useTes4CleanBaseFace
+                && (i == ESM4::Race::Mouth || i == ESM4::Race::TeethLower
+                    || i == ESM4::Race::TeethUpper || i == ESM4::Race::Tongue
+                    || i == ESM4::Race::EyeLeft || i == ESM4::Race::EyeRight))
                 continue;
             if ((i == ESM4::Race::EarMale && isFemale) || (i == ESM4::Race::EarFemale && !isFemale))
                 continue;
@@ -10690,11 +11053,35 @@ namespace MWRender
                 = (i == ESM4::Race::EyeLeft || i == ESM4::Race::EyeRight) && !eyeTexture.empty()
                 ? eyeTexture
                 : std::string_view(bodyPart.texture);
+            const bool applyRigidHeadBasis
+                = i != ESM4::Race::TeethLower && i != ESM4::Race::TeethUpper;
             osg::ref_ptr<osg::Node> attached
-                = insertPart(bodyPart.mesh, nullptr, texture, "Bip01 Head");
+                = insertPart(bodyPart.mesh, nullptr, texture, "Bip01 Head", nullptr, applyRigidHeadBasis);
             if (attached != nullptr)
             {
-                applyFaceGenEgmMorph(mResourceSystem, attached.get(), bodyPart.mesh, traits);
+                if (applyTes4FaceGenMorphs)
+                    applyFaceGenEgmMorph(mResourceSystem, attached.get(), bodyPart.mesh, traits);
+                if (i == ESM4::Race::Head || i == ESM4::Race::EarMale || i == ESM4::Race::EarFemale)
+                {
+                    const bool earPart = i == ESM4::Race::EarMale || i == ESM4::Race::EarFemale;
+                    const std::string& bakedFaceTexture
+                        = earPart ? bakedTes4EarTexture : bakedTes4HeadTexture;
+                    if (!bakedFaceTexture.empty())
+                    {
+                        overrideFalloutPartDiffuseTexture(bakedFaceTexture, mResourceSystem, *attached);
+                        Log(Debug::Info) << "ESM4 diag: bound authored baked TES4 face texture actor="
+                                         << traits.mEditorId << " model=" << bodyPart.mesh
+                                         << " texture=" << bakedFaceTexture;
+                    }
+                    else
+                    {
+                        osg::ref_ptr<osg::Image> generatedFaceTexture
+                            = makeTes4FaceGenTexture(mResourceSystem, bodyPart.mesh, texture, traits);
+                        if (generatedFaceTexture != nullptr)
+                            overrideFalloutPartDiffuseTexture(
+                                generatedFaceTexture.get(), mResourceSystem, *attached);
+                    }
+                }
                 const bool tes4MouthMorphPart = i == ESM4::Race::Head || i == ESM4::Race::Mouth
                     || i == ESM4::Race::TeethLower || i == ESM4::Race::TeethUpper
                     || i == ESM4::Race::Tongue;
@@ -10708,12 +11095,14 @@ namespace MWRender
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
             {
-                const osg::Vec4f hairTint = getHairTint(traits);
-                osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint, {}, "Bip01 Head");
-                if (attached != nullptr)
+                const ResolvedHairTint hairTint = getHairTint(traits);
+                osg::ref_ptr<osg::Node> attached
+                    = insertPart(hair->mModel, &hairTint.mColor, {}, "Bip01 Head");
+                if (attached != nullptr && applyTes4FaceGenMorphs)
                     applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 Log(Debug::Info) << "ESM4 diag: applied TES4 HCLR hair tint actor=" << traits.mEditorId
-                                 << " tint=(" << hairTint.x() << "," << hairTint.y() << "," << hairTint.z()
+                                 << " tint=(" << hairTint.mColor.x() << "," << hairTint.mColor.y() << ","
+                                 << hairTint.mColor.z()
                                  << ")";
             }
             else
@@ -10812,9 +11201,14 @@ namespace MWRender
         // Fallout's exported *_0 face asset is a modulation/detail map over the
         // race diffuse, not a replacement diffuse.  Bodymods use the same
         // neutral-at-0.5 modulation convention, often as a uniform 8x8 map.
+        const bool useDefaultRaceFaceTexture = MWClass::ESM4Npc::usesDefaultFaceTexture(mPtr);
         const std::string npcFaceTexture;
-        const std::string npcFaceDetailTexture = findFonvNpcFaceDetailTexture(mResourceSystem, traits);
-        const std::string npcFaceNormalTexture = findFonvNpcFaceNormalTexture(mResourceSystem, traits);
+        const std::string npcFaceDetailTexture = useDefaultRaceFaceTexture
+            ? std::string{}
+            : findFonvNpcFaceDetailTexture(mResourceSystem, traits);
+        const std::string npcFaceNormalTexture = useDefaultRaceFaceTexture
+            ? std::string{}
+            : findFonvNpcFaceNormalTexture(mResourceSystem, traits);
         const std::string npcBodyTexture = findFonvNpcBodyTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyDetailTexture = findFonvNpcBodyDetailTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyNormalTexture = findFonvNpcBodyNormalTexture(mResourceSystem, traits, isFemale);
@@ -10827,7 +11221,9 @@ namespace MWRender
             && npcBodyTintWidth <= 16 && npcBodyTintHeight <= 16;
         osg::ref_ptr<osg::Image> npcGeneratedFaceGen1
             = npcBodyDetailIsTinyTint ? makeMeasuredFonvFaceGen1(traits) : nullptr;
-        osg::ref_ptr<osg::Image> npcGeneratedSkinFaceGen0 = makeMeasuredFonvSkinFaceGen0(traits);
+        // A missing actor bodymod must retain the loader's exact neutral 0.5
+        // FaceGenMap0. Never substitute another actor's complexion payload.
+        osg::ref_ptr<osg::Image> npcGeneratedSkinFaceGen0;
         if (!npcFaceTexture.empty())
             Log(Debug::Verbose) << "FNV/ESM4 diag: using baked NPC face texture " << npcFaceTexture << " for "
                              << traits.mEditorId;
@@ -10850,10 +11246,6 @@ namespace MWRender
                              << npcBodyMaterialTint.z() << "); preserving race body material for " << traits.mEditorId;
         if (npcGeneratedFaceGen1 != nullptr)
             Log(Debug::Info) << "FNV/ESM4 diag: binding retail-measured generated FaceGen1 for "
-                             << traits.mEditorId;
-        if (npcGeneratedSkinFaceGen0 != nullptr)
-            Log(Debug::Info) << "FNV/ESM4 actor skin: binding retail-measured generated skin FaceGen0 "
-                             << "rgba=(102,104,103,127) fullMipD3D9FNV1a32=0x86EE2541 for "
                              << traits.mEditorId;
         if (!npcBodyNormalTexture.empty())
             Log(Debug::Verbose) << "FNV/ESM4 diag: using baked NPC body normal texture " << npcBodyNormalTexture
@@ -10938,6 +11330,12 @@ namespace MWRender
             const std::string_view texture
                 = !npcBodyTexture.empty() && isFonvRaceSkinSurface(bodyPart.mesh) ? npcBodyTexture : bodyPart.texture;
             osg::ref_ptr<osg::Node> attached = insertPart(bodyPart.mesh, nullptr, texture);
+            if (bodyIndex == 0)
+                stampFalloutAppearanceSource(attached.get(), race->mId, 2, "exposedBody");
+            else if (bodyIndex == 1)
+                stampFalloutAppearanceSource(attached.get(), race->mId, 3, "leftHand");
+            else if (bodyIndex == 2)
+                stampFalloutAppearanceSource(attached.get(), race->mId, 4, "rightHand");
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)
                 ++attachedRaceBodyParts;
@@ -10946,11 +11344,16 @@ namespace MWRender
                 forceFalloutActorPartVisible(attached.get(), bodyPart.mesh, traits);
                 if (npcGeneratedSkinFaceGen0 != nullptr || !npcBodyDetailTexture.empty())
                 {
-                    Log(Debug::Verbose) << "FNV/ESM4 actor skin: binding generated FaceGen0 and "
-                                     << (npcGeneratedFaceGen1 != nullptr ? "generated" : "raw NPC bodymod")
+                    Log(Debug::Verbose) << "FNV/ESM4 actor skin: binding "
+                                     << (npcGeneratedFaceGen1 != nullptr ? "authored NPC bodymod FaceGen0 and generated"
+                                                                        : "neutral FaceGen0 and raw NPC bodymod")
                                      << " FaceGen1 " << npcBodyDetailTexture << " on " << bodyPart.mesh
                                      << " for " << traits.mEditorId;
-                    overrideFalloutPartFaceGenTextures({}, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
+                    const std::string_view bodyFaceGen0
+                        = npcGeneratedFaceGen1 != nullptr ? std::string_view(npcBodyDetailTexture) : std::string_view{};
+                    const std::string_view bodyFaceGen1
+                        = npcGeneratedFaceGen1 == nullptr ? std::string_view(npcBodyDetailTexture) : std::string_view{};
+                    overrideFalloutPartFaceGenTextures(bodyFaceGen0, npcGeneratedSkinFaceGen0.get(), bodyFaceGen1,
                         npcGeneratedFaceGen1.get(), mResourceSystem, *attached);
                 }
                 if (!npcBodyNormalTexture.empty())
@@ -10992,6 +11395,16 @@ namespace MWRender
             const std::string_view texture = eyePart && !eyeTexture.empty() ? eyeTexture
                                                                             : headPart.texture;
             osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, texture);
+            if (i == 0)
+                stampFalloutAppearanceSource(attached.get(), traits.mId, 0, "face");
+            else if (eyePart)
+            {
+                const ESM::FormId eyeSource
+                    = traits.mEyes.isZeroOrUnset() ? traits.mId : traits.mEyes;
+                stampFalloutAppearanceSource(attached.get(), eyeSource, 0, "eyes");
+            }
+            else
+                stampFalloutAppearanceSource(attached.get(), traits.mId, 0, "headPart");
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (required && renderable)
                 ++attachedRaceFaceParts;
@@ -11070,11 +11483,13 @@ namespace MWRender
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
             {
-                const osg::Vec4f hairTint = getHairTint(traits);
+                const ResolvedHairTint hairTint = getHairTint(traits);
                 Log(Debug::Verbose) << "FNV/ESM4 diag: inserting FONV NPC hair " << hair->mEditorId << " model="
-                                 << hair->mModel << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", "
-                                 << hairTint.z() << ") for " << traits.mEditorId;
-                osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
+                                 << hair->mModel << " tint=(" << hairTint.mColor.x() << ", "
+                                 << hairTint.mColor.y() << ", " << hairTint.mColor.z() << ") for "
+                                 << traits.mEditorId;
+                osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint.mColor);
+                stampFalloutAppearanceSource(attached.get(), traits.mHair, 1, "hair");
                 applyFaceGenHairEgmMorph(
                     mResourceSystem, attached.get(), hair->mModel, traits, wearingHat, race, isFemale);
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), hair->mModel, traits);
@@ -11166,7 +11581,8 @@ namespace MWRender
         // NIF. Attach each model once: duplicate actor-space skins z-fight and
         // make otherwise opaque clothing appear translucent.
         std::map<std::string, osg::ref_ptr<osg::Node>> attachedEquipmentModels;
-        const auto attachEquipmentModel = [&](std::string_view model, bool authoredRigidAttachment = false) {
+        const auto attachEquipmentModel
+            = [&](std::string_view model, ESM::FormId sourceForm, uint32_t sourceFlags) {
             const VFS::Path::Normalized corrected
                 = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(model));
             std::string key = corrected.value();
@@ -11174,9 +11590,9 @@ namespace MWRender
             if (const auto found = attachedEquipmentModels.find(key); found != attachedEquipmentModels.end())
                 return std::make_pair(found->second, false);
 
-            osg::ref_ptr<osg::Node> attached = authoredRigidAttachment
-                ? insertAttachedPart(model, {})
-                : insertPart(model);
+            osg::ref_ptr<osg::Node> attached = insertPart(model);
+            stampFalloutAppearanceSource(attached.get(), sourceForm,
+                falloutAppearanceSourceSlot(sourceFlags), "equipment");
             forceFalloutActorPartVisible(attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(attached.get(), model, traits, mResourceSystem, npcBodyTexture,
                 npcFaceTexture, npcFaceDetailTexture, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
@@ -11191,33 +11607,7 @@ namespace MWRender
 
         for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
         {
-            const bool pipBoySlot = (armor->mArmorFlags & ESM4::Armor::FO3_PipBoy) != 0;
-            std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
-            if (pipBoySlot)
-            {
-                // Retail substitutes the separate PipBoyNPC armor model for world/
-                // third-person rendering even though Player owns the full PipBoy.
-                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-                if (store != nullptr)
-                {
-                    for (const ESM4::Armor& candidate : store->get<ESM4::Armor>())
-                    {
-                        if (!Misc::StringUtils::ciEqual(candidate.mEditorId, "PipBoyNPC"))
-                            continue;
-                        model = MWClass::ESM4Npc::chooseEquipmentModel(&candidate, isFemale);
-                        break;
-                    }
-                }
-                if (model.empty() || Misc::StringUtils::lowerCase(model).find("pipboyarmnpc.nif") == std::string::npos
-                    && Misc::StringUtils::lowerCase(model).find("pipboyarmfemalenpc.nif") == std::string::npos)
-                {
-                    model = isFemale ? "PipBoy3000/PipBoyArmFemaleNPC.NIF"
-                                     : "PipBoy3000/PipBoyArmNPC.NIF";
-                }
-                Log(Debug::Info) << "FNV/ESM4 PipBoy view substitution: actor=" << traits.mEditorId
-                                 << " source=" << armor->mEditorId << " selected=" << model
-                                 << " attachment=authored-Prn";
-            }
+            const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
             if (proofActor)
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: armor " << armor->mEditorId
                                  << " form=" << ESM::RefId(armor->mId) << " model=" << model;
@@ -11233,7 +11623,8 @@ namespace MWRender
                 continue;
             }
             ++requiredArmorParts;
-            auto [attached, firstAttachment] = attachEquipmentModel(model, pipBoySlot);
+            auto [attached, firstAttachment]
+                = attachEquipmentModel(model, armor->mId, armor->mArmorFlags);
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)
                 ++attachedArmorParts;
@@ -11262,7 +11653,8 @@ namespace MWRender
                 continue;
             }
             ++requiredArmorParts;
-            auto [attached, firstAttachment] = attachEquipmentModel(model);
+            auto [attached, firstAttachment]
+                = attachEquipmentModel(model, addon->mId, addon->mBodyTemplate.bodyPart);
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)
                 ++attachedArmorParts;
@@ -11294,7 +11686,8 @@ namespace MWRender
                 continue;
             }
             ++requiredClothingParts;
-            auto [attached, firstAttachment] = attachEquipmentModel(model);
+            auto [attached, firstAttachment]
+                = attachEquipmentModel(model, clothing->mId, clothing->mClothingFlags);
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)
                 ++attachedClothingParts;
@@ -11325,15 +11718,14 @@ namespace MWRender
                                  << traits.mEditorId;
             }
             osg::ref_ptr<osg::Node> attached;
-            const std::string_view weaponModel
-                = selectFalloutWeaponViewModel(weapon->mModel, weapon->mFirstPersonModel, mFirstPersonView);
             if (!weaponIntentionallyHidden)
             {
                 std::string authoredParent;
                 // Resolve the model's Prn when present, otherwise the canonical
                 // authored skeleton Weapon target. Never invent a hand, hip,
                 // back, or actor-root fallback.
-                attached = insertAttachedPart(weaponModel, {}, &authoredParent);
+                attached = insertAttachedPart(weapon->mModel, {}, &authoredParent);
+                stampFalloutAppearanceSource(attached.get(), weapon->mId, 5, "weapon");
                 if (!authoredParent.empty())
                     mFalloutWeaponDrawBone = authoredParent;
                 mFalloutWeaponPart = attached;
@@ -11341,8 +11733,6 @@ namespace MWRender
                 {
                     if (weaponDrawn)
                         showWeapons(true);
-                    else if (mFirstPersonView)
-                        attached->setNodeMask(0);
                     else if (!applyRetailWeaponHolsterContract(*weapon))
                         attached->setNodeMask(0);
                 }
@@ -11354,9 +11744,7 @@ namespace MWRender
                 std::ostringstream details;
                 details << "game=FONV npc=\"" << traits.mEditorId << "\" kind=weapon"
                         << " form=" << ESM::RefId(weapon->mId) << " editor=\"" << weapon->mEditorId << "\""
-                        << " model=\"" << weaponModel << "\" worldModel=\"" << weapon->mModel
-                        << "\" firstPersonModel=\"" << weapon->mFirstPersonModel
-                        << "\" firstPerson=" << mFirstPersonView << " preferredBone=\"" << preferredBone << "\""
+                        << " model=\"" << weapon->mModel << "\" preferredBone=\"" << preferredBone << "\""
                         << " animationType=" << static_cast<unsigned int>(weapon->mData.animationType)
                         << " handGrip=" << static_cast<unsigned int>(weapon->mData.handGrip)
                         << " reloadAnim=" << static_cast<unsigned int>(weapon->mData.reloadAnim)
@@ -11470,16 +11858,28 @@ namespace MWRender
             // a later valid head-part entry of the same type).
             if (miscPart || usedHeadPartTypes.count(part->mType) == 0)
             {
-                const osg::Vec4f hairTint = getHairTint(traits);
-                const osg::Vec4f* tint = miscPart || part->mType == ESM4::HeadPart::Type_Hair
+                const ResolvedHairTint hairTint = getHairTint(traits);
+                const bool tintedHeadPart = miscPart || part->mType == ESM4::HeadPart::Type_Hair
                     || part->mType == ESM4::HeadPart::Type_FacialHair
-                    || part->mType == ESM4::HeadPart::Type_Eyebrows
-                    ? &hairTint
-                    : nullptr;
+                    || part->mType == ESM4::HeadPart::Type_Eyebrows;
+                const osg::Vec4f* tint
+                    = tintedHeadPart && !hairTint.mUsesRemappingIndex ? &hairTint.mColor : nullptr;
+                const float* colorRemappingIndex
+                    = tintedHeadPart && hairTint.mUsesRemappingIndex ? &hairTint.mRemappingIndex : nullptr;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: inserting NPC head part " << part->mEditorId << " type="
-                                 << part->mType << " model=" << part->mModel << " for "
-                                 << mPtr.getCellRef().getRefId();
-                osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint);
+                                 << part->mType << " model=" << part->mModel
+                                 << (tint != nullptr
+                                         ? " tint=(" + std::to_string(tint->r()) + "," + std::to_string(tint->g())
+                                             + "," + std::to_string(tint->b()) + ")"
+                                         : std::string())
+                                 << " for " << mPtr.getCellRef().getRefId();
+                osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint, {}, {}, colorRemappingIndex);
+                if (isFallout3OrNewVegas(traits))
+                {
+                    const std::string_view role = falloutAppearanceHeadPartRole(part->mType);
+                    stampFalloutAppearanceSource(
+                        attached.get(), partId, role == "hair" ? 1u : 0u, role);
+                }
                 if (part->mType == ESM4::HeadPart::Type_Hair || isFalloutScalpHairModel(part->mModel))
                     applyFaceGenHairEgmMorph(
                         mResourceSystem, attached.get(), part->mModel, traits, wearingHat, faceGenRace, faceGenFemale);
@@ -11526,13 +11926,22 @@ namespace MWRender
                         Log(Debug::Error) << "Extra head part not found: " << ESM::RefId(extraPartId);
                         continue;
                     }
-                    const osg::Vec4f* extraTint = isFonvMiscHeadPart(*extraPart)
+                    const bool tintedExtraPart = isFonvMiscHeadPart(*extraPart)
                             || extraPart->mType == ESM4::HeadPart::Type_Hair
                             || extraPart->mType == ESM4::HeadPart::Type_FacialHair
-                            || extraPart->mType == ESM4::HeadPart::Type_Eyebrows
-                        ? &hairTint
-                        : nullptr;
-                    osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel, extraTint);
+                            || extraPart->mType == ESM4::HeadPart::Type_Eyebrows;
+                    const osg::Vec4f* extraTint
+                        = tintedExtraPart && !hairTint.mUsesRemappingIndex ? &hairTint.mColor : nullptr;
+                    const float* extraColorRemappingIndex
+                        = tintedExtraPart && hairTint.mUsesRemappingIndex ? &hairTint.mRemappingIndex : nullptr;
+                    osg::ref_ptr<osg::Node> extraAttached
+                        = insertPart(extraPart->mModel, extraTint, {}, {}, extraColorRemappingIndex);
+                    if (isFallout3OrNewVegas(traits))
+                    {
+                        const std::string_view role = falloutAppearanceHeadPartRole(extraPart->mType);
+                        stampFalloutAppearanceSource(
+                            extraAttached.get(), extraPartId, role == "hair" ? 1u : 0u, role);
+                    }
                     if (extraPart->mType == ESM4::HeadPart::Type_Hair
                         || isFalloutScalpHairModel(extraPart->mModel))
                         applyFaceGenHairEgmMorph(
@@ -11641,7 +12050,10 @@ namespace MWRender
                     if (r == traits.mRace)
                         compatibleRace = true;
 
-                const std::string_view addonModel = isFemale ? arma->mModelFemale : arma->mModelMale;
+                // Several Fallout 4 ARMA records use one unisex biped model
+                // and leave the female field empty. Match the established
+                // Fallout selection rule instead of dropping the outfit.
+                const std::string_view addonModel = chooseFonvArmorAddonModel(*arma, isFemale);
                 std::string loweredAddonModel(addonModel);
                 Misc::StringUtils::lowerCaseInPlace(loweredAddonModel);
                 const bool isStandaloneStarfieldHandModel
@@ -11725,7 +12137,7 @@ namespace MWRender
         for (const ESM4::ArmorAddon* arma : armorAddons)
         {
             const uint32_t covers = arma->mBodyTemplate.bodyPart;
-            const std::string_view addonModel = isFemale ? arma->mModelFemale : arma->mModelMale;
+            const std::string_view addonModel = chooseFonvArmorAddonModel(*arma, isFemale);
             if (insertAllDistinctAddonModels)
             {
                 std::string loweredModel(addonModel);
@@ -11898,4 +12310,5 @@ namespace MWRender
                 << " result=" << (pass ? "pass" : "fail");
         }
     }
+
 }

@@ -450,7 +450,9 @@ public:
         const osg::Matrixf world = local * parentWorld;
         mWorldByNode[&node] = world;
 
-        const bool keep = !node.getName().empty() && Misc::StringUtils::ciStartsWith(node.getName(), "Bip01");
+        const bool keep = !node.getName().empty()
+            && (Misc::StringUtils::ciStartsWith(node.getName(), "Bip01")
+                || Misc::StringUtils::ciEqual(node.getName(), "Camera1st"));
         if (keep)
         {
             TransformDumpNode item;
@@ -484,6 +486,7 @@ private:
 bool isImportantFNVHumanBone(const std::string& lowerName)
 {
     static const std::set<std::string> sImportant = {
+        "camera1st",
         "bip01",
         "bip01 nonaccum",
         "bip01 pelvis",
@@ -941,68 +944,6 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         out << "}";
     }
 
-    out << "\n  ],\n";
-    out << "  \"controllers\": [";
-    bool firstController = true;
-    for (const auto& record : meshFile->mRecords)
-    {
-        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
-        if (object == nullptr)
-            continue;
-
-        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
-             controller = controller->mNext)
-        {
-            if (!firstController)
-                out << ",";
-            firstController = false;
-            out << "\n    {\"node\":\"" << jsonEscape(object->mName) << "\""
-                << ",\"type\":\"" << jsonEscape(controller->recName) << "\""
-                << ",\"flags\":" << controller->mFlags
-                << ",\"frequency\":" << controller->mFrequency
-                << ",\"phase\":" << controller->mPhase
-                << ",\"start\":" << controller->mTimeStart
-                << ",\"stop\":" << controller->mTimeStop;
-
-            const auto* transformController
-                = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr());
-            const auto* transformInterpolator = transformController == nullptr
-                ? nullptr
-                : dynamic_cast<const Nif::NiTransformInterpolator*>(
-                    transformController->mInterpolator.getPtr());
-            if (transformInterpolator != nullptr)
-            {
-                out << ",\"defaultTranslation\":"
-                    << formatVec3Json(transformInterpolator->mDefaultValue.mTranslation)
-                    << ",\"defaultRotation\":"
-                    << formatQuatJson(transformInterpolator->mDefaultValue.mRotation)
-                    << ",\"defaultScale\":" << transformInterpolator->mDefaultValue.mScale;
-                if (!transformInterpolator->mData.empty())
-                {
-                    const Nif::NiKeyframeData& data = *transformInterpolator->mData.getPtr();
-                    out << ",\"translations\":[";
-                    for (std::size_t i = 0; i < data.mTranslations->mKeys.size(); ++i)
-                    {
-                        if (i != 0)
-                            out << ",";
-                        const auto& [time, key] = data.mTranslations->mKeys[i];
-                        out << "{\"time\":" << time << ",\"value\":"
-                            << formatVec3Json(key.mValue) << "}";
-                    }
-                    out << "],\"scales\":[";
-                    for (std::size_t i = 0; i < data.mScales->mKeys.size(); ++i)
-                    {
-                        if (i != 0)
-                            out << ",";
-                        const auto& [time, key] = data.mScales->mKeys[i];
-                        out << "{\"time\":" << time << ",\"value\":" << key.mValue << "}";
-                    }
-                    out << "]";
-                }
-            }
-            out << "}";
-        }
-    }
     out << "\n  ]\n";
     out << "}\n";
     return 0;
@@ -2018,8 +1959,8 @@ void readVFS(std::unique_ptr<VFS::Archive>&& archive, const std::filesystem::pat
     if (!archivePath.empty() && !isBSA(archivePath))
     {
         const Files::Collections fileCollections({ archivePath });
-        const Files::MultiDirCollection& bsaCol = fileCollections.getCollection(".bsa");
-        const Files::MultiDirCollection& ba2Col = fileCollections.getCollection(".ba2");
+        const Files::MultiDirCollection& bsaCol = fileCollections.getCollection("bsa");
+        const Files::MultiDirCollection& ba2Col = fileCollections.getCollection("ba2");
         for (const Files::MultiDirCollection& collection : { bsaCol, ba2Col })
         {
             for (auto& file : collection)

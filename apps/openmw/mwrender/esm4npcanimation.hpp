@@ -8,7 +8,6 @@
 #include <osg/MatrixTransform>
 
 #include <array>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,15 +24,6 @@ namespace MWRender
     class ESM4NpcAnimation : public Animation
     {
     public:
-        struct FirstPersonState
-        {
-            float mFieldOfView = 55.f;
-            std::vector<std::string> mSaveWornArmorModels;
-            std::string mSaveWornLeftHandModel;
-            bool mPipBoy = false;
-            bool mPipBoyGlove = false;
-        };
-
         struct WeaponAttachmentState
         {
             bool mApplied = false;
@@ -48,12 +38,9 @@ namespace MWRender
 
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
-        ESM4NpcAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode,
-            Resource::ResourceSystem* resourceSystem, std::optional<FirstPersonState> firstPerson);
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
-        osg::Node* getEquippedWeaponNode() override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
         bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) override;
@@ -62,7 +49,7 @@ namespace MWRender
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
-        std::size_t getFirstPersonAttachedPartCount() const { return mFirstPersonAttachedPartCount; }
+        void refreshEquipment() { updateParts(); }
 
     private:
         struct ProceduralPoseBone
@@ -75,14 +62,14 @@ namespace MWRender
         bool mFo4ProceduralPoseInitialized = false;
         std::string mFo4ProceduralGroup;
         bool mFo4ProceduralAdvancedLogged = false;
+        float mSkyrimAuthoredAnimationElapsed = 0.f;
+        bool mSkyrimAuthoredAnimationLogged = false;
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
         osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
-        bool mFirstPersonView = false;
-        std::size_t mFirstPersonAttachedPartCount = 0;
         const ESM4::Weapon* mFalloutActionWeapon = nullptr;
         osg::ref_ptr<osg::Node> mFalloutAnimatedObjectPart;
         std::string mFalloutAnimatedObjectModel;
@@ -90,10 +77,10 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
-            std::string_view preferredBone = {}, bool forceActorSpace = false);
-        osg::ref_ptr<osg::Node> insertAttachedPart(
-            std::string_view model, std::string_view preferredBone, std::string* authoredParent = nullptr);
-        void initializeFirstPerson(const FirstPersonState& state);
+            std::string_view preferredBone = {}, const float* colorRemappingIndex = nullptr,
+            bool applyTes4RigidHeadBasis = true);
+        osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
+            std::string* authoredParent = nullptr);
 
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,
@@ -109,6 +96,7 @@ namespace MWRender
         void updatePartsTES5(const ESM4::Npc& traits);
         void applyPostManualFalloutActorPose() override;
     };
+
 }
 
 #endif // GAME_RENDER_ESM4NPCANIMATION_H

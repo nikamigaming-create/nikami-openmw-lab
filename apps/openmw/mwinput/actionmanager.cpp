@@ -6,10 +6,7 @@
 #include <SDL_keyboard.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
-#include <cstdlib>
-#include <exception>
 #include <limits>
 #include <ranges>
 #include <vector>
@@ -19,12 +16,14 @@
 #include <osg/Viewport>
 #include <osgViewer/Viewer>
 
-#include <components/settings/values.hpp>
 #include <components/debug/debuglog.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadbptd.hpp>
+#include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/rng.hpp>
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-//## VR_PATCH END
+#include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
@@ -36,32 +35,22 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
-#include "../mwworld/globals.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
 
-#include <components/esm4/loadbptd.hpp>
-#include <components/esm4/loadammo.hpp>
-#include <components/esm4/loadcrea.hpp>
-#include <components/esm4/loadflst.hpp>
-#include <components/esm4/loadnpc.hpp>
-#include <components/esm4/loadrace.hpp>
-#include <components/esm4/loadweap.hpp>
-#include <components/sceneutil/positionattitudetransform.hpp>
-
 #include "../mwmechanics/actorutil.hpp"
-#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
+
+#include "../mwgui/hud.hpp"
+
+#include "../mwphysics/raycasting.hpp"
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/camera.hpp"
 #include "../mwrender/renderingmanager.hpp"
-
-#include "../mwphysics/raycasting.hpp"
-
-#include "../mwgui/hud.hpp"
 
 #include "actions.hpp"
 #include "bindingsmanager.hpp"
@@ -76,127 +65,10 @@ namespace MWInput
         , mScreenCaptureHandler(std::move(screenCaptureHandler))
         , mTimeIdle(0.f)
     {
-        if (const char* proof = std::getenv("OPENMW_FNV_VATS_PROOF"))
-            mFalloutVatsProofEnabled = std::string_view(proof) == "1";
-        if (const char* mode = std::getenv("OPENMW_FNV_VATS_PROOF_MODE"))
-        {
-            if (Misc::StringUtils::ciEqual(mode, "ordinary-ranged"))
-                mFalloutVatsProofMode = FalloutVatsProofMode::OrdinaryRanged;
-            else if (Misc::StringUtils::ciEqual(mode, "ordinary-melee"))
-                mFalloutVatsProofMode = FalloutVatsProofMode::OrdinaryMelee;
-            else if (!Misc::StringUtils::ciEqual(mode, "vats"))
-                Log(Debug::Warning) << "FNV combat proof: invalid mode=" << mode << " using=vats";
-        }
-        if (const char* target = std::getenv("OPENMW_FNV_VATS_PROOF_TARGET"))
-            mFalloutVatsProofTargetName = target;
-        if (const char* targetReference = std::getenv("OPENMW_FNV_VATS_PROOF_TARGET_REF"))
-        {
-            try
-            {
-                mFalloutVatsProofTargetReference
-                    = static_cast<std::uint32_t>(std::stoul(targetReference, nullptr, 0));
-            }
-            catch (const std::exception&)
-            {
-                Log(Debug::Warning) << "FNV VATS proof: invalid target reference=" << targetReference;
-            }
-        }
-        if (const char* startCell = std::getenv("OPENMW_FNV_VATS_PROOF_START_CELL"))
-            mFalloutVatsProofStartCell = startCell;
-        const auto readProofFloat = [](const char* name, float& value) {
-            const char* text = std::getenv(name);
-            if (text == nullptr || *text == '\0')
-                return false;
-            char* end = nullptr;
-            const float parsed = std::strtof(text, &end);
-            if (end == text || *end != '\0' || !std::isfinite(parsed))
-                return false;
-            value = parsed;
-            return true;
-        };
-        const bool targetX
-            = readProofFloat("OPENMW_FNV_VATS_PROOF_TARGET_X", mFalloutVatsProofTargetPosition.x());
-        const bool targetY
-            = readProofFloat("OPENMW_FNV_VATS_PROOF_TARGET_Y", mFalloutVatsProofTargetPosition.y());
-        const bool targetZ
-            = readProofFloat("OPENMW_FNV_VATS_PROOF_TARGET_Z", mFalloutVatsProofTargetPosition.z());
-        const bool targetYaw = readProofFloat("OPENMW_FNV_VATS_PROOF_TARGET_YAW", mFalloutVatsProofTargetYaw);
-        readProofFloat("OPENMW_FNV_VATS_PROOF_TARGET_DISTANCE", mFalloutVatsProofTargetDistance);
-        mFalloutVatsProofTargetDistance = std::clamp(mFalloutVatsProofTargetDistance, 64.f, 3000.f);
-        mFalloutVatsProofAuthoredStartConfigured = targetX && targetY && targetZ && targetYaw;
-        if ((targetX || targetY || targetZ || targetYaw) && !mFalloutVatsProofAuthoredStartConfigured)
-            Log(Debug::Warning) << "FNV VATS proof: incomplete authored target position; start override disabled";
-        if (const char* weapon = std::getenv("OPENMW_FNV_VATS_PROOF_WEAPON"))
-        {
-            try
-            {
-                mFalloutVatsProofWeaponFormId = static_cast<std::uint32_t>(std::stoul(weapon, nullptr, 0));
-            }
-            catch (const std::exception&)
-            {
-                Log(Debug::Warning) << "FNV VATS proof: invalid weapon form=" << weapon
-                                    << " using=0x0000434f";
-            }
-        }
-        if (const char* step = std::getenv("OPENMW_FNV_VATS_PROOF_CAPTURE_STEP"))
-        {
-            try
-            {
-                mFalloutVatsProofCaptureStep = std::max(1u, static_cast<unsigned int>(std::stoul(step)));
-            }
-            catch (const std::exception&)
-            {
-                Log(Debug::Warning) << "FNV VATS proof: invalid capture step=" << step << " using=3";
-            }
-        }
-        if (const char* frames = std::getenv("OPENMW_FNV_VATS_PROOF_POST_FRAMES"))
-        {
-            try
-            {
-                mFalloutVatsProofPostFrames
-                    = std::max(180u, static_cast<unsigned int>(std::stoul(frames)));
-            }
-            catch (const std::exception&)
-            {
-                Log(Debug::Warning) << "FNV VATS proof: invalid post frames=" << frames << " using=180";
-            }
-        }
     }
 
     void ActionManager::update(float dt)
     {
-        if (isFalloutContent() && !VR::getVR())
-        {
-            MWBase::InputManager* input = MWBase::Environment::get().getInputManager();
-            MWBase::WindowManager* window = MWBase::Environment::get().getWindowManager();
-            const MWWorld::Ptr player = MWMechanics::getPlayer();
-            if (input != nullptr && window != nullptr && !player.isEmpty())
-            {
-                MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
-                const bool controls = input->getControlSwitch("playercontrols");
-                const bool fighting = input->getControlSwitch("playerfighting");
-                const bool gui = window->isGuiMode();
-                const bool useDown
-                    = mBindingsManager->actionIsActive(A_Use) || mFalloutVatsProofUseDown;
-                const bool armed = stats.getDrawState() == MWMechanics::DrawState::Weapon;
-                const bool attack = MWMechanics::shouldApplyFalloutPlayerUseInput(
-                    mFalloutVats.getPhase(), controls, fighting, gui, armed, useDown);
-
-                // The native Flat input path must reach the same CharacterController used by AI and V.A.T.S.
-                // Built-in Lua mirrors this state, but relying on a deferred script frame alone allowed a click
-                // that dismissed the Pip-Boy to disappear before ordinary weapon mechanics ever observed it.
-                stats.setAttackingOrSpell(attack);
-                if (useDown != mFalloutPlayerUseDown)
-                {
-                    Log(Debug::Info) << "FNV player use input: down=" << useDown << " attack=" << attack
-                                     << " gui=" << gui << " controls=" << controls
-                                     << " fighting=" << fighting << " armed=" << armed
-                                     << " vatsPhase=" << static_cast<unsigned int>(mFalloutVats.getPhase());
-                    mFalloutPlayerUseDown = useDown;
-                }
-            }
-        }
-
         if (mBindingsManager->actionIsActive(A_MoveForward) || mBindingsManager->actionIsActive(A_MoveBackward)
             || mBindingsManager->actionIsActive(A_MoveLeft) || mBindingsManager->actionIsActive(A_MoveRight)
             || mBindingsManager->actionIsActive(A_Jump) || mBindingsManager->actionIsActive(A_Sneak)
@@ -212,8 +84,6 @@ namespace MWInput
             updateFalloutVatsExecution(dt);
         else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
             updateFalloutVatsPointerSelection();
-
-        updateFalloutVatsProof();
     }
 
     void ActionManager::resetIdleTime()
@@ -226,6 +96,32 @@ namespace MWInput
         MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::Action, action });
         const auto inputManager = MWBase::Environment::get().getInputManager();
         const auto windowManager = MWBase::Environment::get().getWindowManager();
+        if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
+        {
+            switch (action)
+            {
+                case A_QuickMenu:
+                case A_GameMenu:
+                case A_Screenshot:
+                case A_Console:
+                case A_Jump:
+                case A_Activate:
+                case A_Use:
+                case A_MoveLeft:
+                case A_MoveRight:
+                case A_MoveForward:
+                case A_MoveBackward:
+                case A_ToggleHUD:
+                case A_QuickSave:
+                case A_QuickLoad:
+                    break;
+                default:
+                    return;
+            }
+            if (action == A_GameMenu || action == A_Console
+                || action == A_QuickSave || action == A_QuickLoad)
+                cancelFalloutVats();
+        }
         // trigger action activated
         switch (action)
         {
@@ -243,8 +139,6 @@ namespace MWInput
                 toggleConsole();
                 break;
             case A_Jump:
-                // The shipped Fallout profile keeps OpenMW's E-to-jump binding, while the native FNV VATS HUD uses
-                // retail's [E] ACCEPT prompt. In targeting mode E is an accept action, not a world jump.
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
                     executeFalloutVatsQueue();
                 break;
@@ -252,7 +146,7 @@ namespace MWInput
                 inputManager->resetIdleTime();
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
                     executeFalloutVatsQueue();
-                else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive && !VR::getVR())
+                else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
                     activate();
                 break;
             case A_Use:
@@ -260,7 +154,6 @@ namespace MWInput
                     queueFalloutVatsAttack();
                 break;
             case A_ToggleSpell:
-                // Fallout uses the existing retail R binding for reload. TES3 retains Ready Magic.
                 if (isFalloutContent() && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
                     MWBase::Environment::get().getMechanicsManager()->reloadFalloutWeapon(
                         MWMechanics::getPlayer());
@@ -350,6 +243,9 @@ namespace MWInput
             case A_Journal:
                 if (isFalloutContent())
                 {
+                    if (!inputManager->getControlSwitch("playercontrols")
+                        || !inputManager->getControlSwitch("playerinterface"))
+                        break;
                     if (windowManager->containsMode(MWGui::GM_Inventory))
                         windowManager->removeGuiMode(MWGui::GM_Inventory);
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
@@ -363,6 +259,9 @@ namespace MWInput
             case A_Map:
                 if (isFalloutContent())
                 {
+                    if (!inputManager->getControlSwitch("playercontrols")
+                        || !inputManager->getControlSwitch("playerinterface"))
+                        break;
                     if (windowManager->containsMode(MWGui::GM_Inventory))
                         windowManager->removeGuiMode(MWGui::GM_Inventory);
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
@@ -375,38 +274,52 @@ namespace MWInput
         }
     }
 
+    bool ActionManager::checkAllowedToUseItems() const
+    {
+        MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (player.getClass().getNpcStats(player).isWerewolf())
+        {
+            // Cannot use items or spells while in werewolf form
+            MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
+            return false;
+        }
+        return true;
+    }
+
     bool ActionManager::isFalloutContent() const
     {
-        const auto world = MWBase::Environment::get().getWorld();
-        for (const std::string& file : world->getContentFiles())
-        {
-            std::string lower = file;
-            std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return std::tolower(c); });
-            if (lower.find("falloutnv.esm") != std::string::npos)
-                return true;
-        }
-        return false;
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+        const MWWorld::ESM4Game game = world->getStore().getESM4Game();
+        return game == MWWorld::ESM4Game::Fallout3 || game == MWWorld::ESM4Game::FalloutNewVegas;
     }
 
     void ActionManager::toggleFalloutVats()
     {
         if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
         {
-            if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
-            {
-                finishFalloutVatsExecution(true);
-                return;
-            }
-            mFalloutVats.cancel();
-            restoreFalloutVatsView();
-            updateFalloutVatsHud();
+            cancelFalloutVats();
             return;
         }
 
-        const auto world = MWBase::Environment::get().getWorld();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+        MWBase::InputManager* inputManager = MWBase::Environment::get().getInputManager();
+        if (world == nullptr || windowManager == nullptr || inputManager == nullptr
+            || windowManager->isGuiMode()
+            || !inputManager->getControlSwitch("playercontrols")
+            || !inputManager->getControlSwitch("playerfighting"))
+            return;
+
         MWWorld::Ptr player = world->getPlayerPtr();
+        if (player.isEmpty() || !player.getClass().isActor()
+            || player.getClass().getCreatureStats(player).isDead())
+            return;
+
         const auto validTarget = [&](const MWWorld::Ptr& candidate) {
             return !candidate.isEmpty() && candidate != player && candidate.getClass().isActor()
+                && candidate.getRefData().isEnabled()
                 && !candidate.getClass().getCreatureStats(candidate).isDead();
         };
         const auto screenTargetScore = [&](const MWWorld::Ptr& candidate) -> std::optional<float> {
@@ -432,6 +345,7 @@ namespace MWInput
             const float dy = y - 0.5f;
             return dx * dx + dy * dy;
         };
+
         std::vector<MWWorld::Ptr> nearby;
         MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
             player.getRefData().getPosition().asVec3(), 3000.f, nearby);
@@ -448,64 +362,52 @@ namespace MWInput
         });
 
         mFalloutVatsTargets.clear();
-        MWWorld::Ptr target = world->getFacedObject();
-        if (validTarget(target))
-            mFalloutVatsTargets.push_back(target);
+        const MWWorld::Ptr faced = world->getFocusObject();
+        if (validTarget(faced))
+            mFalloutVatsTargets.push_back(faced);
         for (const MWWorld::Ptr& candidate : nearby)
         {
             if (screenTargetScore(candidate)
                 && std::ranges::find(mFalloutVatsTargets, candidate) == mFalloutVatsTargets.end())
                 mFalloutVatsTargets.push_back(candidate);
         }
-        if (mFalloutVatsProofEnabled)
-        {
-            const ESM::FormId preferredReference
-                = ESM::FormId::fromUint32(mFalloutVatsProofTargetReference);
-            const auto preferred = std::ranges::find_if(
-                mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
-                    if (mFalloutVatsProofTargetReference != 0)
-                        return candidate.getCellRef().getRefNum() == preferredReference;
-                    return !mFalloutVatsProofTargetName.empty()
-                        && Misc::StringUtils::ciEqual(
-                            candidate.getClass().getName(candidate), mFalloutVatsProofTargetName);
-                });
-            if (preferred != mFalloutVatsTargets.end())
-                std::rotate(mFalloutVatsTargets.begin(), preferred, std::next(preferred));
-        }
         if (mFalloutVatsTargets.empty())
         {
             Log(Debug::Warning) << "FNV VATS: target acquisition failed";
-            MWBase::Environment::get().getWindowManager()->messageBox("No V.A.T.S. target");
+            windowManager->messageBox("No V.A.T.S. target");
             return;
         }
-        target = mFalloutVatsTargets.front();
 
-        const auto ap = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
-            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
-        if (!ap || !mFalloutVats.enter(ap->mValue))
+        const std::optional<MWWorld::FalloutRuntimeActorValue> ap
+            = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
+                MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+        if (!ap)
         {
-            Log(Debug::Warning) << "FNV VATS: action points unavailable";
-            MWBase::Environment::get().getWindowManager()->messageBox("V.A.T.S. action points unavailable");
+            windowManager->messageBox("V.A.T.S. action points unavailable");
             return;
         }
-        world->getFalloutPlayerRuntimeState().setVatsActive(true);
 
         MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
-        const MWWorld::ContainerStoreIterator weapon = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-        MWMechanics::FalloutVatsWeaponFailure weaponFailure;
+        const MWWorld::ContainerStoreIterator weapon
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        MWMechanics::FalloutVatsWeaponFailure weaponFailure = MWMechanics::FalloutVatsWeaponFailure::None;
         if (weapon == inventory.end() || weapon->getType() != ESM4::Weapon::sRecordId
             || !(mFalloutVatsWeapon = MWMechanics::buildFalloutVatsWeaponContract(
                      *weapon->get<ESM4::Weapon>()->mBase, weaponFailure)))
         {
-            mFalloutVats.cancel();
-            Log(Debug::Warning) << "FNV VATS: equipped weapon contract unavailable";
-            MWBase::Environment::get().getWindowManager()->messageBox("Equipped weapon has no authored V.A.T.S. AP contract");
+            Log(Debug::Warning) << "FNV VATS: equipped weapon contract unavailable reason="
+                                << MWMechanics::getFalloutVatsWeaponFailureName(weaponFailure);
+            windowManager->messageBox("Equipped weapon has no valid V.A.T.S. AP contract");
             return;
         }
+        if (!mFalloutVats.enter(ap->mValue))
+        {
+            mFalloutVatsWeapon.reset();
+            windowManager->messageBox("V.A.T.S. action points unavailable");
+            return;
+        }
+        world->getFalloutPlayerRuntimeState().setVatsActive(true);
 
-        // V.A.T.S. may be entered with a holstered weapon. The execution camera must
-        // never show an empty hand producing a muzzle flash, so begin the ordinary
-        // equipped-weapon transition before targeting freezes simulation.
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
         MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
 
@@ -531,8 +433,22 @@ namespace MWInput
         {
             mFalloutVats.cancel();
             restoreFalloutVatsView();
-            MWBase::Environment::get().getWindowManager()->messageBox("No target has authored V.A.T.S. limbs");
+            windowManager->messageBox("No target has authored V.A.T.S. limbs");
         }
+    }
+
+    void ActionManager::cancelFalloutVats()
+    {
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
+            return;
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
+        {
+            finishFalloutVatsExecution(true);
+            return;
+        }
+        mFalloutVats.cancel();
+        restoreFalloutVatsView();
+        updateFalloutVatsHud();
     }
 
     bool ActionManager::selectFalloutVatsTarget(const MWWorld::Ptr& target)
@@ -546,7 +462,8 @@ namespace MWInput
         const ESM4::BodyPartData* targetBodyData = MWMechanics::getFalloutActorBodyPartData(target);
         if (targetBodyData == nullptr)
         {
-            Log(Debug::Warning) << "FNV VATS: body data unavailable target=" << target.getClass().getName(target);
+            Log(Debug::Warning) << "FNV VATS: body data unavailable target="
+                                << target.getClass().getName(target);
             return false;
         }
 
@@ -554,35 +471,22 @@ namespace MWInput
         std::size_t selectedBodyPartIndex = 0;
         MWRender::Animation* animation = world->getAnimation(target);
         if (animation == nullptr)
-        {
-            Log(Debug::Warning) << "FNV VATS: rendered actor unavailable target="
-                                << target.getClass().getName(target);
             return false;
-        }
         for (std::size_t index = 0; index < targetBodyData->mBodyParts.size() && index <= 14; ++index)
         {
-            MWMechanics::FalloutVatsBodyPartFailure bodyFailure;
-            auto candidate = MWMechanics::buildFalloutVatsBodyPartContract(
-                targetBodyData->mBodyParts[index], static_cast<std::uint8_t>(index), bodyFailure);
-            if (!candidate)
+            MWMechanics::FalloutVatsBodyPartFailure bodyFailure
+                = MWMechanics::FalloutVatsBodyPartFailure::None;
+            const std::optional<MWMechanics::FalloutVatsBodyPartContract> candidate
+                = MWMechanics::buildFalloutVatsBodyPartContract(
+                    targetBodyData->mBodyParts[index], static_cast<std::uint8_t>(index), bodyFailure);
+            if (!candidate || animation->getNode(candidate->mTargetNode) == nullptr)
                 continue;
-            if (animation->getNode(candidate->mTargetNode) == nullptr)
-            {
-                Log(Debug::Warning) << "FNV VATS: authored target node unavailable target="
-                                    << target.getClass().getName(target)
-                                    << " bodyPart=" << candidate->mName
-                                    << " targetNode=" << candidate->mTargetNode;
-                continue;
-            }
             if (candidate->mName == "Torso")
                 selectedBodyPartIndex = bodyParts.size();
             bodyParts.push_back(*candidate);
         }
         if (bodyParts.empty())
-        {
-            Log(Debug::Warning) << "FNV VATS: authored limbs incomplete target=" << target.getClass().getName(target);
             return false;
-        }
 
         clearFalloutVatsHighlight();
         mFalloutVatsTarget = target;
@@ -600,15 +504,14 @@ namespace MWInput
             mFalloutVatsTargetFramingForward.normalize();
         mFalloutVatsExecutionCameraInitialized = false;
         updateFalloutVatsCamera();
-        if (!selectFalloutVatsBodyPart(selectedBodyPartIndex))
-            return false;
-        return true;
+        return selectFalloutVatsBodyPart(selectedBodyPartIndex);
     }
 
     bool ActionManager::selectFalloutVatsBodyPart(std::size_t index)
     {
         if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Targeting
-            || mFalloutVatsTarget.isEmpty() || !mFalloutVatsWeapon || index >= mFalloutVatsBodyParts.size())
+            || mFalloutVatsTarget.isEmpty() || !mFalloutVatsWeapon
+            || index >= mFalloutVatsBodyParts.size())
             return false;
 
         const MWMechanics::FalloutVatsBodyPartContract& bodyPart = mFalloutVatsBodyParts[index];
@@ -622,12 +525,6 @@ namespace MWInput
         mFalloutVatsBodyPartTargetNode = std::string(bodyPart.mTargetNode);
         mFalloutVatsHitChance = hitChance;
         updateFalloutVatsHighlight();
-        Log(Debug::Info) << "FNV VATS: selected target=" << mFalloutVatsTargetName
-                         << " bodyPart=" << mFalloutVatsBodyPartName
-                         << " bodyPartIndex=" << static_cast<unsigned int>(bodyPart.mIndex)
-                         << " targetNode=" << mFalloutVatsBodyPartTargetNode
-                         << " hitChance=" << mFalloutVatsHitChance
-                         << " actionPoints=" << mFalloutVats.getActionPointsBefore();
         updateFalloutVatsHud();
         return true;
     }
@@ -681,12 +578,10 @@ namespace MWInput
         }
         if (std::isfinite(actorHeight) && actorHeight >= 40.f && actorHeight <= 300.f)
         {
-            // Retail frames a standing target around the upper torso, leaving enough vertical room for every limb
-            // selector. Actor head and base transforms are already world-space, so no scene-bound transform belongs
-            // here.
             focus.z() -= actorHeight * 0.3f;
             radius = std::clamp(actorHeight * 0.55f, 70.f, 110.f);
         }
+
         MWMechanics::FalloutVatsCameraPose pose;
         if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
         {
@@ -704,15 +599,14 @@ namespace MWInput
                 }
                 else
                     shotAxis /= shotDistance;
+
                 if (mFalloutVatsExecutionCameraPhase == 0)
                 {
                     const osg::Vec3f side(-shotAxis.y(), shotAxis.x(), 0.f);
-                    // Use a three-quarter shooter cut. A nearly straight rear view hid the rifle and both hands
-                    // behind the actor's torso even while the authored attack controllers were advancing.
-                    mFalloutVatsExecutionCameraFocus = playerHead + shotAxis * 15.f
-                        - osg::Vec3f(0.f, 0.f, 10.f);
-                    osg::Vec3f candidate = playerHead - shotAxis * 55.f + side * 70.f
-                        + osg::Vec3f(0.f, 0.f, 15.f);
+                    mFalloutVatsExecutionCameraFocus
+                        = playerHead + shotAxis * 15.f - osg::Vec3f(0.f, 0.f, 10.f);
+                    osg::Vec3f candidate
+                        = playerHead - shotAxis * 55.f + side * 70.f + osg::Vec3f(0.f, 0.f, 15.f);
                     MWPhysics::RayCastingResult cameraRay;
                     world->castRenderingRay(cameraRay, playerHead, candidate, true, true);
                     if (cameraRay.mHit)
@@ -723,7 +617,6 @@ namespace MWInput
                             candidate = cameraRay.mHitPos - ray / length * 18.f;
                     }
                     mFalloutVatsExecutionCameraEye = candidate;
-                    Log(Debug::Info) << "FNV VATS camera: execution phase=shooter shotDistance=" << shotDistance;
                 }
                 else
                 {
@@ -732,18 +625,18 @@ namespace MWInput
                             focus, radius, mFalloutVatsTargetFramingForward);
                     mFalloutVatsExecutionCameraEye = targetPose.mEye;
                     mFalloutVatsExecutionCameraFocus = targetPose.mFocus;
-                    Log(Debug::Info) << "FNV VATS camera: execution phase=impact";
                 }
                 mFalloutVatsExecutionCameraInitialized = true;
-                Log(Debug::Info) << "FNV VATS camera: execution eye=" << mFalloutVatsExecutionCameraEye
-                                 << " focus=" << mFalloutVatsExecutionCameraFocus;
             }
             pose.mEye = mFalloutVatsExecutionCameraEye;
             pose.mFocus = mFalloutVatsExecutionCameraFocus;
         }
         else
+        {
             pose = MWMechanics::buildFalloutVatsFrontalCameraPose(
                 focus, radius, mFalloutVatsTargetFramingForward);
+        }
+
         const osg::Vec3d lookDirection = pose.mFocus - pose.mEye;
         const double horizontal
             = std::sqrt(lookDirection.x() * lookDirection.x() + lookDirection.y() * lookDirection.y());
@@ -754,14 +647,16 @@ namespace MWInput
         camera->setYaw(-static_cast<float>(std::atan2(lookDirection.x(), lookDirection.y())), true);
         camera->setRoll(0.f);
         camera->instantTransition();
-        camera->updateCamera();
+        if (mViewer != nullptr && mViewer->getCamera() != nullptr)
+            camera->updateCamera(mViewer->getCamera());
     }
 
     void ActionManager::updateFalloutVatsHighlight()
     {
         if (mFalloutVatsTarget.isEmpty())
             return;
-        MWRender::Animation* animation = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget);
+        MWRender::Animation* animation
+            = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget);
         if (animation == nullptr)
             return;
 
@@ -833,16 +728,21 @@ namespace MWInput
         mFalloutVatsExecutionShotsFired = 0;
         mFalloutVatsExecutionRolledHits = 0;
         mFalloutVatsExecutionVisualPrepared = false;
+        mFalloutVatsExecutionTargetHealthBefore.clear();
     }
 
     void ActionManager::queueFalloutVatsAttack()
     {
         if (!mFalloutVatsWeapon)
             return;
-        MWMechanics::FalloutVatsQueueFailure failure;
-        if (!mFalloutVats.queueSelected(*mFalloutVatsWeapon, getFalloutVatsAvailableShots(), failure))
+        MWMechanics::FalloutVatsQueueFailure failure = MWMechanics::FalloutVatsQueueFailure::None;
+        if (!mFalloutVats.queueSelected(
+                *mFalloutVatsWeapon, getFalloutVatsAvailableShots(), failure))
+        {
             MWBase::Environment::get().getWindowManager()->messageBox(
-                std::string("V.A.T.S. queue failed: ") + std::string(MWMechanics::getFalloutVatsQueueFailureName(failure)));
+                std::string("V.A.T.S. queue failed: ")
+                + std::string(MWMechanics::getFalloutVatsQueueFailureName(failure)));
+        }
         updateFalloutVatsHud();
     }
 
@@ -857,16 +757,23 @@ namespace MWInput
 
         const ESM4::Weapon& base = *weapon->get<ESM4::Weapon>()->mBase;
         if (MWMechanics::isFalloutThrownWeapon(base))
-            return static_cast<std::size_t>(std::max(0,
-                inventory.count(ESM::RefId::formIdRefId(base.mId))));
+        {
+            return static_cast<std::size_t>(
+                std::max(0, inventory.count(ESM::RefId::formIdRefId(base.mId))));
+        }
         if (base.mData.ammoUse == 0)
             return 0;
 
         const ESM::RefId weaponId = ESM::RefId::formIdRefId(base.mId);
+        const int capacity = std::max<int>(base.mData.clipSize, base.mData.ammoUse);
         if (const std::optional<int> loaded = inventory.getFalloutLoadedAmmo(weaponId))
-            return static_cast<std::size_t>(std::max(0, *loaded)) / base.mData.ammoUse;
+        {
+            if (*loaded < 0 || *loaded > capacity)
+                return 0;
+            return static_cast<std::size_t>(*loaded) / base.mData.ammoUse;
+        }
 
-        const auto& store = MWBase::Environment::get().getWorld()->getStore();
+        const MWWorld::ESMStore& store = MWBase::Environment::get().getWorld()->getStore();
         std::vector<ESM::FormId> candidates;
         if (store.get<ESM4::Ammunition>().search(base.mAmmo) != nullptr)
             candidates.push_back(base.mAmmo);
@@ -875,19 +782,19 @@ namespace MWInput
         else
             return 0;
 
-        std::size_t rounds = 0;
-        std::vector<ESM::FormId> counted;
         for (ESM::FormId candidate : candidates)
         {
             if (candidate.isZeroOrUnset()
-                || store.get<ESM4::Ammunition>().search(candidate) == nullptr
-                || std::ranges::find(counted, candidate) != counted.end())
+                || store.get<ESM4::Ammunition>().search(candidate) == nullptr)
                 continue;
-            counted.push_back(candidate);
-            rounds += static_cast<std::size_t>(std::max(0,
-                inventory.count(ESM::RefId::formIdRefId(candidate))));
+            const int reserve = inventory.count(ESM::RefId::formIdRefId(candidate));
+            if (reserve >= base.mData.ammoUse)
+            {
+                const int initialMagazine = std::min(capacity, reserve);
+                return static_cast<std::size_t>(initialMagazine) / base.mData.ammoUse;
+            }
         }
-        return rounds / base.mData.ammoUse;
+        return 0;
     }
 
     void ActionManager::executeFalloutVatsQueue()
@@ -907,6 +814,7 @@ namespace MWInput
         mFalloutVatsExecutionRolledHits = 0;
         mFalloutVatsExecutionTargetHealthBefore.clear();
         mFalloutVatsExecutionVisualPrepared = false;
+
         MWBase::World* world = MWBase::Environment::get().getWorld();
         world->getTimeManager()->setSimulationTimeScale(0.2f);
         const MWWorld::Ptr player = world->getPlayerPtr();
@@ -922,14 +830,9 @@ namespace MWInput
                 osg::Vec3f(playerPosition.rot[0], playerPosition.rot[1], targetYaw),
                 MWBase::RotationFlag_none);
             mFalloutVatsPlayerYawChanged = true;
-            Log(Debug::Info) << "FNV VATS execution: shooter-facing previousYaw="
-                             << mFalloutVatsPreviousPlayerYaw << " targetYaw=" << targetYaw;
         }
         mFalloutVatsExecutionCameraPhase = 0;
         mFalloutVatsExecutionCameraInitialized = false;
-        Log(Debug::Info) << "FNV VATS execution: phase=begin queued=" << mFalloutVatsExecutionQueued
-                         << " apBefore=" << mFalloutVatsExecutionApBefore
-                         << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter;
         updateFalloutVatsHud();
     }
 
@@ -939,14 +842,13 @@ namespace MWInput
             return;
         if (std::isfinite(dt) && dt > 0.f)
             mFalloutVatsExecutionTimer += dt;
+
         if (mFalloutVats.getExecutingAction() != nullptr)
         {
             if (!mFalloutVatsExecutionVisualPrepared)
             {
                 if (mFalloutVatsExecutionShotsAttempted > 0 && mFalloutVatsExecutionTimer < 0.35f)
                 {
-                    // Hold the shooter cut through discharge long enough for the authored muzzle flash to render,
-                    // then show the target impact before preparing the next queued action.
                     if (mFalloutVatsExecutionTimer >= 0.12f && mFalloutVatsExecutionCameraPhase == 0)
                     {
                         mFalloutVatsExecutionCameraPhase = 1;
@@ -971,14 +873,8 @@ namespace MWInput
             updateFalloutVatsCamera();
             updateFalloutVatsHud();
 
-            // Give the newly prepared authored attack pose at least one visible beat
-            // before consuming an immediate hitscan release. Projectile families still
-            // wait for their authored hit/release text key below.
             if (mFalloutVatsExecutionTimer < 0.1f)
                 return;
-
-            // The weapon animation's authored delivery text key owns deferred discharge.
-            // Immediate hitscan releases still pass through the visible-pose gate above.
             if (!MWBase::Environment::get().getMechanicsManager()->consumeFalloutVatsRangedAttackRelease(
                     MWBase::Environment::get().getWorld()->getPlayerPtr()))
             {
@@ -988,9 +884,13 @@ namespace MWInput
                 finishFalloutVatsExecution(true);
                 return;
             }
+
             mFalloutVatsExecutionTimer = 0.f;
             if (!executeNextFalloutVatsAction())
+            {
                 finishFalloutVatsExecution(true);
+                return;
+            }
             mFalloutVatsExecutionVisualPrepared = false;
             return;
         }
@@ -1020,20 +920,16 @@ namespace MWInput
 
         MWBase::World* world = MWBase::Environment::get().getWorld();
         MWWorld::Ptr executionTarget;
-        const auto target = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
-            return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == executing.mTarget;
-        });
+        const auto target = std::ranges::find_if(mFalloutVatsTargets,
+            [&](const MWWorld::Ptr& candidate) {
+                return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == executing.mTarget;
+            });
         if (target != mFalloutVatsTargets.end())
             executionTarget = *target;
         else
             executionTarget = world->searchPtr(ESM::RefId(executing.mTarget), true, false);
         if (executionTarget.isEmpty() || !executionTarget.getClass().isActor())
-        {
-            Log(Debug::Error) << "FNV VATS action: target=" << executing.mTarget
-                              << " bodyPart=" << executing.mBodyPartName
-                              << " result=target-unavailable fired=0";
             return false;
-        }
 
         if (executionTarget != mFalloutVatsTarget)
         {
@@ -1052,16 +948,12 @@ namespace MWInput
         if (std::ranges::none_of(mFalloutVatsExecutionTargetHealthBefore,
                 [&](const auto& entry) { return entry.first == executing.mTarget; }))
             mFalloutVatsExecutionTargetHealthBefore.emplace_back(executing.mTarget, healthBefore);
+
         osg::Vec3f targetPoint = world->getActorHeadTransform(executionTarget).getTrans();
-        if (MWRender::Animation* animation = world->getAnimation(executionTarget))
-        {
-            if (const osg::Node* targetNode = animation->getNode(executing.mTargetNode))
-            {
-                const osg::NodePathList paths = targetNode->getParentalNodePaths();
-                if (!paths.empty())
-                    targetPoint = osg::computeLocalToWorld(paths.front()).getTrans();
-            }
-        }
+        if (const std::optional<osg::Matrixf> transform
+            = world->getActorNodeTransform(executionTarget, executing.mTargetNode))
+            targetPoint = transform->getTrans();
+
         const float hitRoll = Misc::Rng::rollProbability(world->getPrng());
         const bool rolledHit
             = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
@@ -1070,17 +962,11 @@ namespace MWInput
         const float healthAfter
             = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
         mFalloutVatsExecutionDamage += std::max(0.f, healthBefore - healthAfter);
-        Log(Debug::Info) << "FNV VATS action: target=" << executionTarget.getClass().getName(executionTarget)
-                         << " bodyPart=" << executing.mBodyPartName
-                         << " targetNode=" << executing.mTargetNode
-                         << " displayedHitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
-                         << " healthDamageMultiplier=" << executing.mHealthDamageMultiplier
-                         << " limbDamageMultiplier=" << executing.mLimbDamageMultiplier
-                         << " healthPercent=" << static_cast<unsigned int>(executing.mHealthPercent)
-                         << " actorValue=" << static_cast<int>(executing.mActorValue)
-                         << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired
-                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter
-                         << " damage=" << (healthBefore - healthAfter);
+        Log(fired ? Debug::Info : Debug::Error)
+            << "FNV VATS action: target=" << executionTarget.getClass().getName(executionTarget)
+            << " bodyPart=" << executing.mBodyPartName
+            << " hitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
+            << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired;
         if (!fired)
             return false;
 
@@ -1088,7 +974,8 @@ namespace MWInput
         if (rolledHit)
             ++mFalloutVatsExecutionRolledHits;
         mFalloutVatsExecutionApSpent += executing.mActionPointCost;
-        const float apAfter = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
+        const float apAfter
+            = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
         world->getFalloutPlayerRuntimeState().setCurrentActorValue(
             MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, apAfter);
         return mFalloutVats.advanceExecution();
@@ -1096,14 +983,15 @@ namespace MWInput
 
     void ActionManager::finishFalloutVatsExecution(bool interrupted)
     {
-        float observedDamage = 0.f;
         MWBase::World* world = MWBase::Environment::get().getWorld();
+        float observedDamage = 0.f;
         for (const auto& [targetId, healthBefore] : mFalloutVatsExecutionTargetHealthBefore)
         {
             MWWorld::Ptr target;
-            const auto activeTarget = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
-                return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == targetId;
-            });
+            const auto activeTarget = std::ranges::find_if(mFalloutVatsTargets,
+                [&](const MWWorld::Ptr& candidate) {
+                    return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == targetId;
+                });
             if (activeTarget != mFalloutVatsTargets.end())
                 target = *activeTarget;
             else
@@ -1117,7 +1005,7 @@ namespace MWInput
         mFalloutVatsExecutionDamage = std::max(mFalloutVatsExecutionDamage, observedDamage);
         const float apAfter
             = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
-        MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().setCurrentActorValue(
+        world->getFalloutPlayerRuntimeState().setCurrentActorValue(
             MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, apAfter);
         Log(interrupted ? Debug::Warning : Debug::Info)
             << "FNV VATS execution: phase=end interrupted=" << interrupted
@@ -1128,12 +1016,12 @@ namespace MWInput
             << " apBefore=" << mFalloutVatsExecutionApBefore
             << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter
             << " apAfter=" << apAfter << " totalDamage=" << mFalloutVatsExecutionDamage;
-        if (mFalloutVatsProofEnabled)
-            mFalloutVatsProofShotsFired = mFalloutVatsExecutionShotsFired;
+
         if (!interrupted && !mFalloutVats.finishExecution())
             mFalloutVats.cancel();
         else if (interrupted)
             mFalloutVats.cancel();
+
         if (mFalloutVatsPlayerYawChanged)
         {
             const MWWorld::Ptr player = world->getPlayerPtr();
@@ -1154,7 +1042,8 @@ namespace MWInput
 
         const osg::Camera* camera = mViewer->getCamera();
         const osg::Viewport* viewport = camera != nullptr ? camera->getViewport() : nullptr;
-        if (camera == nullptr || viewport == nullptr || viewport->width() <= 0.0 || viewport->height() <= 0.0)
+        if (camera == nullptr || viewport == nullptr
+            || viewport->width() <= 0.0 || viewport->height() <= 0.0)
             return;
 
         const MyGUI::IntSize guiSize = MyGUI::RenderManager::getInstance().getViewSize();
@@ -1170,12 +1059,14 @@ namespace MWInput
         for (std::size_t index = 0; index < mFalloutVatsBodyParts.size(); ++index)
         {
             const std::optional<osg::Matrixf> transform
-                = world->getActorNodeTransform(mFalloutVatsTarget, mFalloutVatsBodyParts[index].mTargetNode);
+                = world->getActorNodeTransform(
+                    mFalloutVatsTarget, mFalloutVatsBodyParts[index].mTargetNode);
             if (!transform)
                 continue;
             const osg::Vec3d window = osg::Vec3d(transform->getTrans()) * camera->getViewMatrix()
                 * camera->getProjectionMatrix() * viewport->computeWindowMatrix();
-            if (!std::isfinite(window.x()) || !std::isfinite(window.y()) || window.z() < 0.0 || window.z() > 1.0)
+            if (!std::isfinite(window.x()) || !std::isfinite(window.y())
+                || window.z() < 0.0 || window.z() > 1.0)
                 continue;
             const float x = static_cast<float>((window.x() - viewport->x()) / viewport->width());
             const float y = 1.f - static_cast<float>((window.y() - viewport->y()) / viewport->height());
@@ -1189,8 +1080,6 @@ namespace MWInput
             }
         }
 
-        // Retail V.A.T.S. selects the anatomical target under the cursor. Keep a modest
-        // acquisition radius so nearby limbs remain individually selectable.
         constexpr float selectionRadius = 56.f;
         if (closest && closestDistanceSquared <= selectionRadius * selectionRadius
             && *closest != mFalloutVatsBodyPartIndex)
@@ -1202,13 +1091,15 @@ namespace MWInput
         MWGui::HUD* hud = MWBase::Environment::get().getWindowManager()->getHud();
         if (hud == nullptr)
             return;
-        const bool visible = mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive;
+        const bool visible
+            = mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive;
         std::vector<MWGui::FalloutVatsBodyPartDisplay> bodyPartDisplays;
         if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting
             && !mFalloutVatsTarget.isEmpty() && mFalloutVatsWeapon && mViewer != nullptr)
         {
             const osg::Camera* renderCamera = mViewer->getCamera();
-            const osg::Viewport* viewport = renderCamera != nullptr ? renderCamera->getViewport() : nullptr;
+            const osg::Viewport* viewport
+                = renderCamera != nullptr ? renderCamera->getViewport() : nullptr;
             if (renderCamera != nullptr && viewport != nullptr
                 && viewport->width() > 0.0 && viewport->height() > 0.0)
             {
@@ -1216,13 +1107,15 @@ namespace MWInput
                 bodyPartDisplays.reserve(mFalloutVatsBodyParts.size());
                 for (std::size_t index = 0; index < mFalloutVatsBodyParts.size(); ++index)
                 {
-                    const MWMechanics::FalloutVatsBodyPartContract& bodyPart = mFalloutVatsBodyParts[index];
+                    const MWMechanics::FalloutVatsBodyPartContract& bodyPart
+                        = mFalloutVatsBodyParts[index];
                     const std::optional<osg::Matrixf> transform
                         = world->getActorNodeTransform(mFalloutVatsTarget, bodyPart.mTargetNode);
                     if (!transform)
                         continue;
-                    const osg::Vec3d window = osg::Vec3d(transform->getTrans()) * renderCamera->getViewMatrix()
-                        * renderCamera->getProjectionMatrix() * viewport->computeWindowMatrix();
+                    const osg::Vec3d window = osg::Vec3d(transform->getTrans())
+                        * renderCamera->getViewMatrix() * renderCamera->getProjectionMatrix()
+                        * viewport->computeWindowMatrix();
                     const float viewportX
                         = static_cast<float>((window.x() - viewport->x()) / viewport->width());
                     const float viewportY
@@ -1230,7 +1123,8 @@ namespace MWInput
                     if (!std::isfinite(viewportX) || !std::isfinite(viewportY))
                         continue;
                     bodyPartDisplays.push_back({ bodyPart.mName,
-                        MWMechanics::getFalloutVatsDisplayedHitChance(bodyPart, *mFalloutVatsWeapon),
+                        MWMechanics::getFalloutVatsDisplayedHitChance(
+                            bodyPart, *mFalloutVatsWeapon),
                         viewportX, viewportY, index == mFalloutVatsBodyPartIndex });
                 }
             }
@@ -1239,600 +1133,6 @@ namespace MWInput
             mFalloutVats.getActionPointsBefore(), mFalloutVats.getActionPointsAfter(),
             mFalloutVats.getQueue().size(), visible ? getFalloutVatsAvailableShots() : 0,
             mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing);
-    }
-
-    void ActionManager::captureFalloutVatsProofFrame()
-    {
-        if (mScreenCaptureHandler == nullptr || mViewer == nullptr)
-            return;
-        mScreenCaptureHandler->setFramesToCapture(1);
-        mScreenCaptureHandler->captureNextFrame(*mViewer);
-        ++mFalloutVatsProofCaptures;
-    }
-
-    void ActionManager::updateFalloutVatsProof()
-    {
-        if (!mFalloutVatsProofEnabled || mFalloutVatsProofFinished)
-            return;
-
-        ++mFalloutVatsProofFrame;
-        MWBase::World* world = MWBase::Environment::get().getWorld();
-        const MWWorld::Ptr player = world->getPlayerPtr();
-        const auto quitWithFailure = [&](std::string_view reason) {
-            Log(Debug::Error) << "FNV VATS proof: result=fail stage=" << mFalloutVatsProofStage
-                              << " reason=" << reason << " captures=" << mFalloutVatsProofCaptures;
-            mFalloutVatsProofFinished = true;
-            MWBase::Environment::get().getStateManager()->requestQuit();
-        };
-
-        switch (mFalloutVatsProofStage)
-        {
-            case 0:
-            {
-                if (mFalloutVatsProofAuthoredStartConfigured && !mFalloutVatsProofAuthoredStartApplied)
-                {
-                    // Move only the player to a documented authored encounter. The target reference remains in its
-                    // shipped cell with its native inventory, AI, position, and hostility.
-                    if (mFalloutVatsProofFrame < 30)
-                        return;
-                    const osg::Vec3f targetForward(
-                        std::sin(mFalloutVatsProofTargetYaw), std::cos(mFalloutVatsProofTargetYaw), 0.f);
-                    ESM::Position start;
-                    start.pos[0] = mFalloutVatsProofTargetPosition.x()
-                        + targetForward.x() * mFalloutVatsProofTargetDistance;
-                    start.pos[1] = mFalloutVatsProofTargetPosition.y()
-                        + targetForward.y() * mFalloutVatsProofTargetDistance;
-                    start.pos[2] = mFalloutVatsProofTargetPosition.z() + 48.f;
-                    start.rot[0] = 0.f;
-                    start.rot[1] = 0.f;
-                    start.rot[2] = mFalloutVatsProofTargetYaw + osg::PI;
-
-                    // findExteriorPosition also writes the named marker into its position argument. Probe with a
-                    // copy so the authored encounter coordinates above remain the actual player destination.
-                    ESM::Position cellProbe = start;
-                    const ESM::RefId cellId
-                        = world->findExteriorPosition(mFalloutVatsProofStartCell, cellProbe);
-                    if (cellId.empty())
-                    {
-                        quitWithFailure("authored-target-cell-not-found");
-                        return;
-                    }
-                    world->changeToCell(cellId, start, false, true);
-                    MWWorld::Ptr movedPlayer = world->getPlayerPtr();
-                    movedPlayer = world->moveObject(movedPlayer, start.asVec3(), true, true);
-                    world->rotateObject(
-                        movedPlayer, osg::Vec3f(start.rot[0], start.rot[1], start.rot[2]));
-                    world->adjustPosition(movedPlayer, true);
-
-                    // This authored encounter contains several armed Fiends. Preserve real incoming damage while
-                    // giving the unattended proof enough health to survive the complete four-shot cinematic and
-                    // the post-execution return-fire window.
-                    constexpr float proofPlayerHealth = 500.f;
-                    movedPlayer.getClass().getCreatureStats(movedPlayer).setHealth(
-                        MWMechanics::DynamicStat<float>(
-                            proofPlayerHealth, proofPlayerHealth, proofPlayerHealth));
-                    mFalloutVatsProofPlayerHealthBefore = proofPlayerHealth;
-                    mFalloutVatsProofPlayerHealthRecorded = true;
-
-                    if (MWRender::Camera* camera = world->getRenderingManager()->getCamera())
-                    {
-                        if (mFalloutVatsProofMode != FalloutVatsProofMode::Vats)
-                            camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
-                        const osg::Vec3f delta = osg::Vec3f(mFalloutVatsProofTargetPosition.x(),
-                                                     mFalloutVatsProofTargetPosition.y(),
-                                                     mFalloutVatsProofTargetPosition.z() + 72.f)
-                            - osg::Vec3f(start.pos[0], start.pos[1], start.pos[2] + 64.f);
-                        const float horizontal = std::hypot(delta.x(), delta.y());
-                        if (horizontal > 1.f)
-                        {
-                            camera->instantTransition();
-                            camera->setPitch(std::atan2(delta.z(), horizontal), true);
-                            camera->setYaw(-std::atan2(delta.x(), delta.y()), true);
-                            camera->setRoll(0.f);
-                            camera->updateCamera();
-                        }
-                    }
-
-                    mFalloutVatsProofAuthoredStartApplied = true;
-                    mFalloutVatsProofFrame = 0;
-                    Log(Debug::Info) << "FNV VATS proof: authored-start targetRef=FormId:0x" << std::hex
-                                     << mFalloutVatsProofTargetReference << std::dec
-                                     << " cell=" << cellId.toDebugString()
-                                     << " target=(" << mFalloutVatsProofTargetPosition.x() << ","
-                                     << mFalloutVatsProofTargetPosition.y() << ","
-                                     << mFalloutVatsProofTargetPosition.z() << ")"
-                                     << " player=(" << start.pos[0] << "," << start.pos[1] << ","
-                                     << start.pos[2] << ")";
-                    return;
-                }
-
-                // Let the native save finish instantiating actors, animations, HUD, and the first rendered pose.
-                // The original passive Goodsprings target tolerated a long cinematic warm-up. At an authored
-                // hostile encounter, enter V.A.T.S. promptly so the proof tests combat rather than waiting for the
-                // now-functional enemies to kill an idle player.
-                const unsigned int warmupFrames = mFalloutVatsProofAuthoredStartConfigured
-                    ? (mFalloutVatsProofWeaponSelected ? 90u : 45u)
-                    : (mFalloutVatsProofWeaponSelected ? 90u : 180u);
-                if (mFalloutVatsProofFrame < warmupFrames)
-                    return;
-                if (!mFalloutVatsProofWeaponSelected)
-                {
-                    MWWorld::InventoryStore& proofInventory = player.getClass().getInventoryStore(player);
-                    const auto ap = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
-                        MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
-                    MWWorld::ContainerStoreIterator proofWeapon = proofInventory.end();
-                    float proofLethalCapacity = -1.f;
-                    for (MWWorld::ContainerStoreIterator candidate = proofInventory.begin();
-                         candidate != proofInventory.end(); ++candidate)
-                    {
-                        if (candidate->getCellRef().getCount() <= 0
-                            || candidate->getType() != ESM4::Weapon::sRecordId)
-                            continue;
-                        const ESM4::Weapon& weapon = *candidate->get<ESM4::Weapon>()->mBase;
-                        // ESM4 records are remapped to OpenMW's internal content-file index while loading.
-                        // Match the stable authored record index rather than the rewritten high byte.
-                        if (weapon.mId.mIndex != (mFalloutVatsProofWeaponFormId & 0x00ffffff))
-                            continue;
-
-                        const bool melee = MWMechanics::isFalloutMeleeAnimationType(weapon.mData.animationType);
-                        if (mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryRanged && melee)
-                            continue;
-                        if (mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryMelee && !melee)
-                            continue;
-
-                        if (mFalloutVatsProofMode != FalloutVatsProofMode::Vats)
-                        {
-                            proofWeapon = candidate;
-                            break;
-                        }
-
-                        if (!ap || !Misc::StringUtils::ciEqual(weapon.mFullName, "10mm Pistol"))
-                            continue;
-                            MWMechanics::FalloutVatsWeaponFailure failure;
-                            const std::optional<MWMechanics::FalloutVatsWeaponContract> contract
-                                = MWMechanics::buildFalloutVatsWeaponContract(weapon, failure);
-                            if (!contract || contract->mActionPointCost <= 0.f || weapon.mData.ammoUse == 0)
-                                continue;
-                            std::vector<ESM::FormId> ammoForms;
-                            const auto& store = world->getStore();
-                            if (store.get<ESM4::Ammunition>().search(weapon.mAmmo) != nullptr)
-                                ammoForms.push_back(weapon.mAmmo);
-                            else if (const ESM4::FormIdList* list
-                                = store.get<ESM4::FormIdList>().search(weapon.mAmmo))
-                                ammoForms = list->mObjects;
-                            std::size_t rounds = 0;
-                            for (const ESM::FormId ammo : ammoForms)
-                            {
-                                if (!ammo.isZeroOrUnset()
-                                    && store.get<ESM4::Ammunition>().search(ammo) != nullptr)
-                                    rounds += static_cast<std::size_t>(std::max(
-                                        0, proofInventory.count(ESM::RefId::formIdRefId(ammo))));
-                            }
-                            const std::size_t actions = std::min(rounds / weapon.mData.ammoUse,
-                                static_cast<std::size_t>(std::floor(ap->mValue / contract->mActionPointCost)));
-                            const float capacity = static_cast<float>(weapon.mData.damage) * actions;
-                            Log(Debug::Info) << "FNV VATS proof weapon candidate: form=" << weapon.mId
-                                             << " name=" << weapon.mFullName
-                                             << " damage=" << weapon.mData.damage
-                                             << " apCost=" << contract->mActionPointCost << " actions=" << actions
-                                             << " lethalCapacity=" << capacity;
-                            if (actions >= 4)
-                            {
-                                proofLethalCapacity = capacity;
-                                proofWeapon = candidate;
-                            }
-                            break;
-                    }
-                    if (proofWeapon == proofInventory.end())
-                    {
-                        quitWithFailure(mFalloutVatsProofMode == FalloutVatsProofMode::Vats
-                                ? "required-10mm-cannot-queue-four-shots"
-                                : "required-ordinary-weapon-unavailable");
-                        return;
-                    }
-                    proofInventory.equip(MWWorld::InventoryStore::Slot_CarriedRight, proofWeapon);
-                    player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
-                    MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
-                    const char* proofMode = mFalloutVatsProofMode == FalloutVatsProofMode::Vats
-                        ? "vats"
-                        : (mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryRanged
-                                  ? "ordinary-ranged"
-                                  : "ordinary-melee");
-                    Log(Debug::Info) << "FNV combat proof weapon selected: form="
-                                     << proofWeapon->get<ESM4::Weapon>()->mBase->mId
-                                     << " name=" << proofWeapon->get<ESM4::Weapon>()->mBase->mFullName
-                                     << " animationType="
-                                     << static_cast<unsigned int>(
-                                            proofWeapon->get<ESM4::Weapon>()->mBase->mData.animationType)
-                                     << " lethalCapacity=" << proofLethalCapacity
-                                     << " mode=" << proofMode;
-                    if (mFalloutVatsProofMode == FalloutVatsProofMode::Vats)
-                        Log(Debug::Info) << "FNV VATS proof weapon selected: form="
-                                         << proofWeapon->get<ESM4::Weapon>()->mBase->mId
-                                         << " name=" << proofWeapon->get<ESM4::Weapon>()->mBase->mFullName
-                                         << " lethalCapacity=" << proofLethalCapacity;
-                    mFalloutVatsProofWeaponSelected = true;
-                    mFalloutVatsProofFrame = 0;
-                    return;
-                }
-
-                if (mFalloutVatsProofMode != FalloutVatsProofMode::Vats)
-                {
-                    std::vector<MWWorld::Ptr> nearbyActors;
-                    MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
-                        player.getRefData().getPosition().asVec3(), 3000.f, nearbyActors);
-                    const ESM::FormId requestedReference
-                        = ESM::FormId::fromUint32(mFalloutVatsProofTargetReference);
-                    const auto target = std::ranges::find_if(nearbyActors, [&](const MWWorld::Ptr& candidate) {
-                        if (candidate.isEmpty() || candidate == player || !candidate.getClass().isActor()
-                            || !candidate.getRefData().isEnabled()
-                            || candidate.getClass().getCreatureStats(candidate).isDead())
-                            return false;
-                        if (mFalloutVatsProofTargetReference != 0)
-                            return candidate.getCellRef().getRefNum() == requestedReference;
-                        return !mFalloutVatsProofTargetName.empty()
-                            && Misc::StringUtils::ciEqual(
-                                candidate.getClass().getName(candidate), mFalloutVatsProofTargetName);
-                    });
-                    if (target == nearbyActors.end())
-                    {
-                        quitWithFailure("ordinary-authored-target-not-found");
-                        return;
-                    }
-
-                    mFalloutVatsProofTarget = *target;
-                    mFalloutVatsProofHealthBefore = mFalloutVatsProofTarget.getClass()
-                        .getCreatureStats(mFalloutVatsProofTarget).getHealth().getCurrent();
-                    if (!mFalloutVatsProofPlayerHealthRecorded)
-                    {
-                        mFalloutVatsProofPlayerHealthBefore
-                            = player.getClass().getCreatureStats(player).getHealth().getCurrent();
-                        mFalloutVatsProofPlayerHealthRecorded = true;
-                    }
-                    mFalloutVatsProofStage = 10;
-                    mFalloutVatsProofFrame = 0;
-                    const char* proofMode = mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryRanged
-                        ? "ordinary-ranged"
-                        : "ordinary-melee";
-                    Log(Debug::Info) << "FNV ordinary combat proof: exact authored target acquired ref=FormId:0x"
-                                     << std::hex << mFalloutVatsProofTargetReference << std::dec
-                                     << " name="
-                                     << mFalloutVatsProofTarget.getClass().getName(mFalloutVatsProofTarget)
-                                     << " mode=" << proofMode
-                                     << " targetHealthBefore=" << mFalloutVatsProofHealthBefore
-                                     << " playerHealthBefore=" << mFalloutVatsProofPlayerHealthBefore;
-                    captureFalloutVatsProofFrame();
-                    return;
-                }
-
-                MWRender::Camera* camera = world->getRenderingManager()->getCamera();
-                mFalloutVatsProofCameraModeBefore = static_cast<int>(camera->getMode());
-                mFalloutVatsProofCameraPitchBefore = camera->getPitch();
-                mFalloutVatsProofCameraYawBefore = camera->getYaw();
-                mFalloutVatsProofCameraRollBefore = camera->getRoll();
-                mFalloutVatsProofPlayerYawBefore = player.getRefData().getPosition().rot[2];
-                toggleFalloutVats();
-                if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting
-                    && mFalloutVatsProofTargetReference != 0)
-                {
-                    const ESM::FormId targetRef
-                        = ESM::FormId::fromUint32(mFalloutVatsProofTargetReference);
-                    if (mFalloutVatsTarget.isEmpty()
-                        || mFalloutVatsTarget.getCellRef().getRefNum() != targetRef)
-                    {
-                        quitWithFailure("authored-target-reference-not-selected");
-                        return;
-                    }
-                    Log(Debug::Info) << "FNV VATS proof: exact authored target selected ref=FormId:0x"
-                                     << std::hex << mFalloutVatsProofTargetReference << std::dec
-                                     << " name="
-                                     << mFalloutVatsTarget.getClass().getName(mFalloutVatsTarget);
-                }
-                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Targeting)
-                {
-                    quitWithFailure("enter-vats");
-                    return;
-                }
-                if (!mFalloutVatsProofTargetName.empty()
-                    && !Misc::StringUtils::ciEqual(mFalloutVatsTargetName, mFalloutVatsProofTargetName))
-                {
-                    quitWithFailure("named-target-not-selected");
-                    return;
-                }
-                mFalloutVatsProofTarget = mFalloutVatsTarget;
-                mFalloutVatsProofHealthBefore
-                    = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget).getHealth().getCurrent();
-                Log(Debug::Info) << "FNV VATS proof: stage=targeting target=" << mFalloutVatsTargetName
-                                 << " healthBefore=" << mFalloutVatsProofHealthBefore;
-                mFalloutVatsProofStage = 1;
-                mFalloutVatsProofFrame = 0;
-                captureFalloutVatsProofFrame();
-                return;
-            }
-            case 1:
-            {
-                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
-                    captureFalloutVatsProofFrame();
-                if (mFalloutVatsProofFrame == 20 && mFalloutVatsBodyParts.size() > 1)
-                {
-                    cycleFalloutVatsBodyPart(1);
-                    Log(Debug::Info) << "FNV VATS proof: stage=limb-selected bodyPart=" << mFalloutVatsBodyPartName;
-                }
-                if (mFalloutVatsProofFrame == 26 && mFalloutVatsBodyParts.size() > 1)
-                {
-                    cycleFalloutVatsBodyPart(-1);
-                    Log(Debug::Info) << "FNV VATS proof: stage=torso-restored bodyPart=" << mFalloutVatsBodyPartName;
-                }
-                if (mFalloutVatsProofFrame == 30)
-                {
-                    queueFalloutVatsAttack();
-                    if (mFalloutVats.getQueue().empty())
-                    {
-                        quitWithFailure("queue-attack");
-                        return;
-                    }
-                    Log(Debug::Info) << "FNV VATS proof: stage=queued bodyPart=" << mFalloutVatsBodyPartName;
-                }
-                if (mFalloutVatsProofFrame == 36)
-                {
-                    queueFalloutVatsAttack();
-                    Log(Debug::Info) << "FNV VATS proof: stage=queued-second queue="
-                                     << mFalloutVats.getQueue().size();
-                }
-                if (mFalloutVatsProofFrame == 42)
-                {
-                    queueFalloutVatsAttack();
-                    if (mFalloutVats.getQueue().size() != 3)
-                    {
-                        quitWithFailure("queue-three-10mm-shots");
-                        return;
-                    }
-                    Log(Debug::Info) << "FNV VATS proof: stage=queued-third queue="
-                                     << mFalloutVats.getQueue().size();
-                }
-                if (mFalloutVatsProofFrame == 48)
-                {
-                    queueFalloutVatsAttack();
-                    if (mFalloutVats.getQueue().size() != 4)
-                    {
-                        quitWithFailure("queue-four-10mm-shots");
-                        return;
-                    }
-                    Log(Debug::Info) << "FNV VATS proof: stage=queued-fourth queue="
-                                     << mFalloutVats.getQueue().size();
-                }
-                if (mFalloutVatsProofFrame < 90)
-                    return;
-                executeFalloutVatsQueue();
-                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Executing)
-                {
-                    quitWithFailure("begin-execution");
-                    return;
-                }
-                mFalloutVatsProofStage = 2;
-                mFalloutVatsProofFrame = 0;
-                return;
-            }
-            case 2:
-            {
-                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
-                    captureFalloutVatsProofFrame();
-                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
-                {
-                    // The proof renderer is intentionally uncapped and can advance hundreds of render frames
-                    // during one second of wall time. VATS, meanwhile, runs simulation at 0.2x and must retain
-                    // its post-shot impact hold. Keep this only as a runaway guard; execution completion itself
-                    // is governed by simulation time and pending projectile state above.
-                    if (mFalloutVatsProofFrame > 12000)
-                        quitWithFailure("execution-timeout");
-                    return;
-                }
-                mFalloutVatsProofStage = 3;
-                mFalloutVatsProofFrame = 0;
-                Log(Debug::Info) << "FNV VATS proof: stage=post-execution";
-                return;
-            }
-            case 3:
-            {
-                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
-                    captureFalloutVatsProofFrame();
-                if (mFalloutVatsProofFrame < mFalloutVatsProofPostFrames)
-                    return;
-                if (mFalloutVatsProofTarget.isEmpty())
-                {
-                    quitWithFailure("target-lost");
-                    return;
-                }
-                const float healthAfter = mFalloutVatsProofTarget.getClass()
-                    .getCreatureStats(mFalloutVatsProofTarget).getHealth().getCurrent();
-                const bool damaged = std::isfinite(healthAfter) && healthAfter < mFalloutVatsProofHealthBefore;
-                const bool killed = std::isfinite(healthAfter) && healthAfter <= 0.f
-                    && mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget).isDead();
-                const bool aggro = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget)
-                    .getAiSequence().isInCombat(player);
-                std::vector<MWWorld::Ptr> nearbyActors;
-                MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
-                    player.getRefData().getPosition().asVec3(), 4096.f, nearbyActors);
-                std::size_t hostileWitnesses = 0;
-                for (const MWWorld::Ptr& actor : nearbyActors)
-                {
-                    if (actor.isEmpty() || actor == player || actor == mFalloutVatsProofTarget
-                        || !actor.getClass().isActor() || !actor.getRefData().isEnabled()
-                        || actor.getClass().getCreatureStats(actor).isDead())
-                        continue;
-                    if (actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat(player))
-                        ++hostileWitnesses;
-                }
-                const int bounty = player.getClass().getNpcStats(player).getBounty();
-                const bool witnessResponse = hostileWitnesses > 0 || bounty > 0;
-                const bool requireWitnessResponse
-                    = std::getenv("OPENMW_FNV_VATS_PROOF_REQUIRE_WITNESSES") != nullptr;
-                const bool requireKill = std::getenv("OPENMW_FNV_VATS_PROOF_REQUIRE_KILL") != nullptr;
-                const MWRender::Camera* camera = world->getRenderingManager()->getCamera();
-                const float pitchDelta = std::abs(camera->getPitch() - mFalloutVatsProofCameraPitchBefore);
-                const float yawDelta = std::abs(camera->getYaw() - mFalloutVatsProofCameraYawBefore);
-                const float rollDelta = std::abs(camera->getRoll() - mFalloutVatsProofCameraRollBefore);
-                const bool cameraRestored = static_cast<int>(camera->getMode()) == mFalloutVatsProofCameraModeBefore
-                    && pitchDelta < 0.001f && yawDelta < 0.001f && rollDelta < 0.001f;
-                const bool fired = mFalloutVatsProofShotsFired > 0;
-                const float playerYawDelta = std::abs(std::remainder(
-                    player.getRefData().getPosition().rot[2] - mFalloutVatsProofPlayerYawBefore,
-                    static_cast<float>(2.0 * osg::PI)));
-                const bool playerYawRestored = playerYawDelta < 0.001f;
-                const bool passed = fired && damaged && (!requireKill || killed) && aggro
-                    && cameraRestored && playerYawRestored
-                    && (!requireWitnessResponse || witnessResponse);
-                Log(passed ? Debug::Info : Debug::Error)
-                    << "FNV VATS proof: result=" << (passed ? "pass" : "fail")
-                     << " target=" << mFalloutVatsProofTarget.getClass().getName(mFalloutVatsProofTarget)
-                     << " fired=" << fired << " damaged=" << damaged << " killed=" << killed
-                     << " aggro=" << aggro
-                     << " hostileWitnesses=" << hostileWitnesses << " bounty=" << bounty
-                     << " witnessResponse=" << witnessResponse << " requireKill=" << requireKill
-                     << " healthBefore=" << mFalloutVatsProofHealthBefore << " healthAfter=" << healthAfter
-                     << " cameraRestored=" << cameraRestored << " pitchDelta=" << pitchDelta
-                     << " yawDelta=" << yawDelta << " rollDelta=" << rollDelta
-                     << " playerYawRestored=" << playerYawRestored << " playerYawDelta=" << playerYawDelta
-                     << " captures=" << mFalloutVatsProofCaptures;
-                mFalloutVatsProofFinished = true;
-                MWBase::Environment::get().getStateManager()->requestQuit();
-                return;
-            }
-            case 10:
-            {
-                if (mFalloutVatsProofTarget.isEmpty())
-                {
-                    quitWithFailure("ordinary-target-lost");
-                    return;
-                }
-                if (mFalloutVatsProofFrame % mFalloutVatsProofCaptureStep == 0)
-                    captureFalloutVatsProofFrame();
-
-                const auto aimAtTarget = [&]() {
-                    osg::Vec3f aimOrigin = player.getRefData().getPosition().asVec3();
-                    aimOrigin.z() += world->getHalfExtents(player).z() * 2.f * 0.85f;
-                    MWRender::Camera* proofCamera = world->getRenderingManager()->getCamera();
-                    if (proofCamera != nullptr)
-                    {
-                        const osg::Vec3d& cameraPosition = proofCamera->getPosition();
-                        if (std::isfinite(cameraPosition.x()) && std::isfinite(cameraPosition.y())
-                            && std::isfinite(cameraPosition.z()))
-                            aimOrigin.set(cameraPosition.x(), cameraPosition.y(), cameraPosition.z());
-                    }
-                    osg::Vec3f targetAim = mFalloutVatsProofTarget.getRefData().getPosition().asVec3();
-                    if (mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryMelee)
-                        targetAim.z() += std::max(16.f, world->getHalfExtents(mFalloutVatsProofTarget).z());
-                    else
-                        targetAim.z() += world->getHalfExtents(mFalloutVatsProofTarget).z() * 2.f * 0.85f;
-                    const osg::Vec3f delta = targetAim - aimOrigin;
-                    const float horizontal = std::hypot(delta.x(), delta.y());
-                    if (horizontal <= 1.f)
-                        return;
-                    const float yaw = std::atan2(delta.x(), delta.y());
-                    ESM::Position position = player.getRefData().getPosition();
-                    position.rot[0] = 0.f;
-                    position.rot[1] = 0.f;
-                    position.rot[2] = yaw;
-                    world->rotateObject(player, osg::Vec3f(position.rot[0], position.rot[1], position.rot[2]));
-                    if (proofCamera != nullptr)
-                    {
-                        proofCamera->setMode(MWRender::Camera::Mode::FirstPerson, true);
-                        proofCamera->instantTransition();
-                        constexpr float proofMeleePitchLimit = 0.55f;
-                        const float pitch = std::atan2(delta.z(), horizontal);
-                        proofCamera->setPitch(mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryMelee
-                                ? std::clamp(pitch, -proofMeleePitchLimit, proofMeleePitchLimit)
-                                : pitch,
-                            true);
-                        proofCamera->setYaw(-yaw, true);
-                        proofCamera->setRoll(0.f);
-                        proofCamera->updateCamera();
-                        Log(Debug::Info) << "FNV ordinary combat proof: aim origin=" << aimOrigin
-                                         << " target=" << targetAim
-                                         << " pitch=" << pitch << " yaw=" << yaw;
-                    }
-                };
-                const auto pressAttack = [&]() {
-                    aimAtTarget();
-                    mFalloutVatsProofUseDown = true;
-                    ++mFalloutVatsProofAttacksIssued;
-                    mFalloutVatsProofLastAttackFrame = mFalloutVatsProofFrame;
-                    mFalloutVatsProofAttackReleaseFrame = mFalloutVatsProofFrame + 3;
-                    Log(Debug::Info) << "FNV ordinary combat proof: trigger=down attempt="
-                                     << mFalloutVatsProofAttacksIssued;
-                };
-
-                if (mFalloutVatsProofUseDown
-                    && mFalloutVatsProofFrame >= mFalloutVatsProofAttackReleaseFrame)
-                    mFalloutVatsProofUseDown = false;
-
-                const MWMechanics::CreatureStats& liveTargetStats
-                    = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget);
-                const MWMechanics::CreatureStats& livePlayerStats
-                    = player.getClass().getCreatureStats(player);
-                const bool stillNeedsHit
-                    = liveTargetStats.getHealth().getCurrent() >= mFalloutVatsProofHealthBefore;
-                const bool retryWindow = mFalloutVatsProofFrame >= 20
-                    && mFalloutVatsProofFrame - mFalloutVatsProofLastAttackFrame >= 12;
-                if (!mFalloutVatsProofUseDown && stillNeedsHit && !liveTargetStats.isDead()
-                    && !livePlayerStats.getHitRecovery() && retryWindow
-                    && mFalloutVatsProofAttacksIssued < 12)
-                    pressAttack();
-
-                if (mFalloutVatsProofFrame < 330)
-                    return;
-
-                mFalloutVatsProofUseDown = false;
-                const MWMechanics::CreatureStats& targetStats
-                    = mFalloutVatsProofTarget.getClass().getCreatureStats(mFalloutVatsProofTarget);
-                const float targetHealthAfter = targetStats.getHealth().getCurrent();
-                const float playerHealthAfter
-                    = player.getClass().getCreatureStats(player).getHealth().getCurrent();
-                const bool targetDamaged
-                    = std::isfinite(targetHealthAfter) && targetHealthAfter < mFalloutVatsProofHealthBefore;
-                const bool playerDamaged = std::isfinite(playerHealthAfter)
-                    && playerHealthAfter < mFalloutVatsProofPlayerHealthBefore;
-                const bool targetKilled = targetStats.isDead();
-                const bool aggro = targetStats.getAiSequence().isInCombat(player);
-                const bool passed = mFalloutVatsProofAttacksIssued > 0 && targetDamaged && playerDamaged
-                    && (aggro || targetKilled);
-                const char* proofMode = mFalloutVatsProofMode == FalloutVatsProofMode::OrdinaryRanged
-                    ? "ordinary-ranged"
-                    : "ordinary-melee";
-                Log(passed ? Debug::Info : Debug::Error)
-                    << "FNV ordinary combat proof: result=" << (passed ? "pass" : "fail")
-                    << " mode=" << proofMode
-                    << " target=" << mFalloutVatsProofTarget.getClass().getName(mFalloutVatsProofTarget)
-                    << " attacksIssued=" << mFalloutVatsProofAttacksIssued
-                    << " targetDamaged=" << targetDamaged
-                    << " targetKilled=" << targetKilled
-                    << " playerDamaged=" << playerDamaged
-                    << " aggro=" << aggro
-                    << " targetHealthBefore=" << mFalloutVatsProofHealthBefore
-                    << " targetHealthAfter=" << targetHealthAfter
-                    << " playerHealthBefore=" << mFalloutVatsProofPlayerHealthBefore
-                    << " playerHealthAfter=" << playerHealthAfter
-                    << " captures=" << mFalloutVatsProofCaptures;
-                mFalloutVatsProofFinished = true;
-                MWBase::Environment::get().getStateManager()->requestQuit();
-                return;
-            }
-            default:
-                quitWithFailure("invalid-stage");
-                return;
-        }
-    }
-
-    bool ActionManager::checkAllowedToUseItems() const
-    {
-        MWWorld::Ptr player = MWMechanics::getPlayer();
-        if (player.getClass().getNpcStats(player).isWerewolf())
-        {
-            // Cannot use items or spells while in werewolf form
-            MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
-            return false;
-        }
-        return true;
     }
 
     void ActionManager::screenshot()
@@ -1863,13 +1163,7 @@ namespace MWInput
 
         if (!MWBase::Environment::get().getWindowManager()->isGuiMode()) // No open GUIs, open up the MainMenu
         {
-//## VR_PATCH BEGIN
-// Vr opens a different menu with more options, normally accessed using a keybind
-            if (VR::getVR())
-                MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_VrMetaMenu);
-            else
-                MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_MainMenu);
-//## VR_PATCH END
+            MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_MainMenu);
         }
         else // Close current GUI
         {
@@ -1891,7 +1185,8 @@ namespace MWInput
 
     void ActionManager::rest()
     {
-        if (!MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols"))
+        if (!MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
+            || !MWBase::Environment::get().getInputManager()->getControlSwitch("playerinterface"))
             return;
 
         if (!MWBase::Environment::get().getWindowManager()->getRestEnabled()
@@ -1911,18 +1206,14 @@ namespace MWInput
 
     void ActionManager::quickKey(int index)
     {
-        const bool fallout = isFalloutContent();
         if (!MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
             || !MWBase::Environment::get().getInputManager()->getControlSwitch("playerfighting")
-            || (!fallout && !MWBase::Environment::get().getInputManager()->getControlSwitch("playermagic")))
+            || !MWBase::Environment::get().getInputManager()->getControlSwitch("playermagic"))
             return;
         if (!checkAllowedToUseItems())
             return;
 
-        // Fallout hotkeys are inventory/weapon controls. They must not depend on Morrowind's magic switch or
-        // chargen global; neither is part of the retail FNV input contract and either may be disabled or absent.
-        if (!fallout
-            && MWBase::Environment::get().getWorld()->getGlobalFloat(MWWorld::Globals::sCharGenState) != -1)
+        if (MWBase::Environment::get().getWorld()->getGlobalFloat(MWWorld::Globals::sCharGenState) != -1)
             return;
 
         if (!MWBase::Environment::get().getWindowManager()->isGuiMode())
@@ -1937,7 +1228,8 @@ namespace MWInput
             if (!SDL_IsTextInputActive() && !mBindingsManager->isLeftOrRightButton(A_Activate, joystickUsed))
                 MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::Return, 0, false);
         }
-        else if (MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols"))
+        else if (MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
+            && MWBase::Environment::get().getInputManager()->getControlSwitch("playermovement"))
         {
             MWWorld::Player& player = MWBase::Environment::get().getWorld()->getPlayer();
             player.activate();

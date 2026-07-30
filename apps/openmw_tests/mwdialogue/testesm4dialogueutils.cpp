@@ -10,18 +10,24 @@
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/script.hpp>
 
 #include <apps/openmw/mwbase/environment.hpp>
 
 #include <apps/openmw/mwclass/classes.hpp>
 
+#include <apps/openmw/mwmechanics/creaturestats.hpp>
+#include <apps/openmw/mwmechanics/drawstate.hpp>
+#include <apps/openmw/mwmechanics/falloutactorstate.hpp>
+
+#include <apps/openmw/mwworld/class.hpp>
 #include <apps/openmw/mwworld/esm4questruntime.hpp>
 #include <apps/openmw/mwworld/esmstore.hpp>
-#include <apps/openmw/mwworld/fnvplayerruntimestate.hpp>
 #include <apps/openmw/mwworld/livecellref.hpp>
 #include <apps/openmw/mwworld/ptr.hpp>
 
@@ -92,113 +98,6 @@ namespace
         EXPECT_EQ(MWDialogue::getEsm4DialoguePrompt(dialogue, info), dialogue.mEditorId);
     }
 
-    TEST(Esm4DialogueUtilsTest, RightSideTopicRetainsTheExactInfoUsedForItsVisiblePrompt)
-    {
-        // Exact normalized FalloutNV.esm Easy Pete records observed in the Save330 runtime:
-        // VFreeformGoodspringsGSEasyPeteTopic000 DIAL 01105159 selects INFO 0110515C.
-        const MWDialogue::Esm4DialogueSelection displayed{ form(0x01105159), form(0x0110515c) };
-        MWDialogue::Esm4DialoguePicker picker;
-        ASSERT_TRUE(picker.bindTopic("Why are you called Easy Pete?", displayed));
-
-        const std::optional<MWDialogue::Esm4DialogueSelection> activated
-            = picker.selectTopic("why are you called easy pete?");
-        ASSERT_TRUE(activated.has_value());
-        EXPECT_EQ(*activated, displayed);
-
-        ESM4::DialogInfo displayedInfo;
-        displayedInfo.mId = form(0x0110515c);
-        displayedInfo.mTopic = form(0x01105159);
-        EXPECT_TRUE(MWDialogue::matchesEsm4DialogueSelection(*activated, displayedInfo));
-
-        ESM4::DialogInfo laterFallback = displayedInfo;
-        laterFallback.mId = form(0x0110515d);
-        EXPECT_FALSE(MWDialogue::matchesEsm4DialogueSelection(*activated, laterFallback));
-    }
-
-    TEST(Esm4DialogueUtilsTest, NestedChoiceOwnsThePickerUntilItReturnsToRightSideTopics)
-    {
-        // Exact FalloutNV.esm Victor Science branch: INFO 0115FF4B offers TCLT 0110B192,
-        // whose authored response is INFO 0110B19F.
-        const MWDialogue::Esm4DialogueSelection rightSide{ form(0x01105159), form(0x0110515c) };
-        const MWDialogue::Esm4DialogueSelection nested{ form(0x0110b192), form(0x0110b19f) };
-        MWDialogue::Esm4DialoguePicker picker;
-        ASSERT_TRUE(picker.bindTopic("Why are you called Easy Pete?", rightSide));
-        EXPECT_EQ(picker.bindChoice(nested), 0);
-
-        EXPECT_FALSE(picker.selectTopic("Why are you called Easy Pete?").has_value());
-        ASSERT_TRUE(picker.selectChoice(0).has_value());
-        EXPECT_EQ(*picker.selectChoice(0), nested);
-        EXPECT_FALSE(picker.selectChoice(-1).has_value());
-        EXPECT_FALSE(picker.selectChoice(1).has_value());
-
-        picker.clearChoices();
-        ASSERT_TRUE(picker.selectTopic("Why are you called Easy Pete?").has_value());
-        EXPECT_EQ(*picker.selectTopic("Why are you called Easy Pete?"), rightSide);
-
-        // Starting a new actor/dialogue calls clear(), so no prior actor's label or choice can remain selectable.
-        picker.bindChoice(nested);
-        picker.clear();
-        EXPECT_TRUE(picker.getTopics().empty());
-        EXPECT_FALSE(picker.selectTopic("Why are you called Easy Pete?").has_value());
-        EXPECT_FALSE(picker.selectChoice(0).has_value());
-    }
-
-    TEST(Esm4DialogueUtilsTest, DuplicateVisibleTopicCannotReplaceItsDisplayedSelection)
-    {
-        // These two exact Goodsprings DIALs share a visible label but belong to Easy Pete and Chet.
-        const MWDialogue::Esm4DialogueSelection easyPete{ form(0x01106632), form(0x01106635) };
-        const MWDialogue::Esm4DialogueSelection chet{ form(0x011084cc), form(0x011084cd) };
-        MWDialogue::Esm4DialoguePicker picker;
-        ASSERT_TRUE(picker.bindTopic("Do you know anything about the people who attacked me?", easyPete));
-        EXPECT_FALSE(picker.bindTopic("do you know anything about the people who attacked me?", chet));
-
-        const std::optional<MWDialogue::Esm4DialogueSelection> activated
-            = picker.selectTopic("Do you know anything about the people who attacked me?");
-        ASSERT_TRUE(activated.has_value());
-        EXPECT_EQ(*activated, easyPete);
-    }
-
-    TEST(Esm4DialogueUtilsTest, NativePlayerValuesResolveExactGoodspringsSkillAndSpecialConditions)
-    {
-        MWWorld::FalloutPlayerState base;
-        base.mBaseRecord = form(7);
-        base.mHealth = 100;
-        base.mSpecial = { 5, 5, 5, 5, 6, 5, 5 };
-        base.mSkillValues = { 24, 14, 12, 25, 15, 30, 30, 13, 25, 25, 25, 30, 22, 29 };
-
-        MWWorld::FalloutPlayerRuntimeState runtime;
-        runtime.initialize(base);
-
-        // FalloutNV.esm INFO 0015FF4B (Victor Science), 00104C4B (Easy Pete Explosives), and 0015EC53
-        // (Joe Cobb Intelligence) are representative of the 31 GetActorValue CTDAs owned by VFreeformGoodsprings.
-        const std::array<ESM4::TargetCondition, 4> conditions{
-            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
-            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
-            condition(ESM4::FUN_GetActorValue, form(0), 6.f),
-            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
-        };
-        std::array<ESM4::TargetCondition, 4> exact = conditions;
-        exact[0].param1 = 40; // Science 25 succeeds.
-        exact[1].param1 = 35; // Explosives 25 succeeds.
-        exact[2].param1 = 9; // Intelligence 6 succeeds.
-        exact[3].param1 = 32; // Barter 24 fails a 25 check.
-
-        const auto currentValue = [&](const ESM4::TargetCondition& target) -> std::optional<bool> {
-            const std::optional<MWWorld::FalloutRuntimeActorValue> value
-                = runtime.getCurrentActorValue(target.param1);
-            if (!value)
-                return std::nullopt;
-            return value->mValue >= target.comparison;
-        };
-        EXPECT_TRUE(currentValue(exact[0]).value_or(false));
-        EXPECT_TRUE(currentValue(exact[1]).value_or(false));
-        EXPECT_TRUE(currentValue(exact[2]).value_or(false));
-        EXPECT_FALSE(currentValue(exact[3]).value_or(true));
-
-        exact[0].param1 = 31;
-        EXPECT_FALSE(currentValue(exact[0]).has_value()) << "unsupported actor values must remain fail-closed";
-    }
-
     TEST(Esm4DialogueUtilsTest, RetailLegionInfoRequiresRunningOwnerAndMatchingFactionBeforeLocalConditions)
     {
         MWBase::Environment environment;
@@ -231,6 +130,28 @@ namespace
         caucasian.mFullName = "Caucasian";
         store.overrideRecord(caucasian);
 
+        const ESM::FormId radiationEffectId = form(0x0018f101);
+        const ESM::FormId ghoulResistanceId = form(0x0018f102);
+        ESM4::MagicEffect radiationEffect;
+        radiationEffect.mId = radiationEffectId;
+        radiationEffect.mEditorId = "RadResistGhoulEffect";
+        radiationEffect.mData.present = true;
+        radiationEffect.mData.archetype = ESM4::MagicEffect::Archetype::ValueModifier;
+        radiationEffect.mData.actorValue = 20;
+        store.overrideRecord(radiationEffect);
+        ESM4::Spell ghoulResistance;
+        ghoulResistance.mId = ghoulResistanceId;
+        ghoulResistance.mEditorId = "RadResistGhoul";
+        ghoulResistance.mData.present = true;
+        ghoulResistance.mData.type = ESM4::Spell::Type::Ability;
+        ESM4::Spell::Effect resistanceEntry;
+        resistanceEntry.baseEffect = radiationEffectId;
+        resistanceEntry.magnitude = 85;
+        resistanceEntry.range = ESM4::Spell::Range::Self;
+        resistanceEntry.actorValue = 20;
+        ghoulResistance.mEffects.push_back(resistanceEntry);
+        store.overrideRecord(ghoulResistance);
+
         ESM4::DialogInfo info;
         info.mId = form(0x00175650);
         info.mQuest = ownerId;
@@ -243,6 +164,7 @@ namespace
         ESM4::Npc goodsprings = actorBase(0x00104f02, "GSSettlerAAM", "Goodsprings Settler", 0x0000424a,
             0x0002ab62,
             { 0x0013f89e, 0x0013f89b, 0x00104c6e, 0x0016311a });
+        goodsprings.mSpell.push_back(ghoulResistanceId);
         ESM4::ActorCharacter goodspringsRef = actorReference(0x00104f03, goodsprings.mId);
         MWWorld::LiveCellRef<ESM4::Npc> liveGoodsprings(goodspringsRef, &goodsprings);
         const MWWorld::Ptr goodspringsPtr(&liveGoodsprings);
@@ -296,15 +218,50 @@ namespace
         EXPECT_TRUE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, legionEvaluator));
         EXPECT_EQ(legionFactionChecks, 1);
         EXPECT_EQ(legionInfoChecks, excludedVoiceTypes.size());
-    }
 
-    TEST(Esm4DialogueExpressionTest, StoresRetailEmotionAndClampsAuthoredWeight)
-    {
-        int actorToken = 0;
-        MWDialogue::setEsm4DialogueExpression(&actorToken, ESM4::EMO_Happy, 150);
-        const auto expression = MWDialogue::getEsm4DialogueExpression(&actorToken);
-        ASSERT_TRUE(expression.has_value());
-        EXPECT_EQ(expression->mType, ESM4::EMO_Happy);
-        EXPECT_FLOAT_EQ(expression->mWeight, 1.f);
+        ASSERT_TRUE(MWMechanics::setFalloutActorFaction(legionPtr, form(0x000ee68a), std::nullopt));
+        EXPECT_FALSE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, legionEvaluator))
+            << "RemoveFromFaction must immediately affect owning-quest dialogue filters";
+
+        ASSERT_TRUE(MWMechanics::setFalloutActorFaction(goodspringsPtr, form(0x000ee68a), 2));
+        EXPECT_TRUE(MWDialogue::matchesEsm4DialogueInfoConditions(info, &owner, ownerState, goodspringsEvaluator))
+            << "AddToFaction must immediately affect owning-quest dialogue filters";
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetFactionRank, form(0x000ee68a), 2.f),
+                      goodspringsPtr, false),
+            std::optional<bool>(true));
+
+        ASSERT_TRUE(MWMechanics::applyFalloutActorValue(goodspringsPtr, 0,
+            MWMechanics::FalloutActorValueOperation::Set, 2.f));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetActorValue, form(0), 2.f),
+                      goodspringsPtr, false),
+            std::optional<bool>(true));
+
+        ASSERT_TRUE(MWMechanics::setFalloutActorFlag(
+            goodspringsPtr, MWMechanics::FalloutActorFlag::Ghost, true));
+        ASSERT_TRUE(MWMechanics::setFalloutActorFlag(
+            goodspringsPtr, MWMechanics::FalloutActorFlag::IgnoreFriendlyHits, true));
+        goodspringsPtr.getClass().getCreatureStats(goodspringsPtr).setDrawState(
+            MWMechanics::DrawState::Weapon);
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIsGhost, {}, 1.f), goodspringsPtr, false),
+            std::optional<bool>(true));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIgnoreFriendlyHits, {}, 1.f), goodspringsPtr, false),
+            std::optional<bool>(true));
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(
+                      condition(ESM4::FUN_GetIsAlerted, {}, 1.f), goodspringsPtr, false),
+            std::optional<bool>(true));
+
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(85.f));
+        MWMechanics::CreatureStats& actorStats
+            = goodspringsPtr.getClass().getCreatureStats(goodspringsPtr);
+        EXPECT_FALSE(actorStats.hasFalloutActorEffectOverride());
+        ASSERT_TRUE(actorStats.setFalloutActorEffect(ghoulResistanceId, false));
+        EXPECT_TRUE(actorStats.hasFalloutActorEffectOverride());
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(0.f));
+        ASSERT_TRUE(actorStats.setFalloutActorEffect(ghoulResistanceId, true));
+        EXPECT_EQ(MWMechanics::getFalloutActorValue(goodspringsPtr, 20), std::optional<float>(85.f));
     }
 }

@@ -68,7 +68,22 @@ void MWWorld::Action::execute(const Ptr& actor, bool noSound)
 
     if (interactionAudit)
         Log(Debug::Info) << "FNV interaction audit: Action calling executeImp";
-    executeImp(actor);
+    try
+    {
+        executeImp(actor);
+    }
+    catch (const std::exception& e)
+    {
+        if (interactionAudit)
+            Log(Debug::Error) << "FNV interaction audit: Action executeImp exception: " << e.what();
+        throw;
+    }
+    catch (...)
+    {
+        if (interactionAudit)
+            Log(Debug::Error) << "FNV interaction audit: Action executeImp non-standard exception";
+        throw;
+    }
     if (interactionAudit)
         Log(Debug::Info) << "FNV interaction audit: Action execute end";
 }

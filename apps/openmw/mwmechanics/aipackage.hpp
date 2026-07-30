@@ -26,6 +26,7 @@ namespace ESM
 
 namespace MWMechanics
 {
+    class AiSequence;
     class CharacterController;
     class PathgridGraph;
 
@@ -136,7 +137,8 @@ namespace MWMechanics
         /** \return If the actor has arrived at his destination **/
         bool pathTo(const MWWorld::Ptr& actor, const osg::Vec3f& dest, float duration,
             MWWorld::MovementDirectionFlags supportedMovementDirections, float destTolerance = 0.0f,
-            float endTolerance = 0.0f, PathType pathType = PathType::Full);
+            float endTolerance = 0.0f, PathType pathType = PathType::Full,
+            bool requireDestinationTolerance = false);
 
         /// Check if there aren't any obstacles along the path to make shortcut possible
         /// If a shortcut is possible then path will be cleared and filled with the destination point.
@@ -171,15 +173,15 @@ namespace MWMechanics
         AiReactionTimer mReaction;
 
         ESM::RefId mTargetActorRefId;
-        mutable int mTargetActorId;
-        mutable MWWorld::Ptr mCachedTarget;
-
-        short mRotateOnTheRunChecks; // attempts to check rotation to the pathpoint on the run possibility
-
-        bool mIsShortcutting; // if shortcutting at the moment
-        bool mShortcutProhibited; // shortcutting may be prohibited after unsuccessful attempt
+        mutable ESM::RefNum mTargetActor;
         osg::Vec3f mShortcutFailPos; // position of last shortcut fail
         float mLastDestinationTolerance = 0;
+        short mRotateOnTheRunChecks = 0; // attempts to check rotation to the pathpoint on the run possibility
+        mutable bool mTargetNotFound = false;
+        bool mIsShortcutting = false; // if shortcutting at the moment
+        bool mShortcutProhibited = false; // shortcutting may be prohibited after unsuccessful attempt
+
+        friend class AiSequence;
 
     private:
         bool isNearInactiveCell(osg::Vec3f position);

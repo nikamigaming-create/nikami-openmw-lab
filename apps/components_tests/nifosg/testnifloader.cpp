@@ -1,16 +1,10 @@
 #include "../nif/node.hpp"
 
 #include <components/nif/node.hpp>
-#include <components/nif/niffile.hpp>
-#include <components/nif/controller.hpp>
 #include <components/nif/property.hpp>
-#include <components/nif/texture.hpp>
-#include <components/nifosg/controller.hpp>
-#include <components/nifosg/falloutkf.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
-#include <components/sceneutil/keyframe.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/serialize.hpp>
 #include <components/vfs/manager.hpp>
@@ -26,7 +20,6 @@
 
 #include <array>
 #include <limits>
-#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -139,10 +132,10 @@ namespace
             mAlpha.recType = Nif::RC_NiAlphaProperty;
         }
 
-        void addAlpha(uint16_t flags, uint8_t threshold = 0)
+        void addAlpha(uint16_t flags)
         {
             mAlpha.mFlags = flags;
-            mAlpha.mThreshold = threshold;
+            mAlpha.mThreshold = 0;
             mGeometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&mAlpha));
         }
 
@@ -191,27 +184,6 @@ namespace
         Nif::NiSkinPartition mPartitions;
     };
 
-    struct FalloutPPLightingGeometry : FalloutMaterialOnlyGeometry
-    {
-        explicit FalloutPPLightingGeometry(uint32_t shaderFlags1)
-            : FalloutMaterialOnlyGeometry("Siding:0")
-        {
-            mData.mUVList.push_back(
-                { osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
-            init(static_cast<Nif::NiObjectNET&>(mShader));
-            mShader.recType = Nif::RC_BSShaderPPLightingProperty;
-            mShader.mType = static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default);
-            mShader.mShaderFlags1 = shaderFlags1;
-            mShader.mController = nullptr;
-            mShader.mTextureSet = Nif::BSShaderTextureSetPtr(&mTextureSet);
-            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(&mShader);
-            mTextureSet.mTextures = { "textures/test/diffuse.dds", "textures/test/normal.dds" };
-        }
-
-        Nif::BSShaderPPLightingProperty mShader;
-        Nif::BSShaderTextureSet mTextureSet;
-    };
-
     struct FindNamedNodeStateSetVisitor : osg::NodeVisitor
     {
         explicit FindNamedNodeStateSetVisitor(std::string_view name)
@@ -251,17 +223,6 @@ namespace
         return visitor.mCount;
     }
 
-    osg::ref_ptr<osg::Node> loadFalloutPPLightingGeometry(FalloutPPLightingGeometry& fixture,
-        Resource::ImageManager& imageManager, Resource::BgsmFileManager& materialManager)
-    {
-        Nif::NIFFile file(testNif);
-        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
-        file.mUserVersion = 11;
-        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
-        file.mRoots.push_back(&fixture.mGeometry);
-        return Loader::load(file, &imageManager, &materialManager);
-    }
-
     TEST_F(NifOsgLoaderTest, shouldLoadFileWithDefaultNode)
     {
         Nif::NiAVObject node;
@@ -294,7 +255,7 @@ osg::Group {
           UDC_UserObjects 1 {
             osg::UIntValueObject {
               UniqueID 6
-              Name "recIndex"
+              Name "recordIndex"
               Value 4294967295
             }
           }
@@ -412,111 +373,6 @@ osg::Group {
         EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE);
     }
 
-    TEST_F(NifOsgLoaderTest, shouldIgnorePackedDiffuseAlphaForUnflaggedFalloutPpLighting)
-    {
-        FalloutPPLightingGeometry fixture(0);
-        osg::ref_ptr<osg::Node> result
-            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
-        ASSERT_NE(result, nullptr);
-
-        FindNamedNodeStateSetVisitor visitor("Siding:0");
-        result->accept(visitor);
-        ASSERT_NE(visitor.mStateSet, nullptr);
-        EXPECT_NE(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldPreserveAuthoredFalloutPpLightingAlphaContracts)
-    {
-        FalloutPPLightingGeometry alphaTexture(Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
-        osg::ref_ptr<osg::Node> alphaTextureResult
-            = loadFalloutPPLightingGeometry(alphaTexture, mImageManager, mMaterialManager);
-        ASSERT_NE(alphaTextureResult, nullptr);
-        FindNamedNodeStateSetVisitor alphaTextureVisitor("Siding:0");
-        alphaTextureResult->accept(alphaTextureVisitor);
-        ASSERT_NE(alphaTextureVisitor.mStateSet, nullptr);
-        EXPECT_EQ(alphaTextureVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
-
-        FalloutPPLightingGeometry niAlpha(0);
-        niAlpha.addAlpha(0x12ed); // standard blend plus alpha test
-        osg::ref_ptr<osg::Node> niAlphaResult
-            = loadFalloutPPLightingGeometry(niAlpha, mImageManager, mMaterialManager);
-        ASSERT_NE(niAlphaResult, nullptr);
-        FindNamedNodeStateSetVisitor niAlphaVisitor("Siding:0");
-        niAlphaResult->accept(niAlphaVisitor);
-        ASSERT_NE(niAlphaVisitor.mStateSet, nullptr);
-        EXPECT_EQ(niAlphaVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldRouteStaticFalloutDirectionalSlsByMaterialContract)
-    {
-        FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
-        fixture.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_DepthWrite;
-        fixture.addAlpha(0x12ec, 70); // alpha test GREATER, no blending
-        osg::ref_ptr<osg::Node> result
-            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
-        ASSERT_NE(result, nullptr);
-
-        FindNamedNodeStateSetVisitor visitor("Siding:0");
-        result->accept(visitor);
-        ASSERT_NE(visitor.mStateSet, nullptr);
-        const osg::Uniform* slsMode = visitor.mStateSet->getUniform("falloutSlsMode");
-        ASSERT_NE(slsMode, nullptr);
-        int value = 0;
-        ASSERT_TRUE(slsMode->get(value));
-        EXPECT_EQ(value, 2);
-        EXPECT_EQ(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldNotRouteNearMissesThroughStaticFalloutDirectionalSls)
-    {
-        auto getSlsMode = [this](FalloutPPLightingGeometry& fixture) {
-            osg::ref_ptr<osg::Node> result
-                = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
-            EXPECT_NE(result, nullptr);
-            if (result == nullptr)
-                return -1;
-            FindNamedNodeStateSetVisitor visitor("Siding:0");
-            result->accept(visitor);
-            EXPECT_NE(visitor.mStateSet, nullptr);
-            if (visitor.mStateSet == nullptr)
-                return -1;
-            const osg::Uniform* uniform = visitor.mStateSet->getUniform("falloutSlsMode");
-            if (uniform == nullptr)
-                return 0;
-            int value = 0;
-            EXPECT_TRUE(uniform->get(value));
-            return value;
-        };
-        auto addSignAlpha = [](FalloutPPLightingGeometry& fixture) { fixture.addAlpha(0x12ec, 70); };
-
-        FalloutPPLightingGeometry specular(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures
-            | Nif::BSShaderFlags1::BSSFlag1_Specular);
-        addSignAlpha(specular);
-        EXPECT_EQ(getSlsMode(specular), 0);
-
-        FalloutPPLightingGeometry noRemap(0);
-        addSignAlpha(noRemap);
-        EXPECT_EQ(getSlsMode(noRemap), 0);
-
-        FalloutPPLightingGeometry noAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
-        EXPECT_EQ(getSlsMode(noAlpha), 0);
-
-        FalloutPPLightingGeometry blendedAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
-        blendedAlpha.addAlpha(0x12ed, 70);
-        EXPECT_EQ(getSlsMode(blendedAlpha), 0);
-
-        FalloutPPLightingGeometry vertexColors(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
-        addSignAlpha(vertexColors);
-        vertexColors.mData.mColors = { osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
-            osg::Vec4f(1.f, 1.f, 1.f, 1.f) };
-        EXPECT_EQ(getSlsMode(vertexColors), 0);
-
-        FalloutPPLightingGeometry pointLit(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
-        addSignAlpha(pointLit);
-        pointLit.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_FalloutSlsPointLightMask;
-        EXPECT_EQ(getSlsMode(pointLit), 0);
-    }
-
     TEST_F(NifOsgLoaderTest, shouldApplyBsPpLightingDepthFlags)
     {
         Nif::NiAVObject node;
@@ -568,10 +424,10 @@ osg::Group {
       UserDataContainer TRUE {
         osg::DefaultUserDataContainer {
           UniqueID 5
-          UDC_UserObjects 3 {
+          UDC_UserObjects 2 {
             osg::UIntValueObject {
               UniqueID 6
-              Name "recIndex"
+              Name "recordIndex"
               Value 4294967295
             }
             osg::StringValueObject {
@@ -580,17 +436,12 @@ osg::Group {
               Value ")"
             << shaderPrefix << R"("
             }
-            osg::BoolValueObject {
-              UniqueID 8
-              Name "shaderRequired"
-              Value TRUE
-            }
           }
         }
       }
       StateSet TRUE {
         osg::StateSet {
-          UniqueID 9
+          UniqueID 8
           ModeList 1 {
             GL_DEPTH_TEST OFF
           }
@@ -628,10 +479,10 @@ osg::Group {
       UserDataContainer TRUE {
         osg::DefaultUserDataContainer {
           UniqueID 5
-          UDC_UserObjects 3 {
+          UDC_UserObjects 2 {
             osg::UIntValueObject {
               UniqueID 6
-              Name "recIndex"
+              Name "recordIndex"
               Value 4294967295
             }
             osg::StringValueObject {
@@ -640,23 +491,18 @@ osg::Group {
               Value ")"
             << shaderPrefix << R"("
             }
-            osg::BoolValueObject {
-              UniqueID 8
-              Name "shaderRequired"
-              Value TRUE
-            }
           }
         }
       }
       StateSet TRUE {
         osg::StateSet {
-          UniqueID 9
+          UniqueID 8
           ModeList 1 {
             GL_DEPTH_TEST ON
           }
           AttributeList 1 {
             osg::Depth {
-              UniqueID 10
+              UniqueID 9
               Function LEQUAL
             }
             Value OFF
@@ -692,7 +538,7 @@ osg::Group {
         Nif::NiAVObject node;
         init(node);
         Nif::BSShaderPPLightingProperty property;
-        property.recType = Nif::RC_BSShaderPPLightingProperty;
+        property.mRecordType = Nif::RC_BSShaderPPLightingProperty;
         property.mTextureSet = nullptr;
         property.mController = nullptr;
         property.mType = GetParam().mShaderType;
@@ -720,7 +566,7 @@ osg::Group {
         Nif::NiAVObject node;
         init(node);
         Nif::BSLightingShaderProperty property;
-        property.recType = Nif::RC_BSLightingShaderProperty;
+        property.mRecordType = Nif::RC_BSLightingShaderProperty;
         property.mTextureSet = nullptr;
         property.mController = nullptr;
         property.mType = GetParam().mShaderType;
@@ -735,152 +581,4 @@ osg::Group {
 
     INSTANTIATE_TEST_SUITE_P(
         Params, NifOsgLoaderBSLightingShaderPrefixTest, ValuesIn(NifOsgLoaderBSLightingShaderPrefixTest::sParams));
-
-    TEST(NifOsgFalloutKfTest, shouldKeepDogLandAndSwimGroupsDisjointUnderLastSourceWins)
-    {
-        // VFS recursive discovery is lexical, and Animation::play searches sources in reverse insertion order.
-        static constexpr std::array<std::string_view, 14> dogSources = {
-            "meshes/creatures/dog/h2hbackward.kf",
-            "meshes/creatures/dog/locomotion/h2hfastforward.kf",
-            "meshes/creatures/dog/locomotion/h2hforward.kf",
-            "meshes/creatures/dog/locomotion/mtfastforward.kf",
-            "meshes/creatures/dog/locomotion/mtforward.kf",
-            "meshes/creatures/dog/mtbackrward.kf",
-            "meshes/creatures/dog/mtidle.kf",
-            "meshes/creatures/dog/mtturnleft.kf",
-            "meshes/creatures/dog/mtturnright.kf",
-            "meshes/creatures/dog/swimfastforward.kf",
-            "meshes/creatures/dog/swimforward.kf",
-            "meshes/creatures/dog/swimidle.kf",
-            "meshes/creatures/dog/swimturnleft.kf",
-            "meshes/creatures/dog/swimturnright.kf",
-        };
-
-        std::map<std::string_view, std::string_view, std::less<>> winningSource;
-        for (std::string_view source : dogSources)
-        {
-            for (std::string_view group : getFalloutKfLoopGroups(source))
-                winningSource[group] = source;
-        }
-
-        EXPECT_EQ(winningSource.at("walkforward"), "meshes/creatures/dog/locomotion/mtforward.kf");
-        EXPECT_EQ(winningSource.at("runforward"), "meshes/creatures/dog/locomotion/mtfastforward.kf");
-        EXPECT_EQ(winningSource.at("walkback"), "meshes/creatures/dog/mtbackrward.kf");
-        EXPECT_EQ(winningSource.at("turnleft"), "meshes/creatures/dog/mtturnleft.kf");
-        EXPECT_EQ(winningSource.at("turnright"), "meshes/creatures/dog/mtturnright.kf");
-        EXPECT_EQ(winningSource.at("swimwalkforward"), "meshes/creatures/dog/swimforward.kf");
-        EXPECT_EQ(winningSource.at("swimrunforward"), "meshes/creatures/dog/swimfastforward.kf");
-        EXPECT_EQ(winningSource.at("idleswim"), "meshes/creatures/dog/swimidle.kf");
-        EXPECT_EQ(winningSource.at("swimturnleft"), "meshes/creatures/dog/swimturnleft.kf");
-        EXPECT_EQ(winningSource.at("swimturnright"), "meshes/creatures/dog/swimturnright.kf");
-    }
-
-    TEST(NifOsgFalloutKfTest, shouldUseCompleteRetailDogSequenceDurationsForLoops)
-    {
-        const auto findKeyTime = [](const SceneUtil::TextKeyMap& keys, std::string_view text) {
-            const auto found = std::find_if(keys.begin(), keys.end(),
-                [&](const auto& value) { return value.second == text; });
-            return found == keys.end() ? -1.f : found->first;
-        };
-
-        SceneUtil::TextKeyMap walk;
-        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
-            "meshes/creatures/dog/locomotion/mtforward.kf", 0.f, 2.66666675f, walk));
-        EXPECT_TRUE(walk.hasGroupStart("walkforward"));
-        EXPECT_FALSE(walk.hasGroupStart("runforward"));
-        EXPECT_FLOAT_EQ(findKeyTime(walk, "walkforward: loop stop"), 2.66666675f);
-
-        SceneUtil::TextKeyMap run;
-        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
-            "meshes/creatures/dog/locomotion/mtfastforward.kf", 0.f, 1.5f, run));
-        EXPECT_TRUE(run.hasGroupStart("runforward"));
-        EXPECT_FLOAT_EQ(findKeyTime(run, "runforward: loop stop"), 1.5f);
-
-        SceneUtil::TextKeyMap swim;
-        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
-            "meshes/creatures/dog/swimforward.kf", 0.f, 2.f, swim));
-        EXPECT_TRUE(swim.hasGroupStart("swimwalkforward"));
-        EXPECT_FALSE(swim.hasGroupStart("walkforward"));
-        EXPECT_FLOAT_EQ(findKeyTime(swim, "swimwalkforward: loop stop"), 2.f);
-    }
-
-    TEST(NifOsgFalloutKfTest, shouldKeepSelectedDogHitReactionFromStealingIdle)
-    {
-        static constexpr std::string_view idleSource = "meshes/creatures/dog/mtidle.kf";
-        static constexpr std::string_view hitSource
-            = "meshes/creatures/dog/idleanims/mtspecialidle_hithead.kf";
-
-        std::map<std::string_view, std::string_view, std::less<>> winningSource;
-        for (std::string_view group : getFalloutKfLoopGroups(idleSource))
-            winningSource[group] = idleSource;
-
-        SceneUtil::TextKeyMap hitKeys;
-        hitKeys.emplace(0.f, "start");
-        hitKeys.emplace(0.167f, "enum: idle");
-        hitKeys.emplace(0.8f, "end");
-        EXPECT_TRUE(synthesizeFalloutKfTextKeys(hitSource, 0.f, 0.8f, hitKeys));
-        EXPECT_TRUE(hitKeys.hasGroupStart("idle"));
-        EXPECT_TRUE(hitKeys.hasGroupStart("idle2"));
-        hitKeys.emplace(0.f, "hit1: start");
-        hitKeys.emplace(0.8f, "hit1: stop");
-
-        EXPECT_TRUE(isolateFalloutCreatureHitReactionTextKeys(hitKeys, "hit1"));
-        EXPECT_TRUE(hitKeys.hasGroupStart("hit1"));
-        EXPECT_FALSE(hitKeys.hasGroupStart("idle"));
-        EXPECT_FALSE(hitKeys.hasGroupStart("idle2"));
-        EXPECT_NE(std::find_if(hitKeys.begin(), hitKeys.end(),
-                      [](const auto& value) { return value.second == "enum: idle"; }),
-            hitKeys.end());
-
-        // The selected hit source is added last. Only its explicit hit alias may win reverse lookup.
-        for (const std::string& group : hitKeys.getGroups())
-            winningSource[group] = hitSource;
-        EXPECT_EQ(winningSource.at("idle"), idleSource);
-        EXPECT_EQ(winningSource.at("hit1"), hitSource);
-    }
-
-    TEST(NifOsgFalloutKfTest, shouldLoadBethesdaRotationalAccumulationTransform)
-    {
-        Nif::NiTransformInterpolator interpolator;
-        interpolator.recType = Nif::RC_BSRotAccumTransfInterpolator;
-        interpolator.mDefaultValue.mTranslation = osg::Vec3f(1.f, 2.f, 3.f);
-        interpolator.mDefaultValue.mRotation = osg::Quat();
-        interpolator.mDefaultValue.mScale = 1.f;
-        interpolator.mData = Nif::NiKeyframeDataPtr(nullptr);
-
-        Nif::NiControllerSequence sequence;
-        sequence.recType = Nif::RC_NiControllerSequence;
-        sequence.mName = "Forward";
-        sequence.mStartTime = 0.f;
-        sequence.mStopTime = 1.f;
-        sequence.mFrequency = 1.f;
-        sequence.mPhase = 0.f;
-        sequence.mTextKeys = Nif::ExtraPtr(nullptr);
-        sequence.mManager = Nif::NiControllerManagerPtr(nullptr);
-        sequence.mStringPalette = Nif::NiStringPalettePtr(nullptr);
-        Nif::ControlledBlock block;
-        block.mTargetName = "Bip01 Wheel";
-        block.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
-        block.mController = Nif::NiTimeControllerPtr(nullptr);
-        block.mBlendInterpolator = Nif::NiBlendInterpolatorPtr(nullptr);
-        block.mStringPalette = Nif::NiStringPalettePtr(nullptr);
-        sequence.mControlledBlocks.push_back(block);
-
-        Nif::NIFFile file(testNif);
-        file.mRoots.push_back(&sequence);
-        SceneUtil::KeyframeHolder keyframes;
-        Loader::loadKf(Nif::FileView(file), keyframes);
-
-        const auto found = keyframes.mKeyframeControllers.find("Bip01 Wheel");
-        ASSERT_NE(found, keyframes.mKeyframeControllers.end());
-        const auto* sequenceController = dynamic_cast<const NifOsg::KeyframeController*>(found->second.get());
-        ASSERT_NE(sequenceController, nullptr);
-        EXPECT_TRUE(sequenceController->hasTransformChannels());
-
-        Nif::NiKeyframeController nifController;
-        nifController.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
-        nifController.mData = Nif::NiKeyframeDataPtr(nullptr);
-        NifOsg::KeyframeController nodeController(&nifController);
-        EXPECT_TRUE(nodeController.hasTransformChannels());
-    }
 }

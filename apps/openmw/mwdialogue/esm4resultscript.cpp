@@ -1,9 +1,7 @@
 #include "esm4resultscript.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
-#include <limits>
 #include <sstream>
 
 #include <components/misc/strings/algorithm.hpp>
@@ -44,32 +42,6 @@ namespace MWDialogue
             result.mSource = std::string(line);
 
             const std::string_view token = firstToken(line);
-            if (Misc::StringUtils::ciEqual(token, "Player.AddItem")
-                || Misc::StringUtils::ciEqual(token, "Player.RemoveItem"))
-            {
-                std::istringstream arguments{ std::string(line.substr(token.size())) };
-                std::string item;
-                std::string countText;
-                if (!(arguments >> item >> countText))
-                    return result;
-
-                int count = 0;
-                const char* begin = countText.data();
-                const char* end = begin + countText.size();
-                const auto parsed = std::from_chars(begin, end, count);
-                if (parsed.ec != std::errc() || parsed.ptr != end || count <= 0)
-                    return result;
-
-                result.mType = Misc::StringUtils::ciEqual(token, "Player.AddItem")
-                    ? Esm4ResultCommandType::AddItem
-                    : Esm4ResultCommandType::RemoveItem;
-                result.mTarget = "Player";
-                result.mItem = std::move(item);
-                result.mCount = count;
-                result.mSource.clear();
-                return result;
-            }
-
             if (Misc::StringUtils::ciEqual(token, "ShowBarterMenu"))
             {
                 result.mType = Esm4ResultCommandType::ShowBarterMenu;
@@ -91,8 +63,6 @@ namespace MWDialogue
             else if (Misc::StringUtils::ciEqual(command, "evp")
                 || Misc::StringUtils::ciEqual(command, "EvaluatePackage"))
                 result.mType = Esm4ResultCommandType::EvaluatePackage;
-            else if (Misc::StringUtils::ciEqual(command, "StopCombat"))
-                result.mType = Esm4ResultCommandType::StopCombat;
             else
                 return result;
 
@@ -114,16 +84,8 @@ namespace MWDialogue
     {
         Esm4ResultScript result;
         std::vector<ConditionalFrame> conditionals;
-        std::string conditionalSource;
-        bool conditionalHasQuestCommands = false;
         bool rootShowsBarter = false;
         bool hasTopLevelShowBarter = false;
-
-        const auto appendConditionalLine = [&conditionalSource](std::string_view line) {
-            if (!conditionalSource.empty())
-                conditionalSource.push_back('\n');
-            conditionalSource.append(line);
-        };
 
         std::istringstream stream{ std::string(source) };
         for (std::string storage; std::getline(stream, storage);)
@@ -136,12 +98,6 @@ namespace MWDialogue
 
             if (isControlKeyword(line, "if", true))
             {
-                if (conditionals.empty())
-                {
-                    conditionalSource.clear();
-                    conditionalHasQuestCommands = false;
-                }
-                appendConditionalLine(line);
                 conditionals.emplace_back();
                 continue;
             }
@@ -152,7 +108,6 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
-                appendConditionalLine(line);
                 ConditionalFrame& frame = conditionals.back();
                 frame.mAllClosedBranchesShowBarter &= frame.mCurrentBranchShowsBarter;
                 frame.mCurrentBranchShowsBarter = false;
@@ -165,7 +120,6 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
-                appendConditionalLine(line);
                 ConditionalFrame& frame = conditionals.back();
                 frame.mAllClosedBranchesShowBarter &= frame.mCurrentBranchShowsBarter;
                 frame.mCurrentBranchShowsBarter = false;
@@ -180,7 +134,6 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
-                appendConditionalLine(line);
                 ConditionalFrame frame = conditionals.back();
                 conditionals.pop_back();
                 const bool everyBranchShowsBarter
@@ -192,24 +145,16 @@ namespace MWDialogue
                     else
                         conditionals.back().mCurrentBranchShowsBarter = true;
                 }
-                if (conditionals.empty() && conditionalHasQuestCommands)
-                {
-                    Esm4ResultCommand quest;
-                    quest.mType = Esm4ResultCommandType::Quest;
-                    quest.mSource = std::move(conditionalSource);
-                    result.mCommands.push_back(std::move(quest));
-                }
                 continue;
             }
 
             const Esm4ResultCommand command = parseTopLevelCommand(line);
             if (!conditionals.empty())
             {
-                appendConditionalLine(line);
                 if (command.mType == Esm4ResultCommandType::ShowBarterMenu)
                     conditionals.back().mCurrentBranchShowsBarter = true;
                 else
-                    conditionalHasQuestCommands = true;
+                    ++result.mSkippedConditionalCommands;
                 continue;
             }
 
@@ -224,11 +169,7 @@ namespace MWDialogue
         if (!conditionals.empty())
             result.mMalformedControlFlow = true;
         if (rootShowsBarter && !hasTopLevelShowBarter && !result.mMalformedControlFlow)
-        {
-            Esm4ResultCommand barter;
-            barter.mType = Esm4ResultCommandType::ShowBarterMenu;
-            result.mCommands.push_back(std::move(barter));
-        }
+            result.mCommands.push_back({ Esm4ResultCommandType::ShowBarterMenu, {}, {} });
         return result;
     }
 }

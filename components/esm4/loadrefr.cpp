@@ -214,6 +214,13 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XMRK"):
                 mIsMapMarker = true;
                 break; // all have mBaseObj 0x00000010 "MapMarker"
+            case ESM::fourCC("ONAM"):
+                // Fallout 3 / New Vegas use a zero-sized ONAM subrecord on
+                // door references to mark their authored initial state as
+                // open.  It must survive loading so the live door can remove
+                // its closed collision before any quest package uses it.
+                mOpenByDefault = true;
+                break;
             case ESM::fourCC("FNAM"):
             {
                 if (subHdr.dataSize == sizeof(mMapMarkerFlags))
@@ -329,7 +336,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("XPCI"): // formId
             case ESM::fourCC("XLCM"):
-            case ESM::fourCC("ONAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("INAM"):
             case ESM::fourCC("PDTO"):

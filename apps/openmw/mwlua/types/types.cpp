@@ -75,8 +75,6 @@ namespace MWLua
             { ESM::REC_LIGH, ObjectTypeName::Light },
             { ESM::REC_MISC, ObjectTypeName::MiscItem },
             { ESM::REC_NPC_, ObjectTypeName::NPC },
-            { ESM::REC_NPC_4, ObjectTypeName::NPC },
-            { ESM::REC_CREA4, ObjectTypeName::Creature },
             { ESM::REC_ALCH, ObjectTypeName::Potion },
             { ESM::REC_STAT, ObjectTypeName::Static },
             { ESM::REC_WEAP, ObjectTypeName::Weapon },
@@ -199,10 +197,8 @@ namespace MWLua
             return table;
         };
 
-        addActorBindings(addType(ObjectTypeName::Actor,
-                             { ESM::REC_INTERNAL_PLAYER, ESM::REC_CREA, ESM::REC_NPC_, ESM::REC_CREA4,
-                                 ESM::REC_NPC_4 }),
-            context);
+        addActorBindings(
+            addType(ObjectTypeName::Actor, { ESM::REC_INTERNAL_PLAYER, ESM::REC_CREA, ESM::REC_NPC_ }), context);
         addItemBindings(
             addType(ObjectTypeName::Item,
                 { ESM::REC_ARMO, ESM::REC_BOOK, ESM::REC_CLOT, ESM::REC_INGR, ESM::REC_LIGH, ESM::REC_MISC,
@@ -211,12 +207,9 @@ namespace MWLua
         addLockableBindings(
             addType(ObjectTypeName::Lockable, { ESM::REC_CONT, ESM::REC_DOOR, ESM::REC_CONT4, ESM::REC_DOOR4 }));
 
-        addCreatureBindings(
-            addType(ObjectTypeName::Creature, { ESM::REC_CREA, ESM::REC_CREA4 }, ObjectTypeName::Actor), context);
-        addNpcBindings(addType(
-                           ObjectTypeName::NPC, { ESM::REC_INTERNAL_PLAYER, ESM::REC_NPC_, ESM::REC_NPC_4 },
-                           ObjectTypeName::Actor),
-            context);
+        addCreatureBindings(addType(ObjectTypeName::Creature, { ESM::REC_CREA }, ObjectTypeName::Actor), context);
+        addNpcBindings(
+            addType(ObjectTypeName::NPC, { ESM::REC_INTERNAL_PLAYER, ESM::REC_NPC_ }, ObjectTypeName::Actor), context);
         addPlayerBindings(addType(ObjectTypeName::Player, { ESM::REC_INTERNAL_PLAYER }, ObjectTypeName::NPC), context);
 
         addLevelledCreatureBindings(addType(ObjectTypeName::LevelledCreature, { ESM::REC_LEVC }), context);

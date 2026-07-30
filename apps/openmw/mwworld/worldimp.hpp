@@ -12,8 +12,6 @@
 
 #include "../mwbase/world.hpp"
 
-#include "../mwrender/renderingmanager.hpp"
-
 #include "contentloader.hpp"
 #include "esm4questruntime.hpp"
 #include "esmstore.hpp"
@@ -125,9 +123,36 @@ namespace MWWorld
 
         std::string mStartCell;
 
+        // Kept for OpenNV's opt-in authentic-start telemetry. These fields
+        // state whether a uniquely resolved authored opening placement was
+        // used, and distinguish it from the legacy generic fallback.
+        unsigned mLastNewGameGlobalScriptPasses = 0;
+        bool mLastNewGameUsedFallbackPlacement = false;
+        bool mLastNewGameUsedAuthoredStartPlacement = false;
+        bool mLastNewGameAuthoredStartStageExecuted = false;
+        bool mLastNewGameCinematicRequested = false;
+        std::string mLastNewGameCinematicAsset;
+        std::string mLastNewGameAuthoredStartQuestEditorId;
+        std::string mLastNewGameAuthoredStartMarkerEditorId;
+        std::string mLastNewGameAuthoredStartCinematicAsset;
+
         float mSwimHeightScale;
 
-        float mDistanceToFacedObject;
+        float mDistanceToFocusObject;
+
+        struct ESM4ScriptPackageState
+        {
+            std::vector<ESM::FormId> mPackages;
+            MWRender::Animation* mAppliedAnimation = nullptr;
+            ESM::FormId mAppliedPackage;
+            bool mDirty = true;
+            // A package can legitimately have no playable animation. Only
+            // emit OnPackageDone after this exact authored package was seen
+            // playing and then stopped, so a missing asset never fabricates
+            // a gameplay transition.
+            bool mPlaybackObserved = false;
+        };
+        std::map<ESM::RefId, ESM4ScriptPackageState> mESM4ScriptPackages;
 
         bool mTeleportEnabled;
         bool mLevitationEnabled;
@@ -152,6 +177,7 @@ namespace MWWorld
         World& operator=(const World&) = delete;
 
         void updateWeather(float duration, bool paused = false);
+        void updateESM4ScriptPackages();
 
         void initObjectInCell(const Ptr& ptr, CellStore& cell, bool adjustPos);
         Ptr moveObjectToCell(const Ptr& ptr, CellStore* cell, ESM::Position pos, bool adjustPos);
@@ -162,7 +188,7 @@ namespace MWWorld
         void preloadSpells();
         void discoverFalloutMapMarkersNearPlayer();
 
-        MWWorld::Ptr getFacedObject(float maxDistance, bool ignorePlayer = true);
+        MWWorld::Ptr getFocusObject(float maxDistance, bool ignorePlayer = true);
 
         void PCDropped(const Ptr& item);
 
@@ -191,9 +217,6 @@ namespace MWWorld
             Loading::Listener* listener);
 
         float feetToGameUnits(float feet);
-        // ## VR_PATCH BEGIN
-        float getActivationDistancePlusTelekinesis() override;
-        // ## VR_PATCH END
 
         MWWorld::ConstPtr getClosestMarker(const MWWorld::ConstPtr& ptr, const ESM::RefId& id);
         MWWorld::ConstPtr getClosestMarkerFromExteriorPosition(const osg::Vec3f& worldPos, const ESM::RefId& id);
@@ -219,8 +242,7 @@ namespace MWWorld
 
         // Must be called after `loadData`.
         void init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
-            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue,
-            std::unique_ptr<MWRender::Camera> camera);
+            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue);
 
         virtual ~World();
 
@@ -229,10 +251,31 @@ namespace MWWorld
         void startNewGame(bool bypass) override;
         ///< \param bypass Bypass regular game start.
 
+        std::string_view getStartCell() const override { return mStartCell; }
+
+        unsigned getLastNewGameGlobalScriptPasses() const { return mLastNewGameGlobalScriptPasses; }
+        bool getLastNewGameUsedFallbackPlacement() const { return mLastNewGameUsedFallbackPlacement; }
+        bool getLastNewGameUsedAuthoredStartPlacement() const { return mLastNewGameUsedAuthoredStartPlacement; }
+        bool getLastNewGameAuthoredStartStageExecuted() const { return mLastNewGameAuthoredStartStageExecuted; }
+        bool getLastNewGameCinematicRequested() const { return mLastNewGameCinematicRequested; }
+        std::string_view getLastNewGameCinematicAsset() const { return mLastNewGameCinematicAsset; }
+        std::string_view getLastNewGameAuthoredStartQuestEditorId() const
+        {
+            return mLastNewGameAuthoredStartQuestEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartMarkerEditorId() const
+        {
+            return mLastNewGameAuthoredStartMarkerEditorId;
+        }
+        std::string_view getLastNewGameAuthoredStartCinematicAsset() const
+        {
+            return mLastNewGameAuthoredStartCinematicAsset;
+        }
+
         void clear() override;
 
-        int countSavedGameRecords() const override;
-        int countSavedGameCells() const override;
+        size_t countSavedGameRecords() const override;
+        size_t countSavedGameCells() const override;
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const override;
 
@@ -263,11 +306,13 @@ namespace MWWorld
 
         const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
 
+        bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) override;
+        bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) override;
+
         MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() override
         {
             return mFalloutPlayerRuntimeState;
         }
-
         const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
         {
             return mFalloutPlayerRuntimeState;
@@ -275,6 +320,12 @@ namespace MWWorld
         std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const override;
         bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) override;
         bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) override;
+
+        bool setFalloutPlayerSpecial(const std::array<float, 7>& values) override
+        {
+            return mFalloutPlayerRuntimeState.setCurrentSpecial(values)
+                == MWWorld::FalloutActorValueMutationResult::Applied;
+        }
 
         const std::vector<int>& getESMVersions() const override;
 
@@ -322,8 +373,8 @@ namespace MWWorld
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do not search inactive cells.
 
-        Ptr searchPtrViaActorId(int actorId) override;
-        ///< Search is limited to the active cells.
+        Ptr searchPtrByRefNum(ESM::RefNum refNum) override;
+        ///< Return the live reference with the exact placed-reference number.
 
         MWWorld::Ptr findContainer(const MWWorld::ConstPtr& ptr) override;
         ///< Return a pointer to a liveCellRef which contains \a ptr.
@@ -352,8 +403,6 @@ namespace MWWorld
         void changeWeather(const ESM::RefId& region, const unsigned int id) override;
 
         void changeWeather(const ESM::RefId& region, const ESM::RefId& id) override;
-
-        bool forceWeather(const ESM::RefId& id) override;
 
         const std::vector<MWWorld::Weather>& getAllWeather() const override;
 
@@ -385,10 +434,10 @@ namespace MWWorld
             bool changeEvent = true) override;
         ///< @param changeEvent If false, do not trigger cell change flag or detect worldspace changes
 
-        MWWorld::Ptr getFacedObject() override;
+        MWWorld::Ptr getFocusObject() override;
         ///< Return pointer to the object the player is looking at, if it is within activation range
 
-        float getDistanceToFacedObject() override;
+        float getDistanceToFocusObject() override;
 
         /// @note No-op for items in containers. Use ContainerStore::removeItem instead.
         void deleteObject(const Ptr& ptr) override;
@@ -455,7 +504,7 @@ namespace MWWorld
         void updatePhysics(
             float duration, bool paused, osg::Timer_t frameStart, unsigned int frameNumber, osg::Stats& stats);
 
-        void updateWindowManager();
+        void updateFocusObject();
 
         MWWorld::Ptr placeObject(
             const MWWorld::Ptr& object, float cursorX, float cursorY, int amount, bool copy = true) override;
@@ -505,7 +554,7 @@ namespace MWWorld
         void applyDeferredPreviewRotationToPlayer(float dt) override;
         void disableDeferredPreviewRotation() override;
 
-        void saveLoaded() override;
+        void saveLoaded(const ESM::ESMReader& reader) override;
 
         void setupPlayer() override;
         void renderPlayer() override;
@@ -554,7 +603,7 @@ namespace MWWorld
         ///< check if the player is allowed to rest
 
         void rest(double hours) override;
-        void rechargeItems(double duration, bool activeOnly);
+        void rechargeItems(float duration, bool activeOnly);
 
         /// \todo Probably shouldn't be here
         MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) override;
@@ -614,8 +663,7 @@ namespace MWWorld
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact) override;
         bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
-            const osg::Vec3f& impactNormal) override;
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination) override;
         std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) override;
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
         bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;
@@ -660,12 +708,10 @@ namespace MWWorld
         void spawnRandomCreature(const ESM::RefId& creatureList) override;
 
         void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true,
-            bool useAmbientLight = true, const ESM::RefId& lightId = {},
-            const osg::Quat& orientation = {}, float authoredDuration = 0.f) override;
-        void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
-            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
-            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime) override;
+            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            std::string_view effectId = {}, bool loop = false) override;
+
+        void removeEffect(std::string_view effectId) override;
 
         /// @see MWWorld::WeatherManager::isInStorm
         bool isInStorm() const override;
@@ -734,26 +780,6 @@ namespace MWWorld
 
         void setActorActive(const MWWorld::Ptr& ptr, bool value) override;
 
-        // ## VR_PATCH BEGIN
-        /// Intersects the scene from the origin, in the specified orientation and distance, storing the %result in the
-        /// result structure.
-        /// @Return distance to the target object, or -1 if no object was targeted / in range
-        float getTargetObject(MWRender::RayResult& result, const osg::Vec3f& origin, const osg::Quat& orientation,
-            float maxDistance, bool ignorePlayer, uint32_t ignoreMask) override;
-
-        MWWorld::Ptr placeObject(const MWWorld::ConstPtr& object, const MWRender::RayResult& ray, int amount) override;
-        ///< copy and place an object into the gameworld based on the given intersection
-        /// @param object
-        /// @param world position to place object
-        /// @param number of objects to place
-
-        /// @Return ESM::Weapon::Type enum describing the type of weapon currently drawn by the player.
-        int getActiveWeaponType(void) override;
-
-        void enableVRPointer(bool left, bool right) override;
-
-        std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> getVRMeleeHitContact(MWWorld::Ptr ptr) override;
-        // ## VR_PATCH END
     };
 }
 

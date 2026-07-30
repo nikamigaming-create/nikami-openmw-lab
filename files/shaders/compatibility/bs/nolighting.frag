@@ -33,7 +33,6 @@ uniform float alphaRef;
 #include "lib/core/fragment.h.glsl"
 #include "lib/material/alpha.glsl"
 
-#include "lib/core/fragment.h.glsl"
 #include "compatibility/vertexcolors.glsl"
 #include "compatibility/fog.glsl"
 #include "compatibility/shadows_fragment.glsl"

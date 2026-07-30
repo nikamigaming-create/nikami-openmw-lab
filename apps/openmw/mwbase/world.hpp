@@ -3,18 +3,16 @@
 
 #include "rotationflags.hpp"
 
+#include <array>
 #include <cstdint>
 #include <deque>
-#include <optional>
 #include <set>
 #include <span>
 #include <string_view>
 #include <vector>
 
-#include <osg/Matrixf>
-#include <osg/Quat>
-
 #include <components/esm/formid.hpp>
+#include <components/esm3/refnum.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -29,6 +27,7 @@ namespace osg
 {
     class Vec3f;
     class Vec4f;
+    class Matrixf;
     class Quat;
     class Image;
     class Stats;
@@ -64,33 +63,10 @@ namespace ESM
     struct ExteriorCellLocation;
 }
 
-// ## VR_PATCH BEGIN
-namespace Stereo
-{
-    struct Pose;
-}
-
-namespace osg
-{
-    class Node;
-    class Transform;
-}
-
-namespace MWRender
-{
-    struct RayResult;
-}
-// ## VR_PATCH END
-
 namespace MWPhysics
 {
     class RayCastingResult;
     class RayCastingInterface;
-}
-
-namespace MWMechanics
-{
-    struct FalloutProjectileImpactContract;
 }
 
 namespace MWRender
@@ -103,6 +79,7 @@ namespace MWRender
 
 namespace MWMechanics
 {
+    struct FalloutProjectileImpactContract;
     struct Movement;
 }
 
@@ -150,7 +127,7 @@ namespace MWBase
 
         World() {}
 
-        virtual ~World() {}
+        virtual ~World() = default;
 
         virtual void setRandomSeed(uint32_t seed) = 0;
         ///< \param seed The seed used when starting a new game.
@@ -158,10 +135,13 @@ namespace MWBase
         virtual void startNewGame(bool bypass) = 0;
         ///< \param bypass Bypass regular game start.
 
+        virtual std::string_view getStartCell() const = 0;
+        ///< Return the explicit command-line start cell, if one was requested.
+
         virtual void clear() = 0;
 
-        virtual int countSavedGameRecords() const = 0;
-        virtual int countSavedGameCells() const = 0;
+        virtual size_t countSavedGameRecords() const = 0;
+        virtual size_t countSavedGameCells() const = 0;
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& listener) const = 0;
 
@@ -185,8 +165,17 @@ namespace MWBase
         virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
         virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
 
+        /// Apply or clear a data-driven ESM4 actor script-package stack. The target is a live actor reference;
+        /// package interpretation stays in the world implementation where content records and rendering are present.
+        virtual bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
+        virtual bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) = 0;
+
         virtual MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() = 0;
         virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
+
+        /// Apply a complete Fallout SPECIAL allocation atomically to the
+        /// authoritative native Player runtime state.
+        virtual bool setFalloutPlayerSpecial(const std::array<float, 7>& values) = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
@@ -232,8 +221,9 @@ namespace MWBase
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do non search inactive cells.
 
-        virtual MWWorld::Ptr searchPtrViaActorId(int actorId) = 0;
-        ///< Search is limited to the active cells.
+        virtual MWWorld::Ptr searchPtrByRefNum(ESM::RefNum refNum) = 0;
+        ///< Return the live reference with the exact placed-reference number.
+        /// This is distinct from searchPtr(), whose RefId denotes a base object.
 
         virtual MWWorld::Ptr findContainer(const MWWorld::ConstPtr& ptr) = 0;
         ///< Return a pointer to a liveCellRef which contains \a ptr.
@@ -255,11 +245,6 @@ namespace MWBase
         virtual void changeWeather(const ESM::RefId& region, const unsigned int id) = 0;
 
         virtual void changeWeather(const ESM::RefId& region, const ESM::RefId& id) = 0;
-
-        /// Select an already loaded authored weather immediately. Native Bethesda
-        /// weather records remain inside WeatherManager so their complete cloud,
-        /// fog, celestial, and image-space state is calculated by that pipeline.
-        virtual bool forceWeather(const ESM::RefId& id) = 0;
 
         virtual const std::vector<MWWorld::Weather>& getAllWeather() const = 0;
 
@@ -298,10 +283,10 @@ namespace MWBase
             = 0;
         ///< @param changeEvent If false, do not trigger cell change flag or detect worldspace changes
 
-        virtual MWWorld::Ptr getFacedObject() = 0;
+        virtual MWWorld::Ptr getFocusObject() = 0;
         ///< Return pointer to the object the player is looking at, if it is within activation range
 
-        virtual float getDistanceToFacedObject() = 0;
+        virtual float getDistanceToFocusObject() = 0;
 
         virtual float getMaxActivationDistance() const = 0;
 
@@ -421,7 +406,7 @@ namespace MWBase
         virtual void applyDeferredPreviewRotationToPlayer(float dt) = 0;
         virtual void disableDeferredPreviewRotation() = 0;
 
-        virtual void saveLoaded() = 0;
+        virtual void saveLoaded(const ESM::ESMReader& reader) = 0;
 
         virtual void setupPlayer() = 0;
         virtual void renderPlayer() = 0;
@@ -480,11 +465,12 @@ namespace MWBase
         /// \todo Probably shouldn't be here
         virtual MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) = 0;
         virtual const MWRender::Animation* getAnimation(const MWWorld::ConstPtr& ptr) const = 0;
-        /// Return the authored Fallout weapon-action rig for an actor.  Native Fallout players use a visible
+        /// Return the authored Fallout weapon-action rig for an actor. Native Fallout players use a visible
         /// ESM4 proxy while the ordinary player animation remains a hidden compatibility/camera rig.
-        /// `firstPerson` returns the separate Camera1st rig when one exists; non-player actors have no such rig.
-        virtual MWRender::Animation* getFalloutWeaponAnimation(
-            const MWWorld::Ptr& ptr, bool firstPerson) = 0;
+        virtual MWRender::Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson)
+        {
+            return firstPerson ? nullptr : getAnimation(ptr);
+        }
         virtual void reattachPlayerCamera() = 0;
 
         /// \todo this does not belong here
@@ -532,13 +518,6 @@ namespace MWBase
         virtual void launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
             const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength)
             = 0;
-        virtual bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
-            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
-            const MWMechanics::FalloutProjectileImpactContract& impact)
-            = 0;
-        virtual std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) = 0;
-        virtual unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) = 0;
-        virtual bool playFalloutImageSpaceModifier(ESM::FormId, float) { return false; }
         virtual void updateProjectilesCasters() = 0;
 
         virtual void applyLoopingParticles(const MWWorld::Ptr& ptr) const = 0;
@@ -588,13 +567,10 @@ namespace MWBase
 
         virtual void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
             const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
-            const ESM::RefId& lightId = {}, const osg::Quat& orientation = {},
-            float authoredDuration = 0.f)
+            std::string_view effectId = {}, bool loop = false)
             = 0;
-        virtual void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
-            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
-            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime)
-            = 0;
+
+        virtual void removeEffect(std::string_view effectId) = 0;
 
         /// @see MWWorld::WeatherManager::isInStorm
         virtual bool isInStorm() const = 0;
@@ -677,38 +653,20 @@ namespace MWBase
 
         virtual void setActorActive(const MWWorld::Ptr& ptr, bool value) = 0;
 
-        // ## VR_PATCH BEGIN
-        /// @result pointer to the object and/or node the given node is currently pointing at
-        /// @Return distance to the target object, or -1 if no object was targeted / in range
-        virtual float getTargetObject(MWRender::RayResult& result, const osg::Vec3f& origin,
-            const osg::Quat& orientation, float maxDistance, bool ignorePlayer, uint32_t ignoreMask = 0)
-            = 0;
-
-        /// @Return ESM::Weapon::Type enum describing the type of weapon currently drawn by the player.
-        virtual int getActiveWeaponType(void) = 0;
-
-        virtual void enableVRPointer(bool left, bool right) = 0;
-
-        virtual std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> getVRMeleeHitContact(MWWorld::Ptr actor) = 0;
-
-        virtual MWWorld::Ptr placeObject(const MWWorld::ConstPtr& object, const MWRender::RayResult& ray, int amount)
-            = 0;
-        ///< copy and place an object into the gameworld based on the given intersection
-        /// @param object
-        /// @param world position to place object
-        /// @param number of objects to place
-
-        virtual float getActivationDistancePlusTelekinesis() = 0;
-        // ## VR_PATCH END
-
         // Keep FNV extensions at the end so downstream objects compiled against
         // the pre-extension interface retain their existing virtual-table slots.
         virtual std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const = 0;
         virtual bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) = 0;
         virtual bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) = 0;
+        virtual bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact)
+            = 0;
+        virtual std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) = 0;
+        virtual unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) = 0;
+        virtual bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) = 0;
         virtual bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
-            const osg::Vec3f& impactNormal)
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination)
             = 0;
     };
 }

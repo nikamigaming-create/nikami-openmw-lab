@@ -25,10 +25,6 @@ namespace MWSound
 namespace MWRender
 {
 
-    // Apply the same depth-clear render bin, first-person mask, and projection override used by the established
-    // NpcAnimation first-person path to another native actor root.
-    void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView);
-
     class RotateController;
     class HeadAnimationTime;
 
@@ -44,14 +40,10 @@ namespace MWRender
         {
             VM_Normal,
             VM_FirstPerson,
-//## VR_PATCH BEGIN
-            VM_HeadOnly,
-            VM_VRNormal,
-            VM_VRFirstPerson,
+            VM_HeadOnly
         };
 
-    protected:
-//## VR_PATCH END
+    private:
         static const PartBoneMap sPartList;
 
         // Bounded Parts
@@ -159,18 +151,14 @@ namespace MWRender
 
         osg::Group* getArrowBone() override;
         osg::Node* getWeaponNode() override;
-        osg::Node* getEquippedWeaponNode() override { return getWeaponNode(); }
         Resource::ResourceSystem* getResourceSystem() override;
 
         // WeaponAnimation
         void showWeapon(bool show) override { showWeapons(show); }
 
-//## VR_PATCH BEGIN
-// Overridden in vr-animation
-        virtual void setViewMode(ViewMode viewMode);
+        void setViewMode(ViewMode viewMode);
 
-        virtual void updateParts();
-//## VR_PATCH END
+        void updateParts();
 
         /// Rebuilds the NPC, updating their root model, animation sources, and equipment.
         void rebuild();

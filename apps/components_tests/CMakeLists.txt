@@ -76,20 +76,13 @@ file(GLOB UNITTEST_SRC_FILES
     toutf8/toutf8.cpp
 
     esm4/includes.cpp
-    esm4/fonvsavegame.cpp
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
     esm4/testscdadecoder.cpp
-    esm4/testloadachr.cpp
     esm4/testloadcreature.cpp
     esm4/testloadarmor.cpp
-    esm4/testloadclimate.cpp
-    esm4/testloadamef.cpp
-    esm4/testloadmgef.cpp
-    esm4/testloadspel.cpp
     esm4/testloadweap.cpp
     esm4/testloadproj.cpp
-    esm4/testloadexpl.cpp
     esm4/testloadweather.cpp
     esm4/testloadimagespace.cpp
     esm4/testloadlvli.cpp
@@ -100,7 +93,6 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadmesg.cpp
     esm4/testloadterm.cpp
     esm4/testloadregion.cpp
-    esm4/testloadrace.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -123,13 +115,14 @@ file(GLOB UNITTEST_SRC_FILES
     vfs/testinmemoryarchive.cpp
     vfs/testpathutil.cpp
 
-    sceneutil/lightcommon.cpp
     sceneutil/osgacontroller.cpp
-    sceneutil/riggeometry.cpp
     sceneutil/visitor.cpp
 
     bsa/testbsafile.cpp
     bsa/testcompressedbsafile.cpp
+
+    nif/node.hpp
+    nif/testphysics.cpp
 )
 
 source_group(apps\\components-tests FILES ${UNITTEST_SRC_FILES})
@@ -141,6 +134,10 @@ target_link_libraries(components-tests
     GMock::GMock
     components
 )
+
+if (WIN32)
+    target_sources(components-tests PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
+endif()
 
 # Fix for not visible pthreads functions for linker with glibc 2.15
 if (UNIX AND NOT APPLE)

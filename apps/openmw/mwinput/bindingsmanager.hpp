@@ -5,16 +5,8 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <chrono>
 
 #include <components/sdlutil/events.hpp>
-
-//## VR_PATCH BEGIN
-namespace ICS
-{
-    class InputControlSystem;
-}
-//## VR_PATCH END
 
 namespace MWInput
 {
@@ -75,11 +67,6 @@ namespace MWInput
 
         void saveBindings();
 
-//## VR_PATCH BEGIN
-// The VR input manager needs to forward XR inputs to ICS.
-        ICS::InputControlSystem& ics();
-
-//## VR_PATCH END
     private:
         void setupSDLKeyMappings();
 

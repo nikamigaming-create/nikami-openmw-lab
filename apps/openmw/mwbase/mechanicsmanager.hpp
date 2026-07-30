@@ -19,6 +19,7 @@ namespace osg
 namespace ESM
 {
     struct Class;
+    struct FormId;
     class RefId;
     class ESMReader;
     class ESMWriter;
@@ -115,9 +116,16 @@ namespace MWBase
 
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
+        virtual bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            ESM::FormId targetId, bool rotateBody)
+            = 0;
+        virtual void stopLooking(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool playFalloutDialogueAnimation(
-            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) = 0;
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)
+        {
+            return false;
+        }
 
         enum OffenseType
         {
@@ -172,12 +180,11 @@ namespace MWBase
         ///< Perform a persuasion action on NPC
 
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
+        ///< Forces an object to refresh its animation state.
 
         virtual bool reloadFalloutWeapon(const MWWorld::Ptr&) { return false; }
-
         virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
         virtual bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr&) { return false; }
-
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
             const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
         {
@@ -193,7 +200,6 @@ namespace MWBase
         {
             return false;
         }
-        ///< Forces an object to refresh its animation state.
 
         virtual bool playAnimationGroup(
             const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number = 1, bool scripted = false)
@@ -271,7 +277,7 @@ namespace MWBase
 
         virtual void playerLoaded() = 0;
 
-        virtual int countSavedGameRecords() const = 0;
+        virtual size_t countSavedGameRecords() const = 0;
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& listener) const = 0;
 
@@ -320,7 +326,7 @@ namespace MWBase
         /// It only applies to the current form the NPC is in.
         virtual void applyWerewolfAcrobatics(const MWWorld::Ptr& actor) = 0;
 
-        virtual void cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId) = 0;
+        virtual void cleanupSummonedCreature(ESM::RefNum creature) = 0;
 
         virtual void confiscateStolenItemToOwner(
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count)
@@ -334,11 +340,7 @@ namespace MWBase
         virtual int getGreetingTimer(const MWWorld::Ptr& ptr) const = 0;
         virtual float getAngleToPlayer(const MWWorld::Ptr& ptr) const = 0;
         virtual MWMechanics::GreetingState getGreetingState(const MWWorld::Ptr& ptr) const = 0;
-        virtual bool isTurningToPlayer(const MWWorld::Ptr& ptr) const = 0;
-
-        /// Make the explicit victim, or the nearest active member of faction, respond as if assaulted by the player.
-        /// Kept at the end so existing interface slots remain stable.
-        virtual bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) = 0;
+        virtual void fastForwardAi() const = 0;
     };
 }
 

@@ -12,6 +12,7 @@
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/format.hpp>
+#include <components/esm3/actoridconverter.hpp>
 #include <components/esm3/cellref.hpp>
 #include <components/esm3/cellstate.hpp>
 #include <components/esm3/containerstate.hpp>
@@ -170,25 +171,6 @@ namespace
 
             if (!ptr.isEmpty())
                 return ptr;
-        }
-
-        return MWWorld::Ptr();
-    }
-
-    template <typename T>
-    MWWorld::Ptr searchViaActorId(MWWorld::CellRefList<T>& actorList, int actorId, MWWorld::CellStore* cell,
-        const std::map<MWWorld::LiveCellRefBase*, MWWorld::CellStore*>& toIgnore)
-    {
-        for (typename MWWorld::CellRefList<T>::List::iterator iter(actorList.mList.begin());
-             iter != actorList.mList.end(); ++iter)
-        {
-            MWWorld::Ptr actor(&*iter, cell);
-
-            if (toIgnore.find(&*iter) != toIgnore.end())
-                continue;
-
-            if (actor.getClass().getCreatureStats(actor).matchesActorId(actorId) && actor.getCellRef().getCount() > 0)
-                return actor;
         }
 
         return MWWorld::Ptr();
@@ -362,6 +344,14 @@ namespace
         {
             if constexpr (std::is_same_v<T, ESM::Creature> || std::is_same_v<T, ESM::NPC>)
                 MWWorld::convertEnchantmentSlots(state.mCreatureStats, state.mInventory);
+        }
+        if constexpr (std::is_same_v<T, ESM::Creature> || std::is_same_v<T, ESM::NPC>)
+        {
+            if (reader.mActorIdConverter && state.mHasCustomState)
+            {
+                MWBase::Environment::get().getWorldModel()->assignSaveFileRefNum(state.mRef);
+                reader.mActorIdConverter->mMappings.emplace(state.mCreatureStats.mActorId, state.mRef.mRefNum);
+            }
         }
 
         if (state.mRef.mRefNum.hasContentFile())
@@ -736,6 +726,17 @@ namespace MWWorld
             && ref.mRadio.broadcastRange <= 4 && std::isfinite(ref.mRadio.staticPercentage);
     }
 
+    bool isFalloutSpatialMetadataReference(const ESM4::Reference& ref)
+    {
+        // Fallout 3/New Vegas use reserved hardcoded NAME values for
+        // model-less room-bound metadata. 0x17 carries occlusion planes
+        // (XOCP) and 0x20 carries portal planes (XPOD); both describe their
+        // bounds through XPRM/XMBO and intentionally have no base record to
+        // instantiate. Keep them in the ESM4 reference store, but do not
+        // report them as missing gameplay objects.
+        return ref.mHasPrimitive && (ref.mBaseObj.mIndex == 0x17 || ref.mBaseObj.mIndex == 0x20);
+    }
+
     template <typename X>
     void CellRefList<X>::load(const ESM4::Reference& ref, const MWWorld::ESMStore& esmStore)
     {
@@ -901,6 +902,10 @@ namespace MWWorld
         , mCellVariant(std::move(cell))
         , mState(State_Unloaded)
         , mHasState(false)
+        , mOwner(mCellVariant.isEsm4() && !mCellVariant.getEsm4().mOwner.isZeroOrUnset()
+                  ? ESM::RefId(mCellVariant.getEsm4().mOwner)
+                  : ESM::RefId{})
+        , mHasOwnerOverride(false)
         , mLastRespawn(0, 0)
         , mCellStoreImp(std::make_unique<CellStoreImp>())
         , mRechargingItemsUpToDate(false)
@@ -977,26 +982,6 @@ namespace MWWorld
         return searchVisitor.mFound;
     }
 
-    Ptr CellStore::searchViaActorId(int id)
-    {
-        if (Ptr ptr = ::searchViaActorId(get<ESM::NPC>(), id, this, mMovedToAnotherCell); !ptr.isEmpty())
-            return ptr;
-
-        if (Ptr ptr = ::searchViaActorId(get<ESM::Creature>(), id, this, mMovedToAnotherCell); !ptr.isEmpty())
-            return ptr;
-
-        for (const auto& [base, _] : mMovedHere)
-        {
-            MWWorld::Ptr actor(base, this);
-            if (!actor.getClass().isActor())
-                continue;
-            if (actor.getClass().getCreatureStats(actor).matchesActorId(id) && actor.getCellRef().getCount() > 0)
-                return actor;
-        }
-
-        return Ptr();
-    }
-
     class RefNumSearchVisitor
     {
         ESM::RefNum mRefNum;
@@ -1025,6 +1010,15 @@ namespace MWWorld
         if (isExterior() && !mHasState)
             return getCell()->getWaterHeight();
         return mWaterLevel;
+    }
+
+    void CellStore::setOwner(const ESM::RefId& owner)
+    {
+        if (owner == mOwner)
+            return;
+        mOwner = owner;
+        mHasOwnerOverride = true;
+        mHasState = true;
     }
 
     void CellStore::setWaterLevel(float level)
@@ -1259,6 +1253,13 @@ namespace MWWorld
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
         if (foundType == 0)
         {
+            if (isFalloutSpatialMetadataReference(ref))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained non-live spatial metadata reference "
+                                    << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
+                                    << " in parent cell " << ref.mParent;
+                return;
+            }
             // IDLM references are authored, invisible AI interaction points. They stay in the
             // ESM4 reference store for sandbox-package discovery and deliberately have no live
             // render/physics object in the cell's reference lists.
@@ -1271,6 +1272,16 @@ namespace MWWorld
             }
             Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
                                 << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
+        if (foundType == ESM::REC_ASPC4)
+        {
+            // Placed ASPC references select a local sound environment. They are data-owned spatial metadata, not
+            // renderable or collidable world objects. Keep the base record available for the sound system without
+            // manufacturing a live object for its placement.
+            Log(Debug::Verbose) << "FNV/ESM4 diag: retained non-live acoustic-space reference "
+                                << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
                                 << " in parent cell " << ref.mParent;
             return;
         }
@@ -1420,6 +1431,12 @@ namespace MWWorld
         if (!mCellVariant.isExterior() && mCellVariant.hasWater())
             mWaterLevel = state.mWaterLevel;
 
+        if (state.mHasOwnerOverride)
+        {
+            mOwner = state.mOwner;
+            mHasOwnerOverride = true;
+        }
+
         mLastRespawn = MWWorld::TimeStamp(state.mLastRespawn);
     }
 
@@ -1432,6 +1449,8 @@ namespace MWWorld
         state.mIsInterior = !mCellVariant.isExterior();
         state.mHasFogOfWar = (mFogState.get() ? 1 : 0);
         state.mLastRespawn = mLastRespawn.toEsm();
+        state.mHasOwnerOverride = mHasOwnerOverride;
+        state.mOwner = mOwner;
     }
 
     void CellStore::writeFog(ESM::ESMWriter& writer) const
@@ -1790,20 +1809,6 @@ namespace MWWorld
             || enchantment->mData.mType == ESM::Enchantment::WhenStrikes)
             mRechargingItems.emplace_back(
                 ptr.getBase(), static_cast<float>(MWMechanics::getEnchantmentCharge(*enchantment)));
-    }
-
-    Ptr MWWorld::CellStore::getMovedActor(int actorId) const
-    {
-        for (const auto& [cellRef, cell] : mMovedToAnotherCell)
-        {
-            if (cellRef->mClass->isActor() && cellRef->mData.getCustomData())
-            {
-                Ptr actor(cellRef, cell);
-                if (actor.getClass().getCreatureStats(actor).getActorId() == actorId)
-                    return actor;
-            }
-        }
-        return {};
     }
 
     CellStore* MWWorld::CellStore::getOriginCell(const Ptr& object) const

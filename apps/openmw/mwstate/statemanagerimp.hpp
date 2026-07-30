@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <map>
+#include <utility>
 
 #include "../mwbase/statemanager.hpp"
 
@@ -15,12 +16,11 @@ namespace MWState
         bool mQuitRequest;
         bool mAskLoadRecent;
         bool mNewGameRequest = false;
-        std::optional<std::filesystem::path> mLoadRequest;
+        std::optional<std::pair<const Character*, std::filesystem::path>> mLoadRequest;
         State mState;
         CharacterManager mCharacterManager;
         double mTimePlayed;
         std::filesystem::path mLastSavegame;
-        bool mNativeFalloutSaveLoaded = false;
 
     private:
         void cleanup(bool force = false);
@@ -43,13 +43,12 @@ namespace MWState
         void askLoadRecent() override;
 
         void requestNewGame() override { mNewGameRequest = true; }
-        void requestLoad(const std::filesystem::path& filepath) override { mLoadRequest = filepath; }
+        void requestLoad(const Character* character, const std::filesystem::path& filepath) override
+        {
+            mLoadRequest.emplace(character, filepath);
+        }
 
         State getState() const override;
-
-        /// True only while the running session was created from a normal retail Fallout .fos transaction.
-        /// The engine uses this to keep diagnostic/proof camera paths from replacing save-authored camera state.
-        bool isNativeFalloutSaveLoaded() const { return mNativeFalloutSaveLoaded; }
 
         void newGame(bool bypass = false) override;
         ///< Start a new game.

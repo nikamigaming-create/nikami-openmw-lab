@@ -23,7 +23,6 @@
 #include <components/settings/values.hpp>
 
 #include <components/vfs/manager.hpp>
-#include <components/vr/vr.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwmechanics/actorutil.hpp"

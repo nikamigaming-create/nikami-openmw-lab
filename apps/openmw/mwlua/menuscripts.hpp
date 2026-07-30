@@ -24,8 +24,7 @@ namespace MWLua
             : LuaUtil::ScriptsContainer(lua, "Menu")
             , mInputProcessor(this)
         {
-            registerEngineHandlers({ &mOnFrameHandlers, &mOnVRFrameHandlers, &mOnVRRecenter, &mStateChanged,
-                &mConsoleCommandHandlers, &mUiModeChanged });
+            registerEngineHandlers({ &mOnFrameHandlers, &mStateChanged, &mConsoleCommandHandlers, &mUiModeChanged });
         }
 
         void processInputEvent(const MWBase::LuaManager::InputEvent& event)
@@ -34,9 +33,6 @@ namespace MWLua
         }
 
         void onFrame(float dt) { callEngineHandlers(mOnFrameHandlers, dt); }
-
-        void onVRFrame() { callEngineHandlers(mOnVRFrameHandlers); }
-        void onVRRecenter(bool vertical, bool horizontal) { callEngineHandlers(mOnVRRecenter, vertical, horizontal); }
 
         void stateChanged() { callEngineHandlers(mStateChanged); }
 
@@ -52,8 +48,6 @@ namespace MWLua
         friend class MWLua::InputProcessor<MenuScripts>;
         MWLua::InputProcessor<MenuScripts> mInputProcessor;
         EngineHandlerList mOnFrameHandlers{ "onFrame" };
-        EngineHandlerList mOnVRFrameHandlers{ "onVRFrame" };
-        EngineHandlerList mOnVRRecenter{ "onVRRecenter" };
         EngineHandlerList mStateChanged{ "onStateChanged" };
         EngineHandlerList mConsoleCommandHandlers{ "onConsoleCommand" };
         EngineHandlerList mUiModeChanged{ "_onUiModeChanged" };

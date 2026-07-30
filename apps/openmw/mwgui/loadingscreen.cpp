@@ -27,10 +27,6 @@
 
 #include "backgroundimage.hpp"
 
-//## VR_PATCH BEGIN
-#include <components/misc/callbackmanager.hpp>
-//## VR_PATCH END
-
 namespace MWGui
 {
 
@@ -122,32 +118,31 @@ namespace MWGui
             return mTargetFrameRate;
     }
 
-//## VR_PATCH BEGIN
-// Ported to Misc::CallbackManager::MwDrawCallback
-    class CopyFramebufferToTextureCallback : public Misc::CallbackManager::MwDrawCallback
+    class CopyFramebufferToTextureCallback : public osg::Camera::DrawCallback
     {
     public:
         CopyFramebufferToTextureCallback(osg::Texture2D* texture)
-            : mTexture(texture)
+            : mOneshot(true)
+            , mTexture(texture)
         {
         }
 
-        bool operator()(osg::RenderInfo& renderInfo, Misc::CallbackManager::View view) const override
+        void operator()(osg::RenderInfo& renderInfo) const override
         {
-            if (view == Misc::CallbackManager::View::Right)
-                return false;
-
-            int w = renderInfo.getCurrentCamera()->getViewport()->width();
-            int h = renderInfo.getCurrentCamera()->getViewport()->height();
+            const osg::Viewport* viewPort = renderInfo.getCurrentCamera()->getViewport();
+            int w = static_cast<int>(viewPort->width());
+            int h = static_cast<int>(viewPort->height());
             mTexture->copyTexImage2D(*renderInfo.getState(), 0, 0, w, h);
 
-            return true;
+            mOneshot = false;
         }
 
+        void reset() { mOneshot = true; }
+
     private:
+        mutable bool mOneshot;
         osg::ref_ptr<osg::Texture2D> mTexture;
     };
-//## VR_PATCH END
 
     class DontComputeBoundCallback : public osg::Node::ComputeBoundingSphereCallback
     {
@@ -273,10 +268,10 @@ namespace MWGui
             return false;
 
         // the minimal delay before a loading screen shows
-        const float initialDelay = 0.05;
+        constexpr float initialDelay = 0.05f;
 
         bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
-        float diff = (mTimer.time_m() - mLoadingOnTime);
+        double diff = (mTimer.time_m() - mLoadingOnTime);
 
         if (!alreadyShown)
         {
@@ -312,20 +307,19 @@ namespace MWGui
 
         if (!mCopyFramebufferToTextureCallback)
         {
-//## VR_PATCH BEGIN
-// Ported to Misc::CallbackManager::MwDrawCallback
-            mCopyFramebufferToTextureCallback = std::make_shared<CopyFramebufferToTextureCallback>(mTexture);
+            mCopyFramebufferToTextureCallback = new CopyFramebufferToTextureCallback(mTexture);
         }
 
-        Misc::CallbackManager::instance().addCallbackOneshot(
-            Misc::CallbackManager::DrawStage::Initial, mCopyFramebufferToTextureCallback);
-//## VR_PATCH END
+        mViewer->getCamera()->removeInitialDrawCallback(mCopyFramebufferToTextureCallback);
+        mViewer->getCamera()->addInitialDrawCallback(mCopyFramebufferToTextureCallback);
+        mCopyFramebufferToTextureCallback->reset();
 
         mSplashImage->setBackgroundImage({});
         mSplashImage->setVisible(false);
 
         mSceneImage->setRenderItemTexture(mGuiTexture.get());
-        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+        // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
+        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
         mSceneImage->setVisible(true);
     }
 
@@ -345,7 +339,11 @@ namespace MWGui
             setupCopyFramebufferToTextureCallback();
         }
 
-        MWBase::Environment::get().getInputManager()->update(0, true, true);
+        // Fallout-family profiles do not mount Morrowind's legacy UI art. They
+        // supply a profile-local fallback skin, so defer generic focus updates
+        // until the loading screen has completed its first stable frame.
+        if (!Settings::Manager::getBool("defer loading input update", "OpenNV Compatibility"))
+            MWBase::Environment::get().getInputManager()->update(0, true, true);
 
         osg::Stats* const stats = mViewer->getViewerStats();
         const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();
@@ -362,9 +360,9 @@ namespace MWGui
         // at the time this function is called we are in the middle of a frame,
         // so out of order calls are necessary to get a correct frameNumber for the next frame.
         // refer to the advance() and frame() order in Engine::go()
-//## VR_PATCH BEGIN
-        MWBase::Environment::get().getWindowManager()->viewerTraversals();
-//## VR_PATCH END
+        mViewer->eventTraversal();
+        mViewer->updateTraversal();
+        mViewer->renderingTraversals();
         mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
 
         mLastRenderTime = mTimer.time_m();

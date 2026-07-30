@@ -908,7 +908,7 @@ namespace MWRender
         assert(!mCreated);
 
         const bool falloutSkyModels = hasAvailableConfiguredFalloutSkyModels(*mSceneManager);
-        const bool forceShaders = Settings::shaders().mForceShaders;
+        const bool forceShaders = true;
         const bool useSkyShader = true;
 
         mAtmosphereDay = getOptionalSkyInstance(
@@ -1549,7 +1549,7 @@ namespace MWRender
                     if (!cloud.empty() && updater)
                     {
                         const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
-                            VFS::Path::toNormalized(cloud), mSceneManager->getVFS());
+                            VFS::Path::toNormalized(cloud), *mSceneManager->getVFS());
                         const VFS::Path::Normalized texture
                             = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
                         osg::ref_ptr<osg::Image> cloudImage = mSceneManager->getImageManager()->getImage(texture);
@@ -1630,7 +1630,7 @@ namespace MWRender
             if (mCloudUpdater)
             {
                 const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
-                    VFS::Path::toNormalized(mClouds), mSceneManager->getVFS());
+                    VFS::Path::toNormalized(mClouds), *mSceneManager->getVFS());
                 const VFS::Path::Normalized texture
                     = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
 
@@ -1659,7 +1659,7 @@ namespace MWRender
             if (!mNextClouds.empty() && mNextCloudUpdater)
             {
                 const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
-                    VFS::Path::toNormalized(mNextClouds), mSceneManager->getVFS());
+                    VFS::Path::toNormalized(mNextClouds), *mSceneManager->getVFS());
                 const VFS::Path::Normalized texture
                     = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
 

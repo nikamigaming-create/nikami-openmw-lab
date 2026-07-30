@@ -13,25 +13,31 @@
 #include "draganddrop.hpp"
 #include "exposedwindow.hpp"
 
-//## VR_PATCH BEGIN
-#include "../mwvr/vrgui.hpp"
-#include <components/vr/vr.hpp>
-//## VR_PATCH END
 using namespace MWGui;
 
-int MWGui::wrap(int index, int max)
+size_t MWGui::wrap(size_t index, size_t max, int delta)
 {
-    if (index < 0)
-        return max - 1;
-    else if (index >= max)
+    if (max == 0)
         return 0;
-    else
-        return index;
+    if (delta >= 0)
+    {
+        unsigned absDelta = static_cast<unsigned>(delta);
+        if (absDelta >= max)
+            return 0;
+        else if (index >= max - absDelta)
+            return 0;
+        return index + absDelta;
+    }
+    size_t absDelta = static_cast<size_t>(-static_cast<ptrdiff_t>(delta));
+    index = std::min(index, max);
+    if (index >= absDelta)
+        return index - absDelta;
+    return max - 1;
 }
 
-void MWGui::setControllerFocus(const std::vector<MyGUI::Button*>& buttons, int index, bool focused)
+void MWGui::setControllerFocus(const std::vector<MyGUI::Button*>& buttons, size_t index, bool focused)
 {
-    if (index >= 0 && index < static_cast<int>(buttons.size()))
+    if (index < buttons.size())
         buttons[index]->setStateSelected(focused);
 }
 
@@ -77,14 +83,6 @@ void WindowBase::setVisible(bool visible)
         onOpen();
     else if (wasVisible)
         onClose();
-//## VR_PATCH BEGIN
-// Forward visibility changes to VR
-    // It's possible onOpen/onClose() reversed the change, in which case we don't want to forward anything
-    if (VR::getVR() && this->isVisible() == visible)
-    {
-        MWVR::VRGUIManager::instance().setVisible(this, visible);
-    }
-//## VR_PATCH END
 }
 
 bool WindowBase::isVisible() const
@@ -170,13 +168,6 @@ void NoDrop::onFrame(float dt)
 
     MyGUI::IntPoint mousePos = MyGUI::InputManager::getInstance().getMousePosition();
 
-//## VR_PATCH BEGIN
-    // Since VR mode stretches some windows to full screen, the usual outside condition
-    // won't work
-    if(VR::getVR())
-        mTransparent = false;
-//## VR_PATCH END
-
     if (mDrag->mIsOnDragAndDrop)
     {
         MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getMouseFocusWidget();
@@ -191,24 +182,13 @@ void NoDrop::onFrame(float dt)
 
     if (mTransparent)
     {
-//## VR_PATCH BEGIN
-        // These makes focus null, which messes up the logic for VR
-        // since i reset mTransparent to false every update.
-        // TODO: Is there a cleaner way?
-        if (!VR::getVR())
-        {
-            mWidget->setNeedMouseFocus(false); // Allow click-through
-            setAlpha(std::max(0.13f, mWidget->getAlpha() - dt * 5));
-        }
+        mWidget->setNeedMouseFocus(false); // Allow click-through
+        setAlpha(std::max(0.13f, mWidget->getAlpha() - dt * 5));
     }
     else
     {
-        if (!VR::getVR())
-        {
-            mWidget->setNeedMouseFocus(true); // Allow click-through
-            setAlpha(std::min(1.0f, mWidget->getAlpha() + dt * 5));
-        }
-// ## VR_PATCH END
+        mWidget->setNeedMouseFocus(true);
+        setAlpha(std::min(1.0f, mWidget->getAlpha() + dt * 5));
     }
 }
 
@@ -229,16 +209,14 @@ float BookWindowBase::adjustButton(std::string_view name)
     WindowBase::getWidget(button, name);
     MyGUI::IntSize requested = button->getRequestedSize();
     float scale = float(requested.height) / button->getSize().height;
-    MyGUI::IntSize newSize = requested;
-    newSize.width /= scale;
-    newSize.height /= scale;
+    MyGUI::IntSize newSize(static_cast<int>(requested.width / scale), static_cast<int>(requested.height / scale));
     button->setSize(newSize);
 
     if (button->getAlign().isRight())
     {
         MyGUI::IntSize diff = (button->getSize() - requested);
-        diff.width /= scale;
-        diff.height /= scale;
+        diff.width = static_cast<int>(diff.width / scale);
+        diff.height = static_cast<int>(diff.height / scale);
         button->setPosition(button->getPosition() + MyGUI::IntPoint(diff.width, 0));
     }
 

@@ -43,86 +43,6 @@ return {
                     .. tostring(data.item))
             end
         end,
-        ObScriptRemoveItem = function(data)
-            if data.object == nil or not data.object:isValid() then
-                print('[obscript] RemoveItem: target is no longer valid')
-                return
-            end
-            local recordId = data.recordId
-                or core.obscript.resolveItemEditorId(data.item)
-            if recordId == nil then
-                print('[obscript] RemoveItem: unknown item editor id: ' .. tostring(data.item))
-                return
-            end
-            local inventory
-            if types.Actor.objectIsInstance(data.object) then
-                inventory = types.Actor.inventory(data.object)
-            elseif types.Container.objectIsInstance(data.object) then
-                inventory = types.Container.inventory(data.object)
-            else
-                print('[obscript] RemoveItem: target has no inventory: ' .. tostring(data.object))
-                return
-            end
-            local item = inventory:find(recordId)
-            if item == nil then
-                return
-            end
-            local count = math.max(1, math.floor(tonumber(data.count) or 1))
-            item:remove(math.min(count, item.count))
-        end,
-        ObScriptTransferItem = function(data)
-            if data.source == nil or not data.source:isValid()
-                    or data.target == nil or not data.target:isValid() then
-                print('[obscript-compat] state=transfer-rejected '
-                    .. 'scenarioId=JLM.loot-menu reason=invalid-source-or-target')
-                return
-            end
-            local function inventoryFor(object)
-                if types.Actor.objectIsInstance(object) then
-                    return types.Actor.inventory(object)
-                elseif types.Container.objectIsInstance(object) then
-                    return types.Container.inventory(object)
-                end
-                return nil
-            end
-            local sourceInventory = inventoryFor(data.source)
-            local targetInventory = inventoryFor(data.target)
-            local recordId = data.recordId
-                or core.obscript.resolveItemEditorId(data.item)
-            if sourceInventory == nil or targetInventory == nil or recordId == nil then
-                print('[obscript-compat] state=transfer-rejected '
-                    .. 'scenarioId=JLM.loot-menu reason=invalid-inventory-or-record '
-                    .. 'sourceActor=' .. tostring(types.Actor.objectIsInstance(data.source))
-                    .. ' targetActor=' .. tostring(types.Actor.objectIsInstance(data.target))
-                    .. ' sourceInventory=' .. tostring(sourceInventory)
-                    .. ' targetInventory=' .. tostring(targetInventory)
-                    .. ' recordId=' .. tostring(recordId))
-                return
-            end
-            local sourceBefore = sourceInventory:countOf(recordId)
-            local targetBefore = targetInventory:countOf(recordId)
-            local requested = math.max(1, math.floor(tonumber(data.count) or 1))
-            local transferCount = math.min(requested, sourceBefore)
-            if transferCount <= 0 then
-                return
-            end
-            local item = sourceInventory:find(recordId)
-            if item == nil then return end
-            if transferCount < item.count then
-                item:split(transferCount):moveInto(targetInventory)
-            else
-                item:moveInto(targetInventory)
-            end
-            print(('[obscript-compat] state=native-effect '
-                    .. 'scenarioId=JLM.loot-menu sourceScript=%s '
-                    .. 'provider=%s command=%s '
-                    .. 'enginePath=openmw.inventory.transfer recordId=%s '
-                    .. 'sourceBefore=%d targetBefore=%d transferCount=%d')
-                :format(tostring(data.sourceScript or 'ObScriptTransferItem'),
-                    tostring(data.provider or 'jip-ln'),
-                    tostring(data.command or 'RemoveItemTarget'),
-                    tostring(recordId), sourceBefore, targetBefore, transferCount))
-        end,
         ObScriptSetStage = function(data)
             core.obscript.setQuestStage(data.quest, data.stage)
         end,
@@ -149,11 +69,6 @@ return {
         end,
         ObScriptSetGlobalVariable = function(data)
             core.obscript.setGlobalVariable(data.name, data.value)
-        end,
-        ObScriptCreatePlayerDetectionEvent = function(data)
-            core.obscript.createPlayerDetectionEvent(
-                tonumber(data.soundLevel) or 0,
-                math.floor(tonumber(data.eventType) or 0))
         end,
     },
 }

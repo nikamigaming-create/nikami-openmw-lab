@@ -1,6 +1,6 @@
 #include "esm4npc.hpp"
-#include "esm4container.hpp"
 #include "fnvaipackage.hpp"
+#include "fnvfurnitureplacement.hpp"
 #include "fnvfurniturelifecycle.hpp"
 #include "fnvsandbox.hpp"
 
@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 
 #include <components/esm/attr.hpp>
@@ -49,15 +50,15 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
-#include "../mwworld/actionopen.hpp"
-#include "../mwworld/actiontalk.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
-#include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/worldmodel.hpp"
+#include "../mwworld/actiontalk.hpp"
+#include "../mwworld/failedaction.hpp"
 
 #include "esm4base.hpp"
 #include "fnvactorstate.hpp"
@@ -133,11 +134,11 @@ namespace MWClass
         return nullptr;
     }
 
-    class ESM4NpcContainerStore final : public ESM4ActorContainerStore
+    class ESM4NpcContainerStore final : public MWWorld::ContainerStore
     {
     public:
         template <class Record>
-        bool addInitialRecord(const Record& record, int count, std::optional<float> condition = {})
+        bool addInitialRecord(const Record& record, int count)
         {
             if (count <= 0)
                 return false;
@@ -145,22 +146,11 @@ namespace MWClass
             ESM::CellRef cellRef = ESM::makeBlankCellRef();
             cellRef.mRefID = ESM::RefId::formIdRefId(record.mId);
             MWWorld::LiveCellRef<Record> liveRef(cellRef, &record);
-            const MWWorld::Ptr ptr(&liveRef);
-            if (condition)
-            {
-                const int maxHealth = ptr.getClass().getItemMaxHealth(ptr);
-                if (maxHealth > 0)
-                {
-                    const int health = std::clamp(
-                        static_cast<int>(std::lround(*condition * static_cast<float>(maxHealth))), 0, maxHealth);
-                    ptr.getCellRef().setCharge(health);
-                }
-            }
+            const MWWorld::ConstPtr ptr(&liveRef);
             const int type = getType(ptr);
             for (MWWorld::ContainerStoreIterator item = begin(type); item != end(); ++item)
             {
-                if (item->getCellRef().getRefId() != ptr.getCellRef().getRefId()
-                    || item->getCellRef().getCharge() != ptr.getCellRef().getCharge())
+                if (item->getCellRef().getRefId() != cellRef.mRefID)
                     continue;
                 item->getCellRef().setCount(addItems(item->getCellRef().getCount(false), count));
                 flagAsModified();
@@ -184,26 +174,38 @@ namespace MWClass
     class ESM4NpcCustomData : public MWWorld::TypedCustomData<ESM4NpcCustomData>
     {
     public:
+        // MatchRace/MatchFaceGeometry are reference-local runtime mutations.
+        // Keep an owned traits copy so the immutable ESM store remains shared
+        // and every other actor using the same NPC_ base remains untouched.
+        std::optional<ESM4::Npc> mAppearanceTraits;
         const ESM4::Npc* mTraits = nullptr;
         const ESM4::Npc* mFactions = nullptr;
         const ESM4::Npc* mModel = nullptr;
         const ESM4::Npc* mAIPackage = nullptr;
+        const ESM4::Npc* mActorEffects = nullptr;
         const ESM4::Npc* mStats = nullptr;
         const ESM4::Npc* mAIData = nullptr;
         const ESM4::Npc* mBaseData = nullptr;
         const ESM4::Race* mRace = nullptr;
         bool mIsFemale = false;
+        bool mUsesDefaultFaceTexture = false;
         MWMechanics::CreatureStats mCreatureStats;
         MWMechanics::Movement mMovement;
         std::unique_ptr<ESM4NpcContainerStore> mContainerStore;
         bool mContainerItemsRegistered = false;
-        bool mDeathItemsGenerated = false;
 
         // TODO: Use InventoryStore instead (currently doesn't support ESM4 objects)
         std::vector<const ESM4::Armor*> mEquippedArmor;
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
+        ESM::FormId mFnvPackageCompletionPackage;
+        bool mFnvPackageCompletionPending = false;
+        // An explicit GECK EvaluatePackage/evp request is allowed to release
+        // an active furniture package.  It is consumed by that package so the
+        // actor can play its authored exit transition before the next base
+        // package is selected.
+        bool mFnvPackageEvaluationRequested = false;
         bool mFnvSandboxPackageNeedsReevaluation = false;
         std::optional<FalloutSandboxSaveFallback> mFnvSandboxSaveFallback;
         FalloutFurnitureState mFurnitureState = FalloutFurnitureState::None;
@@ -222,38 +224,147 @@ namespace MWClass
     }
 
     ESM4NpcCustomData::ESM4NpcCustomData(const ESM4NpcCustomData& other)
-        : mTraits(other.mTraits)
+        : mAppearanceTraits(other.mAppearanceTraits)
+        , mTraits(other.mTraits)
         , mFactions(other.mFactions)
         , mModel(other.mModel)
         , mAIPackage(other.mAIPackage)
+        , mActorEffects(other.mActorEffects)
         , mStats(other.mStats)
         , mAIData(other.mAIData)
         , mBaseData(other.mBaseData)
         , mRace(other.mRace)
         , mIsFemale(other.mIsFemale)
+        , mUsesDefaultFaceTexture(other.mUsesDefaultFaceTexture)
         , mCreatureStats(other.mCreatureStats)
         , mMovement(other.mMovement)
         , mContainerStore(other.mContainerStore ? other.mContainerStore->cloneForNpc()
                                                 : std::make_unique<ESM4NpcContainerStore>())
-        , mDeathItemsGenerated(other.mDeathItemsGenerated)
         , mEquippedArmor(other.mEquippedArmor)
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
+        , mFnvPackageCompletionPackage(other.mFnvPackageCompletionPackage)
+        , mFnvPackageCompletionPending(other.mFnvPackageCompletionPending)
+        , mFnvPackageEvaluationRequested(other.mFnvPackageEvaluationRequested)
         , mFnvSandboxPackageNeedsReevaluation(other.mFnvSandboxPackageNeedsReevaluation)
         , mFnvSandboxSaveFallback(other.mFnvSandboxSaveFallback)
         , mFurnitureState(other.mFurnitureState)
         , mFurniturePlacement(other.mFurniturePlacement)
     {
+        if (mAppearanceTraits)
+            mTraits = &*mAppearanceTraits;
+    }
+
+    namespace
+    {
+        bool addEquippedArmorToData(
+            ESM4NpcCustomData& data, const ESM4::Armor* armor, bool replaceOccupiedSlots)
+        {
+            if (armor == nullptr)
+                return false;
+            const std::uint32_t occupiedSlots = armor->mArmorFlags;
+            bool changed = false;
+            if (replaceOccupiedSlots && occupiedSlots != 0)
+            {
+                changed |= std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && equipped != armor
+                        && (equipped->mArmorFlags & occupiedSlots) != 0;
+                }) != 0;
+                changed |= std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+                }) != 0;
+            }
+            if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor)
+                != data.mEquippedArmor.end())
+                return changed;
+            data.mEquippedArmor.push_back(armor);
+            return true;
+        }
+
+        bool addEquippedClothingToData(ESM4NpcCustomData& data, const ESM4::Clothing* clothing)
+        {
+            if (clothing == nullptr)
+                return false;
+            const std::uint32_t occupiedSlots = clothing->mClothingFlags;
+            bool changed = false;
+            if (occupiedSlots != 0)
+            {
+                changed |= std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && (equipped->mArmorFlags & occupiedSlots) != 0;
+                }) != 0;
+                changed |= std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && equipped != clothing
+                        && (equipped->mClothingFlags & occupiedSlots) != 0;
+                }) != 0;
+            }
+            if (std::find(data.mEquippedClothing.begin(), data.mEquippedClothing.end(), clothing)
+                != data.mEquippedClothing.end())
+                return changed;
+            data.mEquippedClothing.push_back(clothing);
+            return true;
+        }
+
+        std::vector<ESM::FormId> collectEquippedItemIds(const ESM4NpcCustomData& data)
+        {
+            std::vector<ESM::FormId> result;
+            result.reserve(data.mEquippedArmor.size() + data.mEquippedClothing.size()
+                + (data.mEquippedWeapon != nullptr ? 1 : 0));
+            for (const ESM4::Armor* armor : data.mEquippedArmor)
+                if (armor != nullptr)
+                    result.push_back(armor->mId);
+            for (const ESM4::Clothing* clothing : data.mEquippedClothing)
+                if (clothing != nullptr)
+                    result.push_back(clothing->mId);
+            if (data.mEquippedWeapon != nullptr)
+                result.push_back(data.mEquippedWeapon->mId);
+            return result;
+        }
+
+        bool recordEquipmentOverride(ESM4NpcCustomData& data)
+        {
+            return data.mCreatureStats.setFalloutEquipmentOverride(collectEquippedItemIds(data));
+        }
+
+        bool applyEquippedItemToData(
+            ESM4NpcCustomData& data, const MWWorld::ESMStore& store, ESM::FormId item, bool requireInventory = true)
+        {
+            if (requireInventory && data.mContainerStore->count(ESM::RefId(item)) <= 0)
+                return false;
+            if (const ESM4::Weapon* weapon = store.get<ESM4::Weapon>().search(ESM::RefId(item)))
+            {
+                data.mEquippedWeapon = weapon;
+                return true;
+            }
+            if (const ESM4::Armor* armor = store.get<ESM4::Armor>().search(ESM::RefId(item)))
+            {
+                addEquippedArmorToData(data, armor, true);
+                return true;
+            }
+            if (const ESM4::Clothing* clothing = store.get<ESM4::Clothing>().search(ESM::RefId(item)))
+            {
+                addEquippedClothingToData(data, clothing);
+                return true;
+            }
+            return false;
+        }
+
+        void applySavedEquipmentOverride(ESM4NpcCustomData& data, const MWWorld::ESMStore& store)
+        {
+            if (!data.mCreatureStats.hasFalloutEquipmentOverride())
+                return;
+            const std::vector<ESM::FormId> equipped = data.mCreatureStats.getFalloutEquippedItems();
+            data.mEquippedArmor.clear();
+            data.mEquippedClothing.clear();
+            data.mEquippedWeapon = nullptr;
+        for (const ESM::FormId item : equipped)
+                applyEquippedItemToData(data, store, item);
+        }
     }
 
     bool requestFnvAiPackageEvaluation(const MWWorld::Ptr& ptr)
     {
-        if (ptr.isEmpty())
-            return false;
-        if (ptr.getType() == ESM4::Creature::sRecordId)
-            return requestFnvCreatureAiPackageEvaluation(ptr);
-        if (ptr.getType() != ESM4::Npc::sRecordId)
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
             return false;
 
         // CreatureStats access creates the per-reference custom data when the
@@ -268,14 +379,37 @@ namespace MWClass
             return false;
 
         MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
-        // EVP selects a new base package; it must not erase combat, pursuit,
-        // or a furniture claim whose release transition has not completed.
-        if (sequence.isInCombat() || sequence.isInPursuit()
-            || data.mFurnitureState != FalloutFurnitureState::None)
+        // EVP selects a new base package but must never erase combat or a
+        // pursuit.  A live furniture package receives this request and owns
+        // the released-state transition; it will then yield so normal package
+        // selection can choose the newly eligible authored package.
+        if (sequence.isInCombat() || sequence.isInPursuit())
             return false;
 
+        if (data.mFurnitureState != FalloutFurnitureState::None && !sequence.isEmpty())
+        {
+            data.mFnvPackageEvaluationRequested = true;
+            data.mFnvAiSequenceInitialised = false;
+            data.mFnvPackageCompletionPackage = ESM::FormId{};
+            data.mFnvPackageCompletionPending = false;
+            return true;
+        }
+
+        // A loaded save may retain a furniture claim after its owning package
+        // has already disappeared.  There is no package left to animate in
+        // that case, so release the stale claim before re-evaluation rather
+        // than leaving every future EVP blocked.
+        if (data.mFurnitureState != FalloutFurnitureState::None)
+        {
+            data.mFurnitureState = FalloutFurnitureState::None;
+            data.mFurniturePlacement = FalloutFurniturePlacement{};
+        }
+
         sequence.clear();
+        data.mFnvPackageEvaluationRequested = false;
         data.mFnvAiSequenceInitialised = false;
+        data.mFnvPackageCompletionPackage = ESM::FormId{};
+        data.mFnvPackageCompletionPending = false;
         ptr.getClass().getCreatureStats(ptr);
         return true;
     }
@@ -357,7 +491,14 @@ namespace MWClass
     static int getLevel(const ESM4::Npc& npc)
     {
         if (npc.mIsFONV)
-            return positiveOrDefault(npc.mBaseConfig.fo3.levelOrMult, 1);
+        {
+            const bool playerLevelMultiplier = (npc.mBaseConfig.fo3.flags & ESM4::Npc::FO3_PCLevelMult) != 0;
+            int playerLevel = ESM4Impl::sDefaultLevel;
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (playerLevelMultiplier && world != nullptr && !world->getPlayerPtr().isEmpty())
+                playerLevel = world->getPlayerPtr().getClass().getCreatureStats(world->getPlayerPtr()).getLevel();
+            return ESM4Impl::calculateFnvActorLevel(npc.mBaseConfig.fo3, playerLevelMultiplier, playerLevel);
+        }
         if (npc.mIsFO4)
             return positiveOrDefault(npc.mBaseConfig.fo4.levelOrMult, 1);
         if (npc.mIsTES4)
@@ -437,8 +578,6 @@ namespace MWClass
         {
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
-                continue;
-            if (!fnvNpcAiPackageProcedureSupported(package->mData.type))
                 continue;
             if (!fnvPackageConditionsPass(*package))
                 continue;
@@ -547,6 +686,39 @@ namespace MWClass
                     ESM4Npc::setFurnitureState(actor, action.mPublishedState);
                 return action;
             };
+            const auto packageEvaluationRequested = [&actor] {
+                MWWorld::CustomData* const customData = actor.getRefData().getCustomData();
+                return customData != nullptr && customData->asESM4NpcCustomData().mFnvPackageEvaluationRequested;
+            };
+            const auto releaseForPackageEvaluation = [&] {
+                stopMovement();
+                characterController.clearAnimQueue(true);
+                place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
+                ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::None);
+                ESM4Npc::setFurniturePlacement(actor, FalloutFurniturePlacement{});
+
+                if (MWWorld::CustomData* const customData = actor.getRefData().getCustomData(); customData != nullptr)
+                {
+                    ESM4NpcCustomData& data = customData->asESM4NpcCustomData();
+                    data.mFnvPackageEvaluationRequested = false;
+                    data.mFnvAiSequenceInitialised = false;
+                    data.mFnvPackageCompletionPackage = ESM::FormId{};
+                    data.mFnvPackageCompletionPending = false;
+                }
+                Log(Debug::Info) << "FNV/ESM4 furniture: state=released package=" << mPackageName
+                                 << " actor=" << actor.getCellRef().getRefId()
+                                 << " position=(" << mPlacement.mEntryPosition.x() << ","
+                                 << mPlacement.mEntryPosition.y() << "," << mPlacement.mEntryPosition.z()
+                                 << ") yaw=" << mPlacement.mEntryYaw;
+                return true;
+            };
+
+            // An explicit EVP while the actor is still approaching or
+            // entering cancels that in-flight furniture package.  There is no
+            // stable seated pose to exit from, so release it immediately.
+            if (packageEvaluationRequested() && mPhase != FalloutFurniturePackagePhase::Seated
+                && mPhase != FalloutFurniturePackagePhase::Exiting)
+                return releaseForPackageEvaluation();
 
             switch (mPhase)
             {
@@ -554,15 +726,6 @@ namespace MWClass
                     reconcileLifecycle(mPhase);
                     if (!mTravel.execute(actor, characterController, state, duration))
                         return false;
-                    if (!hasReachedFalloutFurnitureEntry(
-                            actor.getRefData().getPosition().asVec3(), mPlacement.mEntryPosition))
-                    {
-                        // AiTravel's normal actor-sized finish tolerance is appropriate for ordinary travel,
-                        // but it can complete several dozen units before an exact furniture marker. Keep
-                        // walking toward the marker before aligning to the authored enter-animation anchor.
-                        actor.getClass().getMovementSettings(actor).mPosition[1] = 1.f;
-                        return false;
-                    }
                     stopMovement();
                     place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
                     mPhase = FalloutFurniturePackagePhase::Entering;
@@ -593,6 +756,21 @@ namespace MWClass
 
                 case FalloutFurniturePackagePhase::Seated:
                 {
+                    if (packageEvaluationRequested())
+                    {
+                        stopMovement();
+                        mPhase = FalloutFurniturePackagePhase::Exiting;
+                        reconcileLifecycle(mPhase);
+                        if (mPlacement.mExitGroup.empty()
+                            || !characterController.playGroup(mPlacement.mExitGroup, 1, 0, true))
+                            return releaseForPackageEvaluation();
+                        Log(Debug::Info) << "FNV/ESM4 furniture: state=exiting package=" << mPackageName
+                                         << " actor=" << actor.getCellRef().getRefId()
+                                         << " markerIndex=" << static_cast<unsigned int>(mPlacement.mMarkerIndex)
+                                         << " group=" << mPlacement.mExitGroup;
+                        return false;
+                    }
+
                     const FalloutFurnitureLifecycleAction lifecycle = reconcileLifecycle(mPhase);
                     stopMovement();
                     const ESM::Position& position = actor.getRefData().getPosition();
@@ -607,12 +785,18 @@ namespace MWClass
                                             << mSeatedAnchor.x() << "," << mSeatedAnchor.y() << ","
                                             << mSeatedAnchor.z() << ") yaw=" << mPlacement.mSettledYaw;
                     }
-                    // Retail Easy Pete retains the furniture claim and seated state after both the package
-                    // schedule window expires and EvaluatePackage is requested. Schedule expiry alone is not
-                    // a retail furniture-release trigger, so remain seated until that trigger is implemented
-                    // from direct retail evidence.
+                    // Schedule expiry alone is not a furniture-release
+                    // trigger.  Remain seated until an authored command such
+                    // as EvaluatePackage asks the package to exit.
                     return false;
                 }
+
+                case FalloutFurniturePackagePhase::Exiting:
+                    reconcileLifecycle(mPhase);
+                    stopMovement();
+                    if (characterController.isAnimPlaying(mPlacement.mExitGroup))
+                        return false;
+                    return releaseForPackageEvaluation();
 
             }
             return true;
@@ -900,6 +1084,11 @@ namespace MWClass
     static void initialiseFnvAiSequence(
         ESM4NpcCustomData& data, const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& packageIds)
     {
+        // Route telemetry deliberately exposes data-selected AI decisions.
+        // This is not a content rule: it gives an unattended compatibility
+        // proof the package ID, target, and completion semantics it actually
+        // exercised without requiring foreground inspection.
+        const bool routeTrace = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr;
         if (data.mFnvAiSequenceInitialised)
             return;
 
@@ -914,6 +1103,8 @@ namespace MWClass
             return;
         }
         data.mFnvAiSequenceInitialised = false;
+        data.mFnvPackageCompletionPackage = ESM::FormId{};
+        data.mFnvPackageCompletionPending = false;
 
         const ESM4::Npc* traits = data.mTraits;
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
@@ -947,9 +1138,19 @@ namespace MWClass
         const ESM4::AIPackage* package = selectFnvPackage(packageIds, hour);
         if (package == nullptr)
         {
+            if (routeTrace)
+                Log(Debug::Info) << "FNV/ESM4 route AI: no eligible package actor="
+                                 << ptr.getCellRef().getRefId() << " npc=" << traits->mEditorId
+                                 << " candidateCount=" << packageIds.size() << " hour=" << hour;
             data.mFnvAiSequenceInitialised = true;
             return;
         }
+
+        if (routeTrace)
+            Log(Debug::Info) << "FNV/ESM4 route AI: selected package actor=" << ptr.getCellRef().getRefId()
+                             << " npc=" << traits->mEditorId << " package=" << package->mEditorId
+                             << " form=" << ESM::RefId(package->mId) << " type=" << package->mData.type
+                             << " conditionCount=" << package->mConditions.size() << " hour=" << hour;
 
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (store == nullptr)
@@ -958,9 +1159,18 @@ namespace MWClass
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         if (isFnvPackageTravelLike(package->mData.type))
         {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const bool notifyCompletion = world != nullptr
+                && world->getESM4QuestRuntime().packageCompletionHasAuthoredHandler(ptr, package->mId);
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
+                if (routeTrace)
+                    Log(Debug::Info) << "FNV/ESM4 route AI: travel target unavailable actor="
+                                     << ptr.getCellRef().getRefId() << " package=" << package->mEditorId
+                                     << " targetResolved=" << static_cast<bool>(target) << " targetCell="
+                                     << (target != nullptr ? target->mParent.serializeText() : std::string{})
+                                     << " actorCell=" << currentCellId.serializeText();
                 data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
@@ -974,6 +1184,20 @@ namespace MWClass
             const float dy = actorPos.pos[1] - target->mPos.pos[1];
             const float dz = actorPos.pos[2] - target->mPos.pos[2];
             const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
+            if (furnitureTarget && (!data.mFurniturePlacement.mValid
+                                       || data.mFurniturePlacement.mFurnitureRef != target->mId))
+            {
+                const FalloutFurniturePlacement placement = makeFalloutFurniturePlacement(*store, *target);
+                if (placement.mValid)
+                {
+                    data.mFurniturePlacement = placement;
+                    data.mFurnitureState = FalloutFurnitureState::Approaching;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: rebuilt runtime furniture placement package="
+                                        << package->mEditorId << " targetRef=" << target->mEditorId
+                                        << " markerIndex=" << static_cast<unsigned int>(placement.mMarkerIndex)
+                                        << " for " << traits->mEditorId;
+                }
+            }
             if (furnitureTarget && data.mFurniturePlacement.mValid
                 && data.mFurniturePlacement.mFurnitureRef == target->mId)
             {
@@ -990,26 +1214,48 @@ namespace MWClass
                                  << traits->mEditorId;
                 return;
             }
-            const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
-            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
+            const std::optional<float> arrivalDistance = furnitureTarget
+                ? std::optional<float>{ 128.f }
+                : getFnvTravelCompletionRadius(package->mLocation.radius);
+            if (arrivalDistance
+                && dx * dx + dy * dy + dz * dz < *arrivalDistance * *arrivalDistance && !notifyCompletion)
             {
                 data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
                                  << " furnitureTarget=" << furnitureTarget
-                                 << " arrivalDistance=" << arrivalDistance << " for " << traits->mEditorId;
+                                 << " arrivalDistance=" << *arrivalDistance << " for " << traits->mEditorId;
                 return;
             }
 
-            MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
-            sequence.stack(travel, ptr, true);
+            if (arrivalDistance)
+            {
+                MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2],
+                    !notifyCompletion, *arrivalDistance);
+                sequence.stack(travel, ptr, true);
+            }
+            else
+            {
+                MWMechanics::AiTravel travel(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], !notifyCompletion);
+                sequence.stack(travel, ptr, true);
+            }
             data.mFnvAiSequenceInitialised = true;
+            data.mFnvPackageCompletionPackage = notifyCompletion ? package->mId : ESM::FormId{};
+            data.mFnvPackageCompletionPending = notifyCompletion;
+            if (routeTrace)
+                Log(Debug::Info) << "FNV/ESM4 route AI: travel queued actor=" << ptr.getCellRef().getRefId()
+                                 << " package=" << package->mEditorId << " target=" << target->mEditorId
+                                 << " notifyCompletion=" << notifyCompletion << " delta=(" << dx << ',' << dy
+                                 << ',' << dz << ") completionRadius="
+                                 << (arrivalDistance ? *arrivalDistance : -1.f)
+                                 << " completionMode=" << (arrivalDistance ? "authored-radius" : "reachable-endpoint");
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " targetRef=" << target->mEditorId << " pos=("
                              << target->mPos.pos[0] << "," << target->mPos.pos[1] << "," << target->mPos.pos[2]
-                             << ") for " << traits->mEditorId;
+                             << ") for " << traits->mEditorId << " notifyCompletion=" << notifyCompletion;
             return;
         }
 
@@ -1112,6 +1358,10 @@ namespace MWClass
         stats.setMagicka(0.f);
         stats.setFatigue(fatigue);
         stats.getSpells().setSpells(ESM::RefId(statsRecord->mId), ESM::REC_NPC_4);
+        if (!stats.setFalloutBaseActorEffects(
+                data.mActorEffects != nullptr ? data.mActorEffects->mSpell : std::vector<ESM::FormId>{}))
+            Log(Debug::Warning) << "Invalid native actor-effect list for ESM4 NPC "
+                                << ESM::RefId(statsRecord->mId);
 
         const ESM4::Npc* aiRecord = data.mAIData != nullptr ? data.mAIData : statsRecord;
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
@@ -1163,6 +1413,12 @@ namespace MWClass
         if (data->mAIPackage == nullptr)
             Log(Debug::Warning) << "AI package data is not found for ESM4 NPC base record: \"" << base->mEditorId
                                 << "\" (" << ESM::RefId(base->mId) << ")";
+
+        data->mActorEffects = chooseTemplate(npcRecs, ESM4::Npc::Template_UseSpellList);
+
+        if (data->mActorEffects == nullptr)
+            Log(Debug::Warning) << "Actor effects are not found for ESM4 NPC base record: \""
+                                << base->mEditorId << "\" (" << ESM::RefId(base->mId) << ")";
 
         data->mBaseData = chooseTemplate(npcRecs, ESM4::Npc::Template_UseBaseData);
 
@@ -1247,7 +1503,7 @@ namespace MWClass
             data->mEquippedClothing.push_back(clothing);
             return true;
         };
-        const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, const ESM::RefId& itemId,
+        const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, ESM::FormId itemId,
                                       std::int64_t count, std::string_view result, std::string_view editor) {
             if (!worldViewerActorTelemetryEnabled())
                 return;
@@ -1257,25 +1513,22 @@ namespace MWClass
                              << " base=" << ptr.getCellRef().getRefId().toDebugString()
                              << " source=\"" << source << "\""
                              << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
-                             << " item=" << itemId
+                             << " item=" << ESM::RefId(itemId)
                              << " count=" << count
                              << " result=\"" << result << "\""
                              << " editor=\"" << editor << "\"";
         };
-        const auto storeInventoryRecord
-            = [&](const auto* record, int count, std::optional<float> condition = std::nullopt) {
+        const auto storeInventoryRecord = [&](const auto* record, int count) {
             if (record == nullptr || count <= 0)
                 return false;
 
-            return data->mContainerStore->addInitialRecord(*record, count, condition);
+            return data->mContainerStore->addInitialRecord(*record, count);
         };
         const ESM4::Npc* inventoryStats = chooseStatsRecord(*data);
         const int inventoryLevel = inventoryStats != nullptr ? getLevel(*inventoryStats) : ESM4Impl::sDefaultLevel;
-        std::function<bool(
-            ESM::RefId, int, std::string_view, const ESM4::Npc*, int, std::optional<float>)>
-            equipInventoryItem;
-        equipInventoryItem = [&](ESM::RefId itemId, int count, std::string_view source, const ESM4::Npc* owner,
-                                 int depth, std::optional<float> condition) {
+        std::function<bool(ESM::FormId, int, std::string_view, const ESM4::Npc*, int)> equipInventoryItem;
+        equipInventoryItem = [&](ESM::FormId itemId, int count, std::string_view source, const ESM4::Npc* owner,
+                                 int depth) {
             if (count <= 0)
             {
                 logInventoryItem(source, owner, itemId, count, "invalid-count", {});
@@ -1285,51 +1538,6 @@ namespace MWClass
             {
                 logInventoryItem(source, owner, itemId, count, "levelled-depth-limit", {});
                 return false;
-            }
-
-            // Fallout's NPC inventory commonly selects one ordinary LVLI branch whose result is a nested
-            // "WithAmmo..." Use All list. Resolving the outer list independently by terminal record type loses
-            // that selected branch: the weapon is retained while its authored ammunition siblings are discarded.
-            // Use the same recursive Fallout resolver as containers so the selected weapon, ammo, counts, and
-            // condition remain one atomic authored result.
-            if (const ESM4::LevelledItem* levelled = store->get<ESM4::LevelledItem>().search(itemId);
-                levelled != nullptr && owner != nullptr && owner->mIsFONV)
-            {
-                MWBase::World* world = MWBase::Environment::tryGetWorld();
-                Misc::Rng::Generator& prng = world != nullptr ? world->getPrng() : Misc::Rng::getGenerator();
-                std::vector<ResolvedFnvContainerItem> resolved;
-                std::string_view failure;
-                if (!resolveFnvLevelledItem(
-                        *store, itemId, inventoryLevel, count, prng, world, resolved, failure))
-                {
-                    Log(Debug::Warning) << "Ignoring unresolved FNV NPC inventory LVLI " << itemId << " in "
-                                        << (owner->mEditorId.empty() ? base->mEditorId : owner->mEditorId)
-                                        << " reason=" << failure;
-                    logInventoryItem(source, owner, itemId, count, failure, levelled->mEditorId);
-                    return false;
-                }
-
-                if (worldViewerActorTelemetryEnabled())
-                {
-                    Log(Debug::Info) << "World viewer actor ledger: phase=npc-inventory-levelled"
-                                     << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
-                                     << " base=" << ptr.getCellRef().getRefId().toDebugString()
-                                     << " source=\"" << source << "\""
-                                     << " owner=\"" << owner->mEditorId << "\""
-                                     << " list=" << itemId
-                                     << " editor=\"" << levelled->mEditorId << "\""
-                                     << " resolved=" << resolved.size()
-                                     << " level=" << inventoryLevel;
-                }
-
-                bool usedAny = false;
-                for (const ResolvedFnvContainerItem& item : resolved)
-                {
-                    usedAny = equipInventoryItem(
-                                  item.mId, item.mCount, source, owner, depth + 1, item.mCondition)
-                        || usedAny;
-                }
-                return usedAny;
             }
 
             // Skyrim outfits commonly contain one LVLI whose Use All flag deliberately composes a complete outfit
@@ -1356,7 +1564,7 @@ namespace MWClass
                 {
                     if (entry.level > inventoryLevel)
                         continue;
-                    const ESM::RefId entryId(ESM::FormId::fromUint32(entry.item));
+                    const ESM::FormId entryId = ESM::FormId::fromUint32(entry.item);
                     if (entryId == itemId)
                         continue;
                     if (entry.count <= 0)
@@ -1370,8 +1578,7 @@ namespace MWClass
                         logInventoryItem(source, owner, entryId, nestedCount, "levelled-count-overflow", {});
                         continue;
                     }
-                    usedAny = equipInventoryItem(
-                                  entryId, static_cast<int>(nestedCount), source, owner, depth + 1, std::nullopt)
+                    usedAny = equipInventoryItem(entryId, static_cast<int>(nestedCount), source, owner, depth + 1)
                         || usedAny;
                 }
                 return usedAny;
@@ -1383,7 +1590,7 @@ namespace MWClass
             if (const ESM4::Armor* armor
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(armor, count, condition);
+                const bool stored = storeInventoryRecord(armor, count);
                 const bool added = addArmor(armor);
                 logInventoryItem(
                     source, owner, itemId, count, added ? "armor" : "armor-duplicate", armor->mEditorId);
@@ -1393,7 +1600,7 @@ namespace MWClass
             if (const ESM4::Weapon* weapon
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(weapon, count, condition);
+                const bool stored = storeInventoryRecord(weapon, count);
                 considerEquippedWeapon(*data, weapon);
                 logInventoryItem(source, owner, itemId, count, "weapon", weapon->mEditorId);
                 return stored;
@@ -1402,7 +1609,7 @@ namespace MWClass
             if (const ESM4::Clothing* clothing
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(clothing, count, condition);
+                const bool stored = storeInventoryRecord(clothing, count);
                 const bool added = addClothing(clothing);
                 logInventoryItem(source, owner, itemId, count, added ? "clothing" : "clothing-duplicate",
                     clothing->mEditorId);
@@ -1412,7 +1619,7 @@ namespace MWClass
             if (const ESM4::Ammunition* ammunition
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ammunition>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(ammunition, count, condition);
+                const bool stored = storeInventoryRecord(ammunition, count);
                 logInventoryItem(source, owner, itemId, count, "ammunition", ammunition->mEditorId);
                 return stored;
             }
@@ -1420,7 +1627,7 @@ namespace MWClass
             if (const ESM4::Potion* potion
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Potion>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(potion, count, condition);
+                const bool stored = storeInventoryRecord(potion, count);
                 logInventoryItem(source, owner, itemId, count, "potion", potion->mEditorId);
                 return stored;
             }
@@ -1428,7 +1635,7 @@ namespace MWClass
             if (const ESM4::Book* book
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Book>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(book, count, condition);
+                const bool stored = storeInventoryRecord(book, count);
                 logInventoryItem(source, owner, itemId, count, "book", book->mEditorId);
                 return stored;
             }
@@ -1436,7 +1643,7 @@ namespace MWClass
             if (const ESM4::Ingredient* ingredient
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ingredient>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(ingredient, count, condition);
+                const bool stored = storeInventoryRecord(ingredient, count);
                 logInventoryItem(source, owner, itemId, count, "ingredient", ingredient->mEditorId);
                 return stored;
             }
@@ -1444,7 +1651,7 @@ namespace MWClass
             if (const ESM4::ItemMod* itemMod
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::ItemMod>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(itemMod, count, condition);
+                const bool stored = storeInventoryRecord(itemMod, count);
                 logInventoryItem(source, owner, itemId, count, "item-mod", itemMod->mEditorId);
                 return stored;
             }
@@ -1452,7 +1659,7 @@ namespace MWClass
             if (const ESM4::Key* key
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Key>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(key, count, condition);
+                const bool stored = storeInventoryRecord(key, count);
                 logInventoryItem(source, owner, itemId, count, "key", key->mEditorId);
                 return stored;
             }
@@ -1460,7 +1667,7 @@ namespace MWClass
             if (const ESM4::Light* light
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Light>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(light, count, condition);
+                const bool stored = storeInventoryRecord(light, count);
                 logInventoryItem(source, owner, itemId, count, "light", light->mEditorId);
                 return stored;
             }
@@ -1468,7 +1675,7 @@ namespace MWClass
             if (const ESM4::MiscItem* miscellaneous
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::MiscItem>(itemId, inventoryLevel))
             {
-                const bool stored = storeInventoryRecord(miscellaneous, count, condition);
+                const bool stored = storeInventoryRecord(miscellaneous, count);
                 logInventoryItem(source, owner, itemId, count, "miscellaneous", miscellaneous->mEditorId);
                 return stored;
             }
@@ -1501,7 +1708,7 @@ namespace MWClass
 
             bool usedAny = false;
             for (ESM::FormId itemId : outfit->mInventory)
-                usedAny = equipInventoryItem(itemId, 1, source, owner, 0, std::nullopt) || usedAny;
+                usedAny = equipInventoryItem(itemId, 1, source, owner, 0) || usedAny;
             return usedAny;
         };
         const auto equipNpcInventory = [&](const ESM4::Npc* inv, std::string_view source) {
@@ -1529,9 +1736,7 @@ namespace MWClass
                     logInventoryItem(source, inv, itemId, item.count, "invalid-container-count", {});
                     continue;
                 }
-                usedAny = equipInventoryItem(
-                              itemId, static_cast<int>(item.count), source, inv, 0, std::nullopt)
-                    || usedAny;
+                usedAny = equipInventoryItem(itemId, static_cast<int>(item.count), source, inv, 0) || usedAny;
             }
             usedAny = equipOutfit(inv->mDefaultOutfit, source, inv) || usedAny;
             return usedAny;
@@ -1642,10 +1847,8 @@ namespace MWClass
         const std::optional<FalloutSandboxSaveFallback> sandboxFallback
             = getFalloutSandboxSaveFallback(npcState.mCreatureStats.mAiSequence);
         data->mCreatureStats.readState(npcState.mCreatureStats);
+        applySavedEquipmentOverride(*data, *MWBase::Environment::get().getESMStore());
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered every retained saved stack.
-        // The complete saved inventory already includes the synchronous first-death roll. Never reroll it when a
-        // dead NPC is restored or struck again.
-        data->mDeathItemsGenerated = data->mCreatureStats.isDead();
         data->mFnvAiSequenceInitialised = !sandboxFallback.has_value();
         data->mFnvSandboxPackageNeedsReevaluation = sandboxFallback.has_value();
         data->mFnvSandboxSaveFallback = sandboxFallback;
@@ -1732,39 +1935,20 @@ namespace MWClass
 
     bool ESM4Npc::addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
     {
-        if (armor == nullptr)
-            return false;
-
-        std::vector<const ESM4::Armor*>& equippedArmor = getCustomData(ptr).mEquippedArmor;
-        if (std::find(equippedArmor.begin(), equippedArmor.end(), armor) != equippedArmor.end())
-            return false;
-
-        equippedArmor.push_back(armor);
-        return true;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const bool changed = addEquippedArmorToData(data, armor, false);
+        if (changed)
+            recordEquipmentOverride(data);
+        return changed;
     }
 
     bool ESM4Npc::addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
     {
-        if (armor == nullptr)
-            return false;
-
         ESM4NpcCustomData& data = getCustomData(ptr);
-        const std::uint32_t occupiedSlots = armor->mArmorFlags;
-        if (occupiedSlots != 0)
-        {
-            std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
-                return equipped != nullptr && equipped != armor && (equipped->mArmorFlags & occupiedSlots) != 0;
-            });
-            std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
-                return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
-            });
-        }
-
-        if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor) != data.mEquippedArmor.end())
-            return false;
-
-        data.mEquippedArmor.push_back(armor);
-        return true;
+        const bool changed = addEquippedArmorToData(data, armor, true);
+        if (changed)
+            recordEquipmentOverride(data);
+        return changed;
     }
 
     bool ESM4Npc::setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon)
@@ -1774,6 +1958,121 @@ namespace MWClass
             return false;
 
         data.mEquippedWeapon = weapon;
+        recordEquipmentOverride(data);
+        return true;
+    }
+
+    bool ESM4Npc::equipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item)
+    {
+        if (item.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || !applyEquippedItemToData(data, *store, item))
+            return false;
+        return recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::unequipFalloutItem(const MWWorld::Ptr& ptr, ESM::FormId item)
+    {
+        if (item.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return false;
+
+        bool supported = false;
+        if (store->get<ESM4::Weapon>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            if (data.mEquippedWeapon != nullptr && data.mEquippedWeapon->mId == item)
+            {
+                data.mEquippedWeapon = nullptr;
+                data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+            }
+        }
+        if (store->get<ESM4::Armor>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            std::erase_if(data.mEquippedArmor,
+                [&](const ESM4::Armor* armor) { return armor != nullptr && armor->mId == item; });
+        }
+        if (store->get<ESM4::Clothing>().search(ESM::RefId(item)) != nullptr)
+        {
+            supported = true;
+            std::erase_if(data.mEquippedClothing,
+                [&](const ESM4::Clothing* clothing) { return clothing != nullptr && clothing->mId == item; });
+        }
+        return supported && recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::clearFalloutEquipment(const MWWorld::Ptr& ptr)
+    {
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        data.mEquippedArmor.clear();
+        data.mEquippedClothing.clear();
+        data.mEquippedWeapon = nullptr;
+        data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+        return recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::applyFalloutEquipmentOverride(
+        const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& items, bool requireInventory)
+    {
+        if (items.size() > 64)
+            return false;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const std::vector<const ESM4::Armor*> oldArmor = data.mEquippedArmor;
+        const std::vector<const ESM4::Clothing*> oldClothing = data.mEquippedClothing;
+        const ESM4::Weapon* oldWeapon = data.mEquippedWeapon;
+        const MWMechanics::DrawState oldDrawState = data.mCreatureStats.getDrawState();
+
+        data.mEquippedArmor.clear();
+        data.mEquippedClothing.clear();
+        data.mEquippedWeapon = nullptr;
+        std::set<ESM::FormId> applied;
+        for (const ESM::FormId item : items)
+        {
+            if (item.isZeroOrUnset() || !applied.insert(item).second
+                || !applyEquippedItemToData(data, *store, item, requireInventory))
+            {
+                data.mEquippedArmor = oldArmor;
+                data.mEquippedClothing = oldClothing;
+                data.mEquippedWeapon = oldWeapon;
+                data.mCreatureStats.setDrawState(oldDrawState);
+                return false;
+            }
+        }
+        if (data.mEquippedWeapon == nullptr)
+            data.mCreatureStats.setDrawState(MWMechanics::DrawState::Nothing);
+        return recordEquipmentOverride(data);
+    }
+
+    bool ESM4Npc::resetFalloutInventory(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const ESM4::Npc* const base = ptr.get<ESM4::Npc>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        // Build the authored template/levelled inventory off-reference, then atomically replace only inventory and
+        // equipment. Quest state, health, AI progress, spell overrides, scene state, and scripted name remain live.
+        std::unique_ptr<ESM4NpcCustomData> authored = makeNpcCustomData(ptr);
+        if (authored == nullptr || authored->mContainerStore == nullptr)
+            return false;
+        data.mContainerStore = std::move(authored->mContainerStore);
+        data.mContainerItemsRegistered = false;
+        data.mEquippedArmor = std::move(authored->mEquippedArmor);
+        data.mEquippedClothing = std::move(authored->mEquippedClothing);
+        data.mEquippedWeapon = authored->mEquippedWeapon;
+        data.mCreatureStats.clearFalloutEquipmentOverride();
         return true;
     }
 
@@ -1797,6 +2096,11 @@ namespace MWClass
         return getCustomData(ptr).mAIPackage;
     }
 
+    const ESM4::Npc* ESM4Npc::getAIDataRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mAIData;
+    }
+
     const ESM4::Npc* ESM4Npc::getStatsRecord(const MWWorld::Ptr& ptr)
     {
         return chooseStatsRecord(getCustomData(ptr));
@@ -1815,6 +2119,112 @@ namespace MWClass
     bool ESM4Npc::isFemale(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mIsFemale;
+    }
+
+    bool ESM4Npc::matchRace(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId
+            || sourceTraits.mRace.isZeroOrUnset())
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mTraits == nullptr)
+            return false;
+        const bool targetIsFallout = data.mTraits->mIsFO3 || data.mTraits->mIsFONV;
+        const bool sourceIsFallout = sourceTraits.mIsFO3 || sourceTraits.mIsFONV;
+        const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
+        const ESM4::Race* const sourceRace
+            = store != nullptr ? store->get<ESM4::Race>().search(ESM::RefId(sourceTraits.mRace)) : nullptr;
+        if (!targetIsFallout || !sourceIsFallout || sourceRace == nullptr)
+            return false;
+
+        if (!data.mAppearanceTraits)
+            data.mAppearanceTraits.emplace(*data.mTraits);
+        ESM4::Npc& traits = *data.mAppearanceTraits;
+        traits.mRace = sourceTraits.mRace;
+        traits.mFgRace = sourceTraits.mFgRace;
+        // Retail MatchRace selects the new race's default facial texture.
+        // Geometry remains independently mutable by MatchFaceGeometry.
+        traits.mSymTextureModeCoefficients.clear();
+        traits.mTintLayers.clear();
+        data.mTraits = &traits;
+        data.mRace = sourceRace;
+        data.mUsesDefaultFaceTexture = true;
+        Log(Debug::Info) << "FNV/ESM4 behavior: MatchRace actor="
+                         << ptr.getCellRef().getRefId() << " source=" << sourceTraits.mEditorId
+                         << " race=" << ESM::RefId(sourceTraits.mRace)
+                         << " texture=runtime-race-default";
+        return true;
+    }
+
+    bool ESM4Npc::matchFaceGeometry(const MWWorld::Ptr& ptr, const ESM4::Npc& sourceTraits,
+        const ESM4::Race* sourceRace, bool sourceFemale, float percentage)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId
+            || !std::isfinite(percentage) || percentage < 0.f || percentage > 100.f)
+            return false;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mTraits == nullptr || data.mRace == nullptr || sourceRace == nullptr)
+            return false;
+        const bool targetIsFallout = data.mTraits->mIsFO3 || data.mTraits->mIsFONV;
+        const bool sourceIsFallout = sourceTraits.mIsFO3 || sourceTraits.mIsFONV;
+        if (!targetIsFallout || !sourceIsFallout)
+            return false;
+
+        // Copy both operands before materialising the target's owned override:
+        // source and target are allowed to be the same reference.
+        const ESM4::Npc targetBefore = *data.mTraits;
+        const ESM4::Npc sourceBefore = sourceTraits;
+        const float blend = percentage / 100.f;
+        const auto raceCoefficients = [](const ESM4::Race& race, bool female, bool symmetric)
+            -> const std::vector<float>& {
+            if (symmetric)
+                return female ? race.mSymShapeModeCoeffFemale : race.mSymShapeModeCoefficients;
+            return female ? race.mAsymShapeModeCoeffFemale : race.mAsymShapeModeCoefficients;
+        };
+        const auto blendGeometry = [blend](const std::vector<float>& target,
+                                       const std::vector<float>& targetRace,
+                                       const std::vector<float>& source,
+                                       const std::vector<float>& sourceRace) {
+            const std::size_t size
+                = std::max({ target.size(), targetRace.size(), source.size(), sourceRace.size() });
+            std::vector<float> result(size, 0.f);
+            const auto valueAt = [](const std::vector<float>& values, std::size_t index) {
+                return index < values.size() ? values[index] : 0.f;
+            };
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                const float targetBaseline = valueAt(targetRace, index);
+                const float targetEffective = valueAt(target, index) + targetBaseline;
+                const float sourceEffective = valueAt(source, index) + valueAt(sourceRace, index);
+                result[index] = targetEffective + (sourceEffective - targetEffective) * blend
+                    - targetBaseline;
+            }
+            return result;
+        };
+
+        if (!data.mAppearanceTraits)
+            data.mAppearanceTraits.emplace(targetBefore);
+        ESM4::Npc& traits = *data.mAppearanceTraits;
+        traits.mSymShapeModeCoefficients = blendGeometry(targetBefore.mSymShapeModeCoefficients,
+            raceCoefficients(*data.mRace, data.mIsFemale, true),
+            sourceBefore.mSymShapeModeCoefficients,
+            raceCoefficients(*sourceRace, sourceFemale, true));
+        traits.mAsymShapeModeCoefficients = blendGeometry(targetBefore.mAsymShapeModeCoefficients,
+            raceCoefficients(*data.mRace, data.mIsFemale, false),
+            sourceBefore.mAsymShapeModeCoefficients,
+            raceCoefficients(*sourceRace, sourceFemale, false));
+        data.mTraits = &traits;
+        Log(Debug::Info) << "FNV/ESM4 behavior: MatchFaceGeometry actor="
+                         << ptr.getCellRef().getRefId() << " source=" << sourceTraits.mEditorId
+                         << " percentage=" << percentage << " geometryOnly=true"
+                         << " symmetric=" << traits.mSymShapeModeCoefficients.size()
+                         << " asymmetric=" << traits.mAsymShapeModeCoefficients.size();
+        return true;
+    }
+
+    bool ESM4Npc::usesDefaultFaceTexture(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mUsesDefaultFaceTexture;
     }
 
     std::string_view ESM4Npc::chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale)
@@ -1871,7 +2281,10 @@ namespace MWClass
 
     std::string_view ESM4Npc::getName(const MWWorld::ConstPtr& ptr) const
     {
-        const ESM4::Npc* const baseData = getCustomData(ptr).mBaseData;
+        const ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mCreatureStats.getFalloutFullName())
+            return *data.mCreatureStats.getFalloutFullName();
+        const ESM4::Npc* const baseData = data.mBaseData;
         if (baseData == nullptr)
             return {};
         return baseData->mFullName;
@@ -1883,6 +2296,23 @@ namespace MWClass
         const ESM4::Npc* packageRecord = data.mAIPackage != nullptr ? data.mAIPackage : data.mTraits;
         if (packageRecord != nullptr)
             initialiseFnvAiSequence(data, ptr, packageRecord->mAIPackages);
+        if (data.mFnvPackageCompletionPending && data.mCreatureStats.getAiSequence().isPackageDone())
+        {
+            // AiSequence marks completion on the same simulation boundary on
+            // which it removes a one-shot travel package. Clear the pending
+            // identity before executing source because that source may call
+            // EVP and install a successor package immediately.
+            const ESM::FormId completedPackage = data.mFnvPackageCompletionPackage;
+            data.mFnvPackageCompletionPackage = ESM::FormId{};
+            data.mFnvPackageCompletionPending = false;
+            if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+                world->getESM4QuestRuntime().onActorScriptPackageDone(ptr, completedPackage);
+            // Package End source is allowed to change the same quest
+            // conditions that selected this package.  Re-evaluate naturally
+            // on the following actor update so that a chained authored
+            // package is selected from those new conditions.
+            data.mFnvAiSequenceInitialised = false;
+        }
         if (data.mFnvAiSequenceInitialised)
         {
             data.mFnvSandboxPackageNeedsReevaluation = false;
@@ -1910,60 +2340,13 @@ namespace MWClass
         return store;
     }
 
-    bool ESM4Npc::materializeFnvDeathItem(
-        const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world)
-    {
-        const ESM4::Npc* base = ptr.get<ESM4::Npc>()->mBase;
-        if (base == nullptr || !base->mIsFONV)
-            return false;
-
-        ESM4NpcCustomData& data = getCustomData(ptr);
-        if (!data.mCreatureStats.isDead() || data.mDeathItemsGenerated)
-            return false;
-
-        data.mDeathItemsGenerated = true;
-        const ESM4::Npc* traits = data.mTraits;
-        if (traits == nullptr || traits->mDeathItem.isZeroOrUnset())
-            return true;
-
-        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
-        MWWorld::ContainerStore& destination = ptr.getClass().getContainerStore(ptr);
-        const ESM::RefId deathItem(traits->mDeathItem);
-        std::string_view failure;
-        if (!materializeFnvDeathItemList(
-                destination, esmStore, deathItem, playerLevel, prng, world, failure))
-        {
-            Log(Debug::Warning) << "Unable to materialize FNV NPC_ death item " << deathItem << " for "
-                                << ESM::RefId(base->mId) << " reason=" << failure;
-            return false;
-        }
-        return true;
-    }
-
-    void ESM4Npc::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
-        const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const
-    {
-        const bool wasDead = getCreatureStats(ptr).isDead();
-        Actor::onHit(ptr, damages, object, attacker, successful, sourceType);
-        if (wasDead || !getCreatureStats(ptr).isDead())
-            return;
-
-        MWBase::World* world = MWBase::Environment::tryGetWorld();
-        if (world == nullptr)
-        {
-            Log(Debug::Warning) << "Unable to materialize first-death FNV NPC_ loot without a runtime World";
-            return;
-        }
-        int playerLevel = ESM4Impl::sDefaultLevel;
-        const MWWorld::Ptr player = world->getPlayerPtr();
-        if (!player.isEmpty() && player.getClass().isActor())
-            playerLevel = player.getClass().getCreatureStats(player).getLevel();
-        materializeFnvDeathItem(ptr, world->getPrng(), std::max(playerLevel, 1), world);
-    }
-
     float ESM4Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (const std::optional<float> scripted = stats.getFalloutActorValueOverride(13))
+            return std::max(0.f, *scripted);
+        if (const ESM4::Npc* record = getStatsRecord(ptr); record != nullptr && record->mIsFONV)
+            return std::max(0.f, 150.f + 10.f * stats.getAttribute(ESM::Attribute::Strength).getModified());
         return stats.getAttribute(ESM::Attribute::Strength).getModified() * 5.f;
     }
 
@@ -1983,6 +2366,8 @@ namespace MWClass
         const ESM4NpcCustomData& data = getCustomData(ptr);
         const ESM4::Npc* statsRecord = chooseStatsRecord(data);
         float multiplier = statsRecord != nullptr ? getSpeedMultiplier(*statsRecord) : 1.f;
+        if (const std::optional<float> scripted = data.mCreatureStats.getFalloutActorValueOverride(21))
+            multiplier = std::max(*scripted, 1.f) / 100.f;
         if (statsRecord != nullptr && statsRecord->mIsFONV)
         {
             const ESM::GameSetting* setting = MWBase::Environment::get()
@@ -1992,15 +2377,10 @@ namespace MWClass
             const float baseSpeed
                 = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
             MWBase::World* world = MWBase::Environment::get().getWorld();
-            if (world != nullptr && ptr == world->getPlayerPtr())
-            {
-                const std::optional<MWWorld::FalloutRuntimeActorValue> speedMultiplier
-                    = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
-                        MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
-                if (speedMultiplier && std::isfinite(speedMultiplier->mValue))
-                    multiplier = speedMultiplier->mValue / 100.f;
-            }
-            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed);
+            const float playerScale = world != nullptr && ptr == world->getPlayerPtr()
+                ? MWWorld::getFalloutPlayerSpeedScale()
+                : 1.f;
+            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed) * playerScale;
         }
 
         return std::max(1.f, data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified()) * 2.5f
@@ -2058,7 +2438,7 @@ namespace MWClass
     {
         (void)actor;
         if (getCreatureStats(ptr).isDead())
-            return std::make_unique<MWWorld::ActionOpen>(ptr);
+            return std::make_unique<MWWorld::FailedAction>();
         return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 
@@ -2066,6 +2446,25 @@ namespace MWClass
     {
         const ESM4NpcCustomData& data = getCustomData(ptr);
         return data.mBaseData != nullptr && isPersistentRecord(*data.mBaseData);
+    }
+
+    bool ESM4Npc::isEssential(const MWWorld::ConstPtr& ptr) const
+    {
+        const ESM4::Npc* const record = ptr.get<ESM4::Npc>()->mBase;
+        const ESM4::Npc* const baseData = getCustomData(ptr).mBaseData;
+        if (record == nullptr || baseData == nullptr)
+            return false;
+
+        if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& state = world->getFalloutPlayerRuntimeState();
+            if (const std::optional<bool> override = state.getEssentialOverride(record->mId))
+                return *override;
+            if (baseData->mId != record->mId)
+                if (const std::optional<bool> override = state.getEssentialOverride(baseData->mId))
+                    return *override;
+        }
+        return (baseData->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Essential) != 0;
     }
 
     bool ESM4Npc::isBipedal(const MWWorld::ConstPtr& ptr) const

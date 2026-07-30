@@ -82,12 +82,13 @@ namespace ESM4
 {
     class Reader;
     struct Activator;
+    struct AcousticSpace;
     struct ActorValueInformation;
     struct ActorCharacter;
     struct ActorCreature;
     struct AnimObject;
-    struct AmmoEffect;
     struct Ammunition;
+    struct AmmoEffect;
     struct AIPackage;
     struct Armor;
     struct ArmorAddon;
@@ -218,9 +219,9 @@ namespace MWWorld
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
-            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
-            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Message>, Store<ESM4::Reputation>,
-            Store<ESM4::ImpactData>, Store<ESM4::ImpactDataSet>>;
+            Store<ESM4::Message>, Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Reputation>,
+            Store<ESM4::ImpactData>, Store<ESM4::ImpactDataSet>, Store<ESM4::AcousticSpace>>;
 
     private:
         template <typename T>
@@ -241,12 +242,6 @@ namespace MWWorld
 
         mutable std::unordered_map<ESM::RefId, std::weak_ptr<MWMechanics::SpellList>> mSpellListCache;
 
-        template <class T>
-        Store<T>& getWritable()
-        {
-            return static_cast<Store<T>&>(*mStores[getTypeIndex<T>()]);
-        }
-
         /// Validate entries in store after setup
         void validate();
 
@@ -265,8 +260,6 @@ namespace MWWorld
         bool mHasStarfieldContent = false;
         ESM4Game mESM4Game = ESM4Game::Unknown;
         std::optional<std::uint32_t> mESM4GameMasterIndex;
-        std::size_t mFalloutNewVegasMasterCandidateCount = 0;
-        std::optional<std::int32_t> mFalloutNewVegasMasterCandidateIndex;
         std::optional<FalloutPlayerState> mFalloutPlayerState;
 
     public:
@@ -302,31 +295,7 @@ namespace MWWorld
 
         ESM4Game getESM4Game() const { return mESM4Game; }
 
-        /// Number of content files whose case-insensitive basename is exactly FalloutNV.esm.
-        /// A matching filename establishes only provenance; typed Player validation selects FNV setup.
-        std::size_t getFalloutNewVegasMasterCandidateCount() const
-        {
-            return mFalloutNewVegasMasterCandidateCount;
-        }
-
-        /// Normalized namespace of the sole fully-read FalloutNV.esm candidate, if unambiguous and in range.
-        std::optional<std::int32_t> getFalloutNewVegasMasterCandidateIndex() const
-        {
-            return mFalloutNewVegasMasterCandidateIndex;
-        }
-
-        /// Fully validated, pointer-free native Player state, or nullptr until validation succeeds.
-        const FalloutPlayerState* getFalloutPlayerState() const
-        {
-            return mFalloutPlayerState ? &*mFalloutPlayerState : nullptr;
-        }
-
-        /// Re-resolve exact typed records from the current stores; no raw pointer is retained by ESMStore.
-        FalloutNativePlayerRecordsResolution getFalloutNativePlayerRecords() const;
-
-        /// Bridge validated official FNV GMSTs and the narrow OpenMW compatibility globals/settings before generic
-        /// fallback insertion. Returns false without mutation when no FalloutNV.esm provenance candidate exists.
-        bool prepareFalloutNewVegasCompatibilityRecords();
+        const std::optional<FalloutPlayerState>& getFalloutPlayerState() const { return mFalloutPlayerState; }
 
         /// Return the authored storage cell behind a Starfield BGSPackIn base form.
         /// Pack-ins are expanded lazily by CellStore so only the active exterior grid pays their assembly cost.
@@ -336,6 +305,12 @@ namespace MWWorld
         const Store<T>& get() const
         {
             return static_cast<const Store<T>&>(*mStores[getTypeIndex<T>()]);
+        }
+
+        template <class T>
+        Store<T>& getWritable()
+        {
+            return static_cast<Store<T>&>(*mStores[getTypeIndex<T>()]);
         }
 
         /// Insert a custom record (i.e. with a generated ID that will not clash will pre-existing records)
@@ -379,7 +354,7 @@ namespace MWWorld
         {
             Store<T>& store = getWritable<T>();
             if (store.search(x.mId) != nullptr)
-                throw std::runtime_error("Try to override existing record " + x.mId.toString());
+                throw std::runtime_error("Try to override existing record " + x.mId.toDebugString());
 
             T* ptr = store.insertStatic(x);
             if constexpr (std::is_convertible_v<Store<T>*, DynamicStore*>)
@@ -394,7 +369,7 @@ namespace MWWorld
         void setUp();
         void validateRecords(ESM::ReadersCache& readers);
 
-        int countSavedGameRecords() const;
+        size_t countSavedGameRecords() const;
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const;
 

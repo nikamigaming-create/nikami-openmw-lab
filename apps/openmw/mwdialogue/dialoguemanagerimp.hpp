@@ -14,11 +14,10 @@
 #include <components/misc/strings/algorithm.hpp>
 #include <components/translation/translation.hpp>
 
+#include "../mwscript/compilercontext.hpp"
 #include "../mwworld/ptr.hpp"
 
-#include "../mwscript/compilercontext.hpp"
-
-#include "esm4dialogueutils.hpp"
+#include "keywordsearch.hpp"
 
 namespace ESM
 {
@@ -51,6 +50,9 @@ namespace MWDialogue
         std::map<ESM::RefId, ActorKnownTopicInfo> mActorKnownTopics;
 
         Translation::Storage& mTranslationDataStorage;
+        mutable bool mKeywordSearchInitialized{ false };
+        mutable MWDialogue::KeywordSearch mKeywordSearch;
+
         MWScript::CompilerContext mCompilerContext;
         Compiler::StreamErrorHandler mErrorHandler;
 
@@ -66,7 +68,8 @@ namespace MWDialogue
 
         bool mEsm4Dialogue = false;
         ESM::FormId mLastEsm4Topic{};
-        Esm4DialoguePicker mEsm4Picker;
+        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
+        std::vector<std::pair<ESM::FormId, ESM::FormId>> mEsm4ChoiceSelections;
         std::set<ESM::FormId> mEsm4SaidInfos;
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
@@ -77,7 +80,8 @@ namespace MWDialogue
         int mCurrentDisposition;
         int mPermanentDispositionChange;
 
-        std::vector<ESM::RefId> parseTopicIdsFromText(const std::string& text);
+        const MWDialogue::KeywordSearch& getKeywordSearch() const;
+        std::vector<ESM::RefId> parseTopicIdsFromText(const std::string& text) const;
         void addTopicsFromText(const std::string& text);
 
         void updateActorKnownTopics();
@@ -91,7 +95,6 @@ namespace MWDialogue
         void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
             const ESM4::DialogInfo* retainedInfo = nullptr);
         const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic, bool requireActorAffinity = false) const;
-        const ESM4::DialogInfo* resolveEsm4Selection(const Esm4DialogueSelection& selection) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
         std::string resolveEsm4Voice(
@@ -143,7 +146,7 @@ namespace MWDialogue
         /// @note Controlled by an option, gets discarded when dialogue ends by default
         void applyBarterDispositionChange(int delta) override;
 
-        int countSavedGameRecords() const override;
+        size_t countSavedGameRecords() const override;
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const override;
 

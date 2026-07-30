@@ -4,18 +4,16 @@
 
 #include <MyGUI_EditBox.h>
 
-#include <extern/oics/ICSChannelListener.h>
-#include <extern/oics/ICSInputControlSystem.h>
+#include <oics/ICSChannelListener.h>
+#include <oics/ICSInputControlSystem.h>
 
 #include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
-#include <components/vr/vr.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwvr/vrinputmanager.hpp"
 
 #include "actions.hpp"
 
@@ -57,14 +55,6 @@ namespace MWInput
         }
     };
 
-//## VR_PATCH BEGIN
-// The VR input manager needs to forward XR inputs to ICS.
-    ICS::InputControlSystem& BindingsManager::ics()
-    {
-        return *mInputBinder;
-    }
-
-//## VR_PATCH END
     class BindingsListener : public ICS::ChannelListener, public ICS::DetectingBindingListener
     {
     public:
@@ -282,7 +272,6 @@ namespace MWInput
         defaultKeyBindings[A_Jump] = SDL_SCANCODE_E;
         defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
         defaultKeyBindings[A_Rest] = SDL_SCANCODE_T;
-        defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
         defaultKeyBindings[A_GameMenu] = SDL_SCANCODE_ESCAPE;
         defaultKeyBindings[A_Map] = SDL_SCANCODE_M;
         defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_TAB;
@@ -709,14 +698,9 @@ namespace MWInput
             else if (action == A_Jump && actionIsActive(A_ToggleSpell))
                 action = A_CycleSpellLeft;
         }
-        auto onPress = previousValue <= 0.6 && currentValue > 0.6;
 
-        if (action == A_GameMenu && VR::getVR())
-            MWVR::VRInputManager::instance().gameMenuAction(onPress);
-        else if (onPress)
-        {
+        if (previousValue <= 0.6 && currentValue > 0.6)
             manager->executeAction(action);
-        }
     }
 
     void BindingsManager::saveBindings()

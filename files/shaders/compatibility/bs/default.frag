@@ -1,5 +1,5 @@
 #version 120
-#pragma import_defines(FORCE_OPAQUE, DISTORTION, IGNORE_DIFFUSE_ALPHA)
+#pragma import_defines(FORCE_OPAQUE, DISTORTION)
 
 #if @useUBO
     #extension GL_ARB_uniform_buffer_object : require
@@ -32,6 +32,10 @@ varying vec2 envMapUV;
 uniform vec4 envMapColor;
 #endif
 
+#if @hairPaletteMap
+uniform sampler2D hairPaletteMap;
+#endif
+
 #if @glossMap
 uniform sampler2D glossMap;
 varying vec2 glossMapUV;
@@ -51,6 +55,8 @@ uniform float specStrength;
 uniform bool useTreeAnim;
 uniform float distortionStrength;
 uniform int falloutSlsMode;
+uniform bool falloutHairPaletteMode;
+uniform float falloutHairColorIndex;
 
 #include "lib/core/fragment.h.glsl"
 #include "lib/light/lighting.glsl"
@@ -66,6 +72,8 @@ vec3 falloutEnvMapEffect(vec3 viewNormal)
 {
     vec3 envEffect = vec3(0.0);
 #if @envMap
+    if (falloutHairPaletteMode)
+        return envEffect;
     vec2 envTexCoordGen = envMapUV;
 #if @normalMap
     vec3 viewVec = normalize(passViewPos);
@@ -119,6 +127,12 @@ void main()
 #if @diffuseMap
     gl_FragData[0] = texture2D(diffuseMap, diffuseMapUV);
 
+#if @hairPaletteMap
+    if (falloutHairPaletteMode)
+        gl_FragData[0].rgb = texture2D(hairPaletteMap,
+            vec2(clamp(gl_FragData[0].r, 0.0, 1.0), clamp(falloutHairColorIndex, 0.0, 1.0))).rgb;
+#endif
+
 #if defined(DISTORTION) && DISTORTION
     vec2 screenCoords = gl_FragCoord.xy / (screenRes * @distorionRTRatio);
     gl_FragData[0].a *= getDiffuseColor().a;
@@ -127,11 +141,7 @@ void main()
     return;
 #endif
 
-#if defined(IGNORE_DIFFUSE_ALPHA) && IGNORE_DIFFUSE_ALPHA
-    gl_FragData[0].a = 1.0;
-#else
     gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
-#endif
 #else
     gl_FragData[0] = vec4(1.0);
 #endif
@@ -184,29 +194,6 @@ void main()
 
         gl_FragData[0].xyz *= diffuseColor.xyz * max(light, vec3(0.0));
         gl_FragData[0].xyz += falloutEnvMapEffect(viewNormal);
-        gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
-
-#if defined(FORCE_OPAQUE) && FORCE_OPAQUE
-        gl_FragData[0].a = 1.0;
-#endif
-
-#if !defined(FORCE_OPAQUE) && !@disableNormals
-        gl_FragData[1].xyz = viewNormal * 0.5 + 0.5;
-#endif
-
-        applyShadowDebugOverlay();
-        return;
-    }
-
-    if (falloutSlsMode == 2)
-    {
-        // Bytecode translation of FNV SLS1009/1010.  This static directional
-        // variant has no material-diffuse modulation, shadow sample, point-light
-        // loop, environment/specular term or generic OpenMW lighting clamp.
-        vec3 light = getAmbientColor().xyz * gl_LightModel.ambient.xyz;
-        vec3 sunDirection = normalize(lcalcPosition(0));
-        light += lcalcDiffuse(0) * clamp(dot(viewNormal, sunDirection), 0.0, 1.0);
-        gl_FragData[0].xyz *= clamp(light, vec3(0.0), vec3(1.0));
         gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
 
 #if defined(FORCE_OPAQUE) && FORCE_OPAQUE

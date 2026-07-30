@@ -2,9 +2,11 @@
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
 
+#include <components/esm3/loadmgef.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <limits>
-#include <utility>
 
 namespace ESM
 {
@@ -119,19 +121,31 @@ namespace ESM
                 esm.getHNOT(effectIndex, "EIND");
                 int32_t actorId;
                 esm.getHNT(actorId, "ACID");
-                mSummonedCreatureMap[SummonKey(magicEffect, source, effectIndex)] = actorId;
-                mSummonedCreatures.emplace(magicEffect, actorId);
+                mSummonedCreatureMap[SummonKey(ESM::MagicEffect::indexToRefId(magicEffect), source, effectIndex)]
+                    = actorId;
+                mSummonedCreatures.emplace(ESM::MagicEffect::indexToRefId(magicEffect),
+                    RefNum{ .mIndex = static_cast<uint32_t>(actorId), .mContentFile = -1 });
             }
         }
         else
         {
             while (esm.isNextSub("SUMM"))
             {
-                int32_t magicEffect;
-                esm.getHT(magicEffect);
-                int32_t actorId;
-                esm.getHNT(actorId, "ACID");
-                mSummonedCreatures.emplace(magicEffect, actorId);
+                RefId effectId;
+                if (esm.getFormatVersion() <= MaxSerializeEffectRefIdFormatVersion)
+                {
+                    int32_t magicEffect;
+                    esm.getHT(magicEffect);
+                    effectId = ESM::MagicEffect::indexToRefId(magicEffect);
+                }
+                else
+                    effectId = esm.getRefId();
+                RefNum actor;
+                if (esm.getFormatVersion() <= MaxActorIdSaveGameFormatVersion)
+                    esm.getHNT(actor.mIndex, "ACID");
+                else
+                    actor = esm.getFormId(true, "ACID");
+                mSummonedCreatures.emplace(effectId, actor);
             }
         }
 
@@ -170,22 +184,133 @@ namespace ESM
         }
         mFalloutLimbDamage.fill(0.f);
         esm.getHNOT(mFalloutLimbDamage, "FLMB");
-        mFalloutActiveEffects.clear();
-        while (esm.isNextSub("FAEF"))
+
+        mFalloutActorValueOverrides.clear();
+        std::uint32_t actorValueCount = 0;
+        if (esm.peekNextSub("FAVC"))
         {
-            FalloutActiveEffect effect;
-            std::uint32_t kind = 0;
-            esm.getHT(kind);
-            effect.mKind = static_cast<FalloutActiveEffectKind>(kind);
-            effect.mSpell = esm.getHNRefId("FASP");
-            effect.mBaseEffect = esm.getHNRefId("FABE");
-            esm.getHNT(effect.mFlags, "FAFL");
-            esm.getHNT(effect.mActorValue, "FAAV");
-            esm.getHNT(effect.mMagnitude, "FAMG");
-            esm.getHNT(effect.mDuration, "FADR");
-            esm.getHNT(effect.mTimeLeft, "FATL");
-            esm.getHNT(effect.mCasterActorId, "FACA");
-            mFalloutActiveEffects.push_back(std::move(effect));
+            esm.getHNT(actorValueCount, "FAVC");
+            if (actorValueCount > 96)
+                esm.fail("Unreasonable Fallout actor-value override count");
+            for (std::uint32_t i = 0; i < actorValueCount; ++i)
+            {
+                std::uint8_t actorValue = 0;
+                float value = 0.f;
+                esm.getHNT(actorValue, "FAVI");
+                esm.getHNT(value, "FAVV");
+                if (!std::isfinite(value) || !mFalloutActorValueOverrides.emplace(actorValue, value).second)
+                    esm.fail("Invalid or duplicate Fallout actor-value override");
+            }
+        }
+
+        mFalloutFactionOverrides.clear();
+        std::uint32_t factionCount = 0;
+        if (esm.peekNextSub("FFCT"))
+        {
+            esm.getHNT(factionCount, "FFCT");
+            constexpr std::uint32_t MaximumFactionCount = 1'000'000;
+            if (factionCount > MaximumFactionCount)
+                esm.fail("Unreasonable Fallout faction override count");
+            for (std::uint32_t i = 0; i < factionCount; ++i)
+            {
+                ESM::FormId faction = esm.getFormId(true, "FFID");
+                const bool contentAvailable = esm.applyContentFileMapping(faction);
+                std::int16_t rank = 0;
+                esm.getHNT(rank, "FFRK");
+                if (rank != FalloutFactionRemoved
+                    && (rank < std::numeric_limits<std::int8_t>::min()
+                        || rank > std::numeric_limits<std::int8_t>::max()))
+                    esm.fail("Invalid Fallout faction override rank");
+                if (contentAvailable
+                    && (faction.isZeroOrUnset() || !mFalloutFactionOverrides.emplace(faction, rank).second))
+                    esm.fail("Invalid or duplicate Fallout faction override");
+            }
+        }
+
+        mFalloutRuntimeFlags = 0;
+        esm.getHNOT(mFalloutRuntimeFlags, "FRTF");
+        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x3f;
+        if ((mFalloutRuntimeFlags & ~KnownFalloutRuntimeFlags) != 0)
+            esm.fail("Invalid Fallout actor runtime flags");
+
+        mFalloutLookTarget.reset();
+        mFalloutLookRotateBody = false;
+        if (esm.peekNextSub("FLKT"))
+        {
+            ESM::FormId target = esm.getFormId(true, "FLKT");
+            const bool contentAvailable = esm.applyContentFileMapping(target);
+            std::uint8_t rotateBody = 0;
+            esm.getHNOT(rotateBody, "FLKR");
+            if (rotateBody > 1)
+                esm.fail("Invalid Fallout scripted look flag");
+            if (contentAvailable)
+            {
+                if (target.isZeroOrUnset())
+                    esm.fail("Invalid Fallout scripted look target");
+                mFalloutLookTarget = target;
+                mFalloutLookRotateBody = rotateBody != 0;
+            }
+        }
+
+        mHasFalloutEquipmentOverride = false;
+        mFalloutEquippedItems.clear();
+        if (esm.peekNextSub("FEQC"))
+        {
+            mHasFalloutEquipmentOverride = true;
+            std::uint32_t equippedCount = 0;
+            esm.getHNT(equippedCount, "FEQC");
+            constexpr std::uint32_t MaximumEquippedItems = 64;
+            if (equippedCount > MaximumEquippedItems)
+                esm.fail("Unreasonable Fallout equipped-item override count");
+            for (std::uint32_t i = 0; i < equippedCount; ++i)
+            {
+                ESM::FormId item = esm.getFormId(true, "FEQI");
+                const bool contentAvailable = esm.applyContentFileMapping(item);
+                if (contentAvailable)
+                {
+                    if (item.isZeroOrUnset()
+                        || std::find(mFalloutEquippedItems.begin(), mFalloutEquippedItems.end(), item)
+                            != mFalloutEquippedItems.end())
+                        esm.fail("Invalid or duplicate Fallout equipped-item override");
+                    mFalloutEquippedItems.push_back(item);
+                }
+            }
+        }
+
+        mHasFalloutActorEffectOverride = false;
+        mFalloutActorEffects.clear();
+        if (esm.peekNextSub("FAEC"))
+        {
+            mHasFalloutActorEffectOverride = true;
+            std::uint32_t effectCount = 0;
+            esm.getHNT(effectCount, "FAEC");
+            constexpr std::uint32_t MaximumActorEffects = 1024;
+            if (effectCount > MaximumActorEffects)
+                esm.fail("Unreasonable Fallout actor-effect override count");
+            for (std::uint32_t i = 0; i < effectCount; ++i)
+            {
+                ESM::FormId effect = esm.getFormId(true, "FAEI");
+                const bool contentAvailable = esm.applyContentFileMapping(effect);
+                if (contentAvailable)
+                {
+                    if (effect.isZeroOrUnset()
+                        || std::find(mFalloutActorEffects.begin(), mFalloutActorEffects.end(), effect)
+                            != mFalloutActorEffects.end())
+                        esm.fail("Invalid or duplicate Fallout actor-effect override");
+                    mFalloutActorEffects.push_back(effect);
+                }
+            }
+        }
+
+        mFalloutFullName.reset();
+        if (esm.peekNextSub("FFNM"))
+        {
+            std::string name = esm.getHNString("FFNM");
+            constexpr std::size_t MaximumFullNameLength = 4096;
+            if (name.empty() || name.size() > MaximumFullNameLength
+                || name.find('\0') != std::string::npos)
+                esm.fail("Invalid Fallout actor full-name override");
+            mFalloutFullName = std::move(name);
         }
     }
 
@@ -252,9 +377,6 @@ namespace ESM
         if (mLevel != 1)
             esm.writeHNT("LEVL", mLevel);
 
-        if (mActorId != -1)
-            esm.writeHNT("ACID", mActorId);
-
         if (mDeathAnimation != -1)
             esm.writeHNT("DANM", mDeathAnimation);
 
@@ -266,15 +388,10 @@ namespace ESM
         mAiSequence.save(esm);
         mMagicEffects.save(esm);
 
-        for (const auto& [effectId, actorId] : mSummonedCreatures)
+        for (const auto& [effectId, actor] : mSummonedCreatures)
         {
-            esm.writeHNT("SUMM", effectId);
-            esm.writeHNT("ACID", actorId);
-        }
-
-        for (int32_t key : mSummonGraveyard)
-        {
-            esm.writeHNT("GRAV", key);
+            esm.writeHNRefId("SUMM", effectId);
+            esm.writeFormId(actor, true, "ACID");
         }
 
         esm.writeHNT("AISE", mHasAiSettings);
@@ -287,18 +404,45 @@ namespace ESM
             esm.writeHNT("NOAC", mMissingACDT);
         if (std::any_of(mFalloutLimbDamage.begin(), mFalloutLimbDamage.end(), [](float value) { return value != 0.f; }))
             esm.writeHNT("FLMB", mFalloutLimbDamage);
-        for (const FalloutActiveEffect& effect : mFalloutActiveEffects)
+        if (!mFalloutActorValueOverrides.empty())
         {
-            esm.writeHNT("FAEF", static_cast<std::uint32_t>(effect.mKind));
-            esm.writeHNRefId("FASP", effect.mSpell);
-            esm.writeHNRefId("FABE", effect.mBaseEffect);
-            esm.writeHNT("FAFL", effect.mFlags);
-            esm.writeHNT("FAAV", effect.mActorValue);
-            esm.writeHNT("FAMG", effect.mMagnitude);
-            esm.writeHNT("FADR", effect.mDuration);
-            esm.writeHNT("FATL", effect.mTimeLeft);
-            esm.writeHNT("FACA", effect.mCasterActorId);
+            esm.writeHNT("FAVC", static_cast<std::uint32_t>(mFalloutActorValueOverrides.size()));
+            for (const auto& [actorValue, value] : mFalloutActorValueOverrides)
+            {
+                esm.writeHNT("FAVI", actorValue);
+                esm.writeHNT("FAVV", value);
+            }
         }
+        if (!mFalloutFactionOverrides.empty())
+        {
+            esm.writeHNT("FFCT", static_cast<std::uint32_t>(mFalloutFactionOverrides.size()));
+            for (const auto& [faction, rank] : mFalloutFactionOverrides)
+            {
+                esm.writeFormId(faction, true, "FFID");
+                esm.writeHNT("FFRK", rank);
+            }
+        }
+        if (mFalloutRuntimeFlags != 0)
+            esm.writeHNT("FRTF", mFalloutRuntimeFlags);
+        if (mFalloutLookTarget)
+        {
+            esm.writeFormId(*mFalloutLookTarget, true, "FLKT");
+            esm.writeHNT("FLKR", static_cast<std::uint8_t>(mFalloutLookRotateBody ? 1 : 0));
+        }
+        if (mHasFalloutEquipmentOverride)
+        {
+            esm.writeHNT("FEQC", static_cast<std::uint32_t>(mFalloutEquippedItems.size()));
+            for (const ESM::FormId item : mFalloutEquippedItems)
+                esm.writeFormId(item, true, "FEQI");
+        }
+        if (mHasFalloutActorEffectOverride)
+        {
+            esm.writeHNT("FAEC", static_cast<std::uint32_t>(mFalloutActorEffects.size()));
+            for (const ESM::FormId effect : mFalloutActorEffects)
+                esm.writeFormId(effect, true, "FAEI");
+        }
+        if (mFalloutFullName)
+            esm.writeHNString("FFNM", *mFalloutFullName);
     }
 
     void CreatureStats::blank()
@@ -329,7 +473,16 @@ namespace ESM
         mCorprusSpells.clear();
         mMissingACDT = false;
         mFalloutLimbDamage.fill(0.f);
-        mFalloutActiveEffects.clear();
+        mFalloutActorValueOverrides.clear();
+        mFalloutFactionOverrides.clear();
+        mFalloutRuntimeFlags = 0;
+        mFalloutLookTarget.reset();
+        mFalloutLookRotateBody = false;
+        mHasFalloutEquipmentOverride = false;
+        mFalloutEquippedItems.clear();
+        mHasFalloutActorEffectOverride = false;
+        mFalloutActorEffects.clear();
+        mFalloutFullName.reset();
     }
 
 }

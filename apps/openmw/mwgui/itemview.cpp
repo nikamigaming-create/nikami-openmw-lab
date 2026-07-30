@@ -12,27 +12,9 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/world.hpp"
 
-#include "inventorylistpolicy.hpp"
 #include "itemmodel.hpp"
 #include "itemwidget.hpp"
-
-namespace
-{
-    bool useFalloutInventoryList()
-    {
-        const MWBase::World* world = MWBase::Environment::get().getWorld();
-        if (world == nullptr)
-            return false;
-        for (const std::string& file : world->getContentFiles())
-        {
-            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
-                return true;
-        }
-        return false;
-    }
-}
 
 namespace MWGui
 {
@@ -71,34 +53,8 @@ namespace MWGui
         MyGUI::Widget* dragArea = mScrollView->getChildAt(0);
         int maxHeight = mScrollView->getHeight();
 
-        if (mFalloutListLayout)
-        {
-            constexpr int rowHeight = 36;
-            const int rowWidth = std::max(1, mScrollView->getWidth() - 18);
-            mItemCount = dragArea->getChildCount();
-            mRows = std::max(mItemCount, 1);
-            for (int i = 0; i < mItemCount; ++i)
-                dragArea->getChildAt(i)->setCoord(0, i * rowHeight, rowWidth, rowHeight);
-
-            const MyGUI::IntSize size(
-                mScrollView->getWidth(), std::max(mScrollView->getHeight(), mItemCount * rowHeight));
-            mScrollView->setVisibleVScroll(false);
-            mScrollView->setVisibleHScroll(false);
-            mScrollView->setCanvasSize(size);
-            mScrollView->setVisibleVScroll(true);
-            dragArea->setSize(size);
-
-            if (Settings::gui().mControllerMenus)
-            {
-                const int previousFocus = mControllerFocus;
-                mControllerFocus = normalizeInventoryControllerFocus(mControllerFocus, mItemCount);
-                updateControllerFocus(previousFocus, mControllerFocus);
-            }
-            return;
-        }
-
         mRows = std::max(maxHeight / 42, 1);
-        mItemCount = dragArea->getChildCount();
+        mItemCount = static_cast<int>(dragArea->getChildCount());
         bool showScrollbar = static_cast<int>(std::ceil(mItemCount / float(mRows))) > mScrollView->getWidth() / 42;
         if (showScrollbar)
         {
@@ -126,9 +82,10 @@ namespace MWGui
 
         if (Settings::gui().mControllerMenus)
         {
-            mControllerFocus = -1;
             if (mItemCount > 0)
                 mControllerFocus = std::clamp(mControllerFocus, 0, mItemCount - 1);
+            else
+                mControllerFocus = -1;
             updateControllerFocus(-1, mControllerFocus);
         }
 
@@ -151,7 +108,6 @@ namespace MWGui
             return;
 
         mModel->update();
-        mFalloutListLayout = useFalloutInventoryList();
 
         MyGUI::Widget* dragArea = mScrollView->createWidget<MyGUI::Widget>(
             {}, 0, 0, mScrollView->getWidth(), mScrollView->getHeight(), MyGUI::Align::Stretch);
@@ -162,11 +118,9 @@ namespace MWGui
         for (ItemModel::ModelIndex i = 0; i < static_cast<int>(mModel->getItemCount()); ++i)
         {
             const ItemStack& item = mModel->getItem(i);
-            const int width = mFalloutListLayout ? std::max(1, mScrollView->getWidth() - 18) : 42;
-            const int height = mFalloutListLayout ? 36 : 42;
+
             ItemWidget* itemWidget = dragArea->createWidget<ItemWidget>(
-                mFalloutListLayout ? "MW_FalloutItemRow" : "MW_ItemIcon",
-                MyGUI::IntCoord(0, 0, width, height), MyGUI::Align::Default);
+                "MW_ItemIcon", MyGUI::IntCoord(0, 0, 42, 42), MyGUI::Align::Default);
             itemWidget->setUserString("ToolTipType", "ItemModelIndex");
             itemWidget->setUserData(std::make_pair(i, mModel.get()));
             ItemWidget::ItemState state = ItemWidget::None;
@@ -175,7 +129,7 @@ namespace MWGui
             if (item.mType == ItemStack::Type_Equipped)
                 state = ItemWidget::Equip;
             itemWidget->setItem(item.mBase, state);
-            itemWidget->setCount(item.mCount);
+            itemWidget->setCount(static_cast<int>(item.mCount));
 
             itemWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &ItemView::onSelectedItem);
             itemWidget->eventMouseWheel += MyGUI::newDelegate(this, &ItemView::onMouseWheelMoved);
@@ -207,12 +161,6 @@ namespace MWGui
 
     void ItemView::onMouseWheelMoved(MyGUI::Widget* /*sender*/, int rel)
     {
-        if (mFalloutListLayout)
-        {
-            const int top = std::min(0, mScrollView->getViewOffset().top + static_cast<int>(rel * 0.3f));
-            mScrollView->setViewOffset(MyGUI::IntPoint(0, top));
-            return;
-        }
         if (mScrollView->getViewOffset().left + rel * 0.3f > 0)
             mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
         else
@@ -315,9 +263,6 @@ namespace MWGui
 
     void ItemView::updateControllerFocus(int prevFocus, int newFocus)
     {
-        MWBase::Environment::get().getWindowManager()->setCursorVisible(
-            !MWBase::Environment::get().getWindowManager()->getControllerTooltipVisible());
-
         if (!mItemCount)
             return;
 
@@ -338,21 +283,11 @@ namespace MWGui
                 focused->setControllerFocus(true);
 
                 // Scroll the list to keep the active item in view
-                if (mFalloutListLayout)
-                {
-                    constexpr int rowHeight = 36;
-                    const int visibleRows = std::max(1, mScrollView->getHeight() / rowHeight);
-                    const int firstVisible = std::max(0, newFocus - visibleRows + 1);
-                    mScrollView->setViewOffset(MyGUI::IntPoint(0, -firstVisible * rowHeight));
-                }
+                int column = newFocus / mRows;
+                if (column <= 3)
+                    mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
                 else
-                {
-                    int column = newFocus / mRows;
-                    if (column <= 3)
-                        mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
-                    else
-                        mScrollView->setViewOffset(MyGUI::IntPoint(-42 * (column - 3), 0));
-                }
+                    mScrollView->setViewOffset(MyGUI::IntPoint(-42 * (column - 3), 0));
 
                 MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
                 winMgr->restoreControllerTooltips();

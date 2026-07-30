@@ -49,10 +49,11 @@ namespace
         return result;
     }
 
-    std::unique_ptr<ESM4::Reader> makeFnvReader(std::string_view recordType, std::string payload)
+    std::unique_ptr<ESM4::Reader> makeArmorReader(
+        float version, std::string_view recordType, std::string payload)
     {
         std::string hedr;
-        appendPod(hedr, 1.34f);
+        appendPod(hedr, version);
         appendPod(hedr, std::int32_t{ 2 });
         appendPod(hedr, std::uint32_t{ 0x800 });
         std::string headerPayload;
@@ -79,6 +80,11 @@ namespace
         EXPECT_TRUE(reader->getRecordHeader());
         reader->getRecordData();
         return reader;
+    }
+
+    std::unique_ptr<ESM4::Reader> makeFnvReader(std::string_view recordType, std::string payload)
+    {
+        return makeArmorReader(1.34f, recordType, std::move(payload));
     }
 
     TEST(Esm4ArmorTest, shouldDecodeFnvArmorAddonBipedAndWorldModelsWithoutOrderHeuristics)
@@ -123,38 +129,35 @@ namespace
 
     TEST(Esm4ArmorTest, shouldDecodeFnvDamageResistanceAndThreshold)
     {
-        ESM4::Armor::FalloutData dnam{};
-        dnam.damageResistanceHundredths = 1250;
-        dnam.modifiesVoice = 1;
-        dnam.damageThreshold = 20.f;
-        dnam.flags = 0x12345678;
-
         std::string payload;
         appendSubRecord(payload, "EDID", zString("TestCombatArmor"));
-        appendSubRecord(payload, "DNAM", dnam);
-        auto reader = makeFnvReader("ARMO", std::move(payload));
+        const ESM4::Armor::FalloutData data{ 2350, 1, 12.5f, 0x80000000u };
+        appendSubRecord(payload, "DNAM", data);
 
+        auto reader = makeFnvReader("ARMO", std::move(payload));
         ESM4::Armor armor;
         armor.load(*reader);
 
-        EXPECT_TRUE(armor.mHasFalloutData);
-        EXPECT_EQ(armor.mFalloutData.damageResistanceHundredths, 1250);
+        ASSERT_TRUE(armor.mHasFalloutData);
+        EXPECT_EQ(armor.mFalloutData.damageResistanceHundredths, 2350);
         EXPECT_EQ(armor.mFalloutData.modifiesVoice, 1);
-        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 20.f);
-        EXPECT_EQ(armor.mFalloutData.flags, 0x12345678u);
+        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 12.5f);
+        EXPECT_EQ(armor.mFalloutData.flags, 0x80000000u);
     }
 
-    TEST(Esm4ArmorTest, shouldNotInterpretNonFnvDnamLayoutsAsCombatArmor)
+    TEST(Esm4ArmorTest, shouldKeepFo4BipedModelWhenModlContainsAdditionalRace)
     {
         std::string payload;
-        appendSubRecord(payload, "EDID", zString("TestAudioTemplate"));
-        appendSubRecord(payload, "DNAM", std::uint32_t{ 0x12345678 });
-        auto reader = makeFnvReader("ARMO", std::move(payload));
+        appendSubRecord(payload, "EDID", zString("TestFo4BodyAddon"));
+        appendSubRecord(payload, "MOD2", zString("Actors/Character/CharacterAssets/MaleBody.nif"));
+        appendSubRecord(payload, "MODL", std::uint32_t{ 0x13746 });
 
-        ESM4::Armor armor;
-        armor.load(*reader);
+        auto reader = makeArmorReader(1.0f, "ARMA", std::move(payload));
+        ESM4::ArmorAddon addon;
+        addon.load(*reader);
 
-        EXPECT_FALSE(armor.mHasFalloutData);
-        EXPECT_FLOAT_EQ(armor.mFalloutData.damageThreshold, 0.f);
+        EXPECT_EQ(addon.mModelMale, "Actors/Character/CharacterAssets/MaleBody.nif");
+        ASSERT_EQ(addon.mRaces.size(), 1u);
+        EXPECT_EQ(addon.mRaces.front(), ESM::FormId::fromUint32(0x02013746));
     }
 }

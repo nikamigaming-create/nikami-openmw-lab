@@ -40,11 +40,8 @@ namespace SceneUtil
         /// Retrieve a bone by name.
         Bone* getBone(const std::string& name);
 
-//## VR_PATCH BEGIN
-        /// Request an update of bone matrices. May be a no-op if already updated in this frame. Returns true if update
-        /// was performed.
-        bool updateBoneMatrices(unsigned int traversalNumber);
-//## VR_PATCH END
+        /// Request an update of bone matrices. May be a no-op if already updated in this frame.
+        void updateBoneMatrices(unsigned int traversalNumber);
 
         enum ActiveType
         {
@@ -63,12 +60,10 @@ namespace SceneUtil
 
         void markDirty();
 
-//## VR_PATCH BEGIN
-        void markBoneMatriceDirty();
-        void setIsTracked(bool tracked) { mTracked = tracked; }
-        bool isTracked() const { return mTracked; }
+        // Fallout procedural pose code changes bone transforms after the normal
+        // animation traversal and must request a skinning refresh explicitly.
+        void markBoneMatriceDirty() { mNeedToUpdateBoneMatrices = true; }
 
-//## VR_PATCH END
         void childInserted(unsigned int) override;
         void childRemoved(unsigned int, unsigned int) override;
 
@@ -82,9 +77,6 @@ namespace SceneUtil
         bool mBoneCacheInit;
 
         bool mNeedToUpdateBoneMatrices;
-//## VR_PATCH BEGIN
-        bool mTracked;
-//## VR_PATCH END
 
         ActiveType mActive;
 

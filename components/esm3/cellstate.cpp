@@ -18,6 +18,9 @@ namespace ESM
         mLastRespawn.mHour = 0;
         if (esm.peekNextSub("RESP"))
             mLastRespawn.load(esm, "RESP");
+
+        mHasOwnerOverride = esm.peekNextSub("COWN");
+        mOwner = mHasOwnerOverride ? esm.getHNRefId("COWN") : RefId{};
     }
 
     void CellState::save(ESMWriter& esm) const
@@ -28,6 +31,9 @@ namespace ESM
         esm.writeHNT("HFOW", mHasFogOfWar);
 
         esm.writeHNT("RESP", mLastRespawn);
+
+        if (mHasOwnerOverride)
+            esm.writeHNRefId("COWN", mOwner);
     }
 
 }

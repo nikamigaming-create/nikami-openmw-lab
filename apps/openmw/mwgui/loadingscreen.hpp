@@ -71,7 +71,7 @@ namespace MWGui
         size_t mProgress;
 
         bool mShowWallpaper;
-        float mOldIcoMin = 0.f;
+        double mOldIcoMin = 0.0;
         unsigned int mOldIcoMax = 0;
 
         MyGUI::Widget* mLoadingBox;
@@ -84,9 +84,7 @@ namespace MWGui
         std::vector<std::string> mSplashScreens;
 
         osg::ref_ptr<osg::Texture2D> mTexture;
-//## VR_PATCH BEGIN
-        std::shared_ptr<CopyFramebufferToTextureCallback> mCopyFramebufferToTextureCallback;
-//## VR_PATCH END
+        osg::ref_ptr<CopyFramebufferToTextureCallback> mCopyFramebufferToTextureCallback;
         std::unique_ptr<MyGUI::ITexture> mGuiTexture;
 
         void changeWallpaper();

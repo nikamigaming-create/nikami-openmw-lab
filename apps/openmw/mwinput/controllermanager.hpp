@@ -68,13 +68,6 @@ namespace MWInput
         bool mGuiCursorEnabled;
         bool mJoystickLastUsed;
         bool mGamepadMousePressed;
-//## VR_PATCH BEGIN
-    public:
-        void setThumbstickAutoRun(bool enabled);
-        bool thumbstickAutoRun() const { return mThumbstickAutoRun; }
-    private:
-        bool mThumbstickAutoRun;
-//## VR_PATCH END
     };
 }
 #endif

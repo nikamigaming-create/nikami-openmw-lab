@@ -73,18 +73,10 @@ namespace MWVR
 
         struct FalloutVrHandSurface
         {
-            enum class Kind
-            {
-                Hand,
-                PipBoy,
-                Weapon,
-            };
-
             std::string model;
             std::string diffuseTexture;
             std::string source;
             bool left = false;
-            Kind kind = Kind::Hand;
         };
 
         void setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces);

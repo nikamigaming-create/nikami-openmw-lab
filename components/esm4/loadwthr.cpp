@@ -28,12 +28,16 @@ namespace
     }
 
     template <class T>
-    void readFixedOrSkip(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, T& value)
+    bool readFixedOrSkip(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, T& value)
     {
         if (header.dataSize == sizeof(value))
+        {
             reader.get(value);
+            return true;
+        }
         else
             reader.skipSubRecordData();
+        return false;
     }
 
     template <class T>
@@ -216,22 +220,10 @@ void ESM4::Weather::load(Reader& reader)
                 reader.getZString(mModel);
                 break;
             case ESM::fourCC("LNAM"):
-                if (subHdr.dataSize == sizeof(mMaxCloudLayers))
-                {
-                    reader.get(mMaxCloudLayers);
-                    mHasMaxCloudLayers = true;
-                }
-                else
-                    reader.skipSubRecordData();
+                mHasMaxCloudLayers = readFixedOrSkip(reader, subHdr, mMaxCloudLayers);
                 break;
             case ESM::fourCC("ONAM"):
-                if (subHdr.dataSize == sizeof(mCloudSpeeds))
-                {
-                    reader.get(mCloudSpeeds);
-                    mHasCloudSpeeds = true;
-                }
-                else
-                    reader.skipSubRecordData();
+                mHasCloudSpeeds = readFixedOrSkip(reader, subHdr, mCloudSpeeds);
                 break;
             case ESM::fourCC("PNAM"):
                 mCloudColorSampleCount = readCloudColors(reader, subHdr, mCloudColors);

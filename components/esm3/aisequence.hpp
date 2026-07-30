@@ -9,8 +9,11 @@
 #include <components/esm/refid.hpp>
 #include <components/esm/vector3.hpp>
 
+#include "refnum.hpp"
+
 namespace ESM
 {
+    class ActorIdConverter;
     class ESMReader;
     class ESMWriter;
 
@@ -33,7 +36,7 @@ namespace ESM
 
         struct AiPackage
         {
-            virtual ~AiPackage() {}
+            virtual ~AiPackage() = default;
         };
 
         struct AiWanderData
@@ -86,6 +89,9 @@ namespace ESM
             AiTravelData mData;
             bool mHidden;
             bool mRepeat;
+            // Optional exact completion radius for data-driven travel.
+            // A negative value preserves legacy Morrowind arrival behavior.
+            float mDestinationTolerance = -1.f;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
@@ -95,7 +101,7 @@ namespace ESM
         {
             AiEscortData mData;
 
-            int32_t mTargetActorId;
+            ESM::RefNum mTargetActor;
             ESM::RefId mTargetId;
             std::string mCellId;
             float mRemainingDuration;
@@ -109,7 +115,7 @@ namespace ESM
         {
             AiEscortData mData;
 
-            int32_t mTargetActorId;
+            ESM::RefNum mTargetActor;
             ESM::RefId mTargetId;
             std::string mCellId;
             float mRemainingDuration;
@@ -135,7 +141,7 @@ namespace ESM
 
         struct AiCombat : AiPackage
         {
-            int32_t mTargetActorId;
+            ESM::RefNum mTargetActor;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
@@ -143,7 +149,7 @@ namespace ESM
 
         struct AiPursue : AiPackage
         {
-            int32_t mTargetActorId;
+            ESM::RefNum mTargetActor;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
@@ -158,17 +164,16 @@ namespace ESM
 
         struct AiSequence
         {
-            AiSequence() { mLastAiPackage = -1; }
-
             std::vector<AiPackageContainer> mPackages;
-            int32_t mLastAiPackage;
+            ActorIdConverter* mActorIdConverter = nullptr;
+            int32_t mLastAiPackage = -1;
+
+            AiSequence() {}
+            AiSequence(const AiSequence&) = delete;
+            AiSequence& operator=(const AiSequence&) = delete;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
-
-        private:
-            AiSequence(const AiSequence&);
-            AiSequence& operator=(const AiSequence&);
         };
 
     }

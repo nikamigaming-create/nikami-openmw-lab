@@ -4,8 +4,6 @@
 #include "referenceinterface.hpp"
 #include "windowbase.hpp"
 
-#include "../mwworld/containerstore.hpp"
-
 namespace Gui
 {
     class NumericEditBox;
@@ -22,7 +20,7 @@ namespace MWGui
     class SortFilterItemModel;
     class TradeItemModel;
 
-    class TradeWindow : public WindowBase, public ReferenceInterface, public MWWorld::ContainerStoreListener
+    class TradeWindow : public WindowBase, public ReferenceInterface
     {
     public:
         TradeWindow();
@@ -41,8 +39,7 @@ namespace MWGui
 
         void updateItemView();
 
-        void itemAdded(const MWWorld::ConstPtr& item, int count) override;
-        void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
+        void onInventoryUpdate(const MWWorld::Ptr& ptr) override;
 
         typedef MyGUI::delegates::MultiDelegate<> EventHandle_TradeDone;
         EventHandle_TradeDone eventTradeDone;
@@ -89,14 +86,6 @@ namespace MWGui
         int mCurrentMerchantOffer;
 
         bool mUpdateNextFrame;
-        bool mFlatFalloutTrade = false;
-        ESM::RefId mCurrency;
-        std::vector<MWWorld::Ptr> mItemSources;
-
-        void sellToNpc(
-            const MWWorld::Ptr& item, int count, bool boughtItem); ///< only used for adjusting the gold balance
-        void buyFromNpc(
-            const MWWorld::Ptr& item, int count, bool soldItem); ///< only used for adjusting the gold balance
 
         void updateOffer();
 
@@ -127,7 +116,6 @@ namespace MWGui
         void onDecreaseButtonTriggered();
 
         void addOrRemoveGold(int gold, const MWWorld::Ptr& actor);
-        int getPlayerGold() const;
 
         void updateLabels();
 

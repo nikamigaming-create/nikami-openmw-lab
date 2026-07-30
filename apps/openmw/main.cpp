@@ -7,10 +7,6 @@
 #include <components/platform/platform.hpp>
 #include <components/version/version.hpp>
 
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-//## VR_PATCH END
-
 #include "mwgui/debugwindow.hpp"
 
 #include "engine.hpp"
@@ -221,11 +217,6 @@ int runApplication(int argc, char* argv[])
     setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
 #endif
 
-//## VR_PATCH BEGIN
-#ifdef OPENMW_VR
-    VR::setVR(true);
-#endif
-//## VR_PATCH END
     osg::setNotifyHandler(new OSGLogHandler());
     Files::ConfigurationManager cfgMgr;
     std::unique_ptr<OMW::Engine> engine = std::make_unique<OMW::Engine>(cfgMgr);

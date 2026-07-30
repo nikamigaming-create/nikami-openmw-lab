@@ -22,12 +22,6 @@
 #include "bindingsmanager.hpp"
 #include "mousemanager.hpp"
 
-//## VR_PATCH BEGIN
-#include <components/vr/vr.hpp>
-#include "../mwvr/vrinputmanager.hpp"
-
-//## VR_PATCH END
-
 namespace MWInput
 {
     ControllerManager::ControllerManager(BindingsManager* bindingsManager, MouseManager* mouseManager,
@@ -39,9 +33,6 @@ namespace MWInput
         , mGuiCursorEnabled(true)
         , mJoystickLastUsed(false)
         , mGamepadMousePressed(false)
-//## VR_PATCH BEGIN
-        , mThumbstickAutoRun(Settings::Manager::getBool("thumbstick auto run", "Input"))
-//## VR_PATCH END
     {
         if (!controllerBindingsFile.empty())
         {
@@ -112,7 +103,6 @@ namespace MWInput
             float mouseWheelMove = -zAxis * dt * 1500.0f;
             if (xMove != 0 || yMove != 0 || mouseWheelMove != 0)
             {
-                Log(Debug::Verbose) << "Injecting mouseWheelMove: [" << -zAxis << ", " << mouseWheelMove << "]";
                 mMouseManager->injectMouseMove(xMove, yMove, mouseWheelMove);
                 mMouseManager->warpMouse();
                 MWBase::Environment::get().getWindowManager()->setCursorActive(true);
@@ -201,7 +191,7 @@ namespace MWInput
             if (mGamepadGuiCursorEnabled && (!Settings::gui().mControllerMenus || mGamepadMousePressed))
             {
                 // Temporary mouse binding until keyboard controls are available:
-                if (arg.button == SDL_CONTROLLER_BUTTON_A && !VR::getVR()) // We'll pretend that A is left click.
+                if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
                 {
                     bool mousePressSuccess = mMouseManager->injectMouseButtonRelease(SDL_BUTTON_LEFT);
                     mGamepadMousePressed = false;
@@ -211,11 +201,6 @@ namespace MWInput
 
                     mBindingsManager->setPlayerControlsEnabled(!mousePressSuccess);
                 }
-            }
-            if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
-            {
-                MWVR::VRInputManager::instance().pointerActivate(true);
-                return;
             }
         }
         else
@@ -389,15 +374,8 @@ namespace MWInput
                     && (arg.axis == SDL_CONTROLLER_AXIS_LEFTX || arg.axis == SDL_CONTROLLER_AXIS_LEFTY))
                 {
                     // Treat the left stick like a cursor, which is the default behavior.
-                    if (winMgr->getControllerTooltipVisible())
-                    {
-                        winMgr->setControllerTooltipVisible(false);
-                        winMgr->setCursorVisible(true);
-                    }
-                    else if (mGamepadGuiCursorEnabled)
-                    {
-                        winMgr->setCursorVisible(true);
-                    }
+                    winMgr->setControllerTooltipVisible(false);
+                    winMgr->setCursorVisible(true);
                     return false;
                 }
 
@@ -561,6 +539,12 @@ namespace MWInput
                     return "textures/omw_psx_button_triangle.dds";
                 return "textures/omw_steam_button_y.dds";
             case SDL_CONTROLLER_BUTTON_GUIDE:
+            case SDL_CONTROLLER_BUTTON_MISC1:
+            case SDL_CONTROLLER_BUTTON_PADDLE1:
+            case SDL_CONTROLLER_BUTTON_PADDLE2:
+            case SDL_CONTROLLER_BUTTON_PADDLE3:
+            case SDL_CONTROLLER_BUTTON_PADDLE4:
+            case SDL_CONTROLLER_BUTTON_TOUCHPAD:
             default:
                 return {};
         }
@@ -597,14 +581,6 @@ namespace MWInput
                 return {};
         }
     }
-
-//## VR_PATCH BEGIN
-    void ControllerManager::setThumbstickAutoRun(bool enabled)
-    {
-        mThumbstickAutoRun = enabled;
-        Settings::Manager::setBool("thumbstick auto run", "Input", enabled);
-    }
-//## VR_PATCH END
 
     void ControllerManager::touchpadMoved(int deviceId, const SDLUtil::TouchEvent& arg)
     {

@@ -17,9 +17,6 @@ namespace MWMechanics
         // Controlled by CharacterController, should not be changed from other places.
         // These fields can not be private fields in CharacterController, because Actor::getCurrentSpeed uses it.
         float mSpeedFactor;
-        // Engine-native multiplier requested by local Lua controls. Unlike mSpeedFactor this is not rewritten by
-        // CharacterController while it normalizes the input vector.
-        float mSpeedMultiplier;
         bool mIsStrafing;
 
         Movement()
@@ -27,7 +24,6 @@ namespace MWMechanics
             mPosition[0] = mPosition[1] = mPosition[2] = 0.0f;
             mRotation[0] = mRotation[1] = mRotation[2] = 0.0f;
             mSpeedFactor = 1.f;
-            mSpeedMultiplier = 1.f;
             mIsStrafing = false;
         }
 

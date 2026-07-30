@@ -1,5 +1,9 @@
 #include "objectpaging.hpp"
 
+#include "occlusionculling.hpp"
+
+#include <components/sceneutil/occlusionculling.hpp>
+
 #include <unordered_map>
 #include <vector>
 
@@ -20,7 +24,6 @@
 #include <components/esm3/loaddoor.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm3/readerscache.hpp>
-#include <components/esm4/common.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
@@ -47,7 +50,6 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 
-#include "falloutlodselection.hpp"
 #include "vismask.hpp"
 
 namespace MWRender
@@ -546,13 +548,18 @@ namespace MWRender
     {
     }
 
+    void ObjectPaging::setOcclusionCuller(SceneUtil::OcclusionCuller* culler, unsigned int maxTriangles)
+    {
+        mOcclusionCuller = culler;
+        mMaxTriangles = maxTriangles;
+    }
+
     namespace
     {
         struct PagedCellRef
         {
             ESM::RefId mRefId;
             ESM::RefNum mRefNum;
-            std::uint32_t mRecordFlags;
             osg::Vec3f mPosition;
             osg::Vec3f mRotation;
             float mScale;
@@ -563,7 +570,6 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mRefID,
                 .mRefNum = value.mRefNum,
-                .mRecordFlags = 0,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -575,7 +581,6 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mBaseObj,
                 .mRefNum = value.mId,
-                .mRecordFlags = value.mFlags,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -665,7 +670,7 @@ namespace MWRender
                         continue;
                     for (const ESM4::Reference* ref4 : store.get<ESM4::Reference>().getByCell(cell->mId))
                     {
-                        if (!isEsm4ReferenceEnabledForPaging(ref4->mFlags))
+                        if (ref4->mFlags & ESM4::Rec_Disabled)
                             continue;
                         int type = store.findStatic(ref4->mBaseObj);
                         if (!typeFilter(type, size >= 2))
@@ -765,20 +770,6 @@ namespace MWRender
                     continue;
             }
 
-            int esmVersion = 0;
-            bool falloutNewVegas = false;
-            if (!activeGrid)
-            {
-                esmVersion = world.getESMVersions()[refNum.mContentFile];
-                falloutNewVegas = isFalloutNewVegasVersion(esmVersion);
-                if (falloutNewVegas
-                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, false)
-                        == FalloutDistantReferenceSelection::Skip)
-                {
-                    continue;
-                }
-            }
-
             const float dSqr = (viewPoint - ref.mPosition).length2();
             if (!activeGrid)
             {
@@ -803,7 +794,8 @@ namespace MWRender
                 if (Misc::getFileExtension(model.value()) == "nif")
                 {
                     VFS::Path::Normalized kfname = model;
-                    kfname.changeExtension("kf");
+                    constexpr VFS::Path::ExtensionView kf("kf");
+                    kfname.changeExtension(kf);
                     if (mSceneManager->getVFS()->exists(kfname))
                         continue;
                 }
@@ -811,28 +803,17 @@ namespace MWRender
 
             if (!activeGrid)
             {
-                const VFS::Path::Normalized baseModel = model;
-
-                {
-                    std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
-                    LODNameCacheKey key{ model, lod };
-                    LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
-                    if (found != mLODNameCache.end() && found->first == key)
-                        model = found->second;
-                    else
-                        model = mLODNameCache
-                                    .emplace_hint(found, std::move(key),
-                                        Misc::ResourceHelpers::getLODMeshName(
-                                            esmVersion, model, *mSceneManager->getVFS(), lod))
-                                    ->second;
-                }
-
-                if (falloutNewVegas
-                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, model != baseModel)
-                        == FalloutDistantReferenceSelection::FullModel)
-                {
-                    model = baseModel;
-                }
+                std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
+                LODNameCacheKey key{ model, lod };
+                LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
+                if (found != mLODNameCache.end() && found->first == key)
+                    model = found->second;
+                else
+                    model = mLODNameCache
+                                .emplace_hint(found, std::move(key),
+                                    Misc::ResourceHelpers::getLODMeshName(world.getESMVersions()[refNum.mContentFile],
+                                        model, *mSceneManager->getVFS(), lod))
+                                ->second;
             }
 
             osg::ref_ptr<const osg::Node> cnode = mSceneManager->getTemplate(model, false);
@@ -885,6 +866,22 @@ namespace MWRender
         osg::ref_ptr<Resource::TemplateMultiRef> templateRefs = new Resource::TemplateMultiRef;
         osgUtil::StateToCompile stateToCompile(0, nullptr);
         CopyOp copyop(activeGrid, copyMask);
+
+        const bool buildOccluders = Settings::camera().mOcclusionCulling && Settings::camera().mOcclusionCullingStatics;
+        osg::ref_ptr<PagedOccluderData> pagedOccluderData;
+        float occluderMinRadius = 0;
+        int occluderMeshRes = 6;
+        int occluderMaxMeshRes = 24;
+        float occluderShrinkFactor = 0.9f;
+        if (buildOccluders)
+        {
+            pagedOccluderData = new PagedOccluderData;
+            occluderMinRadius = Settings::camera().mOcclusionOccluderMinRadius;
+            occluderMeshRes = Settings::camera().mOcclusionOccluderMeshResolution;
+            occluderMaxMeshRes = Settings::camera().mOcclusionOccluderMaxMeshResolution;
+            occluderShrinkFactor = Settings::camera().mOcclusionOccluderShrinkFactor;
+        }
+
         for (const auto& pair : nodes)
         {
             const osg::Node* cnode = pair.first;
@@ -951,6 +948,36 @@ namespace MWRender
                 copyop.mViewVector = (viewPoint - worldCenter);
                 copyop.copy(cnode, trans);
                 copyop.mNodePath.pop_back();
+
+                // Build occluder mesh for building-sized objects
+                if (buildOccluders)
+                {
+                    float scaledRadius = cnode->getBound().radius() * ref.mScale;
+                    if (scaledRadius >= occluderMinRadius)
+                    {
+                        // Scale grid resolution with object size so grid cell size stays ~constant.
+                        // A small building (radius 300) uses base resolution, a canton (radius 3000+)
+                        // gets proportionally higher resolution to preserve shape detail.
+                        int adaptiveRes = occluderMeshRes;
+                        if (scaledRadius > occluderMinRadius)
+                        {
+                            float scale = scaledRadius / occluderMinRadius;
+                            adaptiveRes = std::clamp(
+                                static_cast<int>(occluderMeshRes * scale), occluderMeshRes, occluderMaxMeshRes);
+                        }
+                        auto occMesh = buildSimplifiedMesh(trans, adaptiveRes, occluderShrinkFactor);
+                        if (!occMesh.indices.empty())
+                        {
+                            // Offset from chunk-relative to world-space
+                            for (auto& v : occMesh.vertices)
+                                v += worldCenter;
+                            occMesh.aabb = osg::BoundingBox();
+                            for (const auto& v : occMesh.vertices)
+                                occMesh.aabb.expandBy(v);
+                            pagedOccluderData->mOccluderMeshes.push_back(std::move(occMesh));
+                        }
+                    }
+                }
 
                 if (activeGrid)
                 {
@@ -1038,6 +1065,15 @@ namespace MWRender
             group->addCullCallback(new SceneUtil::LightListCallback);
         }
         udc->addUserObject(templateRefs);
+        if (pagedOccluderData && !pagedOccluderData->mOccluderMeshes.empty())
+        {
+            udc->addUserObject(pagedOccluderData);
+            if (mOcclusionCuller)
+            {
+                float maxDist = Settings::camera().mOcclusionOccluderMaxDistance;
+                group->addCullCallback(new PagedOccluderCallback(mOcclusionCuller, maxDist, mMaxTriangles));
+            }
+        }
 
         return group;
     }

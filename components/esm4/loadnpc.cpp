@@ -50,17 +50,11 @@ namespace
         return value;
     }
 
-    bool hasMasterNamed(const ESM4::Reader& reader, std::string_view expected)
+    bool isTtwCapitalWastelandMaster(const ESM4::Reader& reader)
     {
-        for (const ESM::MasterData& master : reader.getGameFiles())
-        {
-            std::string name = master.name;
-            std::transform(name.begin(), name.end(), name.begin(),
-                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (name == expected)
-                return true;
-        }
-        return false;
+        const std::string fileName = lowerFilename(reader.getFileName());
+        return fileName == "fallout3.esm" || fileName == "anchorage.esm" || fileName == "thepitt.esm"
+            || fileName == "brokensteel.esm" || fileName == "pointlookout.esm" || fileName == "zeta.esm";
     }
 
     bool shouldLogFonvNpcFaceData(const ESM4::Npc& npc)
@@ -103,8 +97,10 @@ void ESM4::Npc::load(ESM4::Reader& reader)
 
     std::uint32_t esmVer = reader.esmVersion();
     mIsTES4 = (esmVer == ESM::VER_080 || esmVer == ESM::VER_100) && !reader.hasFormVersion();
-    mIsFO3 = esmVer == ESM::VER_094
-        && (lowerFilename(reader.getFileName()) == "fallout3.esm" || hasMasterNamed(reader, "fallout3.esm"));
+    // TTW preserves Capital Wasteland record layouts while updating the file
+    // header version.  Identify its masters by name rather than relying on
+    // the original Fallout 3 header version.
+    mIsFO3 = isTtwCapitalWastelandMaster(reader);
     mIsFONV = mIsFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
     mIsStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     // mIsTES5 = esmVer == ESM::VER_094 || esmVer == ESM::VER_170; // WARN: FO3 is also VER_094
@@ -173,7 +169,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("AIDT"):
             {
-                if (mIsFONV)
+                if (mIsFONV && !mIsFO3)
                 {
                     if (subHdr.dataSize != sizeof(mFNVAIData))
                         throw std::runtime_error("ESM4::NPC_::load - Fallout AIDT size mismatch");
@@ -215,22 +211,23 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DATA"):
             {
-                if (mIsFONV)
+                if (mIsFONV && !mIsFO3)
                 {
-                    // Nearly every FO3/FNV NPC stores the eleven-byte actor-value
-                    // prefix here.  Two shipped Fallout 3 encounter records append
-                    // fourteen opaque bytes to that same prefix.  Reject genuinely
-                    // truncated or unexpected records, but consume the documented
-                    // FO3 extension so those two records cannot abort loading the
-                    // entire Fallout3.esm NPC group.
-                    const bool hasFo3ExtendedData
-                        = mIsFO3 && subHdr.dataSize > sizeof(mFNVData);
-                    if (subHdr.dataSize != sizeof(mFNVData) && !hasFo3ExtendedData)
+                    if (subHdr.dataSize != sizeof(mFNVData))
+                    {
+                        // TTW's FFER63Hunter override keeps the 25-byte
+                        // Fallout 3 DATA layout. It is not compatible with
+                        // FNVData, so retain stream alignment without
+                        // fabricating New Vegas actor statistics.
+                        if (subHdr.dataSize == 25)
+                        {
+                            reader.skipSubRecordData();
+                            break;
+                        }
                         throw std::runtime_error("ESM4::NPC_::load - Fallout DATA size mismatch");
+                    }
 
                     reader.get(mFNVData);
-                    if (hasFo3ExtendedData)
-                        reader.skipSubRecordData(subHdr.dataSize - sizeof(mFNVData));
                     mHasFNVData = true;
                     break;
                 }
@@ -246,7 +243,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DNAM"):
             {
-                if (!mIsFONV)
+                if (!mIsFONV || mIsFO3)
                 {
                     reader.skipSubRecordData();
                     break;
@@ -310,6 +307,15 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("FGGS"):
             {
+                // Fallout: New Vegas uses zero-sized facegen geometry fields
+                // on a small number of template NPCs.  Do not read the
+                // nominal 50 floats in that case: doing so consumes following
+                // subrecords and leaves the reader misaligned.
+                if (subHdr.dataSize != 50 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mSymShapeModeCoefficients.resize(50);
                 for (std::size_t i = 0; i < 50; ++i)
                     reader.get(mSymShapeModeCoefficients.at(i));
@@ -318,6 +324,11 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("FGGA"):
             {
+                if (subHdr.dataSize != 30 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mAsymShapeModeCoefficients.resize(30);
                 for (std::size_t i = 0; i < 30; ++i)
                     reader.get(mAsymShapeModeCoefficients.at(i));
@@ -326,6 +337,11 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("FGTS"):
             {
+                if (subHdr.dataSize != 50 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mSymTextureModeCoefficients.resize(50);
                 for (std::size_t i = 0; i < 50; ++i)
                     reader.get(mSymTextureModeCoefficients.at(i));

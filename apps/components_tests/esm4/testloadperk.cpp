@@ -322,6 +322,36 @@ namespace
         EXPECT_FALSE(perk.mData.mHidden.has_value());
     }
 
+    TEST(Esm4PerkTest, preservesAuthoredDuplicateConditionTabGroups)
+    {
+        std::string payload = recordPrefix("DuplicateConditionTabGroups");
+        appendRecordData(payload);
+        appendSubRecord(payload, "PRKE", bytes({ 2, 0, 0 }));
+        appendSubRecord(payload, "DATA", bytes({ 0, 1, 2 }));
+        appendSubRecord(payload, "PRKC", bytes({ 0 }));
+        appendSubRecord(payload, "CTDA", condition(ESM4::FUN_GetDead));
+        appendSubRecord(payload, "PRKC", bytes({ 0 }));
+        appendSubRecord(payload, "CTDA", condition(ESM4::FUN_GetDetected, 0x00000014));
+        appendSubRecord(payload, "EPFT", bytes({ 1 }));
+        appendSubRecord(payload, "EPFD", pod(1.f));
+        appendSubRecord(payload, "PRKF", {});
+
+        auto reader = makeReader(payload);
+        ESM4::Perk perk;
+        perk.load(*reader);
+
+        ASSERT_EQ(perk.mEntries.size(), 1);
+        const auto& entry = std::get<ESM4::Perk::EntryPointEntry>(perk.mEntries.front().mData);
+        ASSERT_EQ(entry.mConditionGroups.size(), 2);
+        EXPECT_EQ(entry.mConditionGroups[0].mTab, 0);
+        ASSERT_EQ(entry.mConditionGroups[0].mConditions.size(), 1);
+        EXPECT_EQ(entry.mConditionGroups[0].mConditions[0].functionIndex, ESM4::FUN_GetDead);
+        EXPECT_EQ(entry.mConditionGroups[1].mTab, 0);
+        ASSERT_EQ(entry.mConditionGroups[1].mConditions.size(), 1);
+        EXPECT_EQ(entry.mConditionGroups[1].mConditions[0].functionIndex, ESM4::FUN_GetDetected);
+        EXPECT_EQ(entry.mConditionGroups[1].mConditions[0].param1, 0x02000014u);
+    }
+
     TEST(Esm4PerkTest, rejectsMalformedSizesUnknownFieldsAndOrdering)
     {
         std::vector<std::pair<std::string, std::string>> malformed;
@@ -437,14 +467,6 @@ namespace
         appendSubRecord(outOfRangeTab, "EPFD", pod(1.f));
         appendSubRecord(outOfRangeTab, "PRKF", {});
         malformed.emplace_back("out-of-range PRKC", std::move(outOfRangeTab));
-
-        std::string duplicateConditionTab = entryPointPrefix(2);
-        appendSubRecord(duplicateConditionTab, "PRKC", bytes({ 0 }));
-        appendSubRecord(duplicateConditionTab, "CTDA", condition(ESM4::FUN_GetDead));
-        appendSubRecord(duplicateConditionTab, "PRKC", bytes({ 0 }));
-        appendSubRecord(duplicateConditionTab, "CTDA", condition(ESM4::FUN_GetDead));
-        finishFloatEntry(duplicateConditionTab);
-        malformed.emplace_back("duplicate PRKC", std::move(duplicateConditionTab));
 
         std::string decreasingConditionTab = entryPointPrefix(3);
         appendSubRecord(decreasingConditionTab, "PRKC", bytes({ 1 }));

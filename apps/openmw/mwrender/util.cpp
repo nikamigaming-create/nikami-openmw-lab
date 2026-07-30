@@ -1,7 +1,6 @@
 #include "util.hpp"
 
 #include <osg/Node>
-#include <osg/RenderInfo>
 #include <osg/ValueObject>
 
 #include <components/misc/resourcehelpers.hpp>
@@ -16,10 +15,9 @@ namespace MWRender
 {
     namespace
     {
-        class TextureOverrideVisitor : public osg::NodeVisitor
+        struct TextureOverrideVisitor : osg::NodeVisitor
         {
-        public:
-            TextureOverrideVisitor(std::string_view texture, Resource::ResourceSystem* resourcesystem)
+            explicit TextureOverrideVisitor(VFS::Path::NormalizedView texture, Resource::ResourceSystem* resourcesystem)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTexture(texture)
                 , mResourcesystem(resourcesystem)
@@ -36,23 +34,25 @@ namespace MWRender
                 }
                 traverse(node);
             }
-            std::string_view mTexture;
+
+            VFS::Path::NormalizedView mTexture;
             Resource::ResourceSystem* mResourcesystem;
         };
     }
 
-    void overrideFirstRootTexture(std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+    void overrideFirstRootTexture(
+        VFS::Path::NormalizedView texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
     {
         TextureOverrideVisitor overrideVisitor(texture, resourceSystem);
         node.accept(overrideVisitor);
     }
 
-    void overrideTexture(std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+    void overrideTexture(VFS::Path::NormalizedView texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
     {
         if (texture.empty())
             return;
         const VFS::Path::Normalized correctedTexture
-            = Misc::ResourceHelpers::correctTexturePath(texture, resourceSystem->getVFS());
+            = Misc::ResourceHelpers::correctTexturePath(texture, *resourceSystem->getVFS());
         // Not sure if wrap settings should be pulled from the overridden texture?
         osg::ref_ptr<osg::Texture2D> tex
             = new osg::Texture2D(resourceSystem->getImageManager()->getImage(correctedTexture));
@@ -72,21 +72,6 @@ namespace MWRender
         node.setStateSet(stateset);
     }
 
-//## VR_PATCH BEGIN
-    MipmapCallback::~MipmapCallback() {}
-
-    void MipmapCallback::operator()(osg::RenderInfo& renderInfo) const
-    {
-        auto* gl = renderInfo.getState()->get<osg::GLExtensions>();
-        auto* tex = mTexture->getTextureObject(renderInfo.getContextID());
-        if (tex)
-        {
-            tex->bind();
-            gl->glGenerateMipmap(tex->target());
-        }
-    }
-    
-//## VR_PATCH END
     bool shouldAddMSAAIntermediateTarget()
     {
         return Settings::shaders().mAntialiasAlphaTest && Settings::video().mAntialiasing > 1;

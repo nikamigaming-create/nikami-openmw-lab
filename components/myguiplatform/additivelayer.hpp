@@ -14,10 +14,7 @@ namespace MyGUIPlatform
 {
 
     /// @brief A Layer rendering with additive blend mode.
-//## VR_PATCH BEGIN
-// Not final
-    class AdditiveLayer : public MyGUI::OverlappedLayer
-//## VR_PATCH END
+    class AdditiveLayer final : public MyGUI::OverlappedLayer
     {
     public:
         MYGUI_RTTI_DERIVED(AdditiveLayer)

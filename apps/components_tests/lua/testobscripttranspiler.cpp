@@ -41,9 +41,6 @@ namespace
             transpile = function(text)
                 return transpiler.transpile(parser.parse(text))
             end,
-            transpileRegistration = function(text)
-                return transpiler.transpileRegistration(parser.parse(text))
-            end,
         }
         )X");
 
@@ -65,13 +62,6 @@ namespace
             sol::table script = mLua.runInNewSandbox(path);
             return LuaUtil::call(script["transpile"], text).get<std::string>();
         }
-
-        std::string transpileRegistration(const std::string& text)
-        {
-            const VFS::Path::Normalized path(driverPath);
-            sol::table script = mLua.runInNewSandbox(path);
-            return LuaUtil::call(script["transpileRegistration"], text).get<std::string>();
-        }
     };
 
     TEST_F(ObScriptTranspilerTest, Preamble)
@@ -81,16 +71,6 @@ namespace
         EXPECT_THAT(lua, HasSubstr("local obs = require('openmw_aux.obscript.runtime')"));
         EXPECT_THAT(lua, HasSubstr("local S = obs.locals(\"MyScript\")"));
         EXPECT_THAT(lua, HasSubstr("return obs.makeLocalScript()"));
-    }
-
-    TEST_F(ObScriptTranspilerTest, RegistrationFormHasNoPerScriptFooter)
-    {
-        const std::string lua
-            = transpileRegistration("scn SharedUdf\nbegin Function { value }\nSetFunctionValue value\nend\n");
-        EXPECT_THAT(lua, HasSubstr("obs.udf(\"SharedUdf\""));
-        EXPECT_THAT(lua, Not(HasSubstr("return obs.makeLocalScript()")));
-        sol::state_view view(mLua.unsafeState());
-        EXPECT_TRUE(view.load(lua).valid());
     }
 
     TEST_F(ObScriptTranspilerTest, BlockToHandler)
@@ -108,14 +88,14 @@ namespace
             "scn S\nshort MyVar\nbegin GameMode\n"
             "set MyVar to 1\nset OtherQuestVar to 2\nend\n");
         // declared locals live on S; unknown names go through the runtime
-        EXPECT_THAT(lua, HasSubstr("S.myvar = 1"));
+        EXPECT_THAT(lua, HasSubstr("S.MyVar = 1"));
         EXPECT_THAT(lua, HasSubstr("obs.setv(\"OtherQuestVar\", 2)"));
     }
 
     TEST_F(ObScriptTranspilerTest, DigitLedLocalGetsSafeIdentifier)
     {
         const std::string lua = transpile("scn S\nshort 2ndVar\nbegin GameMode\nset 2ndVar to 5\nend\n");
-        EXPECT_THAT(lua, HasSubstr("S._2ndvar = 5"));
+        EXPECT_THAT(lua, HasSubstr("S._2ndVar = 5"));
     }
 
     TEST_F(ObScriptTranspilerTest, CrossScriptVariables)
@@ -132,8 +112,8 @@ namespace
         const std::string lua = transpile(
             "scn S\nbegin OnActivate\n"
             "ShowMessage SomeMsg\nplayer.AddItem Caps001 5\nSomeRef.Enable\nend\n");
-        EXPECT_THAT(lua, HasSubstr("obs.f(\"ShowMessage\", obs.arg(\"SomeMsg\"))"));
-        EXPECT_THAT(lua, HasSubstr("obs.m(\"player\", \"AddItem\", obs.arg(\"Caps001\"), 5)"));
+        EXPECT_THAT(lua, HasSubstr("obs.f(\"ShowMessage\", \"SomeMsg\")"));
+        EXPECT_THAT(lua, HasSubstr("obs.m(\"player\", \"AddItem\", \"Caps001\", 5)"));
         // zero-arg member command in statement position
         EXPECT_THAT(lua, HasSubstr("obs.m(\"SomeRef\", \"Enable\")"));
     }
@@ -149,11 +129,9 @@ namespace
             "set State to 1\n"
             "endif\n"
             "end\n");
-        EXPECT_THAT(lua,
-            HasSubstr("obs.boolnum(obs.eq(obs.v(\"GetActionRef\"), obs.v(\"player\")))"));
-        EXPECT_THAT(lua,
-            HasSubstr("obs.m(\"player\", \"additem\", obs.arg(\"NVFreshBarrelCactusFruit\"), 1)"));
-        EXPECT_THAT(lua, HasSubstr("S.state = 1"));
+        EXPECT_THAT(lua, HasSubstr("obs.v(\"GetActionRef\") == obs.v(\"player\")"));
+        EXPECT_THAT(lua, HasSubstr("obs.m(\"player\", \"additem\", \"NVFreshBarrelCactusFruit\", 1)"));
+        EXPECT_THAT(lua, HasSubstr("S.State = 1"));
     }
 
     TEST_F(ObScriptTranspilerTest, RetailGoodspringsTriggerRetainsPlayerFilterAndQuestMutation)
@@ -166,10 +144,9 @@ namespace
             "endif\n"
             "end\n");
         EXPECT_THAT(lua, HasSubstr("obs.on(\"OnTriggerEnter\", function()"));
-        EXPECT_THAT(lua, HasSubstr("end, obs.arg(\"player\"))"));
-        EXPECT_THAT(lua,
-            HasSubstr("obs.boolnum(obs.eq(obs.f(\"GetStage\", obs.arg(\"VCG01\")), 110))"));
-        EXPECT_THAT(lua, HasSubstr("obs.f(\"SetStage\", obs.arg(\"VCG01\"), 115)"));
+        EXPECT_THAT(lua, HasSubstr("end, \"player\")"));
+        EXPECT_THAT(lua, HasSubstr("obs.f(\"GetStage\", \"VCG01\") == 110"));
+        EXPECT_THAT(lua, HasSubstr("obs.f(\"SetStage\", \"VCG01\", 115)"));
     }
 
     TEST_F(ObScriptTranspilerTest, IfChainAndTruthiness)
@@ -177,12 +154,9 @@ namespace
         const std::string lua = transpile(
             "scn S\nshort x\nbegin GameMode\n"
             "if x == 1\nelseif x > 1 && x < 5\nelse\nendif\nend\n");
-        EXPECT_THAT(lua, HasSubstr("if obs.b(obs.boolnum(obs.eq(S.x, 1))) then"));
-        // &&/|| operands go through ObScript truthiness (nonzero), preserve
-        // short-circuiting, and return the numeric 0/1 that ObScript expects.
-        EXPECT_THAT(lua,
-            HasSubstr("elseif obs.b(obs.boolnum(obs.b(obs.boolnum((S.x > 1))) and "
-                      "obs.b(obs.boolnum((S.x < 5))))) then"));
+        EXPECT_THAT(lua, HasSubstr("if obs.b((S.x == 1)) then"));
+        // &&/|| operands go through ObScript truthiness (nonzero)
+        EXPECT_THAT(lua, HasSubstr("elseif obs.b((obs.b((S.x > 1)) and obs.b((S.x < 5)))) then"));
         EXPECT_THAT(lua, HasSubstr("else"));
     }
 
@@ -197,39 +171,6 @@ namespace
     {
         const std::string lua = transpile("scn S\nfloat f\nbegin GameMode\nset f to .5 + 5. * -2\nend\n");
         EXPECT_THAT(lua, HasSubstr("(0.5 + (5.0 * -(2)))"));
-    }
-
-    TEST_F(ObScriptTranspilerTest, WorldToScreenPreservesOutputArguments)
-    {
-        const std::string lua = transpile(
-            "scn JVOCoordinates\n"
-            "float fX\nfloat fY\nfloat fZ\nfloat dX\nfloat dY\nfloat dZ\nref target\n"
-            "begin Function {}\n"
-            "WorldToScreen fX fY fZ dX dY dZ 2 target\n"
-            "end\n");
-        EXPECT_THAT(lua,
-            HasSubstr("obs.f(\"WorldToScreen\", obs.out(S, \"fx\"), "
-                      "obs.out(S, \"fy\"), obs.out(S, \"fz\"), "
-                      "S.dx, S.dy, S.dz, 2, S.target)"));
-    }
-
-    TEST_F(ObScriptTranspilerTest, ParenthesizedCommandArgumentDoesNotConsumeFollowingArguments)
-    {
-        const std::string lua = transpile(
-            "scn JDCMainLoopEventHandler\n"
-            "float fPlayerSpread\n"
-            "float fWeaponSpread\n"
-            "float fSpreadDegrees\n"
-            "begin Function {}\n"
-            "set fSpreadDegrees to Clamp "
-            "(5.955 * (2.0 * fPlayerSpread + 0.2 * fWeaponSpread "
-            "+ 0.024 * fWeaponSpread * fWeaponSpread)) 0 89.9\n"
-            "end\n");
-        EXPECT_THAT(lua,
-            HasSubstr("obs.f(\"Clamp\", "
-                      "(5.955 * (((2.0 * S.fplayerspread) + (0.2 * S.fweaponspread)) "
-                      "+ ((0.024 * S.fweaponspread) * S.fweaponspread))), 0, 89.9)"));
-        EXPECT_THAT(lua, Not(HasSubstr("obs.fx(")));
     }
 
     TEST_F(ObScriptTranspilerTest, ReturnAndStray)
@@ -247,76 +188,6 @@ namespace
         const std::string lua = transpile(
             "scn S\nshort x\nbegin GameMode\n"
             "if x >= 0 && <10\nset x to x + 1\nendif\nShowMessage Msg\nend\n");
-        sol::state_view view(mLua.unsafeState());
-        const sol::load_result loaded = view.load(lua);
-        EXPECT_TRUE(loaded.valid());
-    }
-
-    TEST_F(ObScriptTranspilerTest, XnvseLoopsArraysStringsAndBits)
-    {
-        const std::string lua = transpile(
-            "scn JAM\n"
-            "array_var values\n"
-            "string_var label\n"
-            "int i\n"
-            "begin GameMode\n"
-            "values[i] = 0b101\n"
-            "label += \"value=\" + $values[i]\n"
-            "while i < 3\n"
-            "eval i += 1\n"
-            "if i & 1\n"
-            "continue\n"
-            "endif\n"
-            "loop\n"
-            "end\n");
-        EXPECT_THAT(lua, HasSubstr("obs.setindex(S.values, S.i, 5)"));
-        EXPECT_THAT(lua, HasSubstr("obs.add(S.label"));
-        EXPECT_THAT(lua, HasSubstr("while obs.b(obs.boolnum((S.i < 3))) do"));
-        EXPECT_THAT(lua, HasSubstr("obs.bit(\"&\", S.i, 1)"));
-
-        sol::state_view view(mLua.unsafeState());
-        const sol::load_result loaded = view.load(lua);
-        EXPECT_TRUE(loaded.valid());
-    }
-
-    TEST_F(ObScriptTranspilerTest, XnvseNamedAndAnonymousUdfs)
-    {
-        const std::string lua = transpile(
-            "scn JamHandler\n"
-            "ref callback\n"
-            "int value\n"
-            "begin Function {value}\n"
-            "SetFunctionValue value\n"
-            "end\n"
-            "begin GameMode\n"
-            "callback = (begin function {value}\n"
-            "SetFunctionValue value + 1\n"
-            "end)\n"
-            "Call callback 7\n"
-            "end\n");
-        EXPECT_THAT(lua, HasSubstr("obs.udf(\"JamHandler\", function(__obsArg1)"));
-        EXPECT_THAT(lua, HasSubstr("obs.lambda(\"JamHandler#lambda1\", function(__obsArg1)"));
-        EXPECT_THAT(lua, HasSubstr("obs.f(\"Call\", S.callback, 7)"));
-
-        sol::state_view view(mLua.unsafeState());
-        const sol::load_result loaded = view.load(lua);
-        EXPECT_TRUE(loaded.valid());
-    }
-
-    TEST_F(ObScriptTranspilerTest, XnvseArrowLambdaAndPair)
-    {
-        const std::string lua = transpile(
-            "scn JAM\n"
-            "ref callback\n"
-            "int refresh\n"
-            "array_var event\n"
-            "begin GameMode\n"
-            "callback = ({} => refresh = 1)\n"
-            "event = ar_Map \"CurrentItem\"::(refresh)\n"
-            "end\n");
-        EXPECT_THAT(lua, HasSubstr("obs.lambda(\"JAM#lambda1\", function()"));
-        EXPECT_THAT(lua, HasSubstr("obs.pair(\"CurrentItem\", S.refresh)"));
-
         sol::state_view view(mLua.unsafeState());
         const sol::load_result loaded = view.load(lua);
         EXPECT_TRUE(loaded.valid());

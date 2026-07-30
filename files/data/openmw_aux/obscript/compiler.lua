@@ -26,15 +26,4 @@ function compiler.compile(text)
     return transpiler.transpile(parser.parse(text))
 end
 
----
--- Translate ObScript into registration-only Lua. The native content compiler
--- concatenates these chunks for quest scripts and xNVSE UDFs that must share
--- one runtime namespace.
--- @function [parent=#compiler] compileRegistration
--- @param #string text ObScript source
--- @return #string Lua source without a script-interface footer
-function compiler.compileRegistration(text)
-    return transpiler.transpileRegistration(parser.parse(text))
-end
-
 return compiler

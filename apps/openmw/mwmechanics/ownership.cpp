@@ -1,65 +1,72 @@
 #include "ownership.hpp"
 
-#include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadnpc.hpp>
 
-#include "../mwworld/cell.hpp"
-#include "../mwworld/cellref.hpp"
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
-
-namespace
-{
-    bool isEsm4Faction(const ESM::RefId& id, const MWWorld::ESMStore& store)
-    {
-        return !id.empty() && store.get<ESM4::Faction>().search(id) != nullptr;
-    }
-}
+#include "../mwworld/ptr.hpp"
 
 namespace MWMechanics
 {
-    ObjectOwnership resolveObjectOwnership(
-        const MWWorld::CellRef& cellRef, const MWWorld::Cell* cell, const MWWorld::ESMStore& store)
+    namespace
     {
-        ObjectOwnership result{ cellRef.getOwner(), cellRef.getFaction(), cellRef.getFactionRank() };
-
-        // ESM3 records already distinguish owner and faction. ESM4 serializes either kind through XOWN, so a
-        // matching FACT record is authoritative even when the reference itself is not presently attached to a cell.
-        if (!result.mOwner.empty())
+        ESM::RefId refIdFromRuntimeFormId(ESM::FormId value)
         {
-            if (result.mFaction.empty() && isEsm4Faction(result.mOwner, store))
-            {
-                result.mFaction = result.mOwner;
-                result.mOwner = {};
-            }
-            return result;
+            if (value.isZeroOrUnset())
+                return {};
+            if (value.hasContentFile())
+                return ESM::RefId::formIdRefId(value);
+            return ESM::RefId::generated(value.mIndex);
         }
-        if (!result.mFaction.empty() || cell == nullptr || !cell->isEsm4())
-            return result;
+    }
 
-        const ESM::RefId cellOwner(cell->getEsm4().mOwner);
-        if (isEsm4Faction(cellOwner, store))
-            result.mFaction = cellOwner;
+    Ownership resolveOwnership(const MWWorld::Ptr& target, const MWWorld::ESMStore& store)
+    {
+        Ownership result;
+        const MWWorld::CellRef& cellRef = target.getCellRef();
+        result.mOwner = cellRef.getOwner();
+        const bool referenceOwner = !result.mOwner.empty();
+        if (!referenceOwner && target.isInCell())
+            result.mOwner = target.getCell()->getOwner();
+
+        result.mOwnerIsFaction = !result.mOwner.empty()
+            && store.get<ESM4::Faction>().search(result.mOwner) != nullptr;
+        if (result.mOwnerIsFaction)
+        {
+            result.mFaction = result.mOwner;
+            // ESM4 actors have no reference faction-rank field. They are
+            // returned before ordinary use/stealing checks, but keeping this
+            // resolver total makes it safe for diagnostics and tests.
+            if (referenceOwner && target.getType() != ESM4::Npc::sRecordId
+                && target.getType() != ESM4::Creature::sRecordId)
+                result.mRequiredFactionRank = cellRef.getFactionRank();
+        }
         else
-            result.mOwner = cellOwner;
-
-        // CELL has no parsed XRNK in the current ESM4 model. Any authored reference XRNK was already retained above;
-        // inherited ownership therefore intentionally keeps the default "any member" rank.
-        result.mFactionRank = -1;
+        {
+            result.mFaction = cellRef.getFaction();
+            if (!result.mFaction.empty())
+                result.mRequiredFactionRank = cellRef.getFactionRank();
+        }
         return result;
     }
 
-    bool isFactionOwnershipAllowed(
-        const ObjectOwnership& ownership, std::span<const ESM4::ActorFaction> factions)
+    bool isOwnershipAllowed(const Ownership& ownership, const ESM::RefId& actorBase,
+        ESM::FormId actorReference, const std::map<ESM::RefId, int>* actorFactions)
     {
+        if (!ownership.mOwner.empty() && !ownership.mOwnerIsFaction
+            && ownership.mOwner != refIdFromRuntimeFormId(actorReference)
+            && ownership.mOwner != actorBase && ownership.mOwner != "Player")
+            return false;
+
         if (ownership.mFaction.empty())
             return true;
+        if (actorFactions == nullptr)
+            return false;
 
-        for (const ESM4::ActorFaction& membership : factions)
-        {
-            const ESM::RefId faction(ESM::FormId::fromUint32(membership.faction));
-            if (faction == ownership.mFaction)
-                return ownership.mFactionRank < 0 || membership.rank >= ownership.mFactionRank;
-        }
-        return false;
+        const auto found = actorFactions->find(ownership.mFaction);
+        return found != actorFactions->end()
+            && (ownership.mRequiredFactionRank < 0 || found->second >= ownership.mRequiredFactionRank);
     }
 }

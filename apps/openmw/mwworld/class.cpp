@@ -108,22 +108,13 @@ namespace MWWorld
         throw std::runtime_error("class does not have item health");
     }
 
-    // ## VR_PATCH BEGIN
-    //  split evaluateHit into evaluateHit and findMeleeVictim so VR realistic combat can provide
-    //  its victim as a parameter.
-    std::optional<std::pair<Ptr, osg::Vec3f>> Class::findMeleeVictim(const Ptr& ptr) const
+    bool Class::evaluateHit(const Ptr& ptr, Ptr& victim, osg::Vec3f& hitPosition) const
     {
         throw std::runtime_error("class cannot hit");
     }
-
-    MeleeHit Class::evaluateHit(const Ptr& ptr, std::optional<std::pair<Ptr, osg::Vec3f>>) const
-    {
-        throw std::runtime_error("class cannot hit");
-    }
-    // ## VR_PATCH END
 
     void Class::hit(const Ptr& ptr, float attackStrength, int type, const Ptr& victim, const osg::Vec3f& hitPosition,
-        bool success, bool ignoreReach) const
+        bool success) const
     {
         throw std::runtime_error("class cannot hit");
     }

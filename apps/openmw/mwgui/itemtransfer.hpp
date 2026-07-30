@@ -30,7 +30,7 @@ namespace MWGui
 
         void apply(const ItemStack& item, std::size_t count, ItemView& sourceView)
         {
-            if (item.mFlags & ItemStack::Flag_Bound)
+            if (item.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest))
             {
                 mWindowManager->messageBox("#{sBarterDialog12}");
                 return;
@@ -55,7 +55,7 @@ namespace MWGui
             WorldItemModel worldItemModel(0.5f, 0.5f);
             ItemModel* const targetModel = targetView == nullptr ? &worldItemModel : targetView->getModel();
 
-            if (!targetModel->onDropItem(item.mBase, count))
+            if (!targetModel->onDropItem(item.mBase, static_cast<int>(count)))
                 return;
 
             sourceView.getModel()->moveItem(item, count, targetModel);

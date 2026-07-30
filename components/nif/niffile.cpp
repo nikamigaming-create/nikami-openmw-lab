@@ -41,7 +41,7 @@ namespace Nif
     static std::unique_ptr<Record> construct()
     {
         auto result = std::make_unique<NodeType>();
-        result->recType = recordType;
+        result->mRecordType = recordType;
         return result;
     }
 
@@ -635,7 +635,15 @@ namespace Nif
         if (hasUserVersion)
             nif.read(mUserVersion);
 
-        mRecords.resize(nif.get<std::uint32_t>());
+        const std::uint32_t recordsCount = nif.get<std::uint32_t>();
+
+        // The 0.51 reader retains a per-record size table for newer Bethesda
+        // NIFs and assigns parsed records by index below.  A partial merge
+        // changed this to reserve(), leaving size()==0: the size table was
+        // skipped and the parser then treated those sizes as record payload.
+        // Fallout 3/New Vegas 20.2.0.7 NIFs therefore desynchronised at their
+        // first mesh.  Allocate the indexed table before consuming it.
+        mRecords.resize(recordsCount);
 
         // Bethesda stream header
         {
@@ -681,7 +689,7 @@ namespace Nif
             else
             {
                 nif.getSizedStrings(recTypes, nif.get<std::uint16_t>());
-                nif.readVector(recTypeIndices, mRecords.size());
+                nif.readVector(recTypeIndices, recordsCount);
             }
         }
 
@@ -705,11 +713,11 @@ namespace Nif
             nif.readVector(groups, nif.get<std::uint32_t>());
         }
 
-        for (std::size_t i = 0; i < mRecords.size(); i++)
+        for (std::size_t i = 0; i < recordsCount; i++)
         {
             std::unique_ptr<Record> r;
 
-            std::string rec = hasRecTypeListings ? recTypes[recTypeIndices[i]] : nif.get<std::string>();
+            std::string rec = hasRecTypeListings ? recTypes.at(recTypeIndices[i]) : nif.get<std::string>();
             if (rec.empty())
             {
                 std::stringstream error;
@@ -743,9 +751,9 @@ namespace Nif
             const std::streampos recordStart = hasRecordSizes ? nif.tell() : std::streampos(-1);
 
             assert(r != nullptr);
-            assert(r->recType != RC_MISSING);
-            r->recName = std::move(rec);
-            r->recIndex = i;
+            assert(r->mRecordType != RC_MISSING);
+            r->mRecordName = std::move(rec);
+            r->mRecordIndex = static_cast<unsigned>(i);
             r->read(&nif);
 
             if (mBethVersion >= NIFFile::BethVersion::BETHVER_STF && hasRecordSizes)
@@ -765,22 +773,32 @@ namespace Nif
         }
 
         // Determine which records are roots
-        mRoots.resize(nif.get<uint32_t>());
-        for (std::size_t i = 0; i < mRoots.size(); i++)
+        const std::uint32_t rootsCount = nif.get<uint32_t>();
+        mRoots.reserve(rootsCount);
+        constexpr std::uint32_t maxDoesNotPointWarnings = 10;
+        std::uint32_t doesNotPointWarnings = 0;
+        for (std::size_t i = 0; i < rootsCount; i++)
         {
             std::int32_t idx;
             nif.read(idx);
             if (idx >= 0 && static_cast<std::size_t>(idx) < mRecords.size())
             {
-                mRoots[i] = mRecords[idx].get();
+                mRoots.push_back(mRecords[idx].get());
             }
             else
             {
-                mRoots[i] = nullptr;
-                Log(Debug::Warning) << "NIFFile Warning: Root " << i + 1 << " does not point to a record: index " << idx
-                                    << ". File: " << mFilename;
+                mRoots.push_back(nullptr);
+                ++doesNotPointWarnings;
+                if (doesNotPointWarnings <= maxDoesNotPointWarnings)
+                {
+                    Log(Debug::Warning) << "NIFFile Warning: Root " << i + 1 << " does not point to a record: index "
+                                        << idx << ". File: " << mFilename;
+                }
             }
         }
+        if (doesNotPointWarnings > maxDoesNotPointWarnings)
+            Log(Debug::Warning) << "NIFFile Warning: " << doesNotPointWarnings - maxDoesNotPointWarnings
+                                << " more roots did not point to a record. File: " << mFilename;
 
         // Once parsing is done, do post-processing.
         for (const auto& record : mRecords)

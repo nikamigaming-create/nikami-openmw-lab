@@ -2,9 +2,6 @@
 #define OPENMW_MECHANICS_ACTOR_H
 
 #include <memory>
-#include <set>
-#include <utility>
-#include <vector>
 
 #include "character.hpp"
 #include "creaturestats.hpp"
@@ -35,14 +32,6 @@ namespace MWMechanics
             : mCharacterController(ptr, animation)
             , mPositionAdjusted(ptr.getClass().getCreatureStats(ptr).getFallHeight() > 0)
         {
-            std::vector<MWWorld::Ptr> targets;
-            ptr.getClass().getCreatureStats(ptr).getAiSequence().getCombatTargets(targets);
-            for (const MWWorld::Ptr& target : targets)
-            {
-                if (!target.isEmpty() && target.getClass().isActor())
-                    mObservedCombatTargets.insert(target.getClass().getCreatureStats(target).getActorId());
-            }
-            mHasObservedCombatState = true;
         }
 
         const MWWorld::Ptr& getPtr() const { return mCharacterController.getPtr(); }
@@ -80,14 +69,6 @@ namespace MWMechanics
         }
         bool isInvalid() const { return mInvalid; }
 
-        bool hasObservedCombatState() const { return mHasObservedCombatState; }
-        const std::set<int>& getObservedCombatTargets() const { return mObservedCombatTargets; }
-        void setObservedCombatTargets(std::set<int> targets)
-        {
-            mObservedCombatTargets = std::move(targets);
-            mHasObservedCombatState = true;
-        }
-
     private:
         CharacterController mCharacterController;
         int mGreetingTimer{ 0 };
@@ -98,8 +79,6 @@ namespace MWMechanics
         bool mIsTurningToPlayer{ false };
         bool mInvalid{ false };
         bool mPositionAdjusted;
-        bool mHasObservedCombatState{ false };
-        std::set<int> mObservedCombatTargets;
     };
 
 }

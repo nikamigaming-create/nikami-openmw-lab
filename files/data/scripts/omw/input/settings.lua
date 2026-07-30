@@ -5,11 +5,8 @@ local ui = require('openmw.ui')
 local util = require('openmw.util')
 local async = require('openmw.async')
 local I = require('openmw.interfaces')
-local vr = require('openmw.vr')
 
 local settingsGroup = 'SettingsOMWControls'
-local falloutNewVegas = core.contentFiles and core.contentFiles.has
-    and core.contentFiles.has('FalloutNV.esm') or false
 
 local function boolSetting(key, default)
     return {
@@ -35,10 +32,7 @@ I.Settings.registerGroup({
     name = 'MovementSettings',
     permanentStorage = true,
     settings = {
-        -- Fallout defaults forward movement to the run stance; its Run binding
-        -- temporarily inverts that state. Preserve the existing Morrowind
-        -- default while giving a fresh FNV profile retail control semantics.
-        boolSetting('alwaysRun', falloutNewVegas),
+        boolSetting('alwaysRun', false),
         boolSetting('toggleSneak', false), -- TODO: consider removing this setting when we have the advanced binding UI
         boolSetting('smoothControllerMovement', true),
     },

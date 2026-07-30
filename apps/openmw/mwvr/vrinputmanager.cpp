@@ -498,14 +498,6 @@ namespace MWVR
 
     void VRInputManager::updateRetailSurfaceGripRecenter(bool disableControls)
     {
-        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
-        if (!retailSurface.enabled())
-        {
-            mRetailSurfaceLeftGripDown = false;
-            mRetailSurfaceRightGripDown = false;
-            return;
-        }
-
         auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
         const bool leftGripPressed = actionPressed(actionSet, {
             "/user/hand/left/input/squeeze/value",
@@ -524,6 +516,7 @@ namespace MWVR
         });
         const bool rightRecenterChord = rightGripPressed && rightStickClicked;
 
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
         const RetailSurfaceGate gate = retailSurfaceBridgeGate(disableControls);
         if (gate != RetailSurfaceGate::Ready)
         {

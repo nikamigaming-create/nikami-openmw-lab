@@ -30,7 +30,7 @@ namespace MWInput
 
         bool injectMouseButtonPress(Uint8 button);
         bool injectMouseButtonRelease(Uint8 button);
-        void injectMouseMove(float xMove, float yMove, int mouseWheelMove, bool allowedForVR = false);
+        void injectMouseMove(float xMove, float yMove, float mouseWheelMove);
         void warpMouse();
         void warpMouseToWidget(MyGUI::Widget* widget);
 
@@ -39,7 +39,6 @@ namespace MWInput
 
         int getMouseMoveX() const { return mMouseMoveX; }
         int getMouseMoveY() const { return mMouseMoveY; }
-        int getMouseWheel() const { return mMouseWheel; }
 
     private:
         BindingsManager* mBindingsManager;
@@ -55,14 +54,6 @@ namespace MWInput
 
         int mMouseMoveX;
         int mMouseMoveY;
-//## VR_PATCH BEGIN
-    public:
-        // void mouseMovedVR(const SDLUtil::MouseMotionEvent& arg);
-        // VR computes mouse position based on intersections with 3d gui elements
-        void setMousePosition(int x, int y);
-    private:
-        float mPreviousXAxis;
-//## VR_PATCH END
     };
 }
 #endif

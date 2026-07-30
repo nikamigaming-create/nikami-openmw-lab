@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>741</width>
-    <height>503</height>
+    <height>524</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="pageVerticalLayout">
@@ -299,7 +299,7 @@
        <item>
         <spacer name="verticalSpacerGameMechanics">
          <property name="orientation">
-          <enum>Qt::Orientation::Vertical</enum>
+          <enum>Qt::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -353,7 +353,7 @@
                <item row="6" column="1">
                 <spacer name="verticalSpacer_11">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -491,7 +491,7 @@
                  <item row="8" column="1">
                   <spacer name="verticalSpacer_12">
                    <property name="orientation">
-                    <enum>Qt::Orientation::Vertical</enum>
+                    <enum>Qt::Vertical</enum>
                    </property>
                    <property name="sizeHint" stdset="0">
                     <size>
@@ -536,7 +536,6 @@
                    <property name="toolTip">
                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Normally environment map reflections aren't affected by lighting, which makes environment-mapped (and thus bump-mapped objects) glow in the dark.
                   Morrowind Code Patch includes an option to remedy that by doing environment-mapping before applying lighting, this is the equivalent of that option.
-                  Affected objects will use shaders.
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                    </property>
                    <property name="text">
@@ -599,7 +598,7 @@
                <item row="4" column="1">
                 <spacer name="verticalSpacer_13">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -706,7 +705,7 @@
                <item row="7" column="1">
                 <spacer name="verticalSpacer_15">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -769,7 +768,7 @@
                <item row="7" column="1">
                 <spacer name="verticalSpacer_9">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -989,7 +988,7 @@
                <item row="9" column="1">
                 <spacer name="verticalSpacer_8">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -1033,7 +1032,7 @@
                <item row="2" column="1">
                 <spacer name="verticalSpacer_10">
                  <property name="orientation">
-                  <enum>Qt::Orientation::Vertical</enum>
+                  <enum>Qt::Vertical</enum>
                  </property>
                  <property name="sizeHint" stdset="0">
                   <size>
@@ -1047,8 +1046,7 @@
                 <widget class="QLabel" name="lightingMethodLabel">
                  <property name="toolTip">
                   <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the internal handling of light sources.&lt;/p&gt;
-&lt;p&gt; &quot;Legacy&quot; always uses 8 lights per object. It provides results most similar to Morrowind's lighting.&lt;/p&gt;
-&lt;p&gt;&quot;Shaders (compatibility)&quot; removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (compatibility)&quot; It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
 &lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                  </property>
                  <property name="text">
@@ -1058,11 +1056,6 @@
                </item>
                <item row="1" column="1">
                 <widget class="QComboBox" name="lightingMethodComboBox">
-                 <item>
-                  <property name="text">
-                   <string>Legacy</string>
-                  </property>
-                 </item>
                  <item>
                   <property name="text">
                    <string>Shaders (compatibility)</string>
@@ -1242,7 +1235,7 @@
        <item>
         <spacer>
          <property name="orientation">
-          <enum>Qt::Orientation::Vertical</enum>
+          <enum>Qt::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -1448,7 +1441,7 @@
        <item>
         <spacer name="verticalSpacer_2">
          <property name="orientation">
-          <enum>Qt::Orientation::Vertical</enum>
+          <enum>Qt::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -1539,9 +1532,42 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="configsGroup">
+         <property name="title">
+          <string>Active Config Directories</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_4">
+          <item>
+           <widget class="QTreeWidget" name="configsList">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="contextMenuPolicy">
+             <enum>Qt::CustomContextMenu</enum>
+            </property>
+            <property name="expandsOnDoubleClick">
+             <bool>false</bool>
+            </property>
+            <attribute name="headerVisible">
+             <bool>false</bool>
+            </attribute>
+            <column>
+             <property name="text">
+              <string notr="true">1</string>
+             </property>
+            </column>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer>
          <property name="orientation">
-          <enum>Qt::Orientation::Vertical</enum>
+          <enum>Qt::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -1571,7 +1597,7 @@
        <item>
         <widget class="Line" name="testingLine">
          <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
+          <enum>Qt::Horizontal</enum>
          </property>
         </widget>
        </item>
@@ -1597,10 +1623,10 @@
          <item>
           <spacer name="startDefaultCharacterAtHorizontalSpacer">
            <property name="orientation">
-            <enum>Qt::Orientation::Horizontal</enum>
+            <enum>Qt::Horizontal</enum>
            </property>
            <property name="sizeType">
-            <enum>QSizePolicy::Policy::Fixed</enum>
+            <enum>QSizePolicy::Fixed</enum>
            </property>
            <property name="sizeHint" stdset="0">
             <size>
@@ -1650,7 +1676,7 @@
        <item>
         <spacer>
          <property name="orientation">
-          <enum>Qt::Orientation::Vertical</enum>
+          <enum>Qt::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -1659,164 +1685,6 @@
           </size>
          </property>
         </spacer>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="VR">
-      <attribute name="title">
-       <string>VR</string>
-      </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout_2">
-       <item>
-        <layout class="QGridLayout" name="gridLayout_2">
-         <item row="0" column="0">
-          <widget class="QLabel" name="realisticCombatMinimumSwingSpeed">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The velocity at which the minimum strength of attack is achieved when swinging your motion controllers. In meters/second. Swinging slower than this does not initiate an attack.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Realistic melee combat minimum swing speed</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QDoubleSpinBox" name="realisticCombatMinimumSwingSpeedSpinBox">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="decimals">
-            <number>2</number>
-           </property>
-           <property name="minimum">
-            <double>0</double>
-           </property>
-           <property name="maximum">
-            <double>100</double>
-           </property>
-           <property name="value">
-            <double>0.00</double>
-           </property>
-           <property name="singleStep">
-            <double>0.100000000000000</double>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QLabel" name="realisticCombatMaximumSwingSpeed">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The velocity at which max strength of attack is achieved when swinging your motion controllers. In meters/second&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Realistic melee combat minimum swing speed</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QDoubleSpinBox" name="realisticCombatMaximumSwingSpeedSpinBox">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="decimals">
-            <number>2</number>
-           </property>
-           <property name="minimum">
-            <double>0</double>
-           </property>
-           <property name="maximum">
-            <double>100</double>
-           </property>
-           <property name="value">
-            <double>0.00</double>
-           </property>
-           <property name="singleStep">
-            <double>0.100000000000000</double>
-           </property>
-          </widget>
-         </item>
-         <item row="2" column="0">
-          <widget class="QCheckBox" name="leftHandedModeCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes OpenMW VR use left handed modes where this has been implemented.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Left handed mode.</string>
-           </property>
-          </widget>
-         </item>
-         <item row="3" column="0">
-          <widget class="QCheckBox" name="useSharedShadowMapsCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes OpenMW VR map shadows for both eyes in one pass, instead of once per eye. This is a significant performance benefit, and should only be disabled for debugging or masochism purposes.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Use shared shadow maps</string>
-           </property>
-          </widget>
-         </item>
-         <item row="4" column="0">
-          <widget class="QCheckBox" name="useMultiviewCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes OpenMW VR render stereo using the OVR_MultiView2 extension to OpenGL instead of two render passes. You may need to disable this on older GPUs. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Use OVR_MultiView2.</string>
-           </property>
-          </widget>
-         </item>
-         <item row="4" column="1">
-           <widget class="QCheckBox" name="allowDisplayListsCheckBox">
-             <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Lets OpenMW VR use display lists when multiview is enabled. This is default disabled as it breaks on some drivers/cards. If you don't know what this is, ignore it. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-             </property>
-             <property name="text">
-               <string>Enable display lists.</string>
-             </property>
-           </widget>
-         </item>
-         <item row="5" column="0">
-          <widget class="QCheckBox" name="logAllXrCallsCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes OpenMW VR log every single OpenXR call. This degrades performance and creates a massive log. You probably want this disabled.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Debug: Log all OpenXR calls</string>
-           </property>
-          </widget>
-         </item>
-         <item row="6" column="0">
-          <widget class="QCheckBox" name="ignoreXrErrorsCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes OpenMW VR ignore unsuccessful calls to OpenXR. You probably want this enabled.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Debug: Continue on errors</string>
-           </property>
-          </widget>
-         </item>
-         <item row="7" column="0">
-          <widget class="QCheckBox" name="skywindBlasterBoltWorkaroundCheckBox">
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt; In VR, projectiles are launched based on the orientation of the ammo node itself. The skywind blaster bolts do not receive an orientation before being launched, causing them to always travel in a fixed direction in VR. This workaround fixes this issue if enabled by explicitly testing for the sw_blasterbolt identifier and using the weapon orientation instead.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Skywind: Blaster bolt workaround</string>
-           </property>
-          </widget>
-         </item>
-         <item row="8" column="0">
-          <spacer name="verticalSpacerVR">
-           <property name="orientation">
-            <enum>Qt::Orientation::Vertical</enum>
-           </property>
-           <property name="sizeHint" stdset="0">
-            <size>
-             <width>20</width>
-             <height>40</height>
-            </size>
-           </property>
-          </spacer>
-         </item>
-        </layout>
        </item>
       </layout>
      </widget>

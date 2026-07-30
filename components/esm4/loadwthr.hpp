@@ -95,9 +95,6 @@ namespace ESM4
         Data mData;
         std::vector<Sound> mSounds;
 
-        // Preserve whether the authored subrecords decoded successfully. The
-        // corresponding values are zero-initialized, which cannot by itself
-        // distinguish an authored zero from an absent or malformed field.
         bool mHasMaxCloudLayers = false;
         bool mHasCloudSpeeds = false;
         bool mHasCloudColors = false;
