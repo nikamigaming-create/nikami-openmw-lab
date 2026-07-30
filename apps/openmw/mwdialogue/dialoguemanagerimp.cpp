@@ -1,6 +1,7 @@
 #include "dialoguemanagerimp.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <list>
 #include <limits>
@@ -85,6 +86,12 @@ namespace MWDialogue
     {
         constexpr unsigned int maxEsm4SoundReferenceDepth = 8;
 
+        class SilentResponseCallback final : public MWBase::DialogueManager::ResponseCallback
+        {
+        public:
+            void addResponse(std::string_view /*title*/, std::string_view /*text*/) override {}
+        };
+
         std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId id, unsigned int depth = 0)
         {
             if (id.isZeroOrUnset() || depth >= maxEsm4SoundReferenceDepth)
@@ -152,6 +159,8 @@ namespace MWDialogue
                 case ESM4::FUN_GetObjectiveCompleted:
                 case ESM4::FUN_GetObjectiveDisplayed:
                     return questRuntime.evaluateConditions({ condition });
+                case ESM4::FUN_GetPCIsSex:
+                    return evaluateEsm4ActorDialogueCondition(condition, world->getPlayerPtr(), true);
                 default:
                     break;
             }
@@ -1147,6 +1156,66 @@ namespace MWDialogue
         }
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        if (const ESM4::Dialogue* esm4Dialogue = store.get<ESM4::Dialogue>().search(topic))
+        {
+            if (actor.getType() != ESM4::Npc::sRecordId && actor.getType() != ESM4::Creature::sRecordId)
+                return false;
+
+            // `Say` and `SayTo` run the authored INFO result without opening
+            // the player dialogue UI.  Scope mActor to this call because the
+            // existing ESM4 INFO selector and voice resolver deliberately use
+            // the active actor context.
+            const MWWorld::Ptr previousActor = mActor;
+            const bool previousEsm4Dialogue = mEsm4Dialogue;
+            mActor = actor;
+            mEsm4Dialogue = true;
+            const ESM4::DialogInfo* const info = selectEsm4Info(esm4Dialogue->mId);
+            if (info == nullptr)
+            {
+                // Keep failed authored Say selection observable in the same
+                // data-driven telemetry used by the opening capture. This
+                // identifies the real INFO and condition data which rejected
+                // an actor instead of silently stalling its authored script.
+                if (std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 dialogue: scripted Say selection failed actor="
+                                        << actor.toString() << " topic=" << esm4Dialogue->mEditorId;
+                    const auto& infos = store.get<ESM4::DialogInfo>();
+                    for (const ESM4::DialogInfo& candidate : infos)
+                    {
+                        if (candidate.mTopic != esm4Dialogue->mId)
+                            continue;
+                        Log(Debug::Info) << "FNV/ESM4 dialogue: rejected INFO=" << ESM::RefId(candidate.mId)
+                                         << " matched=" << matchesEsm4Info(candidate)
+                                         << " speaker=" << ESM::RefId(candidate.mSpeaker)
+                                         << " quest=" << ESM::RefId(candidate.mQuest)
+                                         << " conditions=" << candidate.mTargetConditions.size();
+                        for (std::size_t index = 0; index < candidate.mTargetConditions.size(); ++index)
+                        {
+                            const ESM4::TargetCondition& condition = candidate.mTargetConditions[index];
+                            Log(Debug::Info) << "FNV/ESM4 dialogue: rejected INFO condition info="
+                                             << ESM::RefId(candidate.mId) << " index=" << index
+                                             << " function=" << condition.functionIndex << " flags="
+                                             << condition.condition << " comparison=" << condition.comparison
+                                             << " param1=" << condition.param1 << " param2=" << condition.param2
+                                             << " runOn=" << condition.runOn << " reference=" << condition.reference;
+                        }
+                    }
+                }
+                mActor = previousActor;
+                mEsm4Dialogue = previousEsm4Dialogue;
+                return false;
+            }
+
+            SilentResponseCallback callback;
+            executeEsm4Topic(esm4Dialogue->mId, &callback, false, info);
+            mActor = previousActor;
+            mEsm4Dialogue = previousEsm4Dialogue;
+            Log(Debug::Info) << "FNV/ESM4 dialogue: scripted Say actor=" << actor.toString()
+                             << " topic=" << esm4Dialogue->mEditorId << " info=" << ESM::RefId(info->mId);
+            return true;
+        }
+
         const ESM::Dialogue* dial = store.get<ESM::Dialogue>().find(topic);
 
         const MWMechanics::CreatureStats& creatureStats = actor.getClass().getCreatureStats(actor);

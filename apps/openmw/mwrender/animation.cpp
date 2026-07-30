@@ -3301,6 +3301,12 @@ namespace MWRender
 
     std::vector<std::string> getFonvBoneAliases(const std::string& name)
     {
+        // Fallout 3/New Vegas author a small set of shared cinematic KFs
+        // against the short root name `Bip`, while their shipped humanoid
+        // skeleton exposes that same root as `Bip01`.  This is a skeleton
+        // dialect alias, not a content-record exception.
+        if (name == "bip")
+            return { "bip01" };
         if (name == "bip01 l finger0")
             return { "bip01 l thumb1" };
         if (name == "bip01 l finger01")
@@ -4587,7 +4593,7 @@ namespace MWRender
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
         const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
-        std::string_view falloutSemanticGroup)
+        std::string_view falloutSemanticGroup, bool forceFalloutActorContext)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4633,7 +4639,8 @@ namespace MWRender
             return nullptr;
         }
         const bool isFonvActorAnim
-            = shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup)
+            = (forceFalloutActorContext
+                  || shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup))
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
                 || lowerKf.find("characters/_male/") != std::string::npos
@@ -4644,6 +4651,19 @@ namespace MWRender
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
         const bool isFonvAnim = isFonvActorAnim || isFonvCreatureAnim;
+
+        const bool scriptedFalloutCamera = forceFalloutActorContext && isFonvActorAnim && animsrc->mKeyframes
+            && std::any_of(animsrc->mKeyframes->mKeyframeControllers.begin(),
+                animsrc->mKeyframes->mKeyframeControllers.end(), [](const auto& controller) {
+                    return Misc::StringUtils::lowerCase(controller.first) == "camera1st";
+                });
+        if (scriptedFalloutCamera && !ensureFalloutScriptPackageCameraTarget())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: unable to materialise authored Camera1st target for "
+                                << kfname;
+            return nullptr;
+        }
+        animsrc->mFalloutAuthoredCamera = scriptedFalloutCamera;
 
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
@@ -5178,6 +5198,125 @@ namespace MWRender
             }
         }
         return {};
+    }
+
+    bool Animation::addFalloutScriptPackageAnimationSource(std::string_view model, std::string_view semanticGroup)
+    {
+        if (model.empty() || semanticGroup.empty() || mResourceSystem == nullptr)
+            return false;
+
+        std::string source(model);
+        VFS::Path::normalizeFilenameInPlace(source);
+        if (!source.starts_with("meshes/"))
+            source = "meshes/" + source;
+        if (!Misc::StringUtils::ciEndsWith(source, ".kf"))
+            return false;
+
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        if (baseModel.empty())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: actor has no compatible animation root actor="
+                                << mPtr.getCellRef().getRefId() << " source=" << source;
+            return false;
+        }
+
+        mFalloutScriptPackageCameraTarget = false;
+        const std::shared_ptr<AnimSource> animationSource
+            = addSingleAnimSource(source, baseModel, false, {}, semanticGroup, true);
+        const bool bound = animationSource != nullptr && hasAnimation(semanticGroup);
+        Log(bound ? Debug::Info : Debug::Warning)
+            << "FNV/ESM4 scripted package: animation source=" << source
+            << " actor=" << mPtr.getCellRef().getRefId() << " group=" << semanticGroup
+            << " bound=" << bound;
+        return bound;
+    }
+
+    bool Animation::ensureFalloutScriptPackageCameraTarget()
+    {
+        if (!mObjectRoot)
+            return false;
+
+        if (getNodeMap().find("Camera1st") != getNodeMap().end())
+        {
+            mFalloutScriptPackageCameraTarget = true;
+            return true;
+        }
+
+        // The shipped Fallout first-person skeleton owns the Camera1st branch.  Import that exact branch from the
+        // active VFS instead of manufacturing a transform from an opening cell, a player height, or a guessed
+        // offset.  This lets any package with an authored Camera1st controller inherit the same bind basis the
+        // retail asset declares while leaving the visible third-person skeleton untouched.
+        const NodeMap& nodeMap = getNodeMap();
+        const NodeMap::const_iterator nonAccum = nodeMap.find("Bip01 NonAccum");
+        if (nonAccum == nodeMap.end())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: missing Bip01 NonAccum for authored Camera1st target "
+                                << mPtr.getCellRef().getRefId();
+            return false;
+        }
+
+        if (mResourceSystem == nullptr)
+            return false;
+
+        const VFS::Path::Normalized firstPersonSkeleton
+            = VFS::Path::toNormalized("meshes/characters/_1stperson/skeleton.nif");
+        if (!mResourceSystem->getVFS()->exists(firstPersonSkeleton))
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: missing retail first-person skeleton for authored "
+                                << "Camera1st target " << mPtr.getCellRef().getRefId();
+            return false;
+        }
+
+        try
+        {
+            osg::ref_ptr<osg::Node> sourceSkeleton
+                = mResourceSystem->getSceneManager()->getInstance(firstPersonSkeleton);
+            SceneUtil::FindByNameVisitor sourceNonAccumVisitor("Bip01 NonAccum");
+            sourceSkeleton->accept(sourceNonAccumVisitor);
+            NifOsg::MatrixTransform* const sourceNonAccum
+                = dynamic_cast<NifOsg::MatrixTransform*>(sourceNonAccumVisitor.mFoundNode);
+            if (sourceNonAccum == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton has no NIF "
+                                    << "Bip01 NonAccum branch for " << mPtr.getCellRef().getRefId();
+                return false;
+            }
+
+            osg::ref_ptr<osg::Node> clonedBranch
+                = static_cast<osg::Node*>(sourceNonAccum->clone(osg::CopyOp::DEEP_COPY_NODES));
+            NifOsg::MatrixTransform* const cameraNonAccum
+                = dynamic_cast<NifOsg::MatrixTransform*>(clonedBranch.get());
+            SceneUtil::FindByNameVisitor targetVisitor("Camera1st");
+            clonedBranch->accept(targetVisitor);
+            NifOsg::MatrixTransform* const target
+                = dynamic_cast<NifOsg::MatrixTransform*>(targetVisitor.mFoundNode);
+            if (cameraNonAccum == nullptr || target == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton lacks a usable "
+                                    << "Camera1st branch for " << mPtr.getCellRef().getRefId();
+                return false;
+            }
+
+            mObjectRoot->addChild(cameraNonAccum);
+            mNodeMap.find("Bip01 NonAccum")->second = cameraNonAccum;
+            mNodeMap.emplace(target->getName(), target);
+            mFalloutScriptPackageCameraTarget = true;
+            Log(Debug::Info) << "FNV/ESM4 scripted package: materialised retail first-person Camera1st branch for "
+                             << mPtr.getCellRef().getRefId() << " parent=Bip01 NonAccum source="
+                             << firstPersonSkeleton.value() << " parentLocal=("
+                             << cameraNonAccum->getMatrix().getTrans().x() << ","
+                             << cameraNonAccum->getMatrix().getTrans().y() << ","
+                             << cameraNonAccum->getMatrix().getTrans().z() << ") targetLocal=("
+                             << target->getMatrix().getTrans().x() << "," << target->getMatrix().getTrans().y()
+                             << "," << target->getMatrix().getTrans().z() << ")";
+            return true;
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: unable to load retail first-person Camera1st branch "
+                                << "for " << mPtr.getCellRef().getRefId() << ": " << e.what();
+            return false;
+        }
     }
 
     bool Animation::prepareFalloutHitReaction()
@@ -6518,9 +6657,18 @@ namespace MWRender
                         }
                     }
                     const bool accumulationBone = isFalloutAccumulationBone(lowerAppliedBone);
-                    const bool allowAccumulationTranslation = !accumulationBone || falloutProcedureIdle;
-                    const bool applyBoneTranslation = (falloutProcedureIdle ? shouldApplyFalloutProcedureBoneTranslations()
-                                                                            : shouldApplyFalloutBoneTranslations())
+                    // Camera1st and its immediate NonAccum parent are an authored first-person branch, not visible
+                    // skeleton displacement.  Their KF translation tracks are therefore mandatory even when the
+                    // optional body-bone translation policy is disabled.  This is selected from the KF's explicit
+                    // controller target names and applies to any Fallout package that carries that branch.
+                    const bool authoredCameraTransform = animsrc && animsrc->mFalloutAuthoredCamera
+                        && (lowerAppliedBone == "camera1st" || lowerAppliedBone == "bip01 nonaccum");
+                    const bool allowAccumulationTranslation
+                        = authoredCameraTransform || !accumulationBone || falloutProcedureIdle;
+                    const bool applyBoneTranslation = (authoredCameraTransform
+                                                           || (falloutProcedureIdle
+                                                                   ? shouldApplyFalloutProcedureBoneTranslations()
+                                                                   : shouldApplyFalloutBoneTranslations()))
                         && allowAccumulationTranslation
                         && keyframe.mTranslation
                         && isSafeFalloutBoneTranslation(*keyframe.mTranslation, before.getTrans());

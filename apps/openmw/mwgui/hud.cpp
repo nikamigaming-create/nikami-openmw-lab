@@ -42,6 +42,11 @@ namespace MWGui
 {
     namespace
     {
+        bool compatibilityUiTelemetryEnabled()
+        {
+            return std::getenv("OPENMW_COMPAT_UI_TELEMETRY") != nullptr;
+        }
+
         bool hasFalloutContent()
         {
             if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
@@ -706,6 +711,8 @@ namespace MWGui
     void HUD::setCrosshairVisible(bool visible)
     {
         mCrosshair->setVisible(visible);
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: crosshair visible=" << visible;
     }
 
     void HUD::setCrosshairOwned(bool owned)
@@ -726,16 +733,10 @@ namespace MWGui
         getWidget(healthFrame, "HealthFrame");
         getWidget(magickaFrame, "MagickaFrame");
         getWidget(fatigueFrame, "FatigueFrame");
-        if ((VR::getVR() || hasFalloutContent()) && !visible)
-        {
-            static bool logged = false;
-            if (!logged)
-            {
-                logged = true;
-                Log(Debug::Verbose) << "FNV/ESM4 diag: keeping Fallout HUD health/AP visible despite hide request";
-            }
-            visible = true;
-        }
+
+        // Scripted openings, cinematics, and character generation own HUD visibility.
+        // Fallout-family content must obey that contract as well: forcing these widgets
+        // back on leaks the legacy HUD (and its fallback textures) into an authored scene.
         const bool falloutVr = VR::getVR() && hasFalloutContent();
         healthFrame->setVisible(visible);
         magickaFrame->setVisible(visible);
@@ -744,6 +745,9 @@ namespace MWGui
         mMagicka->setVisible(visible);
         mStamina->setVisible(falloutVr ? false : visible);
         updatePositions();
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: HMS visible=" << visible
+                             << " staminaVisible=" << (falloutVr ? false : visible) << " falloutVr=" << falloutVr;
     }
 
     void HUD::setWeapVisible(bool visible)
@@ -772,18 +776,12 @@ namespace MWGui
 
     void HUD::setMinimapVisible(bool visible)
     {
-        if ((VR::getVR() || hasFalloutContent()) && !visible)
-        {
-            static bool logged = false;
-            if (!logged)
-            {
-                logged = true;
-                Log(Debug::Verbose) << "FNV/ESM4 diag: keeping Fallout HUD compass/minimap visible despite hide request";
-            }
-            visible = true;
-        }
+        // Keep the visibility decision with the gameplay/UI state.  In particular,
+        // a cinematic or character-generation sequence must not reveal a minimap.
         mMinimapBox->setVisible(visible);
         updatePositions();
+        if (compatibilityUiTelemetryEnabled())
+            Log(Debug::Info) << "OpenNV compatibility UI telemetry: minimap visible=" << visible;
     }
 
     void HUD::updatePositions()

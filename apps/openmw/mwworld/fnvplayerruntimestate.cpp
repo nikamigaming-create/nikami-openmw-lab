@@ -135,6 +135,18 @@ namespace MWWorld
         return FalloutActorValueMutationResult::Applied;
     }
 
+    FalloutActorValueMutationResult FalloutPlayerRuntimeState::setCurrentSpecial(
+        const std::array<float, FalloutPlayerState::SpecialCount>& values)
+    {
+        if (!mBase)
+            return FalloutActorValueMutationResult::Uninitialized;
+        if (!std::ranges::all_of(values, [](float value) { return std::isfinite(value); }))
+            return FalloutActorValueMutationResult::NonFinite;
+
+        mCurrent.mSpecial = values;
+        return FalloutActorValueMutationResult::Applied;
+    }
+
     FalloutActorValueMutationResult FalloutPlayerRuntimeState::modCurrentActorValue(
         std::uint32_t actorValue, float delta)
     {

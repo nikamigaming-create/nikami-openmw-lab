@@ -372,6 +372,12 @@ namespace MWMechanics
     void AiSequence::clear()
     {
         mPackages.clear();
+        // `mDone` describes the package that completed in the preceding AI
+        // update.  A cleared sequence has no completion to report.  Leaving
+        // that edge-triggered bit set lets a newly queued package inherit an
+        // unrelated completion, which can fire authored package End handlers
+        // before the new package has executed.
+        mDone = false;
         mNumCombatPackages = 0;
         mNumPursuitPackages = 0;
     }
@@ -380,6 +386,11 @@ namespace MWMechanics
     {
         if (actor == getPlayer())
             throw std::runtime_error("Can't add AI packages to player");
+
+        // A queued package starts a new AI execution boundary.  Completion is
+        // only reported after `execute` finishes this package, never while it
+        // is merely waiting to run.
+        mDone = false;
 
         // Stop combat when a non-combat AI package is added
         if (isActualAiPackage(package.getTypeId()))

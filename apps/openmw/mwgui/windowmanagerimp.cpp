@@ -4,11 +4,14 @@
 #include <cassert>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include <osgViewer/Viewer>
+#include <osgViewer/ViewerEventHandlers>
 
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
@@ -179,6 +182,19 @@ namespace MWGui
             return false;
         }
 
+        std::optional<float> authoredDefaultChoiceDelaySeconds()
+        {
+            const char* const value = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS");
+            if (value == nullptr || *value == '\0')
+                return std::nullopt;
+
+            char* end = nullptr;
+            const float seconds = std::strtof(value, &end);
+            if (end == value || (end != nullptr && *end != '\0') || !std::isfinite(seconds))
+                return std::nullopt;
+            return std::max(0.f, seconds);
+        }
+
         void setWindowCoord(WindowBase* window, const MyGUI::IntCoord& coord)
         {
             if (window == nullptr || window->mMainWidget == nullptr)
@@ -190,6 +206,111 @@ namespace MWGui
 
             guiWindow->setCoord(coord);
             window->onWindowResize(guiWindow);
+        }
+
+        bool equalNoCase(std::string_view left, std::string_view right)
+        {
+            if (left.size() != right.size())
+                return false;
+
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                const auto lhs = static_cast<unsigned char>(left[index]);
+                const auto rhs = static_cast<unsigned char>(right[index]);
+                if (std::tolower(lhs) != std::tolower(rhs))
+                    return false;
+            }
+            return true;
+        }
+
+        double readPositiveVideoCaptureSeconds(const char* variable)
+        {
+            const char* const text = std::getenv(variable);
+            if (text == nullptr || *text == '\0')
+                return 0.0;
+
+            char* end = nullptr;
+            const double result = std::strtod(text, &end);
+            return end != text && end != nullptr && *end == '\0' && std::isfinite(result) && result > 0.0 ? result : 0.0;
+        }
+
+        std::chrono::milliseconds readNativeVideoCaptureInterval()
+        {
+            const char* const text = std::getenv("OPENMW_CAPTURE_VIDEO_NATIVE_FRAME_INTERVAL_MS");
+            if (text == nullptr || *text == '\0')
+                return {};
+
+            char* end = nullptr;
+            const long value = std::strtol(text, &end, 10);
+            if (end == text || end == nullptr || *end != '\0' || value < 50 || value > 1000)
+                return {};
+            return std::chrono::milliseconds(value);
+        }
+
+        bool queueNativeVideoFrame(osgViewer::Viewer& viewer)
+        {
+            for (const osg::ref_ptr<osgGA::EventHandler>& handler : viewer.getEventHandlers())
+            {
+                if (auto* const capture = dynamic_cast<osgViewer::ScreenCaptureHandler*>(handler.get()))
+                {
+                    capture->setFramesToCapture(1);
+                    capture->captureNextFrame(viewer);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool isCaptureVideoTarget(std::string_view asset)
+        {
+            const char* const configuredAsset = std::getenv("OPENMW_CAPTURE_VIDEO_MATCH");
+            return configuredAsset != nullptr && *configuredAsset != '\0' && equalNoCase(asset, configuredAsset);
+        }
+
+        bool writeVideoCaptureReadyMarker(std::string_view asset)
+        {
+            const char* const markerPath = std::getenv("OPENMW_CAPTURE_VIDEO_READY_PATH");
+            if (markerPath == nullptr || *markerPath == '\0')
+                return false;
+
+            std::ofstream marker(markerPath, std::ios::trunc);
+            if (!marker)
+            {
+                Log(Debug::Warning) << "OpenNV capture: unable to write video-ready marker path=\"" << markerPath << "\"";
+                return false;
+            }
+
+            marker << "asset=" << asset << '\n';
+            marker << "audio=" << (MWBase::Environment::get().getSoundManager() != nullptr ? "available" : "unavailable")
+                   << '\n';
+            marker.flush();
+            Log(Debug::Info) << "OpenNV capture: video gate ready asset=\"" << asset << "\"";
+            return true;
+        }
+
+        void waitForVideoCaptureGate(std::string_view asset)
+        {
+            const char* const goPath = std::getenv("OPENMW_CAPTURE_VIDEO_GO_PATH");
+            if (goPath == nullptr || *goPath == '\0')
+                return;
+
+            const double timeout = readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_GATE_TIMEOUT_SECONDS");
+            const auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(static_cast<long long>(std::max(1.0, timeout > 0.0 ? timeout : 30.0) * 1000.0));
+            std::error_code error;
+            while (std::chrono::steady_clock::now() < deadline
+                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            {
+                if (std::filesystem::exists(goPath, error))
+                {
+                    Log(Debug::Info) << "OpenNV capture: video gate opened asset=\"" << asset << "\"";
+                    return;
+                }
+                error.clear();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+
+            Log(Debug::Warning) << "OpenNV capture: timed out waiting for video gate asset=\"" << asset << "\"";
         }
     }
 
@@ -236,6 +357,7 @@ namespace MWGui
         , mTranslationDataStorage(translationDataStorage)
         , mInputBlocker(nullptr)
         , mHudEnabled(true)
+        , mGameplayOverlaySuppressed(false)
         , mCursorVisible(true)
         , mCursorActive(true)
         , mPlayerBounty(-1)
@@ -758,8 +880,9 @@ namespace MWGui
         if (!mMap)
             return; // UI not created yet
 
-        mHud->setVisible(mHudEnabled && !loading);
-        mToolTips->setVisible(mHudEnabled && !loading);
+        const bool gameplayOverlayVisible = mHudEnabled && !loading && !mGameplayOverlaySuppressed;
+        mHud->setVisible(gameplayOverlayVisible);
+        mToolTips->setVisible(gameplayOverlayVisible);
 
         bool gameMode = !isGuiMode();
 
@@ -1043,6 +1166,7 @@ namespace MWGui
         std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus)
     {
         mMessageBoxManager->createInteractiveMessageBox(message, buttons, block, defaultFocus);
+        mAuthoredDefaultChoiceDelay = authoredDefaultChoiceDelaySeconds().value_or(-1.f);
         updateVisible();
 
         if (block)
@@ -1080,6 +1204,19 @@ namespace MWGui
 
     void WindowManager::messageBox(std::string_view message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        // An authored cinematic or character-generation sequence may deliberately
+        // own the screen.  Quest-stage notifications are delivered through this
+        // path on a later frame, so merely hiding the MessageBoxManager at the
+        // moment the sequence begins is not enough: a queued notification can
+        // otherwise re-create a visible HUD element during the presentation.
+        // Keep interactive character-generation dialogs on their dedicated path;
+        // this applies only to passive gameplay notifications.
+        if (mGameplayOverlaySuppressed)
+        {
+            Log(Debug::Info) << "OpenNV UI: suppressed passive message while authored gameplay overlay is hidden";
+            return;
+        }
+
         if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
             Log(Debug::Info) << "FNV interaction audit: rendered notification text=\"" << message << "\"";
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
@@ -1095,6 +1232,12 @@ namespace MWGui
 
     void WindowManager::scheduleMessageBox(std::string message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        if (mGameplayOverlaySuppressed)
+        {
+            Log(Debug::Info) << "OpenNV UI: suppressed scheduled passive message while authored gameplay overlay is hidden";
+            return;
+        }
+
         mScheduledMessageBoxes.lock()->emplace_back(std::move(message), showInDialogueMode);
     }
 
@@ -1341,6 +1484,26 @@ namespace MWGui
         if (mMessageBoxManager)
             mMessageBoxManager->onFrame(frameDuration);
 
+        if (mAuthoredDefaultChoiceDelay >= 0.f)
+        {
+            if (!mMessageBoxManager || !mMessageBoxManager->isInteractiveMessageBox())
+                mAuthoredDefaultChoiceDelay = -1.f;
+            else
+            {
+                mAuthoredDefaultChoiceDelay -= std::max(0.f, frameDuration);
+                if (mAuthoredDefaultChoiceDelay <= 0.f)
+                {
+                    // This stays inside the same callback path as a player
+                    // selecting the default button.  It is deliberately
+                    // opt-in and exists only so proof automation never needs
+                    // to control a Windows window or inject foreground input.
+                    closeInteractiveMessageBoxWithDefaultButton();
+                    mAuthoredDefaultChoiceDelay = -1.f;
+                    Log(Debug::Info) << "OpenNV authored automation: selected default interactive message button";
+                }
+            }
+        }
+
         mToolTips->onFrame(frameDuration);
 
         if (mLocalMapRender)
@@ -1470,6 +1633,12 @@ namespace MWGui
 
     void WindowManager::setFocusObject(const MWWorld::Ptr& focus)
     {
+        // World updates can finish one last focus pass while the GUI services
+        // are being dismantled.  Tooltips are presentation-only here; do not
+        // dereference their released owner during that lifecycle boundary.
+        if (!mToolTips)
+            return;
+
         mToolTips->setFocusObject(focus);
 
         const int showOwned = Settings::game().mShowOwned;
@@ -1482,6 +1651,9 @@ namespace MWGui
 
     void WindowManager::setFocusObjectScreenCoords(float x, float y)
     {
+        if (!mToolTips)
+            return;
+
         mToolTips->setFocusObjectScreenCoords(x, y);
     }
 
@@ -1519,12 +1691,12 @@ namespace MWGui
 
     void WindowManager::setCursorVisible(bool visible)
     {
-        mCursorVisible = visible;
+        mCursorVisible = visible && !mGameplayOverlaySuppressed;
     }
 
     void WindowManager::setCursorActive(bool active)
     {
-        mCursorActive = active;
+        mCursorActive = active && !mGameplayOverlaySuppressed;
     }
 
     void WindowManager::onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result)
@@ -1686,6 +1858,29 @@ namespace MWGui
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
+    }
+
+    void WindowManager::showAuthoredRaceMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Race))
+            return;
+
+        // Set the handoff mode before pushGuiMode causes CharacterCreation to
+        // instantiate the modal. Completion then returns to the requesting
+        // ESM4 script instead of entering the Morrowind chargen sequence.
+        mCharGen->beginAuthoredRaceMenu();
+        pushGuiMode(GM_Race);
+        Log(Debug::Info) << "FNV/ESM4 behavior: ShowRaceMenu opened authored character appearance menu";
+    }
+
+    void WindowManager::showAuthoredNameMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Name))
+            return;
+
+        mCharGen->beginAuthoredNameMenu();
+        pushGuiMode(GM_Name);
+        Log(Debug::Info) << "FNV/ESM4 behavior: GetPlayerName opened authored name menu";
     }
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg)
@@ -2082,6 +2277,7 @@ namespace MWGui
     void WindowManager::closeInteractiveMessageBoxWithDefaultButton() 
     {
         if (mMessageBoxManager && mMessageBoxManager->isInteractiveMessageBox()
+            && !mCurrentModals.empty()
             && mCurrentModals.back() == mMessageBoxManager->getInteractiveMessageBox())
         {
             static_cast<MWGui::InteractiveMessageBox*>(mCurrentModals.back())->closeDefault();
@@ -2122,7 +2318,7 @@ namespace MWGui
     void WindowManager::showCrosshair(bool show)
     {
         if (mHud)
-            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair);
+            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair && !mGameplayOverlaySuppressed);
     }
 
     void WindowManager::updateActivatedQuickKey()
@@ -2139,8 +2335,29 @@ namespace MWGui
     {
         mHudEnabled = show;
         updateVisible();
-        mMessageBoxManager->setVisible(mHudEnabled);
+        mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
         return mHudEnabled;
+    }
+
+    void WindowManager::setGameplayOverlaySuppressed(bool suppressed)
+    {
+        if (mGameplayOverlaySuppressed == suppressed)
+            return;
+
+        mGameplayOverlaySuppressed = suppressed;
+        if (suppressed)
+        {
+            mCursorVisible = false;
+            mCursorActive = false;
+            if (mHud)
+                mHud->setCrosshairVisible(false);
+        }
+
+        updateVisible();
+        if (mMessageBoxManager)
+            mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
+
+        Log(Debug::Info) << "OpenNV UI: gameplay overlay suppression=" << mGameplayOverlaySuppressed;
     }
 
     bool WindowManager::getRestEnabled()
@@ -2434,8 +2651,33 @@ namespace MWGui
             MWVR::VRGUIManager::instance().setForceLayerVisible(mVideoBackground->getLayer()->getName(), true);
 //## VR_PATCH END
 
-        bool cursorWasVisible = mCursorVisible;
-        setCursorVisible(false);
+        // A full-screen video owns the presentation surface.  The gameplay
+        // overlay must not leak through it, regardless of whether the caller
+        // is a quest opening, a Bink transition, or another authored video.
+        // Preserve the effective UI state so an already-running cinematic or
+        // character-generation sequence remains suppressed when this video
+        // returns.
+        const bool overlayWasSuppressed = mGameplayOverlaySuppressed;
+        const bool cursorWasVisible = mCursorVisible;
+        const bool cursorWasActive = mCursorActive;
+        setGameplayOverlaySuppressed(true);
+
+        const bool captureVideoTarget = isCaptureVideoTarget(name);
+        const double captureVideoLimitSeconds = captureVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_MAX_SECONDS")
+            : 0.0;
+        const std::chrono::milliseconds nativeCaptureInterval = captureVideoTarget
+            ? readNativeVideoCaptureInterval()
+            : std::chrono::milliseconds{};
+        if (captureVideoTarget && writeVideoCaptureReadyMarker(name))
+        {
+            mVideoWidget->pause();
+            waitForVideoCaptureGate(name);
+            mVideoWidget->resume();
+        }
+        const auto captureVideoStart = std::chrono::steady_clock::now();
+        auto nextNativeCapture = captureVideoStart;
+        std::size_t queuedNativeFrames = 0;
 
         if (overrideSounds && mVideoWidget->hasAudioStream())
             MWBase::Environment::get().getSoundManager()->pauseSounds(
@@ -2448,6 +2690,16 @@ namespace MWGui
             mVideoEnabled && mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
 //## VR_PATCH END
         {
+            if (captureVideoLimitSeconds > 0.0
+                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
+                    >= captureVideoLimitSeconds)
+            {
+                Log(Debug::Info) << "OpenNV capture: limiting authored video asset=\"" << name
+                                 << "\" seconds=" << captureVideoLimitSeconds;
+                mVideoWidget->stop();
+                break;
+            }
+
             const double dt
                 = std::chrono::duration_cast<std::chrono::duration<double>>(frameRateLimiter.getLastFrameDuration())
                       .count();
@@ -2464,6 +2716,14 @@ namespace MWGui
                 if (mVideoWidget->isPaused())
                     mVideoWidget->resume();
 
+                const auto now = std::chrono::steady_clock::now();
+                if (nativeCaptureInterval.count() > 0 && now >= nextNativeCapture)
+                {
+                    if (queueNativeVideoFrame(*mViewer))
+                        ++queuedNativeFrames;
+                    nextNativeCapture = now + nativeCaptureInterval;
+                }
+
 //## VR_PATCH BEGIN
                 viewerTraversals();
 //## VR_PATCH END
@@ -2477,11 +2737,19 @@ namespace MWGui
         }
         mVideoWidget->stop();
 
+        if (captureVideoTarget && nativeCaptureInterval.count() > 0)
+        {
+            Log(Debug::Info) << "OpenNV capture: queued native source frames asset=\"" << name << "\" count="
+                             << queuedNativeFrames << " intervalMilliseconds=" << nativeCaptureInterval.count();
+        }
+
         MWBase::Environment::get().getSoundManager()->resumeSounds(MWSound::VideoPlayback);
 
         setKeyFocusWidget(oldKeyFocus);
 
+        setGameplayOverlaySuppressed(overlayWasSuppressed);
         setCursorVisible(cursorWasVisible);
+        setCursorActive(cursorWasActive);
 
         // Restore normal rendering
         updateVisible();

@@ -272,6 +272,7 @@ namespace MWRender
                                      << " changed=" << changed << " drawn=1";
                 }
             }
+
         }
 
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
@@ -1224,6 +1225,10 @@ namespace MWRender
             needsAdjusting = isInterior && !Settings::shaders().mClassicFalloff;
 
         osg::Vec4f ambient = SceneUtil::colourFromRGB(cell.getMood().mAmbiantColor);
+        const osg::Vec4f authoredAmbient = ambient;
+        const float minimumAmbientLuminance = Settings::shaders().mMinimumInteriorBrightness;
+        float relativeLuminance = -1.f;
+        float ambientScale = 1.f;
 
         if (needsAdjusting)
         {
@@ -1232,8 +1237,7 @@ namespace MWRender
             constexpr float pB = 0.0722;
 
             // we already work in linear RGB so no conversions are needed for the luminosity function
-            float relativeLuminance = pR * ambient.r() + pG * ambient.g() + pB * ambient.b();
-            const float minimumAmbientLuminance = Settings::shaders().mMinimumInteriorBrightness;
+            relativeLuminance = pR * ambient.r() + pG * ambient.g() + pB * ambient.b();
             if (relativeLuminance < minimumAmbientLuminance)
             {
                 // brighten ambient so it reaches the minimum threshold but no more, we want to mess with content data
@@ -1242,13 +1246,39 @@ namespace MWRender
                     ambient = osg::Vec4(
                         minimumAmbientLuminance, minimumAmbientLuminance, minimumAmbientLuminance, ambient.a());
                 else
-                    ambient *= minimumAmbientLuminance / relativeLuminance;
+                {
+                    ambientScale = minimumAmbientLuminance / relativeLuminance;
+                    ambient *= ambientScale;
+                }
             }
         }
 
         setAmbientColour(ambient);
 
         osg::Vec4f diffuse = SceneUtil::colourFromRGB(cell.getMood().mDirectionalColor);
+
+        const char* materialTelemetry = std::getenv("OPENMW_ESM4_MATERIAL_TELEMETRY");
+        if (materialTelemetry != nullptr && materialTelemetry[0] != '\0' && materialTelemetry[0] != '0')
+        {
+            const auto& mood = cell.getMood();
+            Log(Debug::Info) << "FNV/ESM4 interior lighting telemetry: cell=" << cell.getId().toDebugString()
+                             << " editor=\"" << cell.getNameId() << "\""
+                             << " description=\"" << cell.getDescription() << "\""
+                             << " interior=" << isInterior
+                             << " authoredAmbient=0x" << std::hex << mood.mAmbiantColor << std::dec
+                             << " authoredAmbientRgb=(" << authoredAmbient.r() << "," << authoredAmbient.g() << ","
+                             << authoredAmbient.b() << ")"
+                             << " resolvedAmbientRgb=(" << ambient.r() << "," << ambient.g() << "," << ambient.b()
+                             << ")"
+                             << " ambientAdjusted=" << needsAdjusting
+                             << " relativeLuminance=" << relativeLuminance
+                             << " minimumInteriorBrightness=" << minimumAmbientLuminance
+                             << " ambientScale=" << ambientScale
+                             << " directional=0x" << std::hex << mood.mDirectionalColor << std::dec
+                             << " directionalRgb=(" << diffuse.r() << "," << diffuse.g() << "," << diffuse.b()
+                             << ")"
+                             << " fog=0x" << std::hex << mood.mFogColor << std::dec;
+        }
 
         setSunColour(diffuse, diffuse, 1.f);
         // This is total nonsense but it's what Morrowind uses
@@ -1541,6 +1571,7 @@ namespace MWRender
                                      << "\" available=" << selectedGroupAvailable;
                 }
             }
+
         }
 
         updateNavMesh();
@@ -1560,7 +1591,14 @@ namespace MWRender
             const bool showThirdPersonPlayer = !VR::getVR() && !proofHidePlayerVisual
                 && mCamera->getMode() != Camera::Mode::FirstPerson;
             if (osg::Group* playerVisualRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
-                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : 0);
+            {
+                // The native Fallout proxy supplies the player-facing Camera1st target as well as its visible body.
+                // Hiding it with node mask 0 prevents OSG's update traversal from reaching its authored KF
+                // controllers, leaving first-person cinematics frozen at the skeleton bind pose.  The dedicated
+                // update-only mask keeps the proxy out of every cull traversal while allowing its data-owned
+                // animation and camera targets to advance.
+                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : Mask_UpdateVisitor);
+            }
         }
 
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
@@ -2027,6 +2065,54 @@ namespace MWRender
             return mPlayerAnimation.get();
 
         return mObjects->getAnimation(ptr);
+    }
+
+    MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)
+    {
+        if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr() && mFalloutPlayerVisualAnimation)
+            return mFalloutPlayerVisualAnimation.get();
+
+        return getAnimation(ptr);
+    }
+
+    bool RenderingManager::setESM4ScriptPackageCamera(const MWWorld::Ptr& ptr, bool active)
+    {
+        if (!mPlayerAnimation || !mCamera || ptr != mPlayerAnimation->getPtr())
+            return false;
+
+        Animation* cameraAnimation = mPlayerAnimation.get();
+        bool usingAuthoredTarget = false;
+        if (active && mFalloutPlayerVisualAnimation && mFalloutPlayerVisualAnimation->hasFalloutScriptPackageCameraTarget())
+        {
+            cameraAnimation = mFalloutPlayerVisualAnimation.get();
+            usingAuthoredTarget = true;
+        }
+
+        // A package that carries an authored Camera1st controller is explicitly a first-person presentation.
+        // Preserve the player's selected view while it runs, then restore it when the package releases the camera.
+        // The decision is based solely on the loaded package/KF target and therefore applies to every Fallout-family
+        // cinematic package rather than naming an opening quest or cell.
+        if (usingAuthoredTarget)
+        {
+            if (!mESM4ScriptPackagePreviousCameraMode)
+                mESM4ScriptPackagePreviousCameraMode = static_cast<int>(mCamera->getMode());
+            mCamera->setMode(Camera::Mode::FirstPerson);
+        }
+        else if (mESM4ScriptPackagePreviousCameraMode)
+        {
+            const Camera::Mode restoreMode = static_cast<Camera::Mode>(*mESM4ScriptPackagePreviousCameraMode);
+            mESM4ScriptPackagePreviousCameraMode.reset();
+            mCamera->setMode(restoreMode);
+        }
+
+        mCamera->setAnimation(cameraAnimation);
+        mCamera->attachTo(ptr);
+        mCamera->processViewChange();
+        mCamera->instantTransition();
+        Log(Debug::Info) << "FNV/ESM4 scripted package: camera actor=" << ptr.getCellRef().getRefId()
+                         << " authoredTarget=" << usingAuthoredTarget
+                         << " mode=" << static_cast<int>(mCamera->getMode());
+        return usingAuthoredTarget;
     }
 
     PostProcessor* RenderingManager::getPostProcessor()

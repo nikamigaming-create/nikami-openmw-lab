@@ -104,6 +104,10 @@ namespace MWGui
 
         bool exit() override { return false; }
 
+        /// Activate an authored button without manufacturing a platform input
+        /// event.  This is used by the engine's opt-in unattended test driver;
+        /// ordinary gameplay continues to enter through the UI callbacks.
+        void closeButton(std::size_t buttonIndex);
         void closeDefault();
 
         bool mMarkedToDelete;

@@ -817,6 +817,19 @@ namespace
         }
     }
 
+    void applyEsm4OpenByDefaultDoorAfterNavigation(const MWWorld::Ptr& ptr, MWWorld::World& world)
+    {
+        // ESM4 ONAM means "Open By Default".  This must happen after the second
+        // scene insertion phase: that phase creates the navigator DoorShapes
+        // connection through the doorway.  Opening before it removes the ESM4
+        // collision object, causing the navigator to lose the authored route.
+        if (ptr.getType() == ESM::REC_DOOR4 && ptr.getCellRef().isEsm4OpenByDefault()
+            && !ptr.getRefData().getCustomData())
+        {
+            world.activateDoor(ptr);
+        }
+    }
+
     struct InsertVisitor
     {
         MWWorld::CellStore& mCell;
@@ -1657,6 +1670,7 @@ namespace MWWorld
             if (skipDistantEsm4Actors && isEsm4Actor(ptr) && ptr.getClass().isActor())
                 return;
             addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator, navigatorUpdateGuard);
+            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
         });
         if (skippedDistantEsm4Actors != 0)
             Log(Debug::Info) << "World viewer: kept connected ESM4 exterior geometry while deferring "
@@ -1671,6 +1685,7 @@ namespace MWWorld
         {
             addObject(ptr, mWorld, mPagedRefs, *mPhysics, mRendering);
             addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator);
+            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
             mWorld.scaleObject(ptr, ptr.getCellRef().getScale());
         }
         catch (std::exception& e)

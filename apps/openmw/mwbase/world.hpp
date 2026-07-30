@@ -3,12 +3,15 @@
 
 #include "rotationflags.hpp"
 
+#include <array>
 #include <deque>
 #include <set>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include <components/esm/formid.hpp>
+#include <components/esm3/refnum.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -178,7 +181,16 @@ namespace MWBase
         virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
         virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
 
+        /// Apply or clear a data-driven ESM4 actor script-package stack. The target is a live actor reference;
+        /// package interpretation stays in the world implementation where content records and rendering are present.
+        virtual bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
+        virtual bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) = 0;
+
         virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
+
+        /// Apply a complete Fallout SPECIAL allocation atomically to the
+        /// authoritative native Player runtime state.
+        virtual bool setFalloutPlayerSpecial(const std::array<float, 7>& values) = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
@@ -223,6 +235,10 @@ namespace MWBase
         virtual MWWorld::Ptr searchPtr(const ESM::RefId& name, bool activeOnly, bool searchInContainers = true) = 0;
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do non search inactive cells.
+
+        virtual MWWorld::Ptr searchPtrByRefNum(ESM::RefNum refNum) = 0;
+        ///< Return the live reference with the exact placed-reference number.
+        /// This is distinct from searchPtr(), whose RefId denotes a base object.
 
         virtual MWWorld::Ptr searchPtrViaActorId(int actorId) = 0;
         ///< Search is limited to the active cells.

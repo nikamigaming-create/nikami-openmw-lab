@@ -3,6 +3,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
@@ -132,6 +133,21 @@ namespace
         EXPECT_EQ(npc.mFactions[0].rank, 2);
         EXPECT_EQ(ESM::FormId::fromUint32(npc.mFactions[1].faction), ESM::FormId::fromUint32(0x03002002));
         EXPECT_EQ(npc.mFactions[1].rank, -1);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveReferenceOpenByDefault)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("OpenPlaypenGate"));
+        appendSubRecord(payload, "NAME", std::uint32_t{ 0x1234 });
+        appendSubRecord(payload, "ONAM", std::string_view{});
+
+        auto reader = makeReader("REFR", 0x1010, payload, 7);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        EXPECT_EQ(reference.mEditorId, "OpenPlaypenGate");
+        EXPECT_TRUE(reference.mOpenByDefault);
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutNpcRuntimeStatePayloads)
@@ -367,6 +383,42 @@ namespace
         EXPECT_EQ(loaded.runOn, 2u);
         EXPECT_EQ(ESM::FormId::fromUint32(loaded.reference),
             (ESM::FormId{ .mIndex = 0x300, .mContentFile = static_cast<std::int32_t>(modIndex) }));
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveFalloutPackageLifecycleScripts)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("LifecyclePackage"));
+
+        ESM4::ScriptHeader beginHeader{};
+        beginHeader.compiledSize = 1;
+        appendSubRecord(payload, "SCHR", beginHeader);
+        appendSubRecord(payload, "SCDA", std::array<std::uint8_t, 1>{ 0x01 });
+        appendSubRecord(payload, "SCTX", zString("set beginFlag to 1"));
+
+        ESM4::ScriptHeader endHeader{};
+        endHeader.compiledSize = 2;
+        appendSubRecord(payload, "SCHR", endHeader);
+        appendSubRecord(payload, "SCDA", std::array<std::uint8_t, 2>{ 0x02, 0x03 });
+        appendSubRecord(payload, "SCTX", zString("setstage TestQuest 20"));
+        appendSubRecord(payload, "SCRO", std::uint32_t{ 0x777 });
+
+        ESM4::ScriptHeader changeHeader{};
+        appendSubRecord(payload, "SCHR", changeHeader);
+        appendSubRecord(payload, "SCTX", zString("set changeFlag to 1"));
+
+        auto reader = makeReader("PACK", 0x1022, payload);
+        ESM4::AIPackage package;
+        package.load(*reader);
+
+        EXPECT_EQ(package.mOnBeginScript.compiledData, std::vector<std::uint8_t>({ 0x01 }));
+        EXPECT_EQ(package.mOnBeginScript.scriptSource, "set beginFlag to 1");
+        EXPECT_EQ(package.mOnEndScript.compiledData, std::vector<std::uint8_t>({ 0x02, 0x03 }));
+        EXPECT_EQ(package.mOnEndScript.scriptSource, "setstage TestQuest 20");
+        ASSERT_EQ(package.mOnEndScript.references.size(), 1);
+        EXPECT_EQ(package.mOnEndScript.references[0], ESM::FormId::fromUint32(0x777));
+        EXPECT_TRUE(package.mOnChangeScript.compiledData.empty());
+        EXPECT_EQ(package.mOnChangeScript.scriptSource, "set changeFlag to 1");
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveAllInfoResponsesConditionsLinksAndResultScripts)

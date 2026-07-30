@@ -32,7 +32,10 @@
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadidle.hpp>
+#include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadland.hpp>
+#include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -73,6 +76,7 @@
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/aiavoiddoor.hpp" //Used to tell actors to avoid doors
+#include "../mwmechanics/character.hpp"
 #include "../mwmechanics/combat.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/levelledlist.hpp"
@@ -125,6 +129,43 @@ namespace MWWorld
 {
     namespace
     {
+        constexpr std::string_view FalloutScriptPackageIdleGroup = "falloutscriptedpackageidle";
+
+        void collectESM4ScriptPackageIdleModels(const MWWorld::ESMStore& store, ESM::FormId id,
+            std::vector<std::string>& models, unsigned int depth = 0)
+        {
+            if (id.isZeroOrUnset() || depth >= 4 || models.size() >= 16)
+                return;
+
+            const auto appendModel = [&models](std::string_view model) {
+                if (model.empty()
+                    || std::find(models.begin(), models.end(), model) != models.end())
+                    return;
+                models.emplace_back(model);
+            };
+
+            if (const ESM4::IdleAnimation* idle = store.get<ESM4::IdleAnimation>().search(id))
+            {
+                appendModel(idle->mModel);
+                if (idle->mModel.empty())
+                    collectESM4ScriptPackageIdleModels(store, idle->mParent, models, depth + 1);
+                return;
+            }
+
+            if (const ESM4::IdleMarker* marker = store.get<ESM4::IdleMarker>().search(id))
+                for (const ESM::FormId child : marker->mIdleAnim)
+                    collectESM4ScriptPackageIdleModels(store, child, models, depth + 1);
+        }
+
+        std::vector<std::string> collectESM4ScriptPackageIdleModels(
+            const MWWorld::ESMStore& store, const ESM4::AIPackage& package)
+        {
+            std::vector<std::string> result;
+            for (const ESM::FormId idle : package.mIdleAnim)
+                collectESM4ScriptPackageIdleModels(store, idle, result);
+            return result;
+        }
+
         bool readViewerProofFloat(const char* name, float& value)
         {
             const char* text = std::getenv(name);
@@ -846,6 +887,7 @@ namespace MWWorld
         mLastNewGameAuthoredStartQuestEditorId.clear();
         mLastNewGameAuthoredStartMarkerEditorId.clear();
         mLastNewGameAuthoredStartCinematicAsset.clear();
+        mESM4ScriptPackages.clear();
 
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
@@ -1005,6 +1047,8 @@ namespace MWWorld
                                          << " quest=" << authoredStart->mQuestEditorId
                                          << " marker=" << authoredStart->mMarkerEditorId
                                          << " cell=" << authoredStart->mCell
+                                         << " sourceStage="
+                                         << static_cast<unsigned int>(authoredStart->mSourceStage)
                                          << " activationStage="
                                          << static_cast<unsigned int>(authoredStart->mActivationStage)
                                          << " cinematic=" << authoredStart->mCinematicAsset;
@@ -1018,7 +1062,36 @@ namespace MWWorld
                             mLastNewGameAuthoredStartMarkerEditorId = authoredStart->mMarkerEditorId;
                             mLastNewGameAuthoredStartCinematicAsset = authoredStart->mCinematicAsset;
                             mLastNewGameAuthoredStartStageExecuted
-                                = mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mActivationStage);
+                                = mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mSourceStage);
+                            if (std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr)
+                            {
+                                const MWWorld::Ptr& player = getPlayerPtr();
+                                const ESM::Position& playerPosition = player.getRefData().getPosition();
+                                const MWRender::Camera* camera = mRendering->getCamera();
+                                const osg::Vec3d cameraPosition
+                                    = camera != nullptr ? camera->getPosition() : osg::Vec3d();
+                                const osg::Vec3d trackedPosition
+                                    = camera != nullptr ? camera->getTrackedPosition() : osg::Vec3d();
+                                const osg::Vec3f halfExtents
+                                    = player.isEmpty() ? osg::Vec3f() : mPhysics->getHalfExtents(player);
+                                Log(Debug::Info)
+                                    << "FNV/ESM4 authored-start telemetry: quest=" << authoredStart->mQuestEditorId
+                                    << " stage=" << static_cast<unsigned int>(authoredStart->mSourceStage)
+                                    << " playerCell=" << (player.getCell() != nullptr ? player.getCell()->getCell()->getId()
+                                                                                         : ESM::RefId())
+                                    << " playerPos=(" << playerPosition.pos[0] << "," << playerPosition.pos[1]
+                                    << "," << playerPosition.pos[2] << ") playerRot=(" << playerPosition.rot[0]
+                                    << "," << playerPosition.rot[1] << "," << playerPosition.rot[2]
+                                    << ") playerScale=" << player.getCellRef().getScale() << " halfExtents=("
+                                    << halfExtents.x() << "," << halfExtents.y() << "," << halfExtents.z()
+                                    << ") cameraMode="
+                                    << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                                    << " cameraPos=(" << cameraPosition.x() << "," << cameraPosition.y() << ","
+                                    << cameraPosition.z() << ") trackedPos=(" << trackedPosition.x() << ","
+                                    << trackedPosition.y() << "," << trackedPosition.z() << ") cameraPitch="
+                                    << (camera != nullptr ? camera->getPitch() : 0.f) << " cameraYaw="
+                                    << (camera != nullptr ? camera->getYaw() : 0.f);
+                            }
                             if (!mLastNewGameAuthoredStartStageExecuted)
                             {
                                 Log(Debug::Warning)
@@ -1170,6 +1243,7 @@ namespace MWWorld
         }
 
         mDoorStates.clear();
+        mESM4ScriptPackages.clear();
 
         mGoToJail = false;
         mTeleportEnabled = true;
@@ -1513,6 +1587,17 @@ namespace MWWorld
         return ptr;
     }
 
+    Ptr World::searchPtrByRefNum(ESM::RefNum refNum)
+    {
+        if (Ptr ptr = mWorldModel.getPtr(refNum); !ptr.isEmpty())
+            return ptr;
+
+        // ESM4 scripts address placed objects by their reference number.  If the
+        // owning cell has not joined the live registry yet, WorldModel resolves
+        // that number through the ESM4 placement stores and loads its cell.
+        return mWorldModel.getPtrByRefId(ESM::RefId(refNum));
+    }
+
     Ptr World::getPtr(const ESM::RefId& name, bool activeOnly)
     {
         Ptr ret = searchPtr(name, activeOnly);
@@ -1754,6 +1839,7 @@ namespace MWWorld
     {
         const MWWorld::Cell* destinationCell = getWorldModel().getCell(cellId).getCell();
         bool exteriorCell = destinationCell->isExterior();
+        const bool playerWasInCell = getPlayerPtr().isInCell();
 
         mPhysics->clearQueuedMovement();
         mDiscardMovements = true;
@@ -1771,6 +1857,26 @@ namespace MWWorld
         else
             mWorldScene->changeToInteriorCell(destinationCell->getNameId(), position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+
+        // A normal teleport moves an already-rendered player.  Fresh authored
+        // starts are different: setupPlayer/renderPlayer ran before the player
+        // was admitted to a cell, so the Fallout player proxy and camera can
+        // still be rooted at the fallback origin after the scene is populated.
+        // Rehydrate only on that unloaded-to-cell transition.  This is a world
+        // lifecycle rule, not a quest/cell-specific placement or camera pose.
+        if (!playerWasInCell && getPlayerPtr().isInCell())
+        {
+            renderPlayer();
+            if (MWRender::Camera* camera = mRendering->getCamera())
+            {
+                camera->attachTo(getPlayerPtr());
+                camera->processViewChange();
+                camera->update(0.f, false);
+                camera->instantTransition();
+                camera->updateCamera();
+            }
+            Log(Debug::Info) << "FNV/ESM4 behavior: rehydrated player visual and camera after unloaded cell entry";
+        }
     }
 
     float World::getMaxActivationDistance() const
@@ -2131,9 +2237,51 @@ namespace MWWorld
             && !(ptr.getClass().isPersistent(ptr) && ptr.getClass().getCreatureStats(ptr).isDeathAnimationFinished());
         if (force || !ptr.getClass().isActor() || (!isFlying(ptr) && !swims && isActorCollisionEnabled(ptr)))
         {
-            osg::Vec3f traced
-                = mPhysics->traceDown(ptr, pos, ESM::getCellSize(ptr.getCell()->getCell()->getWorldSpace()));
+            const float cellSize = ESM::getCellSize(ptr.getCell()->getCell()->getWorldSpace());
+            const osg::Vec3f downwardProbe = pos;
+            const osg::Vec3f traced = mPhysics->traceDown(ptr, downwardProbe, cellSize);
             pos.z() = std::min(pos.z(), traced.z());
+
+            // An authored spawn marker can legitimately be embedded a little below an interior's floor collision.
+            // A downward-only ground probe cannot recover from that state: it sees no ground and leaves the player
+            // beneath the scene. For the player, recover only when the normal ground probe found nothing, then derive
+            // a safe position from the first physical surface directly above the marker. This is intentionally
+            // cell- and game-agnostic; it applies the loaded collision data rather than a content-specific offset.
+            const bool foundGroundBelow = traced.z() < downwardProbe.z() - 0.01f;
+            if (force && ptr == getPlayerPtr())
+            {
+                const bool telemetryEnabled = std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr;
+                if (!foundGroundBelow || telemetryEnabled)
+                {
+                    const MWPhysics::RayCastingResult upwardHit = mPhysics->castRay(downwardProbe,
+                        downwardProbe + osg::Vec3f(0.f, 0.f, cellSize),
+                        MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap);
+                    if (telemetryEnabled)
+                    {
+                        Log(Debug::Info) << "World placement probe: fromZ=" << downwardProbe.z()
+                                         << " downZ=" << traced.z() << " foundDown=" << foundGroundBelow
+                                         << " upwardHit=" << upwardHit.mHit
+                                         << " upwardZ=" << (upwardHit.mHit ? upwardHit.mHitPos.z() : 0.f)
+                                         << " upwardNormalZ=" << (upwardHit.mHit ? upwardHit.mHitNormal.z() : 0.f);
+                    }
+                    if (!foundGroundBelow && upwardHit.mHit)
+                    {
+                        // Keep the existing grounding clearance. The collision sweep below resolves the actor's actual
+                        // capsule dimensions and shape offset, so this does not assume a Fallout/Morrowind body size.
+                        osg::Vec3f recoveryProbe = upwardHit.mHitPos;
+                        recoveryProbe.z() += 20.f;
+                        const osg::Vec3f recovered = mPhysics->traceDown(ptr, recoveryProbe, cellSize);
+                        const bool foundRecoveryGround = recovered.z() < recoveryProbe.z() - 0.01f;
+                        if (foundRecoveryGround && recovered.z() > pos.z() + 0.01f)
+                        {
+                            Log(Debug::Info) << "World placement recovery: raised embedded player using loaded collision"
+                                             << " fromZ=" << downwardProbe.z() << " hitZ=" << upwardHit.mHitPos.z()
+                                             << " hitNormalZ=" << upwardHit.mHitNormal.z() << " toZ=" << recovered.z();
+                            pos = recovered;
+                        }
+                    }
+                }
+            }
         }
 
         moveObject(ptr, ptr.getCell(), pos);
@@ -2477,6 +2625,12 @@ namespace MWWorld
 
         updateNavigator();
 
+        // Fallout-family quests carry their own data-authored GameMode
+        // countdowns. Advance the narrow, validated subset before actor and
+        // package resolution so a stage handoff can materialise its next
+        // authored camera/animation package in this same world tick.
+        mESM4QuestRuntime.update(duration, paused);
+
         mPlayer->update();
 
         mPhysics->debugDraw();
@@ -2484,6 +2638,15 @@ namespace MWWorld
         mWorldScene->update(duration);
 
         mRendering->update(duration, paused);
+
+        // Script packages are declared while authored quest stages are being
+        // evaluated.  Rendering can replace or finish constructing an actor's
+        // visual during that same world tick, so resolve their IDLE/KF data
+        // only after the normal render update has settled the live graph.
+        // This makes package activation follow the actor lifecycle rather
+        // than whichever construction order a particular quest happens to
+        // use.
+        updateESM4ScriptPackages();
 
         updateSoundListener();
 
@@ -3251,6 +3414,182 @@ namespace MWWorld
     const MWRender::Animation* World::getAnimation(const MWWorld::ConstPtr& ptr) const
     {
         return mRendering->getAnimation(ptr);
+    }
+
+    bool World::addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId packageId)
+    {
+        if (actor.isEmpty() || !actor.getClass().isActor())
+            return false;
+
+        const ESM::RefId actorId = actor.getCellRef().getRefId();
+        const ESM4::AIPackage* package = mStore.get<ESM4::AIPackage>().search(packageId);
+        if (actorId.empty() || package == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 scripted package: unresolved actor/package actor=" << actorId
+                                << " package=" << ESM::RefId(packageId);
+            return false;
+        }
+
+        ESM4ScriptPackageState& state = mESM4ScriptPackages[actorId];
+        if (std::find(state.mPackages.begin(), state.mPackages.end(), packageId) == state.mPackages.end())
+            state.mPackages.push_back(packageId);
+        // A package command may deliberately re-enter the same authored package.  Preserve the last visual and
+        // package identity so updateESM4ScriptPackages can retire only the completed package group before replaying
+        // it.  Clearing the pointer here used to leave the finished group in Animation::mStates, where a later
+        // package with the same semantic group could never start.
+        state.mDirty = true;
+        state.mPlaybackObserved = false;
+
+        Log(Debug::Info) << "FNV/ESM4 scripted package: added actor=" << actorId
+                         << " package=" << package->mEditorId << " form=" << ESM::RefId(packageId)
+                         << " stackDepth=" << state.mPackages.size();
+        return true;
+    }
+
+    bool World::removeESM4ScriptPackages(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || !actor.getClass().isActor())
+            return false;
+
+        const ESM::RefId actorId = actor.getCellRef().getRefId();
+        const auto found = mESM4ScriptPackages.find(actorId);
+        if (found == mESM4ScriptPackages.end())
+            return true;
+
+        if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+            mechanics->clearAnimationQueue(actor, true);
+        if (found->second.mAppliedAnimation != nullptr)
+        {
+            found->second.mAppliedAnimation->setPlayScriptedOnly(false);
+            found->second.mAppliedAnimation->play(
+                {}, MWMechanics::Priority_Scripted, MWRender::BlendMask_All, false, 1.f, {}, {}, 0.f, 0);
+        }
+        mRendering->setESM4ScriptPackageCamera(actor, false);
+        Log(Debug::Info) << "FNV/ESM4 scripted package: removed actor=" << actorId
+                         << " stackDepth=" << found->second.mPackages.size();
+        mESM4ScriptPackages.erase(found);
+        return true;
+    }
+
+    void World::updateESM4ScriptPackages()
+    {
+        MWBase::MechanicsManager* const mechanics = MWBase::Environment::get().getMechanicsManager();
+        if (mechanics == nullptr)
+            return;
+
+        for (auto& [actorId, state] : mESM4ScriptPackages)
+        {
+            if (state.mPackages.empty())
+                continue;
+
+            MWWorld::Ptr actor = searchPtr(actorId, true, false);
+            if (actor.isEmpty() || !actor.getClass().isActor())
+                continue;
+
+            // Fallout-family player rendering deliberately keeps a legacy
+            // camera rig and a native ESM4 body proxy.  The script package is
+            // authored against the body proxy's skeleton, so ask rendering for
+            // the package-capable visual rather than assuming the generic
+            // gameplay-animation lookup owns it.
+            MWRender::Animation* const animation = mRendering->getESM4ScriptPackageAnimation(actor);
+            if (animation == nullptr)
+                continue;
+            if (state.mAppliedAnimation != nullptr && state.mAppliedAnimation != animation)
+            {
+                state.mAppliedAnimation->disable(FalloutScriptPackageIdleGroup);
+                state.mAppliedAnimation = nullptr;
+                state.mDirty = true;
+                state.mPlaybackObserved = false;
+            }
+            if (!state.mDirty)
+            {
+                const bool playing = animation->isPlaying(FalloutScriptPackageIdleGroup);
+                mRendering->setESM4ScriptPackageCamera(actor, playing);
+                if (!state.mPlaybackObserved || playing)
+                    continue;
+
+                // Completion is an engine event, not a guessed duration.
+                // Retire the exact data package that really played before
+                // running the actor's source OnPackageDone block. That block
+                // may add a successor package through the same normal world
+                // API, so the stack is left in a coherent state first.
+                const ESM::FormId completedPackage = state.mAppliedPackage;
+                animation->disable(FalloutScriptPackageIdleGroup);
+                const auto package = std::find(state.mPackages.begin(), state.mPackages.end(), completedPackage);
+                if (package != state.mPackages.end())
+                    state.mPackages.erase(package);
+                state.mAppliedPackage = ESM::FormId{};
+                state.mPlaybackObserved = false;
+                state.mDirty = true;
+                mRendering->setESM4ScriptPackageCamera(actor, false);
+                mESM4QuestRuntime.onActorScriptPackageDone(actor, completedPackage);
+                Log(Debug::Info) << "FNV/ESM4 scripted package: completed actor=" << actorId
+                                 << " package=" << ESM::RefId(completedPackage);
+                continue;
+            }
+
+            const ESM::FormId packageId = state.mPackages.back();
+            const ESM4::AIPackage* package = mStore.get<ESM4::AIPackage>().search(packageId);
+            if (package == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 scripted package: active package disappeared actor=" << actorId
+                                    << " package=" << ESM::RefId(packageId);
+                state.mDirty = false;
+                state.mPlaybackObserved = false;
+                continue;
+            }
+
+            const bool packageChanged = state.mAppliedPackage != packageId;
+            if (state.mAppliedAnimation != nullptr && (packageChanged || state.mDirty))
+            {
+                // Package KFs share a semantic group so they can participate in the normal animation scheduler.
+                // That also means a completed predecessor can otherwise mask a successor.  Retire precisely that
+                // scripted group before applying the newly authored package; no quest, cell, or package name is
+                // special-cased here.
+                state.mAppliedAnimation->disable(FalloutScriptPackageIdleGroup);
+            }
+
+            if (state.mAppliedAnimation == nullptr || packageChanged)
+            {
+                const std::vector<std::string> models = collectESM4ScriptPackageIdleModels(mStore, *package);
+                bool bound = false;
+                for (const std::string& model : models)
+                {
+                    if (animation->addFalloutScriptPackageAnimationSource(model, FalloutScriptPackageIdleGroup))
+                    {
+                        bound = true;
+                        break;
+                    }
+                }
+                if (!bound)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 scripted package: no bindable IDLE source actor=" << actorId
+                                        << " package=" << package->mEditorId << " idleCount="
+                                        << package->mIdleAnim.size();
+                    state.mDirty = false;
+                    state.mPlaybackObserved = false;
+                    continue;
+                }
+                state.mAppliedAnimation = animation;
+                state.mAppliedPackage = packageId;
+            }
+
+            // Native Fallout body proxies are intentionally distinct from OpenMW's legacy player camera rig.  Play
+            // the package directly on the visual that accepted its KF; regular CharacterController dispatch would
+            // otherwise send the semantic group back to the invisible compatibility rig.
+            animation->setPlayScriptedOnly(true);
+            animation->play(FalloutScriptPackageIdleGroup, MWMechanics::Priority_Scripted, MWRender::BlendMask_All,
+                false, 1.f, "start", "stop", 0.f, 0);
+            const bool playing = animation->isPlaying(FalloutScriptPackageIdleGroup);
+            mRendering->setESM4ScriptPackageCamera(actor, playing);
+            Log(playing ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 scripted package: play actor=" << actorId << " package=" << package->mEditorId
+                << " group=" << FalloutScriptPackageIdleGroup << " playing=" << playing;
+            // A source that cannot play must not be re-bound and logged every frame.  Its next authored package
+            // command or a visual reload will make the state dirty again.
+            state.mDirty = false;
+            state.mPlaybackObserved = playing;
+        }
     }
 
     void World::screenshot(osg::Image* image, int w, int h)

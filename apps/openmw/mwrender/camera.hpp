@@ -26,6 +26,7 @@ namespace osg
 
 namespace MWRender
 {
+    class Animation;
     class NpcAnimation;
 
     /// \brief Camera control
@@ -128,7 +129,9 @@ namespace MWRender
         float getCameraDistance() const { return mCameraDistance; }
         void setPreferredCameraDistance(float v) { mPreferredCameraDistance = v; }
 
-        void setAnimation(NpcAnimation* anim);
+        /// Most gameplay uses an NpcAnimation camera rig.  Data-driven Fallout cinematics can instead expose an
+        /// authored camera target on a native ESM4 body Animation.
+        void setAnimation(Animation* anim);
 
         osg::Vec3d getTrackedPosition() const { return mTrackedPosition; }
         const osg::Vec3d& getPosition() const { return mPosition; }
@@ -174,7 +177,7 @@ namespace MWRender
 
         osg::ref_ptr<osg::Camera> mCamera;
 
-        NpcAnimation* mAnimation;
+        Animation* mAnimation;
 
         // Always 'true' if mMode == `FirstPerson`. Also it is 'true' in `Vanity` or `Preview` modes if
         // the camera should return to `FirstPerson` view after it.

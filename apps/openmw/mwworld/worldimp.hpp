@@ -5,6 +5,7 @@
 #include <osg/ref_ptr>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/refid.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/misc/rng.hpp>
 #include <components/settings/settings.hpp>
@@ -154,6 +155,20 @@ namespace MWWorld
         std::map<MWWorld::Ptr, MWWorld::DoorState> mDoorStates;
         ///< only holds doors that are currently moving. 1 = opening, 2 = closing
 
+        struct ESM4ScriptPackageState
+        {
+            std::vector<ESM::FormId> mPackages;
+            MWRender::Animation* mAppliedAnimation = nullptr;
+            ESM::FormId mAppliedPackage;
+            bool mDirty = true;
+            // A package can legitimately have no playable animation.  Only
+            // emit OnPackageDone after this exact authored package was seen
+            // playing and then stopped, so a missing asset never fabricates
+            // a gameplay transition.
+            bool mPlaybackObserved = false;
+        };
+        std::map<ESM::RefId, ESM4ScriptPackageState> mESM4ScriptPackages;
+
         uint32_t mRandomSeed{};
         bool mIdsRebuilt{};
 
@@ -162,6 +177,7 @@ namespace MWWorld
         World& operator=(const World&) = delete;
 
         void updateWeather(float duration, bool paused = false);
+        void updateESM4ScriptPackages();
 
         void initObjectInCell(const Ptr& ptr, CellStore& cell, bool adjustPos);
         Ptr moveObjectToCell(const Ptr& ptr, CellStore* cell, ESM::Position pos, bool adjustPos);
@@ -293,9 +309,18 @@ namespace MWWorld
 
         const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
 
+        bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) override;
+        bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) override;
+
         const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
         {
             return mFalloutPlayerRuntimeState;
+        }
+
+        bool setFalloutPlayerSpecial(const std::array<float, 7>& values) override
+        {
+            return mFalloutPlayerRuntimeState.setCurrentSpecial(values)
+                == MWWorld::FalloutActorValueMutationResult::Applied;
         }
 
         const std::vector<int>& getESMVersions() const override;
@@ -343,6 +368,9 @@ namespace MWWorld
         Ptr searchPtr(const ESM::RefId& name, bool activeOnly, bool searchInContainers = false) override;
         ///< Return a pointer to a liveCellRef with the given name.
         /// \param activeOnly do not search inactive cells.
+
+        Ptr searchPtrByRefNum(ESM::RefNum refNum) override;
+        ///< Return the live reference with the exact placed-reference number.
 
         Ptr searchPtrViaActorId(int actorId) override;
         ///< Search is limited to the active cells.

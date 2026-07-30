@@ -44,6 +44,18 @@ namespace MWGui
         // Show a dialog
         void spawnDialog(const char id);
 
+        /// The Fallout-family ShowRaceMenu opcode opens an isolated authored
+        /// character-choice handoff rather than Morrowind's complete startup
+        /// wizard.  Fallout player records do not use Morrowind race/body-part
+        /// records, so this must never reuse the ESM3 race editor.
+        void beginAuthoredRaceMenu();
+
+        /// Begins the isolated Fallout-family name handoff.  The normal
+        /// Morrowind name dialog is reused only as an input widget; completion
+        /// returns to the authored source script rather than the chargen
+        /// wizard.
+        void beginAuthoredNameMenu();
+
         void setAttribute(ESM::RefId id, const MWMechanics::AttributeValue& value) override;
         void setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value) override;
         void setValue(ESM::RefId id, const MWMechanics::SkillValue& value) override;
@@ -62,6 +74,7 @@ namespace MWGui
         // Dialogs
         std::unique_ptr<TextInputDialog> mNameDialog;
         std::unique_ptr<RaceDialog> mRaceDialog;
+        std::unique_ptr<InfoBoxDialog> mAuthoredAppearanceDialog;
         std::unique_ptr<ClassChoiceDialog> mClassChoiceDialog;
         std::unique_ptr<InfoBoxDialog> mGenerateClassQuestionDialog;
         std::unique_ptr<GenerateClassResultDialog> mGenerateClassResultDialog;
@@ -75,6 +88,12 @@ namespace MWGui
         ESM::RefId mPlayerRaceId;
         ESM::RefId mPlayerBirthSignId;
         ESM::Class mPlayerClass;
+
+        bool mAuthoredRaceMenu = false;
+        bool mAuthoredAppearanceDefaultMale = true;
+        bool mAuthoredNameMenu = false;
+        float mAuthoredRaceMenuDefaultDelay = -1.f;
+        float mAuthoredNameMenuDefaultDelay = -1.f;
 
         // Class generation vars
         unsigned mGenerateClassStep; // Keeps track of current step in Generate Class dialog
@@ -91,6 +110,7 @@ namespace MWGui
         void onRaceDialogDone(WindowBase* parWindow);
         void onRaceDialogBack();
         void selectRace();
+        void onAuthoredAppearanceSelected(int index);
 
         // Class dialogs
         void onClassChoice(int index);

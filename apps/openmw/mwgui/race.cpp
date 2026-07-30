@@ -209,6 +209,11 @@ namespace MWGui
         updateSpellPowers();
     }
 
+    void RaceDialog::acceptDefault()
+    {
+        onOkClicked(nullptr);
+    }
+
     void RaceDialog::onClose()
     {
         WindowModal::onClose();

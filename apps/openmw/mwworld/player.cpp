@@ -32,6 +32,7 @@
 
 #include "cellstore.hpp"
 #include "class.hpp"
+#include "esm4questruntime.hpp"
 #include "ptr.hpp"
 
 //## VR_PATCH BEGIN
@@ -206,6 +207,11 @@ namespace MWWorld
         if (!toActivate.getClass().hasToolTip(toActivate))
             return;
 
+        // ESM4 reference scripts observe the same ordinary player activation
+        // that Lua and the standard activation action already receive.  The
+        // runtime only handles an authored OnActivate block; this does not
+        // replace or synthesize the object's normal action.
+        (void)MWBase::Environment::get().getWorld()->getESM4QuestRuntime().onReferenceActivated(toActivate, player);
         MWBase::Environment::get().getLuaManager()->objectActivated(toActivate, player);
     }
 

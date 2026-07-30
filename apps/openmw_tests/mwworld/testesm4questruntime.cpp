@@ -184,6 +184,48 @@ TEST(ESM4QuestRuntimeTest, FindsUnambiguousAuthoredOpeningPlacementFromStageZero
     EXPECT_FLOAT_EQ(placement->mPosition.pos[2], 7360.f);
 }
 
+TEST(ESM4QuestRuntimeTest, ParsesAllowlistedDataDrivenAuthoredCommandCapabilities)
+{
+    const auto mappings = MWWorld::ESM4QuestRuntime::parseAuthoredCompatibilityCommandMappings(
+        "  TTW_ShowGeneProjector : character-appearance , UnsupportedCommand:open-console, "
+        "TTW_ShowGeneProjector:character-appearance, ShowLoveTesterMenuParams:character-special ");
+
+    ASSERT_EQ(mappings.size(), 2);
+    EXPECT_EQ(mappings.at("ttw_showgeneprojector"), "character-appearance");
+    EXPECT_EQ(mappings.at("showlovetestermenuparams"), "character-special");
+    EXPECT_FALSE(mappings.contains("unsupportedcommand"));
+}
+
+TEST(ESM4QuestRuntimeTest, EvaluatesAuthoredObjectiveDisplaySourceConditions)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120107, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "VigorObjectiveQuest");
+    quest.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 30, .mDescription = "Use the tester" });
+    quest.mStages.push_back({ .mIndex = 60 });
+    quest.mStages.push_back({ .mIndex = 65 });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage("VigorObjectiveQuest", 60));
+
+    constexpr std::string_view source = R"(
+        if GetStage VigorObjectiveQuest == 60 && GetObjectiveDisplayed VigorObjectiveQuest 30 == 1
+            SetStage VigorObjectiveQuest 65
+        endif
+    )";
+    runtime.executeResultSource(source);
+    EXPECT_EQ(runtime.search("VigorObjectiveQuest")->mCurrentStage, 60);
+
+    ASSERT_TRUE(runtime.setObjectiveDisplayed("VigorObjectiveQuest", 30, true));
+    runtime.executeResultSource(source);
+    const MWWorld::ESM4QuestState* const state = runtime.search("VigorObjectiveQuest");
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 65);
+    EXPECT_TRUE(state->mStageDone.at(65));
+}
+
 TEST(ESM4QuestRuntimeTest, SelectsSelfActivatingOpeningOverLaterCinematicTransition)
 {
     MWWorld::ESMStore store;
@@ -562,6 +604,28 @@ TEST(ESM4QuestRuntimeTest, RejectsInvalidCompiledSetStageQuestStageAndRange)
     EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, RecordsUndeclaredStageForGameModeTransitions)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120229, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "UndeclaredStageQuest");
+    quest.mStages.push_back({ .mIndex = 90, .mEntries = { ESM4::QuestStageEntry{} } });
+    quest.mStages.push_back({ .mIndex = 100, .mEntries = { ESM4::QuestStageEntry{} } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 95));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_TRUE((state->mFlags & MWWorld::ESM4QuestState::Flag_Running) != 0);
+    EXPECT_EQ(state->mCurrentStage, 95);
+    EXPECT_TRUE(state->mStageDone.at(95));
+    EXPECT_FALSE(state->mStageDone.at(90));
+    EXPECT_FALSE(state->mStageDone.at(100));
+}
+
 TEST(ESM4QuestRuntimeTest, RollsBackActiveQuestAndStateWhenNestedStageHasLaterInvalidCommand)
 {
     MWWorld::ESMStore store;
@@ -675,6 +739,36 @@ TEST(ESM4QuestRuntimeTest, RejectsImpureNestedStageWithoutTouchingFallbackOrUnsu
         EXPECT_FALSE(state->mStageDone.at(5));
         EXPECT_EQ(state->mObjectiveStatus.at(10), 0);
     }
+}
+
+TEST(ESM4QuestRuntimeTest, UsesAuthoredSourceFallbackForImpureCompiledSetStageChain)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x12022e, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "SourceFallbackChain");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Source fallback executed" });
+
+    ESM4::QuestStageEntry root = makeCompiledSetStageEntry({ questId }, 1, 6);
+    root.mScript.scriptSource = "SetStage SourceFallbackChain 6";
+    ESM4::QuestStageEntry impureTarget;
+    impureTarget.mScript.compiledData = { 0xef, 0xbe, 0x03, 0x00, 0xaa, 0xbb, 0xcc };
+    impureTarget.mScript.scriptSource = "SetObjectiveDisplayed SourceFallbackChain 10 1";
+    quest.mStages = {
+        { .mIndex = 5, .mEntries = { std::move(root) } },
+        { .mIndex = 6, .mEntries = { std::move(impureTarget) } },
+    };
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 6);
+    EXPECT_TRUE(state->mStageDone.at(5));
+    EXPECT_TRUE(state->mStageDone.at(6));
+    EXPECT_EQ(state->mObjectiveStatus.at(10), MWWorld::ESM4QuestState::Objective_Displayed);
 }
 
 TEST(ESM4QuestRuntimeTest, TreatsAlreadyDoneNonRepeatableNestedTargetAsTerminalBeforeCycleCheck)
@@ -921,6 +1015,138 @@ TEST(ESM4QuestRuntimeTest, ExecutesDialogueResultQuestCommands)
     EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Completed, 0);
     runtime.executeResultSource("StartQuest GS001\nStopQuest GS001");
     EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Running, 0);
+}
+
+TEST(ESM4QuestRuntimeTest, AdvancesUnambiguousAuthoredGameModeTimerTransitions)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120100, .mContentFile = 0 };
+    const ESM::FormId scriptId{ .mIndex = 0x120101, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "OpeningQuest");
+    quest.mQuestScript = scriptId;
+    ESM4::QuestStageEntry firstStage;
+    firstStage.mScript.scriptSource = "set OpeningQuest.bRunTimer to 1\n"
+                                      "set OpeningQuest.fTimer to 1";
+    ESM4::QuestStageEntry secondStage;
+    secondStage.mScript.scriptSource = "set OpeningQuest.fTimer to 0";
+    quest.mStages = {
+        { .mIndex = 5, .mEntries = { firstStage } },
+        { .mIndex = 6, .mEntries = { secondStage } },
+        { .mIndex = 8, .mEntries = { ESM4::QuestStageEntry{} } },
+    };
+    store.overrideRecord(quest);
+
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bRunTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .variableName = "fTimer" },
+    };
+    script.mScript.scriptSource = R"(scn OpeningQuestScript
+begin GameMode
+    if bRunTimer == 1
+        if fTimer > 0
+            set fTimer to fTimer - GetSecondsPassed
+        else
+            if GetStage OpeningQuest == 5
+                SetStage OpeningQuest 6
+            elseif GetStage OpeningQuest == 6
+                SetStage OpeningQuest 8
+            endif
+        endif
+    endif
+end)";
+    store.overrideRecord(script);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage(questId, 5));
+
+    runtime.update(0.4f, false);
+    ASSERT_NE(runtime.search(questId), nullptr);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 5);
+    const std::optional<float> timerAfterFirstTick = runtime.getQuestVariable("OpeningQuest", "fTimer");
+    ASSERT_TRUE(timerAfterFirstTick.has_value());
+    EXPECT_FLOAT_EQ(*timerAfterFirstTick, 0.6f);
+
+    // Retail scripts transition only on the GameMode pass after the timer
+    // reaches zero, so preserve that one-frame handoff.
+    runtime.update(0.7f, false);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 5);
+    runtime.update(0.01f, false);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 6);
+    runtime.update(0.01f, false);
+    EXPECT_EQ(runtime.search(questId)->mCurrentStage, 8);
+}
+
+TEST(ESM4QuestRuntimeTest, DoesNotExecuteInactiveAuthoredGameModeElseIfBranch)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x120102, .mContentFile = 0 };
+    const ESM::FormId scriptId{ .mIndex = 0x120103, .mContentFile = 0 };
+
+    ESM4::Quest quest = makeQuest(questId, "RoutingQuest");
+    quest.mQuestScript = scriptId;
+    ESM4::QuestStageEntry stageZero;
+    stageZero.mScript.scriptSource = "set RoutingQuest.fTimer to 0";
+    ESM4::QuestStageEntry stageOne;
+    stageOne.mScript.scriptSource = "set RoutingQuest.fTimer to 2.8";
+    quest.mStages = {
+        { .mIndex = 0, .mEntries = { stageZero } },
+        { .mIndex = 1, .mEntries = { stageOne } },
+        { .mIndex = 3, .mEntries = { ESM4::QuestStageEntry{} } },
+        { .mIndex = 65, .mEntries = { ESM4::QuestStageEntry{} } },
+        { .mIndex = 70, .mEntries = { ESM4::QuestStageEntry{} } },
+    };
+    store.overrideRecord(quest);
+
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bRunTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .variableName = "fTimer" },
+        ESM4::ScriptLocalVariableData{ .index = 3, .variableName = "fCurrentValue" },
+    };
+    script.mScript.scriptSource = R"(scn RoutingQuestScript
+begin GameMode
+    if bRunTimer == 1
+        if fTimer > 0
+            set fTimer to fTimer - GetSecondsPassed
+        else
+            if GetStage RoutingQuest == 0
+                SetStage RoutingQuest 1
+            elseif GetStage RoutingQuest == 1
+                SetStage RoutingQuest 3
+            elseif GetStage RoutingQuest == 65
+                if(fCurrentValue < 0)
+                    set fCurrentValue to 0
+                else
+                    set fCurrentValue to 1
+                endif
+                SetStage RoutingQuest 70
+            endif
+        endif
+    endif
+end)";
+    store.overrideRecord(script);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setQuestVariable("RoutingQuest", "bRunTimer", 1.f));
+    ASSERT_TRUE(runtime.setStage(questId, 0));
+
+    runtime.update(0.1f, false);
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 1);
+    EXPECT_FALSE(state->mStageDone.at(70));
+    EXPECT_FLOAT_EQ(*runtime.getQuestVariable("RoutingQuest", "fTimer"), 2.8f);
+
+    runtime.update(0.1f, false);
+    EXPECT_EQ(state->mCurrentStage, 1);
+    EXPECT_FALSE(state->mStageDone.at(70));
+    EXPECT_FLOAT_EQ(*runtime.getQuestVariable("RoutingQuest", "fTimer"), 2.7f);
 }
 
 TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)

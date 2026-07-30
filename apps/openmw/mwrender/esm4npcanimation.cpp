@@ -98,10 +98,20 @@ namespace MWRender
             return value != nullptr && *value != '\0' && value[0] != '0';
         }
 
+        bool esm4MaterialTelemetryEnabled()
+        {
+            // This is a diagnostic-only switch intended for normal playable
+            // Fallout sessions. It deliberately does not share the proof or
+            // world-viewer prefixes, which launchers clear before a player
+            // starts a regular game.
+            return worldViewerEnvEnabled("OPENMW_ESM4_MATERIAL_TELEMETRY");
+        }
+
         bool worldViewerActorTelemetryEnabled()
         {
             return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
-                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY")
+                || esm4MaterialTelemetryEnabled();
         }
 
         bool worldViewerSkipMissingActorParts()
@@ -7804,8 +7814,10 @@ namespace MWRender
         void logFalloutFaceDrawableAudit(
             osg::Node* attached, std::string_view model, const MWWorld::Ptr& ptr, std::string_view phase = "insert")
         {
-            if (attached == nullptr || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") == nullptr
-                || (!isFalloutHeadRelativeModel(model) && !isFonvRaceSkinSurface(model)))
+            const bool materialTelemetry = esm4MaterialTelemetryEnabled();
+            if (attached == nullptr
+                || (std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") == nullptr && !materialTelemetry)
+                || (!materialTelemetry && !isFalloutHeadRelativeModel(model) && !isFonvRaceSkinSurface(model)))
                 return;
 
             FalloutFaceDrawableAuditVisitor visitor(model, ptr, phase);
@@ -12242,4 +12254,5 @@ namespace MWRender
                 << " result=" << (pass ? "pass" : "fail");
         }
     }
+
 }

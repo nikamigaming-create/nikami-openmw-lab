@@ -79,6 +79,12 @@ namespace MWWorld
         std::optional<FalloutRuntimeActorValue> getBaseActorValue(std::uint32_t actorValue) const;
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);
+        // Applies the seven SPECIAL values as one finite, atomic mutation. The
+        // caller owns any game-specific allocation bounds; this state object
+        // only guarantees that a failed batch never leaves a partial SPECIAL
+        // selection behind.
+        FalloutActorValueMutationResult setCurrentSpecial(
+            const std::array<float, FalloutPlayerState::SpecialCount>& values);
         FalloutActorValueMutationResult modCurrentActorValue(std::uint32_t actorValue, float delta);
 
         int countSavedGameRecords() const;

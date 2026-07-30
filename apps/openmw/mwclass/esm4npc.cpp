@@ -189,6 +189,8 @@ namespace MWClass
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
+        ESM::FormId mFnvPackageCompletionPackage;
+        bool mFnvPackageCompletionPending = false;
         bool mFnvSandboxPackageNeedsReevaluation = false;
         std::optional<FalloutSandboxSaveFallback> mFnvSandboxSaveFallback;
         FalloutFurnitureState mFurnitureState = FalloutFurnitureState::None;
@@ -224,6 +226,8 @@ namespace MWClass
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
+        , mFnvPackageCompletionPackage(other.mFnvPackageCompletionPackage)
+        , mFnvPackageCompletionPending(other.mFnvPackageCompletionPending)
         , mFnvSandboxPackageNeedsReevaluation(other.mFnvSandboxPackageNeedsReevaluation)
         , mFnvSandboxSaveFallback(other.mFnvSandboxSaveFallback)
         , mFurnitureState(other.mFurnitureState)
@@ -256,6 +260,8 @@ namespace MWClass
 
         sequence.clear();
         data.mFnvAiSequenceInitialised = false;
+        data.mFnvPackageCompletionPackage = ESM::FormId{};
+        data.mFnvPackageCompletionPending = false;
         ptr.getClass().getCreatureStats(ptr);
         return true;
     }
@@ -842,6 +848,11 @@ namespace MWClass
     static void initialiseFnvAiSequence(
         ESM4NpcCustomData& data, const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& packageIds)
     {
+        // Route telemetry deliberately exposes data-selected AI decisions.
+        // This is not a content rule: it gives an unattended compatibility
+        // proof the package ID, target, and completion semantics it actually
+        // exercised without requiring foreground inspection.
+        const bool routeTrace = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr;
         if (data.mFnvAiSequenceInitialised)
             return;
 
@@ -856,6 +867,8 @@ namespace MWClass
             return;
         }
         data.mFnvAiSequenceInitialised = false;
+        data.mFnvPackageCompletionPackage = ESM::FormId{};
+        data.mFnvPackageCompletionPending = false;
 
         const ESM4::Npc* traits = data.mTraits;
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
@@ -889,9 +902,19 @@ namespace MWClass
         const ESM4::AIPackage* package = selectFnvPackage(packageIds, hour);
         if (package == nullptr)
         {
+            if (routeTrace)
+                Log(Debug::Info) << "FNV/ESM4 route AI: no eligible package actor="
+                                 << ptr.getCellRef().getRefId() << " npc=" << traits->mEditorId
+                                 << " candidateCount=" << packageIds.size() << " hour=" << hour;
             data.mFnvAiSequenceInitialised = true;
             return;
         }
+
+        if (routeTrace)
+            Log(Debug::Info) << "FNV/ESM4 route AI: selected package actor=" << ptr.getCellRef().getRefId()
+                             << " npc=" << traits->mEditorId << " package=" << package->mEditorId
+                             << " form=" << ESM::RefId(package->mId) << " type=" << package->mData.type
+                             << " conditionCount=" << package->mConditions.size() << " hour=" << hour;
 
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (store == nullptr)
@@ -900,9 +923,18 @@ namespace MWClass
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         if (isFnvPackageTravelLike(package->mData.type))
         {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const bool notifyCompletion = world != nullptr
+                && world->getESM4QuestRuntime().packageCompletionHasAuthoredHandler(ptr, package->mId);
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
+                if (routeTrace)
+                    Log(Debug::Info) << "FNV/ESM4 route AI: travel target unavailable actor="
+                                     << ptr.getCellRef().getRefId() << " package=" << package->mEditorId
+                                     << " targetResolved=" << static_cast<bool>(target) << " targetCell="
+                                     << (target != nullptr ? target->mParent.serializeText() : std::string{})
+                                     << " actorCell=" << currentCellId.serializeText();
                 data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
@@ -933,7 +965,7 @@ namespace MWClass
                 return;
             }
             const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
-            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
+            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance && !notifyCompletion)
             {
                 data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
@@ -944,14 +976,22 @@ namespace MWClass
                 return;
             }
 
-            MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
+            MWMechanics::AiTravel travel(
+                target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], !notifyCompletion);
             sequence.stack(travel, ptr, true);
             data.mFnvAiSequenceInitialised = true;
+            data.mFnvPackageCompletionPackage = notifyCompletion ? package->mId : ESM::FormId{};
+            data.mFnvPackageCompletionPending = notifyCompletion;
+            if (routeTrace)
+                Log(Debug::Info) << "FNV/ESM4 route AI: travel queued actor=" << ptr.getCellRef().getRefId()
+                                 << " package=" << package->mEditorId << " target=" << target->mEditorId
+                                 << " notifyCompletion=" << notifyCompletion << " delta=(" << dx << ',' << dy
+                                 << ',' << dz << ')';
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " targetRef=" << target->mEditorId << " pos=("
                              << target->mPos.pos[0] << "," << target->mPos.pos[1] << "," << target->mPos.pos[2]
-                             << ") for " << traits->mEditorId;
+                             << ") for " << traits->mEditorId << " notifyCompletion=" << notifyCompletion;
             return;
         }
 
@@ -1771,6 +1811,23 @@ namespace MWClass
         const ESM4::Npc* packageRecord = data.mAIPackage != nullptr ? data.mAIPackage : data.mTraits;
         if (packageRecord != nullptr)
             initialiseFnvAiSequence(data, ptr, packageRecord->mAIPackages);
+        if (data.mFnvPackageCompletionPending && data.mCreatureStats.getAiSequence().isPackageDone())
+        {
+            // AiSequence marks completion on the same simulation boundary on
+            // which it removes a one-shot travel package. Clear the pending
+            // identity before executing source because that source may call
+            // EVP and install a successor package immediately.
+            const ESM::FormId completedPackage = data.mFnvPackageCompletionPackage;
+            data.mFnvPackageCompletionPackage = ESM::FormId{};
+            data.mFnvPackageCompletionPending = false;
+            if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
+                world->getESM4QuestRuntime().onActorScriptPackageDone(ptr, completedPackage);
+            // Package End source is allowed to change the same quest
+            // conditions that selected this package.  Re-evaluate naturally
+            // on the following actor update so that a chained authored
+            // package is selected from those new conditions.
+            data.mFnvAiSequenceInitialised = false;
+        }
         if (data.mFnvAiSequenceInitialised)
         {
             data.mFnvSandboxPackageNeedsReevaluation = false;

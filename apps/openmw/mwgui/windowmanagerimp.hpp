@@ -180,6 +180,8 @@ namespace MWGui
         bool isSettingsWindowVisible() const override;
         bool isInteractiveMessageBoxActive() const override;
         void closeInteractiveMessageBoxWithDefaultButton() override;
+        void showAuthoredRaceMenu() override;
+        void showAuthoredNameMenu() override;
 
         void toggleVisible(GuiWindow wnd) override;
 
@@ -267,6 +269,7 @@ namespace MWGui
         /// Turn visibility of HUD on or off
         bool setHudVisibility(bool show) override;
         bool isHudVisible() const override { return mHudEnabled; }
+        void setGameplayOverlaySuppressed(bool suppressed) override;
 
         void disallowMouse() override;
         void allowMouse() override;
@@ -503,8 +506,15 @@ namespace MWGui
         MyGUI::Widget* mInputBlocker;
 
         bool mHudEnabled;
+        bool mGameplayOverlaySuppressed;
         bool mCursorVisible;
         bool mCursorActive;
+
+        // Enabled only by OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS.  It
+        // advances the existing message-box callback from inside the engine
+        // for unattended compatibility telemetry, never through foreground
+        // keyboard or mouse injection.
+        float mAuthoredDefaultChoiceDelay = -1.f;
 
         int mPlayerBounty;
 

@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include <components/esm/formid.hpp>
+#include <components/esm3/loadnpc.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
@@ -17,6 +18,7 @@
 #include <apps/openmw/mwbase/environment.hpp>
 
 #include <apps/openmw/mwclass/classes.hpp>
+#include <apps/openmw/mwclass/npc.hpp>
 
 #include <apps/openmw/mwworld/esm4questruntime.hpp>
 #include <apps/openmw/mwworld/esmstore.hpp>
@@ -88,6 +90,32 @@ namespace
         EXPECT_EQ(MWDialogue::getEsm4DialoguePrompt(dialogue, info), dialogue.mTopicName);
         dialogue.mTopicName.clear();
         EXPECT_EQ(MWDialogue::getEsm4DialoguePrompt(dialogue, info), dialogue.mEditorId);
+    }
+
+    TEST(Esm4DialogueUtilsTest, EvaluatesPlayerSexAgainstTheCurrentPlayerActor)
+    {
+        MWClass::Npc::registerSelf();
+        ESM::NPC player;
+        player.blank();
+        player.mId = ESM::RefId::stringRefId("player");
+        player.setIsMale(true);
+        ESM::CellRef playerRef;
+        playerRef.blank();
+        playerRef.mRefID = player.mId;
+        MWWorld::LiveCellRef<ESM::NPC> livePlayer(playerRef, &player);
+        const MWWorld::Ptr playerPtr(&livePlayer);
+
+        ESM4::TargetCondition isMale = condition(ESM4::FUN_GetPCIsSex, ESM::FormId{}, 1.f);
+        isMale.param1 = 0;
+        ESM4::TargetCondition isFemale = isMale;
+        isFemale.param1 = 1;
+
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(isMale, playerPtr, true), true);
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(isFemale, playerPtr, true), false);
+
+        player.setIsMale(false);
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(isMale, playerPtr, true), false);
+        EXPECT_EQ(MWDialogue::evaluateEsm4ActorDialogueCondition(isFemale, playerPtr, true), true);
     }
 
     TEST(Esm4DialogueUtilsTest, RetailLegionInfoRequiresRunningOwnerAndMatchingFactionBeforeLocalConditions)

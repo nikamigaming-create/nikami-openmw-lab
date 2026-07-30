@@ -95,6 +95,7 @@ namespace MWRender
         void updatePartsTES5(const ESM4::Npc& traits);
         void applyPostManualFalloutActorPose() override;
     };
+
 }
 
 #endif // GAME_RENDER_ESM4NPCANIMATION_H

@@ -1208,9 +1208,18 @@ namespace MWMechanics
     {
         removeActor(ptr, true);
 
+        const bool routeTraceActor = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr
+            && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4);
+        if (routeTraceActor)
+            Log(Debug::Info) << "FNV/ESM4 route AI: actor registration attempt ref="
+                             << ptr.getCellRef().getRefId() << " type=" << ptr.getType();
+
         MWRender::Animation* anim = MWBase::Environment::get().getWorld()->getAnimation(ptr);
         if (!anim)
         {
+            if (routeTraceActor)
+                Log(Debug::Info) << "FNV/ESM4 route AI: actor registration skipped ref="
+                                 << ptr.getCellRef().getRefId() << " reason=no-animation";
             if (worldViewerActorTelemetryEnabled())
                 Log(Debug::Warning) << "World viewer actor ledger: phase=no-animation-when-registering "
                                     << "registeredActor=0 ref=" << ptr.getCellRef().getRefId()
@@ -1219,6 +1228,8 @@ namespace MWMechanics
         }
         const auto it = mActors.emplace(mActors.end(), ptr, *anim);
         mIndex.emplace(ptr.mRef, it);
+        if (routeTraceActor)
+            Log(Debug::Info) << "FNV/ESM4 route AI: actor registered ref=" << ptr.getCellRef().getRefId();
         if (worldViewerActorTelemetryEnabled())
             Log(Debug::Info) << "World viewer actor ledger: phase=registered-character-controller "
                              << "registered CharacterController for " << ptr.getCellRef().getRefId()
@@ -1271,6 +1282,12 @@ namespace MWMechanics
         const auto iter = mIndex.find(ptr.mRef);
         if (iter != mIndex.end())
         {
+            if (std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr
+                && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4))
+            {
+                Log(Debug::Info) << "FNV/ESM4 route AI: actor removed ref=" << ptr.getCellRef().getRefId()
+                                 << " keepActive=" << keepActive;
+            }
             if (!keepActive)
                 removeTemporaryEffects(iter->second->getPtr());
             iter->second->invalidate();
@@ -1654,6 +1671,31 @@ namespace MWMechanics
                 const float distSqr = (playerPos - actor.getPtr().getRefData().getPosition().asVec3()).length2();
                 // AI processing is only done within given distance to the player.
                 const bool inProcessingRange = distSqr <= actorsProcessingRange * actorsProcessingRange;
+
+                // A Fallout package with authored completion source is represented
+                // by a normal one-shot AiTravel.  The route trace needs to tell
+                // whether the actor scheduler is reaching that package before
+                // blaming the pathfinder.  The cap prevents a failed route from
+                // producing a frame-by-frame log flood.
+                const MWMechanics::AiSequence& activeSequence
+                    = actor.getPtr().getClass().getCreatureStats(actor.getPtr()).getAiSequence();
+                const bool oneShotTravel = !activeSequence.isEmpty()
+                    && activeSequence.getActivePackage().getTypeId() == MWMechanics::AiPackageTypeId::Travel
+                    && !activeSequence.getActivePackage().getRepeat();
+                if (oneShotTravel && std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr)
+                {
+                    static unsigned int sRouteTravelSchedulingLines = 0;
+                    if (sRouteTravelSchedulingLines < 24)
+                    {
+                        ++sRouteTravelSchedulingLines;
+                        Log(Debug::Info) << "FNV/ESM4 route AI: one-shot travel scheduler actor="
+                                         << actor.getPtr().getCellRef().getRefId() << " aiActive=" << aiActive
+                                         << " inProcessingRange=" << inProcessingRange
+                                         << " conscious=" << isConscious(actor.getPtr())
+                                         << " luaAiDisabled=" << (luaControls != nullptr && luaControls->mDisableAI)
+                                         << " distance=" << std::sqrt(distSqr);
+                    }
+                }
 
                 // If dead or no longer in combat, no longer store any actors who attempted to hit us. Also remove for
                 // the player.

@@ -345,7 +345,11 @@ namespace MWGui
             setupCopyFramebufferToTextureCallback();
         }
 
-        MWBase::Environment::get().getInputManager()->update(0, true, true);
+        // Fallout-family profiles do not mount Morrowind's legacy UI art. They
+        // supply a profile-local fallback skin, so defer generic focus updates
+        // until the loading screen has completed its first stable frame.
+        if (!Settings::Manager::getBool("defer loading input update", "OpenNV Compatibility"))
+            MWBase::Environment::get().getInputManager()->update(0, true, true);
 
         osg::Stats* const stats = mViewer->getViewerStats();
         const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();

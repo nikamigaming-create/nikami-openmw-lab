@@ -55,6 +55,8 @@
 #include <osg/Texture2D>
 #include <osgViewer/ViewerEventHandlers>
 
+#include <yaml-cpp/yaml.h>
+
 // Some supported Windows OpenSceneGraph packages omit these valid sRGB S3TC
 // tokens from their GL headers. Keep the texture-format mapping portable.
 #ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
@@ -511,6 +513,10 @@ namespace
         const bool playerInCell = playerPresent && player.isInCell() && player.getCell() != nullptr;
         const int playerLevel = playerPresent ? player.getClass().getCreatureStats(player).getLevel() : -1;
         const std::string cellId = playerInCell ? player.getCell()->getCell()->getId().toDebugString() : "";
+        const ESM::Position playerPosition = playerPresent ? player.getRefData().getPosition() : ESM::Position{};
+        const MWRender::Camera* camera = world.getCamera();
+        const osg::Vec3d cameraPosition = camera != nullptr ? camera->getPosition() : osg::Vec3d{};
+        const int cameraMode = camera != nullptr ? static_cast<int>(camera->getMode()) : -1;
         const unsigned globalScriptPasses = world.getLastNewGameGlobalScriptPasses();
         const bool usedFallbackPlacement = world.getLastNewGameUsedFallbackPlacement();
         const bool usedAuthoredStartPlacement = world.getLastNewGameUsedAuthoredStartPlacement();
@@ -526,6 +532,10 @@ namespace
         const std::vector<std::uint16_t>& unsupportedCompiledOpcodes = questRuntime.getUnsupportedCompiledOpcodes();
         const std::vector<std::uint32_t>& unsupportedConditionFunctions
             = questRuntime.getUnsupportedConditionFunctions();
+        const std::vector<std::string>& playedStageVideos = questRuntime.getPlayedStageVideos();
+        const bool authoredStartCinematicPlayed = !authoredStartCinematic.empty()
+            && std::find(playedStageVideos.begin(), playedStageVideos.end(), authoredStartCinematic)
+                != playedStageVideos.end();
 
         int charGenState = -999;
         try
@@ -584,10 +594,13 @@ namespace
         {
             if (!authoredStartStageExecuted)
                 gaps.emplace_back("authored-opening-stage-not-executed");
-            if (!authoredStartCinematic.empty())
+            if (!authoredStartCinematic.empty() && !authoredStartCinematicPlayed)
                 gaps.emplace_back("authored-opening-cinematic-unimplemented:" + std::string(authoredStartCinematic));
             else
-                gaps.emplace_back("authored-opening-cinematic-unidentified");
+            {
+                if (authoredStartCinematic.empty())
+                    gaps.emplace_back("authored-opening-cinematic-unidentified");
+            }
         }
         else if (!cinematicRequested)
             gaps.emplace_back("new-game-cinematic-not-requested");
@@ -621,6 +634,11 @@ namespace
                << ",\n    \"inCell\": " << (playerInCell ? "true" : "false")
                << ",\n    \"level\": " << playerLevel << ",\n    \"cell\": ";
         writeProofJsonString(output, cellId);
+        output << ",\n    \"position\": [" << playerPosition.pos[0] << ',' << playerPosition.pos[1] << ','
+               << playerPosition.pos[2] << "]\n  },\n  \"camera\": {\n    \"present\": "
+               << (camera != nullptr ? "true" : "false") << ",\n    \"mode\": " << cameraMode
+               << ",\n    \"position\": [" << cameraPosition.x() << ',' << cameraPosition.y() << ','
+               << cameraPosition.z() << ']';
         output << "\n  },\n  \"newGame\": {\n    \"globalScriptPasses\": " << globalScriptPasses
                << ",\n    \"usedFallbackPlacement\": " << (usedFallbackPlacement ? "true" : "false")
                << ",\n    \"usedAuthoredStartPlacement\": " << (usedAuthoredStartPlacement ? "true" : "false")
@@ -634,7 +652,8 @@ namespace
         writeProofJsonString(output, authoredStartMarker);
         output << ",\n      \"cinematicAsset\": ";
         writeProofJsonString(output, authoredStartCinematic);
-        output << ",\n      \"cinematicImplemented\": false\n    }";
+        output << ",\n      \"cinematicImplemented\": "
+               << (authoredStartCinematicPlayed ? "true" : "false") << "\n    }";
         output << "\n  },\n  \"startGameEnabledQuests\": [";
         for (std::size_t i = 0; i < startGameEnabledQuests.size(); ++i)
         {
@@ -642,6 +661,14 @@ namespace
                 output << ',';
             output << "\n    ";
             writeProofJsonString(output, startGameEnabledQuests[i]);
+        }
+        output << "\n  ],\n  \"playedStageVideos\": [";
+        for (std::size_t i = 0; i < playedStageVideos.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            output << "\n    ";
+            writeProofJsonString(output, playedStageVideos[i]);
         }
         output << "\n  ],\n  \"unsupportedStageCommands\": [";
         for (std::size_t i = 0; i < unsupportedStageCommands.size(); ++i)
@@ -697,6 +724,466 @@ namespace
             << " result=" << (gaps.empty() ? "pass" : "gap") << " gaps=" << gaps.size()
             << " output='" << config.mOutputPath.string() << "'";
     }
+
+    // An opt-in route runner used only for unattended compatibility evidence.  Routes are
+    // declared in a YAML/JSON file outside the game data, so the runner has no knowledge of
+    // a particular campaign, quest, cell, or reference.  It drives the same World movement
+    // and class activation APIs that ordinary play reaches through the input layer, while
+    // deliberately avoiding all desktop/window input.
+    struct CompatibilityRouteStep
+    {
+        std::string mId;
+        std::string mOperation;
+        std::string mQuest;
+        std::optional<ESM::FormId> mReference;
+        std::optional<ESM::FormId> mCell;
+        osg::Vec3f mOffset{};
+        std::uint8_t mStage = 0;
+        bool mRequireStageDone = true;
+        std::int32_t mObjective = 0;
+        bool mObjectiveDisplayed = true;
+        double mDurationSeconds = 0.0;
+        double mTimeoutSeconds = 60.0;
+    };
+
+    std::optional<ESM::FormId> parseCompatibilityRouteFormId(std::string_view value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+        constexpr std::string_view formPrefix = "FormId:";
+        if (value.size() >= formPrefix.size()
+            && Misc::StringUtils::ciEqual(value.substr(0, formPrefix.size()), formPrefix))
+        {
+            value.remove_prefix(formPrefix.size());
+        }
+        if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X'))
+            value.remove_prefix(2);
+        if (value.empty())
+            return std::nullopt;
+
+        std::uint32_t raw = 0;
+        const char* const begin = value.data();
+        const char* const end = begin + value.size();
+        const auto parsed = std::from_chars(begin, end, raw, 16);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || raw == 0)
+            return std::nullopt;
+        return ESM::FormId::fromUint32(raw);
+    }
+
+    std::string compatibilityRouteStepStatus(bool completed, bool failed, bool running)
+    {
+        if (failed)
+            return "failed";
+        if (completed)
+            return "passed";
+        return running ? "running" : "pending";
+    }
+
+    class CompatibilityRouteDriver
+    {
+    public:
+        static CompatibilityRouteDriver fromEnvironment()
+        {
+            CompatibilityRouteDriver result;
+            const char* const routePath = std::getenv("OPENMW_COMPAT_ROUTE_PATH");
+            if (routePath == nullptr || *routePath == '\0')
+                return result;
+
+            result.mEnabled = true;
+            result.mRoutePath = std::filesystem::path(routePath);
+            if (const char* const reportPath = std::getenv("OPENMW_COMPAT_ROUTE_REPORT_PATH"))
+                result.mReportPath = std::filesystem::path(reportPath);
+            result.mExitAfterFinish = std::getenv("OPENMW_COMPAT_ROUTE_EXIT_AFTER_WRITE") != nullptr;
+
+            try
+            {
+                const YAML::Node root = YAML::LoadFile(result.mRoutePath.string());
+                if (!root.IsMap())
+                    throw std::runtime_error("route root must be a mapping");
+                const std::string schema = root["schema"] ? root["schema"].as<std::string>() : "";
+                if (schema != "opennv-authored-route/v1")
+                    throw std::runtime_error("unsupported schema '" + schema + "'");
+                result.mRouteId = root["id"] ? root["id"].as<std::string>() : result.mRoutePath.stem().string();
+                const YAML::Node steps = root["steps"];
+                if (!steps || !steps.IsSequence() || steps.size() == 0)
+                    throw std::runtime_error("route must declare a non-empty steps sequence");
+
+                std::size_t index = 0;
+                for (const YAML::Node& node : steps)
+                {
+                    if (!node.IsMap())
+                        throw std::runtime_error("step " + std::to_string(index) + " must be a mapping");
+                    CompatibilityRouteStep step;
+                    step.mId = node["id"] ? node["id"].as<std::string>() : "step-" + std::to_string(index);
+                    step.mOperation = node["operation"] ? node["operation"].as<std::string>() : "";
+                    if (step.mOperation.empty())
+                        throw std::runtime_error("step '" + step.mId + "' is missing operation");
+                    if (node["timeout_seconds"])
+                        step.mTimeoutSeconds = node["timeout_seconds"].as<double>();
+                    if (!std::isfinite(step.mTimeoutSeconds) || step.mTimeoutSeconds <= 0.0)
+                        throw std::runtime_error("step '" + step.mId + "' has an invalid timeout_seconds");
+
+                    if (step.mOperation == "wait-quest-stage")
+                    {
+                        step.mQuest = node["quest"] ? node["quest"].as<std::string>() : "";
+                        const int stage = node["stage"] ? node["stage"].as<int>() : -1;
+                        if (step.mQuest.empty() || stage < 0 || stage > 255)
+                            throw std::runtime_error("step '" + step.mId + "' needs quest and stage in 0..255");
+                        step.mStage = static_cast<std::uint8_t>(stage);
+                        if (node["stage_done"])
+                            step.mRequireStageDone = node["stage_done"].as<bool>();
+                    }
+                    else if (step.mOperation == "wait-quest-objective")
+                    {
+                        step.mQuest = node["quest"] ? node["quest"].as<std::string>() : "";
+                        const int objective = node["objective"] ? node["objective"].as<int>() : -1;
+                        if (step.mQuest.empty() || objective < 0)
+                            throw std::runtime_error("step '" + step.mId + "' needs quest and a non-negative objective");
+                        step.mObjective = objective;
+                        if (node["displayed"])
+                            step.mObjectiveDisplayed = node["displayed"].as<bool>();
+                    }
+                    else if (step.mOperation == "move-to-reference" || step.mOperation == "activate-reference"
+                        || step.mOperation == "wait-reference-active")
+                    {
+                        const std::string reference = node["reference"] ? node["reference"].as<std::string>() : "";
+                        step.mReference = parseCompatibilityRouteFormId(reference);
+                        if (!step.mReference)
+                            throw std::runtime_error("step '" + step.mId + "' needs a hexadecimal reference FormId");
+                        if (node["offset"])
+                        {
+                            const YAML::Node offset = node["offset"];
+                            if (!offset.IsSequence() || offset.size() != 3)
+                                throw std::runtime_error("step '" + step.mId + "' offset must contain three values");
+                            step.mOffset.set(offset[0].as<float>(), offset[1].as<float>(), offset[2].as<float>());
+                        }
+                    }
+                    else if (step.mOperation == "wait-seconds")
+                    {
+                        step.mDurationSeconds = node["duration_seconds"] ? node["duration_seconds"].as<double>() : 0.0;
+                        if (!std::isfinite(step.mDurationSeconds) || step.mDurationSeconds < 0.0)
+                            throw std::runtime_error("step '" + step.mId + "' has an invalid duration_seconds");
+                    }
+                    else if (step.mOperation == "wait-player-exterior")
+                    {
+                    }
+                    else if (step.mOperation == "wait-player-cell")
+                    {
+                        const std::string cell = node["cell"] ? node["cell"].as<std::string>() : "";
+                        step.mCell = parseCompatibilityRouteFormId(cell);
+                        if (!step.mCell)
+                            throw std::runtime_error("step '" + step.mId + "' needs a hexadecimal cell FormId");
+                    }
+                    else
+                        throw std::runtime_error("step '" + step.mId + "' has unsupported operation '" + step.mOperation + "'");
+
+                    result.mSteps.emplace_back(std::move(step));
+                    ++index;
+                }
+                result.mStates.resize(result.mSteps.size());
+            }
+            catch (const std::exception& e)
+            {
+                result.mStates.resize(result.mSteps.size());
+                result.mLoadError = e.what();
+            }
+            return result;
+        }
+
+        [[nodiscard]] bool enabled() const { return mEnabled; }
+        [[nodiscard]] bool finished() const { return mFinished; }
+        [[nodiscard]] bool shouldQuit() const { return mFinished && mExitAfterFinish; }
+
+        void update(MWWorld::World& world, unsigned frameNumber)
+        {
+            if (!mEnabled || mFinished)
+                return;
+            if (!mLoadError.empty())
+            {
+                fail(frameNumber, "route-load-failed: " + mLoadError);
+                return;
+            }
+            if (mCurrentStep >= mSteps.size())
+            {
+                finish(frameNumber, true, "all declared steps completed");
+                return;
+            }
+
+            CompatibilityRouteStep& step = mSteps[mCurrentStep];
+            StepState& state = mStates[mCurrentStep];
+            if (!state.mStarted)
+            {
+                state.mStarted = true;
+                state.mStartFrame = frameNumber;
+                state.mStartedAt = std::chrono::steady_clock::now();
+                Log(Debug::Info) << "OpenNV compatibility route: id='" << mRouteId << "' step='" << step.mId
+                                 << "' operation=" << step.mOperation << " frame=" << frameNumber;
+            }
+
+            try
+            {
+                bool completed = false;
+                if (step.mOperation == "wait-quest-stage")
+                {
+                    const MWWorld::ESM4QuestState* quest = world.getESM4QuestRuntime().search(step.mQuest);
+                    if (quest != nullptr)
+                    {
+                        const auto done = quest->mStageDone.find(step.mStage);
+                        completed = step.mRequireStageDone ? (done != quest->mStageDone.end() && done->second)
+                                                          : quest->mCurrentStage >= step.mStage;
+                        state.mDetail = "quest=" + step.mQuest + " currentStage="
+                            + std::to_string(quest->mCurrentStage) + " targetStage=" + std::to_string(step.mStage);
+                    }
+                    else
+                        state.mDetail = "quest=" + step.mQuest + " unavailable";
+                }
+                else if (step.mOperation == "wait-quest-objective")
+                {
+                    const MWWorld::ESM4QuestState* quest = world.getESM4QuestRuntime().search(step.mQuest);
+                    if (quest != nullptr)
+                    {
+                        const auto objective = quest->mObjectiveStatus.find(step.mObjective);
+                        const std::uint8_t status = objective != quest->mObjectiveStatus.end() ? objective->second : 0;
+                        const std::uint8_t flag = step.mObjectiveDisplayed
+                            ? MWWorld::ESM4QuestState::Objective_Displayed
+                            : MWWorld::ESM4QuestState::Objective_Completed;
+                        completed = (status & flag) != 0;
+                        state.mDetail = "quest=" + step.mQuest + " objective=" + std::to_string(step.mObjective)
+                            + " status=" + std::to_string(status) + " target="
+                            + (step.mObjectiveDisplayed ? "displayed" : "completed");
+                    }
+                    else
+                        state.mDetail = "quest=" + step.mQuest + " unavailable";
+                }
+                else if (step.mOperation == "wait-seconds")
+                {
+                    completed = std::chrono::duration<double>(std::chrono::steady_clock::now() - state.mStartedAt).count()
+                        >= step.mDurationSeconds;
+                    state.mDetail = "durationSeconds=" + std::to_string(step.mDurationSeconds);
+                }
+                else if (step.mOperation == "wait-player-exterior")
+                {
+                    const MWWorld::Ptr player = world.getPlayerPtr();
+                    completed = !player.isEmpty() && player.getCell() != nullptr && player.getCell()->isExterior();
+                    state.mDetail = completed ? "player is exterior" : "player is not exterior";
+                }
+                else if (step.mOperation == "wait-player-cell")
+                {
+                    const MWWorld::Ptr player = world.getPlayerPtr();
+                    completed = !player.isEmpty() && player.getCell() != nullptr && player.getCell()->getCell() != nullptr
+                        && player.getCell()->getCell()->getId() == ESM::RefId(*step.mCell);
+                    state.mDetail = completed ? "player reached declared cell" : "player has not reached declared cell";
+                }
+                else
+                {
+                    const MWWorld::Ptr reference = findActiveReference(world, *step.mReference);
+                    if (step.mOperation == "wait-reference-active")
+                    {
+                        completed = !reference.isEmpty();
+                        state.mDetail = completed ? "declared reference is active" : "declared reference is not active";
+                    }
+                    else if (reference.isEmpty())
+                        state.mDetail = "declared reference is not active";
+                    else if (step.mOperation == "move-to-reference")
+                    {
+                        const MWWorld::Ptr player = world.getPlayerPtr();
+                        if (player.isEmpty() || reference.getCell() == nullptr)
+                            state.mDetail = "player or target cell unavailable";
+                        else
+                        {
+                            const osg::Vec3f target = reference.getRefData().getPosition().asVec3() + step.mOffset;
+                            world.moveObject(player, reference.getCell(), target, true, false);
+                            completed = true;
+                            state.mDetail = "moved player to " + reference.getCellRef().getRefNum().toString("FormId:");
+                        }
+                    }
+                    else if (step.mOperation == "activate-reference")
+                    {
+                        const MWWorld::Ptr player = world.getPlayerPtr();
+                        bool dispatchedAuthoredReferenceScript = false;
+                        if (!player.isEmpty())
+                        {
+                            // A declared compatibility route performs the same
+                            // engine-level activation boundary as the normal
+                            // player path.  Calling the action directly is
+                            // necessary for unattended proof, but it must not
+                            // bypass the placed reference's authored
+                            // OnActivate script (for example, the FO3 playpen
+                            // gate advances CG01 before its door action).
+                            dispatchedAuthoredReferenceScript
+                                = world.getESM4QuestRuntime().onReferenceActivated(reference, player);
+                        }
+                        std::unique_ptr<MWWorld::Action> action
+                            = player.isEmpty() ? nullptr : reference.getClass().activate(reference, player);
+                        if (action == nullptr || action->isNullAction())
+                        {
+                            if (dispatchedAuthoredReferenceScript)
+                            {
+                                completed = true;
+                                state.mDetail = "dispatched authored reference activation on "
+                                    + reference.getCellRef().getRefNum().toString("FormId:");
+                            }
+                            else
+                                state.mDetail = "declared reference produced no activation action";
+                        }
+                        else
+                        {
+                            action->execute(player);
+                            completed = true;
+                            state.mDetail = "executed authored activation on "
+                                + reference.getCellRef().getRefNum().toString("FormId:");
+                        }
+                    }
+                }
+
+                if (completed)
+                {
+                    state.mCompleted = true;
+                    state.mFinishFrame = frameNumber;
+                    Log(Debug::Info) << "OpenNV compatibility route: id='" << mRouteId << "' step='" << step.mId
+                                     << "' result=pass detail='" << state.mDetail << "' frame=" << frameNumber;
+                    ++mCurrentStep;
+                    if (mCurrentStep >= mSteps.size())
+                        finish(frameNumber, true, "all declared steps completed");
+                    return;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                fail(frameNumber, "step '" + step.mId + "' threw: " + e.what());
+                return;
+            }
+
+            if (std::chrono::duration<double>(std::chrono::steady_clock::now() - state.mStartedAt).count()
+                > step.mTimeoutSeconds)
+            {
+                fail(frameNumber, "step '" + step.mId + "' timed out: " + state.mDetail);
+            }
+        }
+
+    private:
+        struct StepState
+        {
+            bool mStarted = false;
+            bool mCompleted = false;
+            bool mFailed = false;
+            unsigned mStartFrame = 0;
+            unsigned mFinishFrame = 0;
+            std::chrono::steady_clock::time_point mStartedAt{};
+            std::string mDetail;
+        };
+
+        static MWWorld::Ptr findActiveReference(MWWorld::World& world, ESM::FormId id)
+        {
+            for (MWWorld::CellStore* cellstore : world.getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                MWWorld::Ptr result;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == id)
+                    {
+                        result = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!result.isEmpty())
+                    return result;
+            }
+            return {};
+        }
+
+        void fail(unsigned frameNumber, std::string detail)
+        {
+            if (mCurrentStep < mStates.size())
+            {
+                mStates[mCurrentStep].mFailed = true;
+                mStates[mCurrentStep].mFinishFrame = frameNumber;
+                mStates[mCurrentStep].mDetail = detail;
+            }
+            finish(frameNumber, false, std::move(detail));
+        }
+
+        void finish(unsigned frameNumber, bool passed, std::string detail)
+        {
+            if (mFinished)
+                return;
+            mFinished = true;
+            mPassed = passed;
+            mResultDetail = std::move(detail);
+            writeReport(frameNumber);
+            Log(mPassed ? Debug::Info : Debug::Error) << "OpenNV compatibility route: id='" << mRouteId
+                                                       << "' result=" << (mPassed ? "pass" : "fail")
+                                                       << " detail='" << mResultDetail << "' frame=" << frameNumber;
+        }
+
+        void writeReport(unsigned frameNumber) const
+        {
+            if (mReportPath.empty())
+                return;
+            std::error_code error;
+            const std::filesystem::path parent = mReportPath.parent_path();
+            if (!parent.empty())
+                std::filesystem::create_directories(parent, error);
+            if (error)
+            {
+                Log(Debug::Error) << "OpenNV compatibility route: could not create report directory '"
+                                  << parent.string() << "': " << error.message();
+                return;
+            }
+            std::ofstream output(mReportPath, std::ios::out | std::ios::trunc);
+            if (!output.is_open())
+            {
+                Log(Debug::Error) << "OpenNV compatibility route: could not write report '" << mReportPath.string()
+                                  << "'";
+                return;
+            }
+            output << "{\n  \"schema\": \"opennv-authored-route-report/v1\",\n  \"route\": ";
+            writeProofJsonString(output, mRouteId);
+            output << ",\n  \"routePath\": ";
+            writeProofJsonString(output, mRoutePath.string());
+            output << ",\n  \"status\": \"" << (mPassed ? "pass" : "fail") << "\",\n  \"frame\": "
+                   << frameNumber << ",\n  \"resultDetail\": ";
+            writeProofJsonString(output, mResultDetail);
+            output << ",\n  \"capture\": {\n    \"driver\": \"engine-internal declared route\","
+                   << "\n    \"windowsAppControlUsed\": false,\n    \"foregroundActivationUsed\": false,"
+                   << "\n    \"foregroundInputInjected\": false\n  },\n  \"steps\": [";
+            for (std::size_t index = 0; index < mSteps.size(); ++index)
+            {
+                if (index != 0)
+                    output << ',';
+                const CompatibilityRouteStep& step = mSteps[index];
+                const StepState& state = mStates[index];
+                output << "\n    {\"id\":";
+                writeProofJsonString(output, step.mId);
+                output << ",\"operation\":";
+                writeProofJsonString(output, step.mOperation);
+                output << ",\"status\":";
+                writeProofJsonString(output, compatibilityRouteStepStatus(state.mCompleted, state.mFailed, state.mStarted));
+                output << ",\"startFrame\":" << state.mStartFrame << ",\"finishFrame\":" << state.mFinishFrame
+                       << ",\"detail\":";
+                writeProofJsonString(output, state.mDetail);
+                output << '}';
+            }
+            output << "\n  ]\n}\n";
+        }
+
+        bool mEnabled = false;
+        bool mExitAfterFinish = false;
+        bool mFinished = false;
+        bool mPassed = false;
+        std::filesystem::path mRoutePath;
+        std::filesystem::path mReportPath;
+        std::string mRouteId;
+        std::string mLoadError;
+        std::string mResultDetail;
+        std::vector<CompatibilityRouteStep> mSteps;
+        std::vector<StepState> mStates;
+        std::size_t mCurrentStep = 0;
+    };
 
     struct FNVSidecarScreenshot
     {
@@ -12141,6 +12628,43 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
+    // An authored PlayBink runs its own viewer loop, where WindowManager queues
+    // capture frames. Once it returns here, retain the post-movie scene at the
+    // same bounded cadence. The gate marker makes this opt-in to the declared
+    // opening capture and avoids a background screenshot stream in normal play.
+    const int nativeSourceFrameIntervalMilliseconds
+        = readProofInt("OPENMW_CAPTURE_VIDEO_NATIVE_FRAME_INTERVAL_MS", 0);
+    const char* const nativeSourceCaptureGatePath = std::getenv("OPENMW_CAPTURE_VIDEO_GO_PATH");
+    const char* const nativeSourceCaptureStopPath = std::getenv("OPENMW_CAPTURE_VIDEO_STOP_PATH");
+    std::error_code nativeSourceCaptureGateError;
+    std::error_code nativeSourceCaptureStopError;
+    const bool nativeSourceCaptureStopped = nativeSourceCaptureStopPath != nullptr && *nativeSourceCaptureStopPath != '\0'
+        && std::filesystem::exists(nativeSourceCaptureStopPath, nativeSourceCaptureStopError);
+    const bool nativeSourceCaptureActive = nativeSourceFrameIntervalMilliseconds >= 50
+        && nativeSourceFrameIntervalMilliseconds <= 1000 && nativeSourceCaptureGatePath != nullptr
+        && *nativeSourceCaptureGatePath != '\0'
+        && !nativeSourceCaptureStopped
+        && std::filesystem::exists(nativeSourceCaptureGatePath, nativeSourceCaptureGateError);
+    static std::chrono::steady_clock::time_point nativeSourceNextCapture {};
+    static std::size_t nativeSourceFramesQueued = 0;
+    if (nativeSourceCaptureActive && mScreenCaptureHandler != nullptr)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (nativeSourceNextCapture.time_since_epoch().count() == 0 || now >= nativeSourceNextCapture)
+        {
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+            nativeSourceNextCapture = now + std::chrono::milliseconds(nativeSourceFrameIntervalMilliseconds);
+            ++nativeSourceFramesQueued;
+            if (nativeSourceFramesQueued == 1 || nativeSourceFramesQueued % 100 == 0)
+            {
+                Log(Debug::Info) << "OpenNV capture: queued post-movie native source frame count="
+                                 << nativeSourceFramesQueued << " intervalMilliseconds="
+                                 << nativeSourceFrameIntervalMilliseconds << " frame=" << frameNumber;
+            }
+        }
+    }
+
     const int proofVideoCaptureStartFrame = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_START_FRAME");
     const int proofVideoCaptureEndFrame = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_END_FRAME");
     const int proofVideoCaptureStepEnv = getProofFrame("OPENMW_PROOF_VIDEO_CAPTURE_FRAME_STEP");
@@ -13077,6 +13601,7 @@ void OMW::Engine::go()
     MWWorld::DateTimeManager& timeManager = *mWorld->getTimeManager();
     const CompatibilityTelemetryConfig compatibilityTelemetry = readCompatibilityTelemetryConfig();
     bool compatibilityTelemetryWritten = false;
+    CompatibilityRouteDriver compatibilityRoute = CompatibilityRouteDriver::fromEnvironment();
     if (compatibilityTelemetry.enabled())
     {
         Log(Debug::Info) << "OpenNV compatibility telemetry: armed scenario='"
@@ -13084,6 +13609,8 @@ void OMW::Engine::go()
                          << " quests=" << compatibilityTelemetry.mRequiredQuests.size() << " output='"
                          << compatibilityTelemetry.mOutputPath.string() << "'";
     }
+    if (compatibilityRoute.enabled())
+        Log(Debug::Info) << "OpenNV compatibility route: armed";
     const float proofFrameRateLimit
         = readProofFloat("OPENMW_PROOF_FRAME_RATE_LIMIT", mEnvironment.getFrameRateLimit());
     Misc::FrameRateLimiter frameRateLimiter = Misc::makeFrameRateLimiter(proofFrameRateLimit);
@@ -13111,6 +13638,13 @@ void OMW::Engine::go()
         {
             timeManager.setSimulationTime(timeManager.getSimulationTime() + dt);
             timeManager.setRenderingSimulationTime(timeManager.getRenderingSimulationTime() + dt);
+        }
+
+        if (compatibilityRoute.enabled())
+        {
+            compatibilityRoute.update(*mWorld, frameNumber);
+            if (compatibilityRoute.shouldQuit())
+                mStateManager->requestQuit();
         }
 
         if (!compatibilityTelemetryWritten && compatibilityTelemetry.enabled()

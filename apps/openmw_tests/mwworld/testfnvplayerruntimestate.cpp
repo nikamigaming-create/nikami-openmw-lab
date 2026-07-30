@@ -96,6 +96,30 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
 }
 
+TEST(FalloutPlayerRuntimeStateTest, AppliesWholeSpecialAllocationAtomically)
+{
+    MWWorld::FalloutPlayerRuntimeState uninitialized;
+    const std::array<float, MWWorld::FalloutPlayerState::SpecialCount> defaults{ 6.f, 6.f, 6.f, 6.f, 6.f, 5.f,
+        5.f };
+    EXPECT_EQ(uninitialized.setCurrentSpecial(defaults), MWWorld::FalloutActorValueMutationResult::Uninitialized);
+
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(0));
+    ASSERT_EQ(runtime.setCurrentSpecial(defaults), MWWorld::FalloutActorValueMutationResult::Applied);
+    for (std::size_t index = 0; index < defaults.size(); ++index)
+    {
+        const auto value = runtime.getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin + static_cast<std::uint32_t>(index));
+        ASSERT_TRUE(value);
+        EXPECT_FLOAT_EQ(value->mValue, defaults[index]);
+    }
+
+    std::array<float, MWWorld::FalloutPlayerState::SpecialCount> malformed = defaults;
+    malformed[3] = std::numeric_limits<float>::infinity();
+    EXPECT_EQ(runtime.setCurrentSpecial(malformed), MWWorld::FalloutActorValueMutationResult::NonFinite);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(8)->mValue, defaults[3]);
+}
+
 TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
 {
     MWWorld::FalloutPlayerRuntimeState runtime;

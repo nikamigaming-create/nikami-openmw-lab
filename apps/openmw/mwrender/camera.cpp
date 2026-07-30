@@ -1,7 +1,14 @@
 #include "camera.hpp"
 
-#include <osg/Camera>
+#include "animation.hpp"
 
+#include <cstdlib>
+#include <sstream>
+
+#include <osg/Camera>
+#include <osg/MatrixTransform>
+
+#include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/sceneutil/nodecallback.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -135,6 +142,37 @@ namespace MWRender
         if (nodepaths.empty())
             return;
         mTrackedWorldMatrix = osg::computeLocalToWorld(nodepaths[0]);
+
+        // Authored Fallout cameras are driven by a KF target rather than the usual player-height fallback.  When
+        // explicitly requested, retain a small, engine-native transform trace so a content package can be reconciled
+        // against retail without inventing scene coordinates or relying on a screen capture.
+        if (std::getenv("OPENMW_AUTHORED_START_TELEMETRY") != nullptr && mAnimation != nullptr
+            && mAnimation->hasFalloutScriptPackageCameraTarget())
+        {
+            static unsigned int sAuthoredCameraSamples = 0;
+            if (sAuthoredCameraSamples < 24)
+            {
+                ++sAuthoredCameraSamples;
+                const auto* transform = dynamic_cast<const osg::MatrixTransform*>(mTrackingNode.get());
+                const osg::Vec3d local = transform != nullptr ? transform->getMatrix().getTrans() : osg::Vec3d();
+                std::ostringstream parents;
+                const osg::Node* current = mTrackingNode.get();
+                for (unsigned int depth = 0; current != nullptr && depth < 6; ++depth)
+                {
+                    if (depth != 0)
+                        parents << ">";
+                    parents << current->getName();
+                    current = current->getNumParents() != 0 ? current->getParent(0) : nullptr;
+                }
+                const auto& actorPosition = mTrackingPtr.getRefData().getPosition();
+                Log(Debug::Info) << "FNV/ESM4 authored-camera telemetry: sample=" << sAuthoredCameraSamples
+                                 << " target=\"" << mTrackingNode->getName() << "\" local=(" << local.x() << ","
+                                 << local.y() << "," << local.z() << ") world=(" << mTrackedWorldMatrix.getTrans().x()
+                                 << "," << mTrackedWorldMatrix.getTrans().y() << "," << mTrackedWorldMatrix.getTrans().z()
+                                 << ") actor=(" << actorPosition.pos[0] << "," << actorPosition.pos[1] << ","
+                                 << actorPosition.pos[2] << ") chain=\"" << parents.str() << "\"";
+            }
+        }
         if (mMode == Mode::FirstPerson && mFirstPersonUsesTrackingRoot)
         {
             osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
@@ -441,7 +479,8 @@ namespace MWRender
 
     void Camera::setSneakOffset(float offset)
     {
-        mAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
+        if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+            npcAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
 //## VR_PATCH BEGIN
 
         if (VR::getVR())
@@ -474,7 +513,7 @@ namespace MWRender
         mPosition = pos;
     }
 
-    void Camera::setAnimation(NpcAnimation* anim)
+    void Camera::setAnimation(Animation* anim)
     {
         mAnimation = anim;
         mProcessViewChange = true;
@@ -500,10 +539,20 @@ namespace MWRender
 //## VR_PATCH END
         if (mTrackingPtr.isEmpty())
             return;
+        if (mAnimation == nullptr)
+        {
+            mTrackingNode = nullptr;
+            mProcessViewChange = false;
+            return;
+        }
+
         if (mMode == Mode::FirstPerson)
         {
-            mAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
-            mTrackingNode = mAnimation->getNode("Camera");
+            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+                npcAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
+            mTrackingNode = mAnimation->getNode("Camera1st");
+            if (!mTrackingNode)
+                mTrackingNode = mAnimation->getNode("Camera");
             if (!mTrackingNode)
                 mTrackingNode = mAnimation->getNode("Head");
             if (!mTrackingNode)
@@ -515,7 +564,8 @@ namespace MWRender
         }
         else
         {
-            mAnimation->setViewMode(NpcAnimation::VM_Normal);
+            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+                npcAnimation->setViewMode(NpcAnimation::VM_Normal);
             SceneUtil::PositionAttitudeTransform* transform = mTrackingPtr.getRefData().getBaseNode();
             mTrackingNode = transform;
             if (transform)

@@ -66,6 +66,7 @@ namespace MWDialogue
                 actual = stats != nullptr && stats->mClass == parameter ? 1.f : 0.f;
                 break;
             case ESM4::FUN_GetIsSex:
+            case ESM4::FUN_GetPCIsSex:
                 if (actorRef != nullptr)
                     actual = static_cast<std::uint32_t>(MWClass::ESM4Npc::isFemale(actor)) == condition.param1 ? 1.f : 0.f;
                 else if (const auto* npc

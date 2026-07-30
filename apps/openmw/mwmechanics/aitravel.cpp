@@ -78,13 +78,47 @@ namespace MWMechanics
         MWBase::MechanicsManager* mechMgr = MWBase::Environment::get().getMechanicsManager();
         auto& stats = actor.getClass().getCreatureStats(actor);
 
-        if (!stats.getMovementFlag(CreatureStats::Flag_ForceJump)
-            && !stats.getMovementFlag(CreatureStats::Flag_ForceSneak)
-            && (mechMgr->isTurningToPlayer(actor) || mechMgr->getGreetingState(actor) == GreetingState::InProgress))
+        // Fallout package End handlers need the regular one-shot travel
+        // completion signal.  When a declared route is active, expose the
+        // first few executions of that normal package so a failure can
+        // distinguish an actor-update problem from a pathfinding problem.
+        const bool routeTrace = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr && !getRepeat();
+        // The normal path builder intentionally defers its first calculation
+        // for several AI updates. Keep enough bounded samples to observe that
+        // handoff as well as the initial no-path state.
+        // Keep the initial per-frame samples, then take periodic samples for
+        // the rest of an unattended route. A Fallout package can cover a
+        // short corridor in a few frames or wait behind a scripted dialogue;
+        // the later samples distinguish those states without making ordinary
+        // logging noisy.
+        const bool logRouteExecution
+            = routeTrace && (mRouteTraceExecutions < 24 || (mRouteTraceExecutions % 120) == 0);
+        if (routeTrace)
+            ++mRouteTraceExecutions;
+
+        const bool forceMovement = stats.getMovementFlag(CreatureStats::Flag_ForceJump)
+            || stats.getMovementFlag(CreatureStats::Flag_ForceSneak);
+        const bool turningToPlayer = mechMgr->isTurningToPlayer(actor);
+        const bool greetingInProgress = mechMgr->getGreetingState(actor) == GreetingState::InProgress;
+        const bool scriptedAnimation = mechMgr->checkScriptedAnimationPlaying(actor);
+        if (logRouteExecution)
+            Log(Debug::Info) << "FNV/ESM4 route AI: one-shot travel state actor="
+                             << actor.getCellRef().getRefId() << " sample=" << mRouteTraceExecutions
+                             << " forceMovement=" << forceMovement << " turningToPlayer=" << turningToPlayer
+                             << " greetingInProgress=" << greetingInProgress
+                             << " scriptedAnimation=" << scriptedAnimation;
+
+        if (!forceMovement && (turningToPlayer || greetingInProgress))
             return false;
 
         const osg::Vec3f actorPos(actor.getRefData().getPosition().asVec3());
         const osg::Vec3f targetPos(mX, mY, mZ);
+
+        if (logRouteExecution)
+            Log(Debug::Info) << "FNV/ESM4 route AI: one-shot travel execute actor="
+                             << actor.getCellRef().getRefId() << " position=(" << actorPos.x() << ',' << actorPos.y()
+                             << ',' << actorPos.z() << ") target=(" << targetPos.x() << ',' << targetPos.y() << ','
+                             << targetPos.z() << ") duration=" << duration;
 
         stats.setMovementFlag(CreatureStats::Flag_Run, false);
         stats.setDrawState(DrawState::Nothing);
@@ -95,6 +129,20 @@ namespace MWMechanics
 
         const bool reached
             = pathTo(actor, targetPos, duration, characterController.getSupportedMovementDirections());
+        if (logRouteExecution)
+        {
+            const auto& path = mPathFinder.getPath();
+            const osg::Vec3f nextPathPoint = path.empty() ? targetPos : path.front();
+            const osg::Vec3f lastPathPoint = path.empty() ? targetPos : path.back();
+            const auto& movement = actor.getClass().getMovementSettings(actor);
+            Log(Debug::Info) << "FNV/ESM4 route AI: one-shot travel path result actor="
+                             << actor.getCellRef().getRefId() << " reached=" << reached
+                             << " pathPoints=" << path.size() << " next=(" << nextPathPoint.x() << ','
+                             << nextPathPoint.y() << ',' << nextPathPoint.z() << ") last=(" << lastPathPoint.x()
+                             << ',' << lastPathPoint.y() << ',' << lastPathPoint.z() << ") movement=("
+                             << movement.mPosition[0] << ',' << movement.mPosition[1] << ") yaw="
+                             << actor.getRefData().getPosition().rot[2];
+        }
         if (std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY") != nullptr)
         {
             static unsigned int sTravelTelemetryLines = 0;

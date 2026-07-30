@@ -159,6 +159,10 @@ namespace MWRender
 
             osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
             bool mFalloutProcedureIdle = false;
+            // A KF that explicitly animates Camera1st owns a first-person cinematic transform branch.  Keep this
+            // semantic on the source rather than on an individual quest or cell so translation policy follows the
+            // shipped controller contract.
+            bool mFalloutAuthoredCamera = false;
         };
 
         struct AnimState
@@ -265,6 +269,7 @@ namespace MWRender
         bool mProofPreviewAnimation;
         bool mProofPreviewGameplayAudit;
         int mBethesdaBoneLodLevel;
+        bool mFalloutScriptPackageCameraTarget = false;
 
         const NodeMap& getNodeMap() const;
 
@@ -324,7 +329,12 @@ namespace MWRender
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
         std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
             bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
-            std::string_view falloutSemanticGroup = {});
+            std::string_view falloutSemanticGroup = {}, bool forceFalloutActorContext = false);
+
+        /// Fallout cinematic KFs can own a Camera1st controller even though the shared body skeleton deliberately
+        /// has no permanent camera transform.  Materialise that authored target on the visual only when a scripted
+        /// package actually requires it, so the normal player camera rig remains untouched.
+        bool ensureFalloutScriptPackageCameraTarget();
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
@@ -407,6 +417,12 @@ namespace MWRender
         /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
         std::string getAnimationGroupFromSource(
             std::string_view sourceName, std::string_view groupPrefix = {}) const;
+
+        /// Bind an authored Fallout script-package KF to this already rendered actor and expose it under a caller
+        /// supplied semantic group. Script packages can be attached after the actor enters a cell, so this is
+        /// deliberately separate from the constructor-time NPC animation manifests.
+        bool addFalloutScriptPackageAnimationSource(std::string_view model, std::string_view semanticGroup);
+        bool hasFalloutScriptPackageCameraTarget() const { return mFalloutScriptPackageCameraTarget; }
 
         /// Attach or clear a Fallout ANIO model for the duration of an authored idle group.
         virtual bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) { return false; }

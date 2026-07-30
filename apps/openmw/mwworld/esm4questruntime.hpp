@@ -31,6 +31,7 @@ namespace MWWorld
 {
     class ESMStore;
     class Globals;
+    class Ptr;
 
     struct ESM4QuestState
     {
@@ -67,6 +68,7 @@ namespace MWWorld
     struct ESM4AuthoredStartPlacement
     {
         ESM::FormId mQuest{};
+        std::uint8_t mSourceStage = 0;
         std::uint8_t mActivationStage = 0;
         ESM::FormId mMarker{};
         ESM::RefId mCell;
@@ -74,6 +76,18 @@ namespace MWWorld
         std::string mQuestEditorId;
         std::string mMarkerEditorId;
         std::string mCinematicAsset;
+    };
+
+    // A small, data-derived slice of the Fallout-family GameMode scripting
+    // pattern.  Bethesda's opening quests commonly use a local run flag and
+    // countdown variable to move through authored quest stages.  We compile
+    // only that unambiguous timer idiom from the quest's own source script;
+    // this is deliberately not a name- or campaign-specific timeline.
+    struct ESM4AuthoredGameModeTimer
+    {
+        std::string mRunVariable;
+        std::string mTimerVariable;
+        std::map<std::uint8_t, std::uint8_t> mStageTransitions;
     };
 
     class ESM4QuestRuntime
@@ -87,6 +101,89 @@ namespace MWWorld
         std::vector<std::string> mUnsupportedStageCommands;
         std::vector<std::uint16_t> mUnsupportedCompiledOpcodes;
         std::vector<std::uint32_t> mUnsupportedConditionFunctions;
+        // Trace-only state for source-driven cinematic commands.  Video state
+        // itself remains owned by the window manager.
+        std::vector<std::string> mPlayedStageVideos;
+        // Fallout-family quest scripts own their progression in Begin
+        // GameMode blocks.  Keep the source indexed by its owning quest so
+        // locals such as `timer` can be resolved from the authored script,
+        // rather than from a campaign-specific timeline.
+        std::unordered_map<ESM::FormId, std::string> mAuthoredGameModeSources;
+        std::unordered_map<ESM::FormId, std::vector<ESM4AuthoredGameModeTimer>> mAuthoredGameModeTimers;
+
+        // OpenNV profiles can declare aliases for script commands supplied by
+        // a licensed conversion or mod.  The aliases resolve only to a small,
+        // engine-owned set of semantic capabilities; profile data can never
+        // name an arbitrary C++ method or execute an arbitrary command.
+        std::map<std::string, std::string, std::less<>> mAuthoredCompatibilityCommands;
+
+        // MenuMode blocks are authored lifecycle code distinct from GameMode:
+        // they run while a real engine menu is open, including character
+        // generation handoffs.  Keep the source and the quest's local scope
+        // together so this remains data driven.
+        std::unordered_map<ESM::FormId, std::string> mAuthoredMenuModeSources;
+
+        // Fallout also attaches GameMode scripts directly to placed actors.
+        // Their locals belong to each placed reference, rather than to the
+        // shared NPC base or to a quest.  Keep the source and locals together
+        // so commands such as `CG00DadREF.doTalk` use the same authored
+        // ownership model as the retail scripts.
+        struct ActorScriptState
+        {
+            ESM::FormId mActor{};
+            ESM::FormId mScript{};
+            ESM::RefId mCell;
+            std::string mEditorId;
+            std::string mSource;
+            std::map<std::string, float, std::less<>> mVariables;
+        };
+
+        struct PendingActorScriptEvent
+        {
+            ESM::FormId mActor{};
+            std::string mEvent;
+            std::string mArgument;
+        };
+
+        // Say/SayTo result scripts may chain another line while the prior
+        // voice is still playing. Keep the next authored topic queued against
+        // the placed actor instead of losing that command at the audio
+        // boundary.
+        struct PendingAuthoredSay
+        {
+            ESM::FormId mActor{};
+            std::string mTopic;
+            std::optional<ESM::FormId> mActorScript;
+            bool mNotifyActorScript = false;
+        };
+
+        std::unordered_map<ESM::FormId, ActorScriptState> mActorScriptStates;
+        std::unordered_map<std::string, ESM::FormId> mActorScriptEditorIds;
+        std::unordered_map<std::string, bool> mAmbiguousActorScriptEditorIds;
+        std::vector<PendingActorScriptEvent> mPendingActorScriptEvents;
+        std::vector<PendingAuthoredSay> mPendingAuthoredSays;
+
+        // Scripted placed references have their own local variables just as
+        // actors do.  This covers authored trigger volumes and interactive
+        // objects without making a campaign, cell, or editor ID special.
+        struct ReferenceScriptState
+        {
+            ESM::FormId mReference{};
+            ESM::FormId mScript{};
+            ESM::RefId mCell;
+            std::string mEditorId;
+            std::string mSource;
+            std::map<std::string, float, std::less<>> mVariables;
+            float mTriggerRadius = 0.f;
+            bool mHasTriggerEnter = false;
+            bool mHasTriggerLeave = false;
+            bool mHasTrigger = false;
+            bool mPlayerWasInside = false;
+        };
+
+        std::unordered_map<ESM::FormId, ReferenceScriptState> mReferenceScriptStates;
+        std::unordered_map<std::string, ESM::FormId> mReferenceScriptEditorIds;
+        std::unordered_map<std::string, bool> mAmbiguousReferenceScriptEditorIds;
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
@@ -143,6 +240,14 @@ namespace MWWorld
         const ESM4::Quest* resolveQuest(std::string_view id) const;
         ESM4QuestState* findState(const ESM4::Quest& quest);
         const ESM4QuestState* findState(const ESM4::Quest& quest) const;
+        ActorScriptState* findActorScriptState(ESM::FormId actor);
+        const ActorScriptState* findActorScriptState(ESM::FormId actor) const;
+        std::optional<ESM::FormId> resolveActorScript(std::string_view id) const;
+        bool setActorScriptVariable(ESM::FormId actor, std::string_view variable, float value);
+        ReferenceScriptState* findReferenceScriptState(ESM::FormId reference);
+        const ReferenceScriptState* findReferenceScriptState(ESM::FormId reference) const;
+        std::optional<ESM::FormId> resolveReferenceScript(std::string_view id) const;
+        bool setReferenceScriptVariable(ESM::FormId reference, std::string_view variable, float value);
         std::optional<float> evaluateConditionValue(const ESM4::TargetCondition& condition);
         std::optional<float> evaluateConditionValue(
             const ESM4::TargetCondition& condition, const QuestStateMap& states, bool recordUnsupported);
@@ -159,11 +264,23 @@ namespace MWWorld
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
-        void executeStageSource(std::string_view source);
+        void executeStageSource(std::string_view source, std::optional<ESM::FormId> ownerQuest = {},
+            float secondsPassed = 0.f, std::optional<ESM::FormId> ownerActor = {},
+            std::string_view selectedBlock = "gamemode", std::string_view selectedBlockArgument = {},
+            std::optional<ESM::FormId> ownerReference = {}, std::string_view actionReference = {});
+        static std::vector<ESM4AuthoredGameModeTimer> compileAuthoredGameModeTimers(
+            std::string_view source, std::string_view questEditorId);
 
     public:
+        // Parses the profile-local [OpenNV Compatibility] command map.  Each
+        // comma-separated entry is `script-command:capability`; unsupported
+        // capabilities are deliberately ignored.
+        static std::map<std::string, std::string, std::less<>> parseAuthoredCompatibilityCommandMappings(
+            std::string_view mappings);
+
         void initialize(const ESMStore& store, const Globals* globals = nullptr);
         void clear();
+        void update(float duration, bool paused);
 
         bool startQuest(std::string_view id);
         bool startQuest(ESM::FormId id);
@@ -182,6 +299,21 @@ namespace MWWorld
         bool forceActiveQuest(std::string_view id);
         bool forceActiveQuest(ESM::FormId id);
         void executeResultSource(std::string_view source);
+        // Called from the engine's ordinary activation path.  It only runs a
+        // matching authored OnActivate block; standard Lua/default activation
+        // continues unchanged after this notification.
+        [[nodiscard]] bool onReferenceActivated(const MWWorld::Ptr& reference, const MWWorld::Ptr& actor);
+        // Called by the data-driven ESM4 package runtime when a package has
+        // genuinely finished playing on its actor.  It dispatches the
+        // package's authored On End source and then the actor's matching
+        // OnPackageDone block by the package's data ID.
+        void onActorScriptPackageDone(const MWWorld::Ptr& actor, ESM::FormId package);
+        // Lets the generic Fallout package selector choose a one-shot AI
+        // package only when the package's own On End source or the actor's
+        // source declares an exact matching OnPackageDone block. Ambient
+        // packages remain repeatable.
+        bool packageCompletionHasAuthoredHandler(const MWWorld::Ptr& actor, ESM::FormId package) const;
+        bool actorScriptHandlesPackageDone(const MWWorld::Ptr& actor, ESM::FormId package) const;
         bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions);
 
         int countSavedGameRecords() const;
@@ -200,6 +332,7 @@ namespace MWWorld
         {
             return mUnsupportedConditionFunctions;
         }
+        const std::vector<std::string>& getPlayedStageVideos() const { return mPlayedStageVideos; }
     };
 }
 

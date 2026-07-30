@@ -432,11 +432,20 @@ namespace MWGui
         return nullptr;
     }
 
-    void InteractiveMessageBox::closeDefault() 
+    void InteractiveMessageBox::closeButton(std::size_t buttonIndex)
     {
-        auto buttonIndex = std::max(size_t(0), std::min(mDefaultFocus, mButtons.size()));
-        auto button = mButtons[buttonIndex];
-        mousePressed(button);
+        if (buttonIndex >= mButtons.size())
+            return;
+        mousePressed(mButtons[buttonIndex]);
+    }
+
+    void InteractiveMessageBox::closeDefault()
+    {
+        // A default focus of -1 is represented as an out-of-range size_t by
+        // the legacy message-box API.  The first authored button is the
+        // normal default in that case.  Never index at mButtons.size().
+        const std::size_t buttonIndex = mDefaultFocus < mButtons.size() ? mDefaultFocus : 0;
+        closeButton(buttonIndex);
     }
 
     void InteractiveMessageBox::mousePressed(MyGUI::Widget* widget)

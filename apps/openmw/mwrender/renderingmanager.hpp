@@ -17,6 +17,7 @@
 
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -237,6 +238,15 @@ namespace MWRender
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
 
+        /// Return the visual animation that owns data-driven ESM4 script-package KFs.  Fallout-family player
+        /// presentation keeps a legacy first-person rig alongside a native body proxy; authored package animation
+        /// belongs on the native proxy when one is present, while every other actor uses its normal animation.
+        Animation* getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr);
+
+        /// Select the authored Camera1st target while a data-driven ESM4 script package owns it.  This is only
+        /// meaningful for the player, whose legacy camera rig and native body proxy are intentionally separate.
+        bool setESM4ScriptPackageCamera(const MWWorld::Ptr& ptr, bool active);
+
         PostProcessor* getPostProcessor();
 
         void addWaterRippleEmitter(const MWWorld::Ptr& ptr);
@@ -383,6 +393,7 @@ namespace MWRender
         bool mFalloutPlayerVisualCycleLogged = false;
         osg::Vec3f mFalloutPlayerVisualPreviousPosition;
         bool mFalloutPlayerVisualPreviousPositionValid = false;
+        std::optional<int> mESM4ScriptPackagePreviousCameraMode;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;

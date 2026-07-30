@@ -210,7 +210,12 @@ namespace Settings
             Settings::StaticValues::init();
 
         for (const auto& [key, value] : originalDefaultSettings)
-            if (!sInitialized.contains(key))
+            // OpenNV compatibility capabilities are intentionally lazy: they
+            // are only initialized when the matching Fallout profile feature
+            // is activated.  Requiring them during core settings bootstrap
+            // would make an otherwise valid profile fail before its first
+            // frame.  Keep the invariant for every normal engine category.
+            if (key.first != "OpenNV Compatibility" && !sInitialized.contains(key))
                 throw std::runtime_error("Default setting [" + key.first + "] " + key.second + " is not initialized");
 
         return settingspath;
