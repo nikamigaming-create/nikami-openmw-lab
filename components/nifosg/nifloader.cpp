@@ -4732,6 +4732,24 @@ namespace NifOsg
                                  << " colors=" << colors.size();
             }
 
+            if (worldViewerMeshLoadTelemetryEnabled() && isWorldViewerActorMeshPath(filename))
+            {
+                Log(Debug::Info) << "World viewer nif geometry ledger: file=\"" << mFilename.generic_string()
+                                 << "\" shape=\"" << nifNode->mName << "\""
+                                 << " recType=" << niGeometry->recType
+                                 << " hasSkin=" << !niGeometry->mSkin.empty()
+                                 << " hasPartitions=" << hasPartitions
+                                 << " partitionCount=" << partitionCount
+                                 << " partitionTriangleIndices=" << partitionTriangleIndexCount
+                                 << " partitionStrips=" << partitionStripCount
+                                 << " rawFallback=" << usedRawFallback
+                                 << " rawFallbackPrimitiveSets=" << rawFallbackPrimitiveSets
+                                 << " primitiveSets=" << geometry->getNumPrimitiveSets()
+                                 << " vertices=" << vertices.size()
+                                 << " normals=" << normals.size()
+                                 << " colors=" << colors.size();
+            }
+
             const auto& uvlist = niGeometryData->mUVList;
             const bool hasLegacySkyShaderProperty = std::any_of(nifNode->mProperties.begin(),
                 nifNode->mProperties.end(), [](const auto& property) {

@@ -73,6 +73,8 @@ file(GLOB UNITTEST_SRC_FILES
     files/conversiontests.cpp
     files/hash.cpp
 
+    debug/testfnvseamlesstelemetry.cpp
+
     toutf8/toutf8.cpp
 
     esm4/includes.cpp

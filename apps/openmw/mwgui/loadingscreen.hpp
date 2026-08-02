@@ -69,6 +69,7 @@ namespace MWGui
         int mNestedLoadingCount;
 
         size_t mProgress;
+        size_t mSeamlessTelemetryDrawCount = 0;
 
         bool mShowWallpaper;
         double mOldIcoMin = 0.0;

@@ -3724,6 +3724,7 @@ namespace MWRender
         public:
             HideFalloutDismemberGoreVisitor()
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mIncludeStaticGeometry(includeStaticGeometry)
             {
             }
 
@@ -5555,6 +5556,892 @@ namespace MWRender
                 || text.find("rifle") != std::string::npos || text.find("shotgun") != std::string::npos
                 || text.find("sniper") != std::string::npos || text.find("launcher") != std::string::npos
                 || text.find("minigun") != std::string::npos;
+        }
+
+        struct WorldViewerWeaponIkSolve
+        {
+            osg::Vec3f mMid;
+            osg::Vec3f mEnd;
+            float mError = -1.f;
+            bool mReachable = false;
+            bool mSolved = false;
+        };
+
+        struct WorldViewerWeaponIkRotationProbe
+        {
+            bool mSolved = false;
+            float mError = -1.f;
+            const char* mOrder = "none";
+        };
+
+        bool worldViewerFONVWeaponIkEnabled()
+        {
+            if (const char* value = std::getenv("OPENMW_FNV_WEAPON_IK"))
+                return value[0] != '0';
+            if (const char* value = std::getenv("OPENMW_ESM4_WEAPON_IK"))
+                return value[0] != '0';
+            return false;
+        }
+
+        bool worldViewerFONVWeaponFrameStabilizerEnabled()
+        {
+            // Diagnostic fallback only. Retail drives the Weapon node from the selected animation family.
+            return worldViewerEnvEnabled("OPENMW_FNV_WEAPON_FRAME_STABILIZER")
+                || worldViewerEnvEnabled("OPENMW_ESM4_WEAPON_FRAME_STABILIZER");
+        }
+
+        bool worldViewerFONVLongGunOffhandIkEnabled()
+        {
+            // Diagnostic fallback only. Authored 2hr/2ha/etc. sequences contain the retail offhand pose.
+            return worldViewerEnvEnabled("OPENMW_FNV_LONG_GUN_OFFHAND_IK")
+                || worldViewerEnvEnabled("OPENMW_ESM4_LONG_GUN_OFFHAND_IK");
+        }
+
+        osg::Vec3f normalizeFalloutIkVector(osg::Vec3f value, const osg::Vec3f& fallback)
+        {
+            if (value.normalize() <= 0.0001f)
+                return fallback;
+            return value;
+        }
+
+        float falloutIkDirectionAngleDegrees(osg::Vec3f left, osg::Vec3f right)
+        {
+            if (left.normalize() <= 0.0001f || right.normalize() <= 0.0001f)
+                return -1.f;
+            return std::acos(std::clamp(left * right, -1.f, 1.f)) * 57.29577951308232f;
+        }
+
+        void setFalloutIkTransformWorldMatrix(osg::MatrixTransform& transform, const osg::Matrix& desiredWorld)
+        {
+            osg::Group* parent = transform.getNumParents() > 0 ? transform.getParent(0) : nullptr;
+            osg::Matrixf local = desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent));
+            transform.setMatrix(local);
+            transform.dirtyBound();
+
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(&transform))
+            {
+                if (osgAnimation::Bone* boneParent = bone->getBoneParent())
+                    bone->setMatrixInSkeletonSpace(local * boneParent->getMatrixInSkeletonSpace());
+                else
+                    bone->setMatrixInSkeletonSpace(local);
+            }
+        }
+
+        WorldViewerWeaponIkSolve solveFalloutWeaponIkTwoBone(
+            const osg::Vec3f& root, const osg::Vec3f& mid, const osg::Vec3f& end,
+            const osg::Vec3f& requestedTarget, const osg::Vec3f& poleHint)
+        {
+            WorldViewerWeaponIkSolve result;
+            const float upperLength = std::clamp((mid - root).length(), 4.f, 36.f);
+            const float lowerLength = std::clamp((end - mid).length(), 4.f, 36.f);
+
+            osg::Vec3f rootToTarget = requestedTarget - root;
+            float targetDistance = rootToTarget.normalize();
+            if (targetDistance <= 0.0001f)
+                return result;
+
+            const float maxReach = std::max(0.001f, upperLength + lowerLength - 0.01f);
+            const osg::Vec3f target = root + rootToTarget * std::min(targetDistance, maxReach);
+            targetDistance = std::min(targetDistance, maxReach);
+            result.mReachable = targetDistance < maxReach - 0.05f;
+
+            const float along = std::clamp(
+                (upperLength * upperLength - lowerLength * lowerLength + targetDistance * targetDistance)
+                    / (2.f * targetDistance),
+                0.f, upperLength);
+            const float height = std::sqrt(std::max(0.f, upperLength * upperLength - along * along));
+            osg::Vec3f pole = poleHint - rootToTarget * (poleHint * rootToTarget);
+            if (pole.normalize() <= 0.0001f)
+                pole = normalizeFalloutIkVector(
+                    mid - (root + rootToTarget * ((mid - root) * rootToTarget)), osg::Vec3f(0.f, 0.f, -1.f));
+
+            result.mMid = root + rootToTarget * along + pole * height;
+            result.mEnd = target;
+            result.mError = (result.mEnd - requestedTarget).length();
+            result.mSolved = true;
+            return result;
+        }
+
+        WorldViewerWeaponIkRotationProbe rotateFalloutWeaponIkSegmentToBest(
+            osg::MatrixTransform& bone, osg::Node& endpoint, const osg::Vec3f& desiredSegmentEnd, float strength)
+        {
+            WorldViewerWeaponIkRotationProbe result;
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&bone);
+            const osg::Vec3f boneOrigin = originalWorld.getTrans();
+            osg::Vec3f from = getNodeWorldMatrix(&endpoint).getTrans() - boneOrigin;
+            osg::Vec3f to = desiredSegmentEnd - boneOrigin;
+            if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
+                return result;
+
+            osg::Quat delta;
+            delta.makeRotate(from, to);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
+
+            const osg::Vec3f worldScale = originalWorld.getScale();
+            const auto composeWorld = [&](const osg::Quat& rotation) {
+                // Starfield's human skeleton is wrapped in a 32x native-meter conversion. Replacing the
+                // candidate with rotation+translation alone strips that inherited world scale, shrinking the
+                // limb after the first IK iteration and making every later endpoint solve diverge.
+                return osg::Matrix::scale(worldScale) * osg::Matrix::rotate(rotation)
+                    * osg::Matrix::translate(boneOrigin);
+            };
+
+            const auto testCandidate = [&](const osg::Quat& rotation) {
+                setFalloutIkTransformWorldMatrix(bone, composeWorld(rotation));
+                return (getNodeWorldMatrix(&endpoint).getTrans() - desiredSegmentEnd).length();
+            };
+
+            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
+            const float preError = testCandidate(preRotation);
+            setFalloutIkTransformWorldMatrix(bone, originalWorld);
+
+            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
+            const float postError = testCandidate(postRotation);
+            setFalloutIkTransformWorldMatrix(bone, originalWorld);
+
+            if (preError <= postError)
+            {
+                setFalloutIkTransformWorldMatrix(bone, composeWorld(preRotation));
+                result.mError = preError;
+                result.mOrder = "pre";
+            }
+            else
+            {
+                setFalloutIkTransformWorldMatrix(bone, composeWorld(postRotation));
+                result.mError = postError;
+                result.mOrder = "post";
+            }
+            result.mSolved = true;
+            return result;
+        }
+
+        WorldViewerWeaponIkRotationProbe rotateFalloutWeaponIkAxisToBest(
+            osg::MatrixTransform& transform, const osg::Vec3f& localAxis,
+            const osg::Vec3f& desiredWorldAxis, float strength)
+        {
+            WorldViewerWeaponIkRotationProbe result;
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&transform);
+            osg::Vec3f current = originalWorld.getRotate() * localAxis;
+            osg::Vec3f desired = desiredWorldAxis;
+            if (current.normalize() <= 0.0001f || desired.normalize() <= 0.0001f)
+                return result;
+
+            osg::Quat delta;
+            delta.makeRotate(current, desired);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
+
+            const osg::Vec3f origin = originalWorld.getTrans();
+            const osg::Vec3f worldScale = originalWorld.getScale();
+            const auto composeWorld = [&](const osg::Quat& rotation) {
+                return osg::Matrix::scale(worldScale) * osg::Matrix::rotate(rotation)
+                    * osg::Matrix::translate(origin);
+            };
+            const auto testCandidate = [&](const osg::Quat& rotation) {
+                setFalloutIkTransformWorldMatrix(transform, composeWorld(rotation));
+                return falloutIkDirectionAngleDegrees(getNodeWorldMatrix(&transform).getRotate() * localAxis, desired);
+            };
+
+            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
+            const float preAngle = testCandidate(preRotation);
+            setFalloutIkTransformWorldMatrix(transform, originalWorld);
+
+            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
+            const float postAngle = testCandidate(postRotation);
+            setFalloutIkTransformWorldMatrix(transform, originalWorld);
+
+            const float beforeAngle = falloutIkDirectionAngleDegrees(current, desired);
+            if (beforeAngle >= 0.f && beforeAngle <= preAngle + 0.25f && beforeAngle <= postAngle + 0.25f)
+            {
+                result.mSolved = true;
+                result.mError = beforeAngle;
+                result.mOrder = "keep";
+                return result;
+            }
+
+            if (preAngle >= 0.f && (postAngle < 0.f || preAngle <= postAngle))
+            {
+                setFalloutIkTransformWorldMatrix(transform, composeWorld(preRotation));
+                result.mError = preAngle;
+                result.mOrder = "pre";
+            }
+            else
+            {
+                setFalloutIkTransformWorldMatrix(transform, composeWorld(postRotation));
+                result.mError = postAngle;
+                result.mOrder = "post";
+            }
+            result.mSolved = true;
+            return result;
+        }
+
+        struct WorldViewerHandOrientationProbe
+        {
+            bool mSolved = false;
+            float mForwardError = -1.f;
+            float mPalmError = -1.f;
+            float mScore = -1.f;
+            std::string mCandidate = "none";
+        };
+
+        osg::Vec3f projectFalloutIkDirectionOnPlane(
+            osg::Vec3f direction, const osg::Vec3f& planeNormal, const osg::Vec3f& fallback)
+        {
+            const osg::Vec3f normal = normalizeFalloutIkVector(planeNormal, osg::Vec3f(0.f, 0.f, 1.f));
+            direction -= normal * (direction * normal);
+            return normalizeFalloutIkVector(direction, fallback);
+        }
+
+        float signedFalloutIkAngleAroundAxis(osg::Vec3f from, osg::Vec3f to, osg::Vec3f axis)
+        {
+            axis = normalizeFalloutIkVector(axis, osg::Vec3f(0.f, 0.f, 1.f));
+            from = projectFalloutIkDirectionOnPlane(from, axis, osg::Vec3f(1.f, 0.f, 0.f));
+            to = projectFalloutIkDirectionOnPlane(to, axis, osg::Vec3f(1.f, 0.f, 0.f));
+            const float angle = std::acos(std::clamp(from * to, -1.f, 1.f));
+            const osg::Vec3f cross = from ^ to;
+            return cross * axis < 0.f ? -angle : angle;
+        }
+
+        WorldViewerHandOrientationProbe orientFalloutWeaponIkHandGripToBest(osg::MatrixTransform& hand,
+            const osg::Vec3f& desiredWorldForward, const osg::Vec3f& desiredWorldPalm,
+            float strength, std::string_view side, bool longGun)
+        {
+            struct AxisCandidate
+            {
+                osg::Vec3f mAxis;
+                const char* mName;
+            };
+
+            const std::array<AxisCandidate, 6> axes = { {
+                { osg::Vec3f(0.f, 1.f, 0.f), "+Y" },
+                { osg::Vec3f(1.f, 0.f, 0.f), "+X" },
+                { osg::Vec3f(-1.f, 0.f, 0.f), "-X" },
+                { osg::Vec3f(0.f, 0.f, 1.f), "+Z" },
+                { osg::Vec3f(0.f, 0.f, -1.f), "-Z" },
+                { osg::Vec3f(0.f, -1.f, 0.f), "-Y" },
+            } };
+
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&hand);
+            const osg::Quat originalRotation = originalWorld.getRotate();
+            const osg::Vec3f origin = originalWorld.getTrans();
+            const osg::Vec3f targetForward
+                = normalizeFalloutIkVector(desiredWorldForward, osg::Vec3f(0.f, 1.f, 0.f));
+            const osg::Vec3f targetPalm = projectFalloutIkDirectionOnPlane(
+                desiredWorldPalm, targetForward, osg::Vec3f(1.f, 0.f, 0.f));
+            const std::string forced = [] {
+                const char* value = std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+            const std::string forcedSide = [&] {
+                const char* value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION")
+                                                    : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+            const std::string forcedClass = [&] {
+                const char* value = longGun ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_HAND_ORIENTATION")
+                                            : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+            const std::string forcedClassSide = [&] {
+                const char* value = nullptr;
+                if (longGun)
+                    value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_RIGHT_HAND_ORIENTATION")
+                                            : std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_LEFT_HAND_ORIENTATION");
+                else
+                    value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_RIGHT_HAND_ORIENTATION")
+                                            : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_LEFT_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+            const auto matchesForced = [&](const std::string& value, const std::string& candidate,
+                                           unsigned int candidateIndex, const char* forwardName,
+                                           const char* palmName) {
+                return value == candidate || value == std::to_string(candidateIndex)
+                    || value == std::string(forwardName) + "/" + palmName;
+            };
+
+            WorldViewerHandOrientationProbe best;
+            unsigned int index = 0;
+            for (const AxisCandidate& forwardAxis : axes)
+            {
+                for (const AxisCandidate& palmAxis : axes)
+                {
+                    if (std::abs(forwardAxis.mAxis * palmAxis.mAxis) > 0.01f)
+                        continue;
+
+                    std::ostringstream candidateName;
+                    candidateName << side << ":" << index << ":" << forwardAxis.mName << "/" << palmAxis.mName;
+                    const std::string candidate = candidateName.str();
+                    const bool hasForced = !forced.empty() || !forcedSide.empty() || !forcedClass.empty()
+                        || !forcedClassSide.empty();
+                    const bool forcedMatch = !hasForced
+                        || matchesForced(forcedClassSide, candidate, index, forwardAxis.mName, palmAxis.mName)
+                        || matchesForced(forcedSide, candidate, index, forwardAxis.mName, palmAxis.mName)
+                        || matchesForced(forcedClass, candidate, index, forwardAxis.mName, palmAxis.mName)
+                        || matchesForced(forced, candidate, index, forwardAxis.mName, palmAxis.mName);
+                    ++index;
+                    if (!forcedMatch)
+                        continue;
+
+                    osg::Vec3f currentForward = originalRotation * forwardAxis.mAxis;
+                    if (currentForward.normalize() <= 0.0001f)
+                        continue;
+
+                    osg::Quat forwardDelta;
+                    forwardDelta.makeRotate(currentForward, targetForward);
+                    osg::Quat targetRotation = forwardDelta * originalRotation;
+                    const osg::Vec3f palmAfterForward = projectFalloutIkDirectionOnPlane(
+                        targetRotation * palmAxis.mAxis, targetForward, targetPalm);
+                    osg::Quat rollDelta(
+                        signedFalloutIkAngleAroundAxis(palmAfterForward, targetPalm, targetForward), targetForward);
+                    targetRotation = rollDelta * targetRotation;
+
+                    osg::Quat limitedRotation;
+                    limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
+                    setFalloutIkTransformWorldMatrix(
+                        hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
+                    const osg::Quat appliedRotation = getNodeWorldMatrix(&hand).getRotate();
+                    const float forwardError
+                        = falloutIkDirectionAngleDegrees(appliedRotation * forwardAxis.mAxis, targetForward);
+                    const float palmError = falloutIkDirectionAngleDegrees(
+                        projectFalloutIkDirectionOnPlane(appliedRotation * palmAxis.mAxis, targetForward, targetPalm),
+                        targetPalm);
+                    if (forwardError < 0.f || palmError < 0.f)
+                    {
+                        setFalloutIkTransformWorldMatrix(hand, originalWorld);
+                        continue;
+                    }
+
+                    const float preference = (std::string(forwardAxis.mName) == "+Y" ? 0.f : 0.25f)
+                        + (side == "right" && std::string(palmAxis.mName) == "-X" ? 0.f : 0.05f)
+                        + (side == "left" && std::string(palmAxis.mName) == "+X" ? 0.f : 0.05f);
+                    const float score = forwardError * 4.f + palmError + preference;
+                    if (!best.mSolved || score < best.mScore)
+                    {
+                        best.mSolved = true;
+                        best.mForwardError = forwardError;
+                        best.mPalmError = palmError;
+                        best.mScore = score;
+                        best.mCandidate = candidate;
+                    }
+                    setFalloutIkTransformWorldMatrix(hand, originalWorld);
+                }
+            }
+
+            if (best.mSolved)
+            {
+                const std::string selected = best.mCandidate;
+                const std::size_t slash = selected.rfind('/');
+                const std::size_t colon = selected.rfind(':', slash == std::string::npos ? selected.size() : slash);
+                const std::string forwardName = colon == std::string::npos || slash == std::string::npos
+                    ? "+Y"
+                    : selected.substr(colon + 1, slash - colon - 1);
+                const std::string palmName = slash == std::string::npos ? "-X" : selected.substr(slash + 1);
+                const auto axisByName = [&](const std::string& name) {
+                    for (const AxisCandidate& axis : axes)
+                    {
+                        if (name == axis.mName)
+                            return axis.mAxis;
+                    }
+                    return osg::Vec3f(0.f, 1.f, 0.f);
+                };
+                const osg::Vec3f localForward = axisByName(forwardName);
+                const osg::Vec3f localPalm = axisByName(palmName);
+                osg::Vec3f currentForward = originalRotation * localForward;
+                currentForward.normalize();
+                osg::Quat forwardDelta;
+                forwardDelta.makeRotate(currentForward, targetForward);
+                osg::Quat targetRotation = forwardDelta * originalRotation;
+                const osg::Vec3f palmAfterForward = projectFalloutIkDirectionOnPlane(
+                    targetRotation * localPalm, targetForward, targetPalm);
+                osg::Quat rollDelta(
+                    signedFalloutIkAngleAroundAxis(palmAfterForward, targetPalm, targetForward), targetForward);
+                targetRotation = rollDelta * targetRotation;
+                osg::Quat limitedRotation;
+                limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
+                setFalloutIkTransformWorldMatrix(
+                    hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
+            }
+            else
+                setFalloutIkTransformWorldMatrix(hand, originalWorld);
+
+            return best;
+        }
+
+        osg::Vec3f falloutWeaponIkAxisFromName(std::string_view name)
+        {
+            if (Misc::StringUtils::ciEqual(name, "-X"))
+                return osg::Vec3f(-1.f, 0.f, 0.f);
+            if (Misc::StringUtils::ciEqual(name, "+Y") || Misc::StringUtils::ciEqual(name, "Y"))
+                return osg::Vec3f(0.f, 1.f, 0.f);
+            if (Misc::StringUtils::ciEqual(name, "-Y"))
+                return osg::Vec3f(0.f, -1.f, 0.f);
+            if (Misc::StringUtils::ciEqual(name, "+Z") || Misc::StringUtils::ciEqual(name, "Z"))
+                return osg::Vec3f(0.f, 0.f, 1.f);
+            if (Misc::StringUtils::ciEqual(name, "-Z"))
+                return osg::Vec3f(0.f, 0.f, -1.f);
+            return osg::Vec3f(1.f, 0.f, 0.f);
+        }
+
+        const char* falloutWeaponIkAxisName(const osg::Vec3f& axis)
+        {
+            if (axis.x() < -0.5f)
+                return "-X";
+            if (axis.y() > 0.5f)
+                return "+Y";
+            if (axis.y() < -0.5f)
+                return "-Y";
+            if (axis.z() > 0.5f)
+                return "+Z";
+            if (axis.z() < -0.5f)
+                return "-Z";
+            return "+X";
+        }
+
+        osg::Vec3f chooseFalloutWeaponIkAimAxis(osg::MatrixTransform& weaponFrame, const osg::Vec3f& forward)
+        {
+            if (const char* env = std::getenv("OPENMW_FNV_WEAPON_IK_AIM_AXIS"))
+                return falloutWeaponIkAxisFromName(env);
+
+            const osg::Quat rotation = getNodeWorldMatrix(&weaponFrame).getRotate();
+            const osg::Vec3f candidates[] = {
+                osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(-1.f, 0.f, 0.f),
+                osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, -1.f, 0.f),
+                osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(0.f, 0.f, -1.f)
+            };
+
+            float bestDot = -1.f;
+            osg::Vec3f bestAxis(1.f, 0.f, 0.f);
+            for (const osg::Vec3f& axis : candidates)
+            {
+                osg::Vec3f world = rotation * axis;
+                if (world.normalize() <= 0.0001f)
+                    continue;
+                const float dot = world * forward;
+                if (dot > bestDot)
+                {
+                    bestDot = dot;
+                    bestAxis = axis;
+                }
+            }
+            return bestAxis;
+        }
+
+        bool isFalloutWeaponIkLongGun(const ESM4::Weapon& weapon)
+        {
+            if (const char* env = std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN"))
+                return env[0] != '0';
+
+            return isFalloutLongGunWeapon(weapon);
+        }
+
+        float readFalloutWeaponIkClassFloat(
+            bool longGun, const char* side, const char* component, float fallback)
+        {
+            const std::string classPrefix = longGun ? "OPENMW_FNV_WEAPON_IK_LONG_GUN_"
+                                                    : "OPENMW_FNV_WEAPON_IK_SIDEARM_";
+            const std::string sideText(side);
+            const std::string componentText(component);
+            const std::string className = classPrefix + sideText + "_" + componentText;
+            if (std::getenv(className.c_str()) != nullptr)
+                return readFalloutProofFloat(className.c_str(), fallback);
+
+            const std::string genericName = std::string("OPENMW_FNV_WEAPON_IK_") + sideText + "_" + componentText;
+            return readFalloutProofFloat(genericName.c_str(), fallback);
+        }
+
+        bool applyFalloutWeaponGripIk(const Animation::NodeMap& nodeMap, osg::Group* objectRoot,
+            SceneUtil::Skeleton* skeleton, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
+        {
+            static std::map<std::string, unsigned int> sFrameLogs;
+            static std::map<std::string, bool> sProofLogged;
+            const std::string actorKey
+                = traits.mEditorId + "|" + ptr.getCellRef().getRefId().serializeText();
+            unsigned int& frameLogs = sFrameLogs[actorKey];
+
+            const auto logBlocked = [&](std::string_view reason) {
+                if (!worldViewerFONVWeaponIkEnabled() && std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") == nullptr)
+                    return;
+                if (frameLogs >= 4)
+                    return;
+                ++frameLogs;
+                Log(Debug::Warning) << "FNV/ESM4 proof: weapon IK blocked actor=" << traits.mEditorId
+                                    << " ref=" << ptr.getCellRef().getRefId()
+                                    << " reason=" << reason
+                                    << " targetMatch=" << isFonvProofTargetActor(ptr, traits)
+                                    << " disableWeaponIk="
+                                    << (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
+                                    << " runtime=loaded-pending-runtime gate=runtime-fnv-weapon-ik";
+            };
+
+            if (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
+            {
+                logBlocked("disabled-by-env");
+                return false;
+            }
+            if (!worldViewerFONVWeaponIkEnabled())
+                return false;
+            if (!isFonvProofTargetActor(ptr, traits))
+            {
+                logBlocked("not-proof-target");
+                return false;
+            }
+
+            const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
+            if (weapon == nullptr)
+            {
+                logBlocked("no-equipped-weapon");
+                return false;
+            }
+
+            osg::MatrixTransform* weaponFrame = dynamic_cast<osg::MatrixTransform*>(
+                findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand" }));
+            if (weaponFrame == nullptr)
+            {
+                logBlocked("missing-weapon-frame");
+                return false;
+            }
+
+            const auto findMatrix = [&](std::initializer_list<std::string_view> names) {
+                return dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, names));
+            };
+            osg::MatrixTransform* rightClavicle = findMatrix({ "Bip01 R Clavicle", "bip01 r clavicle" });
+            osg::MatrixTransform* rightUpper = findMatrix({ "Bip01 R UpperArm", "bip01 r upperarm" });
+            osg::MatrixTransform* rightForearm = findMatrix({ "Bip01 R Forearm", "bip01 r forearm" });
+            osg::MatrixTransform* rightHand = findMatrix({ "Bip01 R Hand", "bip01 r hand" });
+            osg::MatrixTransform* leftClavicle = findMatrix({ "Bip01 L Clavicle", "bip01 l clavicle" });
+            osg::MatrixTransform* leftUpper = findMatrix({ "Bip01 L UpperArm", "bip01 l upperarm" });
+            osg::MatrixTransform* leftForearm = findMatrix({ "Bip01 L Forearm", "bip01 l forearm" });
+            osg::MatrixTransform* leftHand = findMatrix({ "Bip01 L Hand", "bip01 l hand" });
+            if (rightUpper == nullptr || rightForearm == nullptr || rightHand == nullptr || leftUpper == nullptr
+                || leftForearm == nullptr || leftHand == nullptr)
+            {
+                logBlocked("missing-arm-bone");
+                return false;
+            }
+
+            osg::Group* spine = findBestAttachmentNode(
+                nodeMap, { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
+            const osg::Vec3f chest = getNodeWorldMatrix(spine != nullptr ? spine : objectRoot).getTrans();
+            osg::Group* headNode = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head", "Head", "head" });
+            osg::Vec3f head = chest + osg::Vec3f(0.f, 0.f, 16.f);
+            if (headNode != nullptr)
+                head = getNodeWorldMatrix(headNode).getTrans();
+
+            const ESM::Position& position = ptr.getRefData().getPosition();
+            const float yaw = position.rot[2];
+            osg::Vec3f forward(std::sin(yaw), std::cos(yaw), 0.f);
+            forward = normalizeFalloutIkVector(forward, osg::Vec3f(0.f, 1.f, 0.f));
+            osg::Vec3f right(forward.y(), -forward.x(), 0.f);
+            right = normalizeFalloutIkVector(right, osg::Vec3f(1.f, 0.f, 0.f));
+            const osg::Vec3f up(0.f, 0.f, 1.f);
+
+            const bool longGun = isFalloutWeaponIkLongGun(*weapon);
+            const float shoulderLift = std::clamp((head.z() - chest.z()) * 0.62f, 8.f, 14.f);
+            const osg::Vec3f aimAnchor = chest + up * shoulderLift;
+            const char* targetStyle = longGun ? "head-shoulder-long-gun" : "chest-sidearm";
+            const osg::Vec3f rightTarget = longGun
+                ? aimAnchor + forward * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "FORWARD", 22.f)
+                    + right * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "SIDE", 10.f)
+                    - up * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "DROP", 1.f)
+                : chest + forward * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "FORWARD", 34.f)
+                    + right * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "SIDE", 10.f)
+                    - up * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "DROP", 3.f);
+            const osg::Vec3f leftTarget = longGun
+                ? aimAnchor + forward * readFalloutWeaponIkClassFloat(longGun, "LEFT", "FORWARD", 18.f)
+                    - right * readFalloutWeaponIkClassFloat(longGun, "LEFT", "SIDE", 7.f)
+                    - up * readFalloutWeaponIkClassFloat(longGun, "LEFT", "DROP", 0.5f)
+                : chest + forward * readFalloutWeaponIkClassFloat(longGun, "LEFT", "FORWARD", 28.f)
+                    - right * readFalloutWeaponIkClassFloat(longGun, "LEFT", "SIDE", 8.f)
+                    - up * readFalloutWeaponIkClassFloat(longGun, "LEFT", "DROP", 5.f);
+            const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 1.f), 0.f, 1.f);
+            if (strength <= 0.f)
+            {
+                logBlocked("zero-strength");
+                return false;
+            }
+
+            const osg::Vec3f rightHandBefore = getNodeWorldMatrix(rightHand).getTrans();
+            const osg::Vec3f leftHandBefore = getNodeWorldMatrix(leftHand).getTrans();
+            const osg::Vec3f weaponBefore = getNodeWorldMatrix(weaponFrame).getTrans();
+            const osg::Vec3f weaponAimAxis = chooseFalloutWeaponIkAimAxis(*weaponFrame, forward);
+            const osg::Vec3f weaponForwardBefore
+                = normalizeFalloutIkVector(getNodeWorldMatrix(weaponFrame).getRotate() * weaponAimAxis, forward);
+
+            unsigned int solved = 0;
+            float rightError = -1.f;
+            float leftError = -1.f;
+            bool rightReachable = false;
+            bool leftReachable = false;
+            std::string rightOrders;
+            std::string leftOrders;
+            float rightHandAimError = -1.f;
+            float leftHandAimError = -1.f;
+            float rightHandPalmError = -1.f;
+            float leftHandPalmError = -1.f;
+            std::string rightHandOrientationCandidate = "none";
+            std::string leftHandOrientationCandidate = "none";
+
+            const auto solveArm = [&](osg::MatrixTransform* clavicle, osg::MatrixTransform& upper, osg::MatrixTransform& forearm,
+                                      osg::MatrixTransform& hand, const osg::Vec3f& target,
+                                      const osg::Vec3f& poleHint, const osg::Vec3f& desiredHandForward,
+                                      const osg::Vec3f& desiredHandPalm, std::string_view sideName,
+                                      float& error, bool& reachable, std::string& orders,
+                                      float& handAimError, float& handPalmError,
+                                      std::string& handOrientationCandidate) {
+                unsigned int solvedForArm = 0;
+                WorldViewerWeaponIkSolve solution;
+                for (unsigned int i = 0; i < 6; ++i)
+                {
+                    solution = solveFalloutWeaponIkTwoBone(getNodeWorldMatrix(&upper).getTrans(),
+                        getNodeWorldMatrix(&forearm).getTrans(), getNodeWorldMatrix(&hand).getTrans(), target, poleHint);
+                    error = solution.mError;
+                    reachable = solution.mReachable;
+                    if (!solution.mSolved)
+                        break;
+
+                    const WorldViewerWeaponIkRotationProbe upperProbe
+                        = rotateFalloutWeaponIkSegmentToBest(upper, forearm, solution.mMid, strength);
+                    if (upperProbe.mSolved)
+                    {
+                        ++solvedForArm;
+                        orders += orders.empty() ? std::string("upper=") : std::string(",upper=");
+                        orders += upperProbe.mOrder;
+                    }
+                    const WorldViewerWeaponIkRotationProbe forearmProbe
+                        = rotateFalloutWeaponIkSegmentToBest(forearm, hand, solution.mEnd, strength);
+                    if (forearmProbe.mSolved)
+                    {
+                        ++solvedForArm;
+                        orders += orders.empty() ? std::string("forearm=") : std::string(",forearm=");
+                        orders += forearmProbe.mOrder;
+                    }
+
+                    error = (getNodeWorldMatrix(&hand).getTrans() - target).length();
+                    if (error <= 2.f)
+                        break;
+                }
+
+                if (solution.mSolved && clavicle != nullptr
+                    && std::getenv("OPENMW_FNV_WEAPON_IK_DISABLE_CLAVICLE") == nullptr)
+                {
+                    const float clavicleStrength
+                        = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_CLAVICLE_STRENGTH", 0.15f), 0.f, 1.f);
+                    const osg::Vec3f shoulderAfter = getNodeWorldMatrix(&upper).getTrans();
+                    const osg::Vec3f clavicleHint = getNodeWorldMatrix(clavicle).getTrans()
+                        + normalizeFalloutIkVector(solution.mMid - shoulderAfter, poleHint) * 8.f;
+                    const WorldViewerWeaponIkRotationProbe clavicleProbe
+                        = rotateFalloutWeaponIkSegmentToBest(*clavicle, upper, clavicleHint, strength * clavicleStrength);
+                    if (clavicleProbe.mSolved)
+                    {
+                        ++solvedForArm;
+                        orders += orders.empty() ? std::string("clavicle=") : std::string(",clavicle=");
+                        orders += clavicleProbe.mOrder;
+                    }
+                }
+
+                const bool explicitHandOrientation
+                    = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IK_HAND_ORIENTATION") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION") != nullptr
+                    || (longGun ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_HAND_ORIENTATION") != nullptr
+                                : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_HAND_ORIENTATION") != nullptr)
+                    || (sideName == "right"
+                            ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION") != nullptr
+                            : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION") != nullptr)
+                    || (longGun
+                            ? (sideName == "right"
+                                      ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_RIGHT_HAND_ORIENTATION") != nullptr
+                                      : std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_LEFT_HAND_ORIENTATION") != nullptr)
+                            : (sideName == "right"
+                                      ? std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_RIGHT_HAND_ORIENTATION") != nullptr
+                                      : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_LEFT_HAND_ORIENTATION") != nullptr));
+                if (explicitHandOrientation)
+                {
+                    const WorldViewerHandOrientationProbe handProbe = orientFalloutWeaponIkHandGripToBest(
+                        hand, desiredHandForward, desiredHandPalm, strength, sideName, longGun);
+                    if (handProbe.mSolved)
+                    {
+                        handAimError = handProbe.mForwardError;
+                        handPalmError = handProbe.mPalmError;
+                        handOrientationCandidate = handProbe.mCandidate;
+                        orders += orders.empty() ? std::string("hand=") : std::string(",hand=");
+                        orders += handProbe.mCandidate;
+                        ++solvedForArm;
+                    }
+                }
+                else
+                {
+                    handOrientationCandidate = std::string(sideName) + ":preserve-bind-roll";
+                    handAimError = falloutIkDirectionAngleDegrees(
+                        getNodeWorldMatrix(&hand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f),
+                        desiredHandForward);
+                    handPalmError = 0.f;
+                    orders += orders.empty() ? std::string("hand=") : std::string(",hand=");
+                    orders += handOrientationCandidate;
+                }
+                return solvedForArm;
+            };
+
+            solved += solveArm(rightClavicle, *rightUpper, *rightForearm, *rightHand, rightTarget,
+                right * 0.75f - up * 0.85f + forward * 0.15f, forward + up * 0.08f, -right, "right",
+                rightError, rightReachable, rightOrders, rightHandAimError, rightHandPalmError,
+                rightHandOrientationCandidate);
+            solved += solveArm(leftClavicle, *leftUpper, *leftForearm, *leftHand, leftTarget,
+                -right * 0.75f - up * 0.85f + forward * 0.15f, forward + up * 0.08f, right, "left",
+                leftError, leftReachable, leftOrders, leftHandAimError, leftHandPalmError,
+                leftHandOrientationCandidate);
+
+            float weaponAimAngleBefore = falloutIkDirectionAngleDegrees(weaponForwardBefore, forward);
+            WorldViewerWeaponIkRotationProbe weaponAimProbe
+                = rotateFalloutWeaponIkAxisToBest(*weaponFrame, weaponAimAxis, forward, strength);
+            const osg::Vec3f weaponForwardAfter
+                = normalizeFalloutIkVector(getNodeWorldMatrix(weaponFrame).getRotate() * weaponAimAxis, forward);
+            float weaponAimAngleAfter = falloutIkDirectionAngleDegrees(weaponForwardAfter, forward);
+
+            const bool snapHandsToIkTargets = std::getenv("OPENMW_FNV_WEAPON_IK_SNAP_HANDS_TO_TARGETS") != nullptr;
+            if (snapHandsToIkTargets)
+            {
+                osg::Matrix rightWorld = getNodeWorldMatrix(rightHand);
+                rightWorld.setTrans(rightTarget);
+                setFalloutIkTransformWorldMatrix(*rightHand, rightWorld);
+                osg::Matrix leftWorld = getNodeWorldMatrix(leftHand);
+                leftWorld.setTrans(leftTarget);
+                setFalloutIkTransformWorldMatrix(*leftHand, leftWorld);
+            }
+
+            if (skeleton != nullptr)
+            {
+                skeleton->markBoneMatriceDirty();
+                skeleton->updateBoneMatrices(0);
+            }
+
+            unsigned int forcedRigGeometryHolder = 0;
+            unsigned int refreshedRigGeometry = 0;
+            const unsigned int forcedRigGeometry
+                = forceFalloutRigGeometryUpdate(objectRoot, forcedRigGeometryHolder, refreshedRigGeometry);
+
+            const osg::Vec3f rightHandAfter = getNodeWorldMatrix(rightHand).getTrans();
+            const osg::Vec3f leftHandAfter = getNodeWorldMatrix(leftHand).getTrans();
+            const osg::Vec3f weaponAfter = getNodeWorldMatrix(weaponFrame).getTrans();
+            const osg::Vec3f rightHandAxisYAfter = normalizeFalloutIkVector(
+                getNodeWorldMatrix(rightHand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+            const osg::Vec3f leftHandAxisYAfter = normalizeFalloutIkVector(
+                getNodeWorldMatrix(leftHand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+            const float rightHandForwardAngleAfter = falloutIkDirectionAngleDegrees(rightHandAxisYAfter, forward);
+            const float leftHandForwardAngleAfter = falloutIkDirectionAngleDegrees(leftHandAxisYAfter, forward);
+            const float rightTargetBefore = (rightHandBefore - rightTarget).length();
+            const float rightTargetAfter = (rightHandAfter - rightTarget).length();
+            const float leftTargetBefore = (leftHandBefore - leftTarget).length();
+            const float leftTargetAfter = (leftHandAfter - leftTarget).length();
+            const float rightWeaponGripDistanceAfter = (rightHandAfter - weaponAfter).length();
+            const float leftWeaponGripDistanceAfter = (leftHandAfter - weaponAfter).length();
+            const float weaponGripSpanAfter = (rightHandAfter - leftHandAfter).length();
+            const float rightHandSideAfter = (rightHandAfter - chest) * right;
+            const float leftHandSideAfter = (leftHandAfter - chest) * right;
+            const bool handsUncrossed = rightHandSideAfter > leftHandSideAfter + 2.f;
+            const bool gripOk = rightWeaponGripDistanceAfter <= 2.5f && leftWeaponGripDistanceAfter >= 8.f
+                && leftWeaponGripDistanceAfter <= 32.f && weaponGripSpanAfter >= 10.f && weaponGripSpanAfter <= 32.f;
+            const bool targetImproved = rightTargetAfter + 0.5f < rightTargetBefore
+                || leftTargetAfter + 0.5f < leftTargetBefore;
+            const bool aimOk = weaponAimAngleAfter >= 0.f
+                && (weaponAimAngleAfter <= 12.f || weaponAimAngleAfter + 0.5f < weaponAimAngleBefore);
+            const bool runtimeSupported = solved >= 4 && rightError >= 0.f && leftError >= 0.f
+                && rightError <= 16.f && leftError <= 16.f && handsUncrossed && gripOk && targetImproved && aimOk;
+
+            if (frameLogs < 12)
+            {
+                ++frameLogs;
+                Log(runtimeSupported ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 telemetry: weapon IK frame actor=" << traits.mEditorId
+                    << " ref=" << ptr.getCellRef().getRefId()
+                    << " sample=" << frameLogs
+                    << " weapon=\"" << weapon->mEditorId << "\""
+                    << " weaponModel=\"" << weapon->mModel << "\""
+                    << " solver=fabrik-two-bone-pole"
+                    << " targetStyle=" << targetStyle
+                    << " actorForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
+                    << " actorRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
+                    << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
+                    << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
+                    << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                    << " weaponAimAxisName=" << falloutWeaponIkAxisName(weaponAimAxis)
+                    << " weaponAimAngleBefore=" << weaponAimAngleBefore
+                    << " weaponAimAngleAfter=" << weaponAimAngleAfter
+                    << " weaponAimSolved=" << weaponAimProbe.mSolved
+                    << " weaponAimOrder=" << weaponAimProbe.mOrder
+                    << " snapHandsToIkTargets=" << snapHandsToIkTargets
+                    << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
+                    << refreshedRigGeometry << ")"
+                    << " targetDistancesBefore=(" << rightTargetBefore << "," << leftTargetBefore << ")"
+                    << " targetDistancesAfter=(" << rightTargetAfter << "," << leftTargetAfter << ")"
+                    << " weaponGripDistancesAfter=(" << rightWeaponGripDistanceAfter << ","
+                    << leftWeaponGripDistanceAfter << ")"
+                    << " weaponGripSpanAfter=" << weaponGripSpanAfter
+                    << " fabrikErrors=(" << rightError << "," << leftError << ")"
+                    << " reachable=(" << rightReachable << "," << leftReachable << ")"
+                    << " handsSide=(" << rightHandSideAfter << "," << leftHandSideAfter << ")"
+                    << " handsUncrossed=" << handsUncrossed
+                    << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y()
+                    << "," << rightHandAxisYAfter.z() << ")"
+                    << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y()
+                    << "," << leftHandAxisYAfter.z() << ")"
+                    << " handForwardAngles=(" << rightHandForwardAngleAfter << ","
+                    << leftHandForwardAngleAfter << ")"
+                    << " handOrientationCandidates=(" << rightHandOrientationCandidate << ","
+                    << leftHandOrientationCandidate << ")"
+                    << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError
+                    << "," << leftHandAimError << "," << leftHandPalmError << ")"
+                    << " rotationOrders=(" << rightOrders << ";" << leftOrders << ")"
+                    << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
+                    << " gate=runtime-fnv-weapon-ik-telemetry";
+            }
+
+            if (!sProofLogged[actorKey])
+            {
+                sProofLogged[actorKey] = true;
+                Log(runtimeSupported ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
+                    << " ref=" << ptr.getCellRef().getRefId()
+                    << " solver=fabrik-two-bone-pole"
+                    << " reference=FABRIK"
+                    << " solvedBones=" << solved
+                    << " rightFabrikError=" << rightError
+                    << " leftFabrikError=" << leftError
+                    << " rightFabrikReachable=" << rightReachable
+                    << " leftFabrikReachable=" << leftReachable
+                    << " strength=" << strength
+                    << " targetStyle=" << targetStyle
+                    << " rightTargetDistanceBefore=" << rightTargetBefore
+                    << " rightTargetDistanceAfter=" << rightTargetAfter
+                    << " leftTargetDistanceBefore=" << leftTargetBefore
+                    << " leftTargetDistanceAfter=" << leftTargetAfter
+                    << " rightWeaponGripDistanceAfter=" << rightWeaponGripDistanceAfter
+                    << " leftWeaponGripDistanceAfter=" << leftWeaponGripDistanceAfter
+                    << " weaponGripSpanAfter=" << weaponGripSpanAfter
+                    << " handsUncrossed=" << handsUncrossed
+                    << " weaponAimAxis=(" << weaponAimAxis.x() << "," << weaponAimAxis.y() << ","
+                    << weaponAimAxis.z() << ")"
+                    << " weaponAimAngleBefore=" << weaponAimAngleBefore
+                    << " weaponAimAngleAfter=" << weaponAimAngleAfter
+                    << " weaponAimSolved=" << weaponAimProbe.mSolved
+                    << " weaponAimOrder=" << weaponAimProbe.mOrder
+                    << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y()
+                    << "," << rightHandAxisYAfter.z() << ")"
+                    << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y()
+                    << "," << leftHandAxisYAfter.z() << ")"
+                    << " handForwardAngles=(" << rightHandForwardAngleAfter << ","
+                    << leftHandForwardAngleAfter << ")"
+                    << " handOrientationCandidates=(" << rightHandOrientationCandidate << ","
+                    << leftHandOrientationCandidate << ")"
+                    << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError
+                    << "," << leftHandAimError << "," << leftHandPalmError << ")"
+                    << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
+                    << refreshedRigGeometry << ")"
+                    << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
+                    << " gate=runtime-fnv-weapon-ik";
+            }
+
+            return runtimeSupported;
         }
 
         struct WorldViewerWeaponIkSolve
@@ -8410,6 +9297,22 @@ namespace MWRender
                 return;
             if (vfs.exists(VFS::Path::Normalized(path)))
                 result.push_back(std::move(path));
+        }
+
+        void addChairTransitionSources(std::vector<std::string>& result, const VFS::Manager& vfs)
+        {
+            static constexpr std::array<std::string_view, 8> paths{
+                "meshes/characters/_male/idleanims/chair_forwardenter.kf",
+                "meshes/characters/_male/idleanims/chair_forwardexit.kf",
+                "meshes/characters/_male/idleanims/chair_backenter.kf",
+                "meshes/characters/_male/idleanims/chair_backexit.kf",
+                "meshes/characters/_male/idleanims/chair_leftenter.kf",
+                "meshes/characters/_male/idleanims/chair_leftexit.kf",
+                "meshes/characters/_male/idleanims/chair_rightenter.kf",
+                "meshes/characters/_male/idleanims/chair_rightexit.kf",
+            };
+            for (std::string_view path : paths)
+                addProcedureSourceIfPresent(result, vfs, std::string(path));
         }
 
         std::vector<std::string> collectFonvPackageProcedureAnimationSources(const MWWorld::Ptr& ptr,

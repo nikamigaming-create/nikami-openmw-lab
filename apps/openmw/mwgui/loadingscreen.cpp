@@ -12,6 +12,7 @@
 #include <MyGUI_UString.h>
 
 #include <components/debug/debuglog.hpp>
+#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
@@ -153,9 +154,16 @@ namespace MWGui
     void LoadingScreen::loadingOn()
     {
         // Early-out if already on
-        if (mNestedLoadingCount++ > 0 && mMainWidget->getVisible())
+        const int loadingDepth = ++mNestedLoadingCount;
+        Debug::FNVSeamlessTelemetry::Event("loading-scope-enter")
+            .integer("depth", loadingDepth)
+            .boolean("alreadyVisible", mMainWidget->getVisible())
+            .emit();
+        if (loadingDepth > 1 && mMainWidget->getVisible())
             return;
 
+        if (loadingDepth == 1)
+            mSeamlessTelemetryDrawCount = 0;
         mLoadingOnTime = mTimer.time_m();
 
         // Assign dummy bounding sphere callback to avoid the bounding sphere of the entire scene being recomputed after
@@ -182,8 +190,22 @@ namespace MWGui
 
     void LoadingScreen::loadingOff()
     {
-        if (--mNestedLoadingCount > 0)
+        const int loadingDepth = --mNestedLoadingCount;
+        if (loadingDepth > 0)
+        {
+            Debug::FNVSeamlessTelemetry::Event("loading-scope-exit")
+                .integer("depth", loadingDepth)
+                .boolean("outermost", false)
+                .emit();
             return;
+        }
+
+        Debug::FNVSeamlessTelemetry::Event("loading-scope-exit")
+            .integer("depth", loadingDepth)
+            .boolean("outermost", true)
+            .integer("visibleDrawCount", mSeamlessTelemetryDrawCount)
+            .number("elapsedMs", mTimer.time_m() - mLoadingOnTime)
+            .emit();
 
         if (mLastRenderTime < mLoadingOnTime)
         {
@@ -347,6 +369,14 @@ namespace MWGui
 
         osg::Stats* const stats = mViewer->getViewerStats();
         const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();
+
+        ++mSeamlessTelemetryDrawCount;
+        Debug::FNVSeamlessTelemetry::Event("loading-screen-draw")
+            .integer("frame", frameNumber)
+            .integer("drawIndex", mSeamlessTelemetryDrawCount)
+            .number("elapsedMs", mTimer.time_m() - mLoadingOnTime)
+            .boolean("wallpaper", mShowWallpaper)
+            .emit();
 
         stats->setAttribute(frameNumber, "Loading", 1);
 
