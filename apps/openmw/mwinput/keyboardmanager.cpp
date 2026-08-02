@@ -47,14 +47,20 @@ namespace MWInput
         if (kc != MyGUI::KeyCode::None && !mBindingsManager->isDetectingBindingState())
         {
             const MWGui::GuiMode mode = MWBase::Environment::get().getWindowManager()->getMode();
-            if (!arg.repeat && mode == MWGui::GM_Inventory
+            if (!arg.repeat && mode == MWGui::GM_FalloutPipBoy
                 && mBindingsManager->getKeyBinding(A_Map) == arg.keysym.scancode)
             {
                 MWBase::Environment::get().getInputManager()->executeAction(A_Map);
                 consumed = true;
             }
-            else if (!arg.repeat && mode == MWGui::GM_Inventory
+            else if (!arg.repeat && mode == MWGui::GM_FalloutPipBoy
                 && mBindingsManager->getKeyBinding(A_Inventory) == arg.keysym.scancode)
+            {
+                MWBase::Environment::get().getWindowManager()->removeGuiMode(MWGui::GM_FalloutPipBoy);
+                consumed = true;
+            }
+            else if (!arg.repeat && mode == MWGui::GM_Inventory
+                && mBindingsManager->getKeyBinding(A_QuickKeysMenu) == arg.keysym.scancode)
             {
                 MWBase::Environment::get().getWindowManager()->removeGuiMode(MWGui::GM_Inventory);
                 consumed = true;

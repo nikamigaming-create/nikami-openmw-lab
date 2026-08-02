@@ -16,6 +16,7 @@
 #include <components/misc/strings/algorithm.hpp>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 
 #include <components/settings/values.hpp>
@@ -27,8 +28,11 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwworld/action.hpp"
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -54,6 +58,8 @@ namespace
 
     bool isRightHandWeapon(const MWWorld::Ptr& item)
     {
+        if (item.getClass().getType() == ESM::REC_WEAP4)
+            return true;
         if (item.getClass().getType() != ESM::Weapon::sRecordId)
             return false;
         std::vector<int> equipmentSlots = item.getClass().getEquipmentSlots(item).first;
@@ -96,6 +102,54 @@ namespace MWGui
             }
 
             return false;
+        }
+
+        bool isFalloutEquipment(const MWWorld::Ptr& item)
+        {
+            const int type = item.getType();
+            return type == ESM::REC_WEAP4 || type == ESM::REC_ARMO4 || type == ESM::REC_CLOT4;
+        }
+
+        bool isCompatibleFalloutAmmo(const ESM4::Weapon& weapon, ESM::FormId ammo,
+            const MWWorld::ESMStore& store)
+        {
+            if (weapon.mAmmo == ammo)
+                return true;
+
+            const ESM4::FormIdList* list = store.get<ESM4::FormIdList>().search(weapon.mAmmo);
+            return list != nullptr
+                && std::find(list->mObjects.begin(), list->mObjects.end(), ammo) != list->mObjects.end();
+        }
+
+        bool selectFalloutAmmo(const MWWorld::Ptr& player, const MWWorld::Ptr& item)
+        {
+            if (player.getType() != ESM::REC_NPC_4 || item.getType() != ESM::REC_AMMO4)
+                return false;
+
+            const ESM::FormId* const ammoId = item.getCellRef().getRefId().getIf<ESM::FormId>();
+            const ESM4::Weapon* const weapon = MWClass::ESM4Npc::getEquippedWeapon(player);
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (ammoId == nullptr || weapon == nullptr || world == nullptr
+                || !isCompatibleFalloutAmmo(*weapon, *ammoId, world->getStore()))
+                return false;
+
+            MWWorld::ContainerStore& inventory = player.getClass().getContainerStore(player);
+            const ESM::RefId weaponId = ESM::RefId::formIdRefId(weapon->mId);
+            const ESM::RefId selectedAmmo = ESM::RefId::formIdRefId(*ammoId);
+            const std::optional<ESM::RefId> previous = inventory.getFalloutAmmoSelection(weaponId);
+            const int loaded = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+            if (loaded > 0 && previous && *previous != selectedAmmo)
+            {
+                inventory.add(*previous, loaded);
+                inventory.setFalloutLoadedAmmo(weaponId, 0);
+            }
+
+            inventory.setFalloutAmmoSelection(weaponId, selectedAmmo);
+            if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                mechanics->forceStateUpdate(player);
+            Log(Debug::Info) << "FNV inventory: selected ammo weapon=" << weaponId
+                             << " ammo=" << selectedAmmo << " loaded=" << loaded;
+            return true;
         }
     }
 
@@ -253,30 +307,37 @@ namespace MWGui
         }
 
         const bool falloutContent = hasFalloutContent();
+        const bool pipBoyMode = falloutContent
+            && MWBase::Environment::get().getWindowManager()->getMode() == MWGui::GM_FalloutPipBoy;
         mLeftPane->setVisible(true);
         mRightPane->setVisible(true);
         mAvatar->setVisible(true);
         mAvatarImage->setVisible(true);
         mArmorRating->setVisible(true);
 
+        const int chromeTop = pipBoyMode ? std::max(58, mMainWidget->getHeight() * 10 / 100) : 0;
+        const int chromeBottom = pipBoyMode ? std::max(52, mMainWidget->getHeight() * 9 / 100) : 0;
+        const int paneHeight = std::max(1, mMainWidget->getSize().height - 44 - chromeTop - chromeBottom);
+        const int paneLeft = pipBoyMode ? std::max(14, mMainWidget->getWidth() * 2 / 100) : 0;
+        const int paneRight = pipBoyMode ? std::max(14, mMainWidget->getWidth() * 2 / 100) : 12;
         const float aspect = falloutContent ? 0.78f : 0.5f; // fixed aspect ratio for the avatar image
-        int leftPaneWidth = static_cast<int>((mMainWidget->getSize().height - 44 - mArmorRating->getHeight()) * aspect);
+        int leftPaneWidth = static_cast<int>((paneHeight - mArmorRating->getHeight()) * aspect);
         if (falloutContent)
         {
             const int windowWidth = std::max(1, mMainWidget->getSize().width);
             const int maxPaperDollWidth = std::max(260, windowWidth - 360);
             leftPaneWidth = std::clamp(windowWidth * 38 / 100, 260, maxPaperDollWidth);
         }
-        mLeftPane->setSize(leftPaneWidth, mMainWidget->getSize().height - 44);
-        mRightPane->setCoord(mLeftPane->getPosition().left + leftPaneWidth + 4, mRightPane->getPosition().top,
-            std::max(1, mMainWidget->getSize().width - 12 - leftPaneWidth - 15), mMainWidget->getSize().height - 44);
+        mLeftPane->setCoord(paneLeft, chromeTop, leftPaneWidth, paneHeight);
+        mRightPane->setCoord(paneLeft + leftPaneWidth + 4, chromeTop,
+            std::max(1, mMainWidget->getSize().width - paneLeft - paneRight - leftPaneWidth - 4), paneHeight);
 
         if (falloutContent)
         {
             static int logged = 0;
             if (logged < 8)
             {
-                Log(Debug::Info) << "FNV/ESM4 proof: inventory paper doll pane visible left="
+                Log(Debug::Info) << "FNV/ESM4: inventory paper doll pane visible left="
                                  << mLeftPane->getCoord().left << "," << mLeftPane->getCoord().top << ","
                                  << mLeftPane->getCoord().width << "," << mLeftPane->getCoord().height
                                  << " avatar=" << mAvatar->getCoord().left << "," << mAvatar->getCoord().top
@@ -313,14 +374,23 @@ namespace MWGui
         mFilterMagic->setStateSelected(false);
         mFilterMisc->setStateSelected(false);
 
-        mPreview->updatePtr(mPtr);
-        mPreview->rebuild();
-        mPreview->update();
-        rebuildProfilerPreviews();
+        // A Fallout game begins with this window hidden.  Rendering its
+        // off-screen paper doll before the window opens performs a needless
+        // render-to-texture pass against a not-yet-visible GUI surface.  Keep
+        // the model update deferred to onOpen(), which already rebuilds and
+        // renders the preview after the window becomes visible.
+        if (!hasFalloutContent() || isVisible())
+        {
+            mPreview->updatePtr(mPtr);
+            mPreview->rebuild();
+            mPreview->update();
+            rebuildProfilerPreviews();
 
-        dirtyPreview();
-
-        updatePreviewSize();
+            dirtyPreview();
+            updatePreviewSize();
+        }
+        else
+            updateArmorRating();
 
         updateEncumbranceBar();
         mItemView->update();
@@ -426,8 +496,12 @@ namespace MWGui
         MWWorld::Ptr object = item.mBase;
         size_t count = item.mCount;
         bool shift = MyGUI::InputManager::getInstance().isShiftPressed();
+        const bool falloutUse = !mTrading && hasFalloutContent()
+            && (isFalloutEquipment(object) || object.getType() == ESM::REC_AMMO4);
 
         if (MyGUI::InputManager::getInstance().isControlPressed())
+            count = 1;
+        else if (falloutUse)
             count = 1;
 
         if (mTrading)
@@ -453,10 +527,21 @@ namespace MWGui
         // If we unequip weapon during attack, it can lead to unexpected behaviour
         if (MWBase::Environment::get().getMechanicsManager()->isAttackingOrSpell(mPtr))
         {
-            MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
-            MWWorld::ContainerStoreIterator weapIt = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             bool weapActive = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
-            if (weapActive && weapIt != invStore.end() && *weapIt == item.mBase)
+            bool selectingActiveWeapon = false;
+            if (mPtr.getClass().hasInventoryStore(mPtr))
+            {
+                MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
+                MWWorld::ContainerStoreIterator weapIt = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                selectingActiveWeapon = weapIt != invStore.end() && *weapIt == item.mBase;
+            }
+            else if (mPtr.getType() == ESM::REC_NPC_4 && item.mBase.getType() == ESM::REC_WEAP4)
+            {
+                const ESM::FormId* const formId = item.mBase.getCellRef().getRefId().getIf<ESM::FormId>();
+                const ESM4::Weapon* const weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+                selectingActiveWeapon = formId != nullptr && weapon != nullptr && weapon->mId == *formId;
+            }
+            if (weapActive && selectingActiveWeapon)
             {
                 MWBase::Environment::get().getWindowManager()->messageBox("#{sCantEquipWeapWarning}");
                 return;
@@ -465,7 +550,7 @@ namespace MWGui
 
         // Show a dialog to select a count of items, but not when using an item from the inventory
         // in controller mode. In that case, we skip the dialog and just use one item immediately.
-        if (count > 1 && !shift && mPendingControllerAction != ControllerAction::Use)
+        if (count > 1 && !shift && mPendingControllerAction != ControllerAction::Use && !falloutUse)
         {
             CountDialog* dialog = MWBase::Environment::get().getWindowManager()->getCountDialog();
             std::string message = "#{sTake}";
@@ -495,7 +580,7 @@ namespace MWGui
 
             if (mTrading || mPendingControllerAction == ControllerAction::Sell)
                 sellItem(nullptr, count);
-            else if (mPendingControllerAction == ControllerAction::Use)
+            else if (mPendingControllerAction == ControllerAction::Use || falloutUse)
                 equipItem(count);
             else if (mPendingControllerAction == ControllerAction::Drop)
                 dropItem(nullptr, count);
@@ -514,6 +599,19 @@ namespace MWGui
         const ItemStack& item = mTradeModel->getItem(mSelectedItem);
         if (item.mType == ItemStack::Type_Equipped)
         {
+            if (!mPtr.getClass().hasInventoryStore(mPtr))
+            {
+                const ESM::FormId* const formId = item.mBase.getCellRef().getRefId().getIf<ESM::FormId>();
+                if (mPtr.getType() == ESM::REC_NPC_4 && formId != nullptr && isFalloutEquipment(item.mBase)
+                    && MWClass::ESM4Npc::unequipFalloutItem(mPtr, *formId))
+                {
+                    if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                        mechanics->forceStateUpdate(mPtr);
+                    Log(Debug::Info) << "FNV inventory: unequipped item=" << item.mBase.getCellRef().getRefId();
+                }
+                return;
+            }
+
             MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
             MWWorld::Ptr newStack = *invStore.unequipItemQuantity(item.mBase, count);
 
@@ -690,6 +788,11 @@ namespace MWGui
 
     void InventoryWindow::updatePreviewSize()
     {
+        // See updatePlayer(): Fallout previews are rendered only after their
+        // owning inventory window opens.
+        if (hasFalloutContent() && !isVisible())
+            return;
+
         auto setImageViewport = [](MyGUI::ImageBox* image, MWRender::InventoryPreview* preview, float scale) {
             if (image == nullptr || preview == nullptr)
                 return;
@@ -727,9 +830,15 @@ namespace MWGui
         const MyGUI::IntSize viewport = getPreviewViewportSize();
         mPreview->setViewport(viewport.width, viewport.height);
         mPreview->update();
-        mAvatarImage->getSubWidgetMain()->_setUVSet(
-            MyGUI::FloatRect(0.f, 0.f, viewport.width / float(mPreview->getTextureWidth()),
-                viewport.height / float(mPreview->getTextureHeight())));
+        const float uRight = viewport.width / float(mPreview->getTextureWidth());
+        const float vBottom = viewport.height / float(mPreview->getTextureHeight());
+        // ESM4 paper-doll RTTs retain the renderer's bottom-left origin when
+        // they are presented by this Y-down GUI widget.  Flip the texture
+        // coordinates here rather than rotating the actor, so equipment and
+        // hit-slot picking keep the native Fallout orientation.
+        mAvatarImage->getSubWidgetMain()->_setUVSet(hasFalloutContent()
+                ? MyGUI::FloatRect(0.f, vBottom, uRight, 0.f)
+                : MyGUI::FloatRect(0.f, 0.f, uRight, vBottom));
 
         if (hasFalloutContent())
         {
@@ -838,9 +947,29 @@ namespace MWGui
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
         auto type = ptr.getType();
-        bool isWeaponOrArmor = type == ESM::Weapon::sRecordId || type == ESM::Armor::sRecordId;
+        bool isWeaponOrArmor = type == ESM::Weapon::sRecordId || type == ESM::Armor::sRecordId
+            || type == ESM::REC_WEAP4 || type == ESM::REC_ARMO4;
         bool isBroken = ptr.getClass().hasItemHealth(ptr) && ptr.getCellRef().getCharge() == 0;
         const bool isFromDragAndDrop = mDragAndDrop->mIsOnDragAndDrop && mDragAndDrop->mItem.mBase == ptr;
+
+        if (hasFalloutContent() && type == ESM::REC_AMMO4)
+        {
+            const bool selected = selectFalloutAmmo(player, ptr);
+            if (isFromDragAndDrop)
+                mDragAndDrop->finish();
+            if (selected)
+                MWBase::Environment::get().getWindowManager()->messageBox("Ammo selected. Press R to reload.");
+            else
+                MWBase::Environment::get().getWindowManager()->messageBox(
+                    "Equip a compatible weapon before selecting ammunition.");
+            if (isVisible())
+            {
+                mItemView->update();
+                notifyContentChanged();
+            }
+            return;
+        }
+
         const auto [canEquipResult, canEquipMsg] = ptr.getClass().canBeEquipped(ptr, mPtr);
 
         // In vanilla, broken armor or weapons cannot be equipped
@@ -869,23 +998,32 @@ namespace MWGui
 
         std::unique_ptr<MWWorld::Action> action = ptr.getClass().use(ptr, force);
 
-        MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
         auto [eqSlots, canStack] = ptr.getClass().getEquipmentSlots(ptr);
         int useCount = isFromDragAndDrop ? static_cast<int>(mDragAndDrop->mDraggedCount) : ptr.getCellRef().getCount();
 
-        if (!eqSlots.empty())
+        if (mPtr.getClass().hasInventoryStore(mPtr))
         {
-            MWWorld::ContainerStoreIterator it = invStore.getSlot(eqSlots.front());
-            if (it != invStore.end() && it->getCellRef().getRefId() == ptr.getCellRef().getRefId())
-                useCount += it->getCellRef().getCount();
+            MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
+            if (!eqSlots.empty())
+            {
+                MWWorld::ContainerStoreIterator it = invStore.getSlot(eqSlots.front());
+                if (it != invStore.end() && it->getCellRef().getRefId() == ptr.getCellRef().getRefId())
+                    useCount += it->getCellRef().getCount();
+            }
+
+            action->execute(player, !willEquip);
+
+            // Partial equipping
+            int excess = ptr.getCellRef().getCount() - useCount;
+            if (excess > 0 && canStack)
+                invStore.unequipItemQuantity(ptr, excess);
         }
-
-        action->execute(player, !willEquip);
-
-        // Partial equipping
-        int excess = ptr.getCellRef().getCount() - useCount;
-        if (excess > 0 && canStack)
-            invStore.unequipItemQuantity(ptr, excess);
+        else
+        {
+            // Fallout actors are backed by ContainerStore. ActionEquip updates
+            // their ESM4 custom equipment state without touching an ESM3 slot.
+            action->execute(player, !willEquip);
+        }
 
         if (isFromDragAndDrop)
         {
@@ -951,6 +1089,12 @@ namespace MWGui
         if (slot == -1)
             return MWWorld::Ptr();
 
+        // Fallout paper-doll selections are represented by its native custom
+        // equipment state, not Morrowind InventoryStore slots. Inventory rows
+        // remain the authoritative place to unequip those items.
+        if (!mPtr.getClass().hasInventoryStore(mPtr))
+            return MWWorld::Ptr();
+
         MWWorld::InventoryStore& invStore = mPtr.getClass().getInventoryStore(mPtr);
         if (invStore.getSlot(slot) != invStore.end())
         {
@@ -1001,8 +1145,11 @@ namespace MWGui
 
     void InventoryWindow::dirtyPreview()
     {
-        mPreview->update();
-        updateProfilerPreviews();
+        if (!hasFalloutContent() || isVisible())
+        {
+            mPreview->update();
+            updateProfilerPreviews();
+        }
 
         updateArmorRating();
     }
@@ -1133,7 +1280,9 @@ namespace MWGui
 
             lastId = item.getCellRef().getRefId();
 
-            if (item.getClass().getType() == ESM::Weapon::sRecordId && isRightHandWeapon(item)
+            if ((item.getClass().getType() == ESM::Weapon::sRecordId
+                    || item.getClass().getType() == ESM::REC_WEAP4)
+                && isRightHandWeapon(item)
                 && item.getClass().canBeEquipped(item, player).first)
             {
                 found = true;
@@ -1297,7 +1446,7 @@ namespace MWGui
             return;
 
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
-        if (winMgr->getMode() == MWGui::GM_Inventory)
+        if (winMgr->getMode() == MWGui::GM_Inventory || winMgr->getMode() == MWGui::GM_FalloutPipBoy)
         {
             // Fill the screen, or limit to a certain size on large screens. Size chosen to
             // match the size of the stats window.

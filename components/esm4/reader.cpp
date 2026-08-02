@@ -140,7 +140,11 @@ namespace ESM4
             if (!allError.has_value())
                 return result;
 
-            Log(Debug::Warning) << "Failed to decompress record data at 0x" << std::hex << position
+            // A number of Bethesda records use independently compressed
+            // chunks. The block path below is the supported decoder and has
+            // recovered this record successfully, so keep the failed bulk
+            // probe out of normal runtime warning output.
+            Log(Debug::Verbose) << "Failed to decompress record data at 0x" << std::hex << position
                                 << std::resetiosflags(std::ios_base::hex) << " compressed size = " << compressed.size()
                                 << " uncompressed size = " << uncompressedSize << ": " << *allError
                                 << ". Trying to decompress by block...";

@@ -1379,7 +1379,9 @@ namespace MWGui
             return;
         }
 
-        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Inventory);
+        MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+        const GuiMode mode = windowManager->getMode();
+        windowManager->removeGuiMode(mode == GM_FalloutPipBoy ? GM_FalloutPipBoy : GM_Inventory);
         mPendingFalloutFastTravelMarker = {};
     }
 
@@ -1895,7 +1897,7 @@ namespace MWGui
     void MapWindow::setActiveControllerWindow(bool active)
     {
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
-        if (winMgr->getMode() == MWGui::GM_Inventory)
+        if (winMgr->getMode() == MWGui::GM_Inventory || winMgr->getMode() == MWGui::GM_FalloutPipBoy)
         {
             // Fill the screen, or limit to a certain size on large screens. Size chosen to
             // show the entire local map without scrolling.

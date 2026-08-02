@@ -104,7 +104,7 @@ namespace MWGui
             }
             if (mStamina) { mStamina->changeWidgetSkin("MW_EnergyBar_Green"); }
             if (fatigueFrame && falloutContent) fatigueFrame->setVisible(false);
-            if (mStamina && falloutContent && isVr) mStamina->setVisible(false);
+            if (mStamina && falloutContent) mStamina->setVisible(false);
             Log(Debug::Info) << "FNV/ESM4 proof: HUD Fallout bars applied HP/AP"
                              << (isVr ? "/stamina wrist" : "")
                              << " green theme";
@@ -445,7 +445,8 @@ namespace MWGui
         {
             GuiMode mode = winMgr->getMode();
 
-            if (!winMgr->isConsoleMode() && (mode != GM_Container) && (mode != GM_Inventory))
+            if (!winMgr->isConsoleMode() && (mode != GM_Container) && (mode != GM_Inventory)
+                && (mode != GM_FalloutPipBoy))
                 return;
 
             MWWorld::Ptr object = MWBase::Environment::get().getWorld()->getFocusObject();
@@ -780,17 +781,18 @@ namespace MWGui
         // Cinematics and character generation own HUD visibility. Fallout
         // content must honor that regular UI contract rather than restoring
         // fallback widgets over the authored scene.
-        const bool falloutVr = isVr && hasFalloutContent();
+        const bool falloutContent = hasFalloutContent();
         healthFrame->setVisible(visible);
         magickaFrame->setVisible(visible);
-        fatigueFrame->setVisible(falloutVr ? false : visible);
+        fatigueFrame->setVisible(falloutContent ? false : visible);
         mHealth->setVisible(visible);
         mMagicka->setVisible(visible);
-        mStamina->setVisible(falloutVr ? false : visible);
+        mStamina->setVisible(falloutContent ? false : visible);
         updatePositions();
         if (compatibilityUiTelemetryEnabled())
             Log(Debug::Info) << "OpenNV compatibility UI telemetry: HMS visible=" << visible
-                             << " staminaVisible=" << (falloutVr ? false : visible) << " falloutVr=" << falloutVr;
+                             << " staminaVisible=" << (falloutContent ? false : visible)
+                             << " fallout=" << falloutContent;
     }
 
     void HUD::setWeapVisible(bool visible)

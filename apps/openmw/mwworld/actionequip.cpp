@@ -1,9 +1,13 @@
 #include "actionequip.hpp"
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 
 #include "class.hpp"
 #include "inventorystore.hpp"
@@ -19,6 +23,33 @@ namespace MWWorld
     void ActionEquip::executeImp(const Ptr& actor)
     {
         MWWorld::Ptr object = getTarget();
+        const bool falloutEquipment = object.getType() == ESM::REC_WEAP4 || object.getType() == ESM::REC_ARMO4
+            || object.getType() == ESM::REC_CLOT4;
+
+        // FNV NPCs do not expose Morrowind's InventoryStore. Their container
+        // and custom Fallout equipment state are the production authority.
+        if (falloutEquipment && actor.getType() == ESM::REC_NPC_4)
+        {
+            if (object.getClass().hasItemHealth(object) && object.getCellRef().getCharge() == 0)
+                return;
+
+            const ESM::FormId* formId = object.getCellRef().getRefId().getIf<ESM::FormId>();
+            if (formId == nullptr
+                || actor.getClass().getContainerStore(actor).count(object.getCellRef().getRefId()) <= 0)
+                return;
+
+            const bool changed = MWClass::ESM4Npc::equipFalloutItem(actor, *formId);
+            if (object.getType() == ESM::REC_WEAP4)
+                actor.getClass().getCreatureStats(actor).setDrawState(MWMechanics::DrawState::Weapon);
+
+            if (changed || object.getType() == ESM::REC_WEAP4)
+            {
+                if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
+                    mechanics->forceStateUpdate(actor);
+            }
+            return;
+        }
+
         MWWorld::InventoryStore& invStore = actor.getClass().getInventoryStore(actor);
 
         if (actor != MWMechanics::getPlayer())

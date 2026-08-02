@@ -189,11 +189,12 @@ namespace Settings
 
             // These compatibility settings are intentionally queried through
             // Manager rather than a static category because they map authored
-            // Fallout data to engine-owned semantics.  Register both defaults
+            // Fallout data to engine-owned semantics.  Register these defaults
             // during startup so Settings::Manager validates the complete
             // defaults file before any loading-screen code reads them.
             static_cast<void>(get<std::string>("script command mappings", "OpenNV Compatibility"));
             static_cast<void>(get<bool>("defer loading input update", "OpenNV Compatibility"));
+            static_cast<void>(get<bool>("fallout controls", "OpenNV Compatibility"));
         }
 
         for (const auto& [key, value] : originalDefaultSettings)

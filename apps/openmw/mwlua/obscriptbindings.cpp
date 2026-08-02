@@ -1,5 +1,6 @@
 #include "obscriptbindings.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -20,6 +21,7 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadmesg.hpp>
 #include <components/esm4/loadmisc.hpp>
@@ -32,9 +34,12 @@
 #include <components/misc/strings/lower.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutactorstate.hpp"
+#include "../mwmechanics/falloutcombat.hpp"
 #include "../mwworld/action.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -155,6 +160,57 @@ namespace MWLua
                 return res;
             }();
             return resolve(index, editorId);
+        };
+
+        // `PlaceAtMe` names the base EXPL record by editor id.  The game
+        // already owns explosion rendering, radial damage, radiation, sound,
+        // and image-space routing; ObScript only needs this narrow lookup to
+        // hand the authored record back to that native path.
+        api["placeAtMeExplosion"] = [](const Object& object, std::string_view editorId) {
+            const MWWorld::Ptr& actor = object.ptrOrEmpty();
+            if (actor.isEmpty() || !actor.getClass().isActor())
+                return false;
+
+            using ExplosionIndex = std::map<std::string, ESM::FormId>;
+            static const ExplosionIndex index = [] {
+                ExplosionIndex result;
+                const MWWorld::Store<ESM4::Explosion>& explosions
+                    = MWBase::Environment::get().getESMStore()->get<ESM4::Explosion>();
+                for (std::size_t i = 0; i < explosions.getSize(); ++i)
+                {
+                    const ESM4::Explosion& explosion = *explosions.at(i);
+                    if (!explosion.mEditorId.empty())
+                        result.emplace(Misc::StringUtils::lowerCase(explosion.mEditorId), explosion.mId);
+                }
+                return result;
+            }();
+
+            const auto found = index.find(Misc::StringUtils::lowerCase(editorId));
+            if (found == index.end())
+                return false;
+
+            MWMechanics::FalloutProjectileImpactContract impact;
+            impact.mExplosion = found->second;
+            return MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                actor, actor.getRefData().getPosition().asVec3(), impact);
+        };
+
+        api["restoreActorValue"] = [](const Object& object, std::string_view actorValueName, float value) {
+            if (!std::isfinite(value))
+                return false;
+            const MWWorld::Ptr& actor = object.ptrOrEmpty();
+            if (actor.isEmpty() || !actor.getClass().isActor())
+                return false;
+
+            const std::optional<std::uint8_t> actorValue = MWMechanics::resolveFalloutActorValue(actorValueName);
+            if (!actorValue)
+                return false;
+
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const bool player = world != nullptr && actor == world->getPlayerPtr();
+            return MWMechanics::applyFalloutActorValue(actor, *actorValue,
+                MWMechanics::FalloutActorValueOperation::Restore, value,
+                player ? &world->getFalloutPlayerRuntimeState() : nullptr);
         };
 
         api["isMenuMode"] = [] {

@@ -23,7 +23,7 @@ namespace MWWorld
         if (actor == MWBase::Environment::get().getWorld()->getPlayerPtr())
         {
             MWGui::GuiMode mode = MWBase::Environment::get().getWindowManager()->getMode();
-            if (mode == MWGui::GM_Inventory || mode == MWGui::GM_Container)
+            if (mode == MWGui::GM_Inventory || mode == MWGui::GM_FalloutPipBoy || mode == MWGui::GM_Container)
             {
                 MWBase::Environment::get().getWindowManager()->getInventoryWindow()->pickUpObject(getTarget());
                 return;

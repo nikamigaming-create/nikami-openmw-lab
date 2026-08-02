@@ -188,6 +188,43 @@ obs.bind('GetUnconscious', function(ref)
     return core.obscript.getUnconscious(actor) and 1 or 0
 end)
 
+-- `RestoreActorValue` is used by FNV actor scripts (for example the Glowing
+-- One's periodic Health restore).  The native binding applies the authored
+-- actor value through the same Fallout state path used by quest commands.
+obs.bind('RestoreActorValue', function(ref, actorValue, amount)
+    local actor
+    if amount == nil then
+        actor = self.object
+        amount = actorValue
+        actorValue = ref
+    else
+        actor = resolveObject(ref)
+    end
+    if actor == nil or type(actorValue) ~= 'string' then
+        return 0
+    end
+    core.obscript.restoreActorValue(actor, actorValue, tonumber(amount) or 0)
+    return 0
+end)
+
+-- `PlaceAtMe` can create many record classes.  EXPL is the live TestMap01
+-- path: resolve the authored FNV explosion and execute it at the actor rather
+-- than fabricating a generic object proxy.
+obs.bind('PlaceAtMe', function(ref, record)
+    local actor
+    if record == nil then
+        actor = self.object
+        record = ref
+    else
+        actor = resolveObject(ref)
+    end
+    if actor == nil or type(record) ~= 'string' then
+        return 0
+    end
+    core.obscript.placeAtMeExplosion(actor, record)
+    return 0
+end)
+
 obs.bind('Activate', function(ref)
     local object = resolveObject(ref)
     local actor = obs._actionRef or nearby.players[1]

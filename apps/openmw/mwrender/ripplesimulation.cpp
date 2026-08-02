@@ -11,6 +11,7 @@
 #include <osgParticle/ParticleSystem>
 #include <osgParticle/ParticleSystemUpdater>
 
+#include <components/esm4/loadnpc.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/misc/rng.hpp>
 #include <components/nifosg/controller.hpp>
@@ -25,11 +26,32 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwworld/esmstore.hpp"
 
 namespace
 {
+    bool hasFalloutNvContentLoaded()
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return false;
+
+        for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+        {
+            if (npc.mIsFONV)
+                return true;
+        }
+        return false;
+    }
+
     void createWaterRippleStateSet(Resource::ResourceSystem* resourceSystem, osg::Node* node)
     {
+        // The Fallout archives have no Morrowind ripple-frame sequence. Do
+        // not substitute unrelated artwork or manufacture a missing asset
+        // request; the Fallout renderer simply has no legacy ripple overlay.
+        if (hasFalloutNvContentLoaded())
+            return;
+
         int rippleFrameCount = Fallback::Map::getInt("Water_RippleFrameCount");
         if (rippleFrameCount <= 0)
             return;

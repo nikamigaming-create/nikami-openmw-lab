@@ -473,7 +473,9 @@ namespace MWInput
                 }
                 break;
             case A_QuickKeysMenu:
-                // Handled in Lua
+                if (isFalloutContent())
+                    openOpenMWInventory();
+                // Non-Fallout quick keys remain handled in Lua.
                 break;
             case A_Journal:
                 if (falloutContent)
@@ -526,6 +528,43 @@ namespace MWInput
                 return true;
         }
         return false;
+    }
+
+    void ActionManager::openFalloutPipBoy(std::size_t pane)
+    {
+        MWBase::InputManager* inputManager = MWBase::Environment::get().getInputManager();
+        MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+        if (inputManager == nullptr || windowManager == nullptr
+            || !inputManager->getControlSwitch("playercontrols")
+            || !inputManager->getControlSwitch("playerinterface")
+            || !checkAllowedToUseItems() || !windowManager->isAllowed(MWGui::GW_Inventory))
+            return;
+
+        // The real Fallout route owns its own mode.  Keep the OpenMW analogue
+        // as a separate, explicitly requested interface rather than piling
+        // both presentation systems on top of one another.
+        if (windowManager->containsMode(MWGui::GM_Inventory))
+            windowManager->removeGuiMode(MWGui::GM_Inventory);
+        if (!windowManager->containsMode(MWGui::GM_FalloutPipBoy))
+            windowManager->pushGuiMode(MWGui::GM_FalloutPipBoy);
+
+        windowManager->setActiveControllerWindow(MWGui::GM_FalloutPipBoy, pane);
+    }
+
+    void ActionManager::openOpenMWInventory()
+    {
+        MWBase::InputManager* inputManager = MWBase::Environment::get().getInputManager();
+        MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+        if (inputManager == nullptr || windowManager == nullptr
+            || !inputManager->getControlSwitch("playercontrols")
+            || !inputManager->getControlSwitch("playerinterface")
+            || !checkAllowedToUseItems() || !windowManager->isAllowed(MWGui::GW_Inventory))
+            return;
+
+        if (windowManager->containsMode(MWGui::GM_FalloutPipBoy))
+            windowManager->removeGuiMode(MWGui::GM_FalloutPipBoy);
+        if (!windowManager->containsMode(MWGui::GM_Inventory))
+            windowManager->pushGuiMode(MWGui::GM_Inventory);
     }
 
     void ActionManager::toggleFalloutVats()

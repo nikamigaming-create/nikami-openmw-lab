@@ -319,7 +319,7 @@ namespace MWGui
     void SpellWindow::setActiveControllerWindow(bool active)
     {
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
-        if (winMgr->getMode() == MWGui::GM_Inventory)
+        if (winMgr->getMode() == MWGui::GM_Inventory || winMgr->getMode() == MWGui::GM_FalloutPipBoy)
         {
             // Fill the screen, or limit to a certain size on large screens. Size chosen to
             // match the size of the stats window.

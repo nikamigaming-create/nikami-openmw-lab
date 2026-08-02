@@ -5,6 +5,7 @@
 #include <osg/Vec3f>
 #include <osgViewer/ViewerEventHandlers>
 
+#include <cstddef>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -65,6 +66,8 @@ namespace MWInput
 
         void handleGuiArrowKey(int action);
         bool isFalloutContent() const;
+        void openFalloutPipBoy(std::size_t pane);
+        void openOpenMWInventory();
         void toggleFalloutVats();
         bool selectFalloutVatsTarget(const MWWorld::Ptr& target);
         void cycleFalloutVatsTarget(int direction);

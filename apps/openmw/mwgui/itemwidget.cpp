@@ -7,6 +7,7 @@
 
 #include <components/debug/debuglog.hpp>
 #include <components/misc/resourcehelpers.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 #include <components/vfs/manager.hpp>
@@ -141,7 +142,18 @@ namespace MWGui
         if (icon.empty())
             icon = defaultIcon.value();
         const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
-        std::string invIcon = Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(icon), *vfs);
+        const VFS::Path::Normalized rawIcon = VFS::Path::toNormalized(icon);
+        // Fallout records use texture-rooted icon paths such as
+        // "Interface\\Icons\\PipboyImages\\...".  Treating those as legacy
+        // Morrowind icon paths strips the Interface segment and produces an
+        // invalid "icons/pipboyimages/..." lookup.  Resolve the authored
+        // texture path intact; ordinary Morrowind icons keep their existing
+        // icons-root behavior.
+        const bool interfaceTexture = Misc::StringUtils::ciFind(rawIcon.value(), "interface/")
+            != std::string_view::npos;
+        std::string invIcon = interfaceTexture
+            ? Misc::ResourceHelpers::correctTexturePath(rawIcon, *vfs)
+            : Misc::ResourceHelpers::correctIconPath(rawIcon, *vfs);
         if (!vfs->exists(invIcon))
         {
             Log(Debug::Error) << "Failed to open image: '" << invIcon << "' not found, falling back to '"

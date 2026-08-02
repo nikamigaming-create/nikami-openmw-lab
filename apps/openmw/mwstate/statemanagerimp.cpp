@@ -196,6 +196,22 @@ void MWState::StateManager::newGame(bool bypass)
         MWBase::Environment::get().getWorld()->startNewGame(bypass);
 
         mState = State_Running;
+
+        // Fallout's authored new-game path reaches an immediately playable
+        // exterior rather than the Morrowind character-generation flow.  The
+        // generic new-game guard intentionally disabled every interface
+        // window before startup, but no Fallout handoff restored them.  That
+        // left the player in a running world with Pip-Boy, inventory, map,
+        // and HUD windows still disallowed.  Restore the normal gameplay UI
+        // only after the real FNV start sequence has completed.
+        if (!bypass
+            && MWBase::Environment::get().getWorld()->getStore().getESM4Game()
+                == MWWorld::ESM4Game::FalloutNewVegas)
+        {
+            MWBase::Environment::get().getWindowManager()->setNewGame(false);
+            Log(Debug::Info) << "FNV gameplay start: restored normal player interface after New Game";
+        }
+
         MWBase::Environment::get().getLuaManager()->gameLoaded();
 
         MWBase::Environment::get().getWindowManager()->fadeScreenOut(0);
