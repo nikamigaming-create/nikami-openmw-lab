@@ -1,3 +1,6 @@
+
+Nikami OpenMW Lab is an experimental OpenMW 0.51 fork adding Fallout: New Vegas runtime compatibility for flat-screen and VR use. It uses data from a legally owned installation of Fallout: New Vegas and includes no Bethesda assets. Current development covers ESM4 data, actors, animation, dialogue, quests, ObScript compatibility, saves, combat, VATS, world interaction, and VR systems. This is active experimental work, not yet a complete replacement for the original New Vegas executable.
+
 OpenMW
 ======
 
