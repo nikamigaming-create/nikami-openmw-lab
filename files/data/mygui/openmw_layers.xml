@@ -9,6 +9,7 @@
         <Property key="Size" value="600 520"/>
     </Layer>
     <Layer name="Windows" overlapped="true" pick="true"/>
+    <Layer name="PipBoyScreen" overlapped="false" pick="false"/>
     <Layer name="DragAndDrop" overlapped="false" pick="false"/>
     <Layer name="DrowningBar" overlapped="false" pick="false"/>
     <Layer name="MainMenuBackground" overlapped="true" pick="true"/>

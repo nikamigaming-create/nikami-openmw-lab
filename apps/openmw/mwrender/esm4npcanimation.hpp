@@ -6,8 +6,11 @@
 #include <components/nifosg/matrixtransform.hpp>
 
 #include <osg/MatrixTransform>
+#include <osg/StateSet>
+#include <osg/Texture2D>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,6 +27,15 @@ namespace MWRender
     class ESM4NpcAnimation : public Animation
     {
     public:
+        struct FirstPersonState
+        {
+            float mFieldOfView = 55.f;
+            std::vector<std::string> mSaveWornArmorModels;
+            std::string mSaveWornLeftHandModel;
+            bool mPipBoy = false;
+            bool mPipBoyGlove = false;
+        };
+
         struct WeaponAttachmentState
         {
             bool mApplied = false;
@@ -38,9 +50,12 @@ namespace MWRender
 
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
+        ESM4NpcAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode,
+            Resource::ResourceSystem* resourceSystem, std::optional<FirstPersonState> firstPerson);
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
+        osg::Node* getEquippedWeaponNode() override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
         bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) override;
@@ -49,7 +64,14 @@ namespace MWRender
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
-        void refreshEquipment() { updateParts(); }
+        std::size_t getFirstPersonAttachedPartCount() const { return mFirstPersonAttachedPartCount; }
+        bool hasPipBoyPresentation() const { return mPipBoyPresentationRoot != nullptr; }
+        bool setPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture = nullptr,
+            bool showMap = false, float mapZoom = 1.f, float mapPanX = 0.f, float mapPanY = 0.f);
+        void setPipBoyPresentationProgress(float progress, bool interactionPoseActive);
+        void setPipBoyInteractionProgress(float progress);
+        void setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
+            float mapPanX, float mapPanY, float interactionPulse);
 
     private:
         struct ProceduralPoseBone
@@ -58,18 +80,50 @@ namespace MWRender
             osg::Matrix mRootRelative;
         };
 
+        struct PipBoyPhysicalControl
+        {
+            osg::ref_ptr<osg::MatrixTransform> mRoot;
+            osg::Vec3f mPivot;
+            osg::Vec3f mAxis;
+        };
+
         std::vector<ProceduralPoseBone> mFo4ProceduralPoseBones;
         bool mFo4ProceduralPoseInitialized = false;
         std::string mFo4ProceduralGroup;
         bool mFo4ProceduralAdvancedLogged = false;
-        float mSkyrimAuthoredAnimationElapsed = 0.f;
-        bool mSkyrimAuthoredAnimationLogged = false;
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutWeaponCameraFrame;
+        bool mFalloutWeaponUsesWorldModelFallback = false;
         osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
+        bool mFalloutWeaponShownTelemetryLogged = false;
+        bool mFirstPersonView = false;
+        std::size_t mFirstPersonAttachedPartCount = 0;
+        osg::ref_ptr<osg::Node> mPipBoyArmPart;
+        osg::ref_ptr<osg::Node> mFirstPersonRightHandPart;
+        osg::ref_ptr<osg::MatrixTransform> mPipBoyPresentationRoot;
+        osg::ref_ptr<osg::MatrixTransform> mPipBoyInteractionHandRoot;
+        PipBoyPhysicalControl mPipBoyTabKnob;
+        PipBoyPhysicalControl mPipBoyScrollKnob;
+        std::array<PipBoyPhysicalControl, 3> mPipBoyButtons;
+        std::array<PipBoyPhysicalControl, 3> mPipBoyGlows;
+        std::vector<osg::ref_ptr<osg::StateSet>> mPipBoyScreenStateSets;
+        float mPipBoyPresentationProgress = 0.f;
+        float mPipBoyInteractionProgress = 0.f;
+        int mPipBoyArmTargetVariant = 0;
+        bool mPipBoyControlsInitialized = false;
+        bool mPipBoyControlsInitializationAttempted = false;
+        bool mPipBoyRetailInteractionBound = false;
+        bool mPipBoyRetailWaverBound = false;
+        bool mPipBoyRetailInteractionPoseHeld = false;
+        bool mPipBoyInteractionPulseActive = false;
+        // The game may refresh the first-person weapon after the Pip-Boy
+        // renderer has opened. Keep the visual holster state authoritative
+        // until the wrist has lowered again.
+        bool mPipBoyWeaponSuppressed = false;
         const ESM4::Weapon* mFalloutActionWeapon = nullptr;
         osg::ref_ptr<osg::Node> mFalloutAnimatedObjectPart;
         std::string mFalloutAnimatedObjectModel;
@@ -77,10 +131,11 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
-            std::string_view preferredBone = {}, const float* colorRemappingIndex = nullptr,
-            bool applyTes4RigidHeadBasis = true);
-        osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
-            std::string* authoredParent = nullptr);
+            std::string_view preferredBone = {}, bool forceActorSpace = false);
+        osg::ref_ptr<osg::Node> insertAttachedPart(
+            std::string_view model, std::string_view preferredBone, std::string* authoredParent = nullptr);
+        void initializeFirstPerson(const FirstPersonState& state);
+        void initializePipBoyPhysicalControls();
 
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,
@@ -91,12 +146,12 @@ namespace MWRender
         void updateParts();
         bool applyRetailWeaponHolsterContract(const ESM4::Weapon& weapon);
         bool refreshFalloutWeaponPart();
+        std::string resolveFalloutWeaponViewModel(const ESM4::Weapon& weapon) const;
         void updatePartsTES4(const ESM4::Npc& traits);
         void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
         void applyPostManualFalloutActorPose() override;
     };
-
 }
 
 #endif // GAME_RENDER_ESM4NPCANIMATION_H

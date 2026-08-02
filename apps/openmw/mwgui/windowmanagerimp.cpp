@@ -1,27 +1,27 @@
 #include "windowmanagerimp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <optional>
+#include <memory>
+#include <sstream>
 #include <thread>
 
 #include <osgViewer/Viewer>
-#include <osgViewer/ViewerEventHandlers>
 
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
-#include <MyGUI_LayerManager.h>
 #include <MyGUI_PointerManager.h>
 #include <MyGUI_RenderManager.h>
+#include <MyGUI_TextBox.h>
 #include <MyGUI_UString.h>
 #include <MyGUI_Window.h>
 
@@ -32,6 +32,12 @@
 #include <SDL_keyboard.h>
 
 #include <components/debug/debuglog.hpp>
+
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -49,6 +55,7 @@
 #include <components/myguiplatform/additivelayer.hpp>
 #include <components/myguiplatform/myguiplatform.hpp>
 #include <components/myguiplatform/myguirendermanager.hpp>
+#include <components/myguiplatform/myguitexture.hpp>
 #include <components/myguiplatform/scalinglayer.hpp>
 
 #include <components/vfs/manager.hpp>
@@ -68,13 +75,21 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/luamanager.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwinput/actions.hpp"
+
+#include "../mwphysics/raycasting.hpp"
+
+#include "../mwrender/camera.hpp"
+#include "../mwrender/renderingmanager.hpp"
 #include "../mwrender/vismask.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/action.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
@@ -82,9 +97,12 @@
 #include "../mwworld/player.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwrender/postprocessor.hpp"
+
+#include "../mwworld/inventorystore.hpp"
 
 #include "alchemywindow.hpp"
 #include "backgroundimage.hpp"
@@ -135,8 +153,30 @@
 #include "videowidget.hpp"
 #include "waitdialog.hpp"
 
+//## VR_PATCH BEGIN
+#include "../mwvr/radialmenu.hpp"
+#include "../mwvr/vrgui.hpp"
+#include "../mwvr/vrmetamenu.hpp"
+#include "../mwvr/vrvirtualkeyboard.hpp"
+#include <components/vr/viewer.hpp>
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+
 namespace MWGui
 {
+    struct FalloutDialogueCameraState
+    {
+        MWRender::Camera::Mode mMode = MWRender::Camera::Mode::FirstPerson;
+        float mPitch = 0.f;
+        float mYaw = 0.f;
+        float mRoll = 0.f;
+        float mFieldOfView = 0.f;
+        bool mFieldOfViewWasOverridden = false;
+        bool mChangedFieldOfView = false;
+        MWWorld::Ptr mTarget;
+        osg::Vec3f mCameraPosition;
+    };
+
     namespace
     {
         Settings::SettingValue<bool>* findHiddenSetting(GuiWindow window)
@@ -176,119 +216,308 @@ namespace MWGui
             return false;
         }
 
-        std::optional<float> authoredDefaultChoiceDelaySeconds()
+        // ESM4-format Fallout records are addressed by FormID at runtime, not
+        // by their editor-id strings. Resolve the editor-id against the loaded
+        // store before asking the real inventory for a count.
+        template <class T>
+        ESM::RefId findFalloutEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
         {
-            const char* const value = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS");
-            if (value == nullptr || *value == '\0')
-                return std::nullopt;
-
-            char* end = nullptr;
-            const float seconds = std::strtof(value, &end);
-            if (end == value || (end != nullptr && *end != '\0') || !std::isfinite(seconds))
-                return std::nullopt;
-            return std::max(0.f, seconds);
-        }
-
-        bool equalNoCase(std::string_view left, std::string_view right)
-        {
-            if (left.size() != right.size())
-                return false;
-            for (std::size_t index = 0; index < left.size(); ++index)
+            const auto& typedStore = store.get<T>();
+            for (auto it = typedStore.begin(); it != typedStore.end(); ++it)
             {
-                const auto lhs = static_cast<unsigned char>(left[index]);
-                const auto rhs = static_cast<unsigned char>(right[index]);
-                if (std::tolower(lhs) != std::tolower(rhs))
-                    return false;
+                if (it->mEditorId == editorId)
+                    return ESM::RefId::formIdRefId(it->mId);
             }
-            return true;
+            return ESM::RefId();
         }
 
-        double readPositiveVideoCaptureSeconds(const char* variable)
+        MWWorld::ContainerStoreIterator findFalloutInventoryItem(
+            MWWorld::InventoryStore& inventory, const ESM::RefId& id)
         {
-            const char* const text = std::getenv(variable);
-            if (text == nullptr || *text == '\0')
-                return 0.0;
-            char* end = nullptr;
-            const double value = std::strtod(text, &end);
-            return end != text && end != nullptr && *end == '\0' && std::isfinite(value) && value > 0.0 ? value : 0.0;
-        }
-
-        std::chrono::milliseconds readNativeVideoCaptureInterval()
-        {
-            const char* const text = std::getenv("OPENMW_CAPTURE_VIDEO_NATIVE_FRAME_INTERVAL_MS");
-            if (text == nullptr || *text == '\0')
-                return {};
-            char* end = nullptr;
-            const long value = std::strtol(text, &end, 10);
-            if (end == text || end == nullptr || *end != '\0' || value < 50 || value > 1000)
-                return {};
-            return std::chrono::milliseconds(value);
-        }
-
-        bool queueNativeVideoFrame(osgViewer::Viewer& viewer)
-        {
-            for (const osg::ref_ptr<osgGA::EventHandler>& handler : viewer.getEventHandlers())
+            for (MWWorld::ContainerStoreIterator it = inventory.begin(); it != inventory.end(); ++it)
             {
-                if (auto* const capture = dynamic_cast<osgViewer::ScreenCaptureHandler*>(handler.get()))
+                if (it->getCellRef().getRefId() == id)
+                    return it;
+            }
+            return inventory.end();
+        }
+
+        std::string executeFalloutPipBoySelection(int pane, int submenu, int selectedRow)
+        {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return "NO WORLD";
+
+            MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty())
+                return "NO PLAYER";
+
+            MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+            const MWWorld::ESMStore& store = world->getStore();
+            const auto equip = [&](const ESM::RefId& id, int slot, std::string_view label) {
+                MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
+                if (item == inventory.end())
+                    return std::string("MISSING ") + std::string(label);
+                inventory.equip(slot, item);
+                MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                return std::string("EQUIPPED ") + std::string(label);
+            };
+            const auto use = [&](const ESM::RefId& id, std::string_view label) {
+                MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
+                if (item == inventory.end())
+                    return std::string("MISSING ") + std::string(label);
+                std::unique_ptr<MWWorld::Action> action = (*item).getClass().use(*item, false);
+                if (action == nullptr)
+                    return std::string("CANNOT USE ") + std::string(label);
+                action->execute(player);
+                MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                return std::string("USED ") + std::string(label);
+            };
+
+            if (pane == 1)
+            {
+                switch (submenu)
                 {
-                    capture->setFramesToCapture(1);
-                    capture->captureNextFrame(viewer);
-                    return true;
+                    case 0:
+                    {
+                        const ESM::RefId id = findFalloutEditorId<ESM4::Weapon>(
+                            store, selectedRow == 0 ? "WeapNV9mmPistol" : "WeapNVVarmintRifle");
+                        const std::string label = selectedRow == 0 ? "9MM PISTOL" : "VARMINT RIFLE";
+                        const std::string result = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, label);
+                        if (result.starts_with("EQUIPPED"))
+                            player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+                        return result;
+                    }
+                    case 1:
+                    {
+                        const ESM::RefId id = findFalloutEditorId<ESM4::Armor>(
+                            store, selectedRow == 0 ? "VaultSuit21" : "CowboyHat02");
+                        return use(id, selectedRow == 0 ? "VAULT 21 JUMPSUIT" : "COWBOY HAT");
+                    }
+                    case 2:
+                        return use(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"), "STIMPAK");
+                    case 3:
+                        return selectedRow == 0 ? "SELECTED CAPS" : "SELECTED LOCKPICK";
+                    case 4:
+                    default:
+                        return equip(findFalloutEditorId<ESM4::Ammunition>(
+                                         store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm"),
+                            MWWorld::InventoryStore::Slot_Ammunition,
+                            selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND");
                 }
             }
-            return false;
+
+            if (pane == 2)
+                return "SELECTED DATA ENTRY";
+            return "SELECTED";
         }
 
-        bool isConfiguredVideoTarget(std::string_view asset, const char* variable)
+        int getFalloutPipBoySubmenuCount(int pane)
         {
-            const char* const configuredAsset = std::getenv(variable);
-            return configuredAsset != nullptr && *configuredAsset != '\0' && equalNoCase(asset, configuredAsset);
-        }
-
-        bool writeVideoCaptureReadyMarker(std::string_view asset)
-        {
-            const char* const markerPath = std::getenv("OPENMW_CAPTURE_VIDEO_READY_PATH");
-            if (markerPath == nullptr || *markerPath == '\0')
-                return false;
-
-            std::ofstream marker(markerPath, std::ios::trunc);
-            if (!marker)
+            switch (std::clamp(pane, 0, 3))
             {
-                Log(Debug::Warning) << "OpenNV capture: unable to write video-ready marker path=\"" << markerPath
-                                    << "\"";
-                return false;
+                case 0:
+                    return 2; // LOCAL / WORLD
+                case 1:
+                    return 5; // WEAPONS / APPAREL / AID / MISC / AMMO
+                case 2:
+                    return 3; // QUESTS / NOTES / RADIO
+                case 3:
+                default:
+                    return 7; // CND / RAD / EFF / SPECIAL / SKILLS / PERKS / GENERAL
             }
-            marker << "asset=" << asset << '\n';
-            marker.flush();
-            Log(Debug::Info) << "OpenNV capture: video gate ready asset=\"" << asset << "\"";
-            return true;
         }
 
-        void waitForVideoCaptureGate(std::string_view asset)
+        std::string makeFalloutPipBoyTabRow(std::initializer_list<std::string_view> labels, int active)
         {
-            const char* const goPath = std::getenv("OPENMW_CAPTURE_VIDEO_GO_PATH");
-            if (goPath == nullptr || *goPath == '\0')
-                return;
-
-            const double timeout = readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_GATE_TIMEOUT_SECONDS");
-            const auto deadline = std::chrono::steady_clock::now()
-                + std::chrono::milliseconds(static_cast<long long>(std::max(1.0, timeout > 0.0 ? timeout : 30.0) * 1000.0));
-            std::error_code error;
-            while (std::chrono::steady_clock::now() < deadline
-                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            std::ostringstream text;
+            int index = 0;
+            for (const std::string_view label : labels)
             {
-                if (std::filesystem::exists(goPath, error))
+                text << (index == active ? "[" : " ") << label << (index == active ? "]" : " ");
+                if (++index < static_cast<int>(labels.size()))
+                    text << ' ';
+            }
+            return text.str();
+        }
+
+        std::string makeFalloutPipBoyTerminalBody(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
+            float mapPanX, float mapPanY, std::string_view lastAction)
+        {
+            float healthCurrent = 0.f;
+            float healthMaximum = 0.f;
+            float actionCurrent = 0.f;
+            float actionMaximum = 0.f;
+            int pistolCount = 0;
+            int rifleCount = 0;
+            int ammo9mmCount = 0;
+            int ammo556Count = 0;
+            int stimpakCount = 0;
+            int capsCount = 0;
+            int lockpickCount = 0;
+            int vaultSuitCount = 0;
+            int cowboyHatCount = 0;
+
+            if (MWBase::World* const world = MWBase::Environment::get().getWorld())
+            {
+                const MWWorld::Ptr player = world->getPlayerPtr();
+                if (!player.isEmpty())
                 {
-                    Log(Debug::Info) << "OpenNV capture: video gate opened asset=\"" << asset << "\"";
-                    return;
+                    const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+                    healthCurrent = stats.getHealth().getCurrent();
+                    healthMaximum = stats.getHealth().getModified();
+                    actionCurrent = stats.getFatigue().getCurrent();
+                    actionMaximum = stats.getFatigue().getModified();
+
+                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ESMStore& store = world->getStore();
+                    pistolCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNV9mmPistol"));
+                    rifleCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNVVarmintRifle"));
+                    ammo9mmCount = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo9mm"));
+                    ammo556Count = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo556mm"));
+                    stimpakCount = inventory.count(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"));
+                    capsCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Caps001"));
+                    lockpickCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Lockpick"));
+                    vaultSuitCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "VaultSuit21"));
+                    cowboyHatCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "CowboyHat02"));
                 }
-                error.clear();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-            Log(Debug::Warning) << "OpenNV capture: timed out waiting for video gate asset=\"" << asset << "\"";
+
+            const auto asDisplayNumber = [](float value) { return static_cast<int>(std::lround(value)); };
+            std::ostringstream text;
+            pane = std::clamp(pane, 0, 3);
+            submenu = std::clamp(submenu, 0, getFalloutPipBoySubmenuCount(pane) - 1);
+            const int selectedRow = std::max(0, listOffset);
+            const auto writeEntry = [&text, selectedRow](int row, std::string_view label, int quantity) {
+                text << (row == selectedRow ? "> " : "  ") << label;
+                if (quantity >= 0)
+                    text << "  " << quantity;
+                text << '\n';
+            };
+
+            switch (pane)
+            {
+                case 0:
+                    text << (worldMap ? "MOJAVE WASTELAND" : "TESTMAP01 LOCAL MAP") << "\n"
+                         << "ZOOM "
+                         << static_cast<int>(std::lround(mapZoom * 100.f)) << "%\n"
+                         << "PAN " << static_cast<int>(std::lround(mapPanX * 100.f)) << ','
+                         << static_cast<int>(std::lround(mapPanY * 100.f)) << "  [YOU]"
+                         // The physical Fallout layout keeps the DATA sub-tabs
+                         // below the map rather than consuming the map viewport.
+                         << '\f' << makeFalloutPipBoyTabRow({ "LOCAL", "WORLD" }, worldMap ? 1 : 0);
+                    break;
+                case 1:
+                    text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "WEAPONS\n";
+                            writeEntry(0, "9MM PISTOL", pistolCount);
+                            writeEntry(1, "VARMINT RIFLE", rifleCount);
+                            text << "E: EQUIP / UNEQUIP";
+                            break;
+                        case 1:
+                            text << "APPAREL\n";
+                            writeEntry(0, "VAULT 21 JUMPSUIT", vaultSuitCount);
+                            writeEntry(1, "COWBOY HAT", cowboyHatCount);
+                            break;
+                        case 2:
+                            text << "AID\n";
+                            writeEntry(0, "STIMPAK", stimpakCount);
+                            text << "E: USE";
+                            break;
+                        case 3:
+                            text << "MISC\n";
+                            writeEntry(0, "CAPS", capsCount);
+                            writeEntry(1, "LOCKPICK", lockpickCount);
+                            break;
+                        case 4:
+                        default:
+                            text << "AMMO\n";
+                            writeEntry(0, "9MM ROUND", ammo9mmCount);
+                            writeEntry(1, "5.56 ROUND", ammo556Count);
+                            break;
+                    }
+                    break;
+                case 2:
+                    text << makeFalloutPipBoyTabRow({ "QUESTS", "NOTES", "RADIO" }, submenu) << "\n\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "QUESTS\n";
+                            writeEntry(0, "AIN'T THAT A KICK", -1);
+                            writeEntry(1, "TESTMAP01 CHECK", -1);
+                            text << "W/S SCROLL  E SELECT";
+                            break;
+                        case 1:
+                            text << "NOTES\n";
+                            writeEntry(0, "PIP-BOY ONLINE", -1);
+                            writeEntry(1, "FALLOUTNV.ESM ONLINE", -1);
+                            break;
+                        case 2:
+                        default:
+                            text << "RADIO\n";
+                            writeEntry(0, "NO SIGNAL", -1);
+                            break;
+                    }
+                    break;
+                case 3:
+                default:
+                    text << makeFalloutPipBoyTabRow({ "CND", "RAD", "EFF", "SPECIAL", "SKILLS", "PERKS", "GENERAL" }, submenu)
+                         << "\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "LIMBS  RAD  EFF\n"
+                                 << "HP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
+                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum)
+                                 << "  RAD 000";
+                            break;
+                        case 1:
+                            text << "RADIATION\n\nRADS 000\nRESISTANCE 0%";
+                            break;
+                        case 2:
+                            text << "EFFECTS\n\nNO ACTIVE EFFECTS";
+                            break;
+                        case 3:
+                            text << "S.P.E.C.I.A.L.\n\nOPENMW FALLOUT PLAYER";
+                            break;
+                        case 4:
+                            text << "SKILLS\n\nSELECT A SKILL";
+                            break;
+                        case 5:
+                            text << "PERKS\n\nNO PERK DATA";
+                            break;
+                        case 6:
+                        default:
+                            text << "GENERAL\n\nHP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
+                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum);
+                            break;
+                    }
+                    break;
+            }
+            if ((pane == 1 || pane == 2) && !lastAction.empty())
+                text << "\n" << lastAction;
+            return text.str();
         }
 
-        constexpr bool isVr = false;
+        std::string makeFalloutPipBoyTerminalHeader(int pane)
+        {
+            // The device shell already carries the PIP-BOY 3000 branding.  The
+            // retail screen uses the active physical-button family as its title.
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                case 2:
+                    return "DATA";
+                case 1:
+                    return "ITEMS";
+                case 3:
+                default:
+                    return "STATS";
+            }
+        }
 
         void setWindowCoord(WindowBase* window, const MyGUI::IntCoord& coord)
         {
@@ -300,13 +529,14 @@ namespace MWGui
                 return;
 
             guiWindow->setCoord(coord);
+            window->onWindowResize(guiWindow);
         }
     }
 
     WindowManager::WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
         Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue, const std::filesystem::path& logpath,
         bool consoleOnlyScripts, Translation::Storage& translationDataStorage, ToUTF8::FromType encoding,
-        bool exportFonts, const std::string& versionDescription, Files::ConfigurationManager& cfgMgr)
+        bool exportFonts, const std::string& versionDescription, bool useShaders, Files::ConfigurationManager& cfgMgr)
         : mOldUpdateMask(0)
         , mOldCullMask(0)
         , mStore(nullptr)
@@ -333,8 +563,6 @@ namespace MWGui
         , mWaitDialog(nullptr)
         , mVideoBackground(nullptr)
         , mVideoWidget(nullptr)
-        , mVideoPlaying(false)
-        , mVideoSkippable(false)
         , mWerewolfFader(nullptr)
         , mBlindnessFader(nullptr)
         , mHitFader(nullptr)
@@ -348,7 +576,7 @@ namespace MWGui
         , mTranslationDataStorage(translationDataStorage)
         , mInputBlocker(nullptr)
         , mHudEnabled(true)
-        , mGameplayOverlaySuppressed(false)
+        , mLegacyHudSuppressed(false)
         , mCursorVisible(true)
         , mCursorActive(true)
         , mPlayerBounty(-1)
@@ -362,6 +590,11 @@ namespace MWGui
         , mVersionDescription(versionDescription)
         , mWindowVisible(true)
         , mCfgMgr(cfgMgr)
+//## VR_PATCH BEGIN
+        , mVrMetaMenu(nullptr)
+        , mVirtualKeyboardManager(nullptr)
+        , mVideoEnabled(false)
+//## VR_PATCH END
     {
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
@@ -369,9 +602,21 @@ namespace MWGui
         SDL_GL_GetDrawableSize(window, &dw, &dh);
 
         mScalingFactor = Settings::gui().mScalingFactor * (dw / w);
-        constexpr VFS::Path::NormalizedView resourcePath("mygui");
         mGuiPlatform = std::make_unique<MyGUIPlatform::Platform>(viewer, guiRoot, resourceSystem->getImageManager(),
-            resourceSystem->getVFS(), mScalingFactor, resourcePath, logpath / "MyGUI.log");
+            resourceSystem->getVFS(), mScalingFactor, "mygui", logpath / "MyGUI.log");
+//## VR_PATCH BEGIN
+// Force GUI window to be 1024x1024
+        if(VR::getVR())
+            mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
+//## VR_PATCH END
+
+        const VFS::Manager* vfs = resourceSystem->getVFS();
+        const bool useFnvMissingGuiFallback = !VR::getVR()
+            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
+        if (useFnvMissingGuiFallback)
+            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -411,7 +656,17 @@ namespace MWGui
             "Resource", "ResourceImageSetPointer");
         MyGUI::FactoryManager::getInstance().registerFactory<AutoSizedResourceSkin>(
             "Resource", "AutoSizedResourceSkin");
-        MyGUI::ResourceManager::getInstance().load("core.xml");
+//## VR_PATCH BEGIN
+        if (VR::getVR())
+        {
+            MWVR::VRGUIManager::registerMyGUIFactories();
+            MyGUI::ResourceManager::getInstance().load("core_vr.xml");
+        }
+        else
+        {
+            MyGUI::ResourceManager::getInstance().load("core.xml");
+        }
+//## VR_PATCH END
 
         const bool keyboardNav = Settings::gui().mKeyboardNavigation;
         mKeyboardNavigation = std::make_unique<KeyboardNavigation>();
@@ -446,7 +701,11 @@ namespace MWGui
         mVideoBackground->setNeedMouseFocus(true);
         mVideoBackground->setNeedKeyFocus(true);
 
-        mVideoWidget = mVideoBackground->createWidgetReal<VideoWidget>("ImageBox", 0, 0, 1, 1, MyGUI::Align::Default);
+//## VR_PATCH BEGIN
+// Assign video widget to the InputBlocker layer
+        mVideoWidget = mVideoBackground->createWidgetReal<VideoWidget>(
+            "ImageBox", 0, 0, 1, 1, MyGUI::Align::Default, "InputBlocker");
+//## VR_PATCH END
         mVideoWidget->setNeedMouseFocus(true);
         mVideoWidget->setNeedKeyFocus(true);
         mVideoWidget->setVFS(resourceSystem->getVFS());
@@ -460,10 +719,14 @@ namespace MWGui
         MyGUI::ClipboardManager::getInstance().eventClipboardRequested
             += MyGUI::newDelegate(this, &WindowManager::onClipboardRequested);
 
+//## VR_PATCH BEGIN
+// SDL should not manage gamma in VR. This must be done via shaders.
         mVideoWrapper = std::make_unique<SDLUtil::VideoWrapper>(window, viewer);
+//## VR_PATCH END
         mVideoWrapper->setGammaContrast(Settings::video().mGamma, Settings::video().mContrast);
 
-        mGuiPlatform->getRenderManagerPtr()->enableShaders(mResourceSystem->getSceneManager()->getShaderManager());
+        if (useShaders)
+            mGuiPlatform->getRenderManagerPtr()->enableShaders(mResourceSystem->getSceneManager()->getShaderManager());
 
         mStatsWatcher = std::make_unique<StatsWatcher>();
     }
@@ -482,6 +745,11 @@ namespace MWGui
         auto recharge = std::make_unique<Recharge>();
         mGuiModeStates[GM_Recharge] = GuiModeState(recharge.get());
         mWindows.push_back(std::move(recharge));
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+            mVirtualKeyboardManager = new MWVR::VirtualKeyboardManager;
+
+//## VR_PATCH END
 
         auto menu = std::make_unique<MainMenu>(w, h, mResourceSystem->getVFS(), mVersionDescription);
         mGuiModeStates[GM_MainMenu] = GuiModeState(menu.get());
@@ -685,7 +953,7 @@ namespace MWGui
         if (!mResourceSystem->getVFS()->exists(hitFaderTexture))
         {
             hitFaderTexture = "textures\\player_hit_01.dds";
-            hitFaderCoord = MyGUI::FloatCoord(0.2f, 0.25f, 0.6f, 0.5f);
+            hitFaderCoord = MyGUI::FloatCoord(0.2, 0.25, 0.6, 0.5);
         }
         auto hitFader = std::make_unique<ScreenFader>(hitFaderTexture, hitFaderLayout, hitFaderCoord);
         Log(Debug::Info) << "FNV/ESM4 UI init: hit fader constructed";
@@ -725,11 +993,45 @@ namespace MWGui
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
+        // The physical Pip-Boy gets its own transparent screen layer.  It is
+        // rendered to the authentic PipBoyArm screen texture, not to the flat
+        // desktop UI, so every glyph follows the device as it moves in 3D.
+        mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
+            {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
+        mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
+        mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
+            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
+        mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
+        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
+        mFalloutPipBoyTerminalHeader->setFontHeight(48);
+        mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
+            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
+        mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
+        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
+        mFalloutPipBoyTerminalBody->setFontHeight(42);
+        mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalRoot->setVisible(false);
+        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+
         mHud->setVisible(true);
 
         mCharGen = std::make_unique<CharacterCreation>(mViewer->getSceneData()->asGroup(), mResourceSystem);
         Log(Debug::Info) << "FNV/ESM4 UI init: character creation constructed";
 
+//## VR_PATCH BEGIN
+        auto vrMetaMenu = std::make_unique<MWVR::VrMetaMenu>(w, h);
+        mVrMetaMenu = vrMetaMenu.get();
+        mWindows.emplace_back(std::move(vrMetaMenu));
+        mGuiModeStates[GM_VrMetaMenu] = GuiModeState(mVrMetaMenu);
+
+        auto radialMenu = std::make_unique<MWVR::RadialMenu>(w, h, mQuickKeysMenu);
+        mRadialMenu = radialMenu.get();
+        mWindows.emplace_back(std::move(radialMenu));
+        mGuiModeStates[GM_RadialMenu] = GuiModeState(mRadialMenu);
+//## VR_PATCH END
+        Log(Debug::Info) << "FNV/ESM4 UI init: update pinned begin";
         updatePinnedWindows();
         Log(Debug::Info) << "FNV/ESM4 UI init: update pinned complete";
 
@@ -772,6 +1074,8 @@ namespace MWGui
     {
         try
         {
+            if (VR::getVR())
+                MWVR::VRGUIManager::instance().clearLua();
             LuaUi::clearGameInterface();
             LuaUi::clearMenuInterface();
 
@@ -817,19 +1121,38 @@ namespace MWGui
 
     void WindowManager::enableScene(bool enable)
     {
-        unsigned int disablemask = MWRender::Mask_GUI | MWRender::Mask_PreCompile;
-        if (!enable && getCullMask() != disablemask)
+//## VR_PATCH BEGIN
+// VR has a different set of masks to enable/disable.
+// And needs to ensure the clear color is turned to black to create a proper void, when the scene is disabled.
+
+        unsigned int disableCullMask = MWRender::Mask_GUI | MWRender::Mask_PreCompile;
+        unsigned int disableUpdateMask = disableCullMask;
+        osg::Vec4 disableClearColor = osg::Vec4(0, 0, 0, 1);
+
+        if (VR::getVR())
+        {
+            disableCullMask = MWRender::Mask_Pointer | MWRender::Mask_3DGUI | MWRender::Mask_PreCompile
+                | MWRender::Mask_RenderToTexture | MWRender::Mask_3DGUI_NonIntersectable;
+            // GUI must still be updated.
+            disableUpdateMask = disableCullMask | MWRender::Mask_GUI;
+        }
+
+        if (!enable && getCullMask() != disableCullMask)
         {
             mOldUpdateMask = mViewer->getUpdateVisitor()->getTraversalMask();
             mOldCullMask = getCullMask();
-            mViewer->getUpdateVisitor()->setTraversalMask(disablemask);
-            setCullMask(disablemask);
+            mOldClearColor = mViewer->getCamera()->getClearColor();
+            mViewer->getUpdateVisitor()->setTraversalMask(disableUpdateMask);
+            mViewer->getCamera()->setClearColor(disableClearColor);
+            setCullMask(disableCullMask);
         }
-        else if (enable && getCullMask() == disablemask)
+        else if (enable && getCullMask() == disableCullMask)
         {
             mViewer->getUpdateVisitor()->setTraversalMask(mOldUpdateMask);
+            mViewer->getCamera()->setClearColor(mOldClearColor);
             setCullMask(mOldCullMask);
         }
+//## VR_PATCH END
     }
 
     void WindowManager::updateConsoleObjectPtr(const MWWorld::Ptr& currentPtr, const MWWorld::Ptr& newPtr)
@@ -844,14 +1167,16 @@ namespace MWGui
         bool mainmenucover = containsMode(GM_MainMenu)
             && MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
 
-        enableScene(!loading && !mainmenucover);
+//## VR_PATCH BEGIN
+// Don't enable the scene while in the void
+        enableScene(!loading && !mainmenucover && !mTheVoid);
+//## VR_PATCH END
 
         if (!mMap)
             return; // UI not created yet
 
-        const bool gameplayOverlayVisible = mHudEnabled && !loading && !mGameplayOverlaySuppressed;
-        mHud->setVisible(gameplayOverlayVisible);
-        mToolTips->setVisible(gameplayOverlayVisible);
+        mHud->setVisible(mHudEnabled && !loading && !mLegacyHudSuppressed);
+        mToolTips->setVisible(mHudEnabled && !loading);
 
         bool gameMode = !isGuiMode();
 
@@ -927,7 +1252,7 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
-            const bool flatPaperDollProfiler = falloutContent
+            const bool flatPaperDollProfiler = falloutContent && !VR::getVR()
                 && std::getenv("OPENMW_FNV_PAPER_DOLL_PROFILER") != nullptr;
             if (flatPaperDollProfiler)
             {
@@ -940,21 +1265,13 @@ namespace MWGui
                     loggedPaperDollProfiler = true;
                 }
             }
-            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            else if (falloutContent && mFalloutPipBoyPhysical && !VR::getVR())
             {
-                const int activeIndex = std::clamp(static_cast<int>(mActiveControllerWindows[GM_Inventory]), 0, 3);
+                const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
                 constexpr int falloutPaneMasks[4] = { GW_Map, GW_Inventory, GW_Magic, GW_Stats };
                 eff = falloutPaneMasks[activeIndex];
-                static bool loggedPipBoySurface = false;
-                if (!loggedPipBoySurface)
-                {
-                    Log(Debug::Info)
-                        << "FNV/ESM4 proof: Fallout inventory mode shows only the selected retail pane";
-                    loggedPipBoySurface = true;
-                }
-                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
-                                 << activeIndex << " visibleMask=0x"
-                                 << std::hex << eff << std::dec;
+                Log(Debug::Verbose) << "FNV Pip-Boy physical: activePane=" << activeIndex
+                                    << " visibleMask=0x" << std::hex << eff << std::dec;
             }
             auto setWindowVisibleIfChanged = [](WindowBase* window, bool visible) {
                 if (window != nullptr && window->isVisible() != visible)
@@ -974,103 +1291,10 @@ namespace MWGui
                 Log(Debug::Info) << "FNV/ESM4 proof: flat paper doll profiler fullscreen rect=0,0,"
                                  << viewSize.width << "," << viewSize.height;
             }
-            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
-            {
-                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
-                const int margin = 24;
-                const int top = isVr ? std::min(std::max(88, viewSize.height / 8), 128) : 52;
-                const int bottom = isVr ? 36 : 16;
-                const int gap = 8;
-                const int activeIndex = std::clamp(static_cast<int>(mActiveControllerWindows[GM_Inventory]), 0, 3);
-                const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
-                const int availableWidth = viewSize.width - margin * 2;
-                const int availableHeight = viewSize.height - top - bottom;
-                const int activeWidth = std::max(640, availableWidth);
-                const int activeHeight = std::max(360, availableHeight);
-                int loggedActiveWidth = activeWidth;
-                int loggedActiveHeight = activeHeight;
-                int loggedActiveLeft = margin;
-                int loggedActiveTop = top;
-                const int shelfLeft = viewSize.width - margin - shelfWidth;
-                const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
-
-                WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
-                if (isVr)
-                {
-                    const int mapActiveWidth = std::clamp(availableWidth, 860, 1080);
-                    const int mapActiveHeight = std::clamp(availableHeight, 520, 680);
-                    const int inactiveWidth = std::clamp(activeWidth / 2, 320, 440);
-                    const int inactiveHeight = std::clamp(activeHeight / 2, 240, 340);
-                    const int inactiveLeft = margin + std::max(0, (std::max(activeWidth, mapActiveWidth) - inactiveWidth) / 2);
-                    const int inactiveTop = top + std::max(0, (std::max(activeHeight, mapActiveHeight) - inactiveHeight) / 2);
-
-                    for (int i = 0; i < 4; ++i)
-                    {
-                        if (i == activeIndex)
-                        {
-                            const int paneWidth = i == 0 ? mapActiveWidth : activeWidth;
-                            const int paneHeight = i == 0 ? mapActiveHeight : activeHeight;
-                            const int paneLeft = std::max(margin, (viewSize.width - paneWidth) / 2);
-                            const int paneTop = std::max(top, (viewSize.height - paneHeight) / 2);
-                            loggedActiveLeft = paneLeft;
-                            loggedActiveTop = paneTop;
-                            loggedActiveWidth = paneWidth;
-                            loggedActiveHeight = paneHeight;
-                            setWindowCoord(windows[i], MyGUI::IntCoord(paneLeft, paneTop, paneWidth, paneHeight));
-                        }
-                        else
-                            setWindowCoord(
-                                windows[i], MyGUI::IntCoord(inactiveLeft, inactiveTop, inactiveWidth, inactiveHeight));
-                    }
-                }
-                else
-                {
-                    int shelfSlot = 0;
-                    for (int i = 0; i < 4; ++i)
-                    {
-                        if (i == activeIndex)
-                        {
-                            const int paneWidth = i == 0 ? std::max(activeWidth, 920) : activeWidth;
-                            const int paneHeight = i == 0 ? std::max(activeHeight, 560) : activeHeight;
-                            loggedActiveWidth = paneWidth;
-                            loggedActiveHeight = paneHeight;
-                            setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
-                            continue;
-                        }
-
-                        const int shelfTop = top + shelfSlot * (shelfHeight + gap);
-                        setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
-                        ++shelfSlot;
-                    }
-                }
-
-                if (activeIndex == 0 && mMap != nullptr)
-                    mMap->fitFalloutWorldMapOnce();
-
-                if (WindowBase* activeWindow = windows[activeIndex])
-                {
-                    if (activeWindow->mMainWidget != nullptr)
-                        MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                }
-                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out active="
-                                 << activeIndex << " activeRect=" << loggedActiveLeft << "," << loggedActiveTop
-                                 << "," << loggedActiveWidth << "," << loggedActiveHeight << " vrFullPanels="
-                                 << isVr
-                                 << " shelfWidth=" << shelfWidth;
-            }
         }
 
         updateControllerButtonsOverlay();
-        if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr) && getMode() == GM_Inventory
-            && mInventoryTabsOverlay != nullptr)
-        {
-            mInventoryTabsOverlay->setVisible(true);
-            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
-            if (mInventoryTabsOverlay->mMainWidget != nullptr)
-                MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
-        }
-        else if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
-            && getMode() == GM_Inventory && isVr && mInventoryTabsOverlay != nullptr)
+        if (falloutContent && getMode() == GM_Inventory && mInventoryTabsOverlay != nullptr)
             mInventoryTabsOverlay->setVisible(false);
 
         switch (mode)
@@ -1128,6 +1352,10 @@ namespace MWGui
             }
         }
 
+//## VR_PATCH BEGIN
+        mVideoEnabled = false;
+
+//## VR_PATCH END
         popGuiMode();
     }
 
@@ -1135,7 +1363,6 @@ namespace MWGui
         std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus)
     {
         mMessageBoxManager->createInteractiveMessageBox(message, buttons, block, defaultFocus);
-        mAuthoredDefaultChoiceDelay = authoredDefaultChoiceDelaySeconds().value_or(-1.f);
         updateVisible();
 
         if (block)
@@ -1145,8 +1372,8 @@ namespace MWGui
             while (mMessageBoxManager->readPressedButton(false) == -1
                 && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
             {
-                const float dt
-                    = std::chrono::duration_cast<std::chrono::duration<float>>(frameRateLimiter.getLastFrameDuration())
+                const double dt
+                    = std::chrono::duration_cast<std::chrono::duration<double>>(frameRateLimiter.getLastFrameDuration())
                           .count();
 
                 mKeyboardNavigation->onFrame();
@@ -1156,11 +1383,9 @@ namespace MWGui
                 if (!mWindowVisible)
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 else
-                {
-                    mViewer->eventTraversal();
-                    mViewer->updateTraversal();
-                    mViewer->renderingTraversals();
-                }
+//## VR_PATCH BEGIN
+                    viewerTraversals();
+//## VR_PATCH END
                 // at the time this function is called we are in the middle of a frame,
                 // so out of order calls are necessary to get a correct frameNumber for the next frame.
                 // refer to the advance() and frame() order in Engine::go()
@@ -1175,19 +1400,6 @@ namespace MWGui
 
     void WindowManager::messageBox(std::string_view message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
-        // An authored cinematic or character-generation sequence may deliberately
-        // own the screen. Quest-stage notifications are delivered through this
-        // path on a later frame, so merely hiding the MessageBoxManager at the
-        // moment the sequence begins is not enough: a queued notification can
-        // otherwise re-create a visible HUD element during the presentation.
-        // Keep interactive character-generation dialogs on their dedicated path;
-        // this applies only to passive gameplay notifications.
-        if (mGameplayOverlaySuppressed)
-        {
-            Log(Debug::Info) << "OpenNV UI: suppressed passive message while authored gameplay overlay is hidden";
-            return;
-        }
-
         if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
             Log(Debug::Info) << "FNV interaction audit: rendered notification text=\"" << message << "\"";
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
@@ -1203,12 +1415,6 @@ namespace MWGui
 
     void WindowManager::scheduleMessageBox(std::string message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
-        if (mGameplayOverlaySuppressed)
-        {
-            Log(Debug::Info) << "OpenNV UI: suppressed scheduled passive message while authored gameplay overlay is hidden";
-            return;
-        }
-
         mScheduledMessageBoxes.lock()->emplace_back(std::move(message), showInDialogueMode);
     }
 
@@ -1251,6 +1457,8 @@ namespace MWGui
         int x, y;
         float u, v;
         mLocalMapRender->updatePlayer(playerPosition, playerOrientation, u, v, x, y, playerdirection);
+        mFalloutPipBoyLocalMapX = x;
+        mFalloutPipBoyLocalMapY = y;
 
         if (!player.getCell()->isExterior())
         {
@@ -1279,10 +1487,11 @@ namespace MWGui
         {
             GuiMode mode = mGuiModes.back();
             GuiModeState& state = mGuiModeStates[mode];
-            if (state.mWindows.empty())
+            if (state.mWindows.size() == 0)
                 return nullptr;
 
-            size_t activeIndex = std::clamp<size_t>(mActiveControllerWindows[mode], 0, state.mWindows.size() - 1);
+            int activeIndex
+                = std::clamp(mActiveControllerWindows[mode], 0, static_cast<int>(state.mWindows.size()) - 1);
 
             // If the active window is no longer visible, find the next visible window.
             if (!state.mWindows[activeIndex]->isVisible())
@@ -1300,22 +1509,22 @@ namespace MWGui
             return;
 
         GuiMode mode = mGuiModes.back();
-        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
-        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
         int winCount = mGuiModeStates[mode].mWindows.size();
 
-        size_t activeIndex = 0;
+        int activeIndex = 0;
         if (winCount > 1)
         {
             // Find next/previous visible window
             activeIndex = mActiveControllerWindows[mode];
             int delta = next ? 1 : -1;
 
-            for (size_t i = 0; i < winCount; ++i)
+            for (int i = 0; i < winCount; i++)
             {
-                activeIndex = wrap(activeIndex, winCount, delta);
+                activeIndex = wrap(activeIndex + delta, winCount);
                 if (mGuiModeStates[mode].mWindows[activeIndex]->isVisible())
                     break;
             }
@@ -1331,9 +1540,9 @@ namespace MWGui
             return;
 
         const GuiMode mode = mGuiModes.back();
-        size_t winCount = mGuiModeStates[mode].mWindows.size();
+        int winCount = mGuiModeStates[mode].mWindows.size();
 
-        for (size_t i = 0; i < winCount; i++)
+        for (int i = 0; i < winCount; i++)
         {
             // Set active window last so inactive windows don't stomp on changes it makes, e.g. to tooltips.
             if (i != mActiveControllerWindows[mode])
@@ -1343,20 +1552,20 @@ namespace MWGui
             mGuiModeStates[mode].mWindows[mActiveControllerWindows[mode]]->setActiveControllerWindow(true);
     }
 
-    void WindowManager::setActiveControllerWindow(GuiMode mode, size_t activeIndex)
+    void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
     {
-        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
-        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
-        size_t winCount = mGuiModeStates[mode].mWindows.size();
+        int winCount = mGuiModeStates[mode].mWindows.size();
         if (winCount == 0)
             return;
 
-        activeIndex = std::clamp<size_t>(activeIndex, 0, winCount - 1);
+        activeIndex = std::clamp(activeIndex, 0, winCount - 1);
         mActiveControllerWindows[mode] = activeIndex;
 
-        if (falloutInventoryTabs && !Settings::gui().mControllerMenus)
+        if (falloutPipBoyPhysical && !Settings::gui().mControllerMenus)
         {
             updateVisible();
             for (int i = 0; i < winCount; ++i)
@@ -1369,21 +1578,13 @@ namespace MWGui
                 activeWindow->setActiveControllerWindow(true);
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                Log(Debug::Info) << "FNV/ESM4 proof: Pip-Boy input activated pane index=" << activeIndex
-                                 << " gamepadCursorAllowed=" << activeWindow->isGamepadCursorAllowed();
+                Log(Debug::Verbose) << "FNV Pip-Boy physical: raisedPane=" << activeIndex;
             }
             MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
                 mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());
             updateControllerButtonsOverlay();
             setCursorActive(false);
             if (mInventoryTabsOverlay != nullptr)
-            {
-                mInventoryTabsOverlay->setVisible(true);
-                mInventoryTabsOverlay->setTab(activeIndex);
-                if (mInventoryTabsOverlay->mMainWidget != nullptr)
-                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
-            }
-            else if (mInventoryTabsOverlay != nullptr)
                 mInventoryTabsOverlay->setVisible(false);
 
             if (winCount > 1)
@@ -1397,10 +1598,6 @@ namespace MWGui
         MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
             mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());
 
-        WindowBase* activeWindow = mGuiModeStates[mode].mWindows[activeIndex];
-        if (activeWindow->isVisible())
-            MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-
         updateControllerButtonsOverlay();
         setCursorActive(false);
 
@@ -1408,38 +1605,223 @@ namespace MWGui
             playSound(ESM::RefId::stringRefId("Menu Size"));
     }
 
-    void WindowManager::update(float frameDuration)
+    void WindowManager::setFalloutPipBoyPresentation(bool physical)
     {
-        if (mPostVideoNativeCaptureRemaining > 0.f)
+        if (!isFalloutContentLoaded() || mFalloutPipBoyPhysical == physical)
+            return;
+
+        mFalloutPipBoyPhysical = physical;
+        if (physical)
+            mFalloutPipBoyInteractionPulse = 1.f;
+        Log(Debug::Info) << "FNV Pip-Boy presentation: mode=" << (physical ? "physical" : "analog")
+                         << " activePane=" << getFalloutPipBoyActivePane();
+        updateVisible();
+        updateFalloutPipBoyTerminalSurface();
+    }
+
+    int WindowManager::getFalloutPipBoyActivePane() const
+    {
+        const auto found = mActiveControllerWindows.find(GM_Inventory);
+        return found == mActiveControllerWindows.end() ? 3 : std::clamp(found->second, 0, 3);
+    }
+
+    bool WindowManager::handleFalloutPipBoyAction(int action)
+    {
+        if (!isFalloutContentLoaded() || !mFalloutPipBoyPhysical || !containsMode(GM_Inventory))
+            return false;
+
+        int pane = getFalloutPipBoyActivePane();
+        bool changed = false;
+        bool handled = true;
+        const auto changePane = [this, &changed](int value) {
+            setActiveControllerWindow(GM_Inventory, value);
+            mFalloutPipBoySubmenu = 0;
+            mFalloutPipBoyListOffset = 0;
+            changed = true;
+        };
+        const auto changeList = [this, pane, &changed](int delta) {
+            static constexpr std::array<int, 5> itemRows = { 2, 2, 1, 2, 2 };
+            static constexpr std::array<int, 3> dataRows = { 2, 2, 1 };
+            const int submenuCount = getFalloutPipBoySubmenuCount(pane);
+            mFalloutPipBoySubmenu = std::clamp(mFalloutPipBoySubmenu, 0, submenuCount - 1);
+            int rowCount = 1;
+            if (pane == 1)
+                rowCount = itemRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(itemRows.size()) - 1)];
+            else if (pane == 2)
+                rowCount = dataRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(dataRows.size()) - 1)];
+            mFalloutPipBoyListOffset = std::clamp(mFalloutPipBoyListOffset + delta, 0, rowCount - 1);
+            changed = true;
+        };
+
+        switch (action)
         {
-            // This is a capture-only wall-clock interval.  Game time may be
-            // paused by the authored name/message dialogs in the opening; if
-            // the capture used frameDuration here, it could never reach its
-            // documented completion marker while the proof was exercising
-            // exactly those UI callbacks.
-            const auto now = std::chrono::steady_clock::now();
-            float elapsed = std::chrono::duration<float>(now - mPostVideoNativeCaptureLastUpdate).count();
-            mPostVideoNativeCaptureLastUpdate = now;
-            elapsed = std::max(0.f, elapsed);
-            if (mViewer != nullptr)
-            {
-                mPostVideoNativeCaptureRemaining -= elapsed;
-                mPostVideoNativeCaptureUntilNextFrame -= elapsed;
-                if (mPostVideoNativeCaptureUntilNextFrame <= 0.f)
+            case MWInput::A_QuickKey1:
+                changePane(3); // STATUS
+                break;
+            case MWInput::A_QuickKey2:
+                changePane(1); // ITEMS
+                break;
+            case MWInput::A_QuickKey3:
+                changePane(2); // DATA
+                break;
+            case MWInput::A_QuickKey4:
+                changePane(0); // MAP
+                break;
+            case MWInput::A_Map:
+            case MWInput::A_Activate:
+            case MWInput::A_Use:
+                if (pane == 0)
                 {
-                    queueNativeVideoFrame(*mViewer);
-                    mPostVideoNativeCaptureUntilNextFrame = mPostVideoNativeCaptureInterval;
+                    mFalloutPipBoyWorldMap = !mFalloutPipBoyWorldMap;
+                    mFalloutPipBoySubmenu = mFalloutPipBoyWorldMap ? 1 : 0;
+                    mFalloutPipBoyMapZoom = 1.f;
+                    mFalloutPipBoyMapPanX = 0.f;
+                    mFalloutPipBoyMapPanY = 0.f;
+                    changed = true;
                 }
-                if (mPostVideoNativeCaptureRemaining <= 0.f)
+                else if (action == MWInput::A_Activate || action == MWInput::A_Use)
                 {
-                    Log(Debug::Info) << "OpenNV capture: post-video native scene frames complete";
-                    mPostVideoNativeCaptureRemaining = 0.f;
-                    mPostVideoNativeCaptureUntilNextFrame = -1.f;
+                    // This is the device-side action boundary: physical list
+                    // selection changes the actual player inventory/equipment,
+                    // rather than merely moving a marker on the terminal.
+                    mFalloutPipBoyLastAction
+                        = executeFalloutPipBoySelection(pane, mFalloutPipBoySubmenu, mFalloutPipBoyListOffset);
+                    changed = true;
                 }
-            }
+                else
+                    handled = false;
+                break;
+            case MWInput::A_MoveLeft:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanX = std::clamp(mFalloutPipBoyMapPanX - 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                {
+                    const int count = getFalloutPipBoySubmenuCount(pane);
+                    mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + count - 1) % count;
+                    mFalloutPipBoyListOffset = 0;
+                    changed = true;
+                }
+                break;
+            case MWInput::A_MoveRight:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanX = std::clamp(mFalloutPipBoyMapPanX + 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                {
+                    const int count = getFalloutPipBoySubmenuCount(pane);
+                    mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + 1) % count;
+                    mFalloutPipBoyListOffset = 0;
+                    changed = true;
+                }
+                break;
+            case MWInput::A_MoveForward:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanY = std::clamp(mFalloutPipBoyMapPanY - 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                    changeList(-1);
+                break;
+            case MWInput::A_MoveBackward:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanY = std::clamp(mFalloutPipBoyMapPanY + 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                    changeList(1);
+                break;
+            case MWInput::A_ZoomIn:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapZoom = std::clamp(mFalloutPipBoyMapZoom * 1.25f, 1.f, 3.f);
+                    changed = true;
+                }
+                else
+                    changeList(-1);
+                break;
+            case MWInput::A_ZoomOut:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapZoom = std::clamp(mFalloutPipBoyMapZoom / 1.25f, 1.f, 3.f);
+                    changed = true;
+                }
+                else
+                    changeList(1);
+                break;
+            default:
+                handled = false;
+                break;
         }
 
+        if (!handled)
+            return false;
+
+        if (changed)
+        {
+            // Keep the press visible long enough for the first-person right
+            // hand to reach the real Pip-Boy button and return.
+            mFalloutPipBoyInteractionPulse = 1.f;
+            updateFalloutPipBoyTerminalSurface();
+            Log(Debug::Info) << "FNV Pip-Boy interaction: pane=" << getFalloutPipBoyActivePane()
+                             << " submenu=" << mFalloutPipBoySubmenu << " listOffset=" << mFalloutPipBoyListOffset
+                             << " worldMap=" << mFalloutPipBoyWorldMap << " zoom=" << mFalloutPipBoyMapZoom
+                             << " pan=" << mFalloutPipBoyMapPanX << ',' << mFalloutPipBoyMapPanY;
+        }
+        return true;
+    }
+
+    osg::Texture2D* WindowManager::getFalloutPipBoyLocalMapTexture()
+    {
+        if (mLocalMapRender == nullptr)
+            return nullptr;
+        return mLocalMapRender->getMapTexture(mFalloutPipBoyLocalMapX, mFalloutPipBoyLocalMapY).get();
+    }
+
+    std::string WindowManager::getFalloutPipBoyTerminalHeader() const
+    {
+        return makeFalloutPipBoyTerminalHeader(getFalloutPipBoyActivePane());
+    }
+
+    std::string WindowManager::getFalloutPipBoyTerminalBody() const
+    {
+        return makeFalloutPipBoyTerminalBody(getFalloutPipBoyActivePane(), mFalloutPipBoySubmenu,
+            mFalloutPipBoyListOffset, mFalloutPipBoyWorldMap, mFalloutPipBoyMapZoom, mFalloutPipBoyMapPanX,
+            mFalloutPipBoyMapPanY, mFalloutPipBoyLastAction);
+    }
+
+    void WindowManager::updateFalloutPipBoyTerminalSurface()
+    {
+        if (mFalloutPipBoyTerminalRoot == nullptr || mFalloutPipBoyTerminalHeader == nullptr
+            || mFalloutPipBoyTerminalBody == nullptr)
+            return;
+
+        const bool visible = !VR::getVR() && mFalloutPipBoyPhysical && containsMode(GM_Inventory);
+        mFalloutPipBoyTerminalRoot->setVisible(visible);
+        if (!visible)
+            return;
+
+        mFalloutPipBoyTerminalHeader->setCaption(getFalloutPipBoyTerminalHeader());
+        mFalloutPipBoyTerminalBody->setCaption(getFalloutPipBoyTerminalBody());
+    }
+
+    void WindowManager::update(float frameDuration)
+    {
         handleScheduledMessageBoxes();
+        updateFalloutDialogueCamera();
+        // A physical press needs time to read: approach, contact, and return.
+        // The old 0.8-second envelope was shorter than the showcase's next
+        // action, so the real off-hand was continuously reset and visibly
+        // flapped.  Keep each device-local press a single deliberate motion.
+        mFalloutPipBoyInteractionPulse = std::max(0.f, mFalloutPipBoyInteractionPulse
+                - std::max(0.f, frameDuration) * 0.55f);
+        updateFalloutPipBoyTerminalSurface();
 
         bool gameRunning
             = MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame;
@@ -1486,24 +1868,6 @@ namespace MWGui
 
         if (mMessageBoxManager)
             mMessageBoxManager->onFrame(frameDuration);
-
-        if (mAuthoredDefaultChoiceDelay >= 0.f)
-        {
-            if (!mMessageBoxManager || !mMessageBoxManager->isInteractiveMessageBox())
-                mAuthoredDefaultChoiceDelay = -1.f;
-            else
-            {
-                mAuthoredDefaultChoiceDelay -= std::max(0.f, frameDuration);
-                if (mAuthoredDefaultChoiceDelay <= 0.f)
-                {
-                    // This uses the same default-button callback as ordinary UI selection.
-                    // It is opt-in proof automation and never drives a Windows window or input device.
-                    closeInteractiveMessageBoxWithDefaultButton();
-                    mAuthoredDefaultChoiceDelay = -1.f;
-                    Log(Debug::Info) << "OpenNV authored automation: selected default interactive message button";
-                }
-            }
-        }
 
         mToolTips->onFrame(frameDuration);
 
@@ -1683,15 +2047,12 @@ namespace MWGui
 
     void WindowManager::setCursorVisible(bool visible)
     {
-        // SetInCharGen suppresses gameplay HUD/crosshair presentation, not
-        // interactive modal UI. Character choices and message-box buttons
-        // still own a cursor while that gameplay overlay is hidden.
-        mCursorVisible = visible && (!mGameplayOverlaySuppressed || isGuiMode());
+        mCursorVisible = visible;
     }
 
     void WindowManager::setCursorActive(bool active)
     {
-        mCursorActive = active && (!mGameplayOverlaySuppressed || isGuiMode());
+        mCursorActive = active;
     }
 
     void WindowManager::onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result)
@@ -1782,6 +2143,10 @@ namespace MWGui
 
     void WindowManager::windowResized(int x, int y)
     {
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+            return;
+//## VR_PATCH END
         Settings::video().mResolutionX.set(x);
         Settings::video().mResolutionY.set(y);
 
@@ -1846,36 +2211,184 @@ namespace MWGui
         mCursorManager->cursorChanged(name);
     }
 
+    void WindowManager::beginFalloutDialogueCamera(const MWWorld::Ptr& target)
+    {
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr || VR::getVR() || target.isEmpty() || !target.getClass().isActor()
+            || world->getStore().getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return;
+
+        MWWorld::Ptr player = world->getPlayerPtr();
+        MWRender::Camera* const camera = world->getCamera();
+        MWRender::RenderingManager* const rendering = world->getRenderingManager();
+        if (camera == nullptr || rendering == nullptr || player.isEmpty() || !player.isInCell() || !target.isInCell()
+            || player.getCell() != target.getCell() || camera->getMode() == MWRender::Camera::Mode::VR)
+            return;
+
+        // A second dialogue target may replace the first without returning to gameplay in between. Restore the
+        // original player camera before deriving the next target's view so offsets cannot accumulate.
+        endFalloutDialogueCamera();
+
+        auto actorFocus = [&](const MWWorld::Ptr& actor) {
+            osg::Vec3f focus = world->getActorHeadTransform(actor).getTrans();
+            const osg::Vec3f actorPosition = actor.getRefData().getPosition().asVec3();
+            if ((focus - actorPosition).length2() <= 16.f * 16.f)
+            {
+                const osg::Vec3f halfExtents = world->getHalfExtents(actor, true);
+                focus.z() += std::max(64.f, halfExtents.z() * 2.f * 0.85f);
+            }
+            return focus;
+        };
+
+        const osg::Vec3f focus = actorFocus(target);
+        const osg::Vec3f playerFocus = actorFocus(player);
+        if (!std::isfinite(focus.x()) || !std::isfinite(focus.y()) || !std::isfinite(focus.z()))
+            return;
+
+        osg::Vec3f outward = playerFocus - focus;
+        const float horizontal = std::hypot(outward.x(), outward.y());
+        if (horizontal < 1.f)
+            return;
+        // Keep the close-up near eye level even when the player stands on steep terrain above or below the actor.
+        outward.z() = std::clamp(outward.z(), -horizontal * 0.35f, horizontal * 0.35f);
+        outward.normalize();
+
+        constexpr float desiredDistance = 72.f;
+        constexpr float surfaceClearance = 24.f;
+        osg::Vec3f cameraPosition = focus + outward * desiredDistance;
+        bool rayClamped = false;
+        float obstructionDistance = desiredDistance;
+        MWPhysics::RayCastingResult hit{};
+        const std::array<MWWorld::Ptr, 1> ignored{ target };
+        if (world->castRenderingRay(hit, focus, cameraPosition, true, true, ignored))
+        {
+            obstructionDistance = (hit.mHitPos - focus).length();
+            const float clampedDistance = obstructionDistance - surfaceClearance;
+            // A wall this close leaves no valid near-plane-safe face camera. Keep the player's normal view instead
+            // of crossing geometry or photographing the inside of the actor's head.
+            if (clampedDistance < 32.f)
+                return;
+            cameraPosition = focus + outward * clampedDistance;
+            rayClamped = true;
+        }
+
+        auto previous = std::make_unique<FalloutDialogueCameraState>();
+        previous->mMode = camera->getMode();
+        previous->mPitch = camera->getPitch();
+        previous->mYaw = camera->getYaw();
+        previous->mRoll = camera->getRoll();
+        previous->mFieldOfView = rendering->getFieldOfView();
+        previous->mFieldOfViewWasOverridden = rendering->isFieldOfViewOverridden();
+        previous->mTarget = target;
+        previous->mCameraPosition = cameraPosition;
+
+        camera->setMode(MWRender::Camera::Mode::Static, true);
+        camera->setStaticPosition(cameraPosition);
+        const osg::Vec3f aimDelta = focus - cameraPosition;
+        const float aimHorizontal = std::hypot(aimDelta.x(), aimDelta.y());
+        camera->setPitch(std::atan2(aimDelta.z(), aimHorizontal), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+        camera->setRoll(0.f);
+
+        // The save-derived first-person projection is also the closest available retail dialogue zoom contract.
+        // Explicit projection-oracle captures retain ownership of their matrix and are never overridden here.
+        if (!rendering->isProjectionMatrixOverridden())
+        {
+            const float firstPersonFov = Settings::camera().mFirstPersonFieldOfView;
+            constexpr float nativeSaveDialogueFov = 42.653862f;
+            const float dialogueFov = std::clamp(firstPersonFov, 38.f, nativeSaveDialogueFov);
+            rendering->overrideFieldOfView(dialogueFov);
+            previous->mChangedFieldOfView = true;
+        }
+
+        mFalloutDialogueCamera = std::move(previous);
+        Log(Debug::Info) << "FNV dialogue camera: target=" << target.toString() << " focus=(" << focus.x() << ","
+                         << focus.y() << "," << focus.z() << ") camera=(" << cameraPosition.x() << ","
+                         << cameraPosition.y() << "," << cameraPosition.z() << ") distance="
+                         << (cameraPosition - focus).length() << " rayClamped=" << (rayClamped ? 1 : 0)
+                         << " obstructionDistance=" << obstructionDistance
+                         << " fov=" << rendering->getFieldOfView();
+    }
+
+    void WindowManager::updateFalloutDialogueCamera()
+    {
+        if (!mFalloutDialogueCamera)
+            return;
+
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        const MWWorld::Ptr& target = mFalloutDialogueCamera->mTarget;
+        if (world == nullptr || VR::getVR() || !containsMode(GM_Dialogue) || target.isEmpty() || !target.isInCell()
+            || target.getCellRef().getCount() <= 0 || target.mRef->isDeleted())
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        MWRender::Camera* const camera = world->getCamera();
+        if (camera == nullptr || camera->getMode() != MWRender::Camera::Mode::Static)
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        osg::Vec3f focus = world->getActorHeadTransform(target).getTrans();
+        const osg::Vec3f actorPosition = target.getRefData().getPosition().asVec3();
+        if ((focus - actorPosition).length2() <= 16.f * 16.f)
+        {
+            const osg::Vec3f halfExtents = world->getHalfExtents(target, true);
+            focus.z() += std::max(64.f, halfExtents.z() * 2.f * 0.85f);
+        }
+        if (!std::isfinite(focus.x()) || !std::isfinite(focus.y()) || !std::isfinite(focus.z()))
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+
+        camera->setStaticPosition(mFalloutDialogueCamera->mCameraPosition);
+        const osg::Vec3f aimDelta = focus - mFalloutDialogueCamera->mCameraPosition;
+        const float horizontal = std::hypot(aimDelta.x(), aimDelta.y());
+        if (horizontal < 1.f)
+        {
+            endFalloutDialogueCamera();
+            return;
+        }
+        camera->setPitch(std::atan2(aimDelta.z(), horizontal), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+    }
+
+    void WindowManager::endFalloutDialogueCamera()
+    {
+        if (!mFalloutDialogueCamera)
+            return;
+
+        std::unique_ptr<FalloutDialogueCameraState> previous = std::move(mFalloutDialogueCamera);
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return;
+
+        if (MWRender::Camera* const camera = world->getCamera())
+        {
+            camera->setMode(previous->mMode, true);
+            camera->setPitch(previous->mPitch, true);
+            camera->setYaw(previous->mYaw, true);
+            camera->setRoll(previous->mRoll);
+        }
+        if (previous->mChangedFieldOfView)
+        {
+            if (MWRender::RenderingManager* const rendering = world->getRenderingManager())
+            {
+                if (previous->mFieldOfViewWasOverridden)
+                    rendering->overrideFieldOfView(previous->mFieldOfView);
+                else
+                    rendering->resetFieldOfView();
+            }
+        }
+        Log(Debug::Info) << "FNV dialogue camera: restored player view";
+    }
+
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
-    }
-
-    void WindowManager::showAuthoredRaceMenu()
-    {
-        if (mCharGen == nullptr || containsMode(GM_Race))
-            return;
-
-        // Set the handoff mode before pushGuiMode causes CharacterCreation to
-        // instantiate the modal. Completion then returns to the requesting
-        // ESM4 script instead of entering the Morrowind chargen sequence.
-        mCharGen->beginAuthoredRaceMenu();
-        pushGuiMode(GM_Race);
-        setCursorVisible(true);
-        setCursorActive(true);
-        Log(Debug::Info) << "FNV/ESM4 behavior: ShowRaceMenu opened authored character appearance menu";
-    }
-
-    void WindowManager::showAuthoredNameMenu()
-    {
-        if (mCharGen == nullptr || containsMode(GM_Name))
-            return;
-
-        mCharGen->beginAuthoredNameMenu();
-        pushGuiMode(GM_Name);
-        setCursorVisible(true);
-        setCursorActive(true);
-        Log(Debug::Info) << "FNV/ESM4 behavior: GetPlayerName opened authored name menu";
     }
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg)
@@ -1929,20 +2442,16 @@ namespace MWGui
         updateVisible();
         MWBase::Environment::get().getLuaManager()->uiModeChanged(arg);
 
+        if (mode == GM_Dialogue)
+            beginFalloutDialogueCamera(arg);
+
         if (Settings::gui().mControllerMenus)
         {
             if (mode == GM_Container)
-            {
-                // Ensure controller focus is on container when entering container mode.
-                setActiveControllerWindow(mode, 0);
-            }
-            else
-            {
-                // Activate first visible window. This needs to be called after updateVisible.
-                if (mActiveControllerWindows[mode] != 0)
-                    mActiveControllerWindows[mode] = mActiveControllerWindows[mode] - 1;
-                cycleActiveControllerWindow(true);
-            }
+                mActiveControllerWindows[mode] = 0; // Ensure controller focus is on container
+            // Activate first visible window. This needs to be called after updateVisible.
+            mActiveControllerWindows[mode] = std::max(mActiveControllerWindows[mode] - 1, -1);
+            cycleActiveControllerWindow(true);
         }
     }
 
@@ -1961,8 +2470,34 @@ namespace MWGui
         return mViewer->getCamera()->getCullMask();
     }
 
+//## VR_PATCH BEGIN
+    void WindowManager::enterVoid()
+    {
+        if (!mTheVoid)
+        {
+            mTheVoid = true;
+            updateVisible();
+        }
+    }
+
+    bool WindowManager::isInVoid()
+    {
+        return mTheVoid;
+    }
+
+    void WindowManager::exitVoid()
+    {
+        if (mTheVoid)
+        {
+            mTheVoid = false;
+            updateVisible();
+        }
+    }
+
+//## VR_PATCH END
     void WindowManager::popGuiMode(bool forceExit)
     {
+        bool removedDialogue = false;
         if (mDragAndDrop && mDragAndDrop->mIsOnDragAndDrop)
         {
             mDragAndDrop->finish();
@@ -1983,6 +2518,7 @@ namespace MWGui
                 mGuiModes.pop_back();
                 mGuiModeStates[mode].update(false);
                 MWBase::Environment::get().getLuaManager()->uiModeChanged(MWWorld::Ptr());
+                removedDialogue = mode == GM_Dialogue;
             }
         }
 
@@ -1993,7 +2529,12 @@ namespace MWGui
             mKeyboardNavigation->restoreFocus(mode);
         }
 
+        if (!containsMode(GM_Inventory))
+            mFalloutPipBoyPhysical = false;
         updateVisible();
+
+        if (removedDialogue && !containsMode(GM_Dialogue))
+            endFalloutDialogueCamera();
 
         // To make sure that console window get focus again
         if (mConsole && mConsole->isVisible())
@@ -2002,11 +2543,7 @@ namespace MWGui
         if (Settings::gui().mControllerMenus)
         {
             if (mGuiModes.empty())
-            {
                 setControllerTooltipVisible(false);
-                // When all windows are hidden, reset tooltip visibility to user's preference.
-                mControllerTooltipEnabled = Settings::gui().mControllerTooltips;
-            }
             else
                 reapplyActiveControllerWindow();
         }
@@ -2020,17 +2557,25 @@ namespace MWGui
             return;
         }
 
+        bool removedDialogue = false;
         std::vector<GuiMode>::iterator it = mGuiModes.begin();
         while (it != mGuiModes.end())
         {
             if (*it == mode)
+            {
+                removedDialogue = removedDialogue || mode == GM_Dialogue;
                 it = mGuiModes.erase(it);
+            }
             else
                 ++it;
         }
 
+        if (!containsMode(GM_Inventory))
+            mFalloutPipBoyPhysical = false;
         updateVisible();
         MWBase::Environment::get().getLuaManager()->uiModeChanged(MWWorld::Ptr());
+        if (removedDialogue && !containsMode(GM_Dialogue))
+            endFalloutDialogueCamera();
     }
 
     void WindowManager::goToJail(int days)
@@ -2093,7 +2638,7 @@ namespace MWGui
         if (player->getDrawState() == MWMechanics::DrawState::Spell)
             player->setDrawState(MWMechanics::DrawState::Nothing);
 
-        mSpellWindow->setTitle("#{Interface:None}");
+        mSpellWindow->setTitle(isFalloutContentLoaded() ? "DATA / QUESTS" : "#{Interface:None}");
     }
 
     void WindowManager::unsetSelectedWeapon()
@@ -2211,6 +2756,13 @@ namespace MWGui
         updateVisible();
     }
 
+//## VR_PATCH BEGIN
+    DragAndDrop& WindowManager::getDragAndDrop(void)
+    {
+        return *mDragAndDrop;
+    }
+
+//## VR_PATCH END
     void WindowManager::forceHide(GuiWindow wnd)
     {
         mForceHidden = (GuiWindow)(mForceHidden | wnd);
@@ -2248,10 +2800,9 @@ namespace MWGui
         return mMessageBoxManager && mMessageBoxManager->isInteractiveMessageBox();
     }
 
-    void WindowManager::closeInteractiveMessageBoxWithDefaultButton()
+    void WindowManager::closeInteractiveMessageBoxWithDefaultButton() 
     {
         if (mMessageBoxManager && mMessageBoxManager->isInteractiveMessageBox()
-            && !mCurrentModals.empty()
             && mCurrentModals.back() == mMessageBoxManager->getInteractiveMessageBox())
         {
             static_cast<MWGui::InteractiveMessageBox*>(mCurrentModals.back())->closeDefault();
@@ -2292,7 +2843,7 @@ namespace MWGui
     void WindowManager::showCrosshair(bool show)
     {
         if (mHud)
-            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair && !mGameplayOverlaySuppressed);
+            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair);
     }
 
     void WindowManager::updateActivatedQuickKey()
@@ -2305,33 +2856,31 @@ namespace MWGui
         mQuickKeysMenu->activateQuickKey(index);
     }
 
+    bool WindowManager::setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item)
+    {
+        return mQuickKeysMenu->setFalloutSaveQuickKey(index, item);
+    }
+
     bool WindowManager::setHudVisibility(bool show)
     {
         mHudEnabled = show;
         updateVisible();
-        mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
+        mMessageBoxManager->setVisible(mHudEnabled);
         return mHudEnabled;
     }
 
-    void WindowManager::setGameplayOverlaySuppressed(bool suppressed)
+    void WindowManager::setLegacyHudSuppressed(bool suppress)
     {
-        if (mGameplayOverlaySuppressed == suppressed)
+        if (mLegacyHudSuppressed == suppress)
             return;
 
-        mGameplayOverlaySuppressed = suppressed;
-        if (suppressed)
+        mLegacyHudSuppressed = suppress;
+        if (suppress)
         {
-            mCursorVisible = false;
-            mCursorActive = false;
-            if (mHud)
-                mHud->setCrosshairVisible(false);
+            Log(Debug::Warning) << "Suppressing legacy ESM3 HUD for a validated native FNV save; native FNV HUD "
+                                   "remains uncovered";
         }
-
         updateVisible();
-        if (mMessageBoxManager)
-            mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
-
-        Log(Debug::Info) << "OpenNV UI: gameplay overlay suppression=" << mGameplayOverlaySuppressed;
     }
 
     bool WindowManager::getRestEnabled()
@@ -2456,9 +3005,12 @@ namespace MWGui
     {
         MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
 
-        const WindowRectSettingValues& rect = settings.mIsMaximized ? settings.mMaximized : settings.mRegular;
-
+//## VR_PATCH BEGIN
+        // All windows need to be maximized in VR.
         MyGUI::Window* window = layout->mMainWidget->castType<MyGUI::Window>();
+        const WindowRectSettingValues& rect = settings.mIsMaximized || VR::getVR() ? settings.mMaximized : settings.mRegular;
+//## VR_PATCH END
+
         window->setPosition(
             MyGUI::IntPoint(static_cast<int>(rect.mX * viewSize.width), static_cast<int>(rect.mY * viewSize.height)));
         window->setSize(
@@ -2480,11 +3032,17 @@ namespace MWGui
         const WindowSettingValues& settings = it->second;
         const WindowRectSettingValues& rect = settings.mIsMaximized ? settings.mRegular : settings.mMaximized;
 
+//## VR_PATCH BEGIN
+// Windows are always maximized in VR
+        if (VR::getVR() && settings.mIsMaximized)
+            return;
+//## VR_PATCH END
+
         MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
-        const int x = static_cast<int>(rect.mX * viewSize.width);
-        const int y = static_cast<int>(rect.mY * viewSize.height);
-        const int w = static_cast<int>(rect.mW * viewSize.width);
-        const int h = static_cast<int>(rect.mH * viewSize.height);
+        const float x = rect.mX * viewSize.width;
+        const float y = rect.mY * viewSize.height;
+        const float w = rect.mW * viewSize.width;
+        const float h = rect.mH * viewSize.height;
         window->setCoord(x, y, w, h);
 
         settings.mIsMaximized.set(!settings.mIsMaximized.get());
@@ -2492,6 +3050,12 @@ namespace MWGui
 
     void WindowManager::onWindowChangeCoord(MyGUI::Window* window)
     {
+//## VR_PATCH BEGIN
+// Windows never move in VR
+        if (VR::getVR())
+            return;
+//## VR_PATCH END
+
         // If using controller menus, don't persist changes to size of the stats or magic
         // windows.
         if (Settings::gui().mControllerMenus
@@ -2519,6 +3083,8 @@ namespace MWGui
     void WindowManager::clear()
     {
         mPlayerBounty = -1;
+        // Session-local compatibility policy. Normal ESM3 loads must never inherit FNV HUD suppression.
+        mLegacyHudSuppressed = false;
 
         for (const auto& window : mWindows)
         {
@@ -2558,10 +3124,11 @@ namespace MWGui
             writer.endRecord(ESM::REC_ASPL);
         }
 
-        for (const auto& [_, marker] : mCustomMarkers)
+        for (CustomMarkerCollection::ContainerType::const_iterator it = mCustomMarkers.begin();
+             it != mCustomMarkers.end(); ++it)
         {
             writer.startRecord(ESM::REC_MARK);
-            marker.save(writer);
+            it->second.save(writer);
             writer.endRecord(ESM::REC_MARK);
         }
     }
@@ -2587,7 +3154,7 @@ namespace MWGui
         }
     }
 
-    size_t WindowManager::countSavedGameRecords() const
+    int WindowManager::countSavedGameRecords() const
     {
         return 1 // Global map
             + 1 // QuickKeysMenu
@@ -2604,22 +3171,10 @@ namespace MWGui
 
     void WindowManager::playVideo(std::string_view name, bool allowSkipping, bool overrideSounds)
     {
+//## VR_PATCH BEGIN
+        mVideoEnabled = true;
+//## VR_PATCH END
         mVideoWidget->playVideo("video\\" + std::string{ name });
-
-        struct VideoPlaybackStateGuard
-        {
-            bool& mPlaying;
-            bool& mSkippable;
-
-            ~VideoPlaybackStateGuard()
-            {
-                mPlaying = false;
-                mSkippable = false;
-            }
-        };
-        mVideoPlaying = true;
-        mVideoSkippable = allowSkipping;
-        const VideoPlaybackStateGuard videoPlaybackStateGuard{ mVideoPlaying, mVideoSkippable };
 
         mVideoWidget->eventKeyButtonPressed.clear();
         mVideoBackground->eventKeyButtonPressed.clear();
@@ -2639,38 +3194,13 @@ namespace MWGui
 
         mVideoBackground->setVisible(true);
 
-        const bool hudWasVisible = mHudEnabled;
-        const bool cursorWasVisible = mCursorVisible;
-        const bool cursorWasActive = mCursorActive;
-        const bool overlayWasSuppressed = mGameplayOverlaySuppressed;
-        setGameplayOverlaySuppressed(true);
-        setHudVisibility(false);
-        showCrosshair(false);
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+            MWVR::VRGUIManager::instance().setForceLayerVisible(mVideoBackground->getLayer()->getName(), true);
+//## VR_PATCH END
 
-        const bool presentationVideoTarget
-            = isConfiguredVideoTarget(name, "OPENNV_PRESENTATION_VIDEO_MATCH");
-        const double presentationVideoLimitSeconds = presentationVideoTarget
-            ? readPositiveVideoCaptureSeconds("OPENNV_PRESENTATION_VIDEO_MAX_SECONDS")
-            : 0.0;
-        const bool captureVideoTarget = isConfiguredVideoTarget(name, "OPENMW_CAPTURE_VIDEO_MATCH");
-        const double captureVideoLimitSeconds = captureVideoTarget
-            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_MAX_SECONDS")
-            : 0.0;
-        const std::chrono::milliseconds nativeCaptureInterval = captureVideoTarget
-            ? readNativeVideoCaptureInterval()
-            : std::chrono::milliseconds{};
-        const double postVideoCaptureSeconds = captureVideoTarget
-            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_POST_SCENE_SECONDS")
-            : 0.0;
-        if (captureVideoTarget && writeVideoCaptureReadyMarker(name))
-        {
-            mVideoWidget->pause();
-            waitForVideoCaptureGate(name);
-            mVideoWidget->resume();
-        }
-        const auto captureVideoStart = std::chrono::steady_clock::now();
-        auto nextNativeCapture = captureVideoStart;
-        std::size_t queuedNativeFrames = 0;
+        bool cursorWasVisible = mCursorVisible;
+        setCursorVisible(false);
 
         if (overrideSounds && mVideoWidget->hasAudioStream())
             MWBase::Environment::get().getSoundManager()->pauseSounds(
@@ -2678,29 +3208,13 @@ namespace MWGui
 
         Misc::FrameRateLimiter frameRateLimiter
             = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
-        while (mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+//## VR_PATCH BEGIN
+        while (
+            mVideoEnabled && mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+//## VR_PATCH END
         {
-            if (presentationVideoLimitSeconds > 0.0
-                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
-                    >= presentationVideoLimitSeconds)
-            {
-                Log(Debug::Info) << "OpenNV presentation: limiting authored video asset=\"" << name
-                                 << "\" seconds=" << presentationVideoLimitSeconds;
-                mVideoWidget->stop();
-                break;
-            }
-            if (captureVideoLimitSeconds > 0.0
-                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
-                    >= captureVideoLimitSeconds)
-            {
-                Log(Debug::Info) << "OpenNV capture: limiting authored video asset=\"" << name
-                                 << "\" seconds=" << captureVideoLimitSeconds;
-                mVideoWidget->stop();
-                break;
-            }
-
-            const float dt
-                = std::chrono::duration_cast<std::chrono::duration<float>>(frameRateLimiter.getLastFrameDuration())
+            const double dt
+                = std::chrono::duration_cast<std::chrono::duration<double>>(frameRateLimiter.getLastFrameDuration())
                       .count();
 
             MWBase::Environment::get().getInputManager()->update(dt, true, false);
@@ -2715,17 +3229,9 @@ namespace MWGui
                 if (mVideoWidget->isPaused())
                     mVideoWidget->resume();
 
-                const auto now = std::chrono::steady_clock::now();
-                if (nativeCaptureInterval.count() > 0 && now >= nextNativeCapture)
-                {
-                    if (queueNativeVideoFrame(*mViewer))
-                        ++queuedNativeFrames;
-                    nextNativeCapture = now + nativeCaptureInterval;
-                }
-
-                mViewer->eventTraversal();
-                mViewer->updateTraversal();
-                mViewer->renderingTraversals();
+//## VR_PATCH BEGIN
+                viewerTraversals();
+//## VR_PATCH END
             }
             // at the time this function is called we are in the middle of a frame,
             // so out of order calls are necessary to get a correct frameNumber for the next frame.
@@ -2736,36 +3242,29 @@ namespace MWGui
         }
         mVideoWidget->stop();
 
-        if (captureVideoTarget && nativeCaptureInterval.count() > 0)
-        {
-            Log(Debug::Info) << "OpenNV capture: queued native source frames asset=\"" << name << "\" count="
-                             << queuedNativeFrames << " intervalMilliseconds=" << nativeCaptureInterval.count();
-        }
-
         MWBase::Environment::get().getSoundManager()->resumeSounds(MWSound::VideoPlayback);
 
         setKeyFocusWidget(oldKeyFocus);
 
-        setGameplayOverlaySuppressed(overlayWasSuppressed);
-        setHudVisibility(hudWasVisible);
-        showCrosshair(hudWasVisible);
         setCursorVisible(cursorWasVisible);
-        setCursorActive(cursorWasActive);
 
         // Restore normal rendering
         updateVisible();
 
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+            MWVR::VRGUIManager::instance().setForceLayerVisible(mVideoBackground->getLayer()->getName(), false);
         mVideoBackground->setVisible(false);
-        if (captureVideoTarget && nativeCaptureInterval.count() > 0 && postVideoCaptureSeconds > 0.0)
-        {
-            mPostVideoNativeCaptureRemaining = static_cast<float>(postVideoCaptureSeconds);
-            mPostVideoNativeCaptureUntilNextFrame = 0.f;
-            mPostVideoNativeCaptureInterval = static_cast<float>(nativeCaptureInterval.count()) / 1000.f;
-            mPostVideoNativeCaptureLastUpdate = std::chrono::steady_clock::now();
-            Log(Debug::Info) << "OpenNV capture: post-video native scene frame capture seconds="
-                             << postVideoCaptureSeconds << " intervalMilliseconds=" << nativeCaptureInterval.count();
-        }
+        mVideoEnabled = false;
+//## VR_PATCH END
     }
+
+//## VR_PATCH BEGIN
+    bool WindowManager::isPlayingVideo(void) const
+    {
+        return mVideoEnabled;
+    }
+//## VR_PATCH END
 
     void WindowManager::sizeVideo(int screenWidth, int screenHeight)
     {
@@ -2864,6 +3363,10 @@ namespace MWGui
 
     void WindowManager::pinWindow(GuiWindow window)
     {
+        if (VR::getVR())
+            // Pinning in VR will need some implementation work
+            return;
+
         switch (window)
         {
             case GW_Inventory:
@@ -2920,8 +3423,9 @@ namespace MWGui
             return;
 
         mHitFader->clearQueue();
-        mHitFader->fadeTo(100, 0.0f);
-        mHitFader->fadeTo(0, 0.5f);
+        const bool falloutContent = isFalloutContentLoaded();
+        mHitFader->fadeTo(falloutContent ? 20 : 100, 0.0f);
+        mHitFader->fadeTo(0, falloutContent ? 0.3f : 0.5f);
     }
 
     void WindowManager::setWerewolfOverlay(bool set)
@@ -3071,13 +3575,18 @@ namespace MWGui
 
             const VFS::Path::Normalized path(imgSetPointer->getImageSet()->getIndexInfo(0, 0).texture);
 
-            osg::ref_ptr<osg::Image> image = mResourceSystem->getImageManager()->getImage(path);
+            osg::ref_ptr<osg::Image> image;
+            if (mGuiPlatform->getRenderManagerPtr()->useMissingTextureFallback()
+                && !mResourceSystem->getVFS()->exists(path))
+                image = MyGUIPlatform::createMissingTextureFallback(path.value());
+            else
+                image = mResourceSystem->getImageManager()->getImage(path);
 
             if (image.valid())
             {
                 // everything looks good, send it to the cursor manager
-                const Uint8 hotspotX = static_cast<Uint8>(imgSetPointer->getHotSpot().left);
-                const Uint8 hotspotY = static_cast<Uint8>(imgSetPointer->getHotSpot().top);
+                const Uint8 hotspotX = imgSetPointer->getHotSpot().left;
+                const Uint8 hotspotY = imgSetPointer->getHotSpot().top;
                 int rotation = imgSetPointer->getRotation();
                 MyGUI::IntSize pointerSize = imgSetPointer->getSize();
 
@@ -3161,18 +3670,6 @@ namespace MWGui
 
     bool WindowManager::injectKeyPress(MyGUI::KeyCode key, unsigned int text, bool repeat)
     {
-        // Video playback owns Escape before GUI keyboard navigation gets an
-        // opportunity to consume it. This is an explicit player cancellation,
-        // even for a movie whose authored flags suppress incidental skipping;
-        // playback is never stopped merely because a normal launch elapsed.
-        if (mVideoPlaying && key == MyGUI::KeyCode::Escape)
-        {
-            Log(Debug::Info) << "OpenNV video: player cancelled active cinematic with Escape"
-                             << " authoredSkippable=" << mVideoSkippable;
-            mVideoWidget->stop();
-            return true;
-        }
-
         if (!mKeyboardNavigation->injectKeyPress(key, text, repeat))
         {
             MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
@@ -3207,6 +3704,17 @@ namespace MWGui
         return MyGUI::InputManager::getInstance().injectKeyRelease(key);
     }
 
+//## VR_PATCH BEGIN
+    void WindowManager::viewerTraversals()
+    {
+        mViewer->eventTraversal();
+        mViewer->updateTraversal();
+        if (VR::getVR())
+            VR::Session::instance().updateSpaces();
+        mViewer->renderingTraversals();
+    }
+
+//## VR_PATCH END
     void WindowManager::GuiModeState::update(bool visible)
     {
         for (const auto& window : mWindows)
@@ -3296,45 +3804,6 @@ namespace MWGui
         return res;
     }
 
-    const std::map<MWGui::GuiMode, std::string_view>& WindowManager::guiModeToName() const
-    {
-        static const std::map<MWGui::GuiMode, std::string_view> names{
-            { MWGui::GM_Inventory, "Interface" },
-            { MWGui::GM_Container, "Container" },
-            { MWGui::GM_Companion, "Companion" },
-            { MWGui::GM_MainMenu, "MainMenu" },
-            { MWGui::GM_Journal, "Journal" },
-            { MWGui::GM_Scroll, "Scroll" },
-            { MWGui::GM_Book, "Book" },
-            { MWGui::GM_Alchemy, "Alchemy" },
-            { MWGui::GM_Repair, "Repair" },
-            { MWGui::GM_Dialogue, "Dialogue" },
-            { MWGui::GM_Barter, "Barter" },
-            { MWGui::GM_Rest, "Rest" },
-            { MWGui::GM_SpellBuying, "SpellBuying" },
-            { MWGui::GM_Travel, "Travel" },
-            { MWGui::GM_SpellCreation, "SpellCreation" },
-            { MWGui::GM_Enchanting, "Enchanting" },
-            { MWGui::GM_Recharge, "Recharge" },
-            { MWGui::GM_Training, "Training" },
-            { MWGui::GM_MerchantRepair, "MerchantRepair" },
-            { MWGui::GM_Levelup, "LevelUp" },
-            { MWGui::GM_Name, "ChargenName" },
-            { MWGui::GM_Race, "ChargenRace" },
-            { MWGui::GM_Birth, "ChargenBirth" },
-            { MWGui::GM_Class, "ChargenClass" },
-            { MWGui::GM_ClassGenerate, "ChargenClassGenerate" },
-            { MWGui::GM_ClassPick, "ChargenClassPick" },
-            { MWGui::GM_ClassCreate, "ChargenClassCreate" },
-            { MWGui::GM_Review, "ChargenClassReview" },
-            { MWGui::GM_Loading, "Loading" },
-            { MWGui::GM_LoadingWallpaper, "LoadingWallpaper" },
-            { MWGui::GM_Jail, "Jail" },
-            { MWGui::GM_QuickKeysMenu, "QuickKeysMenu" },
-        };
-        return names;
-    }
-
     int WindowManager::getControllerMenuHeight()
     {
         int height = MyGUI::RenderManager::getInstance().getViewSize().height;
@@ -3370,6 +3839,53 @@ namespace MWGui
             setControllerTooltipVisible(true);
     }
 
+    const static std::map<MWGui::GuiMode, std::string_view> modeToName{
+        { MWGui::GM_Inventory, "Interface" },
+        { MWGui::GM_Container, "Container" },
+        { MWGui::GM_Companion, "Companion" },
+        { MWGui::GM_MainMenu, "MainMenu" },
+        { MWGui::GM_Journal, "Journal" },
+        { MWGui::GM_Scroll, "Scroll" },
+        { MWGui::GM_Book, "Book" },
+        { MWGui::GM_Alchemy, "Alchemy" },
+        { MWGui::GM_Repair, "Repair" },
+        { MWGui::GM_Dialogue, "Dialogue" },
+        { MWGui::GM_Barter, "Barter" },
+        { MWGui::GM_Rest, "Rest" },
+        { MWGui::GM_SpellBuying, "SpellBuying" },
+        { MWGui::GM_Travel, "Travel" },
+        { MWGui::GM_SpellCreation, "SpellCreation" },
+        { MWGui::GM_Enchanting, "Enchanting" },
+        { MWGui::GM_Recharge, "Recharge" },
+        { MWGui::GM_Training, "Training" },
+        { MWGui::GM_MerchantRepair, "MerchantRepair" },
+        { MWGui::GM_Levelup, "LevelUp" },
+        { MWGui::GM_Name, "ChargenName" },
+        { MWGui::GM_Race, "ChargenRace" },
+        { MWGui::GM_Birth, "ChargenBirth" },
+        { MWGui::GM_Class, "ChargenClass" },
+        { MWGui::GM_ClassGenerate, "ChargenClassGenerate" },
+        { MWGui::GM_ClassPick, "ChargenClassPick" },
+        { MWGui::GM_ClassCreate, "ChargenClassCreate" },
+        { MWGui::GM_Review, "ChargenClassReview" },
+        { MWGui::GM_Loading, "Loading" },
+        { MWGui::GM_LoadingWallpaper, "LoadingWallpaper" },
+        { MWGui::GM_Jail, "Jail" },
+        { MWGui::GM_QuickKeysMenu, "QuickKeysMenu" },
+        { MWGui::GM_RadialMenu, "VrRadialMenu" },
+        { MWGui::GM_VrMetaMenu, "VrMetaMenu" },
+    };
+    
+    const std::map<MWGui::GuiMode, std::string_view>& WindowManager::guiModeToName() const
+    {
+        return modeToName;
+    }
+    
+    void WindowManager::skipVideo() {
+        if (mVideoEnabled)
+            mVideoWidget->stop();
+    }
+    
     void WindowManager::updateControllerButtonsOverlay()
     {
         if (!Settings::gui().mControllerMenus || !mControllerButtonsOverlay)
@@ -3388,7 +3904,7 @@ namespace MWGui
 
         // setButtons will handle setting visibility based on if any buttons are defined.
         mControllerButtonsOverlay->setButtons(topWin->getControllerButtons());
-        if (getMode() == GM_Inventory)
+        if (getMode() == GM_Inventory && !VR::getVR())
         {
             mInventoryTabsOverlay->setVisible(true);
             mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
@@ -3397,11 +3913,5 @@ namespace MWGui
         }
         else
             mInventoryTabsOverlay->setVisible(false);
-    }
-
-    void WindowManager::inventoryUpdated(const MWWorld::Ptr& ptr) const
-    {
-        for (const auto& window : mWindows)
-            window->onInventoryUpdate(ptr);
     }
 }
