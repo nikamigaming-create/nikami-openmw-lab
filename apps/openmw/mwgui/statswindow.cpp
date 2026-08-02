@@ -170,6 +170,11 @@ namespace MWGui
     {
         int windowWidth = window->getSize().width;
         int windowHeight = window->getSize().height;
+        const bool pipBoyMode = isFalloutStatsContent()
+            && MWBase::Environment::get().getWindowManager()->getMode() == MWGui::GM_FalloutPipBoy;
+        const int chromeTop = pipBoyMode ? std::max(58, windowHeight * 10 / 100) : 0;
+        const int chromeBottom = pipBoyMode ? std::max(52, windowHeight * 9 / 100) : 0;
+        const int contentHeight = std::max(1, windowHeight - chromeTop - chromeBottom);
 
         // initial values defined in openmw_stats_window.layout, if custom options are not present in .layout, a default
         // is loaded
@@ -189,20 +194,21 @@ namespace MWGui
         mRightPane->setVisible(windowWidth >= minLeftOffsetWidth);
         if (!mRightPane->getVisible())
         {
-            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, windowWidth - leftOffsetWidth, windowHeight));
+            mLeftPane->setCoord(MyGUI::IntCoord(0, chromeTop, windowWidth - leftOffsetWidth, contentHeight));
         }
         // if there's some space for right pane
         else if (windowWidth < mMinFullWidth)
         {
-            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, minLeftWidth, windowHeight));
-            mRightPane->setCoord(MyGUI::IntCoord(minLeftWidth, 0, windowWidth - minLeftWidth, windowHeight));
+            mLeftPane->setCoord(MyGUI::IntCoord(0, chromeTop, minLeftWidth, contentHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(minLeftWidth, chromeTop, windowWidth - minLeftWidth, contentHeight));
         }
         // if there's enough space for both panes
         else
         {
-            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, static_cast<int>(leftPaneRatio * windowWidth), windowHeight));
-            mRightPane->setCoord(MyGUI::IntCoord(static_cast<int>(leftPaneRatio * windowWidth), 0,
-                static_cast<int>(rightPaneRatio * windowWidth), windowHeight));
+            mLeftPane->setCoord(
+                MyGUI::IntCoord(0, chromeTop, static_cast<int>(leftPaneRatio * windowWidth), contentHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(static_cast<int>(leftPaneRatio * windowWidth), chromeTop,
+                static_cast<int>(rightPaneRatio * windowWidth), contentHeight));
         }
 
         // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the
@@ -923,7 +929,7 @@ namespace MWGui
     void StatsWindow::setActiveControllerWindow(bool active)
     {
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
-        if (winMgr->getMode() == MWGui::GM_Inventory)
+        if (winMgr->getMode() == MWGui::GM_Inventory || winMgr->getMode() == MWGui::GM_FalloutPipBoy)
         {
             // Fill the screen, or limit to a certain size on large screens. Size chosen to
             // show all stats.

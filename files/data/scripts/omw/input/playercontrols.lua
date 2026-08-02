@@ -11,6 +11,11 @@ local I = require('openmw.interfaces')
 
 local settings = storage.playerSection('SettingsOMWControls')
 
+local function isFalloutContent()
+    return core.contentFiles and core.contentFiles.has
+        and (core.contentFiles.has('FalloutNV.esm') or core.contentFiles.has('Fallout3.esm'))
+end
+
 do
     local rangeActions = {
         'MoveForward',
@@ -150,6 +155,9 @@ local function combatAllowed()
 end
 
 input.registerTriggerHandler('ToggleSpell', async:callback(function()
+    -- In Fallout profiles R is reload. ActionManager owns that native path;
+    -- never also enter Morrowind's spell stance.
+    if isFalloutContent() then return end
     if not combatAllowed() then return end
     if Actor.getStance(self) == Actor.STANCE.Spell then
         Actor.setStance(self, Actor.STANCE.Nothing)
@@ -161,6 +169,9 @@ input.registerTriggerHandler('ToggleSpell', async:callback(function()
 end))
 
 input.registerTriggerHandler('ToggleWeapon', async:callback(function()
+    -- Fallout equips and holsters through its inventory/runtime state, not the
+    -- Morrowind ready-weapon toggle.
+    if isFalloutContent() then return end
     if not combatAllowed() then return end
     if Actor.getStance(self) == Actor.STANCE.Weapon then
         Actor.setStance(self, Actor.STANCE.Nothing)
@@ -174,6 +185,19 @@ input.registerActionHandler('Use', async:callback(function(value)
     if value and combatAllowed() then startUse = true end
 end))
 local function processAttacking()
+    -- Fallout weapons are drawn by the native equipment state. Left mouse must
+    -- drive them immediately; it must not depend on a Morrowind stance toggle.
+    if isFalloutContent() then
+        if Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
+            and input.getBooleanActionValue('Use') then
+            self.controls.use = self.ATTACK_TYPE.Any
+        else
+            self.controls.use = self.ATTACK_TYPE.NoAttack
+        end
+        startUse = false
+        return
+    end
+
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
     if Actor.getStance(self) == Actor.STANCE.Spell
@@ -198,6 +222,9 @@ local function uiAllowed()
 end
 
 input.registerTriggerHandler('Inventory', async:callback(function()
+    -- Tab is the native Fallout Pip-Boy Items action. ActionManager opens the
+    -- selected Pip-Boy pane and keyboardmanager closes it on the next Tab.
+    if isFalloutContent() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == nil then
@@ -211,7 +238,7 @@ input.registerTriggerHandler('Journal', async:callback(function()
     if not uiAllowed() then return end
     -- FNV routes this trigger to its DATA / QUESTS pane in ActionManager.
     -- Do not also open the Morrowind book journal after the native handler.
-    if core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm') then return end
+    if isFalloutContent() then return end
 
     if I.UI.getMode() == I.UI.MODE.Journal then
         I.UI.removeMode(I.UI.MODE.Journal)
@@ -221,6 +248,9 @@ input.registerTriggerHandler('Journal', async:callback(function()
 end))
 
 input.registerTriggerHandler('QuickKeysMenu', async:callback(function()
+    -- I is the explicit OpenMW inventory analogue in Fallout profiles.
+    -- ActionManager opens it so Lua must not also pop the old quick-keys menu.
+    if isFalloutContent() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == I.UI.MODE.QuickKeysMenu then

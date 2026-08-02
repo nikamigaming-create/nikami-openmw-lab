@@ -1178,7 +1178,13 @@ namespace MWRender
 
     void InventoryPreview::updatePtr(const MWWorld::Ptr& ptr)
     {
-        mCharacter = MWWorld::Ptr(ptr.getBase(), nullptr);
+        // The Fallout equipment slots live on the runtime NPC reference.  Keep
+        // that reference for the paper doll so an equip/unequip updates its
+        // live appearance instead of rebuilding from a blank base record.
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+            mCharacter = ptr;
+        else
+            mCharacter = MWWorld::Ptr(ptr.getBase(), nullptr);
     }
 
     void InventoryPreview::onSetup()

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdlib>
+#include <string_view>
 #include <osgDB/Registry>
 
 #include <components/debug/debuglog.hpp>
@@ -26,11 +27,44 @@ USE_SERIALIZER_WRAPPER_LIBRARY(osg)
 namespace
 {
     constexpr VFS::Path::NormalizedView sFalloutCursor("textures/interface/icons/misc/cursor.dds");
+    constexpr VFS::Path::NormalizedView sFalloutUiChrome("textures/interface/shared/button/frame_idle.dds");
+    constexpr VFS::Path::NormalizedView sFalloutCrosshair("textures/interface/hud/crosshair.dds");
+    constexpr VFS::Path::NormalizedView sFalloutCompass("textures/interface/hud/compass_cropped.dds");
+    constexpr VFS::Path::NormalizedView sFalloutStealthIndicator("textures/interface/hud/stealth_indicator.dds");
+    constexpr VFS::Path::NormalizedView sFalloutHitGradient("textures/interface/hud/hitgradientleft.dds");
 
     bool isLegacyCursorPath(VFS::Path::NormalizedView path)
     {
         return path == "textures/tx_cursor.dds" || path == "textures/tx_cursormove.dds"
             || path == "textures/cursor_drop_ground.dds";
+    }
+
+    bool isLegacyMorrowindUiPath(VFS::Path::NormalizedView path)
+    {
+        const std::string_view value = path.value();
+        return value == "textures/door_icon.dds" || value == "textures/target.dds" || value == "textures/compass.dds"
+            || value == "textures/scroll.dds" || value == "textures/player_hit_01.dds"
+            || value == "icons/tx_goldicon.dds" || value.starts_with("textures/menu_")
+            || value.starts_with("textures/tx_menubook") || value.starts_with("icons/k/");
+    }
+
+    bool resolveFalloutUiAsset(VFS::Path::NormalizedView path, const VFS::Manager& vfs,
+        VFS::Path::NormalizedView& resolvedPath)
+    {
+        if (!isLegacyMorrowindUiPath(path) || !vfs.exists(sFalloutUiChrome))
+            return false;
+
+        if (path == "textures/target.dds" && vfs.exists(sFalloutCrosshair))
+            resolvedPath = sFalloutCrosshair;
+        else if (path == "textures/compass.dds" && vfs.exists(sFalloutCompass))
+            resolvedPath = sFalloutCompass;
+        else if (path == "icons/k/stealth_sneak.dds" && vfs.exists(sFalloutStealthIndicator))
+            resolvedPath = sFalloutStealthIndicator;
+        else if (path == "textures/player_hit_01.dds" && vfs.exists(sFalloutHitGradient))
+            resolvedPath = sFalloutHitGradient;
+        else
+            resolvedPath = sFalloutUiChrome;
+        return true;
     }
 
     osg::ref_ptr<osg::Image> createWarningImage()
@@ -115,7 +149,14 @@ namespace Resource
         {
             Files::IStreamPtr stream;
             VFS::Path::NormalizedView resolvedPath = path;
-            if (!mVFS->exists(path) && isLegacyCursorPath(path) && mVFS->exists(sFalloutCursor))
+            if (!mVFS->exists(path) && resolveFalloutUiAsset(path, *mVFS, resolvedPath))
+            {
+                // The generic MyGUI layouts are still used while the FNV UI
+                // renderer is being assembled. Resolve their legacy chrome to
+                // installed Fallout interface art rather than requesting
+                // Morrowind-only texture names from Fallout archives.
+            }
+            else if (!mVFS->exists(path) && isLegacyCursorPath(path) && mVFS->exists(sFalloutCursor))
             {
                 resolvedPath = sFalloutCursor;
                 Log(Debug::Info) << "Using native Fallout cursor " << resolvedPath << " for " << path;

@@ -9457,7 +9457,9 @@ namespace MWRender
                 }
             }
             else
-                Log(Debug::Warning) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
+                // Empty KFFZ is valid for records that use the shared FNV
+                // locomotion families resolved below.
+                Log(Debug::Verbose) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
                                     << " animationRecord=" << animationRecord->mEditorId;
 
             const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);

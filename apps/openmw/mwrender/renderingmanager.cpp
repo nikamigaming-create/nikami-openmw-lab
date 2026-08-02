@@ -62,6 +62,7 @@
 #include <components/sceneutil/writescene.hpp>
 
 #include <components/misc/constants.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/myguiplatform/myguirendermanager.hpp>
 
@@ -1994,6 +1995,10 @@ namespace MWRender
 
     RenderingManager::~RenderingManager()
     {
+        if (mFalloutPipBoyArmRoot != nullptr && mSceneRoot != nullptr)
+            mSceneRoot->removeChild(mFalloutPipBoyArmRoot);
+        mFalloutPipBoyArmRoot = nullptr;
+
         clearLiveObjectsForShutdown();
 
         // let background loading thread finish before we delete anything else
@@ -2029,7 +2034,20 @@ namespace MWRender
     {
         osg::ref_ptr<PreloadCommonAssetsWorkItem> workItem(new PreloadCommonAssetsWorkItem(mResourceSystem));
         mSky->listAssetsToPreload(workItem->mModels, workItem->mTextures);
-        mWater->listAssetsToPreload(workItem->mTextures);
+        const bool hasFalloutContent = hasFalloutNvContentLoaded();
+        if (!hasFalloutContent)
+        {
+            mWater->listAssetsToPreload(workItem->mTextures);
+            workItem->mTextures.emplace_back("textures/_land_default.dds");
+        }
+        else
+        {
+            // Fallout archives do not carry OpenMW's Morrowind water-frame or
+            // terrain-fallback assets. They are not used by the Fallout
+            // renderer path, so do not turn a normal exterior load into a
+            // batch of known-missing resource errors.
+            Log(Debug::Info) << "FNV/ESM4: skipped Morrowind water and terrain fallback preloads";
+        }
 
         const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
         const bool hasMorrowindCommonActors = vfs != nullptr && vfs->exists(Settings::models().mXbaseanim)
@@ -2049,8 +2067,6 @@ namespace MWRender
         }
         else
             Log(Debug::Info) << "World viewer: skipped Morrowind common actor preloads because xbase assets are absent";
-
-        workItem->mTextures.emplace_back("textures/_land_default.dds");
 
         mWorkQueue->addWorkItem(std::move(workItem));
     }
@@ -3478,6 +3494,46 @@ namespace MWRender
                     falloutRoot->setNodeMask(0);
             }
             Log(Debug::Info) << "ESM4: hidden legacy player render root";
+        }
+
+        if (falloutFlatProfile && mFalloutPipBoyArmRoot == nullptr && mSceneRoot != nullptr && mViewer != nullptr)
+        {
+            const VFS::Path::Normalized model = Misc::ResourceHelpers::correctMeshPath(
+                VFS::Path::toNormalized("pipboy3000\\pipboyarm.nif"));
+            osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(model);
+            if (templateNode != nullptr)
+            {
+                osg::ref_ptr<osg::MatrixTransform> deviceRoot = new osg::MatrixTransform;
+                deviceRoot->setName("FNV Pip-Boy 3000 raised-arm presentation root");
+                deviceRoot->setNodeMask(0);
+
+                // OpenSceneGraph eye space looks down negative Z.  These are
+                // intentionally explicit calibration defaults, matching the
+                // recovered arm mesh rather than inventing a new panel asset.
+                const float localX = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_X", 0.f);
+                const float localY = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_Y", -8.f);
+                const float localZ = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_Z", -52.f);
+                const osg::Matrixd localTransform = osg::Matrixd::translate(localX, localY, localZ);
+                deviceRoot->addUpdateCallback(new FalloutPipBoyCameraAnchorCallback(mViewer->getCamera(), localTransform));
+
+                osg::ref_ptr<osg::PositionAttitudeTransform> device = new osg::PositionAttitudeTransform;
+                device->setName("FNV Pip-Boy 3000 retail arm mesh");
+                const float rotX = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_ROT_X", -90.f);
+                const float rotY = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_ROT_Y", 0.f);
+                const float rotZ = envFloatOr("OPENMW_FNV_FLAT_PIPBOY_ROT_Z", 90.f);
+                device->setAttitude(osg::Quat(osg::DegreesToRadians(rotX), osg::Vec3f(1.f, 0.f, 0.f))
+                    * osg::Quat(osg::DegreesToRadians(rotY), osg::Vec3f(0.f, 1.f, 0.f))
+                    * osg::Quat(osg::DegreesToRadians(rotZ), osg::Vec3f(0.f, 0.f, 1.f)));
+                device->addChild(osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL));
+                deviceRoot->addChild(device);
+                mSceneRoot->addChild(deviceRoot);
+                mFalloutPipBoyArmRoot = deviceRoot;
+                Log(Debug::Info) << "FNV Pip-Boy device: loaded retail raised-arm mesh model=" << model.value()
+                                 << " cameraLocal=(" << localX << "," << localY << "," << localZ << ")"
+                                 << " rotationDegrees=(" << rotX << "," << rotY << "," << rotZ << ")";
+            }
+            else
+                Log(Debug::Error) << "FNV Pip-Boy device: missing retail arm mesh model=" << model.value();
         }
 
         mCamera->setAnimation(mPlayerAnimation.get());

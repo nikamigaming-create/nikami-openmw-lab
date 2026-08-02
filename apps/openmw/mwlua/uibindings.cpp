@@ -24,6 +24,7 @@ namespace MWLua
     {
         const std::unordered_map<MWGui::GuiMode, std::string_view> modeToName{
             { MWGui::GM_Inventory, "Interface" },
+            { MWGui::GM_FalloutPipBoy, "FalloutPipBoy" },
             { MWGui::GM_Container, "Container" },
             { MWGui::GM_Companion, "Companion" },
             { MWGui::GM_MainMenu, "MainMenu" },

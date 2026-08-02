@@ -9,6 +9,7 @@
 
 #include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
+#include <components/settings/settings.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -222,7 +223,7 @@ namespace MWInput
     {
         int playerChannels[] = { A_AutoMove, A_AlwaysRun, A_ToggleWeapon, A_ToggleSpell, A_Rest, A_QuickKey1,
             A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7, A_QuickKey8, A_QuickKey9,
-            A_QuickKey10, A_Use, A_Journal };
+            A_QuickKey10, A_Use, A_Inventory, A_Map, A_Journal, A_QuickMenu };
 
         for (int pc : playerChannels)
         {
@@ -250,6 +251,8 @@ namespace MWInput
         // using hardcoded key defaults is inevitable, if we want the configuration files to stay valid
         // across different versions of OpenMW (in the case where another input action is added)
         std::map<int, SDL_Scancode> defaultKeyBindings;
+
+        const bool falloutControls = Settings::Manager::getBool("fallout controls", "OpenNV Compatibility");
 
         // Gets the Keyvalue from the Scancode; gives the button in the same place reguardless of keyboard format
         defaultKeyBindings[A_Activate] = SDL_SCANCODE_SPACE;
@@ -300,6 +303,26 @@ namespace MWInput
         std::map<int, int> defaultMouseButtonBindings;
         defaultMouseButtonBindings[A_FalloutAim] = SDL_BUTTON_RIGHT;
         defaultMouseButtonBindings[A_Use] = SDL_BUTTON_LEFT;
+
+        if (falloutControls)
+        {
+            // Retail Fallout: New Vegas keyboard/mouse defaults. This stays
+            // profile-controlled so Morrowind and custom bindings stay intact.
+            defaultKeyBindings[A_Activate] = SDL_SCANCODE_E;
+            defaultKeyBindings[A_Jump] = SDL_SCANCODE_SPACE;
+            defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_F;
+            defaultKeyBindings[A_Inventory] = SDL_SCANCODE_TAB;
+            // I opens the separate OpenMW inventory analogue.  It shares the
+            // player inventory with the Pip-Boy but retains its own layout.
+            defaultKeyBindings[A_QuickKeysMenu] = SDL_SCANCODE_I;
+            defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
+            defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
+
+            // R already maps to the native Fallout reload path. Never leave a
+            // Morrowind weapon toggle or inventory action on the mouse.
+            defaultKeyBindings.erase(A_ToggleWeapon);
+            defaultMouseButtonBindings.erase(A_Inventory);
+        }
 
         std::map<int, ICS::InputControlSystem::MouseWheelClick> defaultMouseWheelBindings;
         defaultMouseWheelBindings[A_ZoomIn] = ICS::InputControlSystem::MouseWheelClick::UP;

@@ -147,7 +147,7 @@ namespace MWPhysics
                 {
                     if (mMissingAnimatedCollisionNodes.insert(recIndex).second
                         && shouldLogMissingAnimatedCollisionNode(mPtr, recIndex))
-                        Log(Debug::Warning) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
+                        Log(Debug::Verbose) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
                                             << mPtr.getCellRef().getRefId() << "; keeping static collision child";
 
                     // Fallout meshes sometimes carry animated collision entries for nodes that are absent from the

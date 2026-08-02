@@ -330,6 +330,45 @@ namespace MWWorld
             }
         }
 
+        // The interactive TestMap launcher enters the normal New Game path
+        // first, then uses this deliberately separate developer-only final
+        // placement.  It is not the renderer viewer start contract above:
+        // player construction, globals, scripts, UI, controls, weather, and
+        // normal session state have already been initialized when it runs.
+        bool readFalloutGameplayStartExteriorLocation(ESM::ExteriorCellLocation& location)
+        {
+            const char* worldspaceText = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE");
+            if (worldspaceText == nullptr || *worldspaceText == '\0')
+                return false;
+
+            int gridX = 0;
+            int gridY = 0;
+            if (!readViewerProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_X", gridX)
+                || !readViewerProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_Y", gridY))
+            {
+                Log(Debug::Warning) << "FNV gameplay start: final developer placement ignored; grid is missing or invalid";
+                return false;
+            }
+
+            try
+            {
+                ESM::RefId worldspace = ESM::RefId::deserializeText(worldspaceText);
+                if (worldspace.empty())
+                {
+                    Log(Debug::Warning) << "FNV gameplay start: final developer placement ignored; worldspace is empty";
+                    return false;
+                }
+                location = ESM::ExteriorCellLocation(gridX, gridY, worldspace);
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV gameplay start: final developer placement ignored; worldspace '"
+                                    << worldspaceText << "' is invalid: " << e.what();
+                return false;
+            }
+        }
+
         bool viewerEnvEnabled(const char* name)
         {
             const char* value = std::getenv(name);
@@ -2692,6 +2731,39 @@ namespace MWWorld
                     viewerTrace("fallback-change-to-exterior.begin");
                     mWorldScene->changeToExteriorCell(cellId, pos, true);
                     viewerTrace("fallback-change-to-exterior.end");
+                }
+            }
+        }
+
+        // A gameplay launcher may select a deterministic TestMap cell only
+        // after ordinary new-game initialization above.  This keeps TestMap
+        // interaction on the real FNV player and production systems while
+        // avoiding the renderer diagnostic's --start bypass.
+        if (!bypass && mStore.getESM4Game() == ESM4Game::FalloutNewVegas)
+        {
+            ESM::ExteriorCellLocation gameplayStart;
+            if (readFalloutGameplayStartExteriorLocation(gameplayStart))
+            {
+                try
+                {
+                    MWWorld::CellStore& exteriorStore = mWorldModel.getExterior(gameplayStart);
+                    const ESM::RefId cellId = exteriorStore.getCell()->getId();
+                    const osg::Vec2f positionFromGrid = indexToPosition(gameplayStart, true);
+                    ESM::Position position;
+                    position.pos[0] = positionFromGrid.x();
+                    position.pos[1] = positionFromGrid.y();
+                    position.pos[2] = 0.f;
+                    position.rot[0] = 0.f;
+                    position.rot[1] = 0.f;
+                    position.rot[2] = 0.f;
+                    changeToCell(cellId, position, true);
+                    Log(Debug::Info) << "FNV gameplay start: applied final developer exterior placement="
+                                     << gameplayStart << " cell=" << cellId
+                                     << " afterNormalNewGame=true";
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Error) << "FNV gameplay start: final developer exterior placement failed: " << e.what();
                 }
             }
         }

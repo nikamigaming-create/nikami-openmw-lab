@@ -32,12 +32,15 @@
 #include <components/shader/shadermanager.hpp>
 
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/fallback/fallback.hpp>
 
 #include <components/settings/values.hpp>
 
+#include "../mwbase/environment.hpp"
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/esmstore.hpp"
 
 #include "renderbin.hpp"
 #include "ripples.hpp"
@@ -47,6 +50,23 @@
 
 namespace MWRender
 {
+
+    namespace
+    {
+        bool hasFalloutNvContentLoaded()
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return false;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (npc.mIsFONV)
+                    return true;
+            }
+            return false;
+        }
+    }
 
     // --------------------------------------------------------------------------------------------------------------------------------
 
@@ -572,6 +592,13 @@ namespace MWRender
         node->setStateSet(stateset);
         node->setUpdateCallback(nullptr);
         mRainSettingsUpdater = nullptr;
+
+        // Fallout New Vegas does not ship the legacy Morrowind water-frame
+        // sequence. Keep the simple water geometry, but do not issue VFS
+        // requests for assets that are neither Fallout data nor part of this
+        // renderer path.
+        if (hasFalloutNvContentLoaded())
+            return;
 
         // Add animated textures
         std::vector<osg::ref_ptr<osg::Texture2D>> textures;

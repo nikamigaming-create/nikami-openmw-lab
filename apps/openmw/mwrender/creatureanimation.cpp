@@ -9,6 +9,7 @@
 #include <osg/CullFace>
 #include <osg/Depth>
 #include <osg/FrameStamp>
+#include <osg/Geode>
 #include <osg/GLExtensions>
 #include <osg/Geometry>
 #include <osg/LOD>
@@ -353,6 +354,16 @@ namespace MWRender
                 traverse(node);
             }
 
+            void apply(osg::Geode& node) override
+            {
+                // NodeVisitor's default Geode overload reaches drawables but
+                // does not dispatch through apply(Node).  Restore the Geode
+                // mask explicitly so the enabled FNV RigGeometry children are
+                // not still hidden by their immediate parent.
+                node.setNodeMask(~0u);
+                traverse(node);
+            }
+
             void apply(osg::Drawable& drawable) override
             {
                 drawable.setNodeMask(~0u);
@@ -482,6 +493,27 @@ namespace MWRender
         {
             if (bodyNode == nullptr)
                 return;
+
+            // The source NIF can be attached below an ESM4 actor wrapper that
+            // keeps the old hidden mask.  Restoring only the body subtree is
+            // insufficient: every ancestor in a drawable's parental path
+            // participates in the effective render mask.  Restore the body
+            // and its actual attachment path, including all parents in case
+            // the scene graph is shared.
+            std::set<osg::Node*> restoredAncestors;
+            std::vector<osg::Node*> pending{ bodyNode };
+            while (!pending.empty())
+            {
+                osg::Node* node = pending.back();
+                pending.pop_back();
+                if (node == nullptr || !restoredAncestors.insert(node).second)
+                    continue;
+
+                node->setNodeMask(~0u);
+                node->setCullingActive(false);
+                for (unsigned int index = 0; index < node->getNumParents(); ++index)
+                    pending.push_back(node->getParent(index));
+            }
 
             ForceFalloutCreatureBodyVisibleVisitor visitor;
             bodyNode->accept(visitor);

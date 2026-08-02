@@ -97,6 +97,10 @@ local function isFalloutContentLoaded()
     return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
 end
 
+local function isFalloutPipBoyMode()
+    return isFalloutContentLoaded() and I.UI and I.UI.getMode and I.UI.getMode() == 'FalloutPipBoy'
+end
+
 local function getLayerSize(layer)
     return ui.layers[ui.layers.indexOf(layer)].size
 end
@@ -160,6 +164,18 @@ local function createDerivedSpaces()
         {
             position = util.vector3(-0.037, -0.023, -0.050) * I.vrspaces.unitsPerMeter,
             orientation = util.transform.rotate(math.pi / 2, util.vector3(0, 0, 1))
+        }
+    )
+
+    -- One physical screen on the actual left-wrist Pip-Boy.  The active
+    -- game pane changes its contents in-place; it must never fan out into
+    -- four floating windows around the player.
+    I.vrspaces.createDerivedSpace(
+        'PipBoyScreen',
+        'PipBoyInventory',
+        {
+            position = util.vector3(0, 0, 0) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.identity,
         }
     )
 
@@ -295,6 +311,57 @@ local function getWindowSpaceForCurrentMode()
 end
 
 local layerConfig = {}
+
+local pipBoyScreenLayers = {
+    'InventoryWindow',
+    'StatsWindow',
+    'MapWindow',
+    'SpellWindow',
+}
+local pipBoyScreenLayerDefaults = {}
+local pipBoyScreenConfigActive = false
+
+local function copyLayerConfig(config)
+    local copy = {}
+    for key, value in pairs(config) do
+        copy[key] = value
+    end
+    return copy
+end
+
+local function updateFalloutPipBoyLayerConfig()
+    local active = isFalloutPipBoyMode()
+    if active == pipBoyScreenConfigActive then
+        return
+    end
+
+    pipBoyScreenConfigActive = active
+    for _, layer in ipairs(pipBoyScreenLayers) do
+        local config = layerConfig[layer]
+        if config then
+            if active then
+                pipBoyScreenLayerDefaults[layer] = copyLayerConfig(config)
+                config.backgroundOpacity = 0
+                config.center = util.vector2(0, 0)
+                config.extent = util.vector2(0.120, 0.091)
+                config.rttResolution = util.vector2(855, 650)
+                config.autosize = false
+                config.space = 'PipBoyScreen'
+            else
+                local defaults = pipBoyScreenLayerDefaults[layer]
+                if defaults then
+                    for key in pairs(config) do
+                        config[key] = nil
+                    end
+                    for key, value in pairs(defaults) do
+                        config[key] = value
+                    end
+                end
+            end
+            setLayerConfigIfNotOverridden(layer, config)
+        end
+    end
+end
 
 local settingsPageKey = 'OMWVRUI'
 local l10nKey = settingsPageKey
@@ -494,6 +561,11 @@ local virtualKeyboardRelativePose = {
 local visibleLayersForArrangement = {}
 
 local function updateLayerArrangement()
+    updateFalloutPipBoyLayerConfig()
+    if isFalloutPipBoyMode() then
+        return
+    end
+
     if #visibleLayersForArrangement == 0 then
         return
     end
@@ -602,6 +674,8 @@ local function computeVirtualKeyboardPose()
 end
 
 local function updateLayers()
+    updateFalloutPipBoyLayerConfig()
+
     -- Update all the modes that did not get updated by arrangement.
     local pose = computeLayerPose()
     for _, layer in pairs(getAllLayers()) do

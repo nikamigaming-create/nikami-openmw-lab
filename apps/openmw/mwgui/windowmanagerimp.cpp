@@ -15,6 +15,7 @@
 #include <osgViewer/Viewer>
 
 #include <MyGUI_ClipboardManager.h>
+#include <MyGUI_Button.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_LayerManager.h>
@@ -531,6 +532,48 @@ namespace MWGui
             guiWindow->setCoord(coord);
             window->onWindowResize(guiWindow);
         }
+
+        void tintPipBoyTerminalText(MyGUI::Widget* widget)
+        {
+            if (widget == nullptr)
+                return;
+
+            // Keep the content widgets live; this only changes their terminal
+            // presentation.  Inventory state, drag/drop, map markers, and
+            // quest data still come from their existing windows.
+            const MyGUI::Colour terminalGreen(0.42f, 0.96f, 0.49f, 1.f);
+            if (MyGUI::TextBox* text = widget->castType<MyGUI::TextBox>(false))
+                text->setTextColour(terminalGreen);
+            if (MyGUI::Button* button = widget->castType<MyGUI::Button>(false))
+                button->setTextColour(terminalGreen);
+
+            for (size_t index = 0; index < widget->getChildCount(); ++index)
+                tintPipBoyTerminalText(widget->getChildAt(index));
+        }
+
+        void setPipBoyChrome(WindowBase* window, bool visible)
+        {
+            if (window == nullptr)
+                return;
+
+            for (const std::string_view name : { "PipBoyBackdrop", "PipBoyHeader", "PipBoyFooter" })
+                window->getWidget(name)->setVisible(visible);
+
+            // The pinned Morrowind window skin is retained for the OpenMW
+            // analogue, but its caption, pin, borders, and drag affordance
+            // must never leak through the dedicated Pip-Boy surface.
+            if (Window* guiWindow = window->mMainWidget->castType<Window>(false))
+            {
+                for (const std::string_view name : { "Action", "Caption", "Button" })
+                {
+                    for (MyGUI::Widget* skinWidget : guiWindow->getSkinWidgetsByName(std::string(name)))
+                        skinWidget->setVisible(!visible);
+                }
+            }
+
+            if (visible)
+                tintPipBoyTerminalText(window->mMainWidget);
+        }
     }
 
     WindowManager::WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
@@ -783,6 +826,7 @@ namespace MWGui
         trackWindow(mSpellWindow, makeSpellsWindowSettingValues());
 
         mGuiModeStates[GM_Inventory] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
+        mGuiModeStates[GM_FalloutPipBoy] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
         mGuiModeStates[GM_None] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
 
         auto tradeWindow = std::make_unique<TradeWindow>();
@@ -988,7 +1032,8 @@ namespace MWGui
         mWindows.push_back(std::move(inventoryTabsOverlay));
 
         mControllerTooltipEnabled = Settings::gui().mControllerTooltips;
-        mActiveControllerWindows[GM_Inventory] = 1; // Start on Inventory page
+        mActiveControllerWindows[GM_Inventory] = 1; // OpenMW inventory page
+        mActiveControllerWindows[GM_FalloutPipBoy] = 1; // Fallout ITEMS page
 
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
@@ -1194,13 +1239,16 @@ namespace MWGui
 
         const bool falloutContent = isFalloutContentLoaded();
 
-        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
+        // Fallout uses a Pip-Boy for menus, but its ordinary game-mode HUD still
+        // needs HP, AP, the crosshair, and the equipped-weapon readout.
         if (falloutContent)
         {
             setMinimapVisibility(false);
-            setWeaponVisibility(false);
+            setWeaponVisibility((mAllowed & GW_Inventory) != 0);
             setSpellVisibility(false);
-            setHMSVisibility(false);
+            setSneakVisibility(false);
+            mHud->setEffectVisible(false);
+            setHMSVisibility((mAllowed & GW_Stats) != 0);
         }
         else
         {
@@ -1212,7 +1260,14 @@ namespace MWGui
             setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
         }
 
-        mInventoryWindow->setGuiMode(getMode());
+        const GuiMode currentMode = getMode();
+        const bool inventoryMode = isInventoryMode(currentMode);
+        const bool falloutPipBoyMode = isFalloutPipBoyMode(currentMode);
+        if (mInventoryTabsOverlay != nullptr)
+            mInventoryTabsOverlay->setPipBoyMode(currentMode == GM_FalloutPipBoy);
+        // Item drag/drop and equip actions use the inventory behavior while
+        // the outer mode decides whether this is the Pip-Boy or OpenMW shell.
+        mInventoryWindow->setGuiMode(currentMode == GM_FalloutPipBoy ? GM_Inventory : currentMode);
 
         // If in game mode (or interactive messagebox), show the pinned windows
         if (mGuiModes.empty())
@@ -1231,7 +1286,7 @@ namespace MWGui
                 mInventoryTabsOverlay->setVisible(false);
             return;
         }
-        else if (getMode() != GM_Inventory)
+        else if (!inventoryMode)
         {
             mMap->setVisible(false);
             mStatsWindow->setVisible(false);
@@ -1245,7 +1300,7 @@ namespace MWGui
 
         mInventoryWindow->setTrading(mode == GM_Barter);
 
-        if (getMode() == GM_Inventory)
+        if (inventoryMode)
         {
             // For the inventory mode, compute the effective set of windows to show.
             // This is controlled both by what windows the
@@ -1261,7 +1316,7 @@ namespace MWGui
                 if (!loggedPaperDollProfiler)
                 {
                     Log(Debug::Info)
-                        << "FNV/ESM4 proof: flat paper doll profiler owns inventory mode full-screen";
+                        << "FNV/ESM4: flat paper doll profiler owns inventory mode full-screen";
                     loggedPaperDollProfiler = true;
                 }
             }
@@ -1281,6 +1336,11 @@ namespace MWGui
             setWindowVisibleIfChanged(mInventoryWindow, eff & GW_Inventory);
             setWindowVisibleIfChanged(mSpellWindow, eff & GW_Magic);
             setWindowVisibleIfChanged(mStatsWindow, eff & GW_Stats);
+
+            const bool useRetailPipBoyChrome = currentMode == GM_FalloutPipBoy;
+            for (WindowBase* window : { static_cast<WindowBase*>(mMap), static_cast<WindowBase*>(mInventoryWindow),
+                     static_cast<WindowBase*>(mSpellWindow), static_cast<WindowBase*>(mStatsWindow) })
+                setPipBoyChrome(window, useRetailPipBoyChrome);
 
             if (flatPaperDollProfiler)
             {
@@ -2403,7 +2463,7 @@ namespace MWGui
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg, bool force)
     {
-        if (mode == GM_Inventory && mAllowed == GW_None)
+        if ((mode == GM_Inventory || mode == GM_FalloutPipBoy) && mAllowed == GW_None)
             return;
 
         if (mGuiModes.empty() || mGuiModes.back() != mode)
@@ -2746,7 +2806,7 @@ namespace MWGui
 
     void WindowManager::toggleVisible(GuiWindow wnd)
     {
-        if (getMode() != GM_Inventory)
+        if (!isInventoryMode(getMode()))
             return;
 
         if (Settings::SettingValue<bool>* const hidden = findHiddenSetting(wnd))
@@ -3780,7 +3840,7 @@ namespace MWGui
     std::vector<std::string_view> WindowManager::getAllowedWindowIds(GuiMode mode) const
     {
         std::vector<std::string_view> res;
-        if (mode == GM_Inventory)
+        if (isInventoryMode(mode))
         {
             if (mAllowed & GW_Map)
                 res.push_back(mMap->getWindowIdForLua());
@@ -3907,7 +3967,7 @@ namespace MWGui
         if (getMode() == GM_Inventory && !VR::getVR())
         {
             mInventoryTabsOverlay->setVisible(true);
-            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
+            mInventoryTabsOverlay->setTab(mActiveControllerWindows[getMode()]);
             if (mInventoryTabsOverlay->mMainWidget != nullptr)
                 MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
         }

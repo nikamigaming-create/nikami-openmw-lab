@@ -3520,7 +3520,16 @@ namespace NifOsg
                     || ctrl->recType == Nif::RC_NiParticleSystemController
                     || ctrl->recType == Nif::RC_NiBSPArrayController || ctrl->recType == Nif::RC_NiUVController
                     || ctrl->recType == Nif::RC_NiMultiTargetTransformController
-                    || isNiPSysControllerRecord(ctrl->recType))
+                    || isNiPSysControllerRecord(ctrl->recType)
+                    // Fallout skeletons use empty bhk blend controllers as
+                    // Havok linkage records.  The parser rejects non-empty
+                    // key lists, so an accepted record has no OSG update to
+                    // perform.  Bone LOD is represented by the fully loaded
+                    // skeleton here, and extra-data controllers target data
+                    // not consumed by the renderer.
+                    || ctrl->recType == Nif::RC_bhkBlendController
+                    || ctrl->recType == Nif::RC_NiBoneLODController
+                    || ctrl->recType == Nif::RC_NiFloatExtraDataController)
                 {
                     // These controllers are handled elsewhere
                 }

@@ -317,6 +317,18 @@ namespace
                              << player.mModel << " nativeState=" << static_cast<bool>(falloutPlayerState);
         }
 
+        // The compatibility player shell above is required for the legacy
+        // save/load boundary, but fabricated inventory records are not part of
+        // a normal Fallout session.  Keep those records strictly behind an
+        // explicit recovery/proof opt-in so live FNV inventory always comes
+        // from the loaded ESM4 data.
+        const bool insertProofInventoryFallbacks
+            = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr
+            || std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr
+            || std::getenv("OPENMW_FNV_PROOF_ENABLE_ESM3_FALLBACKS") != nullptr;
+        if (!insertProofInventoryFallbacks)
+            return;
+
         const auto ensureWeapon
             = [&weapons](std::string_view id, std::string_view name, std::string_view icon, int value) {
                   const ESM::RefId refId = ESM::RefId::stringRefId(id);

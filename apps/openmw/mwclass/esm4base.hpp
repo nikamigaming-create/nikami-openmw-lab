@@ -36,6 +36,7 @@
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/actiondoor.hpp"
+#include "../mwworld/actionequip.hpp"
 #include "../mwworld/actionteleport.hpp"
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/class.hpp"
@@ -348,6 +349,17 @@ namespace MWClass
             if (ESM4Impl::isMarkerModel(model) || ESM4Impl::isLodModel(model))
                 return {};
 
+            // FalloutNV.esm TestMap01 retains two editor-only model names
+            // whose source files were not shipped in any retail FNV archive.
+            // Keep the authored records and route only those exact stale names
+            // to their corresponding retail meshes.  This is deliberately a
+            // data correction, not a generated placeholder or cross-game
+            // fallback: both targets are in Fallout - Meshes.bsa.
+            if (model == "clutter\\HELIOSOne\\NV_HeliosOne_SolarReflectorMetal_01.NIF")
+                return "architecture\\helios_one\\heliosone_solarreflector.nif";
+            if (model == "architecture\\diner\\dinernosignTEST.nif")
+                return "architecture\\diner\\dinernosign.nif";
+
             return model;
         }
     };
@@ -375,6 +387,15 @@ namespace MWClass
     template <typename Record>
     class ESM4Named : public MWWorld::RegisteredClass<ESM4Named<Record>, ESM4Base<Record>>
     {
+        static constexpr bool IsInventoryItem = std::is_same_v<Record, ESM4::Ammunition>
+            || std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Book>
+            || std::is_same_v<Record, ESM4::Clothing> || std::is_same_v<Record, ESM4::Ingredient>
+            || std::is_same_v<Record, ESM4::ItemMod> || std::is_same_v<Record, ESM4::Key>
+            || std::is_same_v<Record, ESM4::Light> || std::is_same_v<Record, ESM4::MiscItem>
+            || std::is_same_v<Record, ESM4::Potion> || std::is_same_v<Record, ESM4::Weapon>;
+        static constexpr bool IsFalloutEquipment = std::is_same_v<Record, ESM4::Armor>
+            || std::is_same_v<Record, ESM4::Clothing> || std::is_same_v<Record, ESM4::Weapon>;
+
     public:
         ESM4Named()
             : MWWorld::RegisteredClass<ESM4Named, ESM4Base<Record>>(Record::sRecordId)
@@ -456,7 +477,16 @@ namespace MWClass
         {
             if constexpr (std::is_same_v<Record, ESM4::Furniture>)
                 return ESM4Impl::activateEsm4Furniture(ptr, actor);
+            else if constexpr (IsInventoryItem)
+                return this->defaultItemActivate(ptr, actor);
             return ESM4Base<Record>::activate(ptr, actor);
+        }
+
+        std::unique_ptr<MWWorld::Action> use(const MWWorld::Ptr& ptr, bool force) const override
+        {
+            if constexpr (IsFalloutEquipment)
+                return std::make_unique<MWWorld::ActionEquip>(ptr, force);
+            return ESM4Base<Record>::use(ptr, force);
         }
     };
 

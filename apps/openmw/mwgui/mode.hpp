@@ -45,7 +45,11 @@ namespace MWGui
         GM_LoadingWallpaper,
         GM_Jail,
 
-        GM_QuickKeysMenu
+        GM_QuickKeysMenu,
+
+        // Fallout keeps its Pip-Boy in a distinct GUI mode.  The ordinary
+        // inventory mode remains available for the OpenMW inventory analogue.
+        GM_FalloutPipBoy
     };
 
     // Windows shown in inventory mode

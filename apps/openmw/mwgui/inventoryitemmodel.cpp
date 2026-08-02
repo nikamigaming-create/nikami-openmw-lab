@@ -7,6 +7,8 @@
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -145,6 +147,44 @@ namespace MWGui
                 MWWorld::InventoryStore& invStore = mActor.getClass().getInventoryStore(mActor);
                 if (invStore.isEquipped(newItem.mBase))
                     newItem.mType = ItemStack::Type_Equipped;
+            }
+            else if (mActor.getType() == ESM::REC_NPC_4)
+            {
+                const ESM::FormId* const formId = item.getCellRef().getRefId().getIf<ESM::FormId>();
+                if (formId == nullptr)
+                {
+                    mItems.push_back(newItem);
+                    continue;
+                }
+
+                if (item.getType() == ESM::REC_WEAP4)
+                {
+                    const ESM4::Weapon* const equipped = MWClass::ESM4Npc::getEquippedWeapon(mActor);
+                    if (equipped != nullptr && equipped->mId == *formId)
+                        newItem.mType = ItemStack::Type_Equipped;
+                }
+                else if (item.getType() == ESM::REC_ARMO4)
+                {
+                    for (const ESM4::Armor* equipped : MWClass::ESM4Npc::getEquippedArmor(mActor))
+                    {
+                        if (equipped != nullptr && equipped->mId == *formId)
+                        {
+                            newItem.mType = ItemStack::Type_Equipped;
+                            break;
+                        }
+                    }
+                }
+                else if (item.getType() == ESM::REC_CLOT4)
+                {
+                    for (const ESM4::Clothing* equipped : MWClass::ESM4Npc::getEquippedClothing(mActor))
+                    {
+                        if (equipped != nullptr && equipped->mId == *formId)
+                        {
+                            newItem.mType = ItemStack::Type_Equipped;
+                            break;
+                        }
+                    }
+                }
             }
 
             mItems.push_back(newItem);

@@ -105,7 +105,7 @@ namespace MWGui
 
             if (winMgr->getWorldMouseOver()
                 && (winMgr->isConsoleMode() || (winMgr->getMode() == GM_Container)
-                    || (winMgr->getMode() == GM_Inventory)))
+                    || (winMgr->getMode() == GM_Inventory) || (winMgr->getMode() == GM_FalloutPipBoy)))
             {
                 if (mFocusObject.isEmpty())
                     return;
