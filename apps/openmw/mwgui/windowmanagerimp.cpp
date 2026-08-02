@@ -33,6 +33,7 @@
 #include <SDL_keyboard.h>
 
 #include <components/debug/debuglog.hpp>
+#include <components/debug/fnvseamlesstelemetry.hpp>
 
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
@@ -3450,6 +3451,12 @@ namespace MWGui
 
     void WindowManager::fadeScreenIn(const float time, bool clearQueue, float delay)
     {
+        Debug::FNVSeamlessTelemetry::Event("fade-request")
+            .string("operation", "fadeScreenIn")
+            .number("durationSeconds", time)
+            .boolean("clearQueue", clearQueue)
+            .number("delaySeconds", delay)
+            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeOut(time, delay);
@@ -3457,6 +3464,12 @@ namespace MWGui
 
     void WindowManager::fadeScreenOut(const float time, bool clearQueue, float delay)
     {
+        Debug::FNVSeamlessTelemetry::Event("fade-request")
+            .string("operation", "fadeScreenOut")
+            .number("durationSeconds", time)
+            .boolean("clearQueue", clearQueue)
+            .number("delaySeconds", delay)
+            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeIn(time, delay);
@@ -3464,6 +3477,13 @@ namespace MWGui
 
     void WindowManager::fadeScreenTo(const int percent, const float time, bool clearQueue, float delay)
     {
+        Debug::FNVSeamlessTelemetry::Event("fade-request")
+            .string("operation", "fadeScreenTo")
+            .integer("percent", percent)
+            .number("durationSeconds", time)
+            .boolean("clearQueue", clearQueue)
+            .number("delaySeconds", delay)
+            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeTo(percent, time, delay);

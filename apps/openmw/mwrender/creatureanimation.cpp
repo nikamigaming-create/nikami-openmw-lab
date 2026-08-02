@@ -1853,6 +1853,41 @@ void main()
                                             << FonvCreatureHitReactionSemanticGroup
                                             << " source=<none> status=unavailable";
                     }
+
+                    static constexpr std::string_view fallbackNames[] = {
+                        "skeleton.kf",
+                        "idle.kf",
+                        "forward.kf",
+                        "backward.kf",
+                        "left.kf",
+                        "right.kf",
+                        "walkforward.kf",
+                        "runforward.kf",
+                        "attackleft.kf",
+                        "attackright.kf",
+                        "attack1.kf",
+                    };
+                    for (std::string_view fallback : fallbackNames)
+                    {
+                        std::string path = animationDirectory + std::string(fallback);
+                        std::string normalizedPath;
+                        if (findCreatureKf(*vfs, path, normalizedPath))
+                        {
+                            addAnimSource(normalizedPath, model);
+                            ++fallbackKfs;
+                        }
+                    }
+
+                    std::string normalizedDirectory = animationDirectory;
+                    VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
+                    std::string probeToken = normalizedDirectory;
+                    if (probeToken.ends_with('/'))
+                        probeToken.pop_back();
+                    const std::vector<std::string> discoveredKfPaths
+                        = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
+                    discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
+                    for (const std::string& path : discoveredKfPaths)
+                        addAnimSource(path, model);
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "

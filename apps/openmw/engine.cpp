@@ -49,6 +49,7 @@
 #include <SDL.h>
 
 #include <components/debug/debuglog.hpp>
+#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/debug/gldebug.hpp>
 
 #include <components/misc/rng.hpp>
@@ -3263,6 +3264,109 @@ namespace
         int mAuditFrame = -1;
         bool mApplyLogged = false;
     };
+
+    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return false;
+
+        FalloutProofFaceBoundsVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        if (visitor.getHeadBoneMatched() == 0)
+            return false;
+
+        center = visitor.getHeadCenter();
+        forward = visitor.getHeadForward();
+        return forward.length2() > 1e-6;
+    }
+
+    struct FalloutProofPortraitPose
+    {
+        osg::Vec3d mHeadCenter;
+        osg::Vec3d mHeadForward;
+        osg::Vec3d mLeftHandCenter;
+        osg::Vec3d mRightHandCenter;
+        bool mHeadResolved = false;
+        bool mLeftHandResolved = false;
+        bool mRightHandResolved = false;
+    };
+
+    class FalloutProofPortraitPoseVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutProofPortraitPoseVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub"
+                || lowerName == "bip01 l hand" || lowerName == "bip01 r hand")
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                const osg::Vec3d center = localToWorld.getTrans();
+                if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
+                {
+                    mPose.mHeadCenter += center;
+                    osg::Vec3d forward
+                        = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                    if (forward.normalize() > 1e-6)
+                        mPose.mHeadForward += forward;
+                    ++mHeadCount;
+                }
+                else if (lowerName == "bip01 l hand")
+                {
+                    mPose.mLeftHandCenter += center;
+                    ++mLeftHandCount;
+                }
+                else
+                {
+                    mPose.mRightHandCenter += center;
+                    ++mRightHandCount;
+                }
+            }
+            traverse(node);
+        }
+
+        FalloutProofPortraitPose getPose() const
+        {
+            FalloutProofPortraitPose result = mPose;
+            if (mHeadCount > 0)
+            {
+                result.mHeadCenter /= static_cast<double>(mHeadCount);
+                result.mHeadResolved = result.mHeadForward.normalize() > 1e-6;
+            }
+            if (mLeftHandCount > 0)
+            {
+                result.mLeftHandCenter /= static_cast<double>(mLeftHandCount);
+                result.mLeftHandResolved = true;
+            }
+            if (mRightHandCount > 0)
+            {
+                result.mRightHandCenter /= static_cast<double>(mRightHandCount);
+                result.mRightHandResolved = true;
+            }
+            return result;
+        }
+
+    private:
+        FalloutProofPortraitPose mPose;
+        unsigned int mHeadCount = 0;
+        unsigned int mLeftHandCount = 0;
+        unsigned int mRightHandCount = 0;
+    };
+
+    FalloutProofPortraitPose resolveFalloutProofPortraitPose(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return {};
+        FalloutProofPortraitPoseVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        return visitor.getPose();
+    }
 
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)

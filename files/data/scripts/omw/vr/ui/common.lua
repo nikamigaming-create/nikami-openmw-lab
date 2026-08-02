@@ -453,8 +453,8 @@ local function setLayerPoseIfNotOverridden(layer, pose)
     end
 end
 
-local configHUD3D = createDefaultConfig(0, true)
-configHUD3D.extent = util.vector2(0.033, 0.033)
+local configHUD3D = createDefaultConfig(0.08, true)
+configHUD3D.extent = util.vector2(0.18, 0.125)
 configHUD3D.center = util.vector2(0, 0.5)
 configHUD3D.space = 'LeftWristTop'
 layerConfig.HUD_3D = configHUD3D

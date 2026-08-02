@@ -12,6 +12,7 @@
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
 #include <components/debug/debuglog.hpp>
+#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/detournavigator/agentbounds.hpp>
 #include <components/detournavigator/debug.hpp>
 #include <components/detournavigator/heightfieldshape.hpp>
@@ -1235,11 +1236,22 @@ namespace MWWorld
 
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)
     {
+        const auto gridChangeStart = std::chrono::steady_clock::now();
+        const std::size_t activeCellsBefore = mActiveCells.size();
         const int halfGridSize
             = isEsm4Ext(playerCellIndex.mWorldspace) ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         auto navigatorUpdateGuard = mNavigator.makeUpdateGuard();
         const int playerCellX = playerCellIndex.mX;
         const int playerCellY = playerCellIndex.mY;
+
+        Debug::FNVSeamlessTelemetry::Event("grid-change-begin")
+            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
+            .integer("gridX", playerCellX)
+            .integer("gridY", playerCellY)
+            .integer("halfGridSize", halfGridSize)
+            .boolean("changeEvent", changeEvent)
+            .integer("activeCellsBefore", activeCellsBefore)
+            .emit();
 
         for (auto iter = mActiveCells.begin(); iter != mActiveCells.end();)
         {
@@ -1273,7 +1285,9 @@ namespace MWWorld
         mPreloader->setTerrain(mRendering.getTerrain());
         if (mRendering.pagingUnlockCache())
             mPreloader->abortTerrainPreloadExcept(nullptr);
-        if (!mPreloader->isTerrainLoaded(PositionCellGrid{ pos, newGrid }, mRendering.getReferenceTime()))
+        const bool terrainAlreadyLoaded
+            = mPreloader->isTerrainLoaded(PositionCellGrid{ pos, newGrid }, mRendering.getReferenceTime());
+        if (!terrainAlreadyLoaded)
             preloadTerrain(pos, playerCellIndex.mWorldspace, true);
         mPagedRefs.clear();
         mRendering.getPagedRefnums(newGrid, mPagedRefs);
@@ -1289,6 +1303,19 @@ namespace MWWorld
             refsToLoad += mWorld.getWorldModel().getExterior(location).count();
             cellsPositionsToLoad.emplace_back(x, y);
         });
+
+        Debug::FNVSeamlessTelemetry::Event("grid-load-plan")
+            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
+            .integer("gridX", playerCellX)
+            .integer("gridY", playerCellY)
+            .integer("cellsToLoad", cellsPositionsToLoad.size())
+            .integer("referencesToLoad", refsToLoad)
+            .boolean("terrainAlreadyLoaded", terrainAlreadyLoaded)
+            .boolean("preloadEnabled", mPreloadEnabled)
+            .boolean("preloadExteriorGrid", mPreloadExteriorGrid)
+            .boolean("preloadDoors", mPreloadDoors)
+            .boolean("preloadFastTravel", mPreloadFastTravel)
+            .emit();
 
         Loading::Listener* loadingListener = MWBase::Environment::get().getWindowManager()->getLoadingScreen();
         Loading::ScopedLoad load(loadingListener);
@@ -1318,6 +1345,17 @@ namespace MWWorld
             mCellChanged = true;
 
         mCellLoaded = true;
+
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - gridChangeStart)
+                                   .count();
+        Debug::FNVSeamlessTelemetry::Event("grid-change-end")
+            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
+            .integer("gridX", playerCellX)
+            .integer("gridY", playerCellY)
+            .integer("activeCellsAfter", mActiveCells.size())
+            .integer("elapsedMs", elapsedMs)
+            .emit();
     }
 
     void Scene::addPostponedPhysicsObjects()
@@ -1552,7 +1590,38 @@ namespace MWWorld
         std::string_view cellName, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent)
     {
         CellStore& cell = mWorld.getWorldModel().getInterior(cellName);
+        const auto transitionStart = std::chrono::steady_clock::now();
+        const std::string sourceCell = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
+            ? mCurrentCell->getCell()->getId().toDebugString()
+            : std::string();
+        const std::string sourceWorldspace = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
+            ? mCurrentCell->getCell()->getWorldSpace().toDebugString()
+            : std::string();
         bool useFading = (mCurrentCell != nullptr);
+
+        const auto emitTransitionEnd = [&] {
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - transitionStart)
+                                       .count();
+            Debug::FNVSeamlessTelemetry::Event("scene-transition-end")
+                .string("route", "interior")
+                .string("destinationCell", cell.getCell()->getId().toDebugString())
+                .boolean("changeEvent", changeEvent)
+                .integer("elapsedMs", elapsedMs)
+                .emit();
+        };
+
+        Debug::FNVSeamlessTelemetry::Event("scene-transition-begin")
+            .string("route", "interior")
+            .string("sourceCell", sourceCell)
+            .string("sourceWorldspace", sourceWorldspace)
+            .string("destinationCell", cell.getCell()->getId().toDebugString())
+            .string("destinationWorldspace", cell.getCell()->getWorldSpace().toDebugString())
+            .boolean("changeEvent", changeEvent)
+            .boolean("usesFade", useFading)
+            .string("handoffState", "not-applicable")
+            .emit();
+
         if (useFading)
             MWBase::Environment::get().getWindowManager()->fadeScreenOut(0.5);
 
@@ -1568,6 +1637,7 @@ namespace MWWorld
             if (adjustPlayerPos)
                 mWorld.getPlayerPtr().getClass().adjustPosition(mWorld.getPlayerPtr(), true);
             MWBase::Environment::get().getWindowManager()->fadeScreenIn(0.5);
+            emitTransitionEnd();
             return;
         }
 
@@ -1613,15 +1683,40 @@ namespace MWWorld
         MWBase::Environment::get().getWindowManager()->changeCell(mCurrentCell);
 
         MWBase::Environment::get().getWorld()->getPostProcessor()->setExteriorFlag(cell.getCell()->isQuasiExterior());
+        emitTransitionEnd();
     }
 
     void Scene::changeToExteriorCell(
         const ESM::RefId& extCellId, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent)
     {
+        const auto transitionStart = std::chrono::steady_clock::now();
+        const std::string sourceCell = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
+            ? mCurrentCell->getCell()->getId().toDebugString()
+            : std::string();
+        const std::string sourceWorldspace = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
+            ? mCurrentCell->getCell()->getWorldSpace().toDebugString()
+            : std::string();
+        const bool sourceExterior = mCurrentCell != nullptr && mCurrentCell->isExterior();
 
         if (changeEvent)
             MWBase::Environment::get().getWindowManager()->fadeScreenOut(0.5);
         CellStore& current = mWorld.getWorldModel().getCell(extCellId);
+
+        const bool sameWorldspace = sourceExterior && mCurrentCell->getCell()->getWorldSpace()
+            == current.getCell()->getWorldSpace();
+        const std::string handoffState = sourceExterior && !sameWorldspace ? "not-implemented" : "not-applicable";
+        Debug::FNVSeamlessTelemetry::Event("scene-transition-begin")
+            .string("route", "exterior")
+            .string("sourceCell", sourceCell)
+            .string("sourceWorldspace", sourceWorldspace)
+            .string("destinationCell", current.getCell()->getId().toDebugString())
+            .string("destinationWorldspace", current.getCell()->getWorldSpace().toDebugString())
+            .boolean("sourceExterior", sourceExterior)
+            .boolean("sameWorldspace", sameWorldspace)
+            .boolean("changeEvent", changeEvent)
+            .boolean("usesFade", changeEvent)
+            .string("handoffState", handoffState)
+            .emit();
 
         const osg::Vec2i cellIndex(current.getCell()->getGridX(), current.getCell()->getGridY());
 
@@ -1634,6 +1729,17 @@ namespace MWWorld
             MWBase::Environment::get().getWindowManager()->fadeScreenIn(0.5);
 
         MWBase::Environment::get().getWorld()->getPostProcessor()->setExteriorFlag(true);
+
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - transitionStart)
+                                   .count();
+        Debug::FNVSeamlessTelemetry::Event("scene-transition-end")
+            .string("route", "exterior")
+            .string("destinationCell", current.getCell()->getId().toDebugString())
+            .boolean("sameWorldspace", sameWorldspace)
+            .string("handoffState", handoffState)
+            .integer("elapsedMs", elapsedMs)
+            .emit();
     }
 
     CellStore* Scene::getCurrentCell()

@@ -221,6 +221,11 @@ local function uiAllowed()
         and not uiControlsOverridden
 end
 
+local function isFalloutContentLoaded()
+    return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
+end
+
+local falloutInventoryDiagCount = 0
 input.registerTriggerHandler('Inventory', async:callback(function()
     -- Tab is the native Fallout Pip-Boy Items action. ActionManager opens the
     -- selected Pip-Boy pane and keyboardmanager closes it on the next Tab.
@@ -232,9 +237,16 @@ input.registerTriggerHandler('Inventory', async:callback(function()
     elseif I.UI.getMode() == I.UI.MODE.Interface or I.UI.getMode() == I.UI.MODE.Container then
         I.UI.removeMode(I.UI.getMode())
     end
+
+    if isFalloutContentLoaded() and falloutInventoryDiagCount < 12 then
+        print(string.format(
+            'Fallout VR diag: Inventory trigger completed afterMode=%s',
+            tostring(I.UI.getMode())))
+    end
 end))
 
 input.registerTriggerHandler('Journal', async:callback(function()
+    if isFalloutContentLoaded() then return end
     if not uiAllowed() then return end
     -- FNV routes this trigger to its DATA / QUESTS pane in ActionManager.
     -- Do not also open the Morrowind book journal after the native handler.

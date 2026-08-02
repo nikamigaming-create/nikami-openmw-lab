@@ -420,6 +420,8 @@ namespace MWVR
         {
             mPointerActive = source && sourceName != "DefaultReferenceSpaceView";
             mVRPointer->setSource(source);
+            mVRPointer->setDebugSpaces(
+                mXRInput->getSpace(OpenXRInput::LeftHandAim), mXRInput->getSpace(OpenXRInput::RightHandAim));
             mVRPointer->update();
         }
         else
@@ -463,6 +465,285 @@ namespace MWVR
         }
 
         mDirectPointerClickDown = pressed;
+    }
+
+    void VRInputManager::updateRetailSurfaceDirectClick(bool retailSurfaceReady)
+    {
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
+        if (!retailSurfaceReady || !retailSurface.visible())
+        {
+            mRetailSurfaceClickDown = false;
+            return;
+        }
+
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const bool pressed = actionPressed(actionSet, {
+            "/user/hand/right/input/trigger/value",
+            "/user/hand/right/input/trigger/click",
+            "/user/hand/left/input/trigger/value",
+            "/user/hand/left/input/trigger/click",
+        });
+
+        if (pressed && !mRetailSurfaceClickDown)
+        {
+            if (mRetailSurfaceDirectClickLogCount < 24)
+            {
+                ++mRetailSurfaceDirectClickLogCount;
+                Log(Debug::Info) << "FNVXR retail surface: direct OpenXR click edge focus="
+                                 << retailSurface.hasFocus();
+            }
+            retailSurface.injectMouseClick();
+        }
+
+        mRetailSurfaceClickDown = pressed;
+    }
+
+    void VRInputManager::updateRetailSurfaceGripRecenter(bool disableControls)
+    {
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const bool leftGripPressed = actionPressed(actionSet, {
+            "/user/hand/left/input/squeeze/value",
+            "/user/hand/left/input/squeeze/click",
+            "/user/hand/left/input/grip/value",
+            "/user/hand/left/input/grip/click",
+        });
+        const bool rightGripPressed = actionPressed(actionSet, {
+            "/user/hand/right/input/squeeze/value",
+            "/user/hand/right/input/squeeze/click",
+            "/user/hand/right/input/grip/value",
+            "/user/hand/right/input/grip/click",
+        });
+        const bool rightStickClicked = actionPressed(actionSet, {
+            "/user/hand/right/input/thumbstick/click",
+        });
+        const bool rightRecenterChord = rightGripPressed && rightStickClicked;
+
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
+        const RetailSurfaceGate gate = retailSurfaceBridgeGate(disableControls);
+        if (gate != RetailSurfaceGate::Ready)
+        {
+            if ((leftGripPressed || rightRecenterChord) && mRetailSurfaceStartupGateLogCount < 24)
+            {
+                ++mRetailSurfaceStartupGateLogCount;
+                Log(Debug::Info) << "FNVXR retail surface: ignored startup grip gate="
+                                 << retailSurfaceGateName(gate)
+                                 << " leftGrip=" << leftGripPressed
+                                 << " rightRecenter=" << rightRecenterChord;
+            }
+            mRetailSurfaceLeftGripDown = leftGripPressed;
+            mRetailSurfaceRightGripDown = rightRecenterChord;
+            return;
+        }
+
+        if (leftGripPressed && !mRetailSurfaceLeftGripDown)
+        {
+            Log(Debug::Info) << "FNVXR retail surface: left grip requested retail sidecar";
+            retailSurface.recenterMenuPortal();
+        }
+        if (rightRecenterChord && !mRetailSurfaceRightGripDown)
+        {
+            Log(Debug::Info) << "FNVXR retail surface: right grip plus right stick recentered retail sidecar";
+            retailSurface.recenterMenuPortal();
+        }
+
+        mRetailSurfaceLeftGripDown = leftGripPressed;
+        mRetailSurfaceRightGripDown = rightRecenterChord;
+    }
+
+    void VRInputManager::updateRetailSurfaceXInput(bool retailSurfaceReady)
+    {
+#ifdef _WIN32
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const bool gripHeld = actionPressed(actionSet, {
+            "/user/hand/left/input/squeeze/value",
+            "/user/hand/left/input/squeeze/click",
+            "/user/hand/left/input/grip/value",
+            "/user/hand/left/input/grip/click",
+            "/user/hand/right/input/squeeze/value",
+            "/user/hand/right/input/squeeze/click",
+            "/user/hand/right/input/grip/value",
+            "/user/hand/right/input/grip/click",
+        });
+        const bool xboxMode = retailSurface.modalInputActive();
+
+        const bool retailSurfaceModal = retailSurfaceReady && retailSurface.modalInputActive();
+        if (!retailSurfaceModal)
+        {
+            if (auto* shared = sharedXInputState())
+            {
+                shared->connected = 0;
+                ++shared->packet;
+            }
+            return;
+        }
+
+        if (xboxMode || gripHeld)
+            rootPlayerMovementForRetailSurface();
+
+        auto* shared = sharedXInputState();
+        if (!shared)
+            return;
+
+        const float leftX = actionFloat(actionSet, {
+            "/user/hand/left/input/thumbstick/x",
+            "/user/hand/left/input/trackpad/x",
+        });
+        const float leftY = actionFloat(actionSet, {
+            "/user/hand/left/input/thumbstick/y",
+            "/user/hand/left/input/trackpad/y",
+        });
+        const float rightX = actionFloat(actionSet, {
+            "/user/hand/right/input/thumbstick/x",
+            "/user/hand/right/input/trackpad/x",
+        });
+        const float rightY = actionFloat(actionSet, {
+            "/user/hand/right/input/thumbstick/y",
+            "/user/hand/right/input/trackpad/y",
+        });
+        constexpr float dpadDeadzone = 0.45f;
+        const float navX = std::abs(rightX) > std::abs(leftX) ? rightX : leftX;
+        const float navY = std::abs(rightY) > std::abs(leftY) ? rightY : leftY;
+        std::uint16_t buttons = 0;
+        if (xboxMode && navY > dpadDeadzone)
+            buttons |= XInputDpadUp;
+        if (xboxMode && navY < -dpadDeadzone)
+            buttons |= XInputDpadDown;
+        if (xboxMode && navX < -dpadDeadzone)
+            buttons |= XInputDpadLeft;
+        if (xboxMode && navX > dpadDeadzone)
+            buttons |= XInputDpadRight;
+        if (xboxMode)
+        {
+            if (actionPressed(actionSet, { "/user/hand/right/input/a/click", "/user/hand/left/input/x/click",
+                                          "/user/hand/right/input/select/click", "/user/hand/left/input/select/click" }))
+                buttons |= XInputA;
+            if (actionPressed(actionSet, { "/user/hand/right/input/b/click", "/user/hand/left/input/y/click",
+                                          "/user/hand/right/input/menu/click", "/user/hand/left/input/menu/click" }))
+                buttons |= XInputB;
+            if (actionPressed(actionSet, { "/user/hand/right/input/x/click", "/user/hand/left/input/a/click" }))
+                buttons |= XInputX;
+            if (actionPressed(actionSet, { "/user/hand/right/input/y/click", "/user/hand/left/input/b/click" }))
+                buttons |= XInputY;
+            if (actionPressed(actionSet, { "/user/hand/left/input/thumbstick/click" }))
+                buttons |= XInputBack;
+            if (actionPressed(actionSet, { "/user/hand/right/input/thumbstick/click" }))
+                buttons |= XInputStart;
+        }
+
+        shared->magic = XInputSharedMagic;
+        shared->version = XInputSharedVersion;
+        shared->connected = xboxMode ? 1 : 0;
+        shared->buttons = buttons;
+        shared->leftTrigger = xboxMode ? 255 : 0;
+        shared->rightTrigger = 0;
+        shared->leftThumbX = xboxMode ? thumbAxis(leftX) : 0;
+        shared->leftThumbY = xboxMode ? thumbAxis(leftY) : 0;
+        shared->rightThumbX = xboxMode ? thumbAxis(rightX) : 0;
+        shared->rightThumbY = xboxMode ? thumbAxis(rightY) : 0;
+        ++shared->packet;
+
+        if ((buttons != 0 || xboxMode || std::abs(navX) > 0.1f || std::abs(navY) > 0.1f
+                || (mRetailSurfaceXInputLogCount % 240) == 0)
+            && mRetailSurfaceXInputLogCount < 480)
+        {
+            ++mRetailSurfaceXInputLogCount;
+            Log(Debug::Info) << "FNVXR retail surface: published XInput buttons=0x" << std::hex << buttons
+                             << std::dec << " packet=" << shared->packet
+                             << " xboxMode=" << xboxMode
+                             << " leftTrigger=" << static_cast<int>(shared->leftTrigger)
+                             << " nav=(" << navX << "," << navY << ")";
+        }
+#endif
+    }
+
+    void VRInputManager::updateFallbackMovement(bool disableControls)
+    {
+        if (!VR::getVR())
+        {
+            sFallbackMovementInput = osg::Vec2f();
+            sHasFallbackMovementInput = false;
+            mFallbackMovementActive = false;
+            return;
+        }
+
+        auto state = MWBase::Environment::get().getStateManager();
+        auto window = MWBase::Environment::get().getWindowManager();
+        auto world = MWBase::Environment::get().getWorld();
+        auto lua = MWBase::Environment::get().getLuaManager();
+        if (state->getState() == MWBase::StateManager::State_NoGame)
+            return;
+
+        const bool blocked = disableControls || window->isGuiMode() || FNVXRLiveFrameSurface::instance().modalInputActive();
+        const std::string hand = VR::getLeftHandedMode() ? "/user/hand/right" : "/user/hand/left";
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const float side = blocked ? 0.f : vrMovementDeadzone(actionFloat(actionSet, {
+            "/user/hand/left/input/thumbstick/x",
+            "/user/hand/left/input/trackpad/x",
+            "/user/hand/right/input/thumbstick/x",
+            "/user/hand/right/input/trackpad/x",
+        }));
+        const float movement = blocked ? 0.f : vrMovementDeadzone(actionFloat(actionSet, {
+            "/user/hand/left/input/thumbstick/y",
+            "/user/hand/left/input/trackpad/y",
+            "/user/hand/right/input/thumbstick/y",
+            "/user/hand/right/input/trackpad/y",
+        }));
+        const bool active = std::abs(side) > 0.f || std::abs(movement) > 0.f;
+        sFallbackMovementInput = osg::Vec2f(side, movement);
+        sHasFallbackMovementInput = active;
+
+        if (!active && !mFallbackMovementActive)
+            return;
+
+        MWWorld::Ptr player = world->getPlayerPtr();
+        if (player.isEmpty())
+            return;
+
+        if (MWBase::LuaManager::ActorControls* controls = lua->getActorControls(player))
+        {
+            controls->mSideMovement = side;
+            controls->mMovement = movement;
+            controls->mChanged = true;
+        }
+
+        auto& movementSettings = player.getClass().getMovementSettings(player);
+        movementSettings.mPosition[0] = side;
+        movementSettings.mPosition[1] = movement;
+        movementSettings.mSpeedFactor = osg::Vec2f(side, movement).length();
+
+        if ((active || mFallbackMovementActive) && mFallbackMovementLogCount < 32)
+        {
+            ++mFallbackMovementLogCount;
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR fallback movement"
+                             << " hand=" << hand << " side=" << side << " forward=" << movement
+                             << " blocked=" << blocked << " active=" << active
+                             << " settings=(" << movementSettings.mPosition[0] << ","
+                             << movementSettings.mPosition[1] << "," << movementSettings.mPosition[2]
+                             << ") speedFactor=" << movementSettings.mSpeedFactor;
+        }
+
+        mFallbackMovementActive = active;
+    }
+
+    void VRInputManager::updateRetailSurfaceModalAudio(bool active)
+    {
+        if (active == mRetailSurfaceAudioPaused)
+            return;
+
+        auto soundManager = MWBase::Environment::get().getSoundManager();
+        if (active)
+        {
+            soundManager->pauseSounds(MWSound::BlockerType::VideoPlayback);
+            mRetailSurfaceAudioPaused = true;
+            Log(Debug::Info) << "FNVXR retail surface: OpenMW audio paused while retail surface is active";
+        }
+        else
+        {
+            soundManager->resumeSounds(MWSound::BlockerType::VideoPlayback);
+            mRetailSurfaceAudioPaused = false;
+            Log(Debug::Info) << "FNVXR retail surface: OpenMW audio resumed";
+        }
     }
 
     void VRInputManager::updateRetailSurfaceDirectClick(bool retailSurfaceReady)

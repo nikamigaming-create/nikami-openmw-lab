@@ -58,6 +58,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwsound/testsaysequence.cpp
     mwsound/testsoundbuffer.cpp
 
+    mwrender/testplayervisualpolicy.cpp
+
     mwscript/testscripts.cpp
 )
 

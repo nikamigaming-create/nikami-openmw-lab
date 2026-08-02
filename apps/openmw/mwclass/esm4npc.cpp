@@ -473,6 +473,31 @@ namespace MWClass
                          << " reason=\"" << reason << "\"";
     }
 
+    static std::string_view getFalloutNpcFallbackSkeleton(const ESM4NpcCustomData& data)
+    {
+        if (data.mTraits != nullptr && data.mTraits->mIsFONV)
+            return "characters/_male/skeleton.nif";
+        if (data.mTraits != nullptr && data.mTraits->mIsStarfield)
+            return "actors/human/characterassets/skeleton.nif";
+        return {};
+    }
+
+    static void logWorldViewerNpcModelFallback(
+        const MWWorld::ConstPtr& ptr, const ESM4NpcCustomData& data, std::string_view model, std::string_view reason)
+    {
+        if (!worldViewerActorTelemetryEnabled() || data.mTraits == nullptr)
+            return;
+
+        Log(Debug::Info) << "World viewer actor ledger: phase=npc-model-fallback"
+                         << " ref=" << ptr.getCellRef().getRefId()
+                         << " base=" << ESM::FormId(data.mTraits->mId)
+                         << " game=" << getWorldViewerNpcGameTag(*data.mTraits)
+                         << " npc=\"" << data.mTraits->mEditorId << "\""
+                         << " model=\"" << model << "\""
+                         << " fallback=\"characters/_male/skeleton.nif\""
+                         << " reason=\"" << reason << "\"";
+    }
+
     static const ESM4::Npc* chooseStatsRecord(const ESM4NpcCustomData& data)
     {
         if (data.mStats != nullptr)
@@ -2073,6 +2098,30 @@ namespace MWClass
         data.mEquippedClothing = std::move(authored->mEquippedClothing);
         data.mEquippedWeapon = authored->mEquippedWeapon;
         data.mCreatureStats.clearFalloutEquipmentOverride();
+        return true;
+    }
+
+    bool ESM4Npc::addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
+    {
+        if (armor == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const std::uint32_t occupiedSlots = armor->mArmorFlags;
+        if (occupiedSlots != 0)
+        {
+            std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                return equipped != nullptr && equipped != armor && (equipped->mArmorFlags & occupiedSlots) != 0;
+            });
+            std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+            });
+        }
+
+        if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor) != data.mEquippedArmor.end())
+            return false;
+
+        data.mEquippedArmor.push_back(armor);
         return true;
     }
 
