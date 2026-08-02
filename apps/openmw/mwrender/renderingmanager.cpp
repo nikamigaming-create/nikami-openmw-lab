@@ -1,21 +1,31 @@
 #include "renderingmanager.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
+#include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 
 #include <osg/ClipControl>
+#include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
 #include <osg/Group>
+#include <osg/Image>
 #include <osg/Light>
+#include <osg/LightModel>
 #include <osg/Material>
-#include <osg/Matrix>
+#include <osg/MatrixTransform>
 #include <osg/PolygonMode>
+#include <osg/Texture2D>
 #include <osg/UserDataContainer>
 
 #include <osgUtil/LineSegmentIntersector>
@@ -43,23 +53,20 @@
 #include <components/sceneutil/cullsafeboundsvisitor.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
-#include <components/sceneutil/occlusionculling.hpp>
-#include <components/occlusionculling/occlusionstorage.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
-#include <components/sceneutil/stateupdater.hpp>
+#include <components/sceneutil/statesetupdater.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/sceneutil/workqueue.hpp>
 #include <components/sceneutil/writescene.hpp>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/strings/algorithm.hpp>
-
+#include <components/myguiplatform/myguirendermanager.hpp>
 
 #include <components/terrain/quadtreeworld.hpp>
 #include <components/terrain/terraingrid.hpp>
-#include <components/terrain/terrainoccluder.hpp>
 
 #include <components/esm3/loadcell.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -76,16 +83,17 @@
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
-#include "../mwworld/globals.hpp"
 #include "../mwworld/groundcoverstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/livecellref.hpp"
 #include "../mwworld/scene.hpp"
 
 #include "../mwgui/postprocessorhud.hpp"
+#include "../mwgui/windowmanagerimp.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutcombat.hpp"
 #include "../mwmechanics/movement.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -100,11 +108,11 @@
 #include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
 #include "fogmanager.hpp"
+#include "falloutweaponanimation.hpp"
 #include "groundcover.hpp"
 #include "navmesh.hpp"
 #include "npcanimation.hpp"
 #include "objectpaging.hpp"
-#include "occlusionculling.hpp"
 #include "pathgrid.hpp"
 #include "postprocessor.hpp"
 #include "recastmesh.hpp"
@@ -115,6 +123,14 @@
 #include "vismask.hpp"
 #include "water.hpp"
 
+//## VR_PATCH BEGIN
+#include <osg/ViewportIndexed>
+#include <components/vr/vr.hpp>
+#include "../mwvr/vranimation.hpp"
+#include "../mwvr/vrgui.hpp"
+#include "../mwvr/vrpointer.hpp"
+
+//## VR_PATCH END
 namespace MWRender
 {
     namespace
@@ -133,6 +149,693 @@ namespace MWRender
             char* end = nullptr;
             const float parsed = std::strtof(value, &end);
             return end != value && std::isfinite(parsed) ? parsed : fallback;
+        }
+
+        class FalloutPipBoyGuiRTT final : public SceneUtil::RTTNode
+        {
+        public:
+            explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera)
+                // The MyGUI camera tracks the current flat render surface.  Keeping
+                // this target at the same 16:9 1920x1080 extent prevents its active
+                // panel from being clipped to the lower-left 1280x720 sub-viewport.
+                : RTTNode(1920, 1080, 1, true, 0, StereoAwareness::Unaware, false)
+                , mGuiCamera(std::move(guiCamera))
+            {
+                setName("FNV Pip-Boy live screen RTT");
+            }
+
+            void setDefaults(osg::Camera* camera) override
+            {
+                camera->setCullingActive(false);
+                // PipBoyArm's retail screen material uses the captured alpha as
+                // its emissive mask.  Clearing alpha to one lights every pixel
+                // solid green before the panel can contribute any contrast.
+                camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
+                setColorBufferInternalFormat(GL_RGBA8);
+                camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF);
+                camera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
+                camera->setCullMask(Mask_GUI);
+                camera->setCullMaskLeft(Mask_GUI);
+                camera->setCullMaskRight(Mask_GUI);
+                camera->setNodeMask(Mask_3DGUI);
+                camera->setName("FNV Pip-Boy live screen camera");
+                setUpdateCallback(new NoTraverseCallback);
+                camera->addChild(mGuiCamera);
+                camera->getOrCreateStateSet()->setRenderBinDetails(-1, "RenderBin");
+            }
+
+        private:
+            osg::ref_ptr<osg::Node> mGuiCamera;
+        };
+
+        // A physical Pip-Boy needs a deterministic screen source that survives
+        // independently of the desktop GUI's render order.  This is not a
+        // screen-space overlay: the resulting dynamic texture is bound only to
+        // PipBoyArm's authored display polygons and therefore follows their
+        // UVs, perspective, and raise/lower motion exactly.
+        constexpr int sPipBoyTerminalWidth = 1024;
+        constexpr int sPipBoyTerminalHeight = 768;
+
+        using PipBoyGlyph = std::array<unsigned char, 7>;
+
+        PipBoyGlyph pipBoyGlyph(char value)
+        {
+            const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(value)));
+            switch (c)
+            {
+                case 'A': return { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 };
+                case 'B': return { 0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e };
+                case 'C': return { 0x0f, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0f };
+                case 'D': return { 0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e };
+                case 'E': return { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f };
+                case 'F': return { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10 };
+                case 'G': return { 0x0f, 0x10, 0x10, 0x17, 0x11, 0x11, 0x0f };
+                case 'H': return { 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 };
+                case 'I': return { 0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f };
+                case 'J': return { 0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c };
+                case 'K': return { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 };
+                case 'L': return { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f };
+                case 'M': return { 0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11 };
+                case 'N': return { 0x11, 0x19, 0x19, 0x15, 0x13, 0x13, 0x11 };
+                case 'O': return { 0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e };
+                case 'P': return { 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10 };
+                case 'Q': return { 0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d };
+                case 'R': return { 0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11 };
+                case 'S': return { 0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e };
+                case 'T': return { 0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 };
+                case 'U': return { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e };
+                case 'V': return { 0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04 };
+                case 'W': return { 0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a };
+                case 'X': return { 0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11 };
+                case 'Y': return { 0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04 };
+                case 'Z': return { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f };
+                case '0': return { 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e };
+                case '1': return { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e };
+                case '2': return { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f };
+                case '3': return { 0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e };
+                case '4': return { 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 };
+                case '5': return { 0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e };
+                case '6': return { 0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e };
+                case '7': return { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 };
+                case '8': return { 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e };
+                case '9': return { 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e };
+                case '[': return { 0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e };
+                case ']': return { 0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e };
+                case '-': return { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 };
+                case '/': return { 0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10 };
+                case ':': return { 0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00 };
+                case '.': return { 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06 };
+                case ',': return { 0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x04 };
+                case '+': return { 0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00 };
+                case '>': return { 0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10 };
+                case '<': return { 0x01, 0x02, 0x04, 0x08, 0x04, 0x02, 0x01 };
+                case '=': return { 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00 };
+                case '\'': return { 0x04, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00 };
+                case '(': return { 0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02 };
+                case ')': return { 0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08 };
+                case ' ': return { 0, 0, 0, 0, 0, 0, 0 };
+                default: return { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04 };
+            }
+        }
+
+        void putPipBoyTerminalPixel(osg::Image& image, int x, int y, const std::array<unsigned char, 4>& color)
+        {
+            if (x < 0 || y < 0 || x >= image.s() || y >= image.t())
+                return;
+            std::copy(color.begin(), color.end(), image.data(x, y));
+        }
+
+        void drawPipBoyTerminalLine(osg::Image& image, int x0, int y0, int x1, int y1,
+            const std::array<unsigned char, 4>& color)
+        {
+            const int dx = std::abs(x1 - x0);
+            const int sx = x0 < x1 ? 1 : -1;
+            const int dy = -std::abs(y1 - y0);
+            const int sy = y0 < y1 ? 1 : -1;
+            int error = dx + dy;
+            while (true)
+            {
+                putPipBoyTerminalPixel(image, x0, y0, color);
+                if (x0 == x1 && y0 == y1)
+                    break;
+                const int twiceError = error * 2;
+                if (twiceError >= dy)
+                {
+                    error += dy;
+                    x0 += sx;
+                }
+                if (twiceError <= dx)
+                {
+                    error += dx;
+                    y0 += sy;
+                }
+            }
+        }
+
+        void drawPipBoyTerminalGlyph(osg::Image& image, char character, int left, int top, int scale,
+            const std::array<unsigned char, 4>& color)
+        {
+            const PipBoyGlyph bitmap = pipBoyGlyph(character);
+            for (int y = 0; y < 7; ++y)
+            {
+                for (int x = 0; x < 5; ++x)
+                {
+                    if ((bitmap[y] & (1 << (4 - x))) == 0)
+                        continue;
+                    for (int offsetY = 0; offsetY < scale; ++offsetY)
+                        for (int offsetX = 0; offsetX < scale; ++offsetX)
+                            putPipBoyTerminalPixel(image, left + x * scale + offsetX, top + y * scale + offsetY, color);
+                }
+            }
+        }
+
+        void drawPipBoyTerminalText(osg::Image& image, std::string_view text, int left, int top, int scale,
+            int lineAdvance, const std::array<unsigned char, 4>& color)
+        {
+            const int initialLeft = left;
+            for (char character : text)
+            {
+                if (character == '\n')
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    continue;
+                }
+                drawPipBoyTerminalGlyph(image, character, left, top, scale, color);
+                left += scale * 6;
+            }
+        }
+
+        void drawPipBoyTerminalTextBox(osg::Image& image, std::string_view text, int left, int top, int scale,
+            int lineAdvance, int width, int bottom, const std::array<unsigned char, 4>& color)
+        {
+            // The physical glass is much smaller than a desktop overlay. Keep
+            // all live fields inside a deliberate terminal column instead of
+            // allowing a long tab row or action string to run off the right
+            // edge and look like a UV crop.
+            const int initialLeft = left;
+            const int glyphAdvance = scale * 6;
+            for (char character : text)
+            {
+                if (top + scale * 7 > bottom)
+                    break;
+                if (character == '\n')
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    continue;
+                }
+                if (left + glyphAdvance > initialLeft + width)
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    if (top + scale * 7 > bottom)
+                        break;
+                }
+                drawPipBoyTerminalGlyph(image, character, left, top, scale, color);
+                left += glyphAdvance;
+            }
+        }
+
+        enum class PipBoyConditionPart : std::size_t
+        {
+            Head,
+            Torso,
+            LeftArm,
+            RightArm,
+            LeftLeg,
+            RightLeg,
+            Count,
+        };
+
+        struct PipBoyLimbCondition
+        {
+            int mPercent = 0;
+            bool mKnown = false;
+            bool mCrippled = false;
+        };
+
+        using PipBoyConditionState
+            = std::array<PipBoyLimbCondition, static_cast<std::size_t>(PipBoyConditionPart::Count)>;
+
+        constexpr std::size_t pipBoyConditionIndex(PipBoyConditionPart part)
+        {
+            return static_cast<std::size_t>(part);
+        }
+
+        std::string normalizePipBoyBodyPartName(std::string_view name)
+        {
+            std::string normalized;
+            normalized.reserve(name.size());
+            for (const unsigned char character : name)
+            {
+                if (std::isalnum(character) != 0)
+                    normalized.push_back(static_cast<char>(std::tolower(character)));
+            }
+            return normalized;
+        }
+
+        std::optional<PipBoyConditionPart> classifyPipBoyBodyPart(std::string_view name)
+        {
+            const std::string normalized = normalizePipBoyBodyPartName(name);
+            if (normalized.find("head") != std::string::npos || normalized.find("face") != std::string::npos)
+                return PipBoyConditionPart::Head;
+            if (normalized.find("torso") != std::string::npos || normalized.find("chest") != std::string::npos
+                || normalized.find("body") != std::string::npos)
+                return PipBoyConditionPart::Torso;
+
+            const bool left = normalized.find("left") != std::string::npos || normalized.find("larm") != std::string::npos
+                || normalized.find("lleg") != std::string::npos;
+            const bool right = normalized.find("right") != std::string::npos
+                || normalized.find("rarm") != std::string::npos || normalized.find("rleg") != std::string::npos;
+            if (normalized.find("arm") != std::string::npos)
+            {
+                if (left)
+                    return PipBoyConditionPart::LeftArm;
+                if (right)
+                    return PipBoyConditionPart::RightArm;
+            }
+            if (normalized.find("leg") != std::string::npos)
+            {
+                if (left)
+                    return PipBoyConditionPart::LeftLeg;
+                if (right)
+                    return PipBoyConditionPart::RightLeg;
+            }
+            return std::nullopt;
+        }
+
+        PipBoyConditionState getPipBoyConditionState()
+        {
+            PipBoyConditionState result;
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return result;
+
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty())
+                return result;
+
+            const ESM4::BodyPartData* bodyPartData = MWMechanics::getFalloutActorBodyPartData(player);
+            if (bodyPartData == nullptr)
+            {
+                // The dedicated player BPTD is authored in FalloutNV.esm. A
+                // normal New Game can reach the Pip-Boy before the actor
+                // resolver has attached that record, so resolve the same retail
+                // record from the loaded Fallout store rather than fabricate a
+                // condition figure or display unknown values.
+                const auto& bodyPartRecords = world->getStore().get<ESM4::BodyPartData>();
+                const auto findByEditorId = [&](std::string_view editorId) -> const ESM4::BodyPartData* {
+                    const auto found = std::find_if(bodyPartRecords.begin(), bodyPartRecords.end(),
+                        [&](const ESM4::BodyPartData& candidate) {
+                            return Misc::StringUtils::ciEqual(candidate.mEditorId, editorId);
+                        });
+                    return found != bodyPartRecords.end() ? &*found : nullptr;
+                };
+                bodyPartData = findByEditorId("PlayerBodyPartData");
+                if (bodyPartData == nullptr)
+                {
+                    bodyPartData = findByEditorId("DefaultBodyPartData");
+                }
+            }
+            if (bodyPartData == nullptr)
+                return result;
+
+            const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+            const float actorMaximumHealth = stats.getHealth().getModified();
+            if (!std::isfinite(actorMaximumHealth) || actorMaximumHealth <= 0.f)
+                return result;
+
+            for (const ESM4::BodyPartData::BodyPart& bodyPart : bodyPartData->mBodyParts)
+            {
+                const std::optional<PipBoyConditionPart> part = classifyPipBoyBodyPart(bodyPart.mPartName);
+                if (!part || bodyPart.mData.healthPercent == 0)
+                    continue;
+
+                const float maximumCondition
+                    = actorMaximumHealth * static_cast<float>(bodyPart.mData.healthPercent) * 0.01f;
+                if (!std::isfinite(maximumCondition) || maximumCondition <= 0.f)
+                    continue;
+
+                const float damageTaken = std::max(0.f, stats.getFalloutLimbDamage(bodyPart.mData.actorValue));
+                const float condition = std::max(0.f, maximumCondition - damageTaken);
+                const int percent = static_cast<int>(std::clamp(
+                    std::lround(100.f * condition / maximumCondition), 0l, 100l));
+                result[pipBoyConditionIndex(*part)] = { percent, true, percent == 0 };
+            }
+            return result;
+        }
+
+        std::string makePipBoyConditionSignature(const PipBoyConditionState& state)
+        {
+            std::ostringstream signature;
+            for (const PipBoyLimbCondition& limb : state)
+                signature << static_cast<int>(limb.mKnown) << ':' << limb.mPercent << ':'
+                          << static_cast<int>(limb.mCrippled) << ';';
+            return signature.str();
+        }
+
+        osg::ref_ptr<osg::Image> getPipBoyRetailStatusImage(
+            Resource::ResourceSystem* resourceSystem, std::string_view sourcePath)
+        {
+            if (resourceSystem == nullptr || resourceSystem->getVFS() == nullptr)
+                return nullptr;
+
+            const VFS::Path::Normalized path{ std::string(sourcePath) };
+            if (!resourceSystem->getVFS()->exists(path))
+            {
+                Log(Debug::Warning) << "FNV Pip-Boy retail condition: missing path=" << path;
+                return nullptr;
+            }
+            return resourceSystem->getImageManager()->getImage(path);
+        }
+
+        osg::Texture2D* getPipBoyRetailWorldMapTexture(
+            osg::ref_ptr<osg::Texture2D>& texture, Resource::ResourceSystem* resourceSystem)
+        {
+            if (texture != nullptr)
+                return texture.get();
+            if (resourceSystem == nullptr || resourceSystem->getVFS() == nullptr)
+                return nullptr;
+
+            static constexpr std::string_view sourcePath
+                = "textures/interface/worldmap/wasteland_nv_2048_no_map.dds";
+            const VFS::Path::Normalized path{ std::string(sourcePath) };
+            if (!resourceSystem->getVFS()->exists(path))
+            {
+                Log(Debug::Warning) << "FNV Pip-Boy MAP: missing retail source=" << path;
+                return nullptr;
+            }
+
+            osg::ref_ptr<osg::Image> image = resourceSystem->getImageManager()->getImage(path);
+            if (image == nullptr)
+                return nullptr;
+
+            texture = new osg::Texture2D(image);
+            texture->setName("FNV Pip-Boy retail Mojave world map");
+            texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            texture->setResizeNonPowerOfTwoHint(false);
+            Log(Debug::Info) << "FNV Pip-Boy MAP: bound retail source=" << path << " size=" << image->s() << 'x'
+                             << image->t();
+            return texture.get();
+        }
+
+        bool drawPipBoyRetailStatusImage(osg::Image& target, const osg::Image& source, int left, int top,
+            int width, int height, const std::array<unsigned char, 4>& color)
+        {
+            if (width <= 0 || height <= 0 || source.s() <= 0 || source.t() <= 0)
+                return false;
+
+            bool drewPixels = false;
+            for (int y = 0; y < height; ++y)
+            {
+                const int sourceY = source.t() - 1 - std::min(source.t() - 1, y * source.t() / height);
+                for (int x = 0; x < width; ++x)
+                {
+                    const int sourceX = std::min(source.s() - 1, x * source.s() / width);
+                    const osg::Vec4f sourceColor = source.getColor(sourceX, sourceY);
+                    // Retail DDS icon sheets often keep an opaque black alpha
+                    // background. Alpha-only sampling turns that whole sheet
+                    // into a glowing rectangle. Their actual icon silhouette
+                    // is carried by RGB, so use its strongest channel.
+                    const float coverage = std::clamp(
+                        std::max(sourceColor.r(), std::max(sourceColor.g(), sourceColor.b())), 0.f, 1.f);
+                    if (coverage <= 0.025f)
+                        continue;
+
+                    unsigned char* const existing = target.data(left + x, top + y);
+                    const std::array<unsigned char, 4> glyph = {
+                        std::max(existing[0], static_cast<unsigned char>(color[0] * coverage)),
+                        std::max(existing[1], static_cast<unsigned char>(color[1] * coverage)),
+                        std::max(existing[2], static_cast<unsigned char>(color[2] * coverage)),
+                        std::max(existing[3], static_cast<unsigned char>(color[3] * coverage)),
+                    };
+                    putPipBoyTerminalPixel(target, left + x, top + y, glyph);
+                    drewPixels = true;
+                }
+            }
+            return drewPixels;
+        }
+
+        void drawPipBoyConditionReadout(osg::Image& image, const PipBoyLimbCondition& condition, int left, int top,
+            bool meterPointsRight, const std::array<unsigned char, 4>& dim,
+            const std::array<unsigned char, 4>& bright, const std::array<unsigned char, 4>& accent)
+        {
+            constexpr int meterLength = 56;
+            const int meterStart = meterPointsRight ? left : left - meterLength;
+            drawPipBoyTerminalLine(image, meterStart, top + 18, meterStart + meterLength, top + 18, dim);
+            if (condition.mKnown)
+            {
+                const int filledLength = meterLength * std::clamp(condition.mPercent, 0, 100) / 100;
+                drawPipBoyTerminalLine(image, meterStart, top + 18, meterStart + filledLength, top + 18, bright);
+            }
+
+            if (condition.mCrippled)
+                drawPipBoyTerminalText(image, "CRIPPLED", meterPointsRight ? left : left - 48, top, 1, 8, accent);
+            else
+            {
+                const std::string value = condition.mKnown ? std::to_string(condition.mPercent) : "--";
+                const int valueLeft = meterPointsRight ? left : left - static_cast<int>(value.size()) * 12;
+                drawPipBoyTerminalText(image, value, valueLeft, top, 2, 16, accent);
+            }
+        }
+
+        void drawPipBoyRetailConditionFigure(osg::Image& target, Resource::ResourceSystem* resourceSystem,
+            const PipBoyConditionState& conditions, const std::array<unsigned char, 4>& dim,
+            const std::array<unsigned char, 4>& bright, const std::array<unsigned char, 4>& accent)
+        {
+            struct PartLayout
+            {
+                PipBoyConditionPart mPart;
+                std::string_view mNormalPath;
+                std::string_view mBrokenPath;
+                int mLeft;
+                int mTop;
+                int mWidth;
+                int mHeight;
+                int mReadoutLeft;
+                int mReadoutTop;
+                bool mMeterPointsRight;
+            };
+
+            // The authored retail parts have a taller footprint than the
+            // visible UV portion of the curved Pip-Boy glass. Keep the figure
+            // centred and compact inside that usable rectangle: a complete,
+            // readable condition figure is more important than filling every
+            // available terminal pixel.
+            static constexpr std::array<PartLayout, 6> layout = { {
+                { PipBoyConditionPart::Head, "textures/interface/stats/head.dds",
+                    "textures/interface/stats/head_broken.dds", 493, 145, 122, 132, 640, 168, true },
+                { PipBoyConditionPart::Torso, "textures/interface/stats/torso.dds",
+                    "textures/interface/stats/torso_broken.dds", 474, 269, 147, 184, 640, 337, true },
+                { PipBoyConditionPart::LeftArm, "textures/interface/stats/left_arm.dds",
+                    "textures/interface/stats/left_arm_broken.dds", 602, 269, 144, 74, 700, 246, false },
+                { PipBoyConditionPart::RightArm, "textures/interface/stats/right_arm.dds",
+                    "textures/interface/stats/right_arm_broken.dds", 341, 263, 138, 78, 340, 246, true },
+                { PipBoyConditionPart::LeftLeg, "textures/interface/stats/left_leg.dds",
+                    "textures/interface/stats/left_leg_broken.dds", 540, 390, 103, 160, 650, 488, true },
+                { PipBoyConditionPart::RightLeg, "textures/interface/stats/right_leg.dds",
+                    "textures/interface/stats/right_leg_broken.dds", 420, 385, 120, 160, 412, 488, false },
+            } };
+
+            std::size_t drawnParts = 0;
+            for (const PartLayout& part : layout)
+            {
+                const PipBoyLimbCondition& condition = conditions[pipBoyConditionIndex(part.mPart)];
+                const std::string_view sourcePath = condition.mCrippled ? part.mBrokenPath : part.mNormalPath;
+                const osg::ref_ptr<osg::Image> source = getPipBoyRetailStatusImage(resourceSystem, sourcePath);
+                if (source != nullptr
+                    && drawPipBoyRetailStatusImage(target, *source, part.mLeft, part.mTop, part.mWidth, part.mHeight, bright))
+                    ++drawnParts;
+                drawPipBoyConditionReadout(
+                    target, condition, part.mReadoutLeft, part.mReadoutTop, part.mMeterPointsRight, dim, bright, accent);
+            }
+
+            // face_00 is the retail neutral condition face. A broken head uses
+            // head_broken.dds alone so the damaged state remains legible.
+            const PipBoyLimbCondition& head = conditions[pipBoyConditionIndex(PipBoyConditionPart::Head)];
+            if (!head.mCrippled)
+            {
+                const osg::ref_ptr<osg::Image> face
+                    = getPipBoyRetailStatusImage(resourceSystem, "textures/interface/stats/face_00.dds");
+                // face_00 is a 64px overlay authored for the 128px head canvas.
+                // Keep that 1:2 relationship when the complete figure is
+                // compacted; stretching it vertically made the eyes and mouth
+                // drift down onto the jaw/neck.
+                // Centre the visual face canvas inside the authored head canvas.
+                // The previous anchor centred on the torso, which left the eyes
+                // and mouth visibly high/left inside the head outline.
+                if (face != nullptr && drawPipBoyRetailStatusImage(target, *face, 524, 178, 61, 66, bright))
+                    ++drawnParts;
+            }
+
+            Log(Debug::Info) << "FNV Pip-Boy retail condition: source=Fallout - Textures2.bsa parts=" << drawnParts
+                             << " liveLimbState=" << makePipBoyConditionSignature(conditions);
+        }
+
+        void drawPipBoyRetailPanelIcon(osg::Image& target, Resource::ResourceSystem* resourceSystem, int pane,
+            std::string_view body, const std::array<unsigned char, 4>& bright)
+        {
+            // These are the shipped FalloutNV Pip-Boy glyphs, selected from
+            // the same record family that produces the live text. Do not use a
+            // generic stick figure or made-up emoji as a stand-in for a panel.
+            std::string_view source;
+            int left = 720;
+            int top = 180;
+            int width = 235;
+            int height = 235;
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                    source = "textures/interface/icons/message icons/glow_message_map.dds";
+                    left = 72;
+                    top = 572;
+                    width = 78;
+                    height = 78;
+                    break;
+                case 1:
+                    if (body.find("WEAPONS") != std::string_view::npos)
+                    {
+                        source = body.find("> VARMINT RIFLE") != std::string_view::npos
+                            ? "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds"
+                            : "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds";
+                    }
+                    else if (body.find("APPAREL") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/apparel/vault_suit_21.dds";
+                    else if (body.find("AID") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/items/items_stimpack.dds";
+                    else if (body.find("AMMO") != std::string_view::npos)
+                        source = body.find("5.56") != std::string_view::npos
+                            ? "textures/interface/icons/pipboyimages/items/items_5.56mm_rounds.dds"
+                            : "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds";
+                    else
+                        source = "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds";
+                    break;
+                case 2:
+                    if (body.find("RADIO") != std::string_view::npos)
+                        source = "textures/interface/icons/message icons/glow_message_radio_tower.dds";
+                    else if (body.find("NOTES") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/items/item_holotap.dds";
+                    else
+                        source = "textures/interface/icons/message icons/glow_message_vaultboy_thinking.dds";
+                    break;
+                case 3:
+                default:
+                    if (body.find("S.P.E.C.I.A.L.") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/s.p.e.c.i.a.l/special_strength.dds";
+                    else if (body.find("PERKS") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/perks/perk_gunslinger.dds";
+                    else if (body.find("RADIATION") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/derived statistics/radiation_resistance.dds";
+                    else if (body.find("SKILLS") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/perks/perk_commando.dds";
+                    else
+                        source = "textures/interface/icons/message icons/glow_message_vaultboy_neutral.dds";
+                    break;
+            }
+
+            const osg::ref_ptr<osg::Image> image = getPipBoyRetailStatusImage(resourceSystem, source);
+            if (image != nullptr)
+                drawPipBoyRetailStatusImage(target, *image, left, top, width, height, bright);
+            else
+                Log(Debug::Warning) << "FNV Pip-Boy retail icon: missing source=" << source;
+        }
+
+        osg::Texture2D* updatePipBoyTerminalTexture(osg::ref_ptr<osg::Image>& image,
+            osg::ref_ptr<osg::Texture2D>& texture, std::string& currentContents, std::string_view header,
+            std::string_view body, int pane, bool showCondition, Resource::ResourceSystem* resourceSystem)
+        {
+            const PipBoyConditionState conditions = showCondition ? getPipBoyConditionState() : PipBoyConditionState{};
+            std::string contents = std::string(header) + '\n' + std::string(body);
+            const std::size_t footerMarker = body.find('\f');
+            const std::string_view bodyText = footerMarker == std::string_view::npos ? body : body.substr(0, footerMarker);
+            const std::string_view footerText = footerMarker == std::string_view::npos ? std::string_view{}
+                                                                                         : body.substr(footerMarker + 1);
+            if (showCondition)
+                contents += '\n' + makePipBoyConditionSignature(conditions);
+            if (image != nullptr && texture != nullptr && contents == currentContents)
+                return texture.get();
+
+            if (image == nullptr)
+            {
+                image = new osg::Image;
+                image->allocateImage(sPipBoyTerminalWidth, sPipBoyTerminalHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+                image->setFileName("generated:FNV Pip-Boy live terminal surface");
+                image->setDataVariance(osg::Object::DYNAMIC);
+            }
+            if (texture == nullptr)
+            {
+                texture = new osg::Texture2D(image);
+                texture->setName("FNV Pip-Boy live terminal surface");
+                texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+                texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+                texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+                texture->setResizeNonPowerOfTwoHint(false);
+                texture->setUnRefImageDataAfterApply(false);
+                texture->setDataVariance(osg::Object::DYNAMIC);
+            }
+
+            std::fill(image->data(), image->data() + sPipBoyTerminalWidth * sPipBoyTerminalHeight * 4, 0);
+            constexpr std::array<unsigned char, 4> dim = { 12, 140, 48, 90 };
+            constexpr std::array<unsigned char, 4> bright = { 85, 255, 135, 255 };
+            constexpr std::array<unsigned char, 4> accent = { 155, 255, 180, 255 };
+            for (int y = 14; y < sPipBoyTerminalHeight - 14; y += 4)
+                drawPipBoyTerminalLine(*image, 20, y, sPipBoyTerminalWidth - 20, y, dim);
+            drawPipBoyTerminalLine(*image, 20, 20, sPipBoyTerminalWidth - 20, 20, bright);
+            drawPipBoyTerminalLine(*image, 20, sPipBoyTerminalHeight - 20, sPipBoyTerminalWidth - 20,
+                sPipBoyTerminalHeight - 20, bright);
+            drawPipBoyTerminalLine(*image, 20, 20, 20, sPipBoyTerminalHeight - 20, bright);
+            drawPipBoyTerminalLine(*image, sPipBoyTerminalWidth - 20, 20, sPipBoyTerminalWidth - 20,
+                sPipBoyTerminalHeight - 20, bright);
+            // Make the physical display legible at its real camera-space size:
+            // a large centered title, a bounded left data column, and one
+            // authored retail icon/condition figure on the right. The older
+            // 2px desktop raster made valid text look like a black screen.
+            const int headerScale = 5;
+            const int headerWidth = static_cast<int>(header.size()) * headerScale * 6;
+            drawPipBoyTerminalText(*image, header,
+                std::max(48, (sPipBoyTerminalWidth - headerWidth) / 2), 42, headerScale, 42, accent);
+            drawPipBoyTerminalLine(*image, 44, 116, sPipBoyTerminalWidth - 44, 116, dim);
+            if (showCondition)
+            {
+                drawPipBoyTerminalTextBox(*image, bodyText, 56, 142, 3, 31, 300, 624, bright);
+                drawPipBoyRetailConditionFigure(*image, resourceSystem, conditions, dim, bright, accent);
+            }
+            else
+            {
+                drawPipBoyTerminalTextBox(*image, bodyText, 56, 142, 3, 31, 610, 624, bright);
+                drawPipBoyRetailPanelIcon(*image, resourceSystem, pane, bodyText, bright);
+            }
+            if (!footerText.empty())
+            {
+                drawPipBoyTerminalLine(*image, 44, 650, sPipBoyTerminalWidth - 44, 650, dim);
+                drawPipBoyTerminalTextBox(*image, footerText, 56, 674, 3, 31, 900, 742, accent);
+            }
+            image->dirty();
+            currentContents = contents;
+            Log(Debug::Info) << "FNV Pip-Boy terminal texture: updated source=live-player-data pane=" << pane
+                             << " bytes=" << contents.size();
+            return texture.get();
+        }
+
+        std::string getFalloutPipBoyPanelName(int pane)
+        {
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                    return "MapWindow";
+                case 1:
+                    return "InventoryWindow";
+                case 2:
+                    return "SpellWindow";
+                case 3:
+                default:
+                    return "StatsWindow";
+            }
         }
 
         const ESM4::Npc* findEsm4PlayerVisualRecord()
@@ -272,27 +975,177 @@ namespace MWRender
             }
         }
 
-        bool applyFalloutPlayerRuntimeEquipment(
-            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& player, const char* context)
+        std::vector<ESM::FormId> makeFalloutWornVisualSignature(
+            std::span<const ESM4::Armor* const> equippedArmor)
         {
-            if (player.isEmpty() || !player.getClass().isActor())
+            std::vector<ESM::FormId> signature;
+            signature.reserve(equippedArmor.size());
+            for (const ESM4::Armor* armor : equippedArmor)
+            {
+                if (armor != nullptr)
+                    signature.push_back(armor->mId);
+            }
+            return canonicalizeFalloutWornVisualSignature(std::move(signature));
+        }
+
+        std::vector<const ESM4::Armor*> collectLiveFalloutArmor(const MWWorld::InventoryStore& inventory)
+        {
+            std::vector<const ESM4::Armor*> result;
+            result.reserve(MWWorld::InventoryStore::Slots);
+            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            {
+                const MWWorld::ConstContainerStoreIterator item = inventory.getSlot(slot);
+                if (item == inventory.end() || item->getType() != ESM4::Armor::sRecordId)
+                    continue;
+                if (const ESM4::Armor* armor = item->get<ESM4::Armor>()->mBase)
+                    result.push_back(armor);
+            }
+            std::ranges::sort(result,
+                [](const ESM4::Armor* left, const ESM4::Armor* right) { return left->mId < right->mId; });
+            result.erase(std::unique(result.begin(), result.end(),
+                             [](const ESM4::Armor* left, const ESM4::Armor* right) {
+                                 return left->mId == right->mId;
+                             }),
+                result.end());
+            return result;
+        }
+
+        bool isFalloutPipBoyGloveArmor(const ESM4::Armor* armor, bool female)
+        {
+            if (armor == nullptr || (armor->mArmorFlags & ESM4::Armor::FO3_LeftHand) == 0)
                 return false;
-            const MWMechanics::CreatureStats& playerStats
-                = player.getClass().getCreatureStats(player);
-            if (!playerStats.hasFalloutEquipmentOverride())
-                return false;
-            if (!MWClass::ESM4Npc::applyFalloutEquipmentOverride(
-                    visualPtr, playerStats.getFalloutEquippedItems(), false))
-                return false;
-            MWMechanics::CreatureStats& visualStats
-                = visualPtr.getClass().getCreatureStats(visualPtr);
-            if (MWClass::ESM4Npc::getEquippedWeapon(visualPtr) != nullptr)
-                visualStats.setDrawState(playerStats.getDrawState());
-            else
-                visualStats.setDrawState(MWMechanics::DrawState::Nothing);
-            Log(Debug::Info) << "FNV/ESM4 player equipment: context=" << context
-                             << " equipped=" << playerStats.getFalloutEquippedItems().size();
-            return true;
+            const std::string candidate = normalizeFalloutFirstPersonBipedModel(
+                MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+            const std::string lowered = Misc::StringUtils::lowerCase(candidate);
+            return lowered.find("pipboy") != std::string::npos && lowered.find("glove") != std::string::npos;
+        }
+
+        std::optional<ESM4NpcAnimation::FirstPersonState> makeFalloutFirstPersonState(
+            std::span<const ESM4::Armor* const> equippedArmor, const MWWorld::Ptr& visualPtr,
+            float firstPersonFieldOfView, Resource::ResourceSystem* resourceSystem)
+        {
+            ESM4NpcAnimation::FirstPersonState state;
+            state.mFieldOfView = firstPersonFieldOfView;
+            const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
+            bool unresolvedWornLeftHand = false;
+            for (const ESM4::Armor* armor : equippedArmor)
+            {
+                if (armor == nullptr)
+                    continue;
+                state.mPipBoy = state.mPipBoy || (armor->mArmorFlags & ESM4::Armor::FO3_PipBoy) != 0;
+                if ((armor->mArmorFlags & ESM4::Armor::FO3_LeftHand) != 0)
+                {
+                    std::string candidate = normalizeFalloutFirstPersonBipedModel(
+                        MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+                    // New Vegas tags the worn Pip-Boy glove as a left-hand ARMO in
+                    // some player inventories instead of setting FO3_PipBoy.  The
+                    // authored first-person model is the authoritative signal here:
+                    // recognizing it lets the real pipboyarm.nif attach to the wrist
+                    // rather than falling back to a detached flat-screen UI.
+                    state.mPipBoy = state.mPipBoy || isFalloutPipBoyGloveArmor(armor, female);
+                    const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+                    const bool exists = vfs != nullptr && !candidate.empty()
+                        && vfs->exists(VFS::Path::toNormalized(candidate));
+                    Log(exists ? Debug::Info : Debug::Error)
+                        << "FNV first-person equipped left-hand model: form=" << ESM::RefId(armor->mId)
+                        << " editor=" << armor->mEditorId << " biped="
+                        << MWClass::ESM4Npc::chooseEquipmentModel(armor, female) << " selected=" << candidate
+                        << " exists=" << exists << " source=ARMO-biped-1st-convention";
+                    if (exists)
+                        state.mSaveWornLeftHandModel = std::move(candidate);
+                    else
+                        unresolvedWornLeftHand = true;
+                }
+                if ((armor->mArmorFlags & ESM4::Armor::FO3_UpperBody) == 0)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, female);
+                if (!model.empty())
+                    state.mSaveWornArmorModels.emplace_back(model);
+                Log(!model.empty() ? Debug::Info : Debug::Error)
+                    << "FNV first-person equipped armor model: form=" << ESM::RefId(armor->mId)
+                    << " editor=" << armor->mEditorId << " flags=0x" << std::hex << armor->mArmorFlags
+                    << std::dec << " selected=" << model << " source=ARMO-biped-MODL/MOD3";
+            }
+            if (unresolvedWornLeftHand)
+            {
+                Log(Debug::Error) << "FNV first-person equipped profile: worn left-hand armor has no authored 1st "
+                                     "model; profile=disabled";
+                return std::nullopt;
+            }
+            // The standalone hand meshes end at the wrists.  Retail only makes them
+            // continuous by composing them with the Arms partition from an equipped
+            // upper-body ARMO model.  Building a profile without that partition
+            // produces the detached floating fists seen on an unequipped Player.
+            if (state.mSaveWornArmorModels.empty())
+            {
+                Log(Debug::Warning)
+                    << "FNV first-person equipped profile: no equipped upper-body Arms partition; "
+                       "profile=disabled reason=prevent-detached-hands";
+                return std::nullopt;
+            }
+            state.mPipBoyGlove
+                = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
+            const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(visualPtr);
+            Log(Debug::Info) << "FNV first-person equipped profile: armor=" << equippedArmor.size()
+                             << " unarmed=" << (equippedWeapon == nullptr) << " equippedWeapon="
+                             << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
+                             << " pipBoy=" << state.mPipBoy << " pipBoyGlove=" << state.mPipBoyGlove
+                             << " armorModels=" << state.mSaveWornArmorModels.size()
+                             << " fov=" << state.mFieldOfView << " profile=flat-first-person";
+            return state;
+        }
+
+        std::optional<ESM4NpcAnimation::FirstPersonState> applyFalloutSaveWornPlayerVisuals(
+            std::span<const ESM::FormId> wornVisualItems, const MWWorld::Ptr& visualPtr, float firstPersonFieldOfView,
+            Resource::ResourceSystem* resourceSystem)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+            {
+                Log(Debug::Error) << "FNV first-person saveWorn: no ESM store";
+                return std::nullopt;
+            }
+
+            std::size_t saveWorn = 0;
+            std::size_t savedArmor = 0;
+            std::size_t savedWeapon = 0;
+            for (const ESM::FormId id : wornVisualItems)
+            {
+                ++saveWorn;
+                const ESM::RefId record(id);
+                if (const ESM4::Armor* armor = store->get<ESM4::Armor>().search(record))
+                {
+                    const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                    const auto equipped = MWClass::ESM4Npc::getEquippedArmor(visualPtr);
+                    const bool present = std::ranges::find(equipped, armor) != equipped.end();
+                    ++savedArmor;
+                    Log(present ? Debug::Info : Debug::Error)
+                        << "FNV first-person saveWorn: ordinal=" << saveWorn << " type=ARMO form="
+                        << record << " editor=" << armor->mEditorId << " flags=0x" << std::hex
+                        << armor->mArmorFlags << std::dec << " added=" << added << " present=" << present;
+                }
+                else if (const ESM4::Weapon* weapon = store->get<ESM4::Weapon>().search(record))
+                {
+                    ++savedWeapon;
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    Log(Debug::Info) << "FNV first-person saveWorn: ordinal=" << saveWorn
+                                     << " type=WEAP form=" << record << " editor=" << weapon->mEditorId
+                                     << " worldModel=" << weapon->mModel
+                                     << " firstPersonModel=" << weapon->mFirstPersonModel
+                                     << " equipped=1 changed=" << changed << " selectedProfile=weapon";
+                }
+                else
+                {
+                    Log(Debug::Error) << "FNV first-person saveWorn: ordinal=" << saveWorn
+                                      << " form=" << record << " recordType=unresolved profile=disabled";
+                    return std::nullopt;
+                }
+            }
+
+            Log(Debug::Info) << "FNV first-person saveWorn: total=" << saveWorn << " armor=" << savedArmor
+                             << " weapon=" << savedWeapon << " source=native-save";
+            return makeFalloutFirstPersonState(
+                MWClass::ESM4Npc::getEquippedArmor(visualPtr), visualPtr, firstPersonFieldOfView, resourceSystem);
         }
 
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
@@ -321,11 +1174,6 @@ namespace MWRender
                 || lowered.find("glove") != std::string::npos;
         }
 
-// VR hand surfaces belong to the separately-built VR runtime.  This 0.51
-// Fallout candidate is intentionally a flat-screen build, so keep the
-// diagnostic implementation out of this target rather than linking stale VR
-// interfaces into the player renderer.
-#if 0
         void logFalloutVrHandSourceCandidates(const MWWorld::Ptr& actorPtr, std::string_view label)
         {
             if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
@@ -438,7 +1286,8 @@ namespace MWRender
                 if (weapon == nullptr || weapon->mModel.empty())
                     return false;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    weapon->mModel, {}, std::move(source), false });
+                    weapon->mModel, {}, std::move(source), false,
+                    MWVR::VRAnimation::FalloutVrHandSurface::Kind::Weapon });
                 Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
                                  << surfaces.back().source << " editor=" << weapon->mEditorId
                                  << " model=" << weapon->mModel;
@@ -486,8 +1335,11 @@ namespace MWRender
             const auto addSurface = [&](std::string_view model, std::string_view texture, std::string source, bool left) {
                 if (model.empty())
                     return;
+                const bool pipBoy = Misc::StringUtils::lowerCase(model).find("pipboyarm") != std::string::npos;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    std::string(model), std::string(texture), std::move(source), left });
+                    std::string(model), std::string(texture), std::move(source), left,
+                    pipBoy ? MWVR::VRAnimation::FalloutVrHandSurface::Kind::PipBoy
+                           : MWVR::VRAnimation::FalloutVrHandSurface::Kind::Hand });
             };
 
             if (race != nullptr)
@@ -555,7 +1407,6 @@ namespace MWRender
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
-            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
             const bool rightPipBoyCalibration = [] {
@@ -572,7 +1423,8 @@ namespace MWRender
                     if (lowered.find("pipboyarm") == std::string::npos)
                         continue;
                     rightPipBoySurface = MWVR::VRAnimation::FalloutVrHandSurface{
-                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false };
+                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false,
+                        MWVR::VRAnimation::FalloutVrHandSurface::Kind::PipBoy };
                     break;
                 }
                 if (rightPipBoySurface)
@@ -610,10 +1462,8 @@ namespace MWRender
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-diagnostic");
-            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "vr-hands-diagnostic");
             logFalloutVrHandSourceCandidates(visualPtr, "fallout-visual-record");
         }
-#endif
     }
 
     class PerViewUniformStateUpdater final : public SceneUtil::StateSetUpdater
@@ -834,7 +1684,10 @@ namespace MWRender
     RenderingManager::RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
         Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
         DetourNavigator::Navigator& navigator, const MWWorld::GroundcoverStore& groundcoverStore,
-        SceneUtil::UnrefQueue& unrefQueue)
+//## VR_PATCH BEGIN
+// Add camera to signature
+        SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<Camera> camera)
+//## VR_PATCH END
         : mSkyBlending(Settings::fog().mSkyBlending)
         , mViewer(viewer)
         , mRootNode(rootNode)
@@ -854,21 +1707,76 @@ namespace MWRender
         , mGroundCoverStore(groundcoverStore)
     {
         bool reverseZ = SceneUtil::AutoDepth::isReversed();
+        const SceneUtil::LightingMethod lightingMethod = Settings::shaders().mLightingMethod;
 
         resourceSystem->getSceneManager()->setParticleSystemMask(MWRender::Mask_ParticleSystem);
+
+        // Figure out which pipeline must be used by default and inform the user
+        bool forceShaders = Settings::shaders().mForceShaders;
+        {
+            std::vector<std::string> requesters;
+            if (!forceShaders)
+            {
+                if (Settings::fog().mRadialFog)
+                    requesters.push_back("radial fog");
+                if (Settings::fog().mExponentialFog)
+                    requesters.push_back("exponential fog");
+                if (mSkyBlending)
+                    requesters.push_back("sky blending");
+                if (Settings::shaders().mSoftParticles)
+                    requesters.push_back("soft particles");
+                if (Settings::shadows().mEnableShadows)
+                    requesters.push_back("shadows");
+                if (lightingMethod != SceneUtil::LightingMethod::FFP)
+                    requesters.push_back("lighting method");
+                if (reverseZ)
+                    requesters.push_back("reverse-Z depth buffer");
+                if (Stereo::getMultiview())
+                    requesters.push_back("stereo multiview");
+
+                if (!requesters.empty())
+                    forceShaders = true;
+            }
+
+            if (forceShaders)
+            {
+                std::string message = "Using rendering with shaders by default";
+                if (requesters.empty())
+                {
+                    message += " (forced)";
+                }
+                else
+                {
+                    message += ", requested by:";
+                    for (size_t i = 0; i < requesters.size(); i++)
+                        message += "\n - " + requesters[i];
+                }
+                Log(Debug::Info) << message;
+            }
+            else
+            {
+                Log(Debug::Info) << "Using fixed-function rendering by default";
+            }
+        }
+
+        resourceSystem->getSceneManager()->setForceShaders(forceShaders);
+        // FIXME: calling dummy method because terrain needs to know whether lighting is clamped
+        resourceSystem->getSceneManager()->setClampLighting(Settings::shaders().mClampLighting);
         resourceSystem->getSceneManager()->setAutoUseNormalMaps(Settings::shaders().mAutoUseObjectNormalMaps);
         resourceSystem->getSceneManager()->setNormalMapPattern(Settings::shaders().mNormalMapPattern);
         resourceSystem->getSceneManager()->setNormalHeightMapPattern(Settings::shaders().mNormalHeightMapPattern);
         resourceSystem->getSceneManager()->setAutoUseSpecularMaps(Settings::shaders().mAutoUseObjectSpecularMaps);
         resourceSystem->getSceneManager()->setSpecularMapPattern(Settings::shaders().mSpecularMapPattern);
+        resourceSystem->getSceneManager()->setApplyLightingToEnvMaps(
+            Settings::shaders().mApplyLightingToEnvironmentMaps);
         resourceSystem->getSceneManager()->setConvertAlphaTestToAlphaToCoverage(shouldAddMSAAIntermediateTarget());
         resourceSystem->getSceneManager()->setAdjustCoverageForAlphaTest(
             Settings::shaders().mAdjustCoverageForAlphaTest);
 
-        // Let LightManager choose which backend to use based on our hint.
-        // Ultimately dependent on support for various OpenGL extensions.
+        // Let LightManager choose which backend to use based on our hint. For methods besides legacy lighting, this
+        // depends on support for various OpenGL extensions.
         osg::ref_ptr<SceneUtil::LightManager> sceneRoot = new SceneUtil::LightManager(SceneUtil::LightSettings{
-            .mLightingMethod = Settings::shaders().mLightingMethod,
+            .mLightingMethod = lightingMethod,
             .mMaxLights = Settings::shaders().mMaxLights,
             .mMaximumLightDistance = Settings::shaders().mMaximumLightDistance,
             .mLightFadeStart = Settings::shaders().mLightFadeStart,
@@ -899,9 +1807,10 @@ namespace MWRender
             indoorShadowCastingTraversalMask, Mask_Terrain | Mask_Object | Mask_Static, Settings::shadows(),
             mResourceSystem->getSceneManager()->getShaderManager());
 
-        Shader::ShaderManager::DefineMap globalDefines = Shader::getDefaultDefines();
         Shader::ShaderManager::DefineMap shadowDefines = mShadowManager->getShadowDefines(Settings::shadows());
         Shader::ShaderManager::DefineMap lightDefines = sceneRoot->getLightDefines();
+        Shader::ShaderManager::DefineMap globalDefines
+            = mResourceSystem->getSceneManager()->getShaderManager().getGlobalDefines();
 
         for (auto itr = shadowDefines.begin(); itr != shadowDefines.end(); itr++)
             globalDefines[itr->first] = itr->second;
@@ -914,6 +1823,12 @@ namespace MWRender
         globalDefines["radialFog"] = (exponentialFog || Settings::fog().mRadialFog) ? "1" : "0";
         globalDefines["exponentialFog"] = exponentialFog ? "1" : "0";
         globalDefines["skyBlending"] = mSkyBlending ? "1" : "0";
+        globalDefines["waterRefraction"] = "0";
+        globalDefines["useGPUShader4"] = "0";
+        globalDefines["useOVR_multiview"] = "0";
+        globalDefines["numViews"] = "1";
+        globalDefines["disableNormals"] = "1";
+        globalDefines["softParticles"] = "0";
 
         for (auto itr = lightDefines.begin(); itr != lightDefines.end(); itr++)
             globalDefines[itr->first] = itr->second;
@@ -966,56 +1881,13 @@ namespace MWRender
         mGroundcover = chunkMgr.mGroundcover.get();
         mObjectPaging = chunkMgr.mObjectPaging.get();
 
-        if (Settings::camera().mOcclusionCulling)
-        {
-            // Path is set later via setOcclusionCachePath() called from World::init().
-            // Create a no-op placeholder so get() safely returns false until then.
-            mOcclusionStorage = std::make_unique<OcclusionStorage>("");
-
-            const int bufW = Settings::camera().mOcclusionBufferWidth;
-            const int bufH = Settings::camera().mOcclusionBufferHeight;
-            mOcclusionCuller = new SceneUtil::OcclusionCuller(bufW, bufH);
-
-            const float cellWorldSize = Constants::CellSizeInUnits;
-            mTerrainOccluder = std::make_unique<Terrain::TerrainOccluder>(mTerrainStorage.get(), cellWorldSize);
-            mTerrainOccluder->setWorldspace(ESM::Cell::sDefaultWorldspaceId);
-            mTerrainOccluder->setLodLevel(Settings::camera().mOcclusionTerrainLod);
-
-            const int radius = Settings::camera().mOcclusionTerrainRadius;
-            const bool enableTerrain = Settings::camera().mOcclusionCullingTerrain;
-            const bool debugOverlay = Settings::camera().mOcclusionDebugOverlay;
-            const bool debugMessages = Settings::camera().mOcclusionDebugMessages;
-            const bool enableInteriors = Settings::camera().mOcclusionCullingInteriors;
-            const unsigned int maxTriangles = static_cast<unsigned int>(Settings::camera().mOcclusionMaxTriangles);
-            mSceneOcclusionCallback = new SceneOcclusionCallback(
-                mOcclusionCuller, mTerrainOccluder.get(), radius, enableTerrain, debugOverlay, debugMessages,
-                enableInteriors, mOcclusionStorage.get());
-            sceneRoot->addCullCallback(mSceneOcclusionCallback);
-
-            const float occluderMinRadius = Settings::camera().mOcclusionOccluderMinRadius;
-            const float occluderMaxRadius = Settings::camera().mOcclusionOccluderMaxRadius;
-            const float occluderShrinkFactor = Settings::camera().mOcclusionOccluderShrinkFactor;
-            const int occluderMeshRes = Settings::camera().mOcclusionOccluderMeshResolution;
-            const int occluderMaxMeshRes = Settings::camera().mOcclusionOccluderMaxMeshResolution;
-            const float occluderInsideThreshold = Settings::camera().mOcclusionOccluderInsideThreshold;
-            const float occluderMaxDistance = Settings::camera().mOcclusionOccluderMaxDistance;
-            const bool enableStatics = Settings::camera().mOcclusionCullingStatics;
-            mObjects->setOcclusionCuller(mOcclusionCuller, occluderMinRadius, occluderMaxRadius, occluderShrinkFactor,
-                occluderMeshRes, occluderMaxMeshRes, occluderInsideThreshold, occluderMaxDistance, enableStatics,
-                maxTriangles, mOcclusionStorage.get());
-            if (mObjectPaging)
-                mObjectPaging->setOcclusionCuller(mOcclusionCuller, maxTriangles);
-        }
-
-        mStateUpdater = new SceneUtil::StateUpdater();
+        mStateUpdater = new StateUpdater;
         sceneRoot->addUpdateCallback(mStateUpdater);
 
-        mSharedUniformStateUpdater = new SceneUtil::SharedUniformStateUpdater(Settings::fog().mSkyBlendingStart);
+        mSharedUniformStateUpdater = new SharedUniformStateUpdater();
         rootNode->addUpdateCallback(mSharedUniformStateUpdater);
 
-        mPerViewUniformStateUpdater = new SceneUtil::PerViewUniformStateUpdater(mResourceSystem->getSceneManager(),
-            mResourceSystem->getSceneManager()->getShaderManager().reserveGlobalTextureUnits(
-                Shader::ShaderManager::Slot::OpaqueDepthTexture));
+        mPerViewUniformStateUpdater = new PerViewUniformStateUpdater(mResourceSystem->getSceneManager());
         rootNode->addCullCallback(mPerViewUniformStateUpdater);
 
         mPostProcessor = new PostProcessor(*this, viewer, mRootNode, resourceSystem->getVFS());
@@ -1029,7 +1901,9 @@ namespace MWRender
         mWater = std::make_unique<Water>(
             sceneRoot->getParent(0), sceneRoot, mResourceSystem, mViewer->getIncrementalCompileOperation());
 
-        mCamera = std::make_unique<Camera>(mViewer->getCamera());
+//## VR_PATCH BEGIN
+        mCamera = std::move(camera);
+//## VR_PATCH END
 
         mScreenshotManager = std::make_unique<ScreenshotManager>(viewer);
 
@@ -1047,6 +1921,7 @@ namespace MWRender
         sceneRoot->addChild(source);
 
         sceneRoot->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
+        sceneRoot->getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::ON);
         sceneRoot->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
         osg::ref_ptr<osg::Material> defaultMat(new osg::Material);
         defaultMat->setColorMode(osg::Material::OFF);
@@ -1109,9 +1984,6 @@ namespace MWRender
             mRootNode->getOrCreateStateSet()->setAttributeAndModes(new SceneUtil::AutoDepth, osg::StateAttribute::ON);
             mRootNode->getOrCreateStateSet()->setAttributeAndModes(clipcontrol, osg::StateAttribute::ON);
         }
-
-        mRootNode->getOrCreateStateSet()->setMode(
-            GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED | osg::StateAttribute::OVERRIDE);
 
         SceneUtil::setCameraClearDepth(mViewer->getCamera());
 
@@ -1227,15 +2099,16 @@ namespace MWRender
     {
         bool isInterior = !cell.isExterior() && !cell.isQuasiExterior();
         bool needsAdjusting = false;
-        needsAdjusting = isInterior && !Settings::shaders().mClassicFalloff;
+        if (mResourceSystem->getSceneManager()->getLightingMethod() != SceneUtil::LightingMethod::FFP)
+            needsAdjusting = isInterior && !Settings::shaders().mClassicFalloff;
 
         osg::Vec4f ambient = SceneUtil::colourFromRGB(cell.getMood().mAmbiantColor);
 
         if (needsAdjusting)
         {
-            constexpr float pR = 0.2126f;
-            constexpr float pG = 0.7152f;
-            constexpr float pB = 0.0722f;
+            constexpr float pR = 0.2126;
+            constexpr float pG = 0.7152;
+            constexpr float pB = 0.0722;
 
             // we already work in linear RGB so no conversions are needed for the luminosity function
             float relativeLuminance = pR * ambient.r() + pG * ambient.g() + pB * ambient.b();
@@ -1261,7 +2134,6 @@ namespace MWRender
         static const osg::Vec4f interiorSunPos
             = osg::Vec4f(-1.f, osg::DegreesToRadians(45.f), osg::DegreesToRadians(45.f), 0.f);
         mPostProcessor->getStateUpdater()->setSunPos(interiorSunPos, false);
-        mPostProcessor->getStateUpdater()->setSunVec(-interiorSunPos);
         mSunLight->setPosition(interiorSunPos);
     }
 
@@ -1279,18 +2151,19 @@ namespace MWRender
     {
         osg::Vec3f position = -direction;
 
-        // This is based on the exterior sun orbit and won't make sense for interiors, see WeatherManager::update
+        // The sun is not synchronized with the sunlight because reasons
+        // This is based on exterior sun orbit and won't make sense for interiors, see WeatherManager::update
         position.z() = 400.f - std::abs(position.x());
 
-        // The sun is not always synchronized with the sunlight because reasons
-        const osg::Vec3f sunlightPos = Settings::shaders().mMatchSunlightToSun ? position : -direction;
         // need to wrap this in a StateUpdater?
-        mSunLight->setPosition(osg::Vec4f(sunlightPos, 0.f));
+        if (Settings::shaders().mMatchSunlightToSun)
+            mSunLight->setPosition(osg::Vec4f(position, 0.f));
+        else
+            mSunLight->setPosition(osg::Vec4f(-direction, 0.f));
 
         mSky->setSunDirection(position);
 
         mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);
-        mPostProcessor->getStateUpdater()->setSunVec(osg::Vec4f(-sunlightPos, 0.f));
     }
 
     void RenderingManager::setSunPosition(const osg::Vec3f& position)
@@ -1315,13 +2188,6 @@ namespace MWRender
         {
             enableTerrain(true, store->getCell()->getWorldSpace());
             mTerrain->loadCell(store->getCell()->getGridX(), store->getCell()->getGridY());
-        }
-
-        if (mSceneOcclusionCallback)
-        {
-            const bool isInterior = !store->getCell()->isExterior() && !store->getCell()->isQuasiExterior();
-            const bool isQuasiExterior = store->getCell()->isQuasiExterior();
-            mSceneOcclusionCallback->setCellType(isInterior, isQuasiExterior);
         }
     }
     void RenderingManager::removeCell(const MWWorld::CellStore* store)
@@ -1399,6 +2265,10 @@ namespace MWRender
                 mask &= ~sToggleWorldMask;
             mWater->showWorld(enabled);
             wm->setCullMask(mask);
+//## VR_PATCH BEGIN
+            mViewer->getCamera()->setCullMaskLeft(mask);
+            mViewer->getCamera()->setCullMaskRight(mask);
+//## VR_PATCH END
             return enabled;
         }
         else if (mode == Render_NavMesh)
@@ -1427,6 +2297,11 @@ namespace MWRender
         mFog->configure(mViewDistance, fogDepth, underwaterFog, dlFactor, dlOffset, color);
     }
 
+    void RenderingManager::configureFog(float fogNear, float fogFar, float underwaterFog, const osg::Vec4f& color)
+    {
+        mFog->configureExplicit(fogNear, fogFar, underwaterFog, color);
+    }
+
     SkyManager* RenderingManager::getSkyManager()
     {
         return mSky.get();
@@ -1438,7 +2313,9 @@ namespace MWRender
 
         mResourceSystem->getSceneManager()->getShaderManager().update(*mViewer);
 
-        mWater->setRainIntensity(mSky->getRainRipplesEnabled() ? mSky->getPrecipitationAlpha() : 0.f);
+        float rainIntensity = mSky->getPrecipitationAlpha();
+        mWater->setRainIntensity(rainIntensity);
+        mWater->setRainRipplesEnabled(mSky->getRainRipplesEnabled());
 
         mWater->update(dt, paused);
         if (!paused)
@@ -1455,6 +2332,143 @@ namespace MWRender
 
             if (mFalloutPlayerVisualAnimation)
             {
+                const ESM4::Weapon* liveWeapon = nullptr;
+                std::vector<const ESM4::Armor*> liveArmor;
+                const bool hasLiveInventory = player.getClass().hasInventoryStore(player);
+                if (hasLiveInventory)
+                {
+                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    liveArmor = collectLiveFalloutArmor(inventory);
+                    const MWWorld::ConstContainerStoreIterator weapon
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    if (weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId)
+                        liveWeapon = weapon->get<ESM4::Weapon>()->mBase;
+                }
+
+                const MWWorld::Ptr visualPtr = mFalloutPlayerVisualAnimation->getPtr();
+                bool nativePipBoyGloveRetained = false;
+                if (hasLiveInventory)
+                {
+                    // PipBoyGlove is a native worn-visual record on the player
+                    // proxy, but does not occupy a normal InventoryStore armor
+                    // slot. Preserve that real worn device while the rest of the
+                    // first-person composition follows the live inventory.
+                    const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
+                    for (const ESM4::Armor* const armor : MWClass::ESM4Npc::getEquippedArmor(visualPtr))
+                    {
+                        if (!isFalloutPipBoyGloveArmor(armor, female))
+                            continue;
+                        nativePipBoyGloveRetained = true;
+                        const bool alreadyPresent = std::ranges::any_of(liveArmor,
+                            [armor](const ESM4::Armor* candidate) {
+                                return candidate != nullptr && candidate->mId == armor->mId;
+                            });
+                        if (!alreadyPresent)
+                        {
+                            liveArmor.push_back(armor);
+                            if (!mFalloutPipBoyGloveRetainedLogged)
+                            {
+                                Log(Debug::Info)
+                                    << "FNV first-person equipment bridge: retained native Pip-Boy glove form="
+                                    << ESM::RefId(armor->mId) << " editor=" << armor->mEditorId
+                                    << " source=player-visual-worn-record";
+                            }
+                        }
+                        break;
+                    }
+                }
+                mFalloutPipBoyGloveRetainedLogged = nativePipBoyGloveRetained;
+                const bool weaponChanged
+                    = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, liveWeapon);
+                const MWMechanics::DrawState liveDrawState
+                    = player.getClass().getCreatureStats(player).getDrawState();
+                MWMechanics::CreatureStats& visualStats = visualPtr.getClass().getCreatureStats(visualPtr);
+                const bool drawStateChanged = visualStats.getDrawState() != liveDrawState;
+                if (drawStateChanged)
+                    visualStats.setDrawState(liveDrawState);
+
+                if (weaponChanged)
+                {
+                    const std::uint8_t animationType = liveWeapon != nullptr ? liveWeapon->mData.animationType : 0;
+                    const std::uint8_t reloadAnimation = liveWeapon != nullptr ? liveWeapon->mData.reloadAnim : 0;
+                    const bool thirdPersonPrepared = mFalloutPlayerVisualAnimation->prepareFalloutWeaponAnimation(
+                        animationType, reloadAnimation, FonvWeaponAction::Equip);
+                    const bool firstPersonPrepared = mFalloutPlayerFirstPersonAnimation == nullptr
+                        || mFalloutPlayerFirstPersonAnimation->prepareFalloutWeaponAnimation(
+                            animationType, reloadAnimation, FonvWeaponAction::Equip);
+                    Log(thirdPersonPrepared && firstPersonPrepared ? Debug::Info : Debug::Error)
+                        << "FNV player equipment bridge: weapon="
+                        << (liveWeapon != nullptr ? liveWeapon->mEditorId : std::string("none"))
+                        << " animationType=" << static_cast<unsigned int>(animationType)
+                        << " thirdPersonPrepared=" << thirdPersonPrepared
+                        << " firstPersonPrepared=" << firstPersonPrepared << " source=live-inventory-slot";
+                }
+                if (weaponChanged || drawStateChanged)
+                {
+                    const bool shown = liveDrawState == MWMechanics::DrawState::Weapon && liveWeapon != nullptr;
+                    mFalloutPlayerVisualAnimation->showWeapons(shown);
+                    if (mFalloutPlayerFirstPersonAnimation)
+                        mFalloutPlayerFirstPersonAnimation->showWeapons(shown);
+                }
+
+                const std::vector<ESM::FormId> wornSignature = makeFalloutWornVisualSignature(liveArmor);
+                if (hasLiveInventory
+                    && (weaponChanged || !mFalloutPlayerFirstPersonWornSignatureObserved
+                        || wornSignature != mFalloutPlayerFirstPersonWornSignature))
+                {
+                    mFalloutPlayerFirstPersonWornSignature = wornSignature;
+                    mFalloutPlayerFirstPersonWornSignatureObserved = true;
+                    const std::optional<ESM4NpcAnimation::FirstPersonState> profile
+                        = makeFalloutFirstPersonState(liveArmor, visualPtr, mFirstPersonFieldOfView, mResourceSystem);
+                    if (profile)
+                    {
+                        if (!mFalloutPlayerFirstPersonBasis)
+                        {
+                            mFalloutPlayerFirstPersonBasis = new osg::MatrixTransform;
+                            mFalloutPlayerFirstPersonBasis->setName("FNV First Person Camera1st Alignment");
+                            mFalloutPlayerFirstPersonBasis->setMatrix(osg::Matrix::identity());
+                            mSceneRoot->addChild(mFalloutPlayerFirstPersonBasis);
+                        }
+                        try
+                        {
+                            osg::ref_ptr<ESM4NpcAnimation> replacement = new ESM4NpcAnimation(visualPtr,
+                                osg::ref_ptr<osg::Group>(mFalloutPlayerFirstPersonBasis), mResourceSystem, *profile);
+                            const bool shown
+                                = liveDrawState == MWMechanics::DrawState::Weapon && liveWeapon != nullptr;
+                            replacement->showWeapons(shown);
+                            if (osg::Group* root = replacement->getObjectRoot())
+                            {
+                                const bool visible = mCamera->getMode() == Camera::Mode::FirstPerson;
+                                root->setNodeMask(visible ? Mask_FirstPerson : 0);
+                            }
+                            mFalloutPlayerFirstPersonAnimation = std::move(replacement);
+                            mFalloutPipBoyScreenBound = false;
+                            mFalloutPipBoyScreenBindingAttempted = false;
+                            mFalloutPlayerFirstPersonAlignmentLogged = false;
+                            Log(Debug::Info) << "FNV first-person equipment bridge: rebuilt=1 armor="
+                                             << liveArmor.size() << " signature=" << wornSignature.size()
+                                             << " weaponChanged=" << weaponChanged
+                                             << " pipBoy=" << profile->mPipBoy
+                                             << " pipBoyGlove=" << profile->mPipBoyGlove;
+                        }
+                        catch (const std::exception& error)
+                        {
+                            Log(Debug::Error) << "FNV first-person equipment bridge: rebuilt=0 armor="
+                                              << liveArmor.size() << " weaponChanged=" << weaponChanged
+                                              << " reason=" << error.what();
+                        }
+                    }
+                    else
+                    {
+                        mFalloutPlayerFirstPersonAnimation = nullptr;
+                        mFalloutPlayerFirstPersonAlignmentLogged = false;
+                        Log(Debug::Info)
+                            << "FNV first-person equipment bridge: rebuilt=0 armor=" << liveArmor.size()
+                            << " weaponChanged=" << weaponChanged
+                            << " profile=hidden reason=no-connected-upper-body-arms";
+                    }
+                }
+
                 const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
                 std::string requestedGroup = "idle";
                 const std::string driverGroup(mPlayerAnimation->getActiveGroup(BoneGroup_LowerBody));
@@ -1548,6 +2562,8 @@ namespace MWRender
                                      << "\" available=" << selectedGroupAvailable;
                 }
             }
+            if (mFalloutPlayerFirstPersonAnimation)
+                mFalloutPlayerFirstPersonAnimation->runAnimation(dt);
         }
 
         updateNavMesh();
@@ -1558,48 +2574,82 @@ namespace MWRender
             mUpdateProjectionMatrix = false;
             updateProjectionMatrix();
         }
-        bool esm4AuthoredCharGenActive = false;
-        if (mFalloutPlayerVisualAnimation)
-        {
-            if (MWBase::World* const world = MWBase::Environment::tryGetWorld())
-                esm4AuthoredCharGenActive
-                    = world->getGlobalInt(MWWorld::Globals::sCharGenState) != -1;
-        }
-        if (esm4AuthoredCharGenActive && mCamera->getMode() != Camera::Mode::FirstPerson)
-        {
-            // Fallout's SetInCharGen presentation is first person. The script
-            // separately controls whether looking and POV switching are
-            // enabled; this guard prevents a stale preview/vanity mode from
-            // exposing the compatibility body or producing an orbit camera.
-            mCamera->setMode(Camera::Mode::FirstPerson);
-            mCamera->processViewChange();
-            mCamera->instantTransition();
-        }
-        if (esm4AuthoredCharGenActive != mESM4AuthoredCharGenCameraLockActive)
-        {
-            Log(Debug::Info) << "FNV/ESM4 character generation: first-person presentation "
-                             << (esm4AuthoredCharGenActive ? "engaged" : "released");
-            mESM4AuthoredCharGenCameraLockActive = esm4AuthoredCharGenActive;
-        }
-
         mCamera->update(dt, paused);
+
+        if (mFalloutPlayerFirstPersonAnimation && mFalloutPlayerFirstPersonBasis
+            && mCamera->getMode() == Camera::Mode::FirstPerson)
+        {
+            // The Fallout first-person skeleton is authored around Camera1st.  Solve
+            // its world transform from that anchor instead of tuning offsets against
+            // one screenshot: Camera1st * basis == the live gameplay camera frame.
+            const osg::Node* authoredCamera = mFalloutPlayerFirstPersonAnimation->getNode("Camera1st");
+            bool aligned = false;
+            if (authoredCamera != nullptr)
+            {
+                for (const osg::NodePath& path : authoredCamera->getParentalNodePaths())
+                {
+                    const auto basisIt = std::find(path.begin(), path.end(), mFalloutPlayerFirstPersonBasis.get());
+                    if (basisIt == path.end() || std::next(basisIt) == path.end())
+                        continue;
+
+                    const osg::NodePath authoredPath(std::next(basisIt), path.end());
+                    const osg::Matrixd authoredCameraInBasis = osg::computeLocalToWorld(authoredPath);
+                    const osg::Matrixd gameplayCameraFrame
+                        = osg::Matrixd::rotate(mCamera->getOrient())
+                        * osg::Matrixd::translate(mCamera->getPosition());
+                    const osg::Matrixd solvedBasis
+                        = osg::Matrixd::inverse(authoredCameraInBasis) * gameplayCameraFrame;
+                    mFalloutPlayerFirstPersonBasis->setMatrix(solvedBasis);
+
+                    if (!mFalloutPlayerFirstPersonAlignmentLogged)
+                    {
+                        const osg::Matrixd alignedCamera = authoredCameraInBasis * solvedBasis;
+                        const double positionResidual
+                            = (alignedCamera.getTrans() - gameplayCameraFrame.getTrans()).length();
+                        osg::Vec3d alignedForward
+                            = alignedCamera.getRotate() * osg::Vec3d(0.0, 1.0, 0.0);
+                        osg::Vec3d gameplayForward
+                            = gameplayCameraFrame.getRotate() * osg::Vec3d(0.0, 1.0, 0.0);
+                        alignedForward.normalize();
+                        gameplayForward.normalize();
+                        const double forwardResidualRadians = std::acos(std::clamp(
+                            alignedForward * gameplayForward, -1.0, 1.0));
+                        const bool exact = positionResidual <= 1e-4 && forwardResidualRadians <= 1e-5;
+                        Log(exact ? Debug::Info : Debug::Error)
+                            << "FNV first-person camera alignment: anchor=Camera1st positionResidual="
+                            << positionResidual << " forwardResidualRadians=" << forwardResidualRadians
+                            << " exact=" << exact;
+                        mFalloutPlayerFirstPersonAlignmentLogged = true;
+                    }
+                    aligned = true;
+                    break;
+                }
+            }
+            if (!aligned && !mFalloutPlayerFirstPersonAlignmentLogged)
+            {
+                Log(Debug::Error) << "FNV first-person camera alignment: Camera1st path is unavailable";
+                mFalloutPlayerFirstPersonAlignmentLogged = true;
+            }
+        }
 
         if (mFalloutPlayerVisualAnimation)
         {
             const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
                 || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
-            const bool showThirdPersonPlayer = !proofHidePlayerVisual && !esm4AuthoredCharGenActive
+            const bool showThirdPersonPlayer = !VR::getVR() && !proofHidePlayerVisual
                 && mCamera->getMode() != Camera::Mode::FirstPerson;
             if (osg::Group* playerVisualRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
-            {
-                // The native Fallout proxy supplies the player-facing Camera1st target as well as its visible body.
-                // Hiding it with node mask 0 prevents OSG's update traversal from reaching its authored KF
-                // controllers, leaving first-person cinematics frozen at the skeleton bind pose. The dedicated
-                // update-only mask keeps the proxy out of every cull traversal while allowing its data-owned
-                // animation and camera targets to advance.
-                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : Mask_UpdateVisitor);
-            }
+                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : 0);
         }
+        if (mFalloutPlayerFirstPersonAnimation)
+        {
+            const bool showFirstPersonPlayer
+                = !VR::getVR() && mCamera->getMode() == Camera::Mode::FirstPerson;
+            if (osg::Group* firstPersonRoot = mFalloutPlayerFirstPersonAnimation->getObjectRoot())
+                firstPersonRoot->setNodeMask(showFirstPersonPlayer ? Mask_FirstPerson : 0);
+        }
+
+        updateFalloutPipBoyPresentation(dt);
 
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
@@ -1625,6 +2675,147 @@ namespace MWRender
         stateUpdater->setWindSpeed(world->getWindSpeed());
         stateUpdater->setSkyColor(mSky->getSkyColor());
         mPostProcessor->setUnderwaterFlag(isUnderwater);
+//## VR_PATCH BEGIN
+
+        mPlayerAnimation->updateCrosshairs();
+//## VR_PATCH END
+    }
+
+    void RenderingManager::updateFalloutPipBoyPresentation(float dt)
+    {
+        MWBase::WindowManager* const windowManager = MWBase::Environment::tryGetWindowManager();
+        const bool physicalRequested = windowManager != nullptr && windowManager->containsMode(MWGui::GM_Inventory)
+            && windowManager->isFalloutPipBoyPhysicalPresentation();
+        const bool cameraFirstPerson = mCamera->getMode() == Camera::Mode::FirstPerson;
+        const bool hasFirstPersonAnimation = mFalloutPlayerFirstPersonAnimation != nullptr;
+        const bool hasWristPresentation
+            = hasFirstPersonAnimation && mFalloutPlayerFirstPersonAnimation->hasPipBoyPresentation();
+        const bool physical = !VR::getVR() && physicalRequested && cameraFirstPerson
+            && hasFirstPersonAnimation && hasWristPresentation;
+        if (physicalRequested && !physical && !mFalloutPipBoyPhysicalBlockedLogged)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy physical: presentation=blocked vr=" << VR::getVR()
+                              << " cameraFirstPerson=" << cameraFirstPerson
+                              << " cameraMode=" << static_cast<int>(mCamera->getMode())
+                              << " firstPersonAnimation=" << hasFirstPersonAnimation
+                              << " wristPresentation=" << hasWristPresentation;
+            mFalloutPipBoyPhysicalBlockedLogged = true;
+        }
+        else if (!physicalRequested || physical)
+            mFalloutPipBoyPhysicalBlockedLogged = false;
+
+        const float target = physical ? 1.f : 0.f;
+        const float rate = physical ? 4.5f : 5.5f;
+        mFalloutPipBoyPresentationProgress
+            = std::clamp(mFalloutPipBoyPresentationProgress + (target - mFalloutPipBoyPresentationProgress)
+                    * std::min(1.f, std::max(0.f, dt) * rate),
+                0.f, 1.f);
+        if (mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->setPipBoyPresentationProgress(
+                mFalloutPipBoyPresentationProgress, physical);
+
+        MyGUIPlatform::RenderManager* const guiRenderer = MyGUIPlatform::RenderManager::getInstancePtr();
+        if (!physical)
+        {
+            if (mFalloutPlayerFirstPersonAnimation)
+                mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(0.f);
+            if (guiRenderer != nullptr)
+            {
+                guiRenderer->setSuppressedGuiLayers({});
+                guiRenderer->setSuppressUnfilteredGui(false);
+            }
+            // Once the wrist is mostly clear of the camera the newly selected
+            // weapon must become visible; this is the live confirmation for a
+            // Pip-Boy equip rather than a terminal-only selection.
+            if (mFalloutPlayerFirstPersonAnimation && mFalloutPipBoyPresentationProgress <= 0.10f)
+            {
+                const MWWorld::Ptr player = mPlayerAnimation->getPtr();
+                const bool weaponDrawn
+                    = player.getClass().getCreatureStats(player).getDrawState() == MWMechanics::DrawState::Weapon;
+                mFalloutPlayerFirstPersonAnimation->showWeapons(weaponDrawn);
+            }
+            if (mFalloutPipBoyGuiRtt != nullptr && mFalloutPipBoyPresentationProgress <= 0.01f)
+            {
+                mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
+                mFalloutPipBoyGuiRtt = nullptr;
+                mFalloutPipBoyGuiLayer.clear();
+                mFalloutPipBoyScreenBound = false;
+                mFalloutPipBoyScreenBindingAttempted = false;
+            }
+            return;
+        }
+
+        mFalloutPlayerFirstPersonAnimation->showWeapons(false);
+        const int pane = windowManager->getFalloutPipBoyActivePane();
+        const std::string panel = getFalloutPipBoyPanelName(pane);
+        // The physical device suppresses the desktop UI. Its display content
+        // is generated into the device's own terminal texture below, which
+        // avoids both opaque MyGUI chrome and the asynchronous RTT pass that
+        // previously swallowed its glyphs into a black screen.
+        static constexpr std::string_view guiLayer = "PipBoyScreen";
+        if (guiRenderer != nullptr)
+        {
+            guiRenderer->setSuppressedGuiLayers({ std::string(guiLayer) });
+            guiRenderer->setSuppressUnfilteredGui(true);
+        }
+        if (mFalloutPipBoyGuiRtt != nullptr)
+        {
+            mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
+            mFalloutPipBoyGuiRtt = nullptr;
+            mFalloutPipBoyGuiLayer.clear();
+            mFalloutPipBoyScreenBound = false;
+            mFalloutPipBoyScreenBindingAttempted = false;
+        }
+
+        auto* const falloutWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager);
+        const float interactionPulse
+            = falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyInteractionPulse() : 0.f;
+        mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
+        const bool showCondition
+            = pane == 3 && (falloutWindowManager == nullptr || falloutWindowManager->getFalloutPipBoySubmenu() == 0);
+        const bool showMap = pane == 0 && falloutWindowManager != nullptr;
+        const bool worldMap = showMap && falloutWindowManager->isFalloutPipBoyWorldMap();
+        const float mapZoom = showMap ? falloutWindowManager->getFalloutPipBoyMapZoom() : 1.f;
+        const float mapPanX = showMap ? falloutWindowManager->getFalloutPipBoyMapPanX() : 0.f;
+        const float mapPanY = showMap ? falloutWindowManager->getFalloutPipBoyMapPanY() : 0.f;
+        mFalloutPlayerFirstPersonAnimation->setPipBoyControlState(pane,
+            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoySubmenu() : 0,
+            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyListOffset() : 0, worldMap,
+            mapZoom, mapPanX, mapPanY, interactionPulse);
+        osg::Texture2D* mapTexture = nullptr;
+        if (showMap)
+        {
+            mapTexture = worldMap
+                ? getPipBoyRetailWorldMapTexture(mFalloutPipBoyWorldMapTexture, mResourceSystem)
+                : falloutWindowManager->getFalloutPipBoyLocalMapTexture();
+        }
+        const bool mapTextureChanged = mFalloutPipBoyBoundMapTexture.get() != mapTexture;
+        mFalloutPipBoyBoundMapTexture = mapTexture;
+
+        const std::string previousTerminalContents = mFalloutPipBoyTerminalContents;
+        osg::Texture2D* const texture = updatePipBoyTerminalTexture(mFalloutPipBoyTerminalImage,
+            mFalloutPipBoyTerminalTexture, mFalloutPipBoyTerminalContents,
+            windowManager->getFalloutPipBoyTerminalHeader(), windowManager->getFalloutPipBoyTerminalBody(), pane,
+            showCondition, mResourceSystem);
+        const bool terminalContentsChanged = mFalloutPipBoyTerminalContents != previousTerminalContents;
+        if (!mFalloutPipBoyScreenBindingAttempted || terminalContentsChanged || mapTextureChanged)
+        {
+            mFalloutPipBoyScreenBindingAttempted = true;
+            if (texture != nullptr)
+            {
+                mFalloutPipBoyScreenBound = mFalloutPlayerFirstPersonAnimation->setPipBoyScreenTexture(texture,
+                    mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+            }
+            else
+            {
+                mFalloutPipBoyScreenBound = false;
+                Log(Debug::Error) << "FNV Pip-Boy physical: terminal texture=missing";
+            }
+            Log(mFalloutPipBoyScreenBound ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy physical: presentation=raise progress=" << mFalloutPipBoyPresentationProgress
+                << " activePane=" << pane << " panel=" << panel << " source=terminal-texture"
+                << " screenBound=" << mFalloutPipBoyScreenBound;
+        }
     }
 
     void RenderingManager::updatePlayerPtr(const MWWorld::Ptr& ptr)
@@ -1633,6 +2824,28 @@ namespace MWRender
         {
             setupPlayer(ptr);
             mPlayerAnimation->updatePtr(ptr);
+            if (VR::getVR())
+            {
+                if (auto* vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
+                {
+                    if (ptr.getType() == ESM4::Npc::sRecordId)
+                    {
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly save-loaded live player surface refresh";
+                        logFalloutVrHandSourceCandidates(ptr, "save-loaded-vr-player-ptr");
+                        vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                        vrAnimation->setFalloutVrHandSurfaces(
+                            collectFalloutVrHandSurfaces(ptr, "save-loaded-vr-player-ptr"));
+                    }
+                    else if (const ESM4::Npc* falloutPlayerVisualRecord = findFalloutPlayerVisualRecord())
+                    {
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly save-loaded visual-record surface refresh";
+                        logFalloutVrHandSelectionDiagnostic(ptr, falloutPlayerVisualRecord);
+                        vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                        vrAnimation->setFalloutVrHandSurfaces(
+                            collectFalloutVrHandSurfacesForVisualRecord(ptr, falloutPlayerVisualRecord));
+                    }
+                }
+            }
         }
         mCamera->attachTo(ptr);
     }
@@ -1714,28 +2927,33 @@ namespace MWRender
         return osg::Vec2f(0.5f, 0.f);
     }
 
-    RenderingManager::RayResult getIntersectionResult(osgUtil::LineSegmentIntersector* intersector,
+    RayResult getIntersectionResult(osgUtil::LineSegmentIntersector* intersector,
         const osg::ref_ptr<osgUtil::IntersectionVisitor>& visitor, std::span<const MWWorld::Ptr> ignoreList = {})
     {
+//## VR_PATCH BEGIN
+// VR needs the actual node hit, because the 3dgui does not exist as an object in the world.
+        RayResult result;
         constexpr auto nonObjectWorldMask = Mask_Terrain | Mask_Water;
-        RenderingManager::RayResult result;
         result.mHit = false;
         result.mRatio = 0;
+        result.mHitNode = nullptr;
 
         if (!intersector->containsIntersections())
             return result;
 
         auto test = [&](const osgUtil::LineSegmentIntersector::Intersection& intersection) {
+//## VR_PATCH END
             PtrHolder* ptrHolder = nullptr;
             std::vector<RefnumMarker*> refnumMarkers;
             bool hitNonObjectWorld = false;
-            for (osg::Node* node : intersection.nodePath)
+            for (osg::NodePath::const_iterator it = intersection.nodePath.begin(); it != intersection.nodePath.end();
+                 ++it)
             {
-                const auto& nodeMask = node->getNodeMask();
+                const auto& nodeMask = (*it)->getNodeMask();
                 if (!hitNonObjectWorld)
                     hitNonObjectWorld = nodeMask & nonObjectWorldMask;
 
-                osg::UserDataContainer* userDataContainer = node->getUserDataContainer();
+                osg::UserDataContainer* userDataContainer = (*it)->getUserDataContainer();
                 if (!userDataContainer)
                     continue;
                 for (unsigned int i = 0; i < userDataContainer->getNumUserObjects(); ++i)
@@ -1783,6 +3001,7 @@ namespace MWRender
             if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld)
             {
                 result.mHit = true;
+                result.mHitNode = intersection.nodePath.empty() ? nullptr : intersection.nodePath.back();
                 result.mHitNodePath.clear();
                 result.mHitNodePath.reserve(intersection.nodePath.size());
                 for (const osg::Node* node : intersection.nodePath)
@@ -1792,7 +3011,8 @@ namespace MWRender
                 }
                 result.mHitPointWorld = intersection.getWorldIntersectPoint();
                 result.mHitNormalWorld = intersection.getWorldIntersectNormal();
-                result.mRatio = static_cast<float>(intersection.ratio);
+                result.mHitPointLocal = intersection.getLocalIntersectPoint();
+                result.mRatio = intersection.ratio;
             }
         };
 
@@ -1860,7 +3080,9 @@ namespace MWRender
     };
 
     osg::ref_ptr<osgUtil::IntersectionVisitor> RenderingManager::getIntersectionVisitor(
-        osgUtil::Intersector* intersector, bool ignorePlayer, bool ignoreActors,
+//## VR_PATCH BEGIN
+        osgUtil::Intersector* intersector, bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask,
+//## VR_PATCH END
         std::span<const MWWorld::Ptr> ignoreList)
     {
         if (!mIntersectionVisitor)
@@ -1886,30 +3108,55 @@ namespace MWRender
 
         unsigned int mask = ~0u;
         mask &= ~(Mask_RenderToTexture | Mask_Sky | Mask_Debug | Mask_Effect | Mask_Water | Mask_SimpleWater
-            | Mask_Groundcover);
+            | Mask_Groundcover | Mask_Pointer);
         if (ignorePlayer)
+//## VR_PATCH BEGIN
+// Ignore the 3d pointer, but include the 3d gui
             mask &= ~(Mask_Player);
         if (ignoreActors)
             mask &= ~(Mask_Actor | Mask_Player);
+        mask &= ~ignoreMask;
 
         mIntersectionVisitor->setTraversalMask(mask);
         return mIntersectionVisitor;
     }
 
-    RenderingManager::RayResult RenderingManager::castRay(const osg::Vec3f& origin, const osg::Vec3f& dest,
-        bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList)
+    RayResult RenderingManager::castRay(const osg::Vec3f& origin, const osg::Vec3f& dest,
+        bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask, std::span<const MWWorld::Ptr> ignoreList)
     {
         osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector(
             new osgUtil::LineSegmentIntersector(osgUtil::LineSegmentIntersector::MODEL, origin, dest));
         intersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::LIMIT_NEAREST);
 
-        mRootNode->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreList));
+        mRootNode->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreMask, ignoreList));
 
         return getIntersectionResult(intersector, mIntersectionVisitor, ignoreList);
     }
 
-    RenderingManager::RayResult RenderingManager::castCameraToViewportRay(
-        const float nX, const float nY, float maxDistance, bool ignorePlayer, bool ignoreActors)
+    RayResult RenderingManager::castRay(
+        const osg::Transform* source, float maxDistance, bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask)
+    {
+
+        if (source)
+        {
+            osg::Matrix worldMatrix = osg::computeLocalToWorld(source->getParentalNodePaths()[0]);
+
+            osg::Vec3f direction = worldMatrix.getRotate() * osg::Vec3f(0, 1, 0);
+            direction.normalize();
+
+            osg::Vec3f raySource = worldMatrix.getTrans();
+            osg::Vec3f rayTarget = worldMatrix.getTrans() + direction * maxDistance;
+
+            return castRay(raySource, rayTarget, ignorePlayer, ignoreActors, ignoreMask);
+        }
+        return RayResult();
+    }
+//## VR_PATCH END
+
+//## VR_PATCH BEGIN
+    RayResult RenderingManager::castCameraToViewportRay(
+        const float nX, const float nY, float maxDistance, bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask)
+//## VR_PATCH END
     {
         osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector(new osgUtil::LineSegmentIntersector(
             osgUtil::LineSegmentIntersector::PROJECTION, nX * 2.f - 1.f, nY * (-2.f) + 1.f));
@@ -1923,7 +3170,9 @@ namespace MWRender
         intersector->setEnd(end);
         intersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::LIMIT_NEAREST);
 
-        mViewer->getCamera()->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors));
+//## VR_PATCH BEGIN
+        mViewer->getCamera()->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreMask));
+//## VR_PATCH END
 
         return getIntersectionResult(intersector, mIntersectionVisitor);
     }
@@ -1935,15 +3184,22 @@ namespace MWRender
     }
 
     void RenderingManager::spawnEffect(VFS::Path::NormalizedView model, std::string_view texture,
-        const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight, std::string_view effectId,
-        bool loop)
+        const osg::Vec3f& worldPosition, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM4::Light* light, bool isExterior, const osg::Quat& orientation,
+        float authoredDuration)
     {
-        mEffectManager->addEffect(model, texture, worldPosition, scale, isMagicVFX, useAmbientLight, effectId, loop);
+        mEffectManager->addEffect(
+            model, texture, worldPosition, scale, isMagicVFX, useAmbientLight, light, isExterior,
+            orientation, authoredDuration);
     }
 
-    void RenderingManager::removeEffect(std::string_view effectId)
+    void RenderingManager::spawnFalloutDecal(VFS::Path::NormalizedView texture,
+        const osg::Vec3f& worldPosition, const osg::Vec3f& surfaceNormal, float width,
+        float height, float depth, const osg::Vec4f& color, bool alphaBlend,
+        bool alphaTest, float lifetime)
     {
-        mEffectManager->removeEffect(effectId);
+        mEffectManager->addDecal(texture, worldPosition, surfaceNormal, width, height,
+            depth, color, alphaBlend, alphaTest, lifetime);
     }
 
     void RenderingManager::notifyWorldSpaceChanged()
@@ -1955,6 +3211,9 @@ namespace MWRender
     void RenderingManager::clear()
     {
         mSky->setMoonColour(false);
+        mFalloutSaveWornVisualItems.clear();
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
 
         notifyWorldSpaceChanged();
         if (mObjectPaging)
@@ -1969,15 +3228,35 @@ namespace MWRender
             mCamera->attachTo(MWWorld::Ptr());
         }
 
+        if (mFalloutPlayerFirstPersonAnimation)
+        {
+            mFalloutPlayerFirstPersonAnimation->removeFromScene();
+            mFalloutPlayerFirstPersonAnimation = nullptr;
+        }
         if (mFalloutPlayerVisualAnimation)
         {
             mFalloutPlayerVisualAnimation->removeFromScene();
             mFalloutPlayerVisualAnimation = nullptr;
         }
+        if (mFalloutPlayerVisualBasis)
+        {
+            while (mFalloutPlayerVisualBasis->getNumParents() > 0)
+                mFalloutPlayerVisualBasis->getParent(0)->removeChild(mFalloutPlayerVisualBasis);
+            mFalloutPlayerVisualBasis = nullptr;
+        }
+        if (mFalloutPlayerFirstPersonBasis)
+        {
+            while (mFalloutPlayerFirstPersonBasis->getNumParents() > 0)
+                mFalloutPlayerFirstPersonBasis->getParent(0)->removeChild(mFalloutPlayerFirstPersonBasis);
+            mFalloutPlayerFirstPersonBasis = nullptr;
+        }
         mFalloutPlayerVisualGroup.clear();
         mFalloutPlayerVisualGroupElapsed = 0.f;
         mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerFirstPersonAlignmentLogged = false;
         mFalloutPlayerVisualPreviousPositionValid = false;
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
         mFalloutPlayerVisualRef.reset();
 
         if (mPlayerAnimation)
@@ -2021,98 +3300,13 @@ namespace MWRender
     {
         if (mPlayerAnimation && ptr == mPlayerAnimation->getPtr())
         {
-            // The recovered 0.51 flat renderer currently owns one native ESM4 player proxy. Route authored
-            // weapon keys through it; a separate Camera1st arms rig can replace the null first-person result later.
             if (firstPerson)
-                return nullptr;
+                return mFalloutPlayerFirstPersonAnimation.get();
             if (mFalloutPlayerVisualAnimation)
                 return mFalloutPlayerVisualAnimation.get();
         }
 
         return firstPerson ? nullptr : getAnimation(ptr);
-    }
-
-    bool RenderingManager::refreshFalloutPlayerEquipment(const MWWorld::Ptr& player)
-    {
-        if (!mFalloutPlayerVisualRef || !mFalloutPlayerVisualAnimation)
-            return false;
-        MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
-        if (!applyFalloutPlayerRuntimeEquipment(visualPtr, player, "runtime"))
-            return false;
-        if (auto* animation = dynamic_cast<ESM4NpcAnimation*>(mFalloutPlayerVisualAnimation.get()))
-            animation->refreshEquipment();
-        return true;
-    }
-
-    bool RenderingManager::refreshESM4NpcAppearance(const MWWorld::Ptr& ptr)
-    {
-        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
-            return false;
-        // An unloaded actor will consume its reference-local appearance data
-        // when its cell is inserted. Rebuild only an already-rendered actor,
-        // keeping the immutable base record and authored placement untouched.
-        if (mObjects->getAnimation(ptr) == nullptr)
-            return true;
-        if (!mObjects->removeObject(ptr))
-            return false;
-        mObjects->insertNPC(ptr);
-        return mObjects->getAnimation(ptr) != nullptr;
-    }
-
-    MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)
-    {
-        if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr() && mFalloutPlayerVisualAnimation)
-            return mFalloutPlayerVisualAnimation.get();
-
-        return getAnimation(ptr);
-    }
-
-    bool RenderingManager::setESM4ScriptPackageCamera(const MWWorld::Ptr& ptr, bool active)
-    {
-        if (!mPlayerAnimation || !mCamera || ptr != mPlayerAnimation->getPtr())
-            return false;
-
-        Animation* cameraAnimation = mPlayerAnimation.get();
-        bool usingAuthoredTarget = false;
-        if (active && mFalloutPlayerVisualAnimation && mFalloutPlayerVisualAnimation->hasFalloutScriptPackageCameraTarget())
-        {
-            cameraAnimation = mFalloutPlayerVisualAnimation.get();
-            usingAuthoredTarget = true;
-        }
-
-        const bool cameraChanged = mESM4ScriptPackageCameraAnimation != cameraAnimation;
-        const bool stateChanged = mESM4ScriptPackageCameraActive != usingAuthoredTarget;
-        if (!cameraChanged && !stateChanged)
-            return usingAuthoredTarget;
-
-        // A package that carries an authored Camera1st controller is explicitly a first-person presentation.
-        // Preserve the player's selected view while it runs, then restore it when the package releases the camera.
-        // The decision is based solely on the loaded package/KF target and therefore applies to every Fallout-family
-        // cinematic package rather than naming an opening quest or cell.
-        if (usingAuthoredTarget)
-        {
-            if (!mESM4ScriptPackagePreviousCameraMode)
-                mESM4ScriptPackagePreviousCameraMode = static_cast<int>(mCamera->getMode());
-            mCamera->setMode(Camera::Mode::FirstPerson);
-        }
-        else if (mESM4ScriptPackagePreviousCameraMode)
-        {
-            const Camera::Mode restoreMode = static_cast<Camera::Mode>(*mESM4ScriptPackagePreviousCameraMode);
-            mESM4ScriptPackagePreviousCameraMode.reset();
-            mCamera->setMode(restoreMode);
-        }
-
-        mCamera->setAnimation(cameraAnimation, usingAuthoredTarget);
-        if (mCamera->getTrackingPtr() != ptr)
-            mCamera->attachTo(ptr);
-        mCamera->processViewChange();
-        mCamera->instantTransition();
-        mESM4ScriptPackageCameraAnimation = cameraAnimation;
-        mESM4ScriptPackageCameraActive = usingAuthoredTarget;
-        Log(Debug::Info) << "FNV/ESM4 scripted package: camera transition actor=" << ptr.getCellRef().getRefId()
-                         << " authoredTarget=" << usingAuthoredTarget
-                         << " mode=" << static_cast<int>(mCamera->getMode());
-        return usingAuthoredTarget;
     }
 
     PostProcessor* RenderingManager::getPostProcessor()
@@ -2141,21 +3335,66 @@ namespace MWRender
 
     void RenderingManager::renderPlayer(const MWWorld::Ptr& player)
     {
-        mESM4ScriptPackageCameraAnimation = nullptr;
-        mESM4ScriptPackageCameraActive = false;
+        if (mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->removeFromScene();
+        if (mFalloutPlayerVisualAnimation)
+            mFalloutPlayerVisualAnimation->removeFromScene();
+        if (mFalloutPlayerVisualBasis)
+        {
+            while (mFalloutPlayerVisualBasis->getNumParents() > 0)
+                mFalloutPlayerVisualBasis->getParent(0)->removeChild(mFalloutPlayerVisualBasis);
+        }
+        if (mFalloutPlayerFirstPersonBasis)
+        {
+            while (mFalloutPlayerFirstPersonBasis->getNumParents() > 0)
+                mFalloutPlayerFirstPersonBasis->getParent(0)->removeChild(mFalloutPlayerFirstPersonBasis);
+        }
+        mFalloutPlayerFirstPersonAnimation = nullptr;
+        mFalloutPipBoyScreenBound = false;
+        mFalloutPipBoyScreenBindingAttempted = false;
         mFalloutPlayerVisualAnimation = nullptr;
+        mFalloutPlayerVisualBasis = nullptr;
+        mFalloutPlayerFirstPersonBasis = nullptr;
         mFalloutPlayerVisualRef.reset();
         mFalloutPlayerVisualGroup.clear();
         mFalloutPlayerVisualGroupElapsed = 0.f;
         mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerFirstPersonAlignmentLogged = false;
         mFalloutPlayerVisualPreviousPositionValid = false;
-        const ESM4::Npc* falloutPlayerVisualRecord = findEsm4PlayerVisualRecord();
-        const bool falloutFlatProfile = falloutPlayerVisualRecord != nullptr;
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
+        const ESM4::Npc* falloutPlayerVisualRecord
+            = VR::getVR() ? findFalloutPlayerVisualRecord() : findEsm4PlayerVisualRecord();
+        const bool falloutFlatProfile = !VR::getVR() && falloutPlayerVisualRecord != nullptr;
+        const bool falloutVrProfile = VR::getVR() && falloutPlayerVisualRecord != nullptr;
 
-        mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
-            NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+        {
+            mPlayerAnimation
+                = new MWVR::VRAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, false, mSceneRoot);
+            auto* vrAnimation = static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+            if (falloutVrProfile)
+            {
+                vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
+                logFalloutVrHandSelectionDiagnostic(player, falloutPlayerVisualRecord);
+                vrAnimation->setFalloutVrHandSurfaces(
+                    collectFalloutVrHandSurfacesForVisualRecord(player, falloutPlayerVisualRecord));
+            }
+            else
+                vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
+        }
+        else
+        {
+            Log(Debug::Info) << "FNV/ESM4 render player: legacy tracking animation begin";
+            mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
+                NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
+            Log(Debug::Info) << "FNV/ESM4 render player: legacy tracking animation complete";
+        }
+//## VR_PATCH END
 
-        const bool hideLocalPlayerVisual = false;
+        const bool hideLocalPlayerVisual = VR::getVR();
         const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
             || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
         const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || proofHidePlayerVisual;
@@ -2171,14 +3410,58 @@ namespace MWRender
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
-            applyFalloutPlayerRuntimeEquipment(visualPtr, player, "world");
+            Log(Debug::Info) << "FNV/ESM4 render player: saved worn visual application begin count="
+                             << mFalloutSaveWornVisualItems.size();
+            const std::optional<ESM4NpcAnimation::FirstPersonState> firstPersonProfile
+                = falloutFlatProfile
+                ? applyFalloutSaveWornPlayerVisuals(
+                    mFalloutSaveWornVisualItems, visualPtr, mFirstPersonFieldOfView, mResourceSystem)
+                : std::nullopt;
+            Log(Debug::Info) << "FNV/ESM4 render player: saved worn visual application complete";
+            if (falloutFlatProfile)
+            {
+                mFalloutPlayerFirstPersonWornSignature
+                    = makeFalloutWornVisualSignature(MWClass::ESM4Npc::getEquippedArmor(visualPtr));
+                mFalloutPlayerFirstPersonWornSignatureObserved = true;
+            }
+            visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(
+                player.getClass().getCreatureStats(player).getDrawState());
 
             Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
                              << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
                              << ") on player root; hiding legacy ESM3 body";
 
+            mFalloutPlayerVisualBasis = new osg::MatrixTransform;
+            mFalloutPlayerVisualBasis->setName("FNV Player Visual Basis Conversion");
+            const float playerVisualYawOffset = getFalloutFlatPlayerVisualYawOffset();
+            mFalloutPlayerVisualBasis->setMatrix(
+                osg::Matrix::rotate(playerVisualYawOffset, osg::Vec3f(0.f, 0.f, -1.f)));
+            player.getRefData().getBaseNode()->addChild(mFalloutPlayerVisualBasis);
+            Log(Debug::Info) << "FNV player visual basis: angleDegrees="
+                             << osg::RadiansToDegrees(playerVisualYawOffset) << " axis=(0,0,-1)"
+                             << " parent=" << player.getRefData().getBaseNode()->getName();
+
+            Log(Debug::Info) << "FNV/ESM4 render player: native visual animation begin";
             mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(
-                visualPtr, osg::ref_ptr<osg::Group>(player.getRefData().getBaseNode()), mResourceSystem);
+                visualPtr, osg::ref_ptr<osg::Group>(mFalloutPlayerVisualBasis), mResourceSystem);
+            Log(Debug::Info) << "FNV/ESM4 render player: native visual animation complete";
+            if (firstPersonProfile)
+            {
+                mFalloutPlayerFirstPersonBasis = new osg::MatrixTransform;
+                mFalloutPlayerFirstPersonBasis->setName("FNV First Person Camera1st Alignment");
+                mFalloutPlayerFirstPersonBasis->setMatrix(osg::Matrix::identity());
+                // First-person geometry is camera-space, not player-root space.  Keeping
+                // this basis on the scene root lets the per-frame Camera1st solve follow
+                // pitch, yaw, roll and eye translation exactly.
+                mSceneRoot->addChild(mFalloutPlayerFirstPersonBasis);
+                mFalloutPlayerFirstPersonAnimation = new ESM4NpcAnimation(visualPtr,
+                    osg::ref_ptr<osg::Group>(mFalloutPlayerFirstPersonBasis), mResourceSystem,
+                    *firstPersonProfile);
+                Log(Debug::Info) << "FNV first-person profile created: attachedNodeCount="
+                                 << mFalloutPlayerFirstPersonAnimation->getFirstPersonAttachedPartCount()
+                                 << " fov=" << firstPersonProfile->mFieldOfView
+                                 << " anchor=Camera1st profile=flat-first-person";
+            }
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);
             if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
@@ -2202,14 +3485,20 @@ namespace MWRender
 
         if (falloutFlatProfile)
         {
-            // The hidden legacy Morrowind rig tracks its camera at roughly 124 units,
-            // while the native ESM4 human head/eye anchor is about 110 units above
-            // the authored floor. Compensate for that rig mismatch so first person
-            // does not intersect Bethesda's 128-unit ceilings and exterior awnings.
+            // Keep the hidden tracking rig's authored eye height.  Lowering it by 40
+            // units places the camera inside the native torso, exposing the collar,
+            // legs and the underside of first-person arms when looking up or down.
             const float profileEyeOffsetZ
-                = envFloatOr("OPENMW_ESM4_FIRST_PERSON_EYE_OFFSET_Z", -40.f);
+                = envFloatOr("OPENMW_ESM4_FIRST_PERSON_EYE_OFFSET_Z", 0.f);
             mCamera->setFirstPersonProfileOffset(osg::Vec3f(0.f, 0.f, profileEyeOffsetZ));
             Log(Debug::Info) << "ESM4: persistent first-person eye offset z=" << profileEyeOffsetZ;
+        }
+
+        if (falloutVrProfile)
+        {
+            auto* vrAnimation = static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+            vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+            Log(Debug::Info) << "FNV/ESM4: VR player render uses first-person hand-only rig";
         }
 
         if (falloutFlatProfile || proofHidePlayerVisual)
@@ -2265,11 +3554,13 @@ namespace MWRender
         if (mViewDistance < mNearClip)
             throw std::runtime_error("Viewing distance is less than near clip");
 
-        const int width = Settings::video().mResolutionX;
-        const int height = Settings::video().mResolutionY;
+        const double width = Settings::video().mResolutionX;
+        const double height = Settings::video().mResolutionY;
 
-        const double aspect = (height == 0) ? 1.0 : static_cast<double>(width) / height;
-        const float fov = mFieldOfViewOverridden ? mFieldOfViewOverride : mFieldOfView;
+        double aspect = (height == 0.0) ? 1.0 : width / height;
+        float fov = mFieldOfView;
+        if (mFieldOfViewOverridden)
+            fov = mFieldOfViewOverride;
 
         if (mProjectionMatrixOverridden)
         {
@@ -2291,16 +3582,15 @@ namespace MWRender
 
         mSharedUniformStateUpdater->setNear(mNearClip);
         mSharedUniformStateUpdater->setFar(mViewDistance);
-
         if (Stereo::getStereo())
         {
             auto res = Stereo::Manager::instance().eyeResolution();
-            setScreenRes(res.x(), res.y());
+            mSharedUniformStateUpdater->setScreenRes(res.x(), res.y());
             Stereo::Manager::instance().setMasterProjectionMatrix(mPerViewUniformStateUpdater->getProjectionMatrix());
         }
         else
         {
-            setScreenRes(width, height);
+            mSharedUniformStateUpdater->setScreenRes(width, height);
         }
 
         // Since our fog is not radial yet, we should take FOV in account, otherwise terrain near viewing distance may
@@ -2317,16 +3607,23 @@ namespace MWRender
 
     void RenderingManager::setScreenRes(int width, int height)
     {
-        mSharedUniformStateUpdater->setScreenRes(static_cast<float>(width), static_cast<float>(height));
+        mSharedUniformStateUpdater->setScreenRes(width, height);
     }
 
+//## VR_PATCH BEGIN
+    void RenderingManager::enableVRPointer(bool left, bool right)
+    {
+        if (mPlayerAnimation)
+            static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get())->enablePointers(left, right);
+    }
+
+//## VR_PATCH END
     void RenderingManager::updateTextureFiltering()
     {
         mViewer->stopThreading();
 
         mResourceSystem->getSceneManager()->setFilterSettings(Settings::general().mTextureMagFilter,
-            Settings::general().mTextureMinFilter, Settings::general().mTextureMipmap,
-            static_cast<float>(Settings::general().mAnisotropy));
+            Settings::general().mTextureMinFilter, Settings::general().mTextureMipmap, Settings::general().mAnisotropy);
 
         mTerrain->updateTextureFiltering();
         mWater->processChangedSettings({});
@@ -2339,7 +3636,7 @@ namespace MWRender
         osg::Vec4f color = mAmbientColor;
 
         if (mNightEyeFactor > 0.f)
-            color += osg::Vec4f(0.7f, 0.7f, 0.7f, 0.0f) * mNightEyeFactor;
+            color += osg::Vec4f(0.7, 0.7, 0.7, 0.0) * mNightEyeFactor;
 
         mPostProcessor->getStateUpdater()->setAmbientColor(color);
         mStateUpdater->setAmbientColor(color);
@@ -2348,6 +3645,14 @@ namespace MWRender
     void RenderingManager::setFogColor(const osg::Vec4f& color)
     {
         mViewer->getCamera()->setClearColor(color);
+//## VR_PATCH BEGIN
+        for (unsigned int i = 0; i < mViewer->getNumSlaves(); i++)
+        {
+            const auto& slave = mViewer->getSlave(i);
+            if (slave._camera)
+                slave._camera->setClearColor(color);
+        }
+//## VR_PATCH END
 
         mStateUpdater->setFogColor(color);
     }
@@ -2367,7 +3672,7 @@ namespace MWRender
         {
             const int compMapResolution = Settings::terrain().mCompositeMapResolution;
             const int compMapPower = Settings::terrain().mCompositeMapLevel;
-            const float compMapLevel = static_cast<float>(std::pow(2, compMapPower));
+            const float compMapLevel = std::pow(2, compMapPower);
             const int vertexLodMod = Settings::terrain().mVertexLodMod;
             const float maxCompGeometrySize = Settings::terrain().mMaxCompositeGeometrySize;
             const bool debugChunks = Settings::terrain().mDebugChunks;
@@ -2450,15 +3755,13 @@ namespace MWRender
                     configureAmbient(*MWMechanics::getPlayer().getCell()->getCell());
             }
             else if (it->first == "Shaders"
-                && (it->second == "force per pixel lighting" || it->second == "classic falloff"
-                    || it->second == "clamp lighting"))
+                && (it->second == "force per pixel lighting" || it->second == "classic falloff"))
             {
                 mViewer->stopThreading();
 
                 auto defines = mResourceSystem->getSceneManager()->getShaderManager().getGlobalDefines();
                 defines["forcePPL"] = Settings::shaders().mForcePerPixelLighting ? "1" : "0";
                 defines["classicFalloff"] = Settings::shaders().mClassicFalloff ? "1" : "0";
-                defines["clamp"] = Settings::shaders().mClampLighting ? "1" : "0";
                 mResourceSystem->getSceneManager()->getShaderManager().setGlobalDefines(defines);
 
                 if (MWMechanics::getPlayer().isInCell() && it->second == "classic falloff")
@@ -2475,7 +3778,7 @@ namespace MWRender
                 lightManager->processChangedSettings(Settings::shaders().mLightBoundsMultiplier,
                     Settings::shaders().mMaximumLightDistance, Settings::shaders().mLightFadeStart);
 
-                if (it->second == "max lights")
+                if (it->second == "max lights" && !lightManager->usingFFP())
                 {
                     mViewer->stopThreading();
 
@@ -2502,37 +3805,17 @@ namespace MWRender
                         hud->setVisible(false);
                 }
             }
-            else if (it->first == "Shadows")
+//## VR_PATCH BEGIN
+            else if (it->first == "VR")
             {
-                mViewer->stopThreading();
-
-                mShadowManager->setupShadowSettings(
-                    Settings::shadows(), mResourceSystem->getSceneManager()->getShaderManager());
-
-                // Recompute casting masks from current settings
-                int shadowCastingTraversalMask = Mask_Scene;
-                if (Settings::shadows().mActorShadows)
-                    shadowCastingTraversalMask |= Mask_Actor;
-                if (Settings::shadows().mPlayerShadows)
-                    shadowCastingTraversalMask |= Mask_Player;
-
-                int indoorShadowCastingTraversalMask = shadowCastingTraversalMask;
-                if (Settings::shadows().mObjectShadows)
-                    shadowCastingTraversalMask |= (Mask_Object | Mask_Static);
-                if (Settings::shadows().mTerrainShadows)
-                    shadowCastingTraversalMask |= Mask_Terrain;
-
-                mShadowManager->updateCastingMasks(shadowCastingTraversalMask, indoorShadowCastingTraversalMask);
-
-                // Update global shader defines (soft shadows, resolution, cascade count)
-                auto defines = mResourceSystem->getSceneManager()->getShaderManager().getGlobalDefines();
-                auto shadowDefines = mShadowManager->getShadowDefines(Settings::shadows());
-                for (const auto& [name, value] : shadowDefines)
-                    defines[name] = value;
-                mResourceSystem->getSceneManager()->getShaderManager().setGlobalDefines(defines);
-
-                mViewer->startThreading();
+                if (it->second == "show 3D crosshairs")
+                {
+                    if(VR::getVR())
+                        static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get())
+                            ->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
+                }
             }
+//## VR_PATCH END
         }
 
         if (updateProjection)
@@ -2795,26 +4078,4 @@ namespace MWRender
     {
         mNavMesh->setMode(value);
     }
-
-    void RenderingManager::setOcclusionCachePath(const std::string& path)
-    {
-        if (!mOcclusionCuller)
-            return;
-        mOcclusionStorage = std::make_unique<OcclusionStorage>(path);
-        const float occluderMinRadius = Settings::camera().mOcclusionOccluderMinRadius;
-        const float occluderMaxRadius = Settings::camera().mOcclusionOccluderMaxRadius;
-        const float occluderShrinkFactor = Settings::camera().mOcclusionOccluderShrinkFactor;
-        const int occluderMeshRes = Settings::camera().mOcclusionOccluderMeshResolution;
-        const int occluderMaxMeshRes = Settings::camera().mOcclusionOccluderMaxMeshResolution;
-        const float occluderInsideThreshold = Settings::camera().mOcclusionOccluderInsideThreshold;
-        const float occluderMaxDistance = Settings::camera().mOcclusionOccluderMaxDistance;
-        const bool enableStatics = Settings::camera().mOcclusionCullingStatics;
-        const unsigned int maxTriangles = static_cast<unsigned int>(Settings::camera().mOcclusionMaxTriangles);
-        mObjects->setOcclusionCuller(mOcclusionCuller, occluderMinRadius, occluderMaxRadius, occluderShrinkFactor,
-            occluderMeshRes, occluderMaxMeshRes, occluderInsideThreshold, occluderMaxDistance, enableStatics,
-            maxTriangles, mOcclusionStorage.get());
-        if (mSceneOcclusionCallback)
-            mSceneOcclusionCallback->setStorage(mOcclusionStorage.get());
-    }
-
 }

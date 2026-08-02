@@ -1266,6 +1266,18 @@ namespace Resource
                 "Left_Clavicle",
                 "Weapon_Bone",
                 "Root_Bone",
+                // Fallout's Pip-Boy NIF exposes these as individually authored
+                // transforms.  They are runtime UI controls, not disposable
+                // static hierarchy: preserve their pivots for dial rotation,
+                // button travel, and pane-glow state.
+                "TabKnob",
+                "ScrollKnob",
+                "PipBoyButton01",
+                "PipBoyButton02",
+                "PipBoyButton03",
+                "StatsGlow",
+                "ItemsGlow",
+                "DataGlow",
             };
 
             std::vector<std::string> result;
