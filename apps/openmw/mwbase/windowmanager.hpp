@@ -435,6 +435,18 @@ namespace MWBase
         virtual bool focusFalloutMapMarker(ESM::FormId marker, float zoom) = 0;
         virtual bool requestFalloutFastTravel(ESM::FormId marker) = 0;
         virtual void confirmFalloutFastTravel() = 0;
+
+        /// Fallout has two deliberately separate menu presentations.  The normal
+        /// OpenMW inventory/map windows remain a conventional desktop UI; the
+        /// physical presentation is consumed by the first-person Pip-Boy model.
+        virtual void setFalloutPipBoyPresentation(bool physical) = 0;
+        virtual bool isFalloutPipBoyPhysicalPresentation() const = 0;
+        virtual int getFalloutPipBoyActivePane() const = 0;
+        /// Text fed to the actual PipBoyArm screen material.  This is kept
+        /// separate from the OpenMW desktop inventory presentation so the
+        /// physical device can own its terminal layout and live player data.
+        virtual std::string getFalloutPipBoyTerminalHeader() const = 0;
+        virtual std::string getFalloutPipBoyTerminalBody() const = 0;
     };
 }
 

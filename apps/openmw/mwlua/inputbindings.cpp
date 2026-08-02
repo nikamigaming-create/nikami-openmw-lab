@@ -267,6 +267,8 @@ namespace MWLua
                 { "Map", MWInput::A_Map },
                 { "Screenshot", MWInput::A_Screenshot },
                 { "Inventory", MWInput::A_Inventory },
+                { "FalloutPipBoy", MWInput::A_FalloutPipBoy },
+                { "FalloutAim", MWInput::A_FalloutAim },
                 { "Console", MWInput::A_Console },
 
                 { "MoveLeft", MWInput::A_MoveLeft },

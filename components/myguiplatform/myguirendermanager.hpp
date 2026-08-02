@@ -70,6 +70,14 @@ namespace MyGUIPlatform
         bool mUseMissingTextureFallback;
 
         float mInvScalingFactor;
+        // Layers rendered to an in-world device are deliberately omitted from
+        // the normal full-screen GUI camera while their filtered RTT camera
+        // continues to draw them.
+        std::set<std::string> mSuppressedGuiLayers;
+        // A physical in-world device owns the complete GUI frame while it is
+        // raised.  Its filtered RTT camera still renders the selected layer,
+        // but the unfiltered, fullscreen GUI camera must draw nothing.
+        bool mSuppressUnfilteredGui = false;
 
     public:
 //## VR_PATCH END
@@ -118,6 +126,14 @@ namespace MyGUIPlatform
 
         // Called by the update traversal
         void update();
+
+        void setSuppressedGuiLayers(std::set<std::string> layers) { mSuppressedGuiLayers = std::move(layers); }
+        void setSuppressUnfilteredGui(bool suppressed) { mSuppressUnfilteredGui = suppressed; }
+        bool suppressUnfilteredGui() const { return mSuppressUnfilteredGui; }
+        bool isGuiLayerSuppressed(const std::string& layer) const
+        {
+            return mSuppressedGuiLayers.find(layer) != mSuppressedGuiLayers.end();
+        }
 
 //## VR_PATCH BEGIN
 

@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
+#include <sstream>
 #include <thread>
 
 #include <osgViewer/Viewer>
@@ -19,6 +21,7 @@
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_PointerManager.h>
 #include <MyGUI_RenderManager.h>
+#include <MyGUI_TextBox.h>
 #include <MyGUI_UString.h>
 #include <MyGUI_Window.h>
 
@@ -29,6 +32,12 @@
 #include <SDL_keyboard.h>
 
 #include <components/debug/debuglog.hpp>
+
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -66,9 +75,12 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/luamanager.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwinput/actions.hpp"
 
 #include "../mwphysics/raycasting.hpp"
 
@@ -77,6 +89,7 @@
 #include "../mwrender/vismask.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/action.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
@@ -84,9 +97,12 @@
 #include "../mwworld/player.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwrender/postprocessor.hpp"
+
+#include "../mwworld/inventorystore.hpp"
 
 #include "alchemywindow.hpp"
 #include "backgroundimage.hpp"
@@ -198,6 +214,309 @@ namespace MWGui
             }
 
             return false;
+        }
+
+        // ESM4-format Fallout records are addressed by FormID at runtime, not
+        // by their editor-id strings. Resolve the editor-id against the loaded
+        // store before asking the real inventory for a count.
+        template <class T>
+        ESM::RefId findFalloutEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
+        {
+            const auto& typedStore = store.get<T>();
+            for (auto it = typedStore.begin(); it != typedStore.end(); ++it)
+            {
+                if (it->mEditorId == editorId)
+                    return ESM::RefId::formIdRefId(it->mId);
+            }
+            return ESM::RefId();
+        }
+
+        MWWorld::ContainerStoreIterator findFalloutInventoryItem(
+            MWWorld::InventoryStore& inventory, const ESM::RefId& id)
+        {
+            for (MWWorld::ContainerStoreIterator it = inventory.begin(); it != inventory.end(); ++it)
+            {
+                if (it->getCellRef().getRefId() == id)
+                    return it;
+            }
+            return inventory.end();
+        }
+
+        std::string executeFalloutPipBoySelection(int pane, int submenu, int selectedRow)
+        {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return "NO WORLD";
+
+            MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty())
+                return "NO PLAYER";
+
+            MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+            const MWWorld::ESMStore& store = world->getStore();
+            const auto equip = [&](const ESM::RefId& id, int slot, std::string_view label) {
+                MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
+                if (item == inventory.end())
+                    return std::string("MISSING ") + std::string(label);
+                inventory.equip(slot, item);
+                MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                return std::string("EQUIPPED ") + std::string(label);
+            };
+            const auto use = [&](const ESM::RefId& id, std::string_view label) {
+                MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
+                if (item == inventory.end())
+                    return std::string("MISSING ") + std::string(label);
+                std::unique_ptr<MWWorld::Action> action = (*item).getClass().use(*item, false);
+                if (action == nullptr)
+                    return std::string("CANNOT USE ") + std::string(label);
+                action->execute(player);
+                MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                return std::string("USED ") + std::string(label);
+            };
+
+            if (pane == 1)
+            {
+                switch (submenu)
+                {
+                    case 0:
+                    {
+                        const ESM::RefId id = findFalloutEditorId<ESM4::Weapon>(
+                            store, selectedRow == 0 ? "WeapNV9mmPistol" : "WeapNVVarmintRifle");
+                        const std::string label = selectedRow == 0 ? "9MM PISTOL" : "VARMINT RIFLE";
+                        const std::string result = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, label);
+                        if (result.starts_with("EQUIPPED"))
+                            player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+                        return result;
+                    }
+                    case 1:
+                    {
+                        const ESM::RefId id = findFalloutEditorId<ESM4::Armor>(
+                            store, selectedRow == 0 ? "VaultSuit21" : "CowboyHat02");
+                        return use(id, selectedRow == 0 ? "VAULT 21 JUMPSUIT" : "COWBOY HAT");
+                    }
+                    case 2:
+                        return use(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"), "STIMPAK");
+                    case 3:
+                        return selectedRow == 0 ? "SELECTED CAPS" : "SELECTED LOCKPICK";
+                    case 4:
+                    default:
+                        return equip(findFalloutEditorId<ESM4::Ammunition>(
+                                         store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm"),
+                            MWWorld::InventoryStore::Slot_Ammunition,
+                            selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND");
+                }
+            }
+
+            if (pane == 2)
+                return "SELECTED DATA ENTRY";
+            return "SELECTED";
+        }
+
+        int getFalloutPipBoySubmenuCount(int pane)
+        {
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                    return 2; // LOCAL / WORLD
+                case 1:
+                    return 5; // WEAPONS / APPAREL / AID / MISC / AMMO
+                case 2:
+                    return 3; // QUESTS / NOTES / RADIO
+                case 3:
+                default:
+                    return 7; // CND / RAD / EFF / SPECIAL / SKILLS / PERKS / GENERAL
+            }
+        }
+
+        std::string makeFalloutPipBoyTabRow(std::initializer_list<std::string_view> labels, int active)
+        {
+            std::ostringstream text;
+            int index = 0;
+            for (const std::string_view label : labels)
+            {
+                text << (index == active ? "[" : " ") << label << (index == active ? "]" : " ");
+                if (++index < static_cast<int>(labels.size()))
+                    text << ' ';
+            }
+            return text.str();
+        }
+
+        std::string makeFalloutPipBoyTerminalBody(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
+            float mapPanX, float mapPanY, std::string_view lastAction)
+        {
+            float healthCurrent = 0.f;
+            float healthMaximum = 0.f;
+            float actionCurrent = 0.f;
+            float actionMaximum = 0.f;
+            int pistolCount = 0;
+            int rifleCount = 0;
+            int ammo9mmCount = 0;
+            int ammo556Count = 0;
+            int stimpakCount = 0;
+            int capsCount = 0;
+            int lockpickCount = 0;
+            int vaultSuitCount = 0;
+            int cowboyHatCount = 0;
+
+            if (MWBase::World* const world = MWBase::Environment::get().getWorld())
+            {
+                const MWWorld::Ptr player = world->getPlayerPtr();
+                if (!player.isEmpty())
+                {
+                    const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+                    healthCurrent = stats.getHealth().getCurrent();
+                    healthMaximum = stats.getHealth().getModified();
+                    actionCurrent = stats.getFatigue().getCurrent();
+                    actionMaximum = stats.getFatigue().getModified();
+
+                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ESMStore& store = world->getStore();
+                    pistolCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNV9mmPistol"));
+                    rifleCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNVVarmintRifle"));
+                    ammo9mmCount = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo9mm"));
+                    ammo556Count = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo556mm"));
+                    stimpakCount = inventory.count(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"));
+                    capsCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Caps001"));
+                    lockpickCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Lockpick"));
+                    vaultSuitCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "VaultSuit21"));
+                    cowboyHatCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "CowboyHat02"));
+                }
+            }
+
+            const auto asDisplayNumber = [](float value) { return static_cast<int>(std::lround(value)); };
+            std::ostringstream text;
+            pane = std::clamp(pane, 0, 3);
+            submenu = std::clamp(submenu, 0, getFalloutPipBoySubmenuCount(pane) - 1);
+            const int selectedRow = std::max(0, listOffset);
+            const auto writeEntry = [&text, selectedRow](int row, std::string_view label, int quantity) {
+                text << (row == selectedRow ? "> " : "  ") << label;
+                if (quantity >= 0)
+                    text << "  " << quantity;
+                text << '\n';
+            };
+
+            switch (pane)
+            {
+                case 0:
+                    text << (worldMap ? "MOJAVE WASTELAND" : "TESTMAP01 LOCAL MAP") << "\n"
+                         << "ZOOM "
+                         << static_cast<int>(std::lround(mapZoom * 100.f)) << "%\n"
+                         << "PAN " << static_cast<int>(std::lround(mapPanX * 100.f)) << ','
+                         << static_cast<int>(std::lround(mapPanY * 100.f)) << "  [YOU]"
+                         // The physical Fallout layout keeps the DATA sub-tabs
+                         // below the map rather than consuming the map viewport.
+                         << '\f' << makeFalloutPipBoyTabRow({ "LOCAL", "WORLD" }, worldMap ? 1 : 0);
+                    break;
+                case 1:
+                    text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "WEAPONS\n";
+                            writeEntry(0, "9MM PISTOL", pistolCount);
+                            writeEntry(1, "VARMINT RIFLE", rifleCount);
+                            text << "E: EQUIP / UNEQUIP";
+                            break;
+                        case 1:
+                            text << "APPAREL\n";
+                            writeEntry(0, "VAULT 21 JUMPSUIT", vaultSuitCount);
+                            writeEntry(1, "COWBOY HAT", cowboyHatCount);
+                            break;
+                        case 2:
+                            text << "AID\n";
+                            writeEntry(0, "STIMPAK", stimpakCount);
+                            text << "E: USE";
+                            break;
+                        case 3:
+                            text << "MISC\n";
+                            writeEntry(0, "CAPS", capsCount);
+                            writeEntry(1, "LOCKPICK", lockpickCount);
+                            break;
+                        case 4:
+                        default:
+                            text << "AMMO\n";
+                            writeEntry(0, "9MM ROUND", ammo9mmCount);
+                            writeEntry(1, "5.56 ROUND", ammo556Count);
+                            break;
+                    }
+                    break;
+                case 2:
+                    text << makeFalloutPipBoyTabRow({ "QUESTS", "NOTES", "RADIO" }, submenu) << "\n\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "QUESTS\n";
+                            writeEntry(0, "AIN'T THAT A KICK", -1);
+                            writeEntry(1, "TESTMAP01 CHECK", -1);
+                            text << "W/S SCROLL  E SELECT";
+                            break;
+                        case 1:
+                            text << "NOTES\n";
+                            writeEntry(0, "PIP-BOY ONLINE", -1);
+                            writeEntry(1, "FALLOUTNV.ESM ONLINE", -1);
+                            break;
+                        case 2:
+                        default:
+                            text << "RADIO\n";
+                            writeEntry(0, "NO SIGNAL", -1);
+                            break;
+                    }
+                    break;
+                case 3:
+                default:
+                    text << makeFalloutPipBoyTabRow({ "CND", "RAD", "EFF", "SPECIAL", "SKILLS", "PERKS", "GENERAL" }, submenu)
+                         << "\n";
+                    switch (submenu)
+                    {
+                        case 0:
+                            text << "LIMBS  RAD  EFF\n"
+                                 << "HP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
+                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum)
+                                 << "  RAD 000";
+                            break;
+                        case 1:
+                            text << "RADIATION\n\nRADS 000\nRESISTANCE 0%";
+                            break;
+                        case 2:
+                            text << "EFFECTS\n\nNO ACTIVE EFFECTS";
+                            break;
+                        case 3:
+                            text << "S.P.E.C.I.A.L.\n\nOPENMW FALLOUT PLAYER";
+                            break;
+                        case 4:
+                            text << "SKILLS\n\nSELECT A SKILL";
+                            break;
+                        case 5:
+                            text << "PERKS\n\nNO PERK DATA";
+                            break;
+                        case 6:
+                        default:
+                            text << "GENERAL\n\nHP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
+                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum);
+                            break;
+                    }
+                    break;
+            }
+            if ((pane == 1 || pane == 2) && !lastAction.empty())
+                text << "\n" << lastAction;
+            return text.str();
+        }
+
+        std::string makeFalloutPipBoyTerminalHeader(int pane)
+        {
+            // The device shell already carries the PIP-BOY 3000 branding.  The
+            // retail screen uses the active physical-button family as its title.
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                case 2:
+                    return "DATA";
+                case 1:
+                    return "ITEMS";
+                case 3:
+                default:
+                    return "STATS";
+            }
         }
 
         void setWindowCoord(WindowBase* window, const MyGUI::IntCoord& coord)
@@ -674,6 +993,28 @@ namespace MWGui
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
+        // The physical Pip-Boy gets its own transparent screen layer.  It is
+        // rendered to the authentic PipBoyArm screen texture, not to the flat
+        // desktop UI, so every glyph follows the device as it moves in 3D.
+        mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
+            {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
+        mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
+        mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
+            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
+        mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
+        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
+        mFalloutPipBoyTerminalHeader->setFontHeight(48);
+        mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
+            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
+        mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
+        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
+        mFalloutPipBoyTerminalBody->setFontHeight(42);
+        mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
+        mFalloutPipBoyTerminalRoot->setVisible(false);
+        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+
         mHud->setVisible(true);
 
         mCharGen = std::make_unique<CharacterCreation>(mViewer->getSceneData()->asGroup(), mResourceSystem);
@@ -924,21 +1265,13 @@ namespace MWGui
                     loggedPaperDollProfiler = true;
                 }
             }
-            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            else if (falloutContent && mFalloutPipBoyPhysical && !VR::getVR())
             {
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
                 constexpr int falloutPaneMasks[4] = { GW_Map, GW_Inventory, GW_Magic, GW_Stats };
                 eff = falloutPaneMasks[activeIndex];
-                static bool loggedPipBoySurface = false;
-                if (!loggedPipBoySurface)
-                {
-                    Log(Debug::Info)
-                        << "FNV/ESM4 proof: Fallout inventory mode shows only the selected retail pane";
-                    loggedPipBoySurface = true;
-                }
-                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
-                                 << activeIndex << " visibleMask=0x"
-                                 << std::hex << eff << std::dec;
+                Log(Debug::Verbose) << "FNV Pip-Boy physical: activePane=" << activeIndex
+                                    << " visibleMask=0x" << std::hex << eff << std::dec;
             }
             auto setWindowVisibleIfChanged = [](WindowBase* window, bool visible) {
                 if (window != nullptr && window->isVisible() != visible)
@@ -958,105 +1291,10 @@ namespace MWGui
                 Log(Debug::Info) << "FNV/ESM4 proof: flat paper doll profiler fullscreen rect=0,0,"
                                  << viewSize.width << "," << viewSize.height;
             }
-            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
-            {
-                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
-                const int margin = 24;
-                const int top = VR::getVR() ? std::min(std::max(88, viewSize.height / 8), 128) : 52;
-                const int bottom = VR::getVR() ? 36 : 16;
-                const int gap = 8;
-                const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
-                const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
-                const int availableWidth = viewSize.width - margin * 2;
-                const int availableHeight = viewSize.height - top - bottom;
-                const int activeWidth = VR::getVR() ? std::clamp(availableWidth, 640, 840)
-                                                     : std::max(640, availableWidth);
-                const int activeHeight = VR::getVR() ? std::clamp(availableHeight, 460, 620)
-                                                      : std::max(360, availableHeight);
-                int loggedActiveWidth = activeWidth;
-                int loggedActiveHeight = activeHeight;
-                int loggedActiveLeft = margin;
-                int loggedActiveTop = top;
-                const int shelfLeft = viewSize.width - margin - shelfWidth;
-                const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
-
-                WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
-                if (VR::getVR())
-                {
-                    const int mapActiveWidth = std::clamp(availableWidth, 860, 1080);
-                    const int mapActiveHeight = std::clamp(availableHeight, 520, 680);
-                    const int inactiveWidth = std::clamp(activeWidth / 2, 320, 440);
-                    const int inactiveHeight = std::clamp(activeHeight / 2, 240, 340);
-                    const int inactiveLeft = margin + std::max(0, (std::max(activeWidth, mapActiveWidth) - inactiveWidth) / 2);
-                    const int inactiveTop = top + std::max(0, (std::max(activeHeight, mapActiveHeight) - inactiveHeight) / 2);
-
-                    for (int i = 0; i < 4; ++i)
-                    {
-                        if (i == activeIndex)
-                        {
-                            const int paneWidth = i == 0 ? mapActiveWidth : activeWidth;
-                            const int paneHeight = i == 0 ? mapActiveHeight : activeHeight;
-                            const int paneLeft = std::max(margin, (viewSize.width - paneWidth) / 2);
-                            const int paneTop = std::max(top, (viewSize.height - paneHeight) / 2);
-                            loggedActiveLeft = paneLeft;
-                            loggedActiveTop = paneTop;
-                            loggedActiveWidth = paneWidth;
-                            loggedActiveHeight = paneHeight;
-                            setWindowCoord(windows[i], MyGUI::IntCoord(paneLeft, paneTop, paneWidth, paneHeight));
-                        }
-                        else
-                            setWindowCoord(
-                                windows[i], MyGUI::IntCoord(inactiveLeft, inactiveTop, inactiveWidth, inactiveHeight));
-                    }
-                }
-                else
-                {
-                    int shelfSlot = 0;
-                    for (int i = 0; i < 4; ++i)
-                    {
-                        if (i == activeIndex)
-                        {
-                            const int paneWidth = i == 0 ? std::max(activeWidth, 920) : activeWidth;
-                            const int paneHeight = i == 0 ? std::max(activeHeight, 560) : activeHeight;
-                            loggedActiveWidth = paneWidth;
-                            loggedActiveHeight = paneHeight;
-                            setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
-                            continue;
-                        }
-
-                        const int shelfTop = top + shelfSlot * (shelfHeight + gap);
-                        setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
-                        ++shelfSlot;
-                    }
-                }
-
-                if (activeIndex == 0 && mMap != nullptr)
-                    mMap->fitFalloutWorldMapOnce();
-
-                if (WindowBase* activeWindow = windows[activeIndex])
-                {
-                    if (activeWindow->mMainWidget != nullptr)
-                        MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                }
-                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out active="
-                                 << activeIndex << " activeRect=" << loggedActiveLeft << "," << loggedActiveTop
-                                 << "," << loggedActiveWidth << "," << loggedActiveHeight << " vrFullPanels="
-                                 << VR::getVR()
-                                 << " shelfWidth=" << shelfWidth;
-            }
         }
 
         updateControllerButtonsOverlay();
-        if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr) && getMode() == GM_Inventory
-            && !VR::getVR() && mInventoryTabsOverlay != nullptr)
-        {
-            mInventoryTabsOverlay->setVisible(true);
-            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
-            if (mInventoryTabsOverlay->mMainWidget != nullptr)
-                MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
-        }
-        else if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
-            && getMode() == GM_Inventory && VR::getVR() && mInventoryTabsOverlay != nullptr)
+        if (falloutContent && getMode() == GM_Inventory && mInventoryTabsOverlay != nullptr)
             mInventoryTabsOverlay->setVisible(false);
 
         switch (mode)
@@ -1219,6 +1457,8 @@ namespace MWGui
         int x, y;
         float u, v;
         mLocalMapRender->updatePlayer(playerPosition, playerOrientation, u, v, x, y, playerdirection);
+        mFalloutPipBoyLocalMapX = x;
+        mFalloutPipBoyLocalMapY = y;
 
         if (!player.getCell()->isExterior())
         {
@@ -1269,8 +1509,8 @@ namespace MWGui
             return;
 
         GuiMode mode = mGuiModes.back();
-        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
-        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
         int winCount = mGuiModeStates[mode].mWindows.size();
@@ -1314,8 +1554,8 @@ namespace MWGui
 
     void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
     {
-        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
-        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
         int winCount = mGuiModeStates[mode].mWindows.size();
@@ -1325,7 +1565,7 @@ namespace MWGui
         activeIndex = std::clamp(activeIndex, 0, winCount - 1);
         mActiveControllerWindows[mode] = activeIndex;
 
-        if (falloutInventoryTabs && !Settings::gui().mControllerMenus)
+        if (falloutPipBoyPhysical && !Settings::gui().mControllerMenus)
         {
             updateVisible();
             for (int i = 0; i < winCount; ++i)
@@ -1338,20 +1578,13 @@ namespace MWGui
                 activeWindow->setActiveControllerWindow(true);
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
+                Log(Debug::Verbose) << "FNV Pip-Boy physical: raisedPane=" << activeIndex;
             }
             MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
                 mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());
             updateControllerButtonsOverlay();
             setCursorActive(false);
-            if (mInventoryTabsOverlay != nullptr && !VR::getVR())
-            {
-                mInventoryTabsOverlay->setVisible(true);
-                mInventoryTabsOverlay->setTab(activeIndex);
-                if (mInventoryTabsOverlay->mMainWidget != nullptr)
-                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
-            }
-            else if (mInventoryTabsOverlay != nullptr)
+            if (mInventoryTabsOverlay != nullptr)
                 mInventoryTabsOverlay->setVisible(false);
 
             if (winCount > 1)
@@ -1372,10 +1605,223 @@ namespace MWGui
             playSound(ESM::RefId::stringRefId("Menu Size"));
     }
 
+    void WindowManager::setFalloutPipBoyPresentation(bool physical)
+    {
+        if (!isFalloutContentLoaded() || mFalloutPipBoyPhysical == physical)
+            return;
+
+        mFalloutPipBoyPhysical = physical;
+        if (physical)
+            mFalloutPipBoyInteractionPulse = 1.f;
+        Log(Debug::Info) << "FNV Pip-Boy presentation: mode=" << (physical ? "physical" : "analog")
+                         << " activePane=" << getFalloutPipBoyActivePane();
+        updateVisible();
+        updateFalloutPipBoyTerminalSurface();
+    }
+
+    int WindowManager::getFalloutPipBoyActivePane() const
+    {
+        const auto found = mActiveControllerWindows.find(GM_Inventory);
+        return found == mActiveControllerWindows.end() ? 3 : std::clamp(found->second, 0, 3);
+    }
+
+    bool WindowManager::handleFalloutPipBoyAction(int action)
+    {
+        if (!isFalloutContentLoaded() || !mFalloutPipBoyPhysical || !containsMode(GM_Inventory))
+            return false;
+
+        int pane = getFalloutPipBoyActivePane();
+        bool changed = false;
+        bool handled = true;
+        const auto changePane = [this, &changed](int value) {
+            setActiveControllerWindow(GM_Inventory, value);
+            mFalloutPipBoySubmenu = 0;
+            mFalloutPipBoyListOffset = 0;
+            changed = true;
+        };
+        const auto changeList = [this, pane, &changed](int delta) {
+            static constexpr std::array<int, 5> itemRows = { 2, 2, 1, 2, 2 };
+            static constexpr std::array<int, 3> dataRows = { 2, 2, 1 };
+            const int submenuCount = getFalloutPipBoySubmenuCount(pane);
+            mFalloutPipBoySubmenu = std::clamp(mFalloutPipBoySubmenu, 0, submenuCount - 1);
+            int rowCount = 1;
+            if (pane == 1)
+                rowCount = itemRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(itemRows.size()) - 1)];
+            else if (pane == 2)
+                rowCount = dataRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(dataRows.size()) - 1)];
+            mFalloutPipBoyListOffset = std::clamp(mFalloutPipBoyListOffset + delta, 0, rowCount - 1);
+            changed = true;
+        };
+
+        switch (action)
+        {
+            case MWInput::A_QuickKey1:
+                changePane(3); // STATUS
+                break;
+            case MWInput::A_QuickKey2:
+                changePane(1); // ITEMS
+                break;
+            case MWInput::A_QuickKey3:
+                changePane(2); // DATA
+                break;
+            case MWInput::A_QuickKey4:
+                changePane(0); // MAP
+                break;
+            case MWInput::A_Map:
+            case MWInput::A_Activate:
+            case MWInput::A_Use:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyWorldMap = !mFalloutPipBoyWorldMap;
+                    mFalloutPipBoySubmenu = mFalloutPipBoyWorldMap ? 1 : 0;
+                    mFalloutPipBoyMapZoom = 1.f;
+                    mFalloutPipBoyMapPanX = 0.f;
+                    mFalloutPipBoyMapPanY = 0.f;
+                    changed = true;
+                }
+                else if (action == MWInput::A_Activate || action == MWInput::A_Use)
+                {
+                    // This is the device-side action boundary: physical list
+                    // selection changes the actual player inventory/equipment,
+                    // rather than merely moving a marker on the terminal.
+                    mFalloutPipBoyLastAction
+                        = executeFalloutPipBoySelection(pane, mFalloutPipBoySubmenu, mFalloutPipBoyListOffset);
+                    changed = true;
+                }
+                else
+                    handled = false;
+                break;
+            case MWInput::A_MoveLeft:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanX = std::clamp(mFalloutPipBoyMapPanX - 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                {
+                    const int count = getFalloutPipBoySubmenuCount(pane);
+                    mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + count - 1) % count;
+                    mFalloutPipBoyListOffset = 0;
+                    changed = true;
+                }
+                break;
+            case MWInput::A_MoveRight:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanX = std::clamp(mFalloutPipBoyMapPanX + 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                {
+                    const int count = getFalloutPipBoySubmenuCount(pane);
+                    mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + 1) % count;
+                    mFalloutPipBoyListOffset = 0;
+                    changed = true;
+                }
+                break;
+            case MWInput::A_MoveForward:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanY = std::clamp(mFalloutPipBoyMapPanY - 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                    changeList(-1);
+                break;
+            case MWInput::A_MoveBackward:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapPanY = std::clamp(mFalloutPipBoyMapPanY + 0.08f, -0.45f, 0.45f);
+                    changed = true;
+                }
+                else
+                    changeList(1);
+                break;
+            case MWInput::A_ZoomIn:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapZoom = std::clamp(mFalloutPipBoyMapZoom * 1.25f, 1.f, 3.f);
+                    changed = true;
+                }
+                else
+                    changeList(-1);
+                break;
+            case MWInput::A_ZoomOut:
+                if (pane == 0)
+                {
+                    mFalloutPipBoyMapZoom = std::clamp(mFalloutPipBoyMapZoom / 1.25f, 1.f, 3.f);
+                    changed = true;
+                }
+                else
+                    changeList(1);
+                break;
+            default:
+                handled = false;
+                break;
+        }
+
+        if (!handled)
+            return false;
+
+        if (changed)
+        {
+            // Keep the press visible long enough for the first-person right
+            // hand to reach the real Pip-Boy button and return.
+            mFalloutPipBoyInteractionPulse = 1.f;
+            updateFalloutPipBoyTerminalSurface();
+            Log(Debug::Info) << "FNV Pip-Boy interaction: pane=" << getFalloutPipBoyActivePane()
+                             << " submenu=" << mFalloutPipBoySubmenu << " listOffset=" << mFalloutPipBoyListOffset
+                             << " worldMap=" << mFalloutPipBoyWorldMap << " zoom=" << mFalloutPipBoyMapZoom
+                             << " pan=" << mFalloutPipBoyMapPanX << ',' << mFalloutPipBoyMapPanY;
+        }
+        return true;
+    }
+
+    osg::Texture2D* WindowManager::getFalloutPipBoyLocalMapTexture()
+    {
+        if (mLocalMapRender == nullptr)
+            return nullptr;
+        return mLocalMapRender->getMapTexture(mFalloutPipBoyLocalMapX, mFalloutPipBoyLocalMapY).get();
+    }
+
+    std::string WindowManager::getFalloutPipBoyTerminalHeader() const
+    {
+        return makeFalloutPipBoyTerminalHeader(getFalloutPipBoyActivePane());
+    }
+
+    std::string WindowManager::getFalloutPipBoyTerminalBody() const
+    {
+        return makeFalloutPipBoyTerminalBody(getFalloutPipBoyActivePane(), mFalloutPipBoySubmenu,
+            mFalloutPipBoyListOffset, mFalloutPipBoyWorldMap, mFalloutPipBoyMapZoom, mFalloutPipBoyMapPanX,
+            mFalloutPipBoyMapPanY, mFalloutPipBoyLastAction);
+    }
+
+    void WindowManager::updateFalloutPipBoyTerminalSurface()
+    {
+        if (mFalloutPipBoyTerminalRoot == nullptr || mFalloutPipBoyTerminalHeader == nullptr
+            || mFalloutPipBoyTerminalBody == nullptr)
+            return;
+
+        const bool visible = !VR::getVR() && mFalloutPipBoyPhysical && containsMode(GM_Inventory);
+        mFalloutPipBoyTerminalRoot->setVisible(visible);
+        if (!visible)
+            return;
+
+        mFalloutPipBoyTerminalHeader->setCaption(getFalloutPipBoyTerminalHeader());
+        mFalloutPipBoyTerminalBody->setCaption(getFalloutPipBoyTerminalBody());
+    }
+
     void WindowManager::update(float frameDuration)
     {
         handleScheduledMessageBoxes();
         updateFalloutDialogueCamera();
+        // A physical press needs time to read: approach, contact, and return.
+        // The old 0.8-second envelope was shorter than the showcase's next
+        // action, so the real off-hand was continuously reset and visibly
+        // flapped.  Keep each device-local press a single deliberate motion.
+        mFalloutPipBoyInteractionPulse = std::max(0.f, mFalloutPipBoyInteractionPulse
+                - std::max(0.f, frameDuration) * 0.55f);
+        updateFalloutPipBoyTerminalSurface();
 
         bool gameRunning
             = MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame;
@@ -2083,6 +2529,8 @@ namespace MWGui
             mKeyboardNavigation->restoreFocus(mode);
         }
 
+        if (!containsMode(GM_Inventory))
+            mFalloutPipBoyPhysical = false;
         updateVisible();
 
         if (removedDialogue && !containsMode(GM_Dialogue))
@@ -2122,6 +2570,8 @@ namespace MWGui
                 ++it;
         }
 
+        if (!containsMode(GM_Inventory))
+            mFalloutPipBoyPhysical = false;
         updateVisible();
         MWBase::Environment::get().getLuaManager()->uiModeChanged(MWWorld::Ptr());
         if (removedDialogue && !containsMode(GM_Dialogue))

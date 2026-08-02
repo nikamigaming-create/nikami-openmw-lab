@@ -27,8 +27,10 @@
 namespace osg
 {
     class Group;
+    class Image;
     class MatrixTransform;
     class PositionAttitudeTransform;
+    class Texture2D;
 }
 
 namespace osgUtil
@@ -360,6 +362,7 @@ namespace MWRender
         void updateNavMesh();
 
         void updateRecastMesh();
+        void updateFalloutPipBoyPresentation(float dt);
 
         const bool mSkyBlending;
 
@@ -404,6 +407,23 @@ namespace MWRender
         osg::ref_ptr<ESM4NpcAnimation> mFalloutPlayerFirstPersonAnimation;
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
+        // The RTT is a real render source attached to the Pip-Boy model's
+        // authored screen material.  It is never a floating screen-space pane.
+        osg::ref_ptr<osg::Node> mFalloutPipBoyGuiRtt;
+        std::string mFalloutPipBoyGuiLayer;
+        // The physical display owns a compact, dynamic terminal texture. It
+        // is UV-mapped onto the retail PipBoyArm screen mesh, rather than
+        // borrowed from the desktop MyGUI window hierarchy.
+        osg::ref_ptr<osg::Image> mFalloutPipBoyTerminalImage;
+        osg::ref_ptr<osg::Texture2D> mFalloutPipBoyTerminalTexture;
+        osg::ref_ptr<osg::Texture2D> mFalloutPipBoyWorldMapTexture;
+        osg::ref_ptr<osg::Texture2D> mFalloutPipBoyBoundMapTexture;
+        std::string mFalloutPipBoyTerminalContents;
+        float mFalloutPipBoyPresentationProgress = 0.f;
+        bool mFalloutPipBoyScreenBound = false;
+        bool mFalloutPipBoyScreenBindingAttempted = false;
+        bool mFalloutPipBoyPhysicalBlockedLogged = false;
+        bool mFalloutPipBoyGloveRetainedLogged = false;
         std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
         std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
         bool mFalloutPlayerFirstPersonWornSignatureObserved = false;

@@ -46,6 +46,7 @@ namespace MyGUI
     class Window;
     class UString;
     class ImageBox;
+    class TextBox;
 }
 
 namespace MWWorld
@@ -417,6 +418,20 @@ namespace MWGui
         int getControllerMenuHeight() override;
         void cycleActiveControllerWindow(bool next) override;
         void setActiveControllerWindow(GuiMode mode, int activeIndex) override;
+        void setFalloutPipBoyPresentation(bool physical) override;
+        bool isFalloutPipBoyPhysicalPresentation() const override { return mFalloutPipBoyPhysical; }
+        int getFalloutPipBoyActivePane() const override;
+        bool handleFalloutPipBoyAction(int action);
+        int getFalloutPipBoySubmenu() const { return mFalloutPipBoySubmenu; }
+        int getFalloutPipBoyListOffset() const { return mFalloutPipBoyListOffset; }
+        bool isFalloutPipBoyWorldMap() const { return mFalloutPipBoyWorldMap; }
+        float getFalloutPipBoyMapZoom() const { return mFalloutPipBoyMapZoom; }
+        float getFalloutPipBoyMapPanX() const { return mFalloutPipBoyMapPanX; }
+        float getFalloutPipBoyMapPanY() const { return mFalloutPipBoyMapPanY; }
+        float getFalloutPipBoyInteractionPulse() const { return mFalloutPipBoyInteractionPulse; }
+        osg::Texture2D* getFalloutPipBoyLocalMapTexture();
+        std::string getFalloutPipBoyTerminalHeader() const override;
+        std::string getFalloutPipBoyTerminalBody() const override;
         bool getControllerTooltipVisible() const override { return mControllerTooltipVisible; }
         void setControllerTooltipVisible(bool visible) override;
         bool getControllerTooltipEnabled() const override { return mControllerTooltipEnabled; }
@@ -541,6 +556,34 @@ namespace MWGui
         std::unique_ptr<FalloutDialogueCameraState> mFalloutDialogueCamera;
         // The active window for controller mode for each GUI mode.
         std::map<GuiMode, int> mActiveControllerWindows;
+        // Separate from the conventional OpenMW inventory/map layout.  The
+        // renderer consumes one live pane through the physical first-person
+        // Pip-Boy screen when this is set.
+        bool mFalloutPipBoyPhysical = false;
+        // Device-local navigation state. It is intentionally independent from
+        // the desktop Map/Inventory widgets so P can remain a physical Fallout
+        // Pip-Boy and I can remain the OpenMW analogue.
+        int mFalloutPipBoySubmenu = 0;
+        int mFalloutPipBoyListOffset = 0;
+        // Fallout's DATA screen opens on the authored Mojave overview; E toggles
+        // to the live local-map render without changing the physical Pip-Boy mode.
+        bool mFalloutPipBoyWorldMap = true;
+        float mFalloutPipBoyMapZoom = 1.f;
+        float mFalloutPipBoyMapPanX = 0.f;
+        float mFalloutPipBoyMapPanY = 0.f;
+        // A device-local press envelope drives the visible off-hand button
+        // interaction on the native first-person rig.
+        float mFalloutPipBoyInteractionPulse = 0.f;
+        std::string mFalloutPipBoyLastAction;
+        int mFalloutPipBoyLocalMapX = 0;
+        int mFalloutPipBoyLocalMapY = 0;
+        // A transparent, dedicated MyGUI layer used only as the texture source
+        // for PipBoyArm's real in-world screen.  It deliberately does not
+        // reuse the desktop inventory windows, whose opaque chrome does not
+        // fit the device's terminal display.
+        MyGUI::Widget* mFalloutPipBoyTerminalRoot = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyTerminalHeader = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyTerminalBody = nullptr;
         // Current tooltip visibility state (can be disabled by mouse movement)
         bool mControllerTooltipVisible = false;
         // User preference for tooltips (persists across mouse/controller switches)
@@ -566,6 +609,7 @@ namespace MWGui
         bool mRestAllowed;
 
         void updateVisible(); // Update visibility of all windows based on mode, shown and allowed settings
+        void updateFalloutPipBoyTerminalSurface();
 
         void updateMap();
 

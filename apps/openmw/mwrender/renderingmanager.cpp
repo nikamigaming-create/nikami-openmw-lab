@@ -1,6 +1,8 @@
 #include "renderingmanager.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -8,18 +10,22 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 
 #include <osg/ClipControl>
+#include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
 #include <osg/Group>
+#include <osg/Image>
 #include <osg/Light>
 #include <osg/LightModel>
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/PolygonMode>
+#include <osg/Texture2D>
 #include <osg/UserDataContainer>
 
 #include <osgUtil/LineSegmentIntersector>
@@ -57,6 +63,7 @@
 
 #include <components/misc/constants.hpp>
 #include <components/misc/strings/algorithm.hpp>
+#include <components/myguiplatform/myguirendermanager.hpp>
 
 #include <components/terrain/quadtreeworld.hpp>
 #include <components/terrain/terraingrid.hpp>
@@ -82,9 +89,11 @@
 #include "../mwworld/scene.hpp"
 
 #include "../mwgui/postprocessorhud.hpp"
+#include "../mwgui/windowmanagerimp.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/falloutcombat.hpp"
 #include "../mwmechanics/movement.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -140,6 +149,693 @@ namespace MWRender
             char* end = nullptr;
             const float parsed = std::strtof(value, &end);
             return end != value && std::isfinite(parsed) ? parsed : fallback;
+        }
+
+        class FalloutPipBoyGuiRTT final : public SceneUtil::RTTNode
+        {
+        public:
+            explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera)
+                // The MyGUI camera tracks the current flat render surface.  Keeping
+                // this target at the same 16:9 1920x1080 extent prevents its active
+                // panel from being clipped to the lower-left 1280x720 sub-viewport.
+                : RTTNode(1920, 1080, 1, true, 0, StereoAwareness::Unaware, false)
+                , mGuiCamera(std::move(guiCamera))
+            {
+                setName("FNV Pip-Boy live screen RTT");
+            }
+
+            void setDefaults(osg::Camera* camera) override
+            {
+                camera->setCullingActive(false);
+                // PipBoyArm's retail screen material uses the captured alpha as
+                // its emissive mask.  Clearing alpha to one lights every pixel
+                // solid green before the panel can contribute any contrast.
+                camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
+                setColorBufferInternalFormat(GL_RGBA8);
+                camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF);
+                camera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
+                camera->setCullMask(Mask_GUI);
+                camera->setCullMaskLeft(Mask_GUI);
+                camera->setCullMaskRight(Mask_GUI);
+                camera->setNodeMask(Mask_3DGUI);
+                camera->setName("FNV Pip-Boy live screen camera");
+                setUpdateCallback(new NoTraverseCallback);
+                camera->addChild(mGuiCamera);
+                camera->getOrCreateStateSet()->setRenderBinDetails(-1, "RenderBin");
+            }
+
+        private:
+            osg::ref_ptr<osg::Node> mGuiCamera;
+        };
+
+        // A physical Pip-Boy needs a deterministic screen source that survives
+        // independently of the desktop GUI's render order.  This is not a
+        // screen-space overlay: the resulting dynamic texture is bound only to
+        // PipBoyArm's authored display polygons and therefore follows their
+        // UVs, perspective, and raise/lower motion exactly.
+        constexpr int sPipBoyTerminalWidth = 1024;
+        constexpr int sPipBoyTerminalHeight = 768;
+
+        using PipBoyGlyph = std::array<unsigned char, 7>;
+
+        PipBoyGlyph pipBoyGlyph(char value)
+        {
+            const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(value)));
+            switch (c)
+            {
+                case 'A': return { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 };
+                case 'B': return { 0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e };
+                case 'C': return { 0x0f, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0f };
+                case 'D': return { 0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e };
+                case 'E': return { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f };
+                case 'F': return { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10 };
+                case 'G': return { 0x0f, 0x10, 0x10, 0x17, 0x11, 0x11, 0x0f };
+                case 'H': return { 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 };
+                case 'I': return { 0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f };
+                case 'J': return { 0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c };
+                case 'K': return { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 };
+                case 'L': return { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f };
+                case 'M': return { 0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11 };
+                case 'N': return { 0x11, 0x19, 0x19, 0x15, 0x13, 0x13, 0x11 };
+                case 'O': return { 0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e };
+                case 'P': return { 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10 };
+                case 'Q': return { 0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d };
+                case 'R': return { 0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11 };
+                case 'S': return { 0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e };
+                case 'T': return { 0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 };
+                case 'U': return { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e };
+                case 'V': return { 0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04 };
+                case 'W': return { 0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a };
+                case 'X': return { 0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11 };
+                case 'Y': return { 0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04 };
+                case 'Z': return { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f };
+                case '0': return { 0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e };
+                case '1': return { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e };
+                case '2': return { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f };
+                case '3': return { 0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e };
+                case '4': return { 0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02 };
+                case '5': return { 0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e };
+                case '6': return { 0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e };
+                case '7': return { 0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 };
+                case '8': return { 0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e };
+                case '9': return { 0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e };
+                case '[': return { 0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e };
+                case ']': return { 0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e };
+                case '-': return { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 };
+                case '/': return { 0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10 };
+                case ':': return { 0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00 };
+                case '.': return { 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06 };
+                case ',': return { 0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x04 };
+                case '+': return { 0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00 };
+                case '>': return { 0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10 };
+                case '<': return { 0x01, 0x02, 0x04, 0x08, 0x04, 0x02, 0x01 };
+                case '=': return { 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00 };
+                case '\'': return { 0x04, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00 };
+                case '(': return { 0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02 };
+                case ')': return { 0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08 };
+                case ' ': return { 0, 0, 0, 0, 0, 0, 0 };
+                default: return { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04 };
+            }
+        }
+
+        void putPipBoyTerminalPixel(osg::Image& image, int x, int y, const std::array<unsigned char, 4>& color)
+        {
+            if (x < 0 || y < 0 || x >= image.s() || y >= image.t())
+                return;
+            std::copy(color.begin(), color.end(), image.data(x, y));
+        }
+
+        void drawPipBoyTerminalLine(osg::Image& image, int x0, int y0, int x1, int y1,
+            const std::array<unsigned char, 4>& color)
+        {
+            const int dx = std::abs(x1 - x0);
+            const int sx = x0 < x1 ? 1 : -1;
+            const int dy = -std::abs(y1 - y0);
+            const int sy = y0 < y1 ? 1 : -1;
+            int error = dx + dy;
+            while (true)
+            {
+                putPipBoyTerminalPixel(image, x0, y0, color);
+                if (x0 == x1 && y0 == y1)
+                    break;
+                const int twiceError = error * 2;
+                if (twiceError >= dy)
+                {
+                    error += dy;
+                    x0 += sx;
+                }
+                if (twiceError <= dx)
+                {
+                    error += dx;
+                    y0 += sy;
+                }
+            }
+        }
+
+        void drawPipBoyTerminalGlyph(osg::Image& image, char character, int left, int top, int scale,
+            const std::array<unsigned char, 4>& color)
+        {
+            const PipBoyGlyph bitmap = pipBoyGlyph(character);
+            for (int y = 0; y < 7; ++y)
+            {
+                for (int x = 0; x < 5; ++x)
+                {
+                    if ((bitmap[y] & (1 << (4 - x))) == 0)
+                        continue;
+                    for (int offsetY = 0; offsetY < scale; ++offsetY)
+                        for (int offsetX = 0; offsetX < scale; ++offsetX)
+                            putPipBoyTerminalPixel(image, left + x * scale + offsetX, top + y * scale + offsetY, color);
+                }
+            }
+        }
+
+        void drawPipBoyTerminalText(osg::Image& image, std::string_view text, int left, int top, int scale,
+            int lineAdvance, const std::array<unsigned char, 4>& color)
+        {
+            const int initialLeft = left;
+            for (char character : text)
+            {
+                if (character == '\n')
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    continue;
+                }
+                drawPipBoyTerminalGlyph(image, character, left, top, scale, color);
+                left += scale * 6;
+            }
+        }
+
+        void drawPipBoyTerminalTextBox(osg::Image& image, std::string_view text, int left, int top, int scale,
+            int lineAdvance, int width, int bottom, const std::array<unsigned char, 4>& color)
+        {
+            // The physical glass is much smaller than a desktop overlay. Keep
+            // all live fields inside a deliberate terminal column instead of
+            // allowing a long tab row or action string to run off the right
+            // edge and look like a UV crop.
+            const int initialLeft = left;
+            const int glyphAdvance = scale * 6;
+            for (char character : text)
+            {
+                if (top + scale * 7 > bottom)
+                    break;
+                if (character == '\n')
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    continue;
+                }
+                if (left + glyphAdvance > initialLeft + width)
+                {
+                    left = initialLeft;
+                    top += lineAdvance;
+                    if (top + scale * 7 > bottom)
+                        break;
+                }
+                drawPipBoyTerminalGlyph(image, character, left, top, scale, color);
+                left += glyphAdvance;
+            }
+        }
+
+        enum class PipBoyConditionPart : std::size_t
+        {
+            Head,
+            Torso,
+            LeftArm,
+            RightArm,
+            LeftLeg,
+            RightLeg,
+            Count,
+        };
+
+        struct PipBoyLimbCondition
+        {
+            int mPercent = 0;
+            bool mKnown = false;
+            bool mCrippled = false;
+        };
+
+        using PipBoyConditionState
+            = std::array<PipBoyLimbCondition, static_cast<std::size_t>(PipBoyConditionPart::Count)>;
+
+        constexpr std::size_t pipBoyConditionIndex(PipBoyConditionPart part)
+        {
+            return static_cast<std::size_t>(part);
+        }
+
+        std::string normalizePipBoyBodyPartName(std::string_view name)
+        {
+            std::string normalized;
+            normalized.reserve(name.size());
+            for (const unsigned char character : name)
+            {
+                if (std::isalnum(character) != 0)
+                    normalized.push_back(static_cast<char>(std::tolower(character)));
+            }
+            return normalized;
+        }
+
+        std::optional<PipBoyConditionPart> classifyPipBoyBodyPart(std::string_view name)
+        {
+            const std::string normalized = normalizePipBoyBodyPartName(name);
+            if (normalized.find("head") != std::string::npos || normalized.find("face") != std::string::npos)
+                return PipBoyConditionPart::Head;
+            if (normalized.find("torso") != std::string::npos || normalized.find("chest") != std::string::npos
+                || normalized.find("body") != std::string::npos)
+                return PipBoyConditionPart::Torso;
+
+            const bool left = normalized.find("left") != std::string::npos || normalized.find("larm") != std::string::npos
+                || normalized.find("lleg") != std::string::npos;
+            const bool right = normalized.find("right") != std::string::npos
+                || normalized.find("rarm") != std::string::npos || normalized.find("rleg") != std::string::npos;
+            if (normalized.find("arm") != std::string::npos)
+            {
+                if (left)
+                    return PipBoyConditionPart::LeftArm;
+                if (right)
+                    return PipBoyConditionPart::RightArm;
+            }
+            if (normalized.find("leg") != std::string::npos)
+            {
+                if (left)
+                    return PipBoyConditionPart::LeftLeg;
+                if (right)
+                    return PipBoyConditionPart::RightLeg;
+            }
+            return std::nullopt;
+        }
+
+        PipBoyConditionState getPipBoyConditionState()
+        {
+            PipBoyConditionState result;
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return result;
+
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty())
+                return result;
+
+            const ESM4::BodyPartData* bodyPartData = MWMechanics::getFalloutActorBodyPartData(player);
+            if (bodyPartData == nullptr)
+            {
+                // The dedicated player BPTD is authored in FalloutNV.esm. A
+                // normal New Game can reach the Pip-Boy before the actor
+                // resolver has attached that record, so resolve the same retail
+                // record from the loaded Fallout store rather than fabricate a
+                // condition figure or display unknown values.
+                const auto& bodyPartRecords = world->getStore().get<ESM4::BodyPartData>();
+                const auto findByEditorId = [&](std::string_view editorId) -> const ESM4::BodyPartData* {
+                    const auto found = std::find_if(bodyPartRecords.begin(), bodyPartRecords.end(),
+                        [&](const ESM4::BodyPartData& candidate) {
+                            return Misc::StringUtils::ciEqual(candidate.mEditorId, editorId);
+                        });
+                    return found != bodyPartRecords.end() ? &*found : nullptr;
+                };
+                bodyPartData = findByEditorId("PlayerBodyPartData");
+                if (bodyPartData == nullptr)
+                {
+                    bodyPartData = findByEditorId("DefaultBodyPartData");
+                }
+            }
+            if (bodyPartData == nullptr)
+                return result;
+
+            const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+            const float actorMaximumHealth = stats.getHealth().getModified();
+            if (!std::isfinite(actorMaximumHealth) || actorMaximumHealth <= 0.f)
+                return result;
+
+            for (const ESM4::BodyPartData::BodyPart& bodyPart : bodyPartData->mBodyParts)
+            {
+                const std::optional<PipBoyConditionPart> part = classifyPipBoyBodyPart(bodyPart.mPartName);
+                if (!part || bodyPart.mData.healthPercent == 0)
+                    continue;
+
+                const float maximumCondition
+                    = actorMaximumHealth * static_cast<float>(bodyPart.mData.healthPercent) * 0.01f;
+                if (!std::isfinite(maximumCondition) || maximumCondition <= 0.f)
+                    continue;
+
+                const float damageTaken = std::max(0.f, stats.getFalloutLimbDamage(bodyPart.mData.actorValue));
+                const float condition = std::max(0.f, maximumCondition - damageTaken);
+                const int percent = static_cast<int>(std::clamp(
+                    std::lround(100.f * condition / maximumCondition), 0l, 100l));
+                result[pipBoyConditionIndex(*part)] = { percent, true, percent == 0 };
+            }
+            return result;
+        }
+
+        std::string makePipBoyConditionSignature(const PipBoyConditionState& state)
+        {
+            std::ostringstream signature;
+            for (const PipBoyLimbCondition& limb : state)
+                signature << static_cast<int>(limb.mKnown) << ':' << limb.mPercent << ':'
+                          << static_cast<int>(limb.mCrippled) << ';';
+            return signature.str();
+        }
+
+        osg::ref_ptr<osg::Image> getPipBoyRetailStatusImage(
+            Resource::ResourceSystem* resourceSystem, std::string_view sourcePath)
+        {
+            if (resourceSystem == nullptr || resourceSystem->getVFS() == nullptr)
+                return nullptr;
+
+            const VFS::Path::Normalized path{ std::string(sourcePath) };
+            if (!resourceSystem->getVFS()->exists(path))
+            {
+                Log(Debug::Warning) << "FNV Pip-Boy retail condition: missing path=" << path;
+                return nullptr;
+            }
+            return resourceSystem->getImageManager()->getImage(path);
+        }
+
+        osg::Texture2D* getPipBoyRetailWorldMapTexture(
+            osg::ref_ptr<osg::Texture2D>& texture, Resource::ResourceSystem* resourceSystem)
+        {
+            if (texture != nullptr)
+                return texture.get();
+            if (resourceSystem == nullptr || resourceSystem->getVFS() == nullptr)
+                return nullptr;
+
+            static constexpr std::string_view sourcePath
+                = "textures/interface/worldmap/wasteland_nv_2048_no_map.dds";
+            const VFS::Path::Normalized path{ std::string(sourcePath) };
+            if (!resourceSystem->getVFS()->exists(path))
+            {
+                Log(Debug::Warning) << "FNV Pip-Boy MAP: missing retail source=" << path;
+                return nullptr;
+            }
+
+            osg::ref_ptr<osg::Image> image = resourceSystem->getImageManager()->getImage(path);
+            if (image == nullptr)
+                return nullptr;
+
+            texture = new osg::Texture2D(image);
+            texture->setName("FNV Pip-Boy retail Mojave world map");
+            texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            texture->setResizeNonPowerOfTwoHint(false);
+            Log(Debug::Info) << "FNV Pip-Boy MAP: bound retail source=" << path << " size=" << image->s() << 'x'
+                             << image->t();
+            return texture.get();
+        }
+
+        bool drawPipBoyRetailStatusImage(osg::Image& target, const osg::Image& source, int left, int top,
+            int width, int height, const std::array<unsigned char, 4>& color)
+        {
+            if (width <= 0 || height <= 0 || source.s() <= 0 || source.t() <= 0)
+                return false;
+
+            bool drewPixels = false;
+            for (int y = 0; y < height; ++y)
+            {
+                const int sourceY = source.t() - 1 - std::min(source.t() - 1, y * source.t() / height);
+                for (int x = 0; x < width; ++x)
+                {
+                    const int sourceX = std::min(source.s() - 1, x * source.s() / width);
+                    const osg::Vec4f sourceColor = source.getColor(sourceX, sourceY);
+                    // Retail DDS icon sheets often keep an opaque black alpha
+                    // background. Alpha-only sampling turns that whole sheet
+                    // into a glowing rectangle. Their actual icon silhouette
+                    // is carried by RGB, so use its strongest channel.
+                    const float coverage = std::clamp(
+                        std::max(sourceColor.r(), std::max(sourceColor.g(), sourceColor.b())), 0.f, 1.f);
+                    if (coverage <= 0.025f)
+                        continue;
+
+                    unsigned char* const existing = target.data(left + x, top + y);
+                    const std::array<unsigned char, 4> glyph = {
+                        std::max(existing[0], static_cast<unsigned char>(color[0] * coverage)),
+                        std::max(existing[1], static_cast<unsigned char>(color[1] * coverage)),
+                        std::max(existing[2], static_cast<unsigned char>(color[2] * coverage)),
+                        std::max(existing[3], static_cast<unsigned char>(color[3] * coverage)),
+                    };
+                    putPipBoyTerminalPixel(target, left + x, top + y, glyph);
+                    drewPixels = true;
+                }
+            }
+            return drewPixels;
+        }
+
+        void drawPipBoyConditionReadout(osg::Image& image, const PipBoyLimbCondition& condition, int left, int top,
+            bool meterPointsRight, const std::array<unsigned char, 4>& dim,
+            const std::array<unsigned char, 4>& bright, const std::array<unsigned char, 4>& accent)
+        {
+            constexpr int meterLength = 56;
+            const int meterStart = meterPointsRight ? left : left - meterLength;
+            drawPipBoyTerminalLine(image, meterStart, top + 18, meterStart + meterLength, top + 18, dim);
+            if (condition.mKnown)
+            {
+                const int filledLength = meterLength * std::clamp(condition.mPercent, 0, 100) / 100;
+                drawPipBoyTerminalLine(image, meterStart, top + 18, meterStart + filledLength, top + 18, bright);
+            }
+
+            if (condition.mCrippled)
+                drawPipBoyTerminalText(image, "CRIPPLED", meterPointsRight ? left : left - 48, top, 1, 8, accent);
+            else
+            {
+                const std::string value = condition.mKnown ? std::to_string(condition.mPercent) : "--";
+                const int valueLeft = meterPointsRight ? left : left - static_cast<int>(value.size()) * 12;
+                drawPipBoyTerminalText(image, value, valueLeft, top, 2, 16, accent);
+            }
+        }
+
+        void drawPipBoyRetailConditionFigure(osg::Image& target, Resource::ResourceSystem* resourceSystem,
+            const PipBoyConditionState& conditions, const std::array<unsigned char, 4>& dim,
+            const std::array<unsigned char, 4>& bright, const std::array<unsigned char, 4>& accent)
+        {
+            struct PartLayout
+            {
+                PipBoyConditionPart mPart;
+                std::string_view mNormalPath;
+                std::string_view mBrokenPath;
+                int mLeft;
+                int mTop;
+                int mWidth;
+                int mHeight;
+                int mReadoutLeft;
+                int mReadoutTop;
+                bool mMeterPointsRight;
+            };
+
+            // The authored retail parts have a taller footprint than the
+            // visible UV portion of the curved Pip-Boy glass. Keep the figure
+            // centred and compact inside that usable rectangle: a complete,
+            // readable condition figure is more important than filling every
+            // available terminal pixel.
+            static constexpr std::array<PartLayout, 6> layout = { {
+                { PipBoyConditionPart::Head, "textures/interface/stats/head.dds",
+                    "textures/interface/stats/head_broken.dds", 493, 145, 122, 132, 640, 168, true },
+                { PipBoyConditionPart::Torso, "textures/interface/stats/torso.dds",
+                    "textures/interface/stats/torso_broken.dds", 474, 269, 147, 184, 640, 337, true },
+                { PipBoyConditionPart::LeftArm, "textures/interface/stats/left_arm.dds",
+                    "textures/interface/stats/left_arm_broken.dds", 602, 269, 144, 74, 700, 246, false },
+                { PipBoyConditionPart::RightArm, "textures/interface/stats/right_arm.dds",
+                    "textures/interface/stats/right_arm_broken.dds", 341, 263, 138, 78, 340, 246, true },
+                { PipBoyConditionPart::LeftLeg, "textures/interface/stats/left_leg.dds",
+                    "textures/interface/stats/left_leg_broken.dds", 540, 390, 103, 160, 650, 488, true },
+                { PipBoyConditionPart::RightLeg, "textures/interface/stats/right_leg.dds",
+                    "textures/interface/stats/right_leg_broken.dds", 420, 385, 120, 160, 412, 488, false },
+            } };
+
+            std::size_t drawnParts = 0;
+            for (const PartLayout& part : layout)
+            {
+                const PipBoyLimbCondition& condition = conditions[pipBoyConditionIndex(part.mPart)];
+                const std::string_view sourcePath = condition.mCrippled ? part.mBrokenPath : part.mNormalPath;
+                const osg::ref_ptr<osg::Image> source = getPipBoyRetailStatusImage(resourceSystem, sourcePath);
+                if (source != nullptr
+                    && drawPipBoyRetailStatusImage(target, *source, part.mLeft, part.mTop, part.mWidth, part.mHeight, bright))
+                    ++drawnParts;
+                drawPipBoyConditionReadout(
+                    target, condition, part.mReadoutLeft, part.mReadoutTop, part.mMeterPointsRight, dim, bright, accent);
+            }
+
+            // face_00 is the retail neutral condition face. A broken head uses
+            // head_broken.dds alone so the damaged state remains legible.
+            const PipBoyLimbCondition& head = conditions[pipBoyConditionIndex(PipBoyConditionPart::Head)];
+            if (!head.mCrippled)
+            {
+                const osg::ref_ptr<osg::Image> face
+                    = getPipBoyRetailStatusImage(resourceSystem, "textures/interface/stats/face_00.dds");
+                // face_00 is a 64px overlay authored for the 128px head canvas.
+                // Keep that 1:2 relationship when the complete figure is
+                // compacted; stretching it vertically made the eyes and mouth
+                // drift down onto the jaw/neck.
+                // Centre the visual face canvas inside the authored head canvas.
+                // The previous anchor centred on the torso, which left the eyes
+                // and mouth visibly high/left inside the head outline.
+                if (face != nullptr && drawPipBoyRetailStatusImage(target, *face, 524, 178, 61, 66, bright))
+                    ++drawnParts;
+            }
+
+            Log(Debug::Info) << "FNV Pip-Boy retail condition: source=Fallout - Textures2.bsa parts=" << drawnParts
+                             << " liveLimbState=" << makePipBoyConditionSignature(conditions);
+        }
+
+        void drawPipBoyRetailPanelIcon(osg::Image& target, Resource::ResourceSystem* resourceSystem, int pane,
+            std::string_view body, const std::array<unsigned char, 4>& bright)
+        {
+            // These are the shipped FalloutNV Pip-Boy glyphs, selected from
+            // the same record family that produces the live text. Do not use a
+            // generic stick figure or made-up emoji as a stand-in for a panel.
+            std::string_view source;
+            int left = 720;
+            int top = 180;
+            int width = 235;
+            int height = 235;
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                    source = "textures/interface/icons/message icons/glow_message_map.dds";
+                    left = 72;
+                    top = 572;
+                    width = 78;
+                    height = 78;
+                    break;
+                case 1:
+                    if (body.find("WEAPONS") != std::string_view::npos)
+                    {
+                        source = body.find("> VARMINT RIFLE") != std::string_view::npos
+                            ? "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds"
+                            : "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds";
+                    }
+                    else if (body.find("APPAREL") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/apparel/vault_suit_21.dds";
+                    else if (body.find("AID") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/items/items_stimpack.dds";
+                    else if (body.find("AMMO") != std::string_view::npos)
+                        source = body.find("5.56") != std::string_view::npos
+                            ? "textures/interface/icons/pipboyimages/items/items_5.56mm_rounds.dds"
+                            : "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds";
+                    else
+                        source = "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds";
+                    break;
+                case 2:
+                    if (body.find("RADIO") != std::string_view::npos)
+                        source = "textures/interface/icons/message icons/glow_message_radio_tower.dds";
+                    else if (body.find("NOTES") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/items/item_holotap.dds";
+                    else
+                        source = "textures/interface/icons/message icons/glow_message_vaultboy_thinking.dds";
+                    break;
+                case 3:
+                default:
+                    if (body.find("S.P.E.C.I.A.L.") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/s.p.e.c.i.a.l/special_strength.dds";
+                    else if (body.find("PERKS") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/perks/perk_gunslinger.dds";
+                    else if (body.find("RADIATION") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/derived statistics/radiation_resistance.dds";
+                    else if (body.find("SKILLS") != std::string_view::npos)
+                        source = "textures/interface/icons/pipboyimages/perks/perk_commando.dds";
+                    else
+                        source = "textures/interface/icons/message icons/glow_message_vaultboy_neutral.dds";
+                    break;
+            }
+
+            const osg::ref_ptr<osg::Image> image = getPipBoyRetailStatusImage(resourceSystem, source);
+            if (image != nullptr)
+                drawPipBoyRetailStatusImage(target, *image, left, top, width, height, bright);
+            else
+                Log(Debug::Warning) << "FNV Pip-Boy retail icon: missing source=" << source;
+        }
+
+        osg::Texture2D* updatePipBoyTerminalTexture(osg::ref_ptr<osg::Image>& image,
+            osg::ref_ptr<osg::Texture2D>& texture, std::string& currentContents, std::string_view header,
+            std::string_view body, int pane, bool showCondition, Resource::ResourceSystem* resourceSystem)
+        {
+            const PipBoyConditionState conditions = showCondition ? getPipBoyConditionState() : PipBoyConditionState{};
+            std::string contents = std::string(header) + '\n' + std::string(body);
+            const std::size_t footerMarker = body.find('\f');
+            const std::string_view bodyText = footerMarker == std::string_view::npos ? body : body.substr(0, footerMarker);
+            const std::string_view footerText = footerMarker == std::string_view::npos ? std::string_view{}
+                                                                                         : body.substr(footerMarker + 1);
+            if (showCondition)
+                contents += '\n' + makePipBoyConditionSignature(conditions);
+            if (image != nullptr && texture != nullptr && contents == currentContents)
+                return texture.get();
+
+            if (image == nullptr)
+            {
+                image = new osg::Image;
+                image->allocateImage(sPipBoyTerminalWidth, sPipBoyTerminalHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+                image->setFileName("generated:FNV Pip-Boy live terminal surface");
+                image->setDataVariance(osg::Object::DYNAMIC);
+            }
+            if (texture == nullptr)
+            {
+                texture = new osg::Texture2D(image);
+                texture->setName("FNV Pip-Boy live terminal surface");
+                texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+                texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+                texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+                texture->setResizeNonPowerOfTwoHint(false);
+                texture->setUnRefImageDataAfterApply(false);
+                texture->setDataVariance(osg::Object::DYNAMIC);
+            }
+
+            std::fill(image->data(), image->data() + sPipBoyTerminalWidth * sPipBoyTerminalHeight * 4, 0);
+            constexpr std::array<unsigned char, 4> dim = { 12, 140, 48, 90 };
+            constexpr std::array<unsigned char, 4> bright = { 85, 255, 135, 255 };
+            constexpr std::array<unsigned char, 4> accent = { 155, 255, 180, 255 };
+            for (int y = 14; y < sPipBoyTerminalHeight - 14; y += 4)
+                drawPipBoyTerminalLine(*image, 20, y, sPipBoyTerminalWidth - 20, y, dim);
+            drawPipBoyTerminalLine(*image, 20, 20, sPipBoyTerminalWidth - 20, 20, bright);
+            drawPipBoyTerminalLine(*image, 20, sPipBoyTerminalHeight - 20, sPipBoyTerminalWidth - 20,
+                sPipBoyTerminalHeight - 20, bright);
+            drawPipBoyTerminalLine(*image, 20, 20, 20, sPipBoyTerminalHeight - 20, bright);
+            drawPipBoyTerminalLine(*image, sPipBoyTerminalWidth - 20, 20, sPipBoyTerminalWidth - 20,
+                sPipBoyTerminalHeight - 20, bright);
+            // Make the physical display legible at its real camera-space size:
+            // a large centered title, a bounded left data column, and one
+            // authored retail icon/condition figure on the right. The older
+            // 2px desktop raster made valid text look like a black screen.
+            const int headerScale = 5;
+            const int headerWidth = static_cast<int>(header.size()) * headerScale * 6;
+            drawPipBoyTerminalText(*image, header,
+                std::max(48, (sPipBoyTerminalWidth - headerWidth) / 2), 42, headerScale, 42, accent);
+            drawPipBoyTerminalLine(*image, 44, 116, sPipBoyTerminalWidth - 44, 116, dim);
+            if (showCondition)
+            {
+                drawPipBoyTerminalTextBox(*image, bodyText, 56, 142, 3, 31, 300, 624, bright);
+                drawPipBoyRetailConditionFigure(*image, resourceSystem, conditions, dim, bright, accent);
+            }
+            else
+            {
+                drawPipBoyTerminalTextBox(*image, bodyText, 56, 142, 3, 31, 610, 624, bright);
+                drawPipBoyRetailPanelIcon(*image, resourceSystem, pane, bodyText, bright);
+            }
+            if (!footerText.empty())
+            {
+                drawPipBoyTerminalLine(*image, 44, 650, sPipBoyTerminalWidth - 44, 650, dim);
+                drawPipBoyTerminalTextBox(*image, footerText, 56, 674, 3, 31, 900, 742, accent);
+            }
+            image->dirty();
+            currentContents = contents;
+            Log(Debug::Info) << "FNV Pip-Boy terminal texture: updated source=live-player-data pane=" << pane
+                             << " bytes=" << contents.size();
+            return texture.get();
+        }
+
+        std::string getFalloutPipBoyPanelName(int pane)
+        {
+            switch (std::clamp(pane, 0, 3))
+            {
+                case 0:
+                    return "MapWindow";
+                case 1:
+                    return "InventoryWindow";
+                case 2:
+                    return "SpellWindow";
+                case 3:
+                default:
+                    return "StatsWindow";
+            }
         }
 
         const ESM4::Npc* findEsm4PlayerVisualRecord()
@@ -314,6 +1010,16 @@ namespace MWRender
             return result;
         }
 
+        bool isFalloutPipBoyGloveArmor(const ESM4::Armor* armor, bool female)
+        {
+            if (armor == nullptr || (armor->mArmorFlags & ESM4::Armor::FO3_LeftHand) == 0)
+                return false;
+            const std::string candidate = normalizeFalloutFirstPersonBipedModel(
+                MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+            const std::string lowered = Misc::StringUtils::lowerCase(candidate);
+            return lowered.find("pipboy") != std::string::npos && lowered.find("glove") != std::string::npos;
+        }
+
         std::optional<ESM4NpcAnimation::FirstPersonState> makeFalloutFirstPersonState(
             std::span<const ESM4::Armor* const> equippedArmor, const MWWorld::Ptr& visualPtr,
             float firstPersonFieldOfView, Resource::ResourceSystem* resourceSystem)
@@ -331,6 +1037,12 @@ namespace MWRender
                 {
                     std::string candidate = normalizeFalloutFirstPersonBipedModel(
                         MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+                    // New Vegas tags the worn Pip-Boy glove as a left-hand ARMO in
+                    // some player inventories instead of setting FO3_PipBoy.  The
+                    // authored first-person model is the authoritative signal here:
+                    // recognizing it lets the real pipboyarm.nif attach to the wrist
+                    // rather than falling back to a detached flat-screen UI.
+                    state.mPipBoy = state.mPipBoy || isFalloutPipBoyGloveArmor(armor, female);
                     const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
                     const bool exists = vfs != nullptr && !candidate.empty()
                         && vfs->exists(VFS::Path::toNormalized(candidate));
@@ -1634,6 +2346,38 @@ namespace MWRender
                 }
 
                 const MWWorld::Ptr visualPtr = mFalloutPlayerVisualAnimation->getPtr();
+                bool nativePipBoyGloveRetained = false;
+                if (hasLiveInventory)
+                {
+                    // PipBoyGlove is a native worn-visual record on the player
+                    // proxy, but does not occupy a normal InventoryStore armor
+                    // slot. Preserve that real worn device while the rest of the
+                    // first-person composition follows the live inventory.
+                    const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
+                    for (const ESM4::Armor* const armor : MWClass::ESM4Npc::getEquippedArmor(visualPtr))
+                    {
+                        if (!isFalloutPipBoyGloveArmor(armor, female))
+                            continue;
+                        nativePipBoyGloveRetained = true;
+                        const bool alreadyPresent = std::ranges::any_of(liveArmor,
+                            [armor](const ESM4::Armor* candidate) {
+                                return candidate != nullptr && candidate->mId == armor->mId;
+                            });
+                        if (!alreadyPresent)
+                        {
+                            liveArmor.push_back(armor);
+                            if (!mFalloutPipBoyGloveRetainedLogged)
+                            {
+                                Log(Debug::Info)
+                                    << "FNV first-person equipment bridge: retained native Pip-Boy glove form="
+                                    << ESM::RefId(armor->mId) << " editor=" << armor->mEditorId
+                                    << " source=player-visual-worn-record";
+                            }
+                        }
+                        break;
+                    }
+                }
+                mFalloutPipBoyGloveRetainedLogged = nativePipBoyGloveRetained;
                 const bool weaponChanged
                     = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, liveWeapon);
                 const MWMechanics::DrawState liveDrawState
@@ -1698,6 +2442,8 @@ namespace MWRender
                                 root->setNodeMask(visible ? Mask_FirstPerson : 0);
                             }
                             mFalloutPlayerFirstPersonAnimation = std::move(replacement);
+                            mFalloutPipBoyScreenBound = false;
+                            mFalloutPipBoyScreenBindingAttempted = false;
                             mFalloutPlayerFirstPersonAlignmentLogged = false;
                             Log(Debug::Info) << "FNV first-person equipment bridge: rebuilt=1 armor="
                                              << liveArmor.size() << " signature=" << wornSignature.size()
@@ -1903,6 +2649,8 @@ namespace MWRender
                 firstPersonRoot->setNodeMask(showFirstPersonPlayer ? Mask_FirstPerson : 0);
         }
 
+        updateFalloutPipBoyPresentation(dt);
+
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
         float fogStart = mFog->getFogStart(isUnderwater);
@@ -1931,6 +2679,143 @@ namespace MWRender
 
         mPlayerAnimation->updateCrosshairs();
 //## VR_PATCH END
+    }
+
+    void RenderingManager::updateFalloutPipBoyPresentation(float dt)
+    {
+        MWBase::WindowManager* const windowManager = MWBase::Environment::tryGetWindowManager();
+        const bool physicalRequested = windowManager != nullptr && windowManager->containsMode(MWGui::GM_Inventory)
+            && windowManager->isFalloutPipBoyPhysicalPresentation();
+        const bool cameraFirstPerson = mCamera->getMode() == Camera::Mode::FirstPerson;
+        const bool hasFirstPersonAnimation = mFalloutPlayerFirstPersonAnimation != nullptr;
+        const bool hasWristPresentation
+            = hasFirstPersonAnimation && mFalloutPlayerFirstPersonAnimation->hasPipBoyPresentation();
+        const bool physical = !VR::getVR() && physicalRequested && cameraFirstPerson
+            && hasFirstPersonAnimation && hasWristPresentation;
+        if (physicalRequested && !physical && !mFalloutPipBoyPhysicalBlockedLogged)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy physical: presentation=blocked vr=" << VR::getVR()
+                              << " cameraFirstPerson=" << cameraFirstPerson
+                              << " cameraMode=" << static_cast<int>(mCamera->getMode())
+                              << " firstPersonAnimation=" << hasFirstPersonAnimation
+                              << " wristPresentation=" << hasWristPresentation;
+            mFalloutPipBoyPhysicalBlockedLogged = true;
+        }
+        else if (!physicalRequested || physical)
+            mFalloutPipBoyPhysicalBlockedLogged = false;
+
+        const float target = physical ? 1.f : 0.f;
+        const float rate = physical ? 4.5f : 5.5f;
+        mFalloutPipBoyPresentationProgress
+            = std::clamp(mFalloutPipBoyPresentationProgress + (target - mFalloutPipBoyPresentationProgress)
+                    * std::min(1.f, std::max(0.f, dt) * rate),
+                0.f, 1.f);
+        if (mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->setPipBoyPresentationProgress(
+                mFalloutPipBoyPresentationProgress, physical);
+
+        MyGUIPlatform::RenderManager* const guiRenderer = MyGUIPlatform::RenderManager::getInstancePtr();
+        if (!physical)
+        {
+            if (mFalloutPlayerFirstPersonAnimation)
+                mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(0.f);
+            if (guiRenderer != nullptr)
+            {
+                guiRenderer->setSuppressedGuiLayers({});
+                guiRenderer->setSuppressUnfilteredGui(false);
+            }
+            // Once the wrist is mostly clear of the camera the newly selected
+            // weapon must become visible; this is the live confirmation for a
+            // Pip-Boy equip rather than a terminal-only selection.
+            if (mFalloutPlayerFirstPersonAnimation && mFalloutPipBoyPresentationProgress <= 0.10f)
+            {
+                const MWWorld::Ptr player = mPlayerAnimation->getPtr();
+                const bool weaponDrawn
+                    = player.getClass().getCreatureStats(player).getDrawState() == MWMechanics::DrawState::Weapon;
+                mFalloutPlayerFirstPersonAnimation->showWeapons(weaponDrawn);
+            }
+            if (mFalloutPipBoyGuiRtt != nullptr && mFalloutPipBoyPresentationProgress <= 0.01f)
+            {
+                mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
+                mFalloutPipBoyGuiRtt = nullptr;
+                mFalloutPipBoyGuiLayer.clear();
+                mFalloutPipBoyScreenBound = false;
+                mFalloutPipBoyScreenBindingAttempted = false;
+            }
+            return;
+        }
+
+        mFalloutPlayerFirstPersonAnimation->showWeapons(false);
+        const int pane = windowManager->getFalloutPipBoyActivePane();
+        const std::string panel = getFalloutPipBoyPanelName(pane);
+        // The physical device suppresses the desktop UI. Its display content
+        // is generated into the device's own terminal texture below, which
+        // avoids both opaque MyGUI chrome and the asynchronous RTT pass that
+        // previously swallowed its glyphs into a black screen.
+        static constexpr std::string_view guiLayer = "PipBoyScreen";
+        if (guiRenderer != nullptr)
+        {
+            guiRenderer->setSuppressedGuiLayers({ std::string(guiLayer) });
+            guiRenderer->setSuppressUnfilteredGui(true);
+        }
+        if (mFalloutPipBoyGuiRtt != nullptr)
+        {
+            mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
+            mFalloutPipBoyGuiRtt = nullptr;
+            mFalloutPipBoyGuiLayer.clear();
+            mFalloutPipBoyScreenBound = false;
+            mFalloutPipBoyScreenBindingAttempted = false;
+        }
+
+        auto* const falloutWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager);
+        const float interactionPulse
+            = falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyInteractionPulse() : 0.f;
+        mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
+        const bool showCondition
+            = pane == 3 && (falloutWindowManager == nullptr || falloutWindowManager->getFalloutPipBoySubmenu() == 0);
+        const bool showMap = pane == 0 && falloutWindowManager != nullptr;
+        const bool worldMap = showMap && falloutWindowManager->isFalloutPipBoyWorldMap();
+        const float mapZoom = showMap ? falloutWindowManager->getFalloutPipBoyMapZoom() : 1.f;
+        const float mapPanX = showMap ? falloutWindowManager->getFalloutPipBoyMapPanX() : 0.f;
+        const float mapPanY = showMap ? falloutWindowManager->getFalloutPipBoyMapPanY() : 0.f;
+        mFalloutPlayerFirstPersonAnimation->setPipBoyControlState(pane,
+            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoySubmenu() : 0,
+            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyListOffset() : 0, worldMap,
+            mapZoom, mapPanX, mapPanY, interactionPulse);
+        osg::Texture2D* mapTexture = nullptr;
+        if (showMap)
+        {
+            mapTexture = worldMap
+                ? getPipBoyRetailWorldMapTexture(mFalloutPipBoyWorldMapTexture, mResourceSystem)
+                : falloutWindowManager->getFalloutPipBoyLocalMapTexture();
+        }
+        const bool mapTextureChanged = mFalloutPipBoyBoundMapTexture.get() != mapTexture;
+        mFalloutPipBoyBoundMapTexture = mapTexture;
+
+        const std::string previousTerminalContents = mFalloutPipBoyTerminalContents;
+        osg::Texture2D* const texture = updatePipBoyTerminalTexture(mFalloutPipBoyTerminalImage,
+            mFalloutPipBoyTerminalTexture, mFalloutPipBoyTerminalContents,
+            windowManager->getFalloutPipBoyTerminalHeader(), windowManager->getFalloutPipBoyTerminalBody(), pane,
+            showCondition, mResourceSystem);
+        const bool terminalContentsChanged = mFalloutPipBoyTerminalContents != previousTerminalContents;
+        if (!mFalloutPipBoyScreenBindingAttempted || terminalContentsChanged || mapTextureChanged)
+        {
+            mFalloutPipBoyScreenBindingAttempted = true;
+            if (texture != nullptr)
+            {
+                mFalloutPipBoyScreenBound = mFalloutPlayerFirstPersonAnimation->setPipBoyScreenTexture(texture,
+                    mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+            }
+            else
+            {
+                mFalloutPipBoyScreenBound = false;
+                Log(Debug::Error) << "FNV Pip-Boy physical: terminal texture=missing";
+            }
+            Log(mFalloutPipBoyScreenBound ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy physical: presentation=raise progress=" << mFalloutPipBoyPresentationProgress
+                << " activePane=" << pane << " panel=" << panel << " source=terminal-texture"
+                << " screenBound=" << mFalloutPipBoyScreenBound;
+        }
     }
 
     void RenderingManager::updatePlayerPtr(const MWWorld::Ptr& ptr)
@@ -2465,6 +3350,8 @@ namespace MWRender
                 mFalloutPlayerFirstPersonBasis->getParent(0)->removeChild(mFalloutPlayerFirstPersonBasis);
         }
         mFalloutPlayerFirstPersonAnimation = nullptr;
+        mFalloutPipBoyScreenBound = false;
+        mFalloutPipBoyScreenBindingAttempted = false;
         mFalloutPlayerVisualAnimation = nullptr;
         mFalloutPlayerVisualBasis = nullptr;
         mFalloutPlayerFirstPersonBasis = nullptr;

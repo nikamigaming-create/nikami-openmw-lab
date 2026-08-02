@@ -73,6 +73,12 @@ namespace MWInput
         A_ToggleThumbstickAutoRun,
 
 //## VR_PATCH END
+        // Fallout-only physical wrist device.  Kept at the end so existing
+        // input_v3.xml action IDs stay stable.
+        A_FalloutPipBoy,
+        // Hold for Fallout iron sights.  This is intentionally separate from
+        // inventory and is bound to the right mouse button by default.
+        A_FalloutAim,
         A_Last // Marker for the last item
     };
 }

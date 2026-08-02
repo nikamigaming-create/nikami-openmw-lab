@@ -57,11 +57,14 @@
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/camera.hpp"
+#include "../mwrender/esm4npcanimation.hpp"
+#include "../mwrender/falloutweaponanimation.hpp"
 #include "../mwrender/renderingmanager.hpp"
 
 #include "../mwphysics/raycasting.hpp"
 
 #include "../mwgui/hud.hpp"
+#include "../mwgui/windowmanagerimp.hpp"
 
 #include "actions.hpp"
 #include "bindingsmanager.hpp"
@@ -195,6 +198,7 @@ namespace MWInput
                     mFalloutPlayerUseDown = useDown;
                 }
             }
+            updateFalloutAimDownSights();
         }
 
         if (mBindingsManager->actionIsActive(A_MoveForward) || mBindingsManager->actionIsActive(A_MoveBackward)
@@ -216,6 +220,74 @@ namespace MWInput
         updateFalloutVatsProof();
     }
 
+    void ActionManager::updateFalloutAimDownSights()
+    {
+        MWBase::InputManager* const input = MWBase::Environment::get().getInputManager();
+        MWBase::WindowManager* const window = MWBase::Environment::get().getWindowManager();
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        const MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (input == nullptr || window == nullptr || world == nullptr || player.isEmpty())
+            return;
+
+        MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+        const bool requested = mBindingsManager->actionIsActive(A_FalloutAim)
+            && input->getControlSwitch("playercontrols") && input->getControlSwitch("playerfighting")
+            && !window->isGuiMode() && !window->isFalloutPipBoyPhysicalPresentation() && world->isFirstPerson()
+            && stats.getDrawState() == MWMechanics::DrawState::Weapon
+            && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive;
+        if (requested == mFalloutAimDown)
+            return;
+
+        MWRender::RenderingManager* const rendering = world->getRenderingManager();
+        MWRender::ESM4NpcAnimation* const firstPerson = rendering != nullptr
+            ? dynamic_cast<MWRender::ESM4NpcAnimation*>(rendering->getFalloutWeaponAnimation(player, true))
+            : nullptr;
+
+        if (requested)
+        {
+            const ESM4::Weapon* weapon = nullptr;
+            if (player.getClass().hasInventoryStore(player))
+            {
+                const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                const MWWorld::ConstContainerStoreIterator equipped
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (equipped != inventory.end() && equipped->getType() == ESM4::Weapon::sRecordId)
+                    weapon = equipped->get<ESM4::Weapon>()->mBase;
+            }
+
+            const bool prepared = firstPerson != nullptr && weapon != nullptr
+                && firstPerson->prepareFalloutWeaponAnimation(
+                    weapon->mData.animationType, weapon->mData.reloadAnim, MWRender::FonvWeaponAction::Aim)
+                && firstPerson->hasAnimation("weaponpose");
+            if (!prepared)
+            {
+                Log(Debug::Error) << "FNV ADS: state=raise prepared=0 firstPerson=" << (firstPerson != nullptr)
+                                  << " weapon=" << (weapon != nullptr ? weapon->mEditorId : std::string("none"));
+                return;
+            }
+
+            firstPerson->play("weaponpose", MWRender::Animation::AnimPriority(2), MWRender::BlendMask_All,
+                false, 1.f, "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), true);
+            if (rendering != nullptr && !rendering->isFieldOfViewOverridden())
+            {
+                rendering->overrideFieldOfView(35.f);
+                mFalloutAimFovOwnsOverride = true;
+            }
+            mFalloutAimDown = true;
+            Log(Debug::Info) << "FNV ADS: state=raise prepared=1 weapon=" << weapon->mEditorId
+                             << " fov=" << (mFalloutAimFovOwnsOverride ? 35.f : rendering->getFieldOfView());
+            return;
+        }
+
+        if (firstPerson != nullptr)
+            firstPerson->disable("weaponpose");
+        if (rendering != nullptr && mFalloutAimFovOwnsOverride)
+            rendering->resetFieldOfView();
+        mFalloutAimFovOwnsOverride = false;
+        mFalloutAimDown = false;
+        Log(Debug::Info) << "FNV ADS: state=lower";
+    }
+
     void ActionManager::resetIdleTime()
     {
         mTimeIdle = 0.f;
@@ -223,9 +295,25 @@ namespace MWInput
 
     void ActionManager::executeAction(int action)
     {
-        MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::Action, action });
-        const auto inputManager = MWBase::Environment::get().getInputManager();
+        const bool falloutContent = isFalloutContent();
         const auto windowManager = MWBase::Environment::get().getWindowManager();
+        // The raised Pip-Boy owns its navigation actions. Consume them before
+        // Lua, quick-key equipment, world activation, or movement see them.
+        if (falloutContent)
+        {
+            if (auto* const falloutWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager.get());
+                falloutWindowManager != nullptr && falloutWindowManager->handleFalloutPipBoyAction(action))
+            {
+                return;
+            }
+        }
+        // Fallout routes its two intentional inventory presentations here.  Do
+        // not also pass those actions to the generic Lua inventory toggles.
+        const bool handledFalloutMenuAction = falloutContent
+            && (action == A_Inventory || action == A_FalloutPipBoy || action == A_Journal || action == A_Map);
+        if (!handledFalloutMenuAction)
+            MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::Action, action });
+        const auto inputManager = MWBase::Environment::get().getInputManager();
         // trigger action activated
         switch (action)
         {
@@ -344,16 +432,62 @@ namespace MWInput
                     MWBase::Environment::get().getWindowManager()->cycleWeapon(true);
                 break;
             case A_Inventory:
+                if (falloutContent)
+                {
+                    if (windowManager->containsMode(MWGui::GM_Inventory))
+                    {
+                        if (windowManager->isFalloutPipBoyPhysicalPresentation())
+                            windowManager->setFalloutPipBoyPresentation(false);
+                        else
+                            windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    }
+                    else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
+                    {
+                        windowManager->setFalloutPipBoyPresentation(false);
+                        windowManager->pushGuiMode(MWGui::GM_Inventory);
+                    }
+                }
+                break;
+            case A_FalloutPipBoy:
+                if (!falloutContent)
+                    break;
+
+                if (windowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    if (windowManager->isFalloutPipBoyPhysicalPresentation())
+                        windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    else
+                    {
+                        windowManager->setFalloutPipBoyPresentation(true);
+                        windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 3);
+                    }
+                }
+                else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
+                {
+                    MWBase::World* const world = MWBase::Environment::get().getWorld();
+                    if (world != nullptr && !world->isFirstPerson())
+                        world->togglePOV(true);
+                    windowManager->setFalloutPipBoyPresentation(true);
+                    windowManager->pushGuiMode(MWGui::GM_Inventory);
+                    windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 3);
+                }
+                break;
             case A_QuickKeysMenu:
                 // Handled in Lua
                 break;
             case A_Journal:
-                if (isFalloutContent())
+                if (falloutContent)
                 {
                     if (windowManager->containsMode(MWGui::GM_Inventory))
-                        windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    {
+                        if (windowManager->isFalloutPipBoyPhysicalPresentation())
+                            windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 2);
+                        else
+                            windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    }
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
                     {
+                        windowManager->setFalloutPipBoyPresentation(false);
                         windowManager->pushGuiMode(MWGui::GM_Inventory);
                         windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 2);
                     }
@@ -361,12 +495,18 @@ namespace MWInput
                 // Non-Fallout journal input remains handled by Lua.
                 break;
             case A_Map:
-                if (isFalloutContent())
+                if (falloutContent)
                 {
                     if (windowManager->containsMode(MWGui::GM_Inventory))
-                        windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    {
+                        if (windowManager->isFalloutPipBoyPhysicalPresentation())
+                            windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                        else
+                            windowManager->removeGuiMode(MWGui::GM_Inventory);
+                    }
                     else if (checkAllowedToUseItems() && windowManager->isAllowed(MWGui::GW_Inventory))
                     {
+                        windowManager->setFalloutPipBoyPresentation(false);
                         windowManager->pushGuiMode(MWGui::GM_Inventory);
                         windowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
                     }

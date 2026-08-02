@@ -303,9 +303,13 @@ namespace MWInput
         defaultKeyBindings[A_QuickSave] = SDL_SCANCODE_F5;
         defaultKeyBindings[A_QuickLoad] = SDL_SCANCODE_F9;
         defaultKeyBindings[A_TogglePostProcessorHUD] = SDL_SCANCODE_F2;
+        // The conventional OpenMW inventory/map analog lives on I.  The
+        // physical Fallout Pip-Boy has its own deliberate raise/lower bind.
+        defaultKeyBindings[A_Inventory] = SDL_SCANCODE_I;
+        defaultKeyBindings[A_FalloutPipBoy] = SDL_SCANCODE_P;
 
         std::map<int, int> defaultMouseButtonBindings;
-        defaultMouseButtonBindings[A_Inventory] = SDL_BUTTON_RIGHT;
+        defaultMouseButtonBindings[A_FalloutAim] = SDL_BUTTON_RIGHT;
         defaultMouseButtonBindings[A_Use] = SDL_BUTTON_LEFT;
 
         std::map<int, ICS::InputControlSystem::MouseWheelClick> defaultMouseWheelBindings;
@@ -496,6 +500,10 @@ namespace MWInput
                 return "#{sRestKey}";
             case A_Inventory:
                 return "#{sInventory}";
+            case A_FalloutPipBoy:
+                return "Pip-Boy";
+            case A_FalloutAim:
+                return "Aim / Iron Sights";
             case A_Map:
                 return "#{sMap}";
             case A_TogglePOV:
@@ -591,7 +599,7 @@ namespace MWInput
         static const std::initializer_list<int> actions{ A_MoveForward, A_MoveBackward, A_MoveLeft, A_MoveRight,
             A_TogglePOV, A_ZoomIn, A_ZoomOut, A_Run, A_AlwaysRun, A_Sneak, A_Activate, A_Use, A_ToggleWeapon,
             A_ToggleSpell, A_CycleSpellLeft, A_CycleSpellRight, A_CycleWeaponLeft, A_CycleWeaponRight, A_AutoMove,
-            A_Jump, A_Inventory, A_Map, A_Journal, A_Rest, A_Console, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
+            A_Jump, A_Inventory, A_FalloutPipBoy, A_FalloutAim, A_Map, A_Journal, A_Rest, A_Console, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
             A_QuickKeysMenu, A_QuickKey1, A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7,
             A_QuickKey8, A_QuickKey9, A_QuickKey10, A_TogglePostProcessorHUD };
 
@@ -695,7 +703,7 @@ namespace MWInput
         auto manager = MWBase::Environment::get().getInputManager();
         manager->resetIdleTime();
 
-        if (mDragDrop && action != A_GameMenu && action != A_Inventory)
+        if (mDragDrop && action != A_GameMenu && action != A_Inventory && action != A_FalloutPipBoy)
             return;
 
         if (manager->joystickLastUsed() && manager->getControlSwitch("playercontrols"))

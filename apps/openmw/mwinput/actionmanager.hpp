@@ -84,6 +84,7 @@ namespace MWInput
         void updateFalloutVatsHud();
         void updateFalloutVatsProof();
         void captureFalloutVatsProofFrame();
+        void updateFalloutAimDownSights();
 
         BindingsManager* mBindingsManager;
         osg::ref_ptr<osgViewer::Viewer> mViewer;
@@ -102,6 +103,8 @@ namespace MWInput
         std::string mFalloutVatsBodyPartTargetNode;
         unsigned int mFalloutVatsHitChance = 0;
         bool mFalloutPlayerUseDown = false;
+        bool mFalloutAimDown = false;
+        bool mFalloutAimFovOwnsOverride = false;
         int mFalloutVatsPreviousCameraMode = -1;
         float mFalloutVatsPreviousCameraDistance = 0.f;
         float mFalloutVatsPreviousCameraPitch = 0.f;

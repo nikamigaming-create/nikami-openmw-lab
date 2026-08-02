@@ -13,6 +13,7 @@
 
 #include <osgGA/GUIEventHandler>
 
+#include <components/debug/debuglog.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/sceneutil/nodecallback.hpp>
 #include <components/shader/shadermanager.hpp>
@@ -247,6 +248,8 @@ namespace MyGUIPlatform
             mWriteTo = (mWriteTo + 1) % sNumBuffers;
             mBatchVector[mWriteTo].clear();
         }
+
+        size_t pendingBatchCount() const { return mBatchVector[mWriteTo].size(); }
 
 //## VR_PATCH BEGIN
 // State moved to the parent.
@@ -581,6 +584,27 @@ namespace MyGUIPlatform
         if (mInjectState)
             batch.mStateSet = mInjectState;
 
+        if (mFilter == "PipBoyScreen" && count > 0)
+        {
+            static unsigned sPipBoyScreenBatchTraceCount = 0;
+            if (sPipBoyScreenBatchTraceCount++ < 8 && batch.mArray != nullptr)
+            {
+                const auto* const bytes = static_cast<const unsigned char*>(batch.mArray->getDataPointer());
+                const auto readFloat = [&bytes](std::size_t offset) {
+                    return *reinterpret_cast<const float*>(bytes + offset);
+                };
+                const auto readColor = [&bytes](std::size_t offset) {
+                    return *reinterpret_cast<const unsigned int*>(bytes + offset);
+                };
+                const std::size_t last = (count - 1) * sizeof(MyGUI::Vertex);
+                Log(Debug::Info) << "FNV Pip-Boy RTT glyph batch: vertices=" << count
+                                 << " texture=" << (batch.mTexture != nullptr ? batch.mTexture->getName() : "none")
+                                 << " firstXY=(" << readFloat(0) << ',' << readFloat(sizeof(float)) << ')'
+                                 << " lastXY=(" << readFloat(last) << ',' << readFloat(last + sizeof(float)) << ')'
+                                 << " firstColor=0x" << std::hex << readColor(sizeof(float) * 3) << std::dec;
+            }
+        }
+
         mDrawable->addBatch(batch);
     }
 
@@ -611,11 +635,13 @@ namespace MyGUIPlatform
     {
         begin();
         MyGUI::LayerManager* myGUILayers = MyGUI::LayerManager::getInstancePtr();
-        if (myGUILayers != nullptr)
+        if (myGUILayers != nullptr && !mParent->suppressUnfilteredGui())
         {
             for (unsigned i = 0; i < myGUILayers->getLayerCount(); i++)
             {
                 auto layer = myGUILayers->getLayer(i);
+                if (mParent->isGuiLayerSuppressed(layer->getName()))
+                    continue;
                 layer->renderToTarget(this, mUpdate);
             }
         }
@@ -627,7 +653,14 @@ namespace MyGUIPlatform
     void GUICamera::collectDrawCalls(std::string filter)
     {
         begin();
+        // A filtered in-world GUI camera is the sole target for this layer
+        // while a physical Pip-Boy is raised. Unlike the fullscreen GUI
+        // camera, it cannot rely on a prior render pass to mark the layer
+        // dirty, so explicitly refresh the retained widgets each frame.
+        mUpdate = true;
         MyGUI::LayerManager* myGUILayers = MyGUI::LayerManager::getInstancePtr();
+        unsigned matchedLayerCount = 0;
+        std::string matchedLayers;
         if (myGUILayers != nullptr)
         {
             for (unsigned i = 0; i < myGUILayers->getLayerCount(); i++)
@@ -637,8 +670,24 @@ namespace MyGUIPlatform
 
                 if (filter.find(name) != std::string::npos)
                 {
+                    ++matchedLayerCount;
+                    if (!matchedLayers.empty())
+                        matchedLayers += ',';
+                    matchedLayers += name;
                     layer->renderToTarget(this, mUpdate);
                 }
+            }
+        }
+        if (filter == "PipBoyScreen")
+        {
+            static unsigned sPipBoyWindowsTraceCount = 0;
+            if ((++sPipBoyWindowsTraceCount % 120) == 1)
+            {
+                const osg::Viewport* viewport = getViewport();
+                Log(Debug::Info) << "FNV Pip-Boy RTT telemetry: filter=PipBoyScreen matchedLayers=" << matchedLayerCount
+                                 << " names=" << matchedLayers << " batches=" << mDrawable->pendingBatchCount()
+                                 << " viewport=" << (viewport != nullptr ? std::to_string(viewport->width()) : "0")
+                                 << 'x' << (viewport != nullptr ? std::to_string(viewport->height()) : "0");
             }
         }
         end();

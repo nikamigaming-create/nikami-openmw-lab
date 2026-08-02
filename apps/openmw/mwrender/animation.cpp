@@ -4645,7 +4645,15 @@ namespace MWRender
             const std::string group = falloutSemanticGroup.empty()
                 ? getFalloutSyntheticGroupFromKf(kfname)
                 : std::string(falloutSemanticGroup);
-            if (!group.empty() && !animsrc->mKeyframes->mTextKeys.hasGroupStart(group))
+            // hasGroupStart is metadata supplied by the keyframe reader. A
+            // few retail first-person sequences (notably Pipboy.kf) advertise
+            // a sequence group there while their raw text keys are the bare
+            // "start / Hit / end" markers. Animation::reset consumes the
+            // actual key strings, so use findGroupStart here as well and add a
+            // real semantic interval when metadata alone would claim success.
+            const bool hasPlayableGroup = !group.empty()
+                && animsrc->mKeyframes->mTextKeys.findGroupStart(group) != animsrc->mKeyframes->mTextKeys.end();
+            if (!group.empty() && !hasPlayableGroup)
             {
                 osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);

@@ -137,6 +137,7 @@
 #include <components/settings/values.hpp>
 
 #include "mwinput/inputmanagerimp.hpp"
+#include "mwinput/actions.hpp"
 
 #include "mwgui/windowmanagerimp.hpp"
 
@@ -3562,6 +3563,123 @@ namespace
                                                                                                      : "fail");
     }
 
+    bool applyFNVGameplayStartPlacement(MWBase::World& world)
+    {
+        const char* const requestedCellText = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE");
+        if (requestedCellText == nullptr || *requestedCellText == '\0')
+            return true;
+
+        ESM::RefId requestedWorldspace;
+        try
+        {
+            requestedWorldspace = ESM::RefId::deserializeText(requestedCellText);
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason="
+                              << error.what() << " requestedCell=" << requestedCellText;
+            return false;
+        }
+
+        if (requestedWorldspace.empty())
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason=empty-worldspace "
+                              << "requestedWorldspace=" << requestedCellText;
+            return false;
+        }
+
+        const int requestedGridX = readProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_X", 0);
+        const int requestedGridY = readProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_Y", 0);
+        const ESM::ExteriorCellLocation location(requestedGridX, requestedGridY, requestedWorldspace);
+        ESM::RefId cellId;
+        try
+        {
+            // OPENMW_FNV_GAMEPLAY_START_WORLDSPACE names the ESM4 WRLD record,
+            // not a CELL record. Resolve its real exterior cell through the
+            // normal WorldModel worldspace-plus-grid path.
+            MWWorld::CellStore& exterior = MWBase::Environment::get().getWorldModel()->getExterior(location);
+            cellId = exterior.getCell()->getId();
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason="
+                              << error.what() << " worldspace=" << requestedWorldspace.toDebugString()
+                              << " grid=(" << requestedGridX << "," << requestedGridY << ")";
+            return false;
+        }
+
+        const osg::Vec2f center = ESM::indexToPosition(location, true);
+        ESM::Position position;
+        position.pos[0] = center.x();
+        position.pos[1] = center.y();
+        position.pos[2] = 0.f;
+        position.rot[0] = 0.f;
+        position.rot[1] = 0.f;
+        position.rot[2] = 0.f;
+
+        world.changeToCell(cellId, position, false, true);
+        MWWorld::Ptr player = world.getPlayerPtr();
+        player = world.moveObject(player, position.asVec3(), true, true);
+        world.adjustPosition(player, true);
+
+        const ESM::Position& applied = player.getRefData().getPosition();
+        Log(Debug::Info) << "FNV gameplay start: applied final developer exterior placement="
+                         << cellId.toDebugString() << " worldspace="
+                         << requestedWorldspace.toDebugString() << " grid=(" << requestedGridX << ","
+                         << requestedGridY << ") position=(" << applied.pos[0] << "," << applied.pos[1] << ","
+                         << applied.pos[2] << ") source=normal-new-game-postload";
+        return true;
+    }
+
+    bool applyFNVPipBoyShowcaseLoadout(MWBase::World& world)
+    {
+        // The physical Pip-Boy is a presentation of the real inventory. Keep
+        // the showcase useful without inventing Morrowind fallback items.
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+        {
+            Log(Debug::Error) << "FNV Pip-Boy showcase: authored loadout failed because Player is unresolved";
+            return false;
+        }
+
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ESMStore& store = world.getStore();
+        const bool pistolAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1);
+        const bool rifleAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1);
+        const bool ammo9mmAdded = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60);
+        const bool ammo556Added = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
+        const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
+        const bool lockpickAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Lockpick", 5);
+        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", 75);
+        const bool outfitAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "VaultSuit21", 1);
+        const bool headgearAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "CowboyHat02", 1);
+
+        const bool outfitEquipped
+            = outfitAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "VaultSuit21");
+        const bool headgearEquipped
+            = headgearAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "CowboyHat02");
+        const bool weaponEquipped
+            = pistolAdded && equipFNVEditorItem<ESM4::Weapon>(player, inventory, store, "WeapNV9mmPistol");
+        const bool ammunitionEquipped
+            = ammo9mmAdded && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo9mm");
+        player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+
+        const bool authoredItemsPresent = pistolAdded && rifleAdded && ammo9mmAdded && ammo556Added && stimpakAdded
+            && lockpickAdded && capsAdded && outfitAdded && headgearAdded;
+        const bool presentationEquipped
+            = outfitEquipped && headgearEquipped && weaponEquipped && ammunitionEquipped;
+        Log(authoredItemsPresent && presentationEquipped ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy showcase: authored loadout source=FalloutNV.esm fallbackItems=0 "
+            << "items={WeapNV9mmPistol:" << pistolAdded << ",WeapNVVarmintRifle:" << rifleAdded
+            << ",Ammo9mm:" << ammo9mmAdded << ",Ammo556mm:" << ammo556Added << ",Stimpak:" << stimpakAdded
+            << ",Lockpick:" << lockpickAdded << ",Caps001:" << capsAdded << ",VaultSuit21:" << outfitAdded
+            << ",CowboyHat02:" << headgearAdded << "} equipped={outfit:" << outfitEquipped
+            << ",headgear:" << headgearEquipped << ",weapon:" << weaponEquipped << ",ammunition:"
+            << ammunitionEquipped << "} status="
+            << (authoredItemsPresent && presentationEquipped ? "pass" : "fail");
+        return authoredItemsPresent && presentationEquipped;
+    }
+
     void resetFNVProofCamera(MWBase::World& world)
     {
         MWWorld::Ptr player = world.getPlayerPtr();
@@ -4398,6 +4516,69 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
     static const std::vector<int> proofInventoryPaneFrames = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_FRAME");
     static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
+    // Capture-only scheduling drives the production physical Pip-Boy mode
+    // after normal New Game. It does not synthesize desktop input.
+    static const bool fnvPipBoyShowcaseEnabled = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE");
+    static const bool fnvGameplayStartPlacementEnabled
+        = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE") != nullptr;
+    static const bool fnvPipBoyShowcaseLoadoutEnabled
+        = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_LOADOUT");
+    static const bool fnvPipBoyShowcaseQuitAfterCapture
+        = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_QUIT_AFTER_CAPTURE");
+    static const int fnvPipBoyShowcaseFirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_FIRST_READY_FRAME"));
+    static const int fnvPipBoyShowcaseFramesPerPaneRequested
+        = getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_FRAMES_PER_PANE");
+    static const int fnvPipBoyShowcaseFramesPerPane
+        = fnvPipBoyShowcaseFramesPerPaneRequested >= 30 ? fnvPipBoyShowcaseFramesPerPaneRequested : 120;
+    static const int fnvPipBoyShowcaseCaptureDelayFramesRequested
+        = getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_CAPTURE_DELAY_FRAMES");
+    static const int fnvPipBoyShowcaseCaptureDelayFrames
+        = fnvPipBoyShowcaseCaptureDelayFramesRequested >= 1
+        ? std::clamp(fnvPipBoyShowcaseCaptureDelayFramesRequested, 1, fnvPipBoyShowcaseFramesPerPane - 1)
+        : std::min(45, fnvPipBoyShowcaseFramesPerPane - 1);
+    // Each native capture state is driven through the same device-local
+    // actions a player uses.  This is deliberately more than a four-panel
+    // slideshow: it covers every subpage, list selection, map toggle/pan/zoom,
+    // and a final first-person weapon confirmation after the Pip-Boy lowers.
+    struct FnvPipBoyShowcaseState
+    {
+        const char* mName;
+        int mPane;
+        int mSubmenu;
+        int mListOffset;
+        bool mActivateSelection;
+        bool mWorldMap;
+        int mZoomInCount;
+        int mPanRightCount;
+        int mPanDownCount;
+    };
+    static constexpr std::array<FnvPipBoyShowcaseState, 24> fnvPipBoyShowcaseStates = { {
+        { "STATS-CND", 3, 0, 0, false, false, 0, 0, 0 },
+        { "STATS-RAD", 3, 1, 0, false, false, 0, 0, 0 },
+        { "STATS-EFF", 3, 2, 0, false, false, 0, 0, 0 },
+        { "STATS-SPECIAL", 3, 3, 0, false, false, 0, 0, 0 },
+        { "STATS-SKILLS", 3, 4, 0, false, false, 0, 0, 0 },
+        { "STATS-PERKS", 3, 5, 0, false, false, 0, 0, 0 },
+        { "STATS-GENERAL", 3, 6, 0, false, false, 0, 0, 0 },
+        { "ITEMS-WEAP-9MM", 1, 0, 0, true, false, 0, 0, 0 },
+        { "ITEMS-WEAP-VARMINT", 1, 0, 1, true, false, 0, 0, 0 },
+        { "ITEMS-APP-SUIT", 1, 1, 0, true, false, 0, 0, 0 },
+        { "ITEMS-APP-HAT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "ITEMS-AID-STIMPAK", 1, 2, 0, true, false, 0, 0, 0 },
+        { "ITEMS-MISC-CAPS", 1, 3, 0, true, false, 0, 0, 0 },
+        { "ITEMS-AMMO-9MM", 1, 4, 0, true, false, 0, 0, 0 },
+        { "ITEMS-AMMO-556", 1, 4, 1, true, false, 0, 0, 0 },
+        { "DATA-QUESTS", 2, 0, 0, true, false, 0, 0, 0 },
+        { "DATA-QUESTS-SCROLL", 2, 0, 1, true, false, 0, 0, 0 },
+        { "DATA-NOTES", 2, 1, 0, true, false, 0, 0, 0 },
+        { "DATA-RADIO", 2, 2, 0, true, false, 0, 0, 0 },
+        { "MAP-WORLD", 0, 0, 0, false, true, 0, 0, 0 },
+        { "MAP-WORLD-ZOOM-PAN", 0, 0, 0, false, true, 2, 2, 1 },
+        { "MAP-LOCAL", 0, 0, 0, false, false, 0, 0, 0 },
+        { "MAP-LOCAL-ZOOM-PAN", 0, 0, 0, false, false, 1, 1, 1 },
+        { "WORLD-VARMINT-EQUIPPED", -1, 0, 0, false, false, 0, 0, 0 },
+    } };
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const int proofFalloutQuickKeyAssignFrame
         = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ASSIGN_FRAME");
@@ -4437,6 +4618,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int worldViewerTimeSequenceIndex = -1;
     static int worldViewerCameraAngleSequenceIndex = -1;
     static bool proofInventoryOpened = false;
+    static bool fnvPipBoyShowcaseLoadoutApplied = false;
+    static bool fnvPipBoyShowcaseLoadoutPassed = false;
+    static bool fnvGameplayStartPlacementApplied = false;
+    static bool fnvGameplayStartPlacementPassed = false;
+    static std::size_t fnvPipBoyShowcaseActivePane = static_cast<std::size_t>(-1);
+    static std::size_t fnvPipBoyShowcaseCapturedPanes = 0;
+    static int fnvPipBoyShowcaseExitReadyFrame = -1;
+    static bool fnvPipBoyShowcaseQuitRequested = false;
     static bool proofQuickSaveQueued = false;
     static bool proofFalloutQuickKeyAssigned = false;
     static bool proofFalloutQuickKeyActivated = false;
@@ -4528,6 +4717,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofGodModeEnabled = false;
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
+    static bool fnvNewGameGameplayUiUnlocked = false;
     static bool proofFNVCameraResetApplied = false;
     static bool proofRetailProjectionApplied = false;
     static bool proofRetailProjectionAudited = false;
@@ -5698,7 +5888,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool deferProofLuaWorker = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT")
         || proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT")
         || proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND")
-        || proofEnvEnabled("OPENMW_PROOF_DELAY_STARTUP_SCRIPT");
+        || proofEnvEnabled("OPENMW_PROOF_DELAY_STARTUP_SCRIPT") || fnvPipBoyShowcaseEnabled
+        || fnvGameplayStartPlacementEnabled;
     if (!deferProofLuaWorker)
     {
         worldViewerTrace(frameNumber, "lua-worker-allow.begin");
@@ -6030,6 +6221,30 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofDelayedStartupScriptExecuted = true;
     }
 
+    if (!fnvNewGameGameplayUiUnlocked && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && hasFalloutNvContent(mContentFiles) && mWindowManager != nullptr)
+    {
+        // Fallout's normal New Game does not run Morrowind character creation.
+        // Leaving WindowManager in its generic new-game state keeps mAllowed at
+        // GW_None, which makes both the real P-key Pip-Boy and ordinary inventory
+        // appear to do nothing. Finish the UI handoff when the actual FNV world is
+        // live, just as a restored game does.
+        mWindowManager->setNewGame(false);
+        fnvNewGameGameplayUiUnlocked = true;
+        Log(Debug::Info) << "FNV new-game UI: enabled gameplay inventory/map/stats controls source=normal-world-ready";
+    }
+
+    if (!fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementEnabled && proofWorldReady
+        && mWorld != nullptr)
+    {
+        // This uses the same Lua-worker handoff as the delayed startup script: a
+        // post-New-Game cell change rebuilds active-object lists and must not race
+        // nearby.* iteration in the worker.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        fnvGameplayStartPlacementPassed = applyFNVGameplayStartPlacement(*mWorld);
+        fnvGameplayStartPlacementApplied = true;
+    }
+
     const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
     const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
     if (!proofFNVBootstrapApplied && proofWorldReady && !nativeFalloutSaveOwnsCamera()
@@ -6044,6 +6259,127 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             Log(Debug::Error) << "FNV/ESM4 proof: level-1 Courier bootstrap failed: " << e.what();
         }
         proofFNVBootstrapApplied = true;
+    }
+
+    if (fnvPipBoyShowcaseEnabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr
+        && (!fnvGameplayStartPlacementEnabled
+            || (fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementPassed)))
+    {
+        if (!fnvPipBoyShowcaseLoadoutApplied)
+        {
+            fnvPipBoyShowcaseLoadoutPassed = !fnvPipBoyShowcaseLoadoutEnabled
+                || applyFNVPipBoyShowcaseLoadout(*mWorld);
+            fnvPipBoyShowcaseLoadoutApplied = true;
+            Log(fnvPipBoyShowcaseLoadoutPassed ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy showcase: live authored-data preparation="
+                << (fnvPipBoyShowcaseLoadoutPassed ? "pass" : "fail") << " fallbackItems=0";
+        }
+
+        const int showcaseElapsed = proofWorldReadyFrames - fnvPipBoyShowcaseFirstReadyFrame;
+        if (showcaseElapsed >= 0)
+        {
+            const std::size_t showcaseStateIndex = static_cast<std::size_t>(
+                showcaseElapsed / fnvPipBoyShowcaseFramesPerPane);
+            if (showcaseStateIndex < fnvPipBoyShowcaseStates.size())
+            {
+                const FnvPipBoyShowcaseState& state = fnvPipBoyShowcaseStates[showcaseStateIndex];
+                if (fnvPipBoyShowcaseActivePane != showcaseStateIndex)
+                {
+                    if (state.mPane < 0)
+                    {
+                        if (mWindowManager->containsMode(MWGui::GM_Inventory))
+                            mWindowManager->removeGuiMode(MWGui::GM_Inventory);
+                        fnvPipBoyShowcaseActivePane = showcaseStateIndex;
+                        Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
+                                         << " pane=world readyFrame=" << proofWorldReadyFrames
+                                         << " source=selected-live-weapon";
+                    }
+                    else
+                    {
+                        if (!mWorld->isFirstPerson())
+                            mWorld->togglePOV(true);
+                        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                        {
+                            mWindowManager->setFalloutPipBoyPresentation(true);
+                            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                        }
+                        else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                            mWindowManager->setFalloutPipBoyPresentation(true);
+
+                        auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+                        if (physicalWindowManager == nullptr)
+                        {
+                            Log(Debug::Error) << "FNV Pip-Boy showcase: missing physical window manager for state="
+                                              << state.mName;
+                        }
+                        else
+                        {
+                            const int selectPaneAction = state.mPane == 0 ? MWInput::A_QuickKey4
+                                : state.mPane == 1                    ? MWInput::A_QuickKey2
+                                : state.mPane == 2                    ? MWInput::A_QuickKey3
+                                                                      : MWInput::A_QuickKey1;
+                            physicalWindowManager->handleFalloutPipBoyAction(selectPaneAction);
+                            if (state.mPane == 0)
+                            {
+                                if (physicalWindowManager->isFalloutPipBoyWorldMap() != state.mWorldMap)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                                for (int index = 0; index < state.mZoomInCount; ++index)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_ZoomIn);
+                                for (int index = 0; index < state.mPanRightCount; ++index)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                for (int index = 0; index < state.mPanDownCount; ++index)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                            }
+                            else
+                            {
+                                for (int index = 0; index < state.mSubmenu; ++index)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                for (int index = 0; index < state.mListOffset; ++index)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                                if (state.mActivateSelection)
+                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                            }
+                            fnvPipBoyShowcaseActivePane = showcaseStateIndex;
+                            Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
+                                             << " pane=" << state.mPane << " submenu=" << state.mSubmenu
+                                             << " listOffset=" << state.mListOffset << " readyFrame="
+                                             << proofWorldReadyFrames << " source=physical-wrist-actions";
+                        }
+                    }
+                }
+
+                const int paneElapsed = showcaseElapsed % fnvPipBoyShowcaseFramesPerPane;
+                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
+                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && mScreenCaptureHandler != nullptr)
+                {
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: queuing GUI-inclusive native frame state="
+                                     << state.mName << " pane=" << state.mPane
+                                     << " readyFrame=" << proofWorldReadyFrames
+                                     << " source=ScreenCaptureHandler";
+                    mScreenCaptureHandler->setFramesToCapture(1);
+                    mScreenCaptureHandler->captureNextFrame(*mViewer);
+                    ++fnvPipBoyShowcaseCapturedPanes;
+                }
+            }
+            else if (fnvPipBoyShowcaseQuitAfterCapture
+                && fnvPipBoyShowcaseCapturedPanes >= fnvPipBoyShowcaseStates.size())
+            {
+                if (fnvPipBoyShowcaseExitReadyFrame < 0)
+                {
+                    fnvPipBoyShowcaseExitReadyFrame = proofWorldReadyFrames + 45;
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: final native frame drain begins readyFrame="
+                                     << proofWorldReadyFrames << " exitReadyFrame="
+                                     << fnvPipBoyShowcaseExitReadyFrame;
+                }
+                else if (!fnvPipBoyShowcaseQuitRequested
+                    && proofWorldReadyFrames >= fnvPipBoyShowcaseExitReadyFrame)
+                {
+                    fnvPipBoyShowcaseQuitRequested = true;
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: native panel sequence complete; exiting cleanly";
+                    mStateManager->requestQuit();
+                }
+            }
+        }
     }
 
     if (!proofFNVJamRouteHeadingApplied && proofWorldReady && proofWorldReadyFrames >= 2
@@ -11912,7 +12248,7 @@ void OMW::Engine::prepareEngine()
 
     mWindowManager = std::make_unique<MWGui::WindowManager>(mWindow, mViewer, guiRoot, mResourceSystem.get(),
         mWorkQueue.get(), mCfgMgr.getLogPath(), mScriptConsoleMode, mTranslationDataStorage, mEncoding, mExportFonts,
-        Version::getOpenmwVersionDescription(), shadersSupported, mCfgMgr, hasFalloutNvContent(mContentFiles));
+        Version::getOpenmwVersionDescription(), shadersSupported, mCfgMgr);
     mEnvironment.setWindowManager(*mWindowManager);
 
     // ## VR_PATCH BEGIN
@@ -12061,7 +12397,6 @@ void OMW::Engine::prepareEngine()
     if (mGeneratedFiles != nullptr)
     {
         mLuaManager->compileObScripts(*mVFS, *mGeneratedFiles);
-        mLuaManager->compileMwseCompatMods(*mVFS, *mGeneratedFiles);
     }
 
     // scripts
