@@ -8932,15 +8932,6 @@ namespace MWRender
         Log(mPipBoyRetailWaverBound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy retail held-arm waver: source=" << pipBoyWaverKf
             << " bound=" << mPipBoyRetailWaverBound;
-        const std::string pipBoyManipulateKf
-            = "meshes/characters/_male/idleanims/pipboymanipulate.kf";
-        const std::shared_ptr<AnimSource> pipBoyManipulateSource = addSingleAnimSource(
-            pipBoyManipulateKf, std::string(skeleton), false, {}, "pipboymanipulate");
-        mPipBoyRetailManipulateBound = pipBoyManipulateSource != nullptr && hasAnimation("pipboymanipulate")
-            && getAnimationSourceName("pipboymanipulate") == pipBoyManipulateKf;
-        Log(mPipBoyRetailManipulateBound ? Debug::Info : Debug::Error)
-            << "FNV Pip-Boy retail right-arm manipulation: source=" << pipBoyManipulateKf
-            << " bound=" << mPipBoyRetailManipulateBound;
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
@@ -9107,8 +9098,6 @@ namespace MWRender
                 disable("pipboy");
             if (isPlaying("pipboywaver"))
                 disable("pipboywaver");
-            if (isPlaying("pipboymanipulate"))
-                disable("pipboymanipulate");
             mPipBoyRetailInteractionPoseHeld = false;
             mPipBoyInteractionProgress = 0.f;
             resetActiveGroups();
@@ -9126,8 +9115,15 @@ namespace MWRender
 
         if (mPipBoyRetailInteractionBound)
         {
+            const bool held = mPipBoyPresentationProgress >= 0.999f;
+            if (!held && !isPlaying("pipboy"))
+                play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f,
+                    "start", "stop", 0.f, 0, false);
+            if (!held && isPlaying("pipboywaver"))
+                disable("pipboywaver");
+
             auto raiseState = mStates.find("pipboy");
-            if (raiseState != mStates.end())
+            if (!held && raiseState != mStates.end())
             {
                 const float sequenceSpan
                     = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
@@ -9138,20 +9134,34 @@ namespace MWRender
                 raiseState->second.mPlaying = true;
                 raiseState->second.mAutoDisable = false;
             }
-            mPipBoyRetailInteractionPoseHeld
-                = raiseState != mStates.end() && mPipBoyPresentationProgress >= 0.999f;
-            if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+            mPipBoyRetailInteractionPoseHeld = held && mPipBoyRetailWaverBound;
+            if (mPipBoyRetailInteractionPoseHeld)
             {
-                play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
-                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+                if (isPlaying("pipboy"))
+                    disable("pipboy");
+                if (!isPlaying("pipboywaver"))
+                {
+                    play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
+                        "start", "stop", 0.f, 0, false);
+                }
+                auto waverState = mStates.find("pipboywaver");
+                if (waverState != mStates.end())
+                {
+                    const float heldTime = std::clamp(waverState->second.mStartTime + 0.196f,
+                        waverState->second.mStartTime,
+                        std::max(waverState->second.mStartTime, waverState->second.mStopTime - 0.001f));
+                    waverState->second.setTime(heldTime);
+                    waverState->second.mSpeedMult = 0.f;
+                    waverState->second.mPlaying = true;
+                    waverState->second.mAutoDisable = false;
+                }
             }
             resetActiveGroups();
             if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
                 Log(Debug::Info) << "FNV Pip-Boy replay stack held: raise="
                                  << getAnimationSourceName("pipboy") << " left="
-                                 << getAnimationSourceName("pipboywaver") << " right="
-                                 << getAnimationSourceName("pipboymanipulate")
-                                 << " completeArmMeshes=1 screenAndControls=live";
+                                 << getAnimationSourceName("pipboywaver") << " right=retail-resting-hand"
+                                 << " heldSample=0.196 completeArmMeshes=1 screenAndControls=live";
         }
 
         mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
@@ -9167,48 +9177,11 @@ namespace MWRender
         if (mPipBoyPresentationProgress <= 0.001f)
             return;
         if (mPipBoyInteractionProgress <= 0.001f)
-        {
-            if (isPlaying("pipboymanipulate"))
-            {
-                disable("pipboymanipulate");
-                resetActiveGroups();
-            }
             return;
-        }
-
-        const float phase = 1.f - mPipBoyInteractionProgress;
-        if (mPipBoyPresentationRoot == nullptr || !mPipBoyRetailManipulateBound)
-            return;
-
-        if (!isPlaying("pipboymanipulate"))
-            play("pipboymanipulate", Animation::AnimPriority(12), BlendMask_RightArm, false, 1.f,
-                "start", "stop", 0.f, 0, false);
-        auto manipulateState = mStates.find("pipboymanipulate");
-        if (manipulateState == mStates.end())
-            return;
-        const float clipStart = manipulateState->second.mStartTime;
-        const float clipStop = std::max(clipStart, manipulateState->second.mStopTime - 0.001f);
-        const float contactStart = std::clamp(1.9f, clipStart, clipStop);
-        const float contactStop = std::clamp(2.5f, contactStart, clipStop);
-        manipulateState->second.setTime(
-            contactStart + (contactStop - contactStart) * std::clamp(phase, 0.f, 1.f));
-        manipulateState->second.mSpeedMult = 0.f;
-        manipulateState->second.mPlaying = true;
-        manipulateState->second.mAutoDisable = false;
-        resetActiveGroups();
-        if (mSkeleton != nullptr)
-        {
-            mSkeleton->markBoneMatriceDirty();
-            mSkeleton->updateBoneMatrices(0);
-        }
-        unsigned int holders = 0;
-        unsigned int refreshed = 0;
-        forceFalloutRigGeometryUpdate(mFirstPersonRightHandPart.get(), holders, refreshed);
         if (previousProgress > 0.55f && mPipBoyInteractionProgress <= 0.55f)
-            Log(Debug::Info) << "FNV Pip-Boy replay stack manipulate: sample=" << phase
+            Log(Debug::Info) << "FNV Pip-Boy replay stack physical input: pulse=" << mPipBoyInteractionProgress
                              << " variant=" << mPipBoyArmTargetVariant
-                             << " source=" << getAnimationSourceName("pipboymanipulate")
-                             << " handGeometryRefreshed=" << refreshed;
+                             << " firstPersonArmSource=retail-resting-hand controls=authored-nif";
     }
 
     void ESM4NpcAnimation::setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,

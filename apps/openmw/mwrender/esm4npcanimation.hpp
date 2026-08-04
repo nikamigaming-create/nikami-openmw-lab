@@ -127,7 +127,6 @@ namespace MWRender
         float mPipBoyLastMapPanY = 0.f;
         bool mPipBoyRetailInteractionBound = false;
         bool mPipBoyRetailWaverBound = false;
-        bool mPipBoyRetailManipulateBound = false;
         bool mPipBoyRetailBaseIdleBound = false;
         bool mPipBoyRetailBaseAimBound = false;
         bool mPipBoyControlsInitialized = false;
