@@ -9762,16 +9762,17 @@ namespace MWRender
             auto raiseState = mStates.find("pipboy");
             if (raiseState != mStates.end())
             {
-                // Retail reaches the connected face-level pose at the terminal
-                // pipboy.kf sample (oracle frames 950-952).  Drive that exact
-                // authored curve in both directions: opening advances to the
-                // terminal sample and closing reverses to frame zero.  Never
-                // disable the sequence halfway through the lowering motion.
+                // The retained retail scene-graph trace reaches Pip-Boy mode 3
+                // at frame 934 with pipboy.kf at exactly 0.333333 seconds. The
+                // clip continues to 0.733333 as the toggle lowers, so cap the
+                // authored open/close curve at retail's recorded held pose.
+                constexpr float retailRaisedContactSeconds = 10.f / 30.f;
                 const float sequenceSpan
                     = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
                 const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
                     * (3.f - 2.f * mPipBoyPresentationProgress);
-                raiseState->second.setTime(raiseState->second.mStartTime + sequenceSpan * authoredProgress);
+                const float raisedSpan = std::min(sequenceSpan, retailRaisedContactSeconds);
+                raiseState->second.setTime(raiseState->second.mStartTime + raisedSpan * authoredProgress);
                 raiseState->second.mSpeedMult = 0.f;
                 raiseState->second.mPlaying = true;
                 raiseState->second.mAutoDisable = false;
@@ -9780,10 +9781,11 @@ namespace MWRender
                 = raiseState != mStates.end() && mPipBoyPresentationProgress >= 0.999f;
             resetActiveGroups();
             if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
-                Log(Debug::Info)
-                << "FNV Pip-Boy retail held-arm: source=" << getAnimationSourceName("pipboy")
-                << " sample=terminal connectedPose=" << mPipBoyRetailInteractionPoseHeld
-                << " conflictingWaver=disabled";
+                Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
+                                 << getAnimationSourceName("pipboy")
+                                 << " range=start-to-retail-mode3 sample=0.333333 waver=disabled"
+                                 << " right=retail-pipboy-kf"
+                                 << " completeArmMeshes=1 screenAndControls=live";
         }
 
         mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
