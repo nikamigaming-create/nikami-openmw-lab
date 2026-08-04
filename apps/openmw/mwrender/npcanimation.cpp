@@ -402,6 +402,8 @@ namespace MWRender
                 traverse(node, nv);
         }
 
+        void setFov(float fov) { mFov = fov; }
+
     private:
         float mFov;
     };
@@ -426,6 +428,24 @@ namespace MWRender
         configureFirstPersonRenderBin(root);
         root.setNodeMask(Mask_FirstPerson);
         root.addCullCallback(new OverrideFieldOfViewCallback(fieldOfView));
+    }
+
+    bool setFirstPersonActorRootFieldOfView(osg::Group& root, float fieldOfView)
+    {
+        if (!std::isfinite(fieldOfView) || fieldOfView <= 0.f || fieldOfView >= 180.f)
+            return false;
+
+        osg::Callback* callback = root.getCullCallback();
+        while (callback != nullptr)
+        {
+            if (OverrideFieldOfViewCallback* const override = dynamic_cast<OverrideFieldOfViewCallback*>(callback))
+            {
+                override->setFov(fieldOfView);
+                return true;
+            }
+            callback = callback->getNestedCallback();
+        }
+        return false;
     }
 
     void NpcAnimation::setRenderBin()

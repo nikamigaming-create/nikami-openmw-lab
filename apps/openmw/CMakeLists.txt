@@ -28,6 +28,13 @@ add_openmw_dir (mwrender
     falloutlodselection actorutil distortion animationpriority bonegroup blendmask animblendcontroller
     )
 
+# This translation unit contains the large Fallout actor and Pip-Boy integration path.
+# Keep local MSVC iteration practical: /Od only affects this file, while the rest of
+# RelWithDebInfo retains its normal optimization level.
+if(MSVC)
+    set_source_files_properties(mwrender/esm4npcanimation.cpp PROPERTIES COMPILE_OPTIONS "/Od")
+endif()
+
 add_openmw_dir (mwinput
     actions actionmanager bindingsmanager controllermanager controlswitch
     inputmanagerimp mousemanager keyboardmanager sensormanager gyromanager
@@ -203,6 +210,9 @@ if(BUILD_OPENMW)
     endif()
 
     target_link_libraries(openmw openmw-lib)
+
+    openmw_add_executable(fnv-save330-denominator fnvsave330denominator.cpp)
+    target_link_libraries(fnv-save330-denominator openmw-lib)
 
     # Workaround necessary to ensure osgAnimation::MatrixLinearSampler dynamic casts work under Clang
     # NOTE: it's unclear whether the broken behavior is spec-compliant

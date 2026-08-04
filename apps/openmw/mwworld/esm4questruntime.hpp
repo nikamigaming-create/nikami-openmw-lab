@@ -397,6 +397,28 @@ namespace MWWorld
         bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions);
 
         int countSavedGameRecords() const;
+        std::size_t getStateCount() const { return mStates.size(); }
+        std::size_t getStageValueCount() const
+        {
+            std::size_t count = 0;
+            for (const auto& [_, state] : mStates)
+                count += state.mStageDone.size();
+            return count;
+        }
+        std::size_t getObjectiveValueCount() const
+        {
+            std::size_t count = 0;
+            for (const auto& [_, state] : mStates)
+                count += state.mObjectiveStatus.size();
+            return count;
+        }
+        std::size_t getVariableValueCount() const
+        {
+            std::size_t count = 0;
+            for (const auto& [_, state] : mStates)
+                count += state.mVariables.size();
+            return count;
+        }
         void write(ESM::ESMWriter& writer) const;
         void readRecord(ESM::ESMReader& reader);
 

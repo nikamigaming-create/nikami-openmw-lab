@@ -616,11 +616,19 @@ namespace
         });
     }
 
+    bool isFalloutPlayerActor(const MWWorld::Ptr& ptr)
+    {
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        return world != nullptr && ptr == world->getPlayerPtr()
+            && world->getFalloutPlayerRuntimeState().isInitialized();
+    }
+
     std::optional<int> getFalloutActiveWeaponType(const MWWorld::Ptr& ptr)
     {
         const bool creature = ptr.getType() == ESM4::Creature::sRecordId;
         const bool npc = ptr.getType() == ESM::REC_NPC_4;
-        if (!creature && !npc)
+        const bool falloutPlayer = isFalloutPlayerActor(ptr);
+        if (!creature && !npc && !falloutPlayer)
             return std::nullopt;
         if (creature)
         {
@@ -628,7 +636,7 @@ namespace
             if (record == nullptr || !record->mIsFONV)
                 return std::nullopt;
         }
-        else
+        else if (npc)
         {
             const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
             if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
@@ -1374,7 +1382,7 @@ namespace MWMechanics
         std::uint8_t reloadAnimation = 0;
         if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
             reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
-        else if (mPtr.getType() == ESM::REC_NPC_4)
+        else if (mPtr.getType() == ESM::REC_NPC_4 || isFalloutPlayerActor(mPtr))
         {
             if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
                 reloadAnimation = weapon->mData.reloadAnim;
@@ -1458,7 +1466,7 @@ namespace MWMechanics
             std::uint8_t reloadAnimation = 0;
             if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
                 reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
-            else if (mPtr.getType() == ESM::REC_NPC_4)
+            else if (mPtr.getType() == ESM::REC_NPC_4 || isFalloutPlayerActor(mPtr))
             {
                 if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
                     reloadAnimation = weapon->mData.reloadAnim;
@@ -2033,8 +2041,9 @@ namespace MWMechanics
 
             if (const std::optional<int> falloutWeaponType = getFalloutActiveWeaponType(mPtr))
             {
-                mFalloutWeapon
-                    = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
+                mFalloutWeapon = (mPtr.getType() == ESM::REC_NPC_4 || isFalloutPlayerActor(mPtr))
+                    ? MWClass::ESM4Npc::getEquippedWeapon(mPtr)
+                    : nullptr;
                 mWeaponType = *falloutWeaponType;
                 if (mWeaponType != ESM::Weapon::None)
                 {
@@ -2806,17 +2815,27 @@ namespace MWMechanics
                               << static_cast<int>(mUpperBodyState) << " reason=" << reason;
             return false;
         };
+        // Reload is an ordinary player action and can arrive while the previous
+        // Fallout weapon is being put away. Keep that request attached to the
+        // existing production transition; the already-authored equip completion
+        // below executes it only after the newly equipped weapon is live. Do not
+        // reject it based on the outgoing weapon's incompatible ammo contract.
+        if (mUpperBodyState == UpperBodyState::Equipping || mUpperBodyState == UpperBodyState::Unequipping)
+        {
+            mFalloutReloadQueued = true;
+            Log(Debug::Info) << "FNV reload queued across weapon transition: actor=" << mPtr.toString()
+                             << " outgoingWeapon="
+                             << (mFalloutWeapon != nullptr
+                                     ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                     : std::string("none"))
+                             << " upperBodyState=" << static_cast<int>(mUpperBodyState)
+                             << " path=CharacterController::reloadFalloutWeapon";
+            return true;
+        }
         if (mFalloutWeapon == nullptr || !isFalloutWeaponType(mWeaponType)
             || isFalloutThrownWeapon(*mFalloutWeapon) || mFalloutWeapon->mData.ammoUse == 0
             || mFalloutWeapon->mData.clipSize == 0)
             return fail("weapon-state-not-reloadable");
-        if (mUpperBodyState == UpperBodyState::Equipping)
-        {
-            mFalloutReloadQueued = true;
-            Log(Debug::Info) << "FNV reload queued until weapon equip completes: actor=" << mPtr.toString()
-                             << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId);
-            return true;
-        }
         if (mUpperBodyState != UpperBodyState::WeaponEquipped)
             return fail("weapon-action-in-progress");
 
@@ -4481,8 +4500,9 @@ namespace MWMechanics
         if (falloutWeaponType)
         {
             weaptype = *falloutWeaponType;
-            requestedFalloutWeapon
-                = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
+            requestedFalloutWeapon = (mPtr.getType() == ESM::REC_NPC_4 || isFalloutPlayerActor(mPtr))
+                ? MWClass::ESM4Npc::getEquippedWeapon(mPtr)
+                : nullptr;
             weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
         }
         else if (cls.hasInventoryStore(mPtr))

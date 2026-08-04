@@ -518,6 +518,11 @@ namespace SceneUtil
         dirtyBound();
     }
 
+    void RigGeometry::requestFalloutHandPoseAudit()
+    {
+        mFalloutHandPoseAuditRequested = true;
+    }
+
     bool RigGeometry::refreshFalloutSkinningForCurrentPose()
     {
         if (!mData || !mSourceGeometry || !isFalloutCharacterRig() || mNodes.empty())
@@ -554,6 +559,79 @@ namespace SceneUtil
                 *mSkinToSkelMatrix, mData->mTransform, mInverseSkinToSkeletonMatrix);
         else
             transform = mData->mTransform;
+
+        // This is an opt-in first-person right-hand diagnostic. It compares
+        // authored bind-space candidates without changing the selected
+        // skinning basis, pose, or Pip-Boy interaction behavior.
+        if (mFalloutHandPoseAuditRequested && !mLoggedFalloutHandPoseAudit
+            && std::getenv("OPENMW_FNV_HAND_POSE_AUDIT") != nullptr
+            && Misc::StringUtils::ciFind(getName(), "righthand") != std::string_view::npos)
+        {
+            mLoggedFalloutHandPoseAudit = true;
+            mFalloutHandPoseAuditRequested = false;
+            const auto candidateBounds = [&](std::string_view mode, bool sourceMode) {
+                osg::BoundingBox box;
+                box.init();
+                if (sourceMode)
+                {
+                    for (const osg::Vec3f& vertex : *positionSrc)
+                        box.expandBy(vertex);
+                    return box;
+                }
+
+                std::vector<osg::Matrixf> candidateMatrices(mNodes.size());
+                std::vector<Bone*>::const_iterator candidateBone = mNodes.begin();
+                std::vector<BoneInfo>::const_iterator candidateInfo = mData->mBones.begin();
+                for (osg::Matrixf& candidateMatrix : candidateMatrices)
+                {
+                    if (*candidateBone != nullptr)
+                        candidateMatrix = composeFalloutBoneMatrix(*candidateInfo, *candidateBone, mode);
+                    ++candidateBone;
+                    ++candidateInfo;
+                }
+
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (index < candidateMatrices.size() && mNodes[index] != nullptr)
+                            addWeightedFalloutMatrix(resultMat, candidateMatrices[index], weight);
+                    }
+                    resultMat *= transform;
+                    for (unsigned short vertex : vertices)
+                    {
+                        if (vertex < positionSrc->size())
+                            box.expandBy(resultMat.preMult((*positionSrc)[vertex]));
+                    }
+                }
+                return box;
+            };
+
+            const auto describeBounds = [](const osg::BoundingBox& box) {
+                std::ostringstream value;
+                if (!box.valid())
+                    return std::string("invalid");
+                value << "center=(" << (box.xMin() + box.xMax()) * 0.5f << ','
+                      << (box.yMin() + box.yMax()) * 0.5f << ',' << (box.zMin() + box.zMax()) * 0.5f
+                      << ") extent=(" << box.xMax() - box.xMin() << ',' << box.yMax() - box.yMin() << ','
+                      << box.zMax() - box.zMin() << ')';
+                return value.str();
+            };
+
+            Log(Debug::Info) << "FNV/ESM4 hand pose audit: rig=" << getName()
+                             << " selected=" << falloutSkinningMode << " source="
+                             << describeBounds(candidateBounds("source", true))
+                             << " invBindThenSkeleton="
+                             << describeBounds(candidateBounds("invBindThenSkeleton", false))
+                             << " skeleton=" << describeBounds(candidateBounds("skeleton", false))
+                             << " skeletonThenInvBind="
+                             << describeBounds(candidateBounds("skeletonThenInvBind", false))
+                             << " bindThenSkeleton="
+                             << describeBounds(candidateBounds("bindThenSkeleton", false))
+                             << " skeletonThenBind="
+                             << describeBounds(candidateBounds("skeletonThenBind", false));
+        }
 
         bool refreshed = false;
         for (osg::ref_ptr<osg::Geometry>& geometry : mGeometry)

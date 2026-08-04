@@ -92,6 +92,8 @@ namespace MWWorld
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -145,6 +147,8 @@ namespace MWWorld
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -164,6 +168,8 @@ namespace MWWorld
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mVatsActive = false;
     }
 
@@ -254,6 +260,15 @@ namespace MWWorld
         const float maximum = 65.f + 3.f * agility + mPermanentModifiers[ActionPointsActorValue]
             + mTemporaryModifiers[ActionPointsActorValue];
         return std::isfinite(maximum) ? std::optional<float>(maximum) : std::nullopt;
+    }
+
+    std::optional<FalloutRuntimeActorValueModifierStack> FalloutPlayerRuntimeState::getActorValueModifierStack(
+        std::uint32_t actorValue) const
+    {
+        if (!mBase || actorValue >= ActorValueCount)
+            return std::nullopt;
+        return FalloutRuntimeActorValueModifierStack{ mPermanentModifiers[actorValue], mDamageModifiers[actorValue],
+            mTemporaryModifiers[actorValue] };
     }
 
     float FalloutPlayerRuntimeState::getSavedDamageModifier(std::uint32_t actorValue) const
@@ -496,6 +511,30 @@ namespace MWWorld
         writer.writeHNT("FTEN", static_cast<std::uint8_t>(mFastTravelEnabled));
         writer.writeHNT("WTEN", static_cast<std::uint8_t>(mWaitEnabled));
         writer.writeHNT("FTKP", static_cast<std::uint8_t>(mFastTravelKeepOnCellChange));
+        std::uint32_t modifierCount = 0;
+        for (std::size_t actorValue = 0; actorValue < ActorValueCount; ++actorValue)
+        {
+            if (mPermanentModifiers[actorValue] != 0.f)
+                ++modifierCount;
+            if (mDamageModifiers[actorValue] != 0.f)
+                ++modifierCount;
+            if (mTemporaryModifiers[actorValue] != 0.f)
+                ++modifierCount;
+        }
+        writer.writeHNT("VCNT", modifierCount);
+        const auto writeModifier = [&](std::size_t actorValue, std::uint8_t kind, float value) {
+            if (value == 0.f)
+                return;
+            writer.writeHNT("VACT", static_cast<std::uint8_t>(actorValue));
+            writer.writeHNT("VKND", kind);
+            writer.writeHNT("VVAL", value);
+        };
+        for (std::size_t actorValue = 0; actorValue < ActorValueCount; ++actorValue)
+        {
+            writeModifier(actorValue, 0, mPermanentModifiers[actorValue]);
+            writeModifier(actorValue, 1, mDamageModifiers[actorValue]);
+            writeModifier(actorValue, 2, mTemporaryModifiers[actorValue]);
+        }
         writer.endRecord(ESM::REC_FPLR);
     }
 
@@ -605,6 +644,43 @@ namespace MWWorld
             if (fastTravelEnabled != 0 && waitEnabled == 0)
                 invalidSave("fast travel cannot be enabled while waiting is disabled");
         }
+        std::array<float, ActorValueCount> permanentModifiers{};
+        std::array<float, ActorValueCount> damageModifiers{};
+        std::array<float, ActorValueCount> temporaryModifiers{};
+        if (version >= 8)
+        {
+            std::uint32_t modifierCount = 0;
+            reader.getHNT(modifierCount, "VCNT");
+            if (modifierCount > ActorValueCount * 3)
+                invalidSave("too many actor-value modifier entries");
+            std::array<std::array<bool, ActorValueCount>, 3> seen{};
+            for (std::uint32_t index = 0; index < modifierCount; ++index)
+            {
+                std::uint8_t actorValue = 0;
+                std::uint8_t kind = 0;
+                float value = 0.f;
+                reader.getHNT(actorValue, "VACT");
+                reader.getHNT(kind, "VKND");
+                reader.getHNT(value, "VVAL");
+                if (actorValue >= ActorValueCount || kind > 2 || !std::isfinite(value) || value == 0.f)
+                    invalidSave("invalid actor-value modifier entry");
+                if (seen[kind][actorValue])
+                    invalidSave("duplicate actor-value modifier entry");
+                seen[kind][actorValue] = true;
+                switch (kind)
+                {
+                    case 0:
+                        permanentModifiers[actorValue] = value;
+                        break;
+                    case 1:
+                        damageModifiers[actorValue] = value;
+                        break;
+                    case 2:
+                        temporaryModifiers[actorValue] = value;
+                        break;
+                }
+            }
+        }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
@@ -625,9 +701,9 @@ namespace MWWorld
 
         // Apply only after the whole record and every invariant has been validated.
         mCurrent = restored;
-        mPermanentModifiers = {};
-        mDamageModifiers = {};
-        mTemporaryModifiers = {};
+        mPermanentModifiers = permanentModifiers;
+        mDamageModifiers = damageModifiers;
+        mTemporaryModifiers = temporaryModifiers;
         mPerks = std::move(perks);
         mReputations = std::move(reputations);
         mMapMarkerStates = std::move(mapMarkerStates);

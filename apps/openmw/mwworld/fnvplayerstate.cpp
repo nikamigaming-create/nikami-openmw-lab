@@ -752,6 +752,8 @@ namespace MWWorld
                 return loadFailure("resolved native FNV Player state has an invalid authored inventory item");
             if (!inventoryTotals.emplace(item.mRecord, item.mCount).second)
                 return loadFailure("resolved native FNV Player state has duplicate authored inventory identities");
+            plan.mPlayer.mInventoryContributions.push_back(FalloutInventoryContribution{
+                item.mRecord, item.mRecord, item.mCount, false, 0, 0, 0, 0 });
         }
         for (const ESM4::FONVSavePlayerInventoryEntry& entry : processInventory.mInventoryEntries)
         {
@@ -767,6 +769,9 @@ namespace MWWorld
                 return loadFailure("FNV save Player " + record.mError);
             const ESM::FormId inventoryRecord = *record.mRecord;
             inventoryTotals[inventoryRecord] += static_cast<std::int64_t>(entry.mDelta.mValue);
+            plan.mPlayer.mInventoryContributions.push_back(FalloutInventoryContribution{ inventoryRecord,
+                *normalized, entry.mDelta.mValue, true, entry.mRange.mOffset, entry.mRange.mSize,
+                entry.mType.mEncoded.mRange.mOffset, entry.mType.mEncoded.mRange.mSize });
 
             for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
             {

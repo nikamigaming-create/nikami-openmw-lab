@@ -86,6 +86,23 @@ namespace MWWorld
         bool operator==(const FalloutInventoryItem&) const = default;
     };
 
+    // The normalized inventory total is the sum of authored Player inventory and
+    // save-time deltas. Keep the summands so a denominator exporter can prove
+    // where every final count came from without decoding the save a second time.
+    struct FalloutInventoryContribution
+    {
+        ESM::FormId mRecord;
+        ESM::FormId mSourceRecord;
+        std::int64_t mDelta = 0;
+        bool mFromSave = false;
+        std::uint64_t mSourceOffset = 0;
+        std::uint64_t mSourceBytes = 0;
+        std::uint64_t mFormIdOffset = 0;
+        std::uint64_t mFormIdBytes = 0;
+
+        bool operator==(const FalloutInventoryContribution&) const = default;
+    };
+
     struct FalloutPlayerState
     {
         static constexpr std::size_t SpecialCount = static_cast<std::size_t>(FalloutSpecial::Count);
@@ -258,6 +275,7 @@ namespace MWWorld
         std::int16_t mCurrentWeaponAction = -1;
         std::uint64_t mCurrentWeaponActionSourceOffset = 0;
         std::vector<FalloutInventoryItem> mInventoryItems;
+        std::vector<FalloutInventoryContribution> mInventoryContributions;
         std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;
         std::vector<HotkeyItem> mHotkeyItems;

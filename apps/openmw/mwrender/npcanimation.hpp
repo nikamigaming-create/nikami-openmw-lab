@@ -29,6 +29,11 @@ namespace MWRender
     // NpcAnimation first-person path to another native actor root.
     void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView);
 
+    // Update the existing first-person projection callback without replacing the
+    // root's render-bin or callback chain. Native Fallout Pip-Boy mode changes
+    // the model FOV while keeping the world-camera FOV intact.
+    bool setFirstPersonActorRootFieldOfView(osg::Group& root, float fieldOfView);
+
     class RotateController;
     class HeadAnimationTime;
 

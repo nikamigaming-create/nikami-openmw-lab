@@ -839,6 +839,42 @@ osg::Group {
         EXPECT_EQ(winningSource.at("hit1"), hitSource);
     }
 
+    TEST(NifOsgFalloutKfTest, shouldKeepSelectedPipBoyH2HIdleFromStealingProductionIdle)
+    {
+        static constexpr std::string_view productionIdleSource = "meshes/characters/_1stperson/mtidle.kf";
+        static constexpr std::string_view pipBoyH2hIdleSource = "meshes/characters/_1stperson/h2hidle.kf";
+
+        std::map<std::string, std::string> winningSource;
+        winningSource.emplace("idle", std::string(productionIdleSource));
+
+        // The raw h2hidle clip carries its legacy idle group and PRN marker,
+        // while the caller adds the scoped Pip-Boy lifecycle alias.
+        SceneUtil::TextKeyMap h2hIdleKeys;
+        h2hIdleKeys.emplace(0.f, "start");
+        h2hIdleKeys.emplace(0.f, "idle: start");
+        h2hIdleKeys.emplace(0.f, "idle: loop start");
+        h2hIdleKeys.emplace(0.0333333015f, "prn: bip01 r hand");
+        h2hIdleKeys.emplace(0.333333254f, "end");
+        h2hIdleKeys.emplace(0.333333254f, "idle: loop stop");
+        h2hIdleKeys.emplace(0.333333254f, "idle: stop");
+        h2hIdleKeys.emplace(0.f, "pipboybaseidle: start");
+        h2hIdleKeys.emplace(0.333333254f, "pipboybaseidle: stop");
+
+        EXPECT_TRUE(h2hIdleKeys.hasGroupStart("idle"));
+        EXPECT_TRUE(h2hIdleKeys.hasGroupStart("pipboybaseidle"));
+        EXPECT_TRUE(isolateFalloutSelectedSourceTextKeys(h2hIdleKeys, "pipboybaseidle", { "idle" }));
+        EXPECT_FALSE(h2hIdleKeys.hasGroupStart("idle"));
+        EXPECT_TRUE(h2hIdleKeys.hasGroupStart("pipboybaseidle"));
+        EXPECT_NE(std::find_if(h2hIdleKeys.begin(), h2hIdleKeys.end(),
+                      [](const auto& value) { return value.second == "prn: bip01 r hand"; }),
+            h2hIdleKeys.end());
+
+        for (const std::string& group : h2hIdleKeys.getGroups())
+            winningSource[group] = std::string(pipBoyH2hIdleSource);
+        EXPECT_EQ(winningSource.at("idle"), productionIdleSource);
+        EXPECT_EQ(winningSource.at("pipboybaseidle"), pipBoyH2hIdleSource);
+    }
+
     TEST(NifOsgFalloutKfTest, shouldLoadBethesdaRotationalAccumulationTransform)
     {
         Nif::NiTransformInterpolator interpolator;

@@ -57,6 +57,7 @@
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/fnvmovement.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "esm4base.hpp"
@@ -1696,7 +1697,22 @@ namespace MWClass
 
     const ESM4::Weapon* ESM4Npc::getEquippedWeapon(const MWWorld::Ptr& ptr)
     {
-        return getCustomData(ptr).mEquippedWeapon;
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+            return getCustomData(ptr).mEquippedWeapon;
+
+        // The native Fallout player is represented by OpenMW's ordinary ESM3
+        // Player/NPC object. It deliberately does not own ESM4NpcCustomData;
+        // its normal ActionEquip path makes Slot_CarriedRight the authoritative
+        // selected weapon. Read that production slot directly instead of
+        // crossing the NPC-only custom-data boundary.
+        if (!ptr.getClass().hasInventoryStore(ptr))
+            return nullptr;
+        const MWWorld::InventoryStore& inventory = ptr.getClass().getInventoryStore(ptr);
+        const MWWorld::ConstContainerStoreIterator right
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        return right != inventory.end() && right->getType() == ESM4::Weapon::sRecordId
+            ? right->get<ESM4::Weapon>()->mBase
+            : nullptr;
     }
 
     bool ESM4Npc::isFurnitureSeated(const MWWorld::Ptr& ptr)
@@ -1769,6 +1785,8 @@ namespace MWClass
 
     bool ESM4Npc::setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon)
     {
+        if (ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
         ESM4NpcCustomData& data = getCustomData(ptr);
         if (data.mEquippedWeapon == weapon)
             return false;

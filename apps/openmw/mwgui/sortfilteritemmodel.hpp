@@ -40,6 +40,11 @@ namespace MWGui
         static constexpr int Category_Apparel = (1 << 2);
         static constexpr int Category_Misc = (1 << 3);
         static constexpr int Category_Magic = (1 << 4);
+        // Fallout's Pip-Boy has separate MISC and AMMO tabs.  Keep
+        // ammunition distinct from the generic miscellaneous bucket so the
+        // physical production path can exercise the same five categories as
+        // the retail device without changing the underlying inventory model.
+        static constexpr int Category_Ammo = (1 << 5);
         static constexpr int Category_All = 255;
 
         static constexpr int Filter_OnlyIngredients = (1 << 0);

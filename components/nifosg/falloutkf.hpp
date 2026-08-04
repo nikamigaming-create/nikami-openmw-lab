@@ -2,6 +2,7 @@
 #define OPENMW_COMPONENTS_NIFOSG_FALLOUTKF_HPP
 
 #include <cmath>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -168,6 +169,27 @@ namespace NifOsg
         const bool removedIdle = textKeys.eraseGroup("idle");
         const bool removedIdle2 = textKeys.eraseGroup("idle2");
         return removedIdle || removedIdle2;
+    }
+
+    /// A caller may select one exact Fallout source for a semantic action while
+    /// that KF also retains one or more conflicting legacy action groups.
+    /// Sources are resolved in reverse insertion order, so leave the selected
+    /// group and non-action events intact while removing only the supplied
+    /// stale aliases before the source is installed.
+    inline bool isolateFalloutSelectedSourceTextKeys(
+        SceneUtil::TextKeyMap& textKeys, std::string_view semanticGroup,
+        std::initializer_list<std::string_view> conflictingGroups)
+    {
+        if (semanticGroup.empty() || !textKeys.hasGroupStart(semanticGroup))
+            return false;
+
+        bool changed = false;
+        for (const std::string_view conflictingGroup : conflictingGroups)
+        {
+            if (!conflictingGroup.empty() && conflictingGroup != semanticGroup)
+                changed = textKeys.eraseGroup(conflictingGroup) || changed;
+        }
+        return changed;
     }
 }
 

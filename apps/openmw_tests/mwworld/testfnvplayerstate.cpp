@@ -861,6 +861,13 @@ namespace
         EXPECT_EQ(findInventoryCount(form(0x00015038, 1)), 1);
         EXPECT_EQ(findInventoryCount(form(0x00025b83, 1)), 1);
         EXPECT_EQ(findInventoryCount(form(0x0002935b, 1)), 50);
+        ASSERT_EQ(plan.mPlayer.mInventoryContributions.size(), 52u);
+        EXPECT_EQ(plan.mPlayer.mInventoryContributions[0],
+            (MWWorld::FalloutInventoryContribution{ form(0x00015038, 1), form(0x00015038, 1), 1, false, 0, 0, 0, 0 }));
+        EXPECT_TRUE(plan.mPlayer.mInventoryContributions[2].mFromSave);
+        EXPECT_EQ(plan.mPlayer.mInventoryContributions[2].mRecord, form(0x000340fd, 1));
+        EXPECT_EQ(plan.mPlayer.mInventoryContributions[2].mSourceRecord, form(0x000340fd, 1));
+        EXPECT_EQ(plan.mPlayer.mInventoryContributions[2].mDelta, 1);
         EXPECT_EQ(plan.mTransform.mCellOrWorldspaceRecord, form(0x000da726, 1));
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[0], -72392.84375f);
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);

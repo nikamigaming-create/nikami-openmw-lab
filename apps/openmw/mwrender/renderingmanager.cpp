@@ -74,6 +74,8 @@
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/debug/debugdraw.hpp>
@@ -89,6 +91,7 @@
 #include "../mwworld/scene.hpp"
 
 #include "../mwgui/postprocessorhud.hpp"
+#include "../mwgui/fnvmapmarker.hpp"
 #include "../mwgui/windowmanagerimp.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -544,6 +547,104 @@ namespace MWRender
         }
 
         bool drawPipBoyRetailStatusImage(osg::Image& target, const osg::Image& source, int left, int top,
+            int width, int height, const std::array<unsigned char, 4>& color);
+
+        std::optional<MWGui::FalloutWorldMapGeometry> getPipBoyFalloutWorldMapGeometry()
+        {
+            const MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return std::nullopt;
+
+            const auto& worlds = world->getStore().get<ESM4::World>();
+            for (std::size_t index = 0; index < worlds.getSize(); ++index)
+            {
+                const ESM4::World* const record = worlds.at(index);
+                if (record == nullptr || record->mEditorId != "WastelandNV" || record->mMap.width == 0
+                    || record->mMap.height == 0 || record->mMap.NWcellX >= record->mMap.SEcellX
+                    || record->mMap.NWcellY <= record->mMap.SEcellY)
+                    continue;
+                return MWGui::FalloutWorldMapGeometry{ static_cast<float>(record->mMap.NWcellX),
+                    static_cast<float>(record->mMap.NWcellY), static_cast<float>(record->mMap.SEcellX),
+                    static_cast<float>(record->mMap.SEcellY), static_cast<float>(record->mMap.width),
+                    static_cast<float>(record->mMap.height) };
+            }
+            return std::nullopt;
+        }
+
+        std::string getPipBoyFalloutMapMarkerSignature()
+        {
+            const MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return {};
+
+            std::ostringstream signature;
+            const auto& references = world->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* const marker = references.at(index);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                    continue;
+                const std::uint8_t state = world->getFalloutMapMarkerState(marker->mId);
+                if (state == 0)
+                    continue;
+                signature << marker->mId.toUint32() << ':' << static_cast<unsigned int>(state) << ';';
+            }
+            return signature.str();
+        }
+
+        std::size_t drawPipBoyFalloutMapMarkers(osg::Image& target, Resource::ResourceSystem* resourceSystem,
+            float mapAspect, float mapZoom, float mapPanX, float mapPanY,
+            const std::array<unsigned char, 4>& color)
+        {
+            const MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const std::optional<MWGui::FalloutWorldMapGeometry> geometry = getPipBoyFalloutWorldMapGeometry();
+            if (world == nullptr || !geometry || mapAspect <= 0.f)
+                return 0;
+
+            // These are the same normalized map viewport constants used by
+            // PipBoyScreenTextureVisitor.  Projecting the authored marker
+            // position here keeps the icon on the same live map texel rather
+            // than placing a proof-only decoration at an arbitrary location.
+            constexpr float mapOriginX = 0.08f;
+            constexpr float mapOriginY = 0.26f;
+            constexpr float mapWidth = 0.84f;
+            constexpr float mapHeight = 0.53f;
+            const float viewportAspect = mapWidth / mapHeight;
+            constexpr int markerSize = 48;
+            std::size_t drawn = 0;
+            const auto& references = world->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* const marker = references.at(index);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty()
+                    || world->getFalloutMapMarkerState(marker->mId) == 0)
+                    continue;
+
+                const MWGui::FalloutMapImagePosition imagePosition
+                    = MWGui::projectFalloutWorldMapPosition(marker->mPos.pos[0], marker->mPos.pos[1], *geometry);
+                const float sourceU = imagePosition.mX / geometry->mWidth;
+                const float sourceV = imagePosition.mY / geometry->mHeight;
+                float adjustedX = (sourceU - 0.5f - mapPanX) * mapZoom + 0.5f;
+                float adjustedY = (sourceV - 0.5f - mapPanY) * mapZoom + 0.5f;
+                if (mapAspect <= viewportAspect)
+                    adjustedX = (adjustedX - 0.5f) * (mapAspect / viewportAspect) + 0.5f;
+                else
+                    adjustedY = (adjustedY - 0.5f) * (viewportAspect / mapAspect) + 0.5f;
+
+                const float terminalX = (mapOriginX + mapWidth * adjustedX) * sPipBoyTerminalWidth;
+                const float terminalY = (mapOriginY + mapHeight * adjustedY) * sPipBoyTerminalHeight;
+                const int left = static_cast<int>(std::lround(terminalX)) - markerSize / 2;
+                const int top = static_cast<int>(std::lround(terminalY)) - markerSize / 2;
+                const osg::ref_ptr<osg::Image> icon
+                    = getPipBoyRetailStatusImage(resourceSystem, MWGui::getFalloutMapMarkerIcon(marker->mMapMarkerType));
+                if (icon != nullptr
+                    && drawPipBoyRetailStatusImage(target, *icon, left, top, markerSize, markerSize, color))
+                    ++drawn;
+            }
+            return drawn;
+        }
+
+        bool drawPipBoyRetailStatusImage(osg::Image& target, const osg::Image& source, int left, int top,
             int width, int height, const std::array<unsigned char, 4>& color)
         {
             if (width <= 0 || height <= 0 || source.s() <= 0 || source.t() <= 0)
@@ -746,7 +847,8 @@ namespace MWRender
 
         osg::Texture2D* updatePipBoyTerminalTexture(osg::ref_ptr<osg::Image>& image,
             osg::ref_ptr<osg::Texture2D>& texture, std::string& currentContents, std::string_view header,
-            std::string_view body, int pane, bool showCondition, Resource::ResourceSystem* resourceSystem)
+            std::string_view body, int pane, bool showCondition, Resource::ResourceSystem* resourceSystem,
+            float mapAspect, float mapZoom, float mapPanX, float mapPanY, std::string_view markerSignature)
         {
             const PipBoyConditionState conditions = showCondition ? getPipBoyConditionState() : PipBoyConditionState{};
             std::string contents = std::string(header) + '\n' + std::string(body);
@@ -756,6 +858,8 @@ namespace MWRender
                                                                                          : body.substr(footerMarker + 1);
             if (showCondition)
                 contents += '\n' + makePipBoyConditionSignature(conditions);
+            if (pane == 0 && !markerSignature.empty())
+                contents += '\n' + std::string(markerSignature);
             if (image != nullptr && texture != nullptr && contents == currentContents)
                 return texture.get();
 
@@ -770,8 +874,15 @@ namespace MWRender
             {
                 texture = new osg::Texture2D(image);
                 texture->setName("FNV Pip-Boy live terminal surface");
-                texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+                // The live terminal has retail-style four-pixel scanlines. It
+                // is viewed at a steep angle on the physical display, so a
+                // single linear base level aliases into moving curved bands.
+                // Generate/filter mip levels exactly at the texture boundary
+                // instead of changing the authored terminal raster.
+                texture->setUseHardwareMipMapGeneration(true);
+                texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
                 texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                texture->setMaxAnisotropy(8.f);
                 texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
                 texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
                 texture->setResizeNonPowerOfTwoHint(false);
@@ -809,6 +920,14 @@ namespace MWRender
             {
                 drawPipBoyTerminalTextBox(*image, bodyText, 56, 142, 3, 31, 610, 624, bright);
                 drawPipBoyRetailPanelIcon(*image, resourceSystem, pane, bodyText, bright);
+                if (pane == 0 && !markerSignature.empty())
+                {
+                    const std::size_t drawnMarkers = drawPipBoyFalloutMapMarkers(
+                        *image, resourceSystem, mapAspect, mapZoom, mapPanX, mapPanY, bright);
+                    Log(drawnMarkers > 0 ? Debug::Info : Debug::Error)
+                        << "FNV Pip-Boy MAP: overlay marker icons drawn=" << drawnMarkers
+                        << " source=restored-production-marker-state";
+                }
             }
             if (!footerText.empty())
             {
@@ -2412,8 +2531,13 @@ namespace MWRender
                 }
 
                 const std::vector<ESM::FormId> wornSignature = makeFalloutWornVisualSignature(liveArmor);
+                // A weapon-family change is handled above by the dynamic
+                // weapon/animation bridge. Rebuilding the entire first-person
+                // actor here destroys an in-flight Pip-Boy raise/hold/lower
+                // sequence and replaces both connected arm chains. Only a
+                // worn-armor signature change requires a new composite rig.
                 if (hasLiveInventory
-                    && (weaponChanged || !mFalloutPlayerFirstPersonWornSignatureObserved
+                    && (!mFalloutPlayerFirstPersonWornSignatureObserved
                         || wornSignature != mFalloutPlayerFirstPersonWornSignature))
                 {
                     mFalloutPlayerFirstPersonWornSignature = wornSignature;
@@ -2576,6 +2700,18 @@ namespace MWRender
         }
         mCamera->update(dt, paused);
 
+        updateFalloutPipBoyPresentation(dt);
+        // Opening the physical Pip-Boy pauses simulation, but retail still
+        // advances the authored first-person raise/held KFs. Keep that
+        // lifecycle in Animation::runAnimation using the renderer's real
+        // frame delta while this production presentation is active. This is
+        // deliberately not a second animation clock, a sampled pose, or a
+        // C++ transform: the loaded retail clip supplies every time range and
+        // bone channel. Run it before Camera1st alignment so the rendered
+        // basis is solved from the actual current KF frame.
+        if (paused && mFalloutPipBoyPresentationProgress > 0.001f && mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->runAnimation(dt);
+
         if (mFalloutPlayerFirstPersonAnimation && mFalloutPlayerFirstPersonBasis
             && mCamera->getMode() == Camera::Mode::FirstPerson)
         {
@@ -2649,7 +2785,8 @@ namespace MWRender
                 firstPersonRoot->setNodeMask(showFirstPersonPlayer ? Mask_FirstPerson : 0);
         }
 
-        updateFalloutPipBoyPresentation(dt);
+        if (mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->emitFalloutFirstPersonWeaponPostKfAudit();
 
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
@@ -2704,12 +2841,10 @@ namespace MWRender
         else if (!physicalRequested || physical)
             mFalloutPipBoyPhysicalBlockedLogged = false;
 
-        const float target = physical ? 1.f : 0.f;
-        const float rate = physical ? 4.5f : 5.5f;
-        mFalloutPipBoyPresentationProgress
-            = std::clamp(mFalloutPipBoyPresentationProgress + (target - mFalloutPipBoyPresentationProgress)
-                    * std::min(1.f, std::max(0.f, dt) * rate),
-                0.f, 1.f);
+        // Visibility is a production UI state.  The retail raise/hold timing
+        // comes exclusively from the bound KF clips, not an engine-side eased
+        // progress curve.
+        mFalloutPipBoyPresentationProgress = physical ? 1.f : 0.f;
         if (mFalloutPlayerFirstPersonAnimation)
             mFalloutPlayerFirstPersonAnimation->setPipBoyPresentationProgress(
                 mFalloutPipBoyPresentationProgress, physical);
@@ -2770,7 +2905,6 @@ namespace MWRender
         auto* const falloutWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager);
         const float interactionPulse
             = falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyInteractionPulse() : 0.f;
-        mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
         const bool showCondition
             = pane == 3 && (falloutWindowManager == nullptr || falloutWindowManager->getFalloutPipBoySubmenu() == 0);
         const bool showMap = pane == 0 && falloutWindowManager != nullptr;
@@ -2778,10 +2912,16 @@ namespace MWRender
         const float mapZoom = showMap ? falloutWindowManager->getFalloutPipBoyMapZoom() : 1.f;
         const float mapPanX = showMap ? falloutWindowManager->getFalloutPipBoyMapPanX() : 0.f;
         const float mapPanY = showMap ? falloutWindowManager->getFalloutPipBoyMapPanY() : 0.f;
+        // Resolve the physical control before advancing the action envelope.  A
+        // MAP/WORLD toggle changes the target from the current tab button to
+        // the ScrollKnob; advancing first made the retained contact frame use
+        // the stale MAP-button beat even though the production UI had already
+        // toggled the world map.
         mFalloutPlayerFirstPersonAnimation->setPipBoyControlState(pane,
             falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoySubmenu() : 0,
             falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyListOffset() : 0, worldMap,
             mapZoom, mapPanX, mapPanY, interactionPulse);
+        mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
         osg::Texture2D* mapTexture = nullptr;
         if (showMap)
         {
@@ -2789,6 +2929,20 @@ namespace MWRender
                 ? getPipBoyRetailWorldMapTexture(mFalloutPipBoyWorldMapTexture, mResourceSystem)
                 : falloutWindowManager->getFalloutPipBoyLocalMapTexture();
         }
+        float mapAspect = 1.f;
+        if (mapTexture != nullptr)
+        {
+            int mapWidth = mapTexture->getTextureWidth();
+            int mapHeight = mapTexture->getTextureHeight();
+            if ((mapWidth <= 0 || mapHeight <= 0) && mapTexture->getImage() != nullptr)
+            {
+                mapWidth = mapTexture->getImage()->s();
+                mapHeight = mapTexture->getImage()->t();
+            }
+            if (mapWidth > 0 && mapHeight > 0)
+                mapAspect = static_cast<float>(mapWidth) / static_cast<float>(mapHeight);
+        }
+        const std::string mapMarkerSignature = worldMap ? getPipBoyFalloutMapMarkerSignature() : std::string();
         const bool mapTextureChanged = mFalloutPipBoyBoundMapTexture.get() != mapTexture;
         mFalloutPipBoyBoundMapTexture = mapTexture;
 
@@ -2796,7 +2950,7 @@ namespace MWRender
         osg::Texture2D* const texture = updatePipBoyTerminalTexture(mFalloutPipBoyTerminalImage,
             mFalloutPipBoyTerminalTexture, mFalloutPipBoyTerminalContents,
             windowManager->getFalloutPipBoyTerminalHeader(), windowManager->getFalloutPipBoyTerminalBody(), pane,
-            showCondition, mResourceSystem);
+            showCondition, mResourceSystem, mapAspect, mapZoom, mapPanX, mapPanY, mapMarkerSignature);
         const bool terminalContentsChanged = mFalloutPipBoyTerminalContents != previousTerminalContents;
         if (!mFalloutPipBoyScreenBindingAttempted || terminalContentsChanged || mapTextureChanged)
         {

@@ -59,6 +59,16 @@ namespace MWGui
         TradeItemModel* getTradeModel();
         ItemModel* getModel();
 
+        /// Select one of Fallout's physical Pip-Boy item categories while
+        /// retaining the real inventory model and row widgets.
+        void setFalloutPipBoyCategory(int submenu);
+
+        /// Activate an exact real row through the same production callback used
+        /// by a physical Pip-Boy controller selection.  Proof scheduling may
+        /// identify a row by FormID, but the equip/use operation remains the
+        /// normal inventory-window path.
+        bool activateFalloutPipBoyItem(const ESM::RefId& formId);
+
         void updateItemView();
 
         void updatePlayer();

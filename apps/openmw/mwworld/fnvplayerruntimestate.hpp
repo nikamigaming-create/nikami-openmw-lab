@@ -28,6 +28,15 @@ namespace MWWorld
         std::optional<std::uint8_t> mRawSkillOffset;
     };
 
+    struct FalloutRuntimeActorValueModifierStack
+    {
+        float mPermanent = 0.f;
+        float mDamage = 0.f;
+        float mTemporary = 0.f;
+
+        bool operator==(const FalloutRuntimeActorValueModifierStack&) const = default;
+    };
+
     enum class FalloutActorValueMutationResult
     {
         Applied,
@@ -62,7 +71,7 @@ namespace MWWorld
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 7;
+        static constexpr std::uint32_t SaveVersion = 8;
 
     private:
         struct CurrentState
@@ -92,6 +101,8 @@ namespace MWWorld
         bool mFastTravelEnabled = true;
         bool mWaitEnabled = true;
         bool mFastTravelKeepOnCellChange = false;
+        bool mProofForceEnemiesNearby = false;
+        bool mProofForceInvalidDestination = false;
         // Transient input/mechanics coordination only. V.A.T.S. owns its queue in ActionManager and this flag keeps
         // the ordinary held-attack path from firing an additional unqueued shot while targeting or executing.
         bool mVatsActive = false;
@@ -117,6 +128,8 @@ namespace MWWorld
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
         [[nodiscard]] std::optional<float> getCarryCapacity() const;
         [[nodiscard]] std::optional<float> getMaxActionPoints() const;
+        [[nodiscard]] std::optional<FalloutRuntimeActorValueModifierStack> getActorValueModifierStack(
+            std::uint32_t actorValue) const;
         [[nodiscard]] float getSavedDamageModifier(std::uint32_t actorValue) const;
         [[nodiscard]] bool hasPerk(ESM::FormId perk, bool alternate = false) const;
         [[nodiscard]] std::optional<std::uint8_t> getPerkRankByte(
@@ -127,11 +140,26 @@ namespace MWWorld
             ESM::FormId reputation, float maximum, std::uint32_t axis) const;
         bool addReputationBump(ESM::FormId reputation, bool fame, float maximum, int bump);
         [[nodiscard]] std::optional<std::uint8_t> getMapMarkerState(ESM::FormId marker) const;
+        [[nodiscard]] const std::map<ESM::FormId, std::uint8_t>& getMapMarkerStates() const
+        {
+            return mMapMarkerStates;
+        }
         bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
         [[nodiscard]] bool isFastTravelEnabled() const { return mFastTravelEnabled; }
         [[nodiscard]] bool isWaitEnabled() const { return mWaitEnabled; }
         [[nodiscard]] bool isFastTravelKeptOnCellChange() const { return mFastTravelKeepOnCellChange; }
         bool setScriptedFastTravel(bool canFastTravel, bool canWait = true, bool keepOnCellChange = false);
+        // Unserialized, engine-owned rejection fixtures used only by the
+        // unattended C06 production matrix. They exercise the same resolver
+        // and UI handlers without changing the canonical Save330 marker
+        // denominator or providing an unlock/teleport success path.
+        void setFastTravelProofOverrides(bool forceEnemiesNearby, bool forceInvalidDestination)
+        {
+            mProofForceEnemiesNearby = forceEnemiesNearby;
+            mProofForceInvalidDestination = forceInvalidDestination;
+        }
+        [[nodiscard]] bool isFastTravelProofEnemiesNearby() const { return mProofForceEnemiesNearby; }
+        [[nodiscard]] bool isFastTravelProofInvalidDestination() const { return mProofForceInvalidDestination; }
         void notifyCellChanged();
         bool isVatsActive() const { return mVatsActive; }
         void setVatsActive(bool active) { mVatsActive = active; }

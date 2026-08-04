@@ -415,6 +415,66 @@ namespace MWGui
         return mTradeModel;
     }
 
+    void InventoryWindow::setFalloutPipBoyCategory(int submenu)
+    {
+        if (mSortModel == nullptr || mItemView == nullptr)
+            return;
+
+        submenu = std::clamp(submenu, 0, 4);
+        const int category = [&]() {
+            switch (submenu)
+            {
+                case 0:
+                    return SortFilterItemModel::Category_Weapon;
+                case 1:
+                    return SortFilterItemModel::Category_Apparel;
+                case 2:
+                    return SortFilterItemModel::Category_Magic;
+                case 3:
+                    return SortFilterItemModel::Category_Misc;
+                case 4:
+                default:
+                    return SortFilterItemModel::Category_Ammo;
+            }
+        }();
+        mSortModel->setCategory(category);
+        mFilterAll->setStateSelected(false);
+        mFilterWeapon->setStateSelected(submenu == 0);
+        mFilterApparel->setStateSelected(submenu == 1);
+        mFilterMagic->setStateSelected(submenu == 2);
+        mFilterMisc->setStateSelected(submenu == 3 || submenu == 4);
+        mItemView->update();
+        Log(Debug::Info) << "FNV/ESM4 production inventory category: submenu=" << submenu
+                         << " category=" << category << " source=restored-save330-inventory-model";
+    }
+
+    bool InventoryWindow::activateFalloutPipBoyItem(const ESM::RefId& formId)
+    {
+        if (mSortModel == nullptr || mTradeModel == nullptr || mGuiMode != GM_Inventory || formId.empty())
+            return false;
+
+        for (ItemModel::ModelIndex index = 0; index < static_cast<int>(mSortModel->getItemCount()); ++index)
+        {
+            const ItemStack& item = mSortModel->getItem(index);
+            if (item.mBase.getCellRef().getRefId() != formId)
+                continue;
+
+            const std::string name(item.mBase.getClass().getName(item.mBase));
+            Log(Debug::Info) << "FNV Pip-Boy production row activation: form=" << formId
+                             << " index=" << index << " name=\"" << name
+                             << "\" path=InventoryWindow::onItemSelected status=requested";
+            mPendingControllerAction = ControllerAction::None;
+            onItemSelected(index);
+            Log(Debug::Info) << "FNV Pip-Boy production row activation: form=" << formId
+                             << " index=" << index << " path=InventoryWindow::onItemSelected status=pass";
+            return true;
+        }
+
+        Log(Debug::Error) << "FNV Pip-Boy production row activation: form=" << formId
+                          << " path=InventoryWindow::onItemSelected status=missing";
+        return false;
+    }
+
     void InventoryWindow::onBackgroundSelected()
     {
         if (mDragAndDrop->mIsOnDragAndDrop)

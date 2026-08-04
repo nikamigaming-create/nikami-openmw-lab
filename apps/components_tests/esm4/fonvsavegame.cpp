@@ -18,6 +18,7 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -126,6 +127,56 @@ namespace
         if (!stream || static_cast<std::size_t>(stream.gcount()) != bytes.size())
             throw std::runtime_error("external fixture changed or was truncated while reading");
         return bytes;
+    }
+
+    void writeJsonString(std::ostream& stream, std::string_view value)
+    {
+        stream << '"';
+        for (const unsigned char ch : value)
+        {
+            switch (ch)
+            {
+                case '"': stream << "\\\""; break;
+                case '\\': stream << "\\\\"; break;
+                case '\b': stream << "\\b"; break;
+                case '\f': stream << "\\f"; break;
+                case '\n': stream << "\\n"; break;
+                case '\r': stream << "\\r"; break;
+                case '\t': stream << "\\t"; break;
+                default:
+                    if (ch < 0x20)
+                        stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                               << static_cast<unsigned int>(ch) << std::dec;
+                    else
+                        stream << static_cast<char>(ch);
+            }
+        }
+        stream << '"';
+    }
+
+    void writeJsonRange(std::ostream& stream, const ESM4::FONVSaveRange& range)
+    {
+        stream << "{\"offset\":" << range.mOffset << ",\"bytes\":" << range.mSize << '}';
+    }
+
+    std::string formIdString(std::uint32_t formId)
+    {
+        std::ostringstream stream;
+        stream << "0x" << std::uppercase << std::hex << std::setw(8) << std::setfill('0') << formId;
+        return stream.str();
+    }
+
+    template <class T>
+    void writeJsonValueWithRange(std::ostream& stream, T value, const ESM4::FONVSaveRange& range)
+    {
+        stream << "{\"value\":";
+        if constexpr (std::is_floating_point_v<T>)
+            stream << std::setprecision(std::numeric_limits<T>::max_digits10) << value;
+        else
+            stream << +value;
+        stream << ",\"provenance\":{\"kind\":\"save-bytes\",\"range\":";
+        writeJsonRange(stream, range);
+        stream << "}}";
     }
 
     void appendU8(std::vector<std::uint8_t>& bytes, std::uint8_t value)
@@ -4277,5 +4328,265 @@ namespace
         corrupted = fixtureBytes;
         corrupted[497486] = 26;
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, ExportsExternalSave330PlayerDenominatorWhenRequested)
+    {
+        const char* fixture = std::getenv("OPENMW_FNV_SAVE330_FIXTURE");
+        const char* output = std::getenv("OPENMW_FNV_SAVE330_DENOMINATOR_OUTPUT");
+        if (fixture == nullptr || *fixture == '\0' || output == nullptr || *output == '\0')
+        {
+            GTEST_SKIP() << "Set OPENMW_FNV_SAVE330_FIXTURE and OPENMW_FNV_SAVE330_DENOMINATOR_OUTPUT";
+        }
+
+        const std::filesystem::path sourcePath = std::filesystem::u8path(fixture);
+        const std::filesystem::path outputPath = std::filesystem::u8path(output);
+        const std::vector<std::uint8_t> fixtureBytes = readFixtureBytes(sourcePath);
+        const std::string fixtureHash = sha256Hex(fixtureBytes);
+        ASSERT_EQ(fixtureHash, "07dbdd2d7c4abe3160628e5463a9603a40f4271042c1da1b89f1c4a4f7dbd81f");
+        const ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(fixtureBytes, sourcePath);
+        ASSERT_TRUE(save.mPlayerReferenceMovement);
+        ASSERT_TRUE(save.mPlayerActorValueData);
+        ASSERT_TRUE(save.mPlayerProcessInventoryData);
+        ASSERT_TRUE(save.mPlayerMobileObjectProcessState);
+        ASSERT_TRUE(save.mPlayerCharacterScalarReferenceState);
+        ASSERT_TRUE(save.mPlayerCharacterListsState);
+        ASSERT_TRUE(save.mSky);
+
+        std::error_code error;
+        std::filesystem::create_directories(outputPath.parent_path(), error);
+        ASSERT_FALSE(error) << error.message();
+        std::ofstream stream(outputPath, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(stream) << "could not create denominator output";
+
+        const auto writeStringField = [&](std::string_view name, const ESM4::FONVSaveStringField& field,
+                                          bool comma = true) {
+            writeJsonString(stream, name);
+            stream << ":{\"value\":";
+            writeJsonString(stream, field.mValue);
+            stream << ",\"provenance\":{\"kind\":\"save-bytes\",\"range\":";
+            writeJsonRange(stream, field.mEncodedRange);
+            stream << "}}";
+            if (comma)
+                stream << ',';
+        };
+        const auto writeResolvedForm = [&](const ESM4::FONVSaveResolvedReferenceId& value) {
+            if (value.mResolvedFormId)
+                writeJsonString(stream, formIdString(*value.mResolvedFormId));
+            else
+                stream << "null";
+        };
+
+        stream << "{\n  \"schema\":\"nikami-fnv-save-player-denominator/v1\","
+                  "\n  \"status\":\"native-save-denominator\","
+                  "\n  \"source\":{\"path\":";
+        writeJsonString(stream, sourcePath.generic_string());
+        stream << ",\"bytes\":" << fixtureBytes.size() << ",\"sha256\":";
+        writeJsonString(stream, fixtureHash);
+        stream << "},\n  \"masters\":[";
+        for (std::size_t index = 0; index < save.mMasters.size(); ++index)
+        {
+            if (index != 0)
+                stream << ',';
+            stream << "{\"name\":";
+            writeJsonString(stream, save.mMasters[index].mFileName.mValue);
+            stream << ",\"provenance\":{\"kind\":\"save-bytes\",\"range\":";
+            writeJsonRange(stream, save.mMasters[index].mFileName.mEncodedRange);
+            stream << "}}";
+        }
+        stream << "],\n  \"player\":{";
+        stream << "\"saveNumber\":";
+        writeJsonValueWithRange(stream, save.mHeader.mSaveNumber.mValue, save.mHeader.mSaveNumber.mRange);
+        stream << ',';
+        writeStringField("name", save.mHeader.mPlayerName);
+        writeStringField("karmaTitle", save.mHeader.mPlayerKarmaTitle);
+        stream << "\"level\":";
+        writeJsonValueWithRange(stream, save.mHeader.mPlayerLevel.mValue, save.mHeader.mPlayerLevel.mRange);
+        stream << ',';
+        writeStringField("locationLabel", save.mHeader.mPlayerLocation);
+        writeStringField("playTimeLabel", save.mHeader.mPlayTime, false);
+        stream << "},\n  \"transform\":{\"cellOrWorldspace\":";
+        writeResolvedForm(save.mPlayerReferenceMovement->mCellOrWorldspace);
+        stream << ",\"containerProvenance\":{\"kind\":\"save-bytes\",\"range\":";
+        writeJsonRange(stream, save.mPlayerReferenceMovement->mCellOrWorldspace.mEncoded.mRange);
+        stream << "},\"position\":[";
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            if (index != 0)
+                stream << ',';
+            writeJsonValueWithRange(stream, save.mPlayerReferenceMovement->mPosition[index].mValue,
+                save.mPlayerReferenceMovement->mPosition[index].mRange);
+        }
+        stream << "],\"rotationRadians\":[";
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            if (index != 0)
+                stream << ',';
+            writeJsonValueWithRange(stream, save.mPlayerReferenceMovement->mRotationRadians[index].mValue,
+                save.mPlayerReferenceMovement->mRotationRadians[index].mRange);
+        }
+        stream << "]},\n  \"camera\":{\"firstPersonMode\":";
+        writeJsonValueWithRange(stream, save.mPlayerCharacterScalarReferenceState->mFirstPersonMode.mValue,
+            save.mPlayerCharacterScalarReferenceState->mFirstPersonMode.mRange);
+        stream << ",\"firstPersonModelFov\":";
+        writeJsonValueWithRange(stream, save.mPlayerCharacterScalarReferenceState->mFirstPersonModelFov.mValue,
+            save.mPlayerCharacterScalarReferenceState->mFirstPersonModelFov.mRange);
+        stream << ",\"worldFov\":";
+        writeJsonValueWithRange(stream, save.mPlayerCharacterScalarReferenceState->mWorldFov.mValue,
+            save.mPlayerCharacterScalarReferenceState->mWorldFov.mRange);
+        stream << "},\n  \"scene\":{\"gameHour\":";
+        writeJsonValueWithRange(stream, save.mSky->mGameHour.mValue, save.mSky->mGameHour.mRange);
+        stream << ",\"currentWeather\":";
+        writeResolvedForm(save.mSky->mCurrentWeather);
+        stream << ",\"currentWeatherProvenance\":{\"kind\":\"save-bytes\",\"range\":";
+        writeJsonRange(stream, save.mSky->mCurrentWeather.mEncoded.mRange);
+        stream << "}},\n  \"inventoryContributions\":[";
+
+        const auto& inventory = save.mPlayerProcessInventoryData->mInventoryEntries;
+        for (std::size_t itemIndex = 0; itemIndex < inventory.size(); ++itemIndex)
+        {
+            const ESM4::FONVSavePlayerInventoryEntry& item = inventory[itemIndex];
+            if (itemIndex != 0)
+                stream << ',';
+            stream << "{\"formId\":";
+            writeResolvedForm(item.mType);
+            stream << ",\"formIdProvenance\":{\"kind\":\"save-bytes\",\"range\":";
+            writeJsonRange(stream, item.mType.mEncoded.mRange);
+            stream << "},\"delta\":";
+            writeJsonValueWithRange(stream, item.mDelta.mValue, item.mDelta.mRange);
+            stream << ",\"entryRange\":";
+            writeJsonRange(stream, item.mRange);
+            stream << ",\"instances\":[";
+            for (std::size_t stackIndex = 0; stackIndex < item.mExtendData.size(); ++stackIndex)
+            {
+                const auto& stack = item.mExtendData[stackIndex];
+                if (stackIndex != 0)
+                    stream << ',';
+                stream << "{\"range\":";
+                writeJsonRange(stream, stack.mRange);
+                stream << ",\"extras\":[";
+                for (std::size_t extraIndex = 0; extraIndex < stack.mExtraData.size(); ++extraIndex)
+                {
+                    const auto& extra = stack.mExtraData[extraIndex];
+                    if (extraIndex != 0)
+                        stream << ',';
+                    stream << "{\"type\":" << +extra.mType.mValue << ",\"typeRange\":";
+                    writeJsonRange(stream, extra.mType.mRange);
+                    if (extra.mCount)
+                    {
+                        stream << ",\"count\":";
+                        writeJsonValueWithRange(stream, extra.mCount->mValue, extra.mCount->mRange);
+                    }
+                    if (extra.mHealth)
+                    {
+                        stream << ",\"health\":";
+                        writeJsonValueWithRange(stream, extra.mHealth->mValue, extra.mHealth->mRange);
+                    }
+                    if (extra.mHotkey)
+                    {
+                        stream << ",\"hotkey\":";
+                        writeJsonValueWithRange(stream, extra.mHotkey->mValue, extra.mHotkey->mRange);
+                    }
+                    if (extra.mAmmo)
+                    {
+                        stream << ",\"ammoFormId\":";
+                        writeResolvedForm(*extra.mAmmo);
+                    }
+                    if (extra.mAmmoCount)
+                    {
+                        stream << ",\"loadedRounds\":";
+                        writeJsonValueWithRange(stream, extra.mAmmoCount->mValue, extra.mAmmoCount->mRange);
+                    }
+                    stream << '}';
+                }
+                stream << "]}";
+            }
+            stream << "]}";
+        }
+        stream << "],\n  \"actorValueArrays\":{";
+        constexpr std::array names{ "unidentified244", "permanent378", "unidentified4B0" };
+        const std::array arrays{ &save.mPlayerActorValueData->mActorValues244,
+            &save.mPlayerActorValueData->mActorValues378, &save.mPlayerActorValueData->mActorValues4B0 };
+        for (std::size_t arrayIndex = 0; arrayIndex < arrays.size(); ++arrayIndex)
+        {
+            if (arrayIndex != 0)
+                stream << ',';
+            writeJsonString(stream, names[arrayIndex]);
+            stream << ":[";
+            for (std::size_t valueIndex = 0; valueIndex < arrays[arrayIndex]->size(); ++valueIndex)
+            {
+                if (valueIndex != 0)
+                    stream << ',';
+                stream << "{\"actorValue\":" << valueIndex << ",\"sample\":";
+                const auto& value = (*arrays[arrayIndex])[valueIndex];
+                writeJsonValueWithRange(stream, value.mValue, value.mRange);
+                stream << '}';
+            }
+            stream << ']';
+        }
+        stream << "},\n  \"globals\":[";
+        if (save.mGlobalVariables)
+        {
+            for (std::size_t index = 0; index < save.mGlobalVariables->mVariables.size(); ++index)
+            {
+                const auto& global = save.mGlobalVariables->mVariables[index];
+                if (index != 0)
+                    stream << ',';
+                stream << "{\"formId\":";
+                writeResolvedForm(global.mVariable);
+                stream << ",\"value\":";
+                writeJsonValueWithRange(stream, global.mValue.mValue, global.mValue.mRange);
+                stream << ",\"entryRange\":";
+                writeJsonRange(stream, global.mRange);
+                stream << '}';
+            }
+        }
+        stream << "],\n  \"questProgress\":{\"activeQuest\":";
+        writeResolvedForm(save.mPlayerCharacterScalarReferenceState->mQuest);
+        stream << ",\"stages\":[";
+        for (std::size_t index = 0; index < save.mPlayerCharacterListsState->mStages.size(); ++index)
+        {
+            const auto& stage = save.mPlayerCharacterListsState->mStages[index];
+            if (index != 0)
+                stream << ',';
+            stream << "{\"quest\":";
+            writeResolvedForm(stage.mQuest);
+            stream << ",\"stage\":";
+            writeJsonValueWithRange(stream, stage.mStage.mValue, stage.mStage.mRange);
+            stream << ",\"logEntry\":";
+            writeJsonValueWithRange(stream, stage.mLogEntry.mValue, stage.mLogEntry.mRange);
+            stream << ",\"entryRange\":";
+            writeJsonRange(stream, stage.mRange);
+            stream << '}';
+        }
+        stream << "],\"objectives\":[";
+        for (std::size_t index = 0; index < save.mPlayerCharacterListsState->mObjectives.size(); ++index)
+        {
+            const auto& objective = save.mPlayerCharacterListsState->mObjectives[index];
+            if (index != 0)
+                stream << ',';
+            stream << "{\"quest\":";
+            writeResolvedForm(objective.mQuest);
+            stream << ",\"objective\":";
+            writeJsonValueWithRange(stream, objective.mObjective.mValue, objective.mObjective.mRange);
+            stream << ",\"entryRange\":";
+            writeJsonRange(stream, objective.mRange);
+            stream << '}';
+        }
+        stream << "]},\n  \"discoveredMarkerStates\":{\"status\":\"unsupported\","
+                  "\"reason\":\"native Save330 decoder does not expose map-marker discovery semantics\"},"
+                  "\n  \"unsupportedOpaqueRanges\":[";
+        for (std::size_t index = 0; index < save.mUnparsedSemanticPayloadRanges.size(); ++index)
+        {
+            if (index != 0)
+                stream << ',';
+            writeJsonRange(stream, save.mUnparsedSemanticPayloadRanges[index]);
+        }
+        stream << "],\n  \"unsupportedOpaqueBytes\":" << save.mUnparsedSemanticPayloadBytes
+               << "\n}\n";
+        stream.close();
+        ASSERT_TRUE(stream) << "failed while writing denominator output";
+        ASSERT_TRUE(std::filesystem::exists(outputPath));
+        ASSERT_GT(std::filesystem::file_size(outputPath), 1024u);
     }
 }

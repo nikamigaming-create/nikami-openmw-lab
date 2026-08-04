@@ -272,6 +272,12 @@ namespace MWWorld
         {
             return mFalloutPlayerRuntimeState;
         }
+        // Persistence telemetry uses the concrete world type so adding this
+        // diagnostic accessor cannot perturb the long-lived MWBase::World ABI.
+        std::size_t getFalloutPersistenceGlobalVariableCount() const
+        {
+            return mGlobalVariables.getVariableCount();
+        }
         std::uint8_t getFalloutMapMarkerState(ESM::FormId marker) const override;
         bool showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi = true) override;
         bool fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error) override;

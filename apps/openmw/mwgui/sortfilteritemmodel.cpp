@@ -239,8 +239,10 @@ namespace MWGui
             case ESM4::Potion::sRecordId:
                 category = Category_Magic;
                 break;
-            case ESM::Miscellaneous::sRecordId:
             case ESM4::Ammunition::sRecordId:
+                category = Category_Ammo;
+                break;
+            case ESM::Miscellaneous::sRecordId:
             case ESM4::Book::sRecordId:
             case ESM4::ItemMod::sRecordId:
             case ESM4::Key::sRecordId:

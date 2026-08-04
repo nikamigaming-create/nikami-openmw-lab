@@ -65,6 +65,7 @@ namespace MWWorld
         ///< Replace variables with variables from \a store with default values.
 
         int countSavedGameRecords() const;
+        std::size_t getVariableCount() const { return mVariables.size(); }
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const;
 

@@ -327,11 +327,13 @@ namespace MWRender
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
          * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
          * @param falloutSemanticGroup Optional semantic alias synthesized for a selected Fallout creature source.
+         * @param falloutIsolateExistingGroups When a selected Fallout source carries a legacy group that would
+         *        otherwise replace an already-bound production group, retain only the requested semantic alias.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
         std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
             bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
-            std::string_view falloutSemanticGroup = {});
+            std::string_view falloutSemanticGroup = {}, bool falloutIsolateExistingGroups = false);
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);

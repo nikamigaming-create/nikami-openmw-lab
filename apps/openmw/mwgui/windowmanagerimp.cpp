@@ -123,6 +123,7 @@
 #include "hud.hpp"
 #include "inventorytabsoverlay.hpp"
 #include "inventorywindow.hpp"
+#include "itemmodel.hpp"
 #include "itemchargeview.hpp"
 #include "itemtransfer.hpp"
 #include "itemview.hpp"
@@ -143,6 +144,7 @@
 #include "screenfader.hpp"
 #include "scrollwindow.hpp"
 #include "settingswindow.hpp"
+#include "sortfilteritemmodel.hpp"
 #include "spellbuyingwindow.hpp"
 #include "spellview.hpp"
 #include "spellwindow.hpp"
@@ -254,6 +256,32 @@ namespace MWGui
 
             MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
             const MWWorld::ESMStore& store = world->getStore();
+            const auto selectionState = [&]() {
+                std::ostringstream state;
+                const MWWorld::ConstContainerStoreIterator right
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                const MWWorld::ConstContainerStoreIterator ammunition
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+                const ESM::RefId weaponId
+                    = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                state << "right="
+                      << (weaponId.empty() ? std::string("none") : weaponId.toDebugString())
+                      << ",ammo="
+                      << (ammunition == inventory.end() ? std::string("none")
+                                                        : ammunition->getCellRef().getRefId().toDebugString())
+                      << ",loaded=" << inventory.getFalloutLoadedAmmo(weaponId).value_or(0)
+                      << ",stimpak="
+                      << inventory.count(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"))
+                      << ",health=" << player.getClass().getCreatureStats(player).getHealth().getCurrent();
+                return state.str();
+            };
+            const std::string beforeState = selectionState();
+            const auto completeSelection = [&](std::string result) {
+                Log(Debug::Info) << "FNV Pip-Boy selection: pane=" << pane << " submenu=" << submenu
+                                 << " row=" << selectedRow << " result=\"" << result << "\" before={"
+                                 << beforeState << "} after={" << selectionState() << "}";
+                return result;
+            };
             const auto equip = [&](const ESM::RefId& id, int slot, std::string_view label) {
                 MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
                 if (item == inventory.end())
@@ -266,6 +294,33 @@ namespace MWGui
                 MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
                 if (item == inventory.end())
                     return std::string("MISSING ") + std::string(label);
+
+                if (item->getType() == ESM4::Potion::sRecordId)
+                {
+                    const ESM4::Potion& potion = *item->get<ESM4::Potion>()->mBase;
+                    // FNV's Stimpak is an ALCH record whose retail effect is
+                    // restorative. This production boundary consumes the real
+                    // loaded inventory record and synchronizes both live health
+                    // representations; broader ALCH effect execution remains
+                    // outside the Pip-Boy item-selection slice.
+                    if (potion.mEditorId != "Stimpak")
+                        return std::string("CANNOT APPLY ") + std::string(label);
+
+                    MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+                    MWMechanics::DynamicStat<float> health = stats.getHealth();
+                    const float applied = std::min(25.f, health.getModified() - health.getCurrent());
+                    if (applied <= 0.f)
+                        return std::string("HEALTH FULL ") + std::string(label);
+                    health.setCurrent(health.getCurrent() + applied);
+                    stats.setHealth(health);
+                    world->getFalloutPlayerRuntimeState().modCurrentActorValue(
+                        MWWorld::FalloutPlayerRuntimeState::HealthActorValue, applied);
+                    if (inventory.remove(*item, 1) != 1)
+                        return std::string("FAILED TO CONSUME ") + std::string(label);
+                    MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                    return std::string("USED ") + std::string(label);
+                }
+
                 std::unique_ptr<MWWorld::Action> action = (*item).getClass().use(*item, false);
                 if (action == nullptr)
                     return std::string("CANNOT USE ") + std::string(label);
@@ -285,31 +340,41 @@ namespace MWGui
                         const std::string label = selectedRow == 0 ? "9MM PISTOL" : "VARMINT RIFLE";
                         const std::string result = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, label);
                         if (result.starts_with("EQUIPPED"))
+                        {
                             player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
-                        return result;
+                            const ESM::RefId ammunitionId = findFalloutEditorId<ESM4::Ammunition>(
+                                store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm");
+                            equip(ammunitionId, MWWorld::InventoryStore::Slot_Ammunition,
+                                selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND");
+                            inventory.setFalloutAmmoSelection(id, ammunitionId);
+                            if (!inventory.getFalloutLoadedAmmo(id).has_value())
+                                inventory.setFalloutLoadedAmmo(id, 0);
+                        }
+                        return completeSelection(result);
                     }
                     case 1:
                     {
                         const ESM::RefId id = findFalloutEditorId<ESM4::Armor>(
                             store, selectedRow == 0 ? "VaultSuit21" : "CowboyHat02");
-                        return use(id, selectedRow == 0 ? "VAULT 21 JUMPSUIT" : "COWBOY HAT");
+                        return completeSelection(
+                            use(id, selectedRow == 0 ? "VAULT 21 JUMPSUIT" : "COWBOY HAT"));
                     }
                     case 2:
-                        return use(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"), "STIMPAK");
+                        return completeSelection(
+                            use(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"), "STIMPAK"));
                     case 3:
-                        return selectedRow == 0 ? "SELECTED CAPS" : "SELECTED LOCKPICK";
+                        return completeSelection(selectedRow == 0 ? "SELECTED CAPS" : "SELECTED LOCKPICK");
                     case 4:
                     default:
-                        return equip(findFalloutEditorId<ESM4::Ammunition>(
-                                         store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm"),
-                            MWWorld::InventoryStore::Slot_Ammunition,
-                            selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND");
+                        return completeSelection(equip(findFalloutEditorId<ESM4::Ammunition>(
+                                                           store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm"),
+                            MWWorld::InventoryStore::Slot_Ammunition, selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND"));
                 }
             }
 
             if (pane == 2)
-                return "SELECTED DATA ENTRY";
-            return "SELECTED";
+                return completeSelection("SELECTED DATA ENTRY");
+            return completeSelection("SELECTED");
         }
 
         int getFalloutPipBoySubmenuCount(int pane)
@@ -341,9 +406,123 @@ namespace MWGui
             return text.str();
         }
 
-        std::string makeFalloutPipBoyTerminalBody(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
-            float mapPanX, float mapPanY, std::string_view lastAction)
+        std::string falloutD01SafeText(std::string_view value)
         {
+            std::string result(value);
+            for (char& character : result)
+            {
+                if (character == '"' || character == '\r' || character == '\n')
+                    character = '_';
+            }
+            return result;
+        }
+
+        std::string falloutD01Family(const MWWorld::Ptr& item)
+        {
+            switch (item.getType())
+            {
+                case ESM4::Weapon::sRecordId:
+                    return "WEAP";
+                case ESM4::Armor::sRecordId:
+                case ESM4::Clothing::sRecordId:
+                    return "ARMO";
+                case ESM4::Ammunition::sRecordId:
+                    return "AMMO";
+                case ESM4::Potion::sRecordId:
+                case ESM4::Ingredient::sRecordId:
+                    return "ALCH";
+                case ESM4::Book::sRecordId:
+                    return "BOOK";
+                default:
+                    return "MISC";
+            }
+        }
+
+        std::string makeFalloutD01ProductionInventoryBody(int submenu, int listOffset)
+        {
+            submenu = std::clamp(submenu, 0, 4);
+            listOffset = std::max(0, listOffset);
+            constexpr std::array<std::string_view, 5> categoryNames = { "WEAP", "APP", "AID", "MISC", "AMMO" };
+            const std::string_view categoryName = categoryNames[static_cast<std::size_t>(submenu)];
+
+            MWGui::InventoryWindow* const inventoryWindow
+                = MWBase::Environment::get().getWindowManager()->getInventoryWindow();
+            MWGui::ItemModel* const allModel = inventoryWindow != nullptr ? inventoryWindow->getModel() : nullptr;
+            MWGui::SortFilterItemModel* const visibleModel
+                = inventoryWindow != nullptr ? inventoryWindow->getSortFilterModel() : nullptr;
+            if (allModel == nullptr || visibleModel == nullptr)
+            {
+                Log(Debug::Error) << "FNV D01 inventory: category=" << categoryName
+                                  << " allRows=0 visibleRows=0 status=fail source=restored-save330-inventory-model";
+                return std::string(categoryName) + "\n\nINVENTORY MODEL NOT READY";
+            }
+
+            static std::array<bool, 5> categoryRowsLogged = { false, false, false, false, false };
+            const std::size_t categoryIndex = static_cast<std::size_t>(submenu);
+            const std::size_t allRows = allModel->getItemCount();
+            const std::size_t visibleRows = visibleModel->getItemCount();
+            const int selectedIndex = visibleRows > 0
+                ? std::min(listOffset, static_cast<int>(visibleRows) - 1)
+                : -1;
+            Log(Debug::Info) << "FNV D01 inventory: category=" << categoryName << " allRows=" << allRows
+                             << " visibleRows=" << visibleRows << " selectedIndex=" << selectedIndex
+                             << " source=restored-save330-inventory-model"
+                             << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
+
+            if (!categoryRowsLogged[categoryIndex])
+            {
+                for (std::size_t index = 0; index < visibleRows; ++index)
+                {
+                    const MWGui::ItemStack item = visibleModel->getItem(static_cast<int>(index));
+                    const MWWorld::Ptr& base = item.mBase;
+                    const bool hasCondition = base.getClass().hasItemHealth(base);
+                    const int currentCondition = hasCondition ? base.getClass().getItemHealth(base) : -1;
+                    const int maximumCondition = hasCondition ? base.getClass().getItemMaxHealth(base) : -1;
+                    const std::string icon = base.getClass().getInventoryIcon(base);
+                    const bool equipped = item.mType == MWGui::ItemStack::Type_Equipped;
+                    Log(Debug::Info) << "FNV D01 inventory row: category=" << categoryName << " index=" << index
+                                     << " formId=" << base.getCellRef().getRefId().toDebugString()
+                                     << " count=" << item.mCount << " family=" << falloutD01Family(base)
+                                     << " name=\"" << falloutD01SafeText(base.getClass().getName(base)) << "\""
+                                     << " icon=\"" << falloutD01SafeText(icon) << "\" equipped="
+                                     << (equipped ? 1 : 0) << " condition=" << (hasCondition ? 1 : 0)
+                                     << " current=" << currentCondition << " max=" << maximumCondition
+                                     << " value=" << base.getClass().getValue(base)
+                                     << " weight=" << base.getClass().getWeight(base)
+                                     << " selected=" << (static_cast<int>(index) == selectedIndex ? 1 : 0)
+                                     << " source=restored-save330-inventory-model"
+                                     << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
+                }
+                categoryRowsLogged[categoryIndex] = true;
+                Log(Debug::Info) << "FNV D01 inventory category complete: category=" << categoryName
+                                 << " visibleRows=" << visibleRows << " source=production-Pip-Boy-items-tab status=pass";
+            }
+
+            std::ostringstream text;
+            text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n"
+                 << categoryName << "  LIVE SAVE330  " << visibleRows << " ROWS\n";
+            const std::size_t first = selectedIndex < 0 ? 0 : static_cast<std::size_t>(selectedIndex);
+            const std::size_t last = std::min(visibleRows, first + 7);
+            for (std::size_t index = first; index < last; ++index)
+            {
+                const MWGui::ItemStack item = visibleModel->getItem(static_cast<int>(index));
+                const MWWorld::Ptr& base = item.mBase;
+                const bool equipped = item.mType == MWGui::ItemStack::Type_Equipped;
+                const std::string name = falloutD01SafeText(base.getClass().getName(base));
+                text << (static_cast<int>(index) == selectedIndex ? "> " : "  ")
+                     << (equipped ? "[E] " : "    ") << name << "  " << item.mCount << "\n";
+            }
+            text << "\nSOURCE: RESTORED SAVE330\nE EQUIP/USE  W/S SCROLL";
+            return text.str();
+        }
+
+        std::string makeFalloutPipBoyTerminalBody(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
+            float mapPanX, float mapPanY, std::string_view lastAction, std::string_view mapSelection,
+            std::string_view mapConfirmation)
+        {
+            if (pane == 1 && std::getenv("OPENMW_FNV_REAL_SAVE_D01") != nullptr)
+                return makeFalloutD01ProductionInventoryBody(submenu, listOffset);
+
             float healthCurrent = 0.f;
             float healthMaximum = 0.f;
             float actionCurrent = 0.f;
@@ -403,6 +582,8 @@ namespace MWGui
                          << static_cast<int>(std::lround(mapZoom * 100.f)) << "%\n"
                          << "PAN " << static_cast<int>(std::lround(mapPanX * 100.f)) << ','
                          << static_cast<int>(std::lround(mapPanY * 100.f)) << "  [YOU]"
+                         << (mapSelection.empty() ? "" : "\nSELECTED: " + std::string(mapSelection))
+                         << (mapConfirmation.empty() ? "" : "\n" + std::string(mapConfirmation))
                          // The physical Fallout layout keeps the DATA sub-tabs
                          // below the map rather than consuming the map viewport.
                          << '\f' << makeFalloutPipBoyTabRow({ "LOCAL", "WORLD" }, worldMap ? 1 : 0);
@@ -1637,6 +1818,8 @@ namespace MWGui
             setActiveControllerWindow(GM_Inventory, value);
             mFalloutPipBoySubmenu = 0;
             mFalloutPipBoyListOffset = 0;
+            if (value == 1 && mInventoryWindow != nullptr)
+                mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
             changed = true;
         };
         const auto changeList = [this, pane, &changed](int delta) {
@@ -1702,6 +1885,8 @@ namespace MWGui
                     const int count = getFalloutPipBoySubmenuCount(pane);
                     mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + count - 1) % count;
                     mFalloutPipBoyListOffset = 0;
+                    if (pane == 1 && mInventoryWindow != nullptr)
+                        mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
                     changed = true;
                 }
                 break;
@@ -1716,6 +1901,8 @@ namespace MWGui
                     const int count = getFalloutPipBoySubmenuCount(pane);
                     mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + 1) % count;
                     mFalloutPipBoyListOffset = 0;
+                    if (pane == 1 && mInventoryWindow != nullptr)
+                        mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
                     changed = true;
                 }
                 break;
@@ -1777,6 +1964,23 @@ namespace MWGui
         return true;
     }
 
+    void WindowManager::setFalloutPipBoyMapSelection(std::string_view name, ESM::FormId marker)
+    {
+        mFalloutPipBoyMapSelection = std::string(name) + " " + marker.toString();
+        updateFalloutPipBoyTerminalSurface();
+    }
+
+    void WindowManager::setFalloutPipBoyMapConfirmation(std::string_view text)
+    {
+        // The physical terminal has a deliberately small retail-sized text
+        // surface.  Once the production confirmation dialog opens, show its
+        // exact title in the available row instead of clipping it below the
+        // selected-marker annotation.
+        mFalloutPipBoyMapSelection.clear();
+        mFalloutPipBoyMapConfirmation = std::string(text);
+        updateFalloutPipBoyTerminalSurface();
+    }
+
     osg::Texture2D* WindowManager::getFalloutPipBoyLocalMapTexture()
     {
         if (mLocalMapRender == nullptr)
@@ -1793,7 +1997,8 @@ namespace MWGui
     {
         return makeFalloutPipBoyTerminalBody(getFalloutPipBoyActivePane(), mFalloutPipBoySubmenu,
             mFalloutPipBoyListOffset, mFalloutPipBoyWorldMap, mFalloutPipBoyMapZoom, mFalloutPipBoyMapPanX,
-            mFalloutPipBoyMapPanY, mFalloutPipBoyLastAction);
+            mFalloutPipBoyMapPanY, mFalloutPipBoyLastAction, mFalloutPipBoyMapSelection,
+            mFalloutPipBoyMapConfirmation);
     }
 
     void WindowManager::updateFalloutPipBoyTerminalSurface()

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -18,10 +19,13 @@
 #include <components/esm3/loadclas.hpp>
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/l10n/manager.hpp>
@@ -56,6 +60,7 @@
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/scene.hpp"
+#include "../mwworld/worldimp.hpp"
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -88,6 +93,186 @@ namespace
         if (hour < 0.f)
             hour += 24.f;
         return true;
+    }
+
+    bool fnvB04PersistenceTelemetryEnabled()
+    {
+        const char* value = std::getenv("OPENMW_FNV_B04_PERSISTENCE_TELEMETRY");
+        return value != nullptr && *value != '\0';
+    }
+
+    void logFNVB04PersistenceState(MWBase::World& world)
+    {
+        if (!fnvB04PersistenceTelemetryEnabled())
+            return;
+
+        const MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty() || !player.getClass().hasInventoryStore(player))
+        {
+            Log(Debug::Error) << "FNV B04 persistence: OpenMW save player inventory unavailable";
+            return;
+        }
+
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        std::set<ESM::RefId> equippedIds;
+        std::size_t worn = 0;
+        for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+        {
+            const MWWorld::ContainerStoreIterator item = inventory.getSlot(slot);
+            if (item == inventory.end())
+                continue;
+            ++worn;
+            const ESM::RefId id = item->getCellRef().getRefId();
+            equippedIds.insert(id);
+            Log(Debug::Info) << "FNV B04 persistence equipped: slot=" << slot << " form=" << id.toDebugString();
+        }
+
+        std::size_t stacks = 0;
+        std::size_t visible = 0;
+        std::int64_t totalItems = 0;
+        for (MWWorld::ContainerStoreIterator item = inventory.begin(); item != inventory.end(); ++item)
+        {
+            ++stacks;
+            const int count = item->getCellRef().getCount();
+            totalItems += count;
+            const bool itemVisible = item->getClass().showsInInventory(*item);
+            if (itemVisible)
+                ++visible;
+            const ESM::RefId id = item->getCellRef().getRefId();
+            Log(Debug::Info) << "FNV B04 persistence inventory item: form=" << id.toDebugString()
+                             << " count=" << count << " visible=" << (itemVisible ? 1 : 0)
+                             << " equipped=" << (equippedIds.contains(id) ? 1 : 0);
+        }
+
+        const MWWorld::FalloutPlayerRuntimeState& runtime = world.getFalloutPlayerRuntimeState();
+        const std::optional<MWWorld::FalloutRuntimeActorValue> health
+            = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::HealthActorValue);
+        const std::optional<MWWorld::FalloutRuntimeActorValue> actionPoints
+            = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+        const std::optional<float> actionPointsMaximum = runtime.getMaxActionPoints();
+        Log(Debug::Info) << "FNV B04 persistence: OpenMW save player inventory stacks=" << stacks
+                         << " visible=" << visible << " worn=" << worn << " totalItems=" << totalItems
+                         << " health=" << (health ? health->mValue : -1.f)
+                         << " actionPoints=" << (actionPoints ? actionPoints->mValue : -1.f)
+                         << " actionPointsMax=" << (actionPointsMaximum ? *actionPointsMaximum : -1.f);
+
+        const auto base = runtime.getBaseState();
+        Log(Debug::Info) << "FNV B04 persistence: OpenMW save player identity initialized="
+                         << (base ? 1 : 0) << " base="
+                         << (base ? ESM::RefId(base->mBaseRecord).toDebugString() : std::string("none"))
+                         << " reference="
+                         << (base ? ESM::RefId(base->mReferenceRecord).toDebugString() : std::string("none"));
+
+        std::size_t modifierCount = 0;
+        for (std::uint32_t actorValue = 0; actorValue < MWWorld::FalloutPlayerRuntimeState::ActorValueCount;
+             ++actorValue)
+        {
+            const auto modifier = runtime.getActorValueModifierStack(actorValue);
+            if (!modifier || (modifier->mPermanent == 0.f && modifier->mDamage == 0.f
+                                  && modifier->mTemporary == 0.f))
+                continue;
+            ++modifierCount;
+            Log(Debug::Info) << "FNV B04 persistence actor-value modifier: actorValue=" << actorValue
+                             << " permanent=" << modifier->mPermanent << " damage=" << modifier->mDamage
+                             << " temporary=" << modifier->mTemporary;
+        }
+        Log(Debug::Info) << "FNV B04 persistence: OpenMW save actor-value modifiers count=" << modifierCount;
+
+        const MWWorld::ESM4QuestRuntime& quests = world.getESM4QuestRuntime();
+        Log(Debug::Info) << "FNV B04 persistence: OpenMW save quest state states=" << quests.getStateCount()
+                         << " stages=" << quests.getStageValueCount() << " objectives="
+                         << quests.getObjectiveValueCount() << " variables=" << quests.getVariableValueCount()
+                         << " active="
+                         << (quests.getActiveQuest() ? ESM::RefId(*quests.getActiveQuest()).toDebugString()
+                                                     : std::string("none"));
+        const auto* concreteWorld = dynamic_cast<const MWWorld::World*>(&world);
+        if (concreteWorld == nullptr)
+        {
+            Log(Debug::Warning) << "FNV B04 persistence: OpenMW save globals count unavailable: concrete world type missing";
+        }
+        else
+        {
+            Log(Debug::Info) << "FNV B04 persistence: OpenMW save globals count="
+                             << concreteWorld->getFalloutPersistenceGlobalVariableCount();
+        }
+
+        const auto& references = world.getStore().get<ESM4::Reference>();
+        std::size_t authoredMarkers = 0;
+        std::size_t visibleMarkers = 0;
+        std::size_t travelMarkers = 0;
+        std::size_t explicitMarkerOverrides = 0;
+        Log(Debug::Info) << "FNV C02 marker restoration snapshot: phase=pre-proximity-discovery";
+        for (std::size_t index = 0; index < references.getSize(); ++index)
+        {
+            const ESM4::Reference* marker = references.at(index);
+            if (marker == nullptr || !marker->mIsMapMarker)
+                continue;
+            ++authoredMarkers;
+            const std::uint8_t state = world.getFalloutMapMarkerState(marker->mId);
+            if (state > 0)
+                ++visibleMarkers;
+            if (state == 2)
+                ++travelMarkers;
+            const auto overrideState = runtime.getMapMarkerState(marker->mId);
+            if (overrideState)
+                ++explicitMarkerOverrides;
+            Log(Debug::Info) << "FNV B04 persistence map marker: id="
+                             << ESM::RefId(marker->mId).toDebugString() << " name=\"" << marker->mFullName
+                             << "\" state=" << static_cast<unsigned int>(state) << " override="
+                             << (overrideState ? static_cast<unsigned int>(*overrideState) : -1)
+                             << " authoredVisible="
+                             << (((marker->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0) ? 1 : 0)
+                             << " authoredCanTravel="
+                             << (((marker->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0) ? 1 : 0);
+
+            const ESM4::Cell* markerCell = world.getStore().get<ESM4::Cell>().search(marker->mParent);
+            const ESM4::World* markerWorld = markerCell == nullptr
+                ? nullptr
+                : world.getStore().get<ESM4::World>().search(markerCell->mParent);
+            const bool referenceValid = marker->mId != ESM::FormId() && marker->mIsMapMarker
+                && !marker->mFullName.empty();
+            const bool destinationCellValid = markerCell != nullptr && markerCell->isExterior()
+                && markerCell->mId == marker->mParent;
+            const bool destinationWorldspaceValid = destinationCellValid && markerWorld != nullptr
+                && markerCell->mParent == markerWorld->mId;
+            const bool destinationValid = destinationCellValid && destinationWorldspaceValid;
+            const std::string worldspace = markerWorld == nullptr
+                ? (markerCell == nullptr ? std::string("none")
+                                         : ESM::RefId(markerCell->mParent).toDebugString())
+                : ESM::RefId(markerWorld->mId).toDebugString();
+            Log(Debug::Info) << "FNV C01 map marker: id="
+                             << ESM::RefId(marker->mId).toDebugString() << " name=\"" << marker->mFullName
+                             << "\" iconType=" << static_cast<unsigned int>(marker->mMapMarkerType)
+                             << " worldspace=" << worldspace << " cell="
+                             << ESM::RefId(marker->mParent).toDebugString() << " grid=("
+                             << (markerCell == nullptr ? 0 : markerCell->mX) << ","
+                             << (markerCell == nullptr ? 0 : markerCell->mY) << ") pos=("
+                             << marker->mPos.pos[0] << "," << marker->mPos.pos[1] << ","
+                             << marker->mPos.pos[2] << ") state=" << static_cast<unsigned int>(state)
+                             << " authoredVisible="
+                             << (((marker->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0) ? 1 : 0)
+                             << " authoredCanTravel="
+                             << (((marker->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0) ? 1 : 0)
+                             << " referenceValid=" << (referenceValid ? 1 : 0)
+                             << " destinationCellValid=" << (destinationCellValid ? 1 : 0)
+                             << " destinationWorldspaceValid=" << (destinationWorldspaceValid ? 1 : 0)
+                             << " destinationValid=" << (destinationValid ? 1 : 0);
+            const std::uint8_t authoredState = (marker->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0
+                ? 2
+                : ((marker->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0 ? 1 : 0);
+            Log(Debug::Info) << "FNV C02 restored marker: phase=pre-proximity-discovery id="
+                             << ESM::RefId(marker->mId).toDebugString() << " name=\"" << marker->mFullName
+                             << "\" state=" << static_cast<unsigned int>(state)
+                             << " authoredState=" << static_cast<unsigned int>(authoredState)
+                             << " override=" << (overrideState ? static_cast<unsigned int>(*overrideState) : -1)
+                             << " overridePresent=" << (overrideState ? 1 : 0);
+        }
+        Log(Debug::Info) << "FNV B04 persistence: OpenMW save map markers authored=" << authoredMarkers
+                         << " visible=" << visibleMarkers << " travel=" << travelMarkers
+                         << " overrides=" << explicitMarkerOverrides;
+        Log(Debug::Info) << "FNV C02 marker restoration snapshot: phase=pre-proximity-discovery rows="
+                         << authoredMarkers << " visible=" << visibleMarkers << " travel=" << travelMarkers
+                         << " overrides=" << explicitMarkerOverrides;
     }
 }
 
@@ -617,6 +802,9 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             throw std::runtime_error("native FNV visual application has no validated Player compatibility carrier");
         ESM::NPC savedPlayer = *playerCarrier;
         MWWorld::applyFalloutSavePlayerHeader(savedPlayer, context.mPlan.mPlayer);
+        Log(Debug::Info) << "Native FNV save Player identity restored: base="
+                         << context.mPlan.mPlayer.mBaseRecord << " reference="
+                         << context.mPlan.mPlayer.mReferenceRecord;
         Log(Debug::Info) << "Native FNV save Player inventory: stacks="
                          << context.mPlan.mPlayer.mInventoryItems.size() << " worn="
                          << context.mPlan.mPlayer.mWornVisualItems.size();
@@ -1046,6 +1234,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                          << " pitch=" << camera->getPitch() << " yaw=" << camera->getYaw()
                          << " roll=" << camera->getRoll() << " worldFov=" << savedWorldFov
                          << " firstPersonModelFov=" << savedFirstPersonFov;
+        logFNVB04PersistenceState(mutableWorld);
         return;
     }
 
@@ -1256,6 +1445,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         MWBase::Environment::get().getWorldScene()->markCellAsUnchanged();
 
         MWBase::Environment::get().getLuaManager()->gameLoaded();
+        logFNVB04PersistenceState(*MWBase::Environment::get().getWorld());
     }
     catch (const SaveVersionTooNewError& e)
     {

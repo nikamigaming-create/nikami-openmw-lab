@@ -4574,7 +4574,7 @@ namespace MWRender
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
         const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
-        std::string_view falloutSemanticGroup)
+        std::string_view falloutSemanticGroup, bool falloutIsolateExistingGroups)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4637,7 +4637,6 @@ namespace MWRender
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
         const bool isFonvAnim = isFonvActorAnim || isFonvCreatureAnim;
-
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
             // Callers that selected an exact retail action manifest provide the semantic group explicitly. Filename
@@ -4696,6 +4695,25 @@ namespace MWRender
                 animsrc->mKeyframes = keyframes;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected creature hit KF " << kfname
                                     << " from generic idle groups";
+            }
+        }
+        if (animsrc->mKeyframes && isFonvActorAnim && falloutIsolateExistingGroups
+            && !falloutSemanticGroup.empty())
+        {
+            // Exact Fallout source selection is not allowed to replace an
+            // unrelated production group merely because the KF also exposes a
+            // legacy text-key name. Keep the selected semantic interval and
+            // its raw controllers, but remove the conflicting aliases before
+            // this source enters the reverse-priority source stack.
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutSelectedSourceTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup, { "idle" }))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected Fallout source " << kfname
+                                    << " to semantic group '" << falloutSemanticGroup
+                                    << "' by removing conflicting legacy group(s)";
             }
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
@@ -4832,8 +4850,12 @@ namespace MWRender
                                      << bonename << "' for " << kfname;
                 }
             }
-            const bool requiredSkeletonTarget
-                = !isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename);
+            const bool optionalFirstPersonPipBoyPauldron
+                = lowerKf.find("pipboymanipulate.kf") != std::string::npos
+                && authoredBonename == "bip01 rpauldron"
+                && lowerBaseModel.find("characters/_1stperson/") != std::string::npos;
+            const bool requiredSkeletonTarget = !optionalFirstPersonPipBoyPauldron
+                && (!isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename));
             if (found == nodeMap.end() && !requiredSkeletonTarget)
                 resolutionKind = "deferred-visual";
             if (auditFalloutControllerTargets)
@@ -4864,8 +4886,13 @@ namespace MWRender
                 {
                     ++missingRequiredControllers;
                     if (isFonvAnim)
+                    {
                         Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
                                             << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                        if (lowerKf.find("pipboymanipulate.kf") != std::string::npos)
+                            Log(Debug::Warning) << "FNV Pip-Boy retail manipulate missing controller target='"
+                                                << bonename << "' base=" << baseModel;
+                    }
                     else
                         Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
                                             << baseModel << " (referenced by " << kfname << ")";
@@ -5019,7 +5046,6 @@ namespace MWRender
                                  << " keys=[" << summarizeFalloutTextKeys(animsrc->getTextKeys()) << "]";
             }
             animsrc->mFalloutProcedureIdle = isProcedureIdle;
-
             Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
                              << missingRequiredControllers << ", skippedSyntheticAttachmentHelpers "
@@ -6097,106 +6123,148 @@ namespace MWRender
         for (size_t blendMask = 0; blendMask < sNumBlendMasks; blendMask++)
         {
             AnimStateMap::const_iterator active = mStates.end();
+            std::map<std::string, AnimStateMap::const_iterator> activeControllers;
 
             AnimStateMap::const_iterator state = mStates.begin();
             for (; state != mStates.end(); ++state)
             {
-                if (!state->second.blendMaskContains(blendMask))
+                if (!state->second.blendMaskContains(blendMask) || !state->second.mSource)
                     continue;
 
                 if (active == mStates.end()
                     || active->second.mPriority[(BoneGroup)blendMask] < state->second.mPriority[(BoneGroup)blendMask])
                     active = state;
+
+                for (const auto& controller : state->second.mSource->mControllerMap[blendMask])
+                {
+                    auto [selected, inserted] = activeControllers.emplace(controller.first, state);
+                    if (!inserted
+                        && selected->second->second.mPriority[(BoneGroup)blendMask]
+                            < state->second.mPriority[(BoneGroup)blendMask])
+                        selected->second = state;
+                }
             }
 
             mAnimationTimePtr[blendMask]->setTimePtr(
                 active == mStates.end() ? std::shared_ptr<float>() : active->second.mTime);
 
-            // add external controllers for the AnimSource active in this blend mask
-            if (active != mStates.end())
+            if (!falloutNpc && active != mStates.end())
             {
+                activeControllers.clear();
+                for (const auto& controller : active->second.mSource->mControllerMap[blendMask])
+                    activeControllers.emplace(controller.first, active);
+            }
+
+            // Fallout first-person clips commonly author only one arm inside the same coarse upper-body mask.
+            // Select the highest-priority controller for each bone so the partial overlay does not drop the
+            // complementary base-pose controllers that retail keeps playing. Other animation systems retain their
+            // original whole-source selection above.
+            for (const auto& [controllerName, controllerState] : activeControllers)
+            {
+                active = controllerState;
                 std::shared_ptr<AnimSource> animsrc = active->second.mSource;
                 activeFalloutProcedureIdle = activeFalloutProcedureIdle || animsrc->mFalloutProcedureIdle;
                 const AnimBlendStateData stateData
                     = { .mGroupname = active->second.mGroupname, .mStartKey = active->second.mStartKey };
 
-                for (AnimSource::ControllerMap::iterator it = animsrc->mControllerMap[blendMask].begin();
-                     it != animsrc->mControllerMap[blendMask].end(); ++it)
+                AnimSource::ControllerMap::iterator it = animsrc->mControllerMap[blendMask].find(controllerName);
+                if (it == animsrc->mControllerMap[blendMask].end())
+                    continue;
+                if (falloutNpc && std::getenv("OPENMW_FNV_HAND_POSE_AUDIT") != nullptr
+                    && (active->second.mGroupname == "pipboywaver"
+                        || active->second.mGroupname == "pipboybaseaim")
+                    && (controllerName == "bip01 nonaccum" || controllerName == "bip01 l clavicle"
+                        || controllerName == "bip01 l upperarm" || controllerName == "bip01 l forearm"
+                        || controllerName == "bip01 luparmtwistbone" || controllerName == "bip01 l foretwist"
+                        || controllerName == "bip01 l hand" || controllerName == "bip01 r clavicle"
+                        || controllerName == "bip01 r upperarm" || controllerName == "bip01 r forearm"
+                        || controllerName == "bip01 r foretwist" || controllerName == "bip01 r hand"))
                 {
-                    osg::ref_ptr<osg::Node> node = getNodeMap().at(
-                        it->first); // this should not throw, we already checked for the node existing in addAnimSource
+                    Log(Debug::Info) << "FNV Pip-Boy controller ownership: bone=" << controllerName
+                                     << " blendMask=" << blendMask
+                                     << " group=" << active->second.mGroupname
+                                     << " source=" << animsrc->mSourceName
+                                     << " time=" << active->second.getTime();
+                }
+                if (falloutNpc)
+                {
+                    auto controllerTime = std::make_shared<AnimationTime>();
+                    controllerTime->setTimePtr(active->second.mTime);
+                    it->second->setSource(std::move(controllerTime));
+                }
+                osg::ref_ptr<osg::Node> node = getNodeMap().at(
+                    it->first); // this should not throw, we already checked for the node existing in addAnimSource
 
-                    if (falloutNpc && isBethesdaBoneLodSuppressed(node))
+                if (falloutNpc && isBethesdaBoneLodSuppressed(node))
+                {
+                    ++falloutBoneLodSuppressedControllers;
+                    continue;
+                }
+
+                const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
+
+                osg::Callback* callback = it->second->getAsCallback();
+                auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
+                const bool propertyController
+                    = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
+                const bool transformController
+                    = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
+                // A compound Fallout KF controller owns its transform and render-property channels atomically.
+                // Feeding it into a transform-only blender would discard material/UV animation.
+                if (useSmoothAnims && !propertyController)
+                {
+                    if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
                     {
-                        ++falloutBoneLodSuppressedControllers;
-                        continue;
+                        callback = handleBlendTransform<NifAnimBlendController>(node, it->second,
+                            mAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
                     }
-
-                    const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
-
-                    osg::Callback* callback = it->second->getAsCallback();
-                    auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
-                    const bool propertyController
-                        = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
-                    const bool transformController
-                        = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
-                    // A compound Fallout KF controller owns its transform and render-property channels atomically.
-                    // Feeding it into a transform-only blender would discard material/UV animation.
-                    if (useSmoothAnims && !propertyController)
+                    else if (dynamic_cast<osgAnimation::Bone*>(node.get()))
                     {
-                        if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
-                        {
-                            callback = handleBlendTransform<NifAnimBlendController>(node, it->second,
-                                mAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
-                        }
-                        else if (dynamic_cast<osgAnimation::Bone*>(node.get()))
-                        {
-                            callback = handleBlendTransform<BoneAnimBlendController>(node, it->second,
-                                mBoneAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
-                        }
+                        callback = handleBlendTransform<BoneAnimBlendController>(node, it->second,
+                            mBoneAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
                     }
+                }
 //## VR_PATCH BEGIN
-                    // Some bones need to be still and do nothing in VR
-                    // I'm SURE we'll TOTALLY make a cleaner solution for this before the end of 2090
-                    node->setDataVariance(osg::Object::DYNAMIC);
-                    const bool addSceneGraphCallback
-                        = (propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
-                        && (!isPlayer || !vrOverride(active->first, it->first));
-                    if (addSceneGraphCallback)
+                // Some bones need to be still and do nothing in VR
+                // I'm SURE we'll TOTALLY make a cleaner solution for this before the end of 2090
+                node->setDataVariance(osg::Object::DYNAMIC);
+                const bool addSceneGraphCallback
+                    = (propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
+                    && (!isPlayer || !vrOverride(active->first, it->first));
+                if (addSceneGraphCallback)
 //## VR_PATCH END
-                    {
-                        node->addUpdateCallback(callback);
-                        mActiveControllers.emplace_back(node, callback);
-                        if (falloutNpc)
-                            ++falloutAddedControllers;
-                    }
+                {
+                    node->addUpdateCallback(callback);
+                    mActiveControllers.emplace_back(node, callback);
+                    if (falloutNpc)
+                        ++falloutAddedControllers;
+                }
 
-                    if (transformController && blendMask == 0 && node == mAccumRoot)
-                    {
-                        mAccumCtrl = it->second;
+                if (transformController && blendMask == 0 && node == mAccumRoot)
+                {
+                    mAccumCtrl = it->second;
 
-                        // Bethesda locomotion stores actor displacement on the accumulation root. Apply that
-                        // displacement to gameplay movement, then clear its accumulated axes from the rendered
-                        // skeleton just like the native engine. Leaving the callback off for Fallout actors makes
-                        // the complete body surge away from and back to its physics reference every animation cycle.
-                        if (!mResetAccumRootCallback)
-                        {
-                            mResetAccumRootCallback = new ResetAccumRootCallback;
-                            mResetAccumRootCallback->setAccumulate(mAccumulate);
-                        }
-                        mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
-                        const bool restoreFalloutBindRotation = falloutNpc
-                            && Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
-                            && !animsrc->mFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
-                        auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
-                        mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
-                                ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
-                                : std::nullopt);
-                        // Keep the reset last in the callback chain so it sees the sampled controller value.
-                        mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
-                        mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
-                        accumResetAttached = true;
+                    // Bethesda locomotion stores actor displacement on the accumulation root. Apply that
+                    // displacement to gameplay movement, then clear its accumulated axes from the rendered
+                    // skeleton just like the native engine. Leaving the callback off for Fallout actors makes
+                    // the complete body surge away from and back to its physics reference every animation cycle.
+                    if (!mResetAccumRootCallback)
+                    {
+                        mResetAccumRootCallback = new ResetAccumRootCallback;
+                        mResetAccumRootCallback->setAccumulate(mAccumulate);
                     }
+                    mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
+                    const bool restoreFalloutBindRotation = falloutNpc
+                        && Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                        && !animsrc->mFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+                    auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+                    mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                            ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                            : std::nullopt);
+                    // Keep the reset last in the callback chain so it sees the sampled controller value.
+                    mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
+                    mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
+                    accumResetAttached = true;
                 }
             }
         }

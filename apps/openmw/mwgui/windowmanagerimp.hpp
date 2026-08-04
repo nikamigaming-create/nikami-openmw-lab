@@ -429,6 +429,8 @@ namespace MWGui
         float getFalloutPipBoyMapPanX() const { return mFalloutPipBoyMapPanX; }
         float getFalloutPipBoyMapPanY() const { return mFalloutPipBoyMapPanY; }
         float getFalloutPipBoyInteractionPulse() const { return mFalloutPipBoyInteractionPulse; }
+        void setFalloutPipBoyMapSelection(std::string_view name, ESM::FormId marker);
+        void setFalloutPipBoyMapConfirmation(std::string_view text);
         osg::Texture2D* getFalloutPipBoyLocalMapTexture();
         std::string getFalloutPipBoyTerminalHeader() const override;
         std::string getFalloutPipBoyTerminalBody() const override;
@@ -575,6 +577,8 @@ namespace MWGui
         // interaction on the native first-person rig.
         float mFalloutPipBoyInteractionPulse = 0.f;
         std::string mFalloutPipBoyLastAction;
+        std::string mFalloutPipBoyMapSelection;
+        std::string mFalloutPipBoyMapConfirmation;
         int mFalloutPipBoyLocalMapX = 0;
         int mFalloutPipBoyLocalMapY = 0;
         // A transparent, dedicated MyGUI layer used only as the texture source
