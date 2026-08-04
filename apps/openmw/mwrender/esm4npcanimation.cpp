@@ -9119,21 +9119,25 @@ namespace MWRender
             if (!isPlaying("pipboy"))
                 play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f,
                     "start", "stop", 0.f, 0, false);
-            // The known-good, screen-facing wrist orientation is the terminal
-            // sample of the retail first-person raise clip.  Replacing it with
-            // the third-person waver basis pitches the device away from the
-            // camera and hides the screen.
+            // The retained retail scene-graph trace reaches Pip-Boy mode 3 at
+            // frame 934 with pipboy.kf at exactly 0.333333 seconds. That is the
+            // fully raised two-arm contact pose. The clip continues to 0.733333
+            // as the toggle lowers, so its terminal sample is not a held pose.
+            // Replay the stock controllers up to retail's recorded transition
+            // frame and retain that sample while the physical menu is open.
             if (isPlaying("pipboywaver"))
                 disable("pipboywaver");
 
             auto raiseState = mStates.find("pipboy");
             if (raiseState != mStates.end())
             {
+                constexpr float retailRaisedContactSeconds = 10.f / 30.f;
                 const float sequenceSpan
                     = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
                 const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
                     * (3.f - 2.f * mPipBoyPresentationProgress);
-                raiseState->second.setTime(raiseState->second.mStartTime + sequenceSpan * authoredProgress);
+                const float raisedSpan = std::min(sequenceSpan, retailRaisedContactSeconds);
+                raiseState->second.setTime(raiseState->second.mStartTime + raisedSpan * authoredProgress);
                 raiseState->second.mSpeedMult = 0.f;
                 raiseState->second.mPlaying = true;
                 raiseState->second.mAutoDisable = false;
@@ -9143,7 +9147,8 @@ namespace MWRender
             if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
                 Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
                                  << getAnimationSourceName("pipboy")
-                                 << " sample=terminal waver=disabled right=retail-resting-hand"
+                                 << " range=start-to-retail-mode3 sample=0.333333 waver=disabled"
+                                 << " right=retail-pipboy-kf"
                                  << " completeArmMeshes=1 screenAndControls=live";
         }
 
