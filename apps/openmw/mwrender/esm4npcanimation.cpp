@@ -9201,10 +9201,34 @@ namespace MWRender
             || worldMap != mPipBoyLastWorldMap || std::abs(mapZoom - mPipBoyLastMapZoom) > 0.001f
             || std::abs(mapPanX - mPipBoyLastMapPanX) > 0.001f
             || std::abs(mapPanY - mPipBoyLastMapPanY) > 0.001f;
-        if (paneChanged)
-            mPipBoyArmTargetVariant = physicalTab;
-        else if (listControlChanged)
+        const bool initialState = mPipBoyLastPane < 0;
+        const bool newInputPulse = !initialState && interactionPulse > mPipBoyLastControlPulse + 0.25f;
+        if (initialState)
             mPipBoyArmTargetVariant = 4;
+        else if (paneChanged)
+            mPipBoyArmTargetVariant = physicalTab;
+        else if (!initialState && listControlChanged)
+            mPipBoyArmTargetVariant = 4;
+        else if (newInputPulse)
+            mPipBoyArmTargetVariant = physicalTab;
+
+        if (!initialState && !paneChanged && listControlChanged)
+        {
+            float direction = 0.f;
+            if (listOffset != mPipBoyLastListOffset)
+                direction = static_cast<float>(listOffset - mPipBoyLastListOffset);
+            else if (submenu != mPipBoyLastSubmenu)
+                direction = static_cast<float>(submenu - mPipBoyLastSubmenu);
+            else if (worldMap != mPipBoyLastWorldMap)
+                direction = worldMap ? 1.f : -1.f;
+            else if (std::abs(mapZoom - mPipBoyLastMapZoom) > 0.001f)
+                direction = mapZoom - mPipBoyLastMapZoom;
+            else
+                direction = (mapPanX - mPipBoyLastMapPanX) + (mapPanY - mPipBoyLastMapPanY);
+            direction = direction < 0.f ? -1.f : 1.f;
+            mPipBoyScrollStartAngle = mPipBoyScrollDisplayAngle;
+            mPipBoyScrollTargetAngle = mPipBoyScrollDisplayAngle + direction * 0.65f;
+        }
         mPipBoyLastPane = pane;
         mPipBoyLastSubmenu = submenu;
         mPipBoyLastListOffset = listOffset;
@@ -9212,6 +9236,7 @@ namespace MWRender
         mPipBoyLastMapZoom = mapZoom;
         mPipBoyLastMapPanX = mapPanX;
         mPipBoyLastMapPanY = mapPanY;
+        mPipBoyLastControlPulse = interactionPulse;
         const float actionContact = std::sin(std::clamp(1.f - interactionPulse, 0.f, 1.f) * osg::PI);
         const auto rotateAroundPivot = [](const PipBoyPhysicalControl& control, float angle) {
             const osg::Vec3f negativePivot(-control.mPivot.x(), -control.mPivot.y(), -control.mPivot.z());
@@ -9220,19 +9245,20 @@ namespace MWRender
         };
         constexpr std::array<float, 3> tabAngles = { -0.5f, 0.5f, 1.5f };
         mPipBoyTabKnob.mRoot->setMatrix(rotateAroundPivot(mPipBoyTabKnob, tabAngles[physicalTab]));
-        float scrollSteps = static_cast<float>(submenu) * 0.80f + static_cast<float>(listOffset) * 0.40f;
-        if (pane == 0)
-        {
-            scrollSteps = (worldMap ? 0.80f : 0.f) + (std::clamp(mapZoom, 1.f, 3.f) - 1.f) * 0.75f
-                + std::clamp(mapPanX, -0.45f, 0.45f) * 1.5f + std::clamp(mapPanY, -0.45f, 0.45f) * 1.5f;
-        }
-        mPipBoyScrollKnob.mRoot->setMatrix(rotateAroundPivot(mPipBoyScrollKnob, 1.57079632679f + scrollSteps));
+        const float spinProgress = std::clamp((1.f - interactionPulse) * 3.f, 0.f, 1.f);
+        const float smoothSpin = spinProgress * spinProgress * (3.f - 2.f * spinProgress);
+        mPipBoyScrollDisplayAngle
+            = mPipBoyScrollStartAngle + (mPipBoyScrollTargetAngle - mPipBoyScrollStartAngle) * smoothSpin;
+        mPipBoyScrollKnob.mRoot->setMatrix(
+            rotateAroundPivot(mPipBoyScrollKnob, mPipBoyScrollDisplayAngle));
         for (std::size_t index = 0; index < mPipBoyButtons.size(); ++index)
         {
             PipBoyPhysicalControl& button = mPipBoyButtons[index];
             if (button.mRoot != nullptr)
             {
-                const float depth = static_cast<int>(index) == physicalTab ? -0.065f * actionContact : 0.f;
+                const float depth = static_cast<int>(index) == mPipBoyArmTargetVariant
+                    ? -0.065f * actionContact
+                    : 0.f;
                 button.mRoot->setMatrix(osg::Matrix::translate(button.mAxis * depth));
             }
             if (mPipBoyGlows[index].mRoot != nullptr)

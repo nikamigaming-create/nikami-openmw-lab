@@ -125,6 +125,10 @@ namespace MWRender
         float mPipBoyLastMapZoom = 1.f;
         float mPipBoyLastMapPanX = 0.f;
         float mPipBoyLastMapPanY = 0.f;
+        float mPipBoyLastControlPulse = 0.f;
+        float mPipBoyScrollStartAngle = 1.57079632679f;
+        float mPipBoyScrollTargetAngle = 1.57079632679f;
+        float mPipBoyScrollDisplayAngle = 1.57079632679f;
         bool mPipBoyRetailInteractionBound = false;
         bool mPipBoyRetailWaverBound = false;
         bool mPipBoyRetailBaseIdleBound = false;
