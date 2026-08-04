@@ -9116,14 +9116,18 @@ namespace MWRender
         if (mPipBoyRetailInteractionBound)
         {
             const bool held = mPipBoyPresentationProgress >= 0.999f;
-            if (!held && !isPlaying("pipboy"))
+            if (!isPlaying("pipboy"))
                 play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f,
                     "start", "stop", 0.f, 0, false);
-            if (!held && isPlaying("pipboywaver"))
+            // The known-good, screen-facing wrist orientation is the terminal
+            // sample of the retail first-person raise clip.  Replacing it with
+            // the third-person waver basis pitches the device away from the
+            // camera and hides the screen.
+            if (isPlaying("pipboywaver"))
                 disable("pipboywaver");
 
             auto raiseState = mStates.find("pipboy");
-            if (!held && raiseState != mStates.end())
+            if (raiseState != mStates.end())
             {
                 const float sequenceSpan
                     = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
@@ -9134,34 +9138,13 @@ namespace MWRender
                 raiseState->second.mPlaying = true;
                 raiseState->second.mAutoDisable = false;
             }
-            mPipBoyRetailInteractionPoseHeld = held && mPipBoyRetailWaverBound;
-            if (mPipBoyRetailInteractionPoseHeld)
-            {
-                if (isPlaying("pipboy"))
-                    disable("pipboy");
-                if (!isPlaying("pipboywaver"))
-                {
-                    play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
-                        "start", "stop", 0.f, 0, false);
-                }
-                auto waverState = mStates.find("pipboywaver");
-                if (waverState != mStates.end())
-                {
-                    const float heldTime = std::clamp(waverState->second.mStartTime + 0.196f,
-                        waverState->second.mStartTime,
-                        std::max(waverState->second.mStartTime, waverState->second.mStopTime - 0.001f));
-                    waverState->second.setTime(heldTime);
-                    waverState->second.mSpeedMult = 0.f;
-                    waverState->second.mPlaying = true;
-                    waverState->second.mAutoDisable = false;
-                }
-            }
+            mPipBoyRetailInteractionPoseHeld = held && raiseState != mStates.end();
             resetActiveGroups();
             if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
-                Log(Debug::Info) << "FNV Pip-Boy replay stack held: raise="
-                                 << getAnimationSourceName("pipboy") << " left="
-                                 << getAnimationSourceName("pipboywaver") << " right=retail-resting-hand"
-                                 << " heldSample=0.196 completeArmMeshes=1 screenAndControls=live";
+                Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
+                                 << getAnimationSourceName("pipboy")
+                                 << " sample=terminal waver=disabled right=retail-resting-hand"
+                                 << " completeArmMeshes=1 screenAndControls=live";
         }
 
         mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
