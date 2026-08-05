@@ -4197,7 +4197,7 @@ namespace NifOsg
         static osg::ref_ptr<Emitter> handleModernParticleEmitter(
             const Nif::NiPSysEmitter* emitter, float rate)
         {
-            osg::ref_ptr<Emitter> osgEmitter = new Emitter({});
+            osg::ref_ptr<Emitter> osgEmitter = new Emitter(std::vector<int>{});
 
             osgParticle::ConstantRateCounter* counter = new osgParticle::ConstantRateCounter;
             const float lifetime = emitter && emitter->mLifespan > 0.f ? emitter->mLifespan : 2.f;

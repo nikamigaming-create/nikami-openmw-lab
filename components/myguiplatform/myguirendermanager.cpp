@@ -739,8 +739,7 @@ namespace MyGUIPlatform
 
     MyGUI::ITexture* RenderManager::createTexture(const std::string& name)
     {
-        const auto it
-            = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager, mUseMissingTextureFallback)).first;
+        const auto it = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager)).first;
         return &it->second;
     }
 
