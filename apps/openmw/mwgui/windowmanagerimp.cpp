@@ -1613,7 +1613,7 @@ namespace MWGui
             mGuiModeStates[mode].mWindows[mActiveControllerWindows[mode]]->setActiveControllerWindow(true);
     }
 
-    void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
+    void WindowManager::setActiveControllerWindow(GuiMode mode, size_t activeIndex)
     {
         const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
         if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
@@ -3215,7 +3215,7 @@ namespace MWGui
         }
     }
 
-    int WindowManager::countSavedGameRecords() const
+    size_t WindowManager::countSavedGameRecords() const
     {
         return 1 // Global map
             + 1 // QuickKeysMenu

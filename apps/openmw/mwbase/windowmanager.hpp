@@ -81,6 +81,7 @@ namespace MWGui
     class SettingsWindow;
     class HUD;
     class WindowBase;
+    class DragAndDrop;
 
     enum ShowInDialogueMode
     {
@@ -118,6 +119,14 @@ namespace MWBase
         /// @note This method will block until the video finishes playing
         /// (and will continually update the window while doing so)
         virtual void playVideo(std::string_view name, bool allowSkipping, bool overrideSounds = true) = 0;
+        virtual void skipVideo() = 0;
+        virtual bool isPlayingVideo() const = 0;
+        virtual void update(float duration) = 0;
+        virtual MWGui::DragAndDrop& getDragAndDrop() = 0;
+        virtual void viewerTraversals() = 0;
+        virtual void enterVoid() = 0;
+        virtual bool isInVoid() = 0;
+        virtual void exitVoid() = 0;
 
         virtual void setNewGame(bool newgame) = 0;
 
@@ -233,6 +242,7 @@ namespace MWBase
 
         /// activate selected quick key
         virtual void activateQuickKey(int index) = 0;
+        virtual bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) = 0;
         /// update activated quick key state (if action executing was delayed for some reason)
         virtual void updateActivatedQuickKey() = 0;
 
@@ -248,6 +258,7 @@ namespace MWBase
         virtual void showCrosshair(bool show) = 0;
         virtual bool setHudVisibility(bool show) = 0;
         virtual bool isHudVisible() const = 0;
+        virtual void setLegacyHudSuppressed(bool suppress) = 0;
 
         /// Temporarily suppress the gameplay overlay while authored presentation
         /// (for example a cinematic or character generation) owns the screen.

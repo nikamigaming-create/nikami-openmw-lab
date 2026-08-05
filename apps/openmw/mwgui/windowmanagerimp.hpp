@@ -354,7 +354,7 @@ namespace MWGui
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) override;
         void readRecord(ESM::ESMReader& reader, uint32_t type) override;
-        int countSavedGameRecords() const override;
+        size_t countSavedGameRecords() const override;
 
         /// Does the current stack of GUI-windows permit saving?
         bool isSavingAllowed() const override;
@@ -417,7 +417,7 @@ namespace MWGui
         WindowBase* getActiveControllerWindow() override;
         int getControllerMenuHeight() override;
         void cycleActiveControllerWindow(bool next) override;
-        void setActiveControllerWindow(GuiMode mode, int activeIndex) override;
+        void setActiveControllerWindow(GuiMode mode, size_t activeIndex) override;
         void setFalloutPipBoyPresentation(bool physical) override;
         bool isFalloutPipBoyPhysicalPresentation() const override { return mFalloutPipBoyPhysical; }
         int getFalloutPipBoyActivePane() const override;

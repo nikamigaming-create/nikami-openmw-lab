@@ -316,7 +316,7 @@ add_component_dir (esm4
 )
 
 add_component_dir (misc
-    barrier budgetmeasurement color compression constants convert coordinateconverter display endianness float16 frameratelimiter
+    barrier budgetmeasurement callbackmanager color compression constants convert coordinateconverter display endianness float16 frameratelimiter
     guarded math mathutil messageformatparser notnullptr objectpool osgpluginchecker osguservalues progressreporter resourcehelpers
     rng strongtypedef thread timeconvert timer tuplehelpers tuplemeta utf8stream weakcache windows
     )
@@ -377,7 +377,7 @@ add_component_dir (myguiplatform
     )
 
 add_component_dir (widgets
-    box fontwrapper imagebutton tags list numericeditbox sharedstatebutton windowcaption widgets
+    box fontwrapper imagebutton tags list numericeditbox sharedstatebutton virtualkeyboardmanager windowcaption widgets
     )
 
 add_component_dir (fontloader
@@ -535,6 +535,46 @@ else ()
     add_component_dir(platform
         filestdio
         )
+endif()
+
+if(BUILD_OPENMW_VR)
+    add_component_dir(vr
+        actionmanager
+        actionset
+        constants
+        directx
+        frame
+        layer
+        rendertoswapchain
+        session
+        space
+        swapchain
+        trackinglistener
+        trackingmanager
+        trackingsource
+        trackingtransform
+        viewer
+        vr
+    )
+    add_component_dir(xr
+        action
+        actionset
+        debug
+        extensions
+        input
+        interactionprofiles
+        instance
+        platform
+        session
+        space
+        swapchain
+        tracking
+        typeconversion
+    )
+else()
+    add_component_dir(vr
+        flat
+    )
 endif()
 
 add_component_dir(testing
