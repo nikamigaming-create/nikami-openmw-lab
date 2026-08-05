@@ -6,13 +6,13 @@
 
 namespace XR
 {
-    XrSpaceWrapper::~XrSpaceWrapper() 
+    XrSpaceWrapper::~XrSpaceWrapper()
     {
         if (mSpace != XR_NULL_HANDLE)
             CHECK_XRCMD(xrDestroySpace(mSpace));
     }
 
-    void XrSpaceWrapper::operator=(XrSpace space) 
+    void XrSpaceWrapper::operator=(XrSpace space)
     {
         if (mSpace != XR_NULL_HANDLE)
             CHECK_XRCMD(xrDestroySpace(mSpace));
@@ -63,7 +63,7 @@ namespace XR
         recenter(true, true, true);
     }
 
-    void ReferenceSpace::recenter(bool recenterX, bool recenterY, bool recenterZ) 
+    void ReferenceSpace::recenter(bool recenterX, bool recenterY, bool recenterZ)
     {
         auto& session = Session::instance();
         mSpace = session.createReferenceSpace(mType, {});

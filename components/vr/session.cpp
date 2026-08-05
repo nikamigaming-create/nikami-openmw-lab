@@ -100,7 +100,7 @@ namespace VR
             syncFrameEnd(frame);
     }
 
-    void Session::addListener(Listener* listener) 
+    void Session::addListener(Listener* listener)
     {
         mListeners.push_back(listener);
     }

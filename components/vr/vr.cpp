@@ -148,7 +148,7 @@ namespace VR
         sSteamVR = steamVR;
     }
 
-    void setSneakOffsetEnabled(bool enabled) 
+    void setSneakOffsetEnabled(bool enabled)
     {
         if (sVRMode)
             Session::instance().setSneak(enabled);
@@ -162,7 +162,7 @@ namespace VR
         sPredictedDisplayPeriod = time;
     }
 
-    void setLocatingSpacesAllowed(bool allowed) 
+    void setLocatingSpacesAllowed(bool allowed)
     {
         sLocatingSpacesAllowed = allowed;
     }
@@ -172,7 +172,7 @@ namespace VR
         sRuntimeName = name;
     }
 
-    void setLeftHandedMode(bool enable) 
+    void setLeftHandedMode(bool enable)
     {
         sLeftHanded = enable;
     }

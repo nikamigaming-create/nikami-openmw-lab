@@ -87,7 +87,7 @@ namespace MWVR
         //void onTrackingUpdated(VR::TrackingManager& manager) override;
 
         osg::Texture2D* colorTexture() const;
-        std::shared_ptr<VR::QuadLayer> vrLayer() { return mVrLayer; } 
+        std::shared_ptr<VR::QuadLayer> vrLayer() { return mVrLayer; }
 
         bool updateLayer();
         void updateVisibility();

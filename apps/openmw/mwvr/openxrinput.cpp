@@ -81,7 +81,7 @@ namespace MWVR
         return s;
     }
 
-    void OpenXRInput::createLuaActions() 
+    void OpenXRInput::createLuaActions()
     {
         // Use the list of known interactionProfiles to populate a list of actions
         auto interactionProfiles = XR::getAllKnownInteractionProfiles();
@@ -253,21 +253,21 @@ namespace MWVR
         mSpaces[id] = std::make_shared<VR::DerivedSpace>(mSpaces.at(referenceId), pose);
     }
 
-    void OpenXRInput::createDerivedSpace(const std::string& id, VR::ReferenceSpace ref, Stereo::Pose pose) 
+    void OpenXRInput::createDerivedSpace(const std::string& id, VR::ReferenceSpace ref, Stereo::Pose pose)
     {
         if (mSpaces.contains(id))
             throw std::runtime_error("Space " + id + " already exists");
         mSpaces[id] = std::make_shared<VR::DerivedSpace>(VR::Session::instance().getReferenceSpace(ref), pose);
     }
 
-    void OpenXRInput::createActionSpace(const std::string& id, const std::string& actionName) 
+    void OpenXRInput::createActionSpace(const std::string& id, const std::string& actionName)
     {
         if (mSpaces.contains(id))
             throw std::runtime_error("Space " + id + " already exists");
         mSpaces[id] = mActionSets.at(MWActionSet::Pose).createActionSpace(id, actionName);
     }
 
-    void OpenXRInput::createReferenceSpace(const std::string& id, VR::ReferenceSpace ref) 
+    void OpenXRInput::createReferenceSpace(const std::string& id, VR::ReferenceSpace ref)
     {
         if (mSpaces.contains(id))
             throw std::runtime_error("Space " + id + " already exists");
@@ -281,7 +281,7 @@ namespace MWVR
             return nullptr;
         return it->second;
     }
-    void OpenXRInput::onFrameUpdate(VR::Frame&) 
+    void OpenXRInput::onFrameUpdate(VR::Frame&)
     {
         mActionSets.at(MWActionSet::Pose).update();
     }
