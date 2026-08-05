@@ -2,10 +2,12 @@
 
 #include <osg/io_utils>
 
+#include <cmath>
+
 namespace Stereo
 {
 
-    Pose Pose::operator+(const Pose& rhs)
+    Pose Pose::operator+(const Pose& rhs) const
     {
         Pose pose = *this;
         pose.position += this->orientation * rhs.position;
@@ -51,7 +53,7 @@ namespace Stereo
 
     osg::Matrix View::viewMatrix(bool useGLConventions)
     {
-        auto position = pose.position;
+        auto position = pose.position.asMWUnits();
         auto orientation = pose.orientation;
 
         if (useGLConventions)
@@ -147,7 +149,8 @@ namespace Stereo
 
     std::ostream& operator<<(std::ostream& os, const Pose& pose)
     {
-        os << "position=" << pose.position << ", orientation=" << pose.orientation;
+        os << "position={ Meters=" << pose.position.asMeters() << ", MWUnits=" << pose.position.asMWUnits()
+           << " }, orientation=" << pose.orientation;
         return os;
     }
 
@@ -162,5 +165,27 @@ namespace Stereo
     {
         os << "pose=< " << view.pose << " >, fov=< " << view.fov << " >";
         return os;
+    }
+
+    void getEulerAngles(const osg::Quat& quat, float& yaw, float& pitch, float& roll)
+    {
+        osg::Matrixd rotation(osg::Matrixd::rotate(quat));
+        const double* matrix = rotation.ptr();
+        const double angleY = std::asin(matrix[2]);
+        const double cosine = std::cos(angleY);
+        double angleX = 0.0;
+        double angleZ = 0.0;
+
+        if (std::fabs(cosine) > 0.005)
+        {
+            angleX = std::atan2(-matrix[6] / cosine, matrix[10] / cosine);
+            angleZ = std::atan2(-matrix[1] / cosine, matrix[0] / cosine);
+        }
+        else
+            angleZ = std::atan2(matrix[4], matrix[5]);
+
+        yaw = static_cast<float>(angleZ);
+        pitch = static_cast<float>(angleX);
+        roll = static_cast<float>(angleY);
     }
 }
