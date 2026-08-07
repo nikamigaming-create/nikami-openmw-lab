@@ -2577,16 +2577,11 @@ namespace MWMechanics
             showFalloutWeapons(mFalloutWeapon != nullptr);
             detachFalloutWeaponTextKeys();
             mUpperBodyState = UpperBodyState::WeaponEquipped;
-            const bool steadyPoseRestored = mFalloutWeapon != nullptr && isFalloutWeaponType(mWeaponType)
-                && restoreFalloutPrimaryWeaponGroup(mWeaponType);
-            if (!steadyPoseRestored)
-            {
-                mCurrentWeapon.clear();
-                setFalloutWeaponGroup({}, false);
-            }
+            mCurrentWeapon.clear();
+            setFalloutWeaponGroup({}, false);
             Log(Debug::Warning) << "FNV mechanics retained usable weapon without exact visual action: actor="
                                 << mPtr.toString() << " weaponType=" << mWeaponType << " reason=" << reason
-                                << " steadyPoseRestored=" << steadyPoseRestored << " gameplayAvailable=1";
+                                << " gameplayAvailable=1";
         };
         const auto updateAiming = [&]() {
             const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
@@ -2727,6 +2722,28 @@ namespace MWMechanics
                     break;
             }
             forceStateUpdate = true;
+        }
+
+        // Source-family replacement happens before this controller observes an
+        // interrupted handoff. Do not start the steady pose in that same frame:
+        // the render traversal can still own controllers from the retired
+        // source. On a later, stable frame restore the authored aim KF only
+        // after the requested and active weapon families agree.
+        if (isFalloutWeaponType(mWeaponType) && mUpperBodyState == UpperBodyState::WeaponEquipped
+            && !weaponChanged && requestedWeaponType == mWeaponType)
+        {
+            MWRender::Animation* const steadyAnimation = getFalloutWeaponAnimation();
+            MWRender::Animation* const firstPersonAnimation = getFalloutWeaponAnimation(true);
+            const bool steadyPosePlaying
+                = steadyAnimation != nullptr && steadyAnimation->isPlaying("weaponpose");
+            const bool firstPersonPosePlaying
+                = firstPersonAnimation == nullptr || firstPersonAnimation->isPlaying("weaponpose");
+            if (!steadyPosePlaying || !firstPersonPosePlaying)
+            {
+                if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                    settleUsableWithoutAction("missing-steady-pose");
+                forceStateUpdate = true;
+            }
         }
 
         bool currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
