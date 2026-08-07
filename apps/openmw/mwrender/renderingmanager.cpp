@@ -154,41 +154,45 @@ namespace MWRender
             return end != value && std::isfinite(parsed) ? parsed : fallback;
         }
 
-        class FalloutPipBoyGuiRTT final : public SceneUtil::RTTNode
+        class FalloutPipBoyGuiRTT final : public osg::Group
         {
         public:
             explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera)
-                // The MyGUI camera tracks the current flat render surface.  Keeping
-                // this target at the same 16:9 1920x1080 extent prevents its active
-                // panel from being clipped to the lower-left 1280x720 sub-viewport.
-                : RTTNode(1920, 1080, 1, true, 0, StereoAwareness::Unaware, false)
-                , mGuiCamera(std::move(guiCamera))
             {
                 setName("FNV Pip-Boy live screen RTT");
+                mTexture = new osg::Texture2D;
+                mTexture->setName("FNV Pip-Boy live screen texture");
+                mTexture->setTextureSize(1920, 1080);
+                mTexture->setInternalFormat(GL_RGBA8);
+                mTexture->setSourceFormat(GL_RGBA);
+                mTexture->setSourceType(GL_UNSIGNED_BYTE);
+                mTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+                mTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+                mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+
+                mCamera = dynamic_cast<osg::Camera*>(guiCamera.get());
+                if (mCamera == nullptr)
+                    return;
+
+                // Render MyGUI directly into its own FBO. Nesting the MyGUI
+                // camera below a second RTT camera collected valid batches but
+                // left the sampled attachment black on D3D9-era FNV hardware.
+                mCamera->setRenderOrder(osg::Camera::PRE_RENDER, 0);
+                mCamera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+                mCamera->setViewport(0, 0, 1920, 1080);
+                mCamera->setClearMask(GL_COLOR_BUFFER_BIT);
+                mCamera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
+                mCamera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
+                mCamera->attach(osg::Camera::COLOR_BUFFER, mTexture.get());
+                addChild(mCamera);
             }
 
-            void setDefaults(osg::Camera* camera) override
-            {
-                camera->setCullingActive(false);
-                // PipBoyArm's retail screen material uses the captured alpha as
-                // its emissive mask.  Clearing alpha to one lights every pixel
-                // solid green before the panel can contribute any contrast.
-                camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
-                setColorBufferInternalFormat(GL_RGBA8);
-                camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF);
-                camera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
-                camera->setCullMask(Mask_GUI);
-                camera->setCullMaskLeft(Mask_GUI);
-                camera->setCullMaskRight(Mask_GUI);
-                camera->setNodeMask(Mask_3DGUI);
-                camera->setName("FNV Pip-Boy live screen camera");
-                setUpdateCallback(new NoTraverseCallback);
-                camera->addChild(mGuiCamera);
-                camera->getOrCreateStateSet()->setRenderBinDetails(-1, "RenderBin");
-            }
+            osg::Texture2D* getColorTexture() const { return mCamera != nullptr ? mTexture.get() : nullptr; }
 
         private:
-            osg::ref_ptr<osg::Node> mGuiCamera;
+            osg::ref_ptr<osg::Camera> mCamera;
+            osg::ref_ptr<osg::Texture2D> mTexture;
         };
 
         // A physical Pip-Boy needs a deterministic screen source that survives
@@ -2938,9 +2942,7 @@ namespace MWRender
         mFalloutPipBoyBoundMapTexture = mapTexture;
 
         auto* const pipBoyRtt = dynamic_cast<FalloutPipBoyGuiRTT*>(mFalloutPipBoyGuiRtt.get());
-        osg::Texture2D* const texture = pipBoyRtt != nullptr
-            ? dynamic_cast<osg::Texture2D*>(pipBoyRtt->getColorTexture(nullptr))
-            : nullptr;
+        osg::Texture2D* const texture = pipBoyRtt != nullptr ? pipBoyRtt->getColorTexture() : nullptr;
         if (!mFalloutPipBoyScreenBindingAttempted || mapTextureChanged)
         {
             mFalloutPipBoyScreenBindingAttempted = true;
