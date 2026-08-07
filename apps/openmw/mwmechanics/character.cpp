@@ -2635,7 +2635,8 @@ namespace MWMechanics
                 firstPerson != nullptr && firstPerson != actionAnimation)
             {
                 float firstPersonComplete = 0.f;
-                actionStateExists = firstPerson->getInfo(mCurrentWeapon, &firstPersonComplete);
+                actionStateExists = firstPerson->getInfo(mCurrentWeapon, &firstPersonComplete)
+                    && firstPerson->isPlaying(mCurrentWeapon);
                 if (actionStateExists)
                     complete = std::min(complete, firstPersonComplete);
             }
