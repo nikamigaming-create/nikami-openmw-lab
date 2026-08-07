@@ -6589,6 +6589,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         // roster. This preserves the physical Pip-Boy route while allowing a
         // real authored pose to settle instead of letting a fixed slot clock
         // race the first weapon's production controller.
+        bool d02AdvancedThisFrame = false;
         if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction
             && fnvRealSaveD02CapturedCurrent && fnvRealSaveD02CurrentWeapon < 9)
         {
@@ -6597,12 +6598,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             fnvRealSaveD02ActiveWeapon = -1;
             fnvRealSaveD02CapturedCurrent = false;
             fnvRealSaveD02NextActionFrame = -1;
+            d02AdvancedThisFrame = true;
             Log(Debug::Info) << "FNV D02 weapon selection: index=" << fnvRealSaveD02CurrentWeapon
                              << " action=advance-after-stable-native-frame"
                              << " source=production-pipboy-weapon-selection status=pass";
         }
 
-        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction)
+        // weaponIndex and weaponElapsed were sampled before the advance above.
+        // Wait one engine frame so the next production activation uses the
+        // newly selected roster row and its fresh pacing origin.
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction && !d02AdvancedThisFrame)
         {
             const bool needsPipBoyOpen = !fnvRealSaveD02MenuClosed || weaponIndex != fnvRealSaveD02ActiveWeapon;
             if (needsPipBoyOpen)
