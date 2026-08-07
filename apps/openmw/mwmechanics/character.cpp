@@ -2729,8 +2729,9 @@ namespace MWMechanics
         // the render traversal can still own controllers from the retired
         // source. On a later, stable frame restore the authored aim KF only
         // after the requested and active weapon families agree.
-        if (isFalloutWeaponType(mWeaponType) && mUpperBodyState == UpperBodyState::WeaponEquipped
-            && !weaponChanged && requestedWeaponType == mWeaponType)
+        if (mFalloutWeapon != nullptr && isFalloutWeaponType(mWeaponType)
+            && mUpperBodyState == UpperBodyState::WeaponEquipped && !weaponChanged
+            && requestedWeaponType == mWeaponType)
         {
             MWRender::Animation* const steadyAnimation = getFalloutWeaponAnimation();
             MWRender::Animation* const firstPersonAnimation = getFalloutWeaponAnimation(true);
