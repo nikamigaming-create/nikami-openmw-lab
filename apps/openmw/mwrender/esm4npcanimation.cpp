@@ -10332,6 +10332,12 @@ namespace MWRender
 
             if (getAnimationSourceName(source.mSemanticGroup) != resolution.mPath)
             {
+                // A semantic action can still own controller time from the
+                // previously equipped weapon (most commonly weaponpose).
+                // Stop that state before replacing its AnimSource so the
+                // next render traversal cannot retain controller pointers
+                // into the retired weapon family.
+                disable(source.mSemanticGroup);
                 const std::shared_ptr<AnimSource> bound = addSingleAnimSource(
                     resolution.mPath, baseModel, false, {}, source.mSemanticGroup);
                 if (bound == nullptr)
