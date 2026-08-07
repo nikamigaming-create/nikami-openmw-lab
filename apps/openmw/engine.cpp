@@ -3791,8 +3791,7 @@ namespace
 
     bool worldViewerTraceEnabled()
     {
-        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE")
-            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE");
     }
 
     void worldViewerTrace(unsigned int frameNumber, std::string_view phase)
