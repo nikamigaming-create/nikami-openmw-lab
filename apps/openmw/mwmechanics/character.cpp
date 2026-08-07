@@ -2741,6 +2741,8 @@ namespace MWMechanics
                 = firstPersonAnimation == nullptr || firstPersonAnimation->isPlaying("weaponpose");
             if (!steadyPosePlaying || !firstPersonPosePlaying)
             {
+                if (!mCurrentWeapon.empty())
+                    disableFalloutWeaponGroup(mCurrentWeapon);
                 if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
                     settleUsableWithoutAction("missing-steady-pose");
                 forceStateUpdate = true;
