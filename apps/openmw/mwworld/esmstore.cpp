@@ -322,8 +322,7 @@ namespace
 
     void ensureFalloutCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
         MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
-        MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons,
-        MWWorld::Store<ESM::Potion>& potions, MWWorld::Store<ESM::Miscellaneous>& miscItems,
+        MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs,
         const MWWorld::FalloutPlayerState* falloutPlayerState, std::string_view playerSkeleton)
     {
         const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
@@ -451,76 +450,6 @@ namespace
                              << player.mModel << " nativeState=" << static_cast<bool>(falloutPlayerState);
         }
 
-        const auto ensureWeapon
-            = [&weapons](std::string_view id, std::string_view name, std::string_view icon, int value) {
-                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
-                  if (weapons.searchStatic(refId) != nullptr)
-                      return;
-
-                  ESM::Weapon weapon;
-                  weapon.mId = refId;
-                  weapon.blank();
-                  weapon.mName = std::string(name);
-                  weapon.mIcon = std::string(icon);
-                  weapon.mData.mWeight = 2.f;
-                  weapon.mData.mValue = value;
-                  weapon.mData.mType = ESM::Weapon::MarksmanThrown;
-                  weapon.mData.mHealth = 100;
-                  weapon.mData.mSpeed = 1.f;
-                  weapon.mData.mReach = 1.f;
-                  weapon.mData.mChop = { 4, 12 };
-                  weapon.mData.mSlash = { 4, 12 };
-                  weapon.mData.mThrust = { 4, 12 };
-                  weapons.insertStatic(weapon);
-                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
-              };
-
-        const auto ensurePotion
-            = [&potions](std::string_view id, std::string_view name, std::string_view icon, int value) {
-                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
-                  if (potions.searchStatic(refId) != nullptr)
-                      return;
-
-                  ESM::Potion potion;
-                  potion.mId = refId;
-                  potion.blank();
-                  potion.mName = std::string(name);
-                  potion.mIcon = std::string(icon);
-                  potion.mData.mWeight = 0.1f;
-                  potion.mData.mValue = value;
-                  potions.insertStatic(potion);
-                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
-              };
-
-        const auto ensureMisc
-            = [&miscItems](std::string_view id, std::string_view name, std::string_view icon, float weight, int value) {
-                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
-                  if (miscItems.searchStatic(refId) != nullptr)
-                      return;
-
-                  ESM::Miscellaneous item;
-                  item.mId = refId;
-                  item.blank();
-                  item.mName = std::string(name);
-                  item.mIcon = std::string(icon);
-                  item.mData.mWeight = weight;
-                  item.mData.mValue = value;
-                  miscItems.insertStatic(item);
-                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
-              };
-
-        ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol",
-            "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds", 100);
-        ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle",
-            "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds", 75);
-        ensurePotion(
-            "FNV_PROOF_STIMPAK", "Stimpak", "textures/interface/icons/pipboyimages/items/items_stimpack.dds", 25);
-        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round", "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds",
-            0.01f, 1);
-        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin", "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds",
-            0.01f, 1);
-        ensureMisc("FNV_PROOF_CAPS", "Bottle Cap",
-            "textures/interface/icons/pipboyimages/items/items_nuka_cola_cap.dds", 0.f, 1);
     }
 
     bool shouldEnsureFalloutProofCharacterDefaults()
@@ -1513,7 +1442,6 @@ namespace MWWorld
         {
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
-                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
                 nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
                     getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         }
@@ -1593,7 +1521,6 @@ namespace MWWorld
         {
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
-                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
                 nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
                     getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         }

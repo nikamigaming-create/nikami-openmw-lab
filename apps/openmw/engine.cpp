@@ -3311,27 +3311,6 @@ namespace
         }
     }
 
-    bool addProofInventoryItem(MWWorld::ContainerStore& inventory, std::string_view id, int count)
-    {
-        const ESM::RefId refId = ESM::RefId::stringRefId(id);
-        try
-        {
-            const int existing = inventory.count(refId);
-            const int missing = std::max(0, count - existing);
-            if (missing > 0)
-                inventory.add(refId, missing, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory "
-                             << (missing > 0 ? "added " : "retained ") << id << " x" << count
-                             << " previous=" << existing << " inserted=" << missing;
-            return true;
-        }
-        catch (const std::exception& e)
-        {
-            Log(Debug::Warning) << "FNV/ESM4 proof: starter proof inventory failed " << id << ": " << e.what();
-            return false;
-        }
-    }
-
     template <typename T>
     bool isFNVEditorItemEquipped(
         MWWorld::InventoryStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId)
@@ -3528,25 +3507,8 @@ namespace
             = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
 
-        // Fallback records keep the save usable if a partial content stack omits one of the core retail records.
-        // Never add both representations: a complete FalloutNV.esm load receives only the authored items above.
-        int proofAdded = 0;
-        if (!pistolAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
-        if (!rifleAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
-        if (!ammo9mmAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
-        if (!stimpakAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
-        if (!bobbyPinAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
-        if (!capsAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
-
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
-                         << " proofStarterItemKinds=" << proofAdded
                          << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
                          << " visualWeapon=WeapNVVarmintRifle"
                          << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
