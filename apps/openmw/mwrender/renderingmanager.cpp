@@ -2883,21 +2883,28 @@ namespace MWRender
         mFalloutPlayerFirstPersonAnimation->showWeapons(false);
         const int pane = windowManager->getFalloutPipBoyActivePane();
         const std::string panel = getFalloutPipBoyPanelName(pane);
-        // The physical device suppresses the desktop UI. Its display content
-        // is generated into the device's own terminal texture below, which
-        // avoids both opaque MyGUI chrome and the asynchronous RTT pass that
-        // previously swallowed its glyphs into a black screen.
+        // Render the live MyGUI Pip-Boy layer into the authored device screen.
+        // The mesh, UVs, and screen material remain owned by the loaded NIF;
+        // this bridge only supplies the current runtime-backed GUI texture.
         static constexpr std::string_view guiLayer = "PipBoyScreen";
         if (guiRenderer != nullptr)
         {
             guiRenderer->setSuppressedGuiLayers({ std::string(guiLayer) });
             guiRenderer->setSuppressUnfilteredGui(true);
         }
-        if (mFalloutPipBoyGuiRtt != nullptr)
+        if (mFalloutPipBoyGuiRtt == nullptr || mFalloutPipBoyGuiLayer != guiLayer)
         {
-            mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
-            mFalloutPipBoyGuiRtt = nullptr;
-            mFalloutPipBoyGuiLayer.clear();
+            if (mFalloutPipBoyGuiRtt != nullptr)
+                mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
+            osg::ref_ptr<osg::Camera> guiCamera
+                = guiRenderer != nullptr
+                ? guiRenderer->createGUICamera(osg::Camera::NESTED_RENDER, std::string(guiLayer))
+                : nullptr;
+            mFalloutPipBoyGuiRtt
+                = guiCamera != nullptr ? new FalloutPipBoyGuiRTT(std::move(guiCamera)) : nullptr;
+            if (mFalloutPipBoyGuiRtt != nullptr)
+                mSceneRoot->addChild(mFalloutPipBoyGuiRtt);
+            mFalloutPipBoyGuiLayer = mFalloutPipBoyGuiRtt != nullptr ? guiLayer : std::string_view{};
             mFalloutPipBoyScreenBound = false;
             mFalloutPipBoyScreenBindingAttempted = false;
         }
@@ -2905,8 +2912,6 @@ namespace MWRender
         auto* const falloutWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager);
         const float interactionPulse
             = falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyInteractionPulse() : 0.f;
-        const bool showCondition
-            = pane == 3 && (falloutWindowManager == nullptr || falloutWindowManager->getFalloutPipBoySubmenu() == 0);
         const bool showMap = pane == 0 && falloutWindowManager != nullptr;
         const bool worldMap = showMap && falloutWindowManager->isFalloutPipBoyWorldMap();
         const float mapZoom = showMap ? falloutWindowManager->getFalloutPipBoyMapZoom() : 1.f;
@@ -2929,30 +2934,14 @@ namespace MWRender
                 ? getPipBoyRetailWorldMapTexture(mFalloutPipBoyWorldMapTexture, mResourceSystem)
                 : falloutWindowManager->getFalloutPipBoyLocalMapTexture();
         }
-        float mapAspect = 1.f;
-        if (mapTexture != nullptr)
-        {
-            int mapWidth = mapTexture->getTextureWidth();
-            int mapHeight = mapTexture->getTextureHeight();
-            if ((mapWidth <= 0 || mapHeight <= 0) && mapTexture->getImage() != nullptr)
-            {
-                mapWidth = mapTexture->getImage()->s();
-                mapHeight = mapTexture->getImage()->t();
-            }
-            if (mapWidth > 0 && mapHeight > 0)
-                mapAspect = static_cast<float>(mapWidth) / static_cast<float>(mapHeight);
-        }
-        const std::string mapMarkerSignature = worldMap ? getPipBoyFalloutMapMarkerSignature() : std::string();
         const bool mapTextureChanged = mFalloutPipBoyBoundMapTexture.get() != mapTexture;
         mFalloutPipBoyBoundMapTexture = mapTexture;
 
-        const std::string previousTerminalContents = mFalloutPipBoyTerminalContents;
-        osg::Texture2D* const texture = updatePipBoyTerminalTexture(mFalloutPipBoyTerminalImage,
-            mFalloutPipBoyTerminalTexture, mFalloutPipBoyTerminalContents,
-            windowManager->getFalloutPipBoyTerminalHeader(), windowManager->getFalloutPipBoyTerminalBody(), pane,
-            showCondition, mResourceSystem, mapAspect, mapZoom, mapPanX, mapPanY, mapMarkerSignature);
-        const bool terminalContentsChanged = mFalloutPipBoyTerminalContents != previousTerminalContents;
-        if (!mFalloutPipBoyScreenBindingAttempted || terminalContentsChanged || mapTextureChanged)
+        auto* const pipBoyRtt = dynamic_cast<FalloutPipBoyGuiRTT*>(mFalloutPipBoyGuiRtt.get());
+        osg::Texture2D* const texture = pipBoyRtt != nullptr
+            ? dynamic_cast<osg::Texture2D*>(pipBoyRtt->getColorTexture(nullptr))
+            : nullptr;
+        if (!mFalloutPipBoyScreenBindingAttempted || mapTextureChanged)
         {
             mFalloutPipBoyScreenBindingAttempted = true;
             if (texture != nullptr)
@@ -2963,11 +2952,11 @@ namespace MWRender
             else
             {
                 mFalloutPipBoyScreenBound = false;
-                Log(Debug::Error) << "FNV Pip-Boy physical: terminal texture=missing";
+                Log(Debug::Error) << "FNV Pip-Boy physical: MyGUI layer RTT texture=missing";
             }
             Log(mFalloutPipBoyScreenBound ? Debug::Info : Debug::Error)
                 << "FNV Pip-Boy physical: presentation=raise progress=" << mFalloutPipBoyPresentationProgress
-                << " activePane=" << pane << " panel=" << panel << " source=terminal-texture"
+                << " activePane=" << pane << " panel=" << panel << " source=mygui-layer-rtt"
                 << " screenBound=" << mFalloutPipBoyScreenBound;
         }
     }
