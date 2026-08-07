@@ -1440,11 +1440,23 @@ namespace MWMechanics
         const std::string previousGroup = mCurrentWeapon;
         if (!previousGroup.empty() && previousGroup != group)
             disableFalloutWeaponGroup(previousGroup);
+
+        // The authored aim pose is the steady state between semantic weapon
+        // actions. Remove it before an equip, attack, reload, or unequip so
+        // the action owns the arm channels unambiguously. It is restored by
+        // restoreFalloutPrimaryWeaponGroup once that action completes.
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr)
+            actionAnimation->disable("weaponpose");
+        if (MWRender::Animation* firstPerson = getFalloutWeaponAnimation(true))
+            firstPerson->disable("weaponpose");
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+            mAnimation->disable("weaponpose");
+
         mCurrentWeapon = group;
         const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
         setFalloutWeaponGroup(mCurrentWeapon, relativeDuration);
 
-        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
         attachFalloutWeaponTextKeys();
         if (actionAnimation == mAnimation)
         {
@@ -1517,8 +1529,37 @@ namespace MWMechanics
         mCurrentWeapon = primary;
         const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
         setFalloutWeaponGroup(mCurrentWeapon, relativeDuration);
+
+        // ESM4NpcAnimation derives directly from Animation and therefore has
+        // no NpcAnimation::WeaponAnimationTime to keep the authored aim KF on
+        // the weapon channels. Explicitly run that data-backed steady pose on
+        // the visible third- and first-person rigs. Semantic actions disable
+        // it above and restore it here after their authored sequence ends.
+        MWRender::Animation::AnimPriority posePriority(Priority_Weapon);
+        posePriority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const auto playPose = [&](MWRender::Animation* animation) {
+            if (animation == nullptr || !animation->hasAnimation("weaponpose"))
+                return false;
+            animation->play("weaponpose", posePriority, MWRender::BlendMask_All, true, 1.f, "start", "stop",
+                0.f, std::numeric_limits<std::uint32_t>::max(), true);
+            return animation->isPlaying("weaponpose");
+        };
+        MWRender::Animation* const actionAnimation = getFalloutWeaponAnimation();
+        const bool actionPosePlaying = playPose(actionAnimation);
+        MWRender::Animation* const firstPersonAnimation = getFalloutWeaponAnimation(true);
+        const bool firstPersonPosePlaying
+            = firstPersonAnimation == nullptr || playPose(firstPersonAnimation);
+        if (mAnimation != nullptr && mAnimation != actionAnimation)
+            playPose(mAnimation);
+        if (!actionPosePlaying || !firstPersonPosePlaying)
+        {
+            Log(Debug::Warning) << "FNV mechanics could not restore authored weapon pose: actor="
+                                << mPtr.toString() << " weaponType=" << weaponType
+                                << " actionPosePlaying=" << actionPosePlaying
+                                << " firstPersonPosePlaying=" << firstPersonPosePlaying;
+        }
         detachFalloutWeaponTextKeys();
-        return true;
+        return actionPosePlaying;
     }
 
     std::string_view CharacterController::getWeaponShortGroup(int weaponType) const
