@@ -2574,14 +2574,19 @@ namespace MWMechanics
             mFalloutAttackDelivery = {};
             if (!mCurrentWeapon.empty())
                 disableFalloutWeaponGroup(mCurrentWeapon);
-            mCurrentWeapon.clear();
-            setFalloutWeaponGroup({}, false);
             showFalloutWeapons(mFalloutWeapon != nullptr);
             detachFalloutWeaponTextKeys();
             mUpperBodyState = UpperBodyState::WeaponEquipped;
+            const bool steadyPoseRestored = mFalloutWeapon != nullptr && isFalloutWeaponType(mWeaponType)
+                && restoreFalloutPrimaryWeaponGroup(mWeaponType);
+            if (!steadyPoseRestored)
+            {
+                mCurrentWeapon.clear();
+                setFalloutWeaponGroup({}, false);
+            }
             Log(Debug::Warning) << "FNV mechanics retained usable weapon without exact visual action: actor="
                                 << mPtr.toString() << " weaponType=" << mWeaponType << " reason=" << reason
-                                << " gameplayAvailable=1";
+                                << " steadyPoseRestored=" << steadyPoseRestored << " gameplayAvailable=1";
         };
         const auto updateAiming = [&]() {
             const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
