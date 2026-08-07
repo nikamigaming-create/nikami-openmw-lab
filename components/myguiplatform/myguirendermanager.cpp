@@ -423,6 +423,11 @@ namespace MyGUIPlatform
         void collectDrawCalls(std::string filter);
 
         void setViewSize(MyGUI::IntSize viewSize);
+        void setContentRect(const MyGUI::IntCoord& rect)
+        {
+            mContentRect = rect;
+            mUpdate = true;
+        }
 
         void update();
 
@@ -431,6 +436,7 @@ namespace MyGUIPlatform
         MyGUI::RenderTargetInfo mInfo;
         bool mUpdate;
         std::string mFilter;
+        MyGUI::IntCoord mContentRect;
     };
 
     void GuiCameraUpdate::operator()(GUICamera* camera, osg::NodeVisitor* nv)
@@ -699,11 +705,15 @@ namespace MyGUIPlatform
     {
         setViewport(0, 0, viewSize.width, viewSize.height);
         mInfo.maximumDepth = 1;
-        mInfo.hOffset = 0;
-        mInfo.vOffset = 0;
-        mInfo.aspectCoef = float(viewSize.height) / float(viewSize.width);
-        mInfo.pixScaleX = 1.0f / float(viewSize.width);
-        mInfo.pixScaleY = 1.0f / float(viewSize.height);
+        const bool crop = mContentRect.width > 0 && mContentRect.height > 0;
+        const float logicalWidth = crop ? static_cast<float>(mContentRect.width) : static_cast<float>(viewSize.width);
+        const float logicalHeight
+            = crop ? static_cast<float>(mContentRect.height) : static_cast<float>(viewSize.height);
+        mInfo.hOffset = crop ? -static_cast<float>(mContentRect.left) / logicalWidth : 0.f;
+        mInfo.vOffset = crop ? -static_cast<float>(mContentRect.top) / logicalHeight : 0.f;
+        mInfo.aspectCoef = logicalHeight / logicalWidth;
+        mInfo.pixScaleX = 1.f / logicalWidth;
+        mInfo.pixScaleY = 1.f / logicalHeight;
         mUpdate = true;
     }
 
@@ -730,6 +740,15 @@ namespace MyGUIPlatform
     {
         return new GUICamera(static_cast<osg::Camera::RenderOrder>(order), mGuiStateSet, this, layerFilter);
 //## VR_PATCH END
+    }
+
+    void RenderManager::setGUICameraContentRect(osg::Camera* camera, const MyGUI::IntCoord& rect)
+    {
+        if (auto* guiCamera = dynamic_cast<GUICamera*>(camera))
+        {
+            guiCamera->setContentRect(rect);
+            guiCamera->setViewSize(mViewSize);
+        }
     }
 
     bool RenderManager::isFormatSupported(MyGUI::PixelFormat /*format*/, MyGUI::TextureUsage /*usage*/)

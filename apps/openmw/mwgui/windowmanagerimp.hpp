@@ -581,13 +581,11 @@ namespace MWGui
         std::string mFalloutPipBoyMapConfirmation;
         int mFalloutPipBoyLocalMapX = 0;
         int mFalloutPipBoyLocalMapY = 0;
-        // A transparent, dedicated MyGUI layer used only as the texture source
-        // for PipBoyArm's real in-world screen.  It deliberately does not
-        // reuse the desktop inventory windows, whose opaque chrome does not
-        // fit the device's terminal display.
-        MyGUI::Widget* mFalloutPipBoyTerminalRoot = nullptr;
-        MyGUI::TextBox* mFalloutPipBoyTerminalHeader = nullptr;
-        MyGUI::TextBox* mFalloutPipBoyTerminalBody = nullptr;
+        // The native inventory panes temporarily move to the PipBoyScreen RTT
+        // layer while the physical device is raised, then return to the layer
+        // declared by their MyGUI layout. This preserves their real models,
+        // selection state, and input handlers instead of drawing a duplicate.
+        std::array<std::string, 4> mFalloutPipBoyOriginalLayers;
         // Current tooltip visibility state (can be disabled by mouse movement)
         bool mControllerTooltipVisible = false;
         // User preference for tooltips (persists across mouse/controller switches)

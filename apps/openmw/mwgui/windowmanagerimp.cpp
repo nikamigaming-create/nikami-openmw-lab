@@ -1174,27 +1174,7 @@ namespace MWGui
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
-        // The physical Pip-Boy gets its own transparent screen layer.  It is
-        // rendered to the authentic PipBoyArm screen texture, not to the flat
-        // desktop UI, so every glyph follows the device as it moves in 3D.
-        mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
-            {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
-        mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
-        mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
-        mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
-        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalHeader->setFontHeight(48);
-        mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
-        mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
-        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalBody->setFontHeight(42);
-        mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalRoot->setVisible(false);
-        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+        Log(Debug::Info) << "FNV Pip-Boy screen surface: layer=PipBoyScreen source=native-gui-pane";
 
         mHud->setVisible(true);
 
@@ -2003,17 +1983,31 @@ namespace MWGui
 
     void WindowManager::updateFalloutPipBoyTerminalSurface()
     {
-        if (mFalloutPipBoyTerminalRoot == nullptr || mFalloutPipBoyTerminalHeader == nullptr
-            || mFalloutPipBoyTerminalBody == nullptr)
-            return;
-
         const bool visible = !VR::getVR() && mFalloutPipBoyPhysical && containsMode(GM_Inventory);
-        mFalloutPipBoyTerminalRoot->setVisible(visible);
-        if (!visible)
+        auto& windows = mGuiModeStates[GM_Inventory].mWindows;
+        if (windows.empty())
             return;
+        const int activeIndex = std::clamp(getFalloutPipBoyActivePane(), 0, static_cast<int>(windows.size()) - 1);
 
-        mFalloutPipBoyTerminalHeader->setCaption(getFalloutPipBoyTerminalHeader());
-        mFalloutPipBoyTerminalBody->setCaption(getFalloutPipBoyTerminalBody());
+        for (std::size_t i = 0; i < windows.size() && i < mFalloutPipBoyOriginalLayers.size(); ++i)
+        {
+            MyGUI::Widget* widget = windows[i] != nullptr ? windows[i]->mMainWidget : nullptr;
+            if (widget == nullptr)
+                continue;
+
+            if (mFalloutPipBoyOriginalLayers[i].empty() && widget->getLayer() != nullptr
+                && widget->getLayer()->getName() != "PipBoyScreen")
+                mFalloutPipBoyOriginalLayers[i] = widget->getLayer()->getName();
+
+            const bool renderOnDevice = visible && static_cast<int>(i) == activeIndex;
+            const std::string targetLayer
+                = renderOnDevice ? "PipBoyScreen" : mFalloutPipBoyOriginalLayers[i];
+            if (targetLayer.empty() || (widget->getLayer() != nullptr && widget->getLayer()->getName() == targetLayer))
+                continue;
+
+            MyGUI::LayerManager::getInstance().attachToLayerNode(targetLayer, widget);
+            Log(Debug::Info) << "FNV Pip-Boy native pane layer: pane=" << i << " layer=" << targetLayer;
+        }
     }
 
     void WindowManager::update(float frameDuration)

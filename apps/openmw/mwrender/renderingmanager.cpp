@@ -2164,6 +2164,7 @@ namespace MWRender
                 mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
                 mFalloutPipBoyGuiRtt = nullptr;
                 mFalloutPipBoyGuiLayer.clear();
+                mFalloutPipBoyGuiPane = -1;
                 mFalloutPipBoyScreenBound = false;
                 mFalloutPipBoyScreenBindingAttempted = false;
             }
@@ -2182,7 +2183,8 @@ namespace MWRender
             guiRenderer->setSuppressedGuiLayers({ std::string(guiLayer) });
             guiRenderer->setSuppressUnfilteredGui(true);
         }
-        if (mFalloutPipBoyGuiRtt == nullptr || mFalloutPipBoyGuiLayer != guiLayer)
+        if (mFalloutPipBoyGuiRtt == nullptr || mFalloutPipBoyGuiLayer != guiLayer
+            || mFalloutPipBoyGuiPane != pane)
         {
             if (mFalloutPipBoyGuiRtt != nullptr)
                 mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
@@ -2190,11 +2192,23 @@ namespace MWRender
                 = guiRenderer != nullptr
                 ? guiRenderer->createGUICamera(osg::Camera::NESTED_RENDER, std::string(guiLayer))
                 : nullptr;
+            const std::vector<MWGui::WindowBase*> inventoryWindows
+                = windowManager->getGuiModeWindows(MWGui::GM_Inventory);
+            if (guiRenderer != nullptr && guiCamera != nullptr && pane >= 0
+                && pane < static_cast<int>(inventoryWindows.size()) && inventoryWindows[pane] != nullptr
+                && inventoryWindows[pane]->mMainWidget != nullptr)
+            {
+                const MyGUI::IntCoord contentRect = inventoryWindows[pane]->mMainWidget->getAbsoluteCoord();
+                guiRenderer->setGUICameraContentRect(guiCamera, contentRect);
+                Log(Debug::Info) << "FNV Pip-Boy RTT content rect: pane=" << pane << " rect=" << contentRect.left
+                                 << ',' << contentRect.top << ',' << contentRect.width << ',' << contentRect.height;
+            }
             mFalloutPipBoyGuiRtt
                 = guiCamera != nullptr ? new FalloutPipBoyGuiRTT(std::move(guiCamera)) : nullptr;
             if (mFalloutPipBoyGuiRtt != nullptr)
                 mSceneRoot->addChild(mFalloutPipBoyGuiRtt);
             mFalloutPipBoyGuiLayer = mFalloutPipBoyGuiRtt != nullptr ? guiLayer : std::string_view{};
+            mFalloutPipBoyGuiPane = mFalloutPipBoyGuiRtt != nullptr ? pane : -1;
             mFalloutPipBoyScreenBound = false;
             mFalloutPipBoyScreenBindingAttempted = false;
         }

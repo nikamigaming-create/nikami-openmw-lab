@@ -411,9 +411,10 @@ namespace MWRender
         // authored screen material.  It is never a floating screen-space pane.
         osg::ref_ptr<osg::Node> mFalloutPipBoyGuiRtt;
         std::string mFalloutPipBoyGuiLayer;
-        // The physical display owns a compact, dynamic terminal texture. It
-        // is UV-mapped onto the retail PipBoyArm screen mesh, rather than
-        // borrowed from the desktop MyGUI window hierarchy.
+        int mFalloutPipBoyGuiPane = -1;
+        // The physical display consumes the active native GUI pane. It is
+        // UV-mapped onto the retail PipBoyArm screen mesh and omitted from the
+        // desktop camera while the device is raised.
         osg::ref_ptr<osg::Image> mFalloutPipBoyTerminalImage;
         osg::ref_ptr<osg::Texture2D> mFalloutPipBoyTerminalTexture;
         osg::ref_ptr<osg::Texture2D> mFalloutPipBoyWorldMapTexture;
