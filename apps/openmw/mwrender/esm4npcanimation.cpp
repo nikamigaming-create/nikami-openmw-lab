@@ -9115,40 +9115,31 @@ namespace MWRender
 
         if (mPipBoyRetailInteractionBound)
         {
-            const bool held = mPipBoyPresentationProgress >= 0.999f;
-            if (!isPlaying("pipboy"))
-                play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f,
-                    "start", "stop", 0.f, 0, false);
-            // The retained retail scene-graph trace reaches Pip-Boy mode 3 at
-            // frame 934 with pipboy.kf at exactly 0.333333 seconds. That is the
-            // fully raised two-arm contact pose. The clip continues to 0.733333
-            // as the toggle lowers, so its terminal sample is not a held pose.
-            // Replay the stock controllers up to retail's recorded transition
-            // frame and retain that sample while the physical menu is open.
-            if (isPlaying("pipboywaver"))
-                disable("pipboywaver");
-
             auto raiseState = mStates.find("pipboy");
             if (raiseState != mStates.end())
             {
-                constexpr float retailRaisedContactSeconds = 10.f / 30.f;
                 const float sequenceSpan
                     = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
                 const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
                     * (3.f - 2.f * mPipBoyPresentationProgress);
-                const float raisedSpan = std::min(sequenceSpan, retailRaisedContactSeconds);
-                raiseState->second.setTime(raiseState->second.mStartTime + raisedSpan * authoredProgress);
+                raiseState->second.setTime(raiseState->second.mStartTime + sequenceSpan * authoredProgress);
                 raiseState->second.mSpeedMult = 0.f;
                 raiseState->second.mPlaying = true;
                 raiseState->second.mAutoDisable = false;
             }
-            mPipBoyRetailInteractionPoseHeld = held && raiseState != mStates.end();
+            mPipBoyRetailInteractionPoseHeld
+                = raiseState != mStates.end() && mPipBoyPresentationProgress >= 0.999f;
+            if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+            {
+                play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
+                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+            }
             resetActiveGroups();
             if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
-                Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
-                                 << getAnimationSourceName("pipboy")
-                                 << " range=start-to-retail-mode3 sample=0.333333 waver=disabled"
-                                 << " right=retail-pipboy-kf"
+                Log(Debug::Info) << "FNV Pip-Boy recovery hold: raise="
+                                 << getAnimationSourceName("pipboy") << " left="
+                                 << getAnimationSourceName("pipboywaver")
+                                 << " frozenMode3Removed=1"
                                  << " completeArmMeshes=1 screenAndControls=live";
         }
 
