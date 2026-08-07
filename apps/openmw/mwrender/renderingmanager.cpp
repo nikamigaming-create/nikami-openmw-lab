@@ -177,10 +177,13 @@ namespace MWRender
 
                 // Render MyGUI directly into its own FBO. Nesting the MyGUI
                 // camera below a second RTT camera collected valid batches but
-                // left the sampled attachment black on D3D9-era FNV hardware.
+                // left the sampled attachment black in the FNV Windows runtime.
                 mCamera->setRenderOrder(osg::Camera::PRE_RENDER, 0);
                 mCamera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
-                mCamera->setViewport(0, 0, 1920, 1080);
+                // Leave the viewport unset here. GUICamera::update initializes
+                // it together with MyGUI's RenderTargetInfo pixel scale. Setting
+                // only the viewport early makes MyGUI treat pixel coordinates as
+                // clip coordinates and renders the whole layer offscreen.
                 mCamera->setClearMask(GL_COLOR_BUFFER_BIT);
                 mCamera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
                 mCamera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
