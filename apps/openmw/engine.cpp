@@ -6631,7 +6631,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             else
             {
-                inventoryWindow->setFalloutPipBoyCategory(0);
                 MWGui::SortFilterItemModel* const sortModel = inventoryWindow->getSortFilterModel();
                 if (fnvRealSaveD02Weapons.empty() && sortModel->getItemCount() > 0)
                 {

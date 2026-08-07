@@ -9883,6 +9883,13 @@ namespace MWRender
                 return;
             }
 
+            if (mFalloutWeaponPart->getNumParents() == 1
+                && mFalloutWeaponPart->getParent(0) == mFalloutWeaponHolsterFrame)
+            {
+                mFalloutWeaponPart->setNodeMask(~0u);
+                return;
+            }
+
             while (mFalloutWeaponPart->getNumParents() > 0)
             {
                 osg::Group* parent = mFalloutWeaponPart->getParent(0);
@@ -9931,6 +9938,16 @@ namespace MWRender
             Log(Debug::Warning) << "FNV/ESM4 actor completeness: cannot move equipped weapon for "
                                 << mPtr.getCellRef().getRefId() << " target=\"" << targetName
                                 << "\" gate=weapon-draw-state-attachment";
+            return;
+        }
+
+        // Draw-state synchronization runs every update. Reparenting an
+        // already-correct weapon needlessly dirties the live rig and can
+        // invalidate an authored equip/reload state between mechanics and
+        // render updates. An unchanged attachment is a strict no-op.
+        if (mFalloutWeaponPart->getNumParents() == 1 && mFalloutWeaponPart->getParent(0) == target)
+        {
+            mFalloutWeaponPart->setNodeMask(~0u);
             return;
         }
 
