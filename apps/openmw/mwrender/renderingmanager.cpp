@@ -160,9 +160,20 @@ namespace MWRender
             explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera)
             {
                 setName("FNV Pip-Boy live screen RTT");
+                mCamera = dynamic_cast<osg::Camera*>(guiCamera.get());
+                if (mCamera == nullptr)
+                    return;
+
+                const osg::Viewport* const viewport = mCamera->getViewport();
+                const int width = viewport != nullptr ? std::max(1, static_cast<int>(viewport->width())) : 1;
+                const int height = viewport != nullptr ? std::max(1, static_cast<int>(viewport->height())) : 1;
                 mTexture = new osg::Texture2D;
                 mTexture->setName("FNV Pip-Boy live screen texture");
-                mTexture->setTextureSize(1920, 1080);
+                mTexture->setTextureSize(width, height);
+                // Keep the attachment dimensions identical to the live
+                // widget viewport used by the material's aspect-fit uniforms.
+                // Padding this RTT would make those data-derived ratios lie.
+                mTexture->setResizeNonPowerOfTwoHint(false);
                 mTexture->setInternalFormat(GL_RGBA8);
                 mTexture->setSourceFormat(GL_RGBA);
                 mTexture->setSourceType(GL_UNSIGNED_BYTE);
@@ -170,10 +181,6 @@ namespace MWRender
                 mTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
                 mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
                 mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-
-                mCamera = dynamic_cast<osg::Camera*>(guiCamera.get());
-                if (mCamera == nullptr)
-                    return;
 
                 // Render MyGUI directly into its own FBO. Nesting the MyGUI
                 // camera below a second RTT camera collected valid batches but

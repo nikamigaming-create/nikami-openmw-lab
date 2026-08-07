@@ -703,9 +703,10 @@ namespace MyGUIPlatform
 
     void GUICamera::setViewSize(MyGUI::IntSize viewSize)
     {
-        setViewport(0, 0, viewSize.width, viewSize.height);
-        mInfo.maximumDepth = 1;
         const bool crop = mContentRect.width > 0 && mContentRect.height > 0;
+        setViewport(0, 0, crop ? mContentRect.width : viewSize.width,
+            crop ? mContentRect.height : viewSize.height);
+        mInfo.maximumDepth = 1;
         const float logicalWidth = crop ? static_cast<float>(mContentRect.width) : static_cast<float>(viewSize.width);
         const float logicalHeight
             = crop ? static_cast<float>(mContentRect.height) : static_cast<float>(viewSize.height);
@@ -721,7 +722,9 @@ namespace MyGUIPlatform
     {
         auto viewSize = mParent->getViewSize();
         auto viewport = getViewport();
-        if (!viewport || viewport->width() != viewSize.width || viewport->height() != viewSize.height)
+        const int targetWidth = mContentRect.width > 0 ? mContentRect.width : viewSize.width;
+        const int targetHeight = mContentRect.height > 0 ? mContentRect.height : viewSize.height;
+        if (!viewport || viewport->width() != targetWidth || viewport->height() != targetHeight)
             setViewSize(viewSize);
     }
 

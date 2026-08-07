@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <components/misc/resourcehelpers.hpp>
@@ -1839,15 +1840,22 @@ namespace MWRender
             static void setLiveTexture(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
                 bool showMap, float mapZoom, float mapPanX, float mapPanY)
             {
-                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+                float screenAspect = 1.f;
+                if (const osg::Uniform* uniform = stateSet.getUniform("pipBoyScreenAspect"))
+                    uniform->get(screenAspect);
+                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, screenAspect);
             }
 
         private:
             template <class StateOwner>
             static bool isPipBoyScreenOwner(const StateOwner& owner)
             {
-                const std::string ownerName = Misc::StringUtils::lowerCase(owner.getName());
-                return ownerName.find("pipboyscreen") != std::string::npos && isPipBoyScreen(owner.getStateSet());
+                // Fallout's authored PipBoyArm NIF uses the same Screen.dds
+                // material on more than one display surface (including
+                // pipboyscreen:0 and ScreenLit:8). The texture reference is
+                // the data contract; filtering by a guessed node name leaves
+                // the primary glass black and updates only the small overlay.
+                return isPipBoyScreen(owner.getStateSet());
             }
 
             static void auditPipBoyScreenUv(osg::Geometry* geometry, std::string_view phase, bool screenOwner)
@@ -1930,6 +1938,7 @@ namespace MWRender
                     result->setName("FNV Pip-Boy live terminal screen");
                     result->addShader(new osg::Shader(osg::Shader::VERTEX, R"glsl(
                         #version 120
+                        uniform vec2 pipBoyTerminalUvScale;
                         varying vec2 pipBoyTerminalUv;
 
                         void main()
@@ -1949,9 +1958,11 @@ namespace MWRender
                             const vec2 retailScreenAtlasSize = vec2(0.7633793, 0.76051);
                             vec2 screenUv = (gl_MultiTexCoord0.xy - retailScreenAtlasMin)
                                 / retailScreenAtlasSize;
-                            // OSG image data is bottom-up while the terminal
-                            // raster is authored top-down. Keep glyphs upright.
-                            pipBoyTerminalUv = vec2(screenUv.x, 1.0 - screenUv.y);
+                            // The MyGUI render target already applies its
+                            // top-left-origin texture transform while drawing
+                            // the pane into the FBO; sampling it needs no
+                            // second vertical flip.
+                            pipBoyTerminalUv = screenUv * pipBoyTerminalUvScale;
                         }
                     )glsl"));
                     result->addShader(new osg::Shader(osg::Shader::FRAGMENT, R"glsl(
@@ -1967,7 +1978,10 @@ namespace MWRender
                         void main()
                         {
                             vec4 source = texture2D(pipBoyTerminalMap, pipBoyTerminalUv);
-                            float glyph = max(source.a, max(source.r, max(source.g, source.b)));
+                            // Convert RGB luminance, not alpha, so the opaque
+                            // black window background remains black glass.
+                            float sourceLuma = dot(source.rgb, vec3(0.299, 0.587, 0.114));
+                            float glyph = smoothstep(0.08, 0.75, sourceLuma);
                             // MAP is an actual FNV world-map texture or OpenMW's
                             // live LocalMap render target. It is cropped, panned,
                             // and zoomed directly on the authored Pip-Boy glass.
@@ -2036,7 +2050,7 @@ namespace MWRender
             }
 
             static void decorateStateSet(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
-                bool showMap, float mapZoom, float mapPanX, float mapPanY)
+                bool showMap, float mapZoom, float mapPanX, float mapPanY, float screenAspect)
             {
                 constexpr auto flags = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE;
                 stateSet.setTextureAttributeAndModes(0, texture, flags);
@@ -2046,6 +2060,22 @@ namespace MWRender
                     stateSet.removeTextureAttribute(1, osg::StateAttribute::TEXTURE);
                 stateSet.setAttributeAndModes(getPipBoyTerminalProgram(), flags);
                 stateSet.addUniform(new osg::Uniform("pipBoyTerminalMap", 0));
+                int terminalWidth = texture != nullptr ? texture->getTextureWidth() : 0;
+                int terminalHeight = texture != nullptr ? texture->getTextureHeight() : 0;
+                if (texture != nullptr && (terminalWidth <= 0 || terminalHeight <= 0) && texture->getImage() != nullptr)
+                {
+                    terminalWidth = texture->getImage()->s();
+                    terminalHeight = texture->getImage()->t();
+                }
+                const float terminalAspect = terminalWidth > 0 && terminalHeight > 0
+                    ? static_cast<float>(terminalWidth) / static_cast<float>(terminalHeight)
+                    : 1.f;
+                const float safeScreenAspect = std::max(screenAspect, 0.01f);
+                const osg::Vec2f terminalUvScale(
+                    std::min(1.f, safeScreenAspect / terminalAspect),
+                    std::min(1.f, terminalAspect / safeScreenAspect));
+                stateSet.addUniform(new osg::Uniform("pipBoyScreenAspect", safeScreenAspect));
+                stateSet.addUniform(new osg::Uniform("pipBoyTerminalUvScale", terminalUvScale));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapTexture", 1));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapEnabled", mapTexture != nullptr && showMap ? 1.f : 0.f));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapZoom", mapZoom));
@@ -2075,8 +2105,20 @@ namespace MWRender
                 const osg::StateSet* source = owner.getStateSet();
                 auditPipBoyScreenTextureTransform(*source, owner.getName());
 
+                float screenAspect = 1.f;
+                if (const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(&owner))
+                {
+                    const osg::BoundingBox bounds = geometry->getBoundingBox();
+                    std::array<float, 3> extents = { bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(),
+                        bounds.zMax() - bounds.zMin() };
+                    std::sort(extents.begin(), extents.end(), std::greater<float>());
+                    if (extents[1] > 0.0001f)
+                        screenAspect = extents[0] / extents[1];
+                }
+
                 osg::ref_ptr<osg::StateSet> bound = new osg::StateSet(*source, osg::CopyOp::SHALLOW_COPY);
-                decorateStateSet(*bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY);
+                decorateStateSet(
+                    *bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY, screenAspect);
                 owner.setStateSet(bound);
                 mBoundStateSets.push_back(std::move(bound));
             }
