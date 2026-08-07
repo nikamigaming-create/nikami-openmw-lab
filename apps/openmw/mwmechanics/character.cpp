@@ -2621,9 +2621,25 @@ namespace MWMechanics
         const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
             || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
         float complete = 0.f;
-        const bool actionStateExists
-            = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
+        bool actionStateExists = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
             && actionAnimation->getInfo(mCurrentWeapon, &complete);
+        // A first-person player action is usable only while the visible rig
+        // owns the same semantic group as the gameplay/third-person rig. A
+        // dynamic AnimSource replacement can retire the visible state first;
+        // treating the remaining hidden state as Running forever strands the
+        // arms in reload/equip. Reuse the ordinary interrupted-action recovery
+        // when either rig loses the authored group.
+        if (actionStateExists && mPtr == getPlayer())
+        {
+            if (MWRender::Animation* const firstPerson = getFalloutWeaponAnimation(true);
+                firstPerson != nullptr && firstPerson != actionAnimation)
+            {
+                float firstPersonComplete = 0.f;
+                actionStateExists = firstPerson->getInfo(mCurrentWeapon, &firstPersonComplete);
+                if (actionStateExists)
+                    complete = std::min(complete, firstPersonComplete);
+            }
+        }
         const MWRender::FonvWeaponActionProgress actionProgress
             = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
 
