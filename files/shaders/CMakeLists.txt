@@ -66,6 +66,8 @@ set(SHADER_FILES
     compatibility/bs/default.frag
     compatibility/bs/skin.vert
     compatibility/bs/skin.frag
+    compatibility/bs/dao_face.vert
+    compatibility/bs/dao_face.frag
     compatibility/bs/nolighting.vert
     compatibility/bs/nolighting.frag
     compatibility/luminance/resolve.frag

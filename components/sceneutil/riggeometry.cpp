@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -1502,6 +1503,47 @@ namespace SceneUtil
         if (!mData || index >= mData->mBones.size())
             return {};
         return mData->mBones[index].mName;
+    }
+
+    bool RigGeometry::getBoneParentIndices(std::vector<int>& parentIndices) const
+    {
+        parentIndices.assign(mNodes.size(), -1);
+        if (!mData || mNodes.size() != mData->mBones.size())
+            return false;
+        const std::function<int(const Bone*, const Bone*)> descendantDepth
+            = [&](const Bone* parent, const Bone* target) -> int {
+            if (parent == nullptr)
+                return -1;
+            for (const std::unique_ptr<Bone>& candidate : parent->mChildren)
+            {
+                if (candidate.get() == target)
+                    return 1;
+                const int childDepth = descendantDepth(candidate.get(), target);
+                if (childDepth >= 0)
+                    return childDepth + 1;
+            }
+            return -1;
+        };
+        for (std::size_t childIndex = 0; childIndex < mNodes.size(); ++childIndex)
+        {
+            const Bone* child = mNodes[childIndex];
+            if (child == nullptr)
+                continue;
+            int bestDepth = std::numeric_limits<int>::max();
+            for (std::size_t parentIndex = 0; parentIndex < mNodes.size(); ++parentIndex)
+            {
+                const Bone* parent = mNodes[parentIndex];
+                if (parent == nullptr || parent == child)
+                    continue;
+                const int depth = descendantDepth(parent, child);
+                if (depth > 0 && depth < bestDepth)
+                {
+                    parentIndices[childIndex] = static_cast<int>(parentIndex);
+                    bestDepth = depth;
+                }
+            }
+        }
+        return true;
     }
 
     bool RigGeometry::getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,

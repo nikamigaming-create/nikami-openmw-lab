@@ -105,6 +105,7 @@ namespace Shader
             int mTexStageRequiringTangents;
 
             bool mSoftParticles;
+            bool mDaoFaceSurface;
 
             // Shader properties live on an ancestor transform while the final Program is also installed on
             // descendant drawables. Carry the selected family through the requirement stack so a child program

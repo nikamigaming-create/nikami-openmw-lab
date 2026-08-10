@@ -654,13 +654,11 @@ namespace MWGui
             mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
 //## VR_PATCH END
 
-        const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
-            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
-        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
-        if (useFnvMissingGuiFallback)
-            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
+        // Missing authored UI resources are an integration error.  Do not
+        // synthesize replacement pixels: doing so hides bad VFS/layout wiring
+        // and makes the rendered result impossible to compare with the game
+        // data that is actually installed.
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(false);
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});

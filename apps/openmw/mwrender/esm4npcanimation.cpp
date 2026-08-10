@@ -9531,7 +9531,6 @@ namespace MWRender
                 if (wristParent->replaceChild(mPipBoyArmPart, mPipBoyPresentationRoot))
                 {
                     mPipBoyPresentationRoot->addChild(mPipBoyArmPart);
-                    initializePipBoyPhysicalControls();
                     Log(Debug::Info) << "FNV Pip-Boy physical: wristAttachment=ready model=" << pipBoy
                                      << " presentationMount=Bip01-L-ForeTwist"
                                      << " interactionHand=player-skeleton";
@@ -9751,41 +9750,20 @@ namespace MWRender
 
         if (previousProgress <= 0.001f && mPipBoyRetailInteractionBound)
         {
-            play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
+            play("pipboy", Animation::AnimPriority(10), BlendMask_All, true, 1.f, "start", "stop", 0.f, 0,
                 false);
             Log(isPlaying("pipboy") ? Debug::Info : Debug::Error)
                 << "FNV Pip-Boy retail raise: played=" << isPlaying("pipboy")
                 << " source=" << getAnimationSourceName("pipboy");
         }
-        if (mPipBoyRetailInteractionBound)
+        if (!isPlaying("pipboy") && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
         {
-            auto raiseState = mStates.find("pipboy");
-            if (raiseState != mStates.end())
-            {
-                // The retained retail scene-graph trace reaches Pip-Boy mode 3
-                // at frame 934 with pipboy.kf at exactly 0.333333 seconds. The
-                // clip continues to 0.733333 as the toggle lowers, so cap the
-                // authored open/close curve at retail's recorded held pose.
-                constexpr float retailRaisedContactSeconds = 10.f / 30.f;
-                const float sequenceSpan
-                    = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
-                const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
-                    * (3.f - 2.f * mPipBoyPresentationProgress);
-                const float raisedSpan = std::min(sequenceSpan, retailRaisedContactSeconds);
-                raiseState->second.setTime(raiseState->second.mStartTime + raisedSpan * authoredProgress);
-                raiseState->second.mSpeedMult = 0.f;
-                raiseState->second.mPlaying = true;
-                raiseState->second.mAutoDisable = false;
-            }
-            mPipBoyRetailInteractionPoseHeld
-                = raiseState != mStates.end() && mPipBoyPresentationProgress >= 0.999f;
-            resetActiveGroups();
-            if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
-                Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
-                                 << getAnimationSourceName("pipboy")
-                                 << " range=start-to-retail-mode3 sample=0.333333 waver=disabled"
-                                 << " right=retail-pipboy-kf"
-                                 << " completeArmMeshes=1 screenAndControls=live";
+            play("pipboywaver", Animation::AnimPriority(10), BlendMask_All, false, 1.f, "start", "stop", 0.f,
+                std::numeric_limits<std::uint32_t>::max(), true);
+            mPipBoyRetailInteractionPoseHeld = isPlaying("pipboywaver");
+            Log(mPipBoyRetailInteractionPoseHeld ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy authored hold: played=" << mPipBoyRetailInteractionPoseHeld
+                << " source=" << getAnimationSourceName("pipboywaver");
         }
 
         mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
@@ -9801,8 +9779,12 @@ namespace MWRender
 
     void ESM4NpcAnimation::setPipBoyInteractionProgress(float progress)
     {
-        const float previousProgress = mPipBoyInteractionProgress;
         mPipBoyInteractionProgress = std::clamp(progress, 0.f, 1.f);
+        // The loaded first-person sequences own the connected arm and finger
+        // transforms. No runtime IK or guessed device-space contact points.
+        return;
+
+        const float previousProgress = mPipBoyInteractionProgress;
         if (mPipBoyPresentationProgress <= 0.001f)
         {
             if (mPipBoyInteractionHandRoot != nullptr)
@@ -9960,6 +9942,17 @@ namespace MWRender
     void ESM4NpcAnimation::setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
         float mapPanX, float mapPanY, float interactionPulse)
     {
+        (void)pane;
+        (void)submenu;
+        (void)listOffset;
+        (void)worldMap;
+        (void)mapZoom;
+        (void)mapPanX;
+        (void)mapPanY;
+        (void)interactionPulse;
+        // Physical NIF/KF controller data owns knob, button, and glow state.
+        return;
+
         mPipBoyArmTargetVariant = std::abs(pane * 7 + submenu * 2 + listOffset) % 8;
         if (!mPipBoyControlsInitialized)
             initializePipBoyPhysicalControls();

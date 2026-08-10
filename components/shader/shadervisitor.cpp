@@ -1,6 +1,9 @@
 #include "shadervisitor.hpp"
 
+#include <array>
+#include <filesystem>
 #include <set>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -12,7 +15,10 @@
 #include <osg/Material>
 #include <osg/Multisample>
 #include <osg/Texture>
+#include <osg/Texture2D>
 #include <osg/ValueObject>
+
+#include <osgDB/ReadFile>
 
 #include <osgParticle/ParticleSystem>
 
@@ -187,6 +193,7 @@ namespace Shader
         , mReconstructNormalZ(false)
         , mTexStageRequiringTangents(-1)
         , mSoftParticles(false)
+        , mDaoFaceSurface(false)
         , mNode(nullptr)
     {
     }
@@ -283,7 +290,9 @@ namespace Shader
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
         "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1",
-        "hairPaletteMap" };
+        "hairPaletteMap", "poreNormalMap", "daoTintMask", "daoAgeDiffuseMap", "daoAgeNormalMap",
+        "daoEmotionMask0", "daoEmotionMask1", "daoEmotionNormalMap", "daoBrowStubbleMap",
+        "daoBrowStubbleNormalMap", "daoTattooMask", "daoBeckmannLut" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))
@@ -325,6 +334,17 @@ namespace Shader
                     const osg::Texture* texture = attr->asTexture();
                     if (texture)
                     {
+                        for (unsigned int imageIndex = 0; imageIndex < texture->getNumImages(); ++imageIndex)
+                        {
+                            const osg::Image* image = texture->getImage(imageIndex);
+                            if (!image)
+                                continue;
+                            const std::string fileName = Misc::StringUtils::lowerCase(image->getFileName());
+                            if (fileName.find("_hed_") != std::string::npos
+                                || fileName.find("head_diff") != std::string::npos
+                                || fileName.find("face_diff") != std::string::npos)
+                                mRequirements.back().mDaoFaceSurface = true;
+                        }
                         std::string texName = SceneUtil::getTextureType(*stateset, *texture, unit);
                         if ((texName.empty() || !isTextureNameRecognized(texName)) && unit == 0)
                             texName = "diffuseMap";
@@ -564,6 +584,7 @@ namespace Shader
         std::string shaderPrefix;
         if (node.getUserValue("shaderPrefix", shaderPrefix))
             mRequirements.back().mShaderPrefix = std::move(shaderPrefix);
+
     }
 
     void ShaderVisitor::popRequirements()
@@ -727,10 +748,165 @@ namespace Shader
 
         Stereo::shaderStereoDefines(defineMap);
 
-        const std::string& shaderPrefix
-            = reqs.mShaderPrefix.empty() ? mDefaultShaderPrefix : reqs.mShaderPrefix;
+        std::string shaderPrefix = reqs.mShaderPrefix.empty() ? mDefaultShaderPrefix : reqs.mShaderPrefix;
+        const char* daoFaceShader = std::getenv("OPENMW_DAO_FACE_SHADER");
+        static bool loggedDaoFaceSwitch = false;
+        if (!loggedDaoFaceSwitch)
+        {
+            Log(Debug::Warning) << "DAO face shader switch: "
+                                << (daoFaceShader != nullptr ? daoFaceShader : "<unset>");
+            loggedDaoFaceSwitch = true;
+        }
+        if (daoFaceShader != nullptr && *daoFaceShader != '\0' && std::string_view(daoFaceShader) != "0")
+        {
+            std::string surfaceName = node.getName() + " " + writableStateSet->getName();
+            if (const auto* material = dynamic_cast<const osg::Material*>(
+                    writableStateSet->getAttribute(osg::StateAttribute::MATERIAL)))
+                surfaceName += " " + material->getName();
+            static unsigned int daoFaceProbeCount = 0;
+            const std::string lowerSurfaceName = Misc::StringUtils::lowerCase(surfaceName);
+            if (daoFaceProbeCount < 96 || lowerSurfaceName.find("leliana") != std::string::npos
+                || lowerSurfaceName.find("dao_") != std::string::npos)
+            {
+                Log(Debug::Warning) << "DAO face probe[" << daoFaceProbeCount << "]: surface='" << surfaceName
+                                    << "' textures=" << writableStateSet->getTextureAttributeList().size();
+                ++daoFaceProbeCount;
+            }
+            bool isFaceSurface = reqs.mDaoFaceSurface || lowerSurfaceName.find("face") != std::string::npos;
+            std::string matchedTexture;
+            const auto& textureAttributes = writableStateSet->getTextureAttributeList();
+            for (unsigned int unit = 0; unit < textureAttributes.size(); ++unit)
+            {
+                const osg::StateAttribute* attribute
+                    = writableStateSet->getTextureAttribute(unit, osg::StateAttribute::TEXTURE);
+                const osg::Texture* texture = attribute ? attribute->asTexture() : nullptr;
+                if (!texture)
+                    continue;
+                const std::string textureName = Misc::StringUtils::lowerCase(texture->getName());
+                if (textureName.find("_hed_") != std::string::npos || textureName.find("face") != std::string::npos)
+                {
+                    isFaceSurface = true;
+                    matchedTexture = texture->getName();
+                }
+                for (unsigned int imageIndex = 0; imageIndex < texture->getNumImages(); ++imageIndex)
+                {
+                    const osg::Image* image = texture->getImage(imageIndex);
+                    if (!image)
+                        continue;
+                    const std::string fileName = Misc::StringUtils::lowerCase(image->getFileName());
+                    if (fileName.find("_hed_") != std::string::npos
+                        || fileName.find("head_diff") != std::string::npos
+                        || fileName.find("face_diff") != std::string::npos)
+                    {
+                        isFaceSurface = true;
+                        matchedTexture = image->getFileName();
+                        break;
+                    }
+                }
+                if (isFaceSurface && !matchedTexture.empty())
+                    break;
+            }
+            if (isFaceSurface)
+            {
+                shaderPrefix = "bs/dao_face";
+                const std::string daoFaceCharacter = [] {
+                    const char* value = std::getenv("OPENMW_DAO_FACE_CHARACTER");
+                    return value != nullptr ? Misc::StringUtils::lowerCase(value) : std::string();
+                }();
+                const bool isMarethari = daoFaceCharacter == "keeper_marethari"
+                    || daoFaceCharacter == "marethari";
+                const bool hasDaoFaceTangents = [] {
+                    const char* value = std::getenv("OPENMW_DAO_FACE_TANGENTS");
+                    return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+                }();
+                // The OBJ bridge does not carry Face1.vsh's skinned tangent
+                // and binormal streams. Use the geometric normal until the
+                // reconstructed Face1 basis is supplied explicitly. GLB
+                // imports with TEXCOORD7 tangents opt into the full path.
+                if (!hasDaoFaceTangents)
+                {
+                    defineMap["normalMap"] = "0";
+                    defineMap["bumpMap"] = "0";
+                    defineMap["poreNormalMap"] = "0";
+                }
+                writableStateSet->addUniform(new osg::Uniform("daoAgeAmount", isMarethari ? 1.0f : 0.0f));
+                addedState->addUniform("daoAgeAmount");
+                writableStateSet->addUniform(new osg::Uniform("daoTattooAmount", isMarethari ? 0.8f : 0.0f));
+                addedState->addUniform("daoTattooAmount");
+                writableStateSet->addUniform(
+                    new osg::Uniform("daoTattooChannelWeights", osg::Vec4f(1.f, 0.f, 0.f, 0.f)));
+                addedState->addUniform("daoTattooChannelWeights");
+                writableStateSet->addUniform(
+                    new osg::Uniform("daoTattooTint", osg::Vec3f(0.6f, 0.47f, 0.8f)));
+                addedState->addUniform("daoTattooTint");
+                Log(Debug::Info) << "DAO face shader selected: surface='" << surfaceName
+                                 << "' texture='" << matchedTexture << "'";
+
+                const char* materialDirectory = std::getenv("OPENMW_DAO_FACE_MATERIAL_DIR");
+                if (materialDirectory != nullptr && *materialDirectory != '\0')
+                {
+                    const std::array<std::pair<const char*, const char*>, 11> materialTextures = { {
+                        { "daoTintMask", "uh_hed_maka_0t.dds" },
+                        { "daoAgeDiffuseMap", "uh_hed_olda_0d.dds" },
+                        { "daoAgeNormalMap", "uh_hed_olda_0n.dds" },
+                        { "daoEmotionMask0", "uh_hed_mlw.dds" },
+                        { "daoEmotionMask1", "uh_hed_mup.dds" },
+                        { "daoEmotionNormalMap", "uh_hed_emo_0n.dds" },
+                        { "daoBrowStubbleMap", "uh_hed_stb_0t.dds" },
+                        { "daoBrowStubbleNormalMap", "uh_hed_stb_0n.dds" },
+                        { "daoTattooMask", "uh_tat_ed1_0t.dds" },
+                        { "daoBeckmannLut", "beckmann.dds" },
+                        { "poreNormalMap", "skin_micro_nrm_ao.png" },
+                    } };
+                    unsigned int textureUnit = static_cast<unsigned int>(textureAttributes.size());
+                    for (const auto& [semantic, fileName] : materialTextures)
+                    {
+                        const std::string_view semanticName(semantic);
+                        // Neutral/young faces do not consume Marethari's age,
+                        // emotion, stubble, or tattoo stack. Binding every
+                        // dormant map can exceed the GLSL 1.20 sampler budget
+                        // once a Godot-canonical GLB already supplies its PBR
+                        // textures. Leliana still receives the tint mask,
+                        // Beckmann LUT, and pore detail required by face0.
+                        if (!isMarethari && semanticName != "daoTintMask"
+                            && semanticName != "daoBeckmannLut" && semanticName != "poreNormalMap")
+                            continue;
+                        const bool requiresTangents = semanticName == "daoAgeNormalMap"
+                            || semanticName == "daoEmotionNormalMap"
+                            || semanticName == "daoBrowStubbleNormalMap";
+                        if (requiresTangents && !hasDaoFaceTangents)
+                            continue;
+                        const std::filesystem::path path = std::filesystem::path(materialDirectory) / fileName;
+                        if (!std::filesystem::exists(path))
+                            continue;
+                        osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile(path.string());
+                        if (!image)
+                            continue;
+                        osg::ref_ptr<osg::Texture2D> materialTexture = new osg::Texture2D(image);
+                        materialTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+                        materialTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                        materialTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+                        materialTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                        writableStateSet->setTextureAttributeAndModes(
+                            textureUnit, materialTexture, osg::StateAttribute::ON);
+                        addedState->setTextureAttributeAndModes(textureUnit, materialTexture);
+                        writableStateSet->addUniform(new osg::Uniform(semantic, static_cast<int>(textureUnit)));
+                        addedState->addUniform(semantic);
+                        defineMap[semantic] = "1";
+                        defineMap[std::string(semantic) + "UV"] = "0";
+                        Log(Debug::Info) << "DAO face material texture: " << semantic << "='" << path.string()
+                                         << "' unit=" << textureUnit;
+                        ++textureUnit;
+                    }
+                }
+            }
+        }
         auto program = mShaderManager.getProgram(shaderPrefix, defineMap, mProgramTemplate);
-        writableStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+        osg::StateAttribute::OverrideValue programMode = osg::StateAttribute::ON;
+        if (shaderPrefix == "bs/dao_face")
+            programMode = static_cast<osg::StateAttribute::OverrideValue>(
+                programMode | osg::StateAttribute::PROTECTED);
+        writableStateSet->setAttributeAndModes(program, programMode);
         addedState->setAttributeAndModes(std::move(program));
 
         for (const auto& [unit, name] : reqs.mTextures)

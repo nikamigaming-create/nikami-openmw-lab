@@ -25,7 +25,9 @@
 #include <components/nif/niffile.hpp>
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
+#include <components/nif/extra.hpp>
 #include <components/nif/particle.hpp>
+#include <components/nif/texture.hpp>
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/sceneutil/keyframe.hpp>
@@ -432,6 +434,98 @@ private:
     float mTime;
 };
 
+class MutableAnimationDumpTimeSource : public SceneUtil::ControllerSource
+{
+public:
+    float getValue(osg::NodeVisitor*) override { return mTime; }
+    float mTime = 0.f;
+};
+
+std::unique_ptr<Nif::NIFFile> readNifFile(const std::filesystem::path& path);
+
+int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesystem::path& outPath,
+    float sampleRate, float requestedDuration)
+{
+    if (!(sampleRate > 0.f) || !std::isfinite(sampleRate))
+        throw std::runtime_error("animation sample rate must be finite and positive");
+    Nif::Reader::setLoadUnsupportedFiles(true);
+    std::unique_ptr<Nif::NIFFile> kfFile = readNifFile(kfPath);
+    SceneUtil::KeyframeHolder keyframes;
+    NifOsg::Loader::loadKf(*kfFile, keyframes);
+    if (keyframes.mKeyframeControllers.empty())
+        throw std::runtime_error("KF contains no transform controllers");
+    float duration = requestedDuration;
+    if (!(duration > 0.f))
+    {
+        duration = 0.f;
+        for (const auto& [time, text] : keyframes.mTextKeys)
+        {
+            (void)text;
+            if (std::isfinite(time))
+                duration = std::max(duration, time);
+        }
+    }
+    if (!(duration > 0.f))
+        duration = 4.f;
+    const std::uint32_t frameCount = static_cast<std::uint32_t>(std::ceil(duration * sampleRate)) + 1u;
+    if (frameCount > 36000u)
+        throw std::runtime_error("animation dump exceeds 36000 frames");
+    std::ofstream out(outPath, std::ios::binary);
+    if (!out)
+        throw std::runtime_error("failed to open animation output path");
+    const auto writeValue = [&out](const auto& value) { out.write(reinterpret_cast<const char*>(&value), sizeof(value)); };
+    const auto writeString = [&out, &writeValue](const std::string& value) {
+        const std::uint32_t size = static_cast<std::uint32_t>(value.size());
+        writeValue(size);
+        out.write(value.data(), size);
+    };
+    out.write("ONVANIM1", 8);
+    writeValue(std::uint32_t{ 1 });
+    writeValue(sampleRate);
+    writeValue(duration);
+    writeValue(frameCount);
+    writeValue(static_cast<std::uint32_t>(keyframes.mKeyframeControllers.size()));
+    writeValue(static_cast<std::uint32_t>(std::distance(keyframes.mTextKeys.begin(), keyframes.mTextKeys.end())));
+    for (const auto& [time, text] : keyframes.mTextKeys)
+    {
+        writeValue(time);
+        writeString(text);
+    }
+    auto timeSource = std::make_shared<MutableAnimationDumpTimeSource>();
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+    {
+        writeString(name);
+        auto* mutableController = const_cast<SceneUtil::KeyframeController*>(controller.get());
+        mutableController->setSource(timeSource);
+        for (std::uint32_t frame = 0; frame < frameCount; ++frame)
+        {
+            timeSource->mTime = std::min(duration, static_cast<float>(frame) / sampleRate);
+            const SceneUtil::KeyframeController::KfTransform transform = mutableController->getCurrentTransformation(nullptr);
+            const std::uint8_t flags = (transform.mTranslation ? 1u : 0u)
+                | (transform.mRotation ? 2u : 0u) | (transform.mScale ? 4u : 0u);
+            writeValue(flags);
+            if (transform.mTranslation)
+            {
+                writeValue(transform.mTranslation->x()); writeValue(transform.mTranslation->y()); writeValue(transform.mTranslation->z());
+            }
+            if (transform.mRotation)
+            {
+                writeValue(static_cast<float>(transform.mRotation->x()));
+                writeValue(static_cast<float>(transform.mRotation->y()));
+                writeValue(static_cast<float>(transform.mRotation->z()));
+                writeValue(static_cast<float>(transform.mRotation->w()));
+            }
+            if (transform.mScale)
+                writeValue(*transform.mScale);
+        }
+    }
+    if (!out)
+        throw std::runtime_error("failed while writing animation payload");
+    std::cout << "FNV animation dump wrote " << keyframes.mKeyframeControllers.size() << " tracks, "
+              << frameCount << " frames, " << duration << " seconds to " << outPath << std::endl;
+    return 0;
+}
+
 class TransformDumpVisitor : public osg::NodeVisitor
 {
 public:
@@ -672,9 +766,15 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
 
     std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
     std::vector<FnvGeometryDumpInfo> geometries;
+    int bsxFlags = 0;
     for (const Nif::Record* record : meshFile->mRoots)
         if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+        {
             collectNifGeometryInfos(root, osg::Matrixf::identity(), geometries);
+            for (const auto& extra : root->getExtraList())
+                if (!extra.empty() && extra->recType == Nif::RC_BSXFlags)
+                    bsxFlags = static_cast<const Nif::NiIntegerExtraData*>(extra.getPtr())->mData;
+        }
 
     std::ofstream out(outPath);
     if (!out)
@@ -683,6 +783,7 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
     out << std::setprecision(9);
     out << "{\n";
     out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"bsxFlags\": " << bsxFlags << ",\n";
     out << "  \"geometryCount\": " << geometries.size() << ",\n";
     out << "  \"geometries\": [";
 
@@ -743,6 +844,30 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         const Nif::BSShaderProperty* shaderProperty = geometry->mShaderProperty.empty()
             ? nullptr
             : geometry->mShaderProperty.getPtr();
+        std::string diffuseTexture;
+        const auto resolveShaderTexture = [&](const Nif::BSShaderProperty* shader) {
+            if (const auto* effect = dynamic_cast<const Nif::BSEffectShaderProperty*>(shader))
+                return effect->mSourceTexture;
+            if (const auto* pp = dynamic_cast<const Nif::BSShaderPPLightingProperty*>(shader))
+            {
+                if (!pp->mTextureSet.empty() && !pp->mTextureSet->mTextures.empty())
+                    return pp->mTextureSet->mTextures.front();
+            }
+            if (const auto* lighting = dynamic_cast<const Nif::BSLightingShaderProperty*>(shader))
+            {
+                if (!lighting->mTextureSet.empty() && !lighting->mTextureSet->mTextures.empty())
+                    return lighting->mTextureSet->mTextures.front();
+            }
+            if (const auto* noLighting = dynamic_cast<const Nif::BSShaderNoLightingProperty*>(shader))
+                return noLighting->mFilename;
+            if (const auto* sky = dynamic_cast<const Nif::SkyShaderProperty*>(shader))
+                return sky->mFilename;
+            if (const auto* grass = dynamic_cast<const Nif::TallGrassShaderProperty*>(shader))
+                return grass->mFilename;
+            if (const auto* tile = dynamic_cast<const Nif::TileShaderProperty*>(shader))
+                return tile->mFilename;
+            return std::string();
+        };
         for (const auto& property : geometry->mProperties)
         {
             if (property.empty())
@@ -750,8 +875,23 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             if (property->recType == Nif::RC_NiAlphaProperty)
                 alphaProperty = static_cast<const Nif::NiAlphaProperty*>(property.getPtr());
             if (const auto* shader = dynamic_cast<const Nif::BSShaderProperty*>(property.getPtr()))
+            {
                 shaderProperty = shader;
+                if (diffuseTexture.empty())
+                    diffuseTexture = resolveShaderTexture(shader);
+            }
+            if (diffuseTexture.empty())
+            {
+                if (const auto* texturing = dynamic_cast<const Nif::NiTexturingProperty*>(property.getPtr()))
+                {
+                    if (!texturing->mTextures.empty() && texturing->mTextures.front().mEnabled
+                        && !texturing->mTextures.front().mSourceTexture.empty())
+                        diffuseTexture = texturing->mTextures.front().mSourceTexture->mFile;
+                }
+            }
         }
+        if (diffuseTexture.empty())
+            diffuseTexture = resolveShaderTexture(shaderProperty);
 
         out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
             << ",\"avFlags\":" << geometry->mFlags
@@ -791,10 +931,13 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             << (alphaProperty == nullptr ? -1 : alphaProperty->destinationBlendMode())
             << ",\"shaderFlags1\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags1)
             << ",\"shaderFlags2\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags2)
+            << ",\"shaderRecord\":\""
+            << jsonEscape(shaderProperty == nullptr ? std::string() : shaderProperty->recName) << "\""
             << ",\"shaderDepthTest\":"
             << (shaderProperty != nullptr && shaderProperty->depthTest() ? "true" : "false")
             << ",\"shaderDepthWrite\":"
             << (shaderProperty != nullptr && shaderProperty->depthWrite() ? "true" : "false")
+            << ",\"diffuseTexture\":\"" << jsonEscape(diffuseTexture) << "\""
             << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
             << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
             << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
@@ -853,6 +996,16 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
                     firstIndex = false;
                     out << index;
                 }
+        }
+        out << "],\"stripLengths\":[";
+        if (triStrips != nullptr)
+        {
+            for (std::size_t i = 0; i < triStrips->mStrips.size(); ++i)
+            {
+                if (i != 0)
+                    out << ',';
+                out << triStrips->mStrips[i].size();
+            }
         }
         out << "]";
 
@@ -2035,6 +2188,21 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+    if ((argc == 4 || argc == 5 || argc == 6) && std::string_view(argv[1]) == "--fnv-animation-dump")
+    {
+        try
+        {
+            const float sampleRate = argc >= 5 ? std::stof(argv[4]) : 30.f;
+            const float duration = argc >= 6 ? std::stof(argv[5]) : 0.f;
+            return runFnvAnimationDump(argv[2], argv[3], sampleRate, duration);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV animation dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
     if (argc == 4 && std::string_view(argv[1]) == "--fnv-particle-dump")
     {
         try

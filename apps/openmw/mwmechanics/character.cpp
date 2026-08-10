@@ -2823,6 +2823,9 @@ namespace MWMechanics
         const bool visualAction
             = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Reload, priority);
 
+        if (!visualAction)
+            return fail("authored-reload-animation-unavailable");
+
         const int removed = container.remove(*ammoId, transfer);
         if (removed != transfer)
         {
@@ -2832,15 +2835,11 @@ namespace MWMechanics
         }
         container.setFalloutAmmoSelection(weaponId, *ammoId);
         container.setFalloutLoadedAmmo(weaponId, loaded + transfer);
-        if (visualAction)
-            mUpperBodyState = UpperBodyState::AttackEnd;
+        mUpperBodyState = UpperBodyState::AttackEnd;
         Log(Debug::Info) << "FNV reload: actor=" << mPtr.toString() << " weapon=" << weaponId
                          << " ammo=" << *ammoId << " loadedBefore=" << loaded
                          << " transferred=" << transfer << " loadedAfter=" << (loaded + transfer)
                          << " capacity=" << capacity << " visualAction=" << visualAction << " status=pass";
-        if (!visualAction)
-            Log(Debug::Warning) << "FNV reload used gameplay fallback because the authored reload animation "
-                                << "could not be played: actor=" << mPtr.toString() << " weapon=" << weaponId;
         return true;
     }
 
