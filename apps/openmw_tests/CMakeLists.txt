@@ -40,6 +40,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwgui/testfalloutquestlistpolicy.cpp
     mwgui/testinventorylistpolicy.cpp
     mwgui/testinventoryitemtype.cpp
+    mwgui/testfnvmenuxml.cpp
 
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp

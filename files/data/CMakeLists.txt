@@ -229,6 +229,7 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_hud_energybar.skin.xml
     mygui/openmw_hud.layout
     mygui/openmw_infobox.layout
+    mygui/openmw_fnv_menu.layout
     mygui/openmw_interactive_messagebox.layout
     mygui/openmw_interactive_messagebox_notransp.layout
     mygui/openmw_inventory_tabs.layout

@@ -73,6 +73,7 @@ namespace SceneUtil
         std::string_view getRootBone() const;
         std::size_t getBoneCount() const;
         std::string_view getBoneName(std::size_t index) const;
+        bool getBoneParentIndices(std::vector<int>& parentIndices) const;
         bool getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,
             std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
             osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const;

@@ -970,6 +970,38 @@ TEST(ESM4QuestRuntimeTest, ExecutesExactVcg01VictorDisableFrame)
     EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesCompiledTerminalResultScriptWithoutQuestStageWrapper)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId targetId{ .mIndex = 0x103dfe, .mContentFile = 0 };
+    ESM4::ActorCreature target;
+    target.mId = targetId;
+    target.mEditorId = "VictorREF";
+    store.overrideRecord(target);
+
+    ESM4::ScriptDefinition script;
+    script.compiledData = { 0x1c, 0x00, 0x01, 0x00, 0x22, 0x10, 0x02, 0x00, 0x00, 0x00 };
+    script.references = { targetId };
+    std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>> commands;
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.setReferenceCommandHandler(
+        [&commands](MWWorld::ESM4QuestReferenceCommand command, ESM::FormId targetForm) {
+            commands.emplace_back(command, targetForm);
+            return true;
+        });
+    runtime.initialize(store);
+
+    ASSERT_TRUE(runtime.executeResultScript(script));
+    EXPECT_EQ(commands,
+        (std::vector<std::pair<MWWorld::ESM4QuestReferenceCommand, ESM::FormId>>{
+            { MWWorld::ESM4QuestReferenceCommand::Disable, targetId },
+        }));
+    script.compiledData = { 0xef, 0xbe, 0x00, 0x00 };
+    script.references.clear();
+    EXPECT_FALSE(runtime.executeResultScript(script));
+    EXPECT_EQ(commands.size(), 1u);
+}
+
 TEST(ESM4QuestRuntimeTest, ExecutesExactVms54BunkerDoorUnlockFrame)
 {
     MWWorld::ESMStore store;

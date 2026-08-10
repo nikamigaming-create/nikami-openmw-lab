@@ -297,6 +297,12 @@ namespace MWGui
         void removeStaticMessageBox() override;
         void interactiveMessageBox(std::string_view message, const std::vector<std::string>& buttons = {},
             bool block = false, int defaultFocus = -1) override;
+        void interactiveFnvMenuMessageBox(const FnvMenuXmlDocument& menu, std::string_view frameTile,
+            std::string_view messageTile, std::string_view buttonTile, std::string_view message,
+            const std::vector<std::string>& buttons = {}, bool block = false, int defaultFocus = -1,
+            const FnvHackingMenuPresentation* hacking = nullptr) override;
+        void beginFalloutTerminalSession(const MWWorld::Ptr& target) override;
+        void endFalloutTerminalSession() override;
 
         int readPressedButton() override; ///< returns the index of the pressed button or -1 if no button was pressed
                                           ///< (->MessageBoxmanager->InteractiveMessageBox)
@@ -556,6 +562,7 @@ namespace MWGui
         // The currently active stack of GUI modes (top mode is the one we are in).
         std::vector<GuiMode> mGuiModes;
         std::unique_ptr<FalloutDialogueCameraState> mFalloutDialogueCamera;
+        std::unique_ptr<FalloutDialogueCameraState> mFalloutTerminalCamera;
         // The active window for controller mode for each GUI mode.
         std::map<GuiMode, int> mActiveControllerWindows;
         // Separate from the conventional OpenMW inventory/map layout.  The

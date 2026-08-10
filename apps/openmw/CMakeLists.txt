@@ -42,6 +42,7 @@ add_openmw_dir (mwinput
 
 add_openmw_dir (mwgui
     layout textinput widgets race class birth review windowmanagerimp console dialogue
+    fnvmenuxml
     windowbase statswindow messagebox journalwindow charactercreation
     mapwindow windowpinnablebase tooltips scrollwindow bookwindow resourceskin
     formatting inventorywindow container hud countdialog tradewindow settingswindow
@@ -92,7 +93,7 @@ add_openmw_dir (mwworld
     actionfnvcrafting fnvradioprogram
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
-    esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime
+    esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime fnvterminalhacking
     fnvweather fnvsavepreflight fnvfasttravel
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry

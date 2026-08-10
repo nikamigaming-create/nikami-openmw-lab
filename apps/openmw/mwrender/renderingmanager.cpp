@@ -2270,6 +2270,12 @@ namespace MWRender
         }
     }
 
+    bool RenderingManager::isFalloutPipBoyPresentationHeld() const
+    {
+        return mFalloutPipBoyPresentationProgress > 0.999f && mFalloutPlayerFirstPersonAnimation
+            && mFalloutPlayerFirstPersonAnimation->isPipBoyPresentationHeld();
+    }
+
     void RenderingManager::updatePlayerPtr(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get())

@@ -10,6 +10,7 @@
 #include <osg/Texture2D>
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,6 +68,7 @@ namespace MWRender
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
         std::size_t getFirstPersonAttachedPartCount() const { return mFirstPersonAttachedPartCount; }
         bool hasPipBoyPresentation() const { return mPipBoyPresentationRoot != nullptr; }
+        bool isPipBoyPresentationHeld() const { return mPipBoyRetailInteractionPoseHeld; }
         bool setPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture = nullptr,
             bool showMap = false, float mapZoom = 1.f, float mapPanX = 0.f, float mapPanY = 0.f);
         void setPipBoyPresentationProgress(float progress, bool interactionPoseActive);
@@ -131,6 +133,7 @@ namespace MWRender
         float mPipBoyScrollDisplayAngle = 1.57079632679f;
         bool mPipBoyRetailInteractionBound = false;
         bool mPipBoyRetailWaverBound = false;
+        bool mPipBoyRetailManipulateBound = false;
         bool mPipBoyRetailBaseIdleBound = false;
         bool mPipBoyRetailBaseAimBound = false;
         bool mPipBoyControlsInitialized = false;

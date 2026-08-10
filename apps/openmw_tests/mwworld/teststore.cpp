@@ -211,6 +211,11 @@ TEST(FNVNativePlayerStore, validatedOfficialSetupUsesNativePlayerAndNeutralStruc
     EXPECT_EQ(store.get<ESM4::GameSetting>().getSize(), 2u);
     EXPECT_FLOAT_EQ(store.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat(), 0.42f);
     EXPECT_EQ(store.get<ESM::GameSetting>().find("sFNVBridgeProbe")->mValue.getString(), "authored");
+    EXPECT_EQ(store.get<ESM::GameSetting>().find("iHackingMinWords")->mValue.getInteger(), 5);
+    EXPECT_EQ(store.get<ESM::GameSetting>().find("iHackingMaxWords")->mValue.getInteger(), 20);
+    EXPECT_FLOAT_EQ(store.get<ESM::GameSetting>().find("fHackLevelMult")->mValue.getFloat(), 0.25f);
+    EXPECT_FLOAT_EQ(store.get<ESM::GameSetting>().find("fHackingMinSkillHard")->mValue.getFloat(), 75.f);
+    EXPECT_EQ(store.get<ESM::GameSetting>().find("iHackingRetryMilliseconds")->mValue.getInteger(), 10000);
     EXPECT_EQ(store.get<ESM::GameSetting>().find("sDefaultCellname")->mValue.getString(), "Wasteland");
     EXPECT_EQ(store.get<ESM::GameSetting>().search("sAttributeStrength"), nullptr);
     EXPECT_EQ(store.get<ESM::GameSetting>().search("fWerewolfStrength"), nullptr);

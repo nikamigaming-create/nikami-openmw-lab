@@ -257,6 +257,33 @@ namespace
             { "fMoveBaseSpeed", ESM::Variant(77.f) },
             { "fMoveRunMult", ESM::Variant(4.f) },
             { "fMoveSneakMult", ESM::Variant(0.57f) },
+            // These hacking tunables are executable defaults in New Vegas rather than authored FalloutNV.esm
+            // GMST records. Expose them through the same store used by authored settings so terminal behavior stays
+            // data-driven and a loaded plugin can still override the defaults.
+            { "iHackingMinWords", ESM::Variant(std::int32_t{ 5 }) },
+            { "iHackingMaxWords", ESM::Variant(std::int32_t{ 20 }) },
+            { "fHackLevelMult", ESM::Variant(0.25f) },
+            { "fHackingMinSkillVeryEasy", ESM::Variant(0.f) },
+            { "fHackingMinSkillEasy", ESM::Variant(25.f) },
+            { "fHackingMinSkillAverage", ESM::Variant(50.f) },
+            { "fHackingMinSkillHard", ESM::Variant(75.f) },
+            { "fHackingMinSkillVeryHard", ESM::Variant(100.f) },
+            { "iHackingDumpRate", ESM::Variant(std::int32_t{ 500 }) },
+            { "iHackingFlashOffDuration", ESM::Variant(std::int32_t{ 500 }) },
+            { "iHackingFlashOnDuration", ESM::Variant(std::int32_t{ 750 }) },
+            { "iHackingInputRate", ESM::Variant(std::int32_t{ 20 }) },
+            { "iHackingOutputRate", ESM::Variant(std::int32_t{ 67 }) },
+            { "iHackingRetryMilliseconds", ESM::Variant(std::int32_t{ 10000 }) },
+            { "sHackingCorrect", ESM::Variant(std::string("correct")) },
+            { "sHackingDenied", ESM::Variant(std::string("Entry denied")) },
+            { "sHackingDudRemoved", ESM::Variant(std::string("Dud removed.")) },
+            { "sHackingGranted", ESM::Variant(std::string("Exact match!")) },
+            { "sHackingHeader", ESM::Variant(std::string("ROBCO INDUSTRIES (TM) TERMLINK PROTOCOL")) },
+            { "sHackingHeader2", ESM::Variant(std::string("ENTER PASSWORD NOW")) },
+            { "sHackingHeader3", ESM::Variant(std::string("ATTEMPT(S) LEFT:")) },
+            { "sHackingToleranceReset1", ESM::Variant(std::string("Allowance")) },
+            { "sHackingToleranceReset2", ESM::Variant(std::string("replenished.")) },
+            { "sHackingWarning", ESM::Variant(std::string(" !!! WARNING: LOCKOUT IMMINENT !!!")) },
             { "sDefaultCellname", ESM::Variant(std::string("Wasteland")) },
         };
     }

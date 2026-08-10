@@ -432,6 +432,106 @@ private:
     float mTime;
 };
 
+class MutableAnimationDumpTimeSource : public SceneUtil::ControllerSource
+{
+public:
+    float getValue(osg::NodeVisitor*) override { return mTime; }
+    float mTime = 0.f;
+};
+
+std::unique_ptr<Nif::NIFFile> readNifFile(const std::filesystem::path& path);
+
+int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesystem::path& outPath,
+    float sampleRate, float requestedDuration)
+{
+    if (!(sampleRate > 0.f) || !std::isfinite(sampleRate))
+        throw std::runtime_error("animation sample rate must be finite and positive");
+    Nif::Reader::setLoadUnsupportedFiles(true);
+    std::unique_ptr<Nif::NIFFile> kfFile = readNifFile(kfPath);
+    SceneUtil::KeyframeHolder keyframes;
+    NifOsg::Loader::loadKf(*kfFile, keyframes);
+    if (keyframes.mKeyframeControllers.empty())
+        throw std::runtime_error("KF contains no transform controllers");
+
+    float duration = requestedDuration;
+    if (!(duration > 0.f))
+    {
+        duration = 0.f;
+        for (const auto& [time, text] : keyframes.mTextKeys)
+        {
+            (void)text;
+            if (std::isfinite(time))
+                duration = std::max(duration, time);
+        }
+    }
+    if (!(duration > 0.f))
+        duration = 4.f;
+    const std::uint32_t frameCount = static_cast<std::uint32_t>(std::ceil(duration * sampleRate)) + 1u;
+    if (frameCount > 36000u)
+        throw std::runtime_error("animation dump exceeds 36000 frames");
+
+    std::ofstream out(outPath, std::ios::binary);
+    if (!out)
+        throw std::runtime_error("failed to open animation output path");
+    const auto writeValue = [&out](const auto& value) {
+        out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    const auto writeString = [&out, &writeValue](const std::string& value) {
+        const std::uint32_t size = static_cast<std::uint32_t>(value.size());
+        writeValue(size);
+        out.write(value.data(), size);
+    };
+    out.write("ONVANIM1", 8);
+    writeValue(std::uint32_t{ 1 });
+    writeValue(sampleRate);
+    writeValue(duration);
+    writeValue(frameCount);
+    writeValue(static_cast<std::uint32_t>(keyframes.mKeyframeControllers.size()));
+    writeValue(static_cast<std::uint32_t>(std::distance(keyframes.mTextKeys.begin(), keyframes.mTextKeys.end())));
+    for (const auto& [time, text] : keyframes.mTextKeys)
+    {
+        writeValue(time);
+        writeString(text);
+    }
+
+    auto timeSource = std::make_shared<MutableAnimationDumpTimeSource>();
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+    {
+        writeString(name);
+        auto* mutableController = const_cast<SceneUtil::KeyframeController*>(controller.get());
+        mutableController->setSource(timeSource);
+        for (std::uint32_t frame = 0; frame < frameCount; ++frame)
+        {
+            timeSource->mTime = std::min(duration, static_cast<float>(frame) / sampleRate);
+            const SceneUtil::KeyframeController::KfTransform transform
+                = mutableController->getCurrentTransformation(nullptr);
+            const std::uint8_t flags = (transform.mTranslation ? 1u : 0u)
+                | (transform.mRotation ? 2u : 0u) | (transform.mScale ? 4u : 0u);
+            writeValue(flags);
+            if (transform.mTranslation)
+            {
+                writeValue(transform.mTranslation->x());
+                writeValue(transform.mTranslation->y());
+                writeValue(transform.mTranslation->z());
+            }
+            if (transform.mRotation)
+            {
+                writeValue(static_cast<float>(transform.mRotation->x()));
+                writeValue(static_cast<float>(transform.mRotation->y()));
+                writeValue(static_cast<float>(transform.mRotation->z()));
+                writeValue(static_cast<float>(transform.mRotation->w()));
+            }
+            if (transform.mScale)
+                writeValue(*transform.mScale);
+        }
+    }
+    if (!out)
+        throw std::runtime_error("failed while writing animation payload");
+    std::cout << "FNV animation dump wrote " << keyframes.mKeyframeControllers.size() << " tracks, "
+              << frameCount << " frames, " << duration << " seconds to " << outPath << std::endl;
+    return 0;
+}
+
 class TransformDumpVisitor : public osg::NodeVisitor
 {
 public:
@@ -2094,6 +2194,21 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+    if ((argc == 4 || argc == 5 || argc == 6) && std::string_view(argv[1]) == "--fnv-animation-dump")
+    {
+        try
+        {
+            const float sampleRate = argc >= 5 ? std::stof(argv[4]) : 30.f;
+            const float duration = argc >= 6 ? std::stof(argv[5]) : 0.f;
+            return runFnvAnimationDump(argv[2], argv[3], sampleRate, duration);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV animation dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
     if (argc == 4 && std::string_view(argv[1]) == "--fnv-particle-dump")
     {
         try

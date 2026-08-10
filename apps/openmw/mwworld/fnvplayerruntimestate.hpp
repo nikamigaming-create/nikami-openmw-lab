@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <vector>
 
@@ -53,6 +54,25 @@ namespace MWWorld
         bool operator==(const FalloutReputationValue&) const = default;
     };
 
+    enum class FalloutTerminalState : std::uint8_t
+    {
+        None = 0,
+        Hacked = 1u << 0,
+        LockedOut = 1u << 1,
+        ComputerWhizRetryConsumed = 1u << 2,
+    };
+
+    [[nodiscard]] constexpr bool hasFalloutTerminalState(FalloutTerminalState state, FalloutTerminalState flag)
+    {
+        return (static_cast<std::uint8_t>(state) & static_cast<std::uint8_t>(flag)) != 0;
+    }
+
+    [[nodiscard]] constexpr FalloutTerminalState operator|(FalloutTerminalState left, FalloutTerminalState right)
+    {
+        return static_cast<FalloutTerminalState>(
+            static_cast<std::uint8_t>(left) | static_cast<std::uint8_t>(right));
+    }
+
     /// Mutable Player actor values kept deliberately separate from the immutable NPC_ base record state.
     ///
     /// This slice covers exact authored/current health, SpeedMult, SPECIAL, the fourteen FNV skills, and runtime
@@ -71,7 +91,7 @@ namespace MWWorld
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 8;
+        static constexpr std::uint32_t SaveVersion = 10;
 
     private:
         struct CurrentState
@@ -96,6 +116,11 @@ namespace MWWorld
         // Per-player discovery state for Fallout world-map references. Values use the retail
         // GetMapMarkerVisible contract: 0 hidden, 1 visible, 2 visible and fast-travel enabled.
         std::map<ESM::FormId, std::uint8_t> mMapMarkerStates;
+        // Per-placement terminal state. TERM is a shared base record, so successful hacks and lockouts must be
+        // keyed by the placed reference FormId and remapped with the content load order on save/load.
+        std::map<ESM::FormId, FalloutTerminalState> mTerminalStates;
+        // NOTE records learned through authored terminal ANAM "Add Note" entries.
+        std::set<ESM::FormId> mNotes;
         // Vanilla EnableFastTravel state. The optional FNV arguments independently control waiting and whether
         // a cell transition may clear a scripted fast-travel block.
         bool mFastTravelEnabled = true;
@@ -145,6 +170,11 @@ namespace MWWorld
             return mMapMarkerStates;
         }
         bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
+        [[nodiscard]] FalloutTerminalState getTerminalState(ESM::FormId placement) const;
+        bool setTerminalState(ESM::FormId placement, FalloutTerminalState state);
+        [[nodiscard]] const std::set<ESM::FormId>& getNotes() const { return mNotes; }
+        [[nodiscard]] bool hasNote(ESM::FormId note) const { return mNotes.contains(note); }
+        bool addNote(ESM::FormId note);
         [[nodiscard]] bool isFastTravelEnabled() const { return mFastTravelEnabled; }
         [[nodiscard]] bool isWaitEnabled() const { return mWaitEnabled; }
         [[nodiscard]] bool isFastTravelKeptOnCellChange() const { return mFastTravelKeepOnCellChange; }

@@ -37,6 +37,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/esm3/esmreader.hpp>
@@ -632,10 +633,42 @@ namespace MWGui
                             text << "W/S SCROLL  E SELECT";
                             break;
                         case 1:
+                        {
                             text << "NOTES\n";
-                            writeEntry(0, "PIP-BOY ONLINE", -1);
-                            writeEntry(1, "FALLOUTNV.ESM ONLINE", -1);
+                            MWBase::World* const world = MWBase::Environment::get().getWorld();
+                            if (world == nullptr)
+                            {
+                                text << "NO NOTE DATA";
+                                break;
+                            }
+                            const auto& notes = world->getFalloutPlayerRuntimeState().getNotes();
+                            const MWWorld::ESMStore& store = world->getStore();
+                            const int selected = notes.empty()
+                                ? -1
+                                : std::min(selectedRow, static_cast<int>(notes.size()) - 1);
+                            int row = 0;
+                            const ESM4::Note* selectedNote = nullptr;
+                            for (const ESM::FormId id : notes)
+                            {
+                                const ESM4::Note* note = store.get<ESM4::Note>().search(ESM::RefId(id));
+                                if (note == nullptr)
+                                    continue;
+                                if (row == selected)
+                                    selectedNote = note;
+                                writeEntry(row++, note->mFullName.empty() ? note->mEditorId : note->mFullName, -1);
+                                if (row >= selected + 7)
+                                    break;
+                            }
+                            if (selectedNote != nullptr && selectedNote->mData == 1 && !selectedNote->mText.empty())
+                            {
+                                std::string preview = selectedNote->mText.substr(0, 180);
+                                std::ranges::replace(preview, '\r', ' ');
+                                text << "\n" << preview;
+                            }
+                            if (notes.empty())
+                                text << "NO NOTES ACQUIRED";
                             break;
+                        }
                         case 2:
                         default:
                             text << "RADIO\n";
@@ -1772,8 +1805,6 @@ namespace MWGui
             return;
 
         mFalloutPipBoyPhysical = physical;
-        if (physical)
-            mFalloutPipBoyInteractionPulse = 1.f;
         Log(Debug::Info) << "FNV Pip-Boy presentation: mode=" << (physical ? "physical" : "analog")
                          << " activePane=" << getFalloutPipBoyActivePane();
         updateVisible();
@@ -2007,6 +2038,39 @@ namespace MWGui
 
             MyGUI::LayerManager::getInstance().attachToLayerNode(targetLayer, widget);
             Log(Debug::Info) << "FNV Pip-Boy native pane layer: pane=" << i << " layer=" << targetLayer;
+        }
+    }
+
+    void WindowManager::interactiveFnvMenuMessageBox(const FnvMenuXmlDocument& menu,
+        std::string_view frameTile, std::string_view messageTile, std::string_view buttonTile,
+        std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus,
+        const FnvHackingMenuPresentation* hacking)
+    {
+        mMessageBoxManager->createInteractiveFnvMenuMessageBox(
+            menu, frameTile, messageTile, buttonTile, message, buttons, block, defaultFocus, hacking);
+        updateVisible();
+
+        if (block)
+        {
+            Misc::FrameRateLimiter frameRateLimiter
+                = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
+            while (mMessageBoxManager->readPressedButton(false) == -1
+                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            {
+                const double dt
+                    = std::chrono::duration_cast<std::chrono::duration<double>>(frameRateLimiter.getLastFrameDuration())
+                          .count();
+                mKeyboardNavigation->onFrame();
+                mMessageBoxManager->onFrame(dt);
+                MWBase::Environment::get().getInputManager()->update(dt, true, false);
+                if (!mWindowVisible)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                else
+                    viewerTraversals();
+                mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
+                frameRateLimiter.limit();
+            }
+            mMessageBoxManager->resetInteractiveMessageBox();
         }
     }
 
@@ -2583,6 +2647,105 @@ namespace MWGui
             }
         }
         Log(Debug::Info) << "FNV dialogue camera: restored player view";
+    }
+
+    void WindowManager::beginFalloutTerminalSession(const MWWorld::Ptr& target)
+    {
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr || VR::getVR() || target.isEmpty() || !target.isInCell()
+            || world->getStore().getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return;
+
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        MWRender::Camera* const camera = world->getCamera();
+        MWRender::RenderingManager* const rendering = world->getRenderingManager();
+        if (player.isEmpty() || !player.isInCell() || player.getCell() != target.getCell() || camera == nullptr
+            || rendering == nullptr || camera->getMode() == MWRender::Camera::Mode::VR)
+            return;
+
+        endFalloutTerminalSession();
+        osg::Vec3f focus = target.getRefData().getPosition().asVec3();
+        const osg::Vec3f halfExtents = world->getHalfExtents(target, true);
+        focus.z() += std::max(24.f, halfExtents.z() * 0.65f);
+        osg::Vec3f playerFocus = player.getRefData().getPosition().asVec3();
+        playerFocus.z() += std::max(48.f, world->getHalfExtents(player, true).z());
+        osg::Vec3f outward = playerFocus - focus;
+        const float horizontal = std::hypot(outward.x(), outward.y());
+        if (horizontal < 1.f)
+            return;
+        outward.z() = std::clamp(outward.z(), -horizontal * 0.25f, horizontal * 0.25f);
+        outward.normalize();
+
+        const float desiredDistance = std::clamp(halfExtents.length() * 1.5f, 88.f, 160.f);
+        osg::Vec3f cameraPosition = focus + outward * desiredDistance;
+        MWPhysics::RayCastingResult hit{};
+        const std::array<MWWorld::Ptr, 1> ignored{ target };
+        if (world->castRenderingRay(hit, focus, cameraPosition, true, true, ignored))
+        {
+            const float available = (hit.mHitPos - focus).length() - 16.f;
+            if (available < 40.f)
+                return;
+            cameraPosition = focus + outward * std::min(desiredDistance, available);
+        }
+
+        auto previous = std::make_unique<FalloutDialogueCameraState>();
+        previous->mMode = camera->getMode();
+        previous->mPitch = camera->getPitch();
+        previous->mYaw = camera->getYaw();
+        previous->mRoll = camera->getRoll();
+        previous->mFieldOfView = rendering->getFieldOfView();
+        previous->mFieldOfViewWasOverridden = rendering->isFieldOfViewOverridden();
+        previous->mTarget = target;
+        previous->mCameraPosition = cameraPosition;
+
+        camera->setMode(MWRender::Camera::Mode::Static, true);
+        camera->setStaticPosition(cameraPosition);
+        const osg::Vec3f aimDelta = focus - cameraPosition;
+        camera->setPitch(std::atan2(aimDelta.z(), std::hypot(aimDelta.x(), aimDelta.y())), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+        camera->setRoll(0.f);
+        if (!rendering->isProjectionMatrixOverridden())
+        {
+            rendering->overrideFieldOfView(50.f);
+            previous->mChangedFieldOfView = true;
+        }
+        // Retail terminal interaction replaces the gameplay HUD while retaining the physical world and shell.
+        // Suppress only the HUD widget; the modal terminal presenter remains visible on its own layer.
+        if (mHud)
+            mHud->setVisible(false);
+        mFalloutTerminalCamera = std::move(previous);
+        Log(Debug::Info) << "FNV terminal camera: physical shell target=" << target.toString() << " focus=("
+                         << focus.x() << "," << focus.y() << "," << focus.z() << ") distance="
+                         << (cameraPosition - focus).length();
+    }
+
+    void WindowManager::endFalloutTerminalSession()
+    {
+        if (!mFalloutTerminalCamera)
+            return;
+        std::unique_ptr<FalloutDialogueCameraState> previous = std::move(mFalloutTerminalCamera);
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return;
+        if (MWRender::Camera* const camera = world->getCamera())
+        {
+            camera->setMode(previous->mMode, true);
+            camera->setPitch(previous->mPitch, true);
+            camera->setYaw(previous->mYaw, true);
+            camera->setRoll(previous->mRoll);
+        }
+        if (previous->mChangedFieldOfView)
+        {
+            if (MWRender::RenderingManager* const rendering = world->getRenderingManager())
+            {
+                if (previous->mFieldOfViewWasOverridden)
+                    rendering->overrideFieldOfView(previous->mFieldOfView);
+                else
+                    rendering->resetFieldOfView();
+            }
+        }
+        updateVisible();
+        Log(Debug::Info) << "FNV terminal camera: restored player view";
     }
 
     void WindowManager::pushGuiMode(GuiMode mode)

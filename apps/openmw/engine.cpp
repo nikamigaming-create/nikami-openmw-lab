@@ -27,6 +27,7 @@
 #include <string_view>
 #include <system_error>
 #include <tuple>
+#include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
@@ -2139,6 +2140,308 @@ namespace
     private:
         unsigned int mMinimumCullTraversal = 0;
     };
+
+    class OpenNvActorSkeletonVisitor final : public osg::NodeVisitor
+    {
+    public:
+        OpenNvActorSkeletonVisitor(std::ostream& output, const osg::Matrixd& worldToActor)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
+            , mOutput(output)
+            , mWorldToActor(worldToActor)
+        {
+            setTraversalMask(~0u);
+            static_assert(std::endian::native == std::endian::little,
+                "OpenNV actor skeleton export currently requires little-endian storage");
+            mOutput.write("ONVSKEL1", 8);
+            writeValue(std::uint32_t{ 1 });
+            mSurfaceCountOffset = mOutput.tellp();
+            writeValue(std::uint32_t{ 0 });
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            if (drawable.getNodeMask() == 0)
+                return;
+            for (const osg::Node* node : getNodePath())
+                if (node != nullptr && node->getNodeMask() == 0)
+                    return;
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+            {
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                    writeStaticSurface(drawable, *geometry);
+                return;
+            }
+            osg::Geometry* source = rig->getSourceGeometry();
+            const auto* vertices = source == nullptr ? nullptr
+                : dynamic_cast<const osg::Vec3Array*>(source->getVertexArray());
+            if (source == nullptr || vertices == nullptr || vertices->empty())
+                return;
+
+            std::vector<SceneUtil::RigGeometry::BoneInfo> bones;
+            std::vector<SceneUtil::RigGeometry::BoneWeights> influences;
+            std::vector<osg::Matrixf> localBoneMatrices;
+            std::vector<osg::Matrixf> skeletonBoneMatrices;
+            osg::Matrixf transform;
+            osg::Matrixf skinToSkeleton;
+            if (!rig->getSkinningDebugData(bones, influences, localBoneMatrices,
+                    skeletonBoneMatrices, transform, skinToSkeleton))
+                return;
+            if (influences.size() != vertices->size() || bones.empty())
+                return;
+            std::vector<int> parentBoneIndices;
+            if (!rig->getBoneParentIndices(parentBoneIndices) || parentBoneIndices.size() != bones.size())
+                return;
+
+            std::vector<std::uint32_t> indices;
+            appendTriangleIndices(*source, indices);
+            if (indices.empty())
+                return;
+
+            writeString(drawable.getName());
+            writeString(std::string(rig->getRootBone()));
+            writeString(texturePath(drawable, *source));
+            writeValue(static_cast<std::uint32_t>(vertices->size()));
+            writeValue(static_cast<std::uint32_t>(indices.size()));
+            writeValue(static_cast<std::uint32_t>(bones.size()));
+            writeMatrix(transform);
+            writeMatrix(skinToSkeleton);
+
+            const auto* normals = dynamic_cast<const osg::Vec3Array*>(source->getNormalArray());
+            const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(source->getTexCoordArray(0));
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+            {
+                const osg::Vec3f& vertex = (*vertices)[i];
+                const osg::Vec3f normal
+                    = normals != nullptr && i < normals->size() ? (*normals)[i] : osg::Vec3f(0.f, 0.f, 1.f);
+                const osg::Vec2f uv
+                    = texcoords != nullptr && i < texcoords->size() ? (*texcoords)[i] : osg::Vec2f();
+                writeValue(vertex.x());
+                writeValue(vertex.y());
+                writeValue(vertex.z());
+                writeValue(normal.x());
+                writeValue(normal.y());
+                writeValue(normal.z());
+                writeValue(uv.x());
+                writeValue(uv.y());
+            }
+            for (std::uint32_t index : indices)
+                writeValue(index);
+
+            for (std::size_t i = 0; i < bones.size(); ++i)
+            {
+                writeString(bones[i].mName);
+                writeValue(static_cast<std::int32_t>(parentBoneIndices[i]));
+                writeMatrix(bones[i].mInvBindMatrix);
+                osg::Matrixf compressedLocal = i < skeletonBoneMatrices.size()
+                    ? skeletonBoneMatrices[i] : osg::Matrixf();
+                if (parentBoneIndices[i] >= 0)
+                {
+                    osg::Matrixf parentInverse;
+                    if (!parentInverse.invert(skeletonBoneMatrices[static_cast<std::size_t>(parentBoneIndices[i])]))
+                        throw std::runtime_error("OpenNV actor skeleton parent matrix is singular");
+                    compressedLocal = skeletonBoneMatrices[i] * parentInverse;
+                }
+                writeMatrix(compressedLocal);
+                writeMatrix(i < skeletonBoneMatrices.size() ? skeletonBoneMatrices[i] : osg::Matrixf());
+            }
+            for (const SceneUtil::RigGeometry::BoneWeights& vertexInfluences : influences)
+            {
+                const std::size_t count = std::min<std::size_t>(
+                    vertexInfluences.size(), std::numeric_limits<std::uint16_t>::max());
+                writeValue(static_cast<std::uint16_t>(count));
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    if (vertexInfluences[i].first > std::numeric_limits<std::uint16_t>::max())
+                        throw std::runtime_error("OpenNV actor skeleton bone index exceeds uint16 range");
+                    writeValue(static_cast<std::uint16_t>(vertexInfluences[i].first));
+                    writeValue(vertexInfluences[i].second);
+                }
+            }
+            ++mSurfaceCount;
+            mVertexCount += vertices->size();
+            mTriangleCount += indices.size() / 3;
+        }
+
+        void finish()
+        {
+            const std::streampos end = mOutput.tellp();
+            mOutput.seekp(mSurfaceCountOffset);
+            writeValue(static_cast<std::uint32_t>(mSurfaceCount));
+            mOutput.seekp(end);
+        }
+
+        std::size_t getSurfaceCount() const { return mSurfaceCount; }
+        std::size_t getVertexCount() const { return mVertexCount; }
+        std::size_t getTriangleCount() const { return mTriangleCount; }
+
+    private:
+        void writeStaticSurface(osg::Drawable& drawable, osg::Geometry& geometry)
+        {
+            const auto* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+            if (vertices == nullptr || vertices->empty())
+                return;
+            std::vector<std::uint32_t> indices;
+            appendTriangleIndices(geometry, indices);
+            if (indices.empty())
+                return;
+            writeString(drawable.getName());
+            writeString({});
+            writeString(texturePath(drawable, geometry));
+            writeValue(static_cast<std::uint32_t>(vertices->size()));
+            writeValue(static_cast<std::uint32_t>(indices.size()));
+            writeValue(std::uint32_t{ 0 });
+            osg::Matrixf identity;
+            identity.makeIdentity();
+            writeMatrix(identity);
+            writeMatrix(identity);
+            const osg::Matrixd world = osg::computeLocalToWorld(getNodePath());
+            const auto* normals = dynamic_cast<const osg::Vec3Array*>(geometry.getNormalArray());
+            const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(geometry.getTexCoordArray(0));
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+            {
+                const osg::Vec3d vertex = osg::Vec3d((*vertices)[i]) * world * mWorldToActor;
+                osg::Vec3d normal = normals != nullptr && i < normals->size()
+                        ? osg::Matrixd::transform3x3(osg::Vec3d((*normals)[i]), world * mWorldToActor)
+                    : osg::Vec3d(0.0, 0.0, 1.0);
+                normal.normalize();
+                const osg::Vec2f uv
+                    = texcoords != nullptr && i < texcoords->size() ? (*texcoords)[i] : osg::Vec2f();
+                writeValue(static_cast<float>(vertex.x()));
+                writeValue(static_cast<float>(vertex.y()));
+                writeValue(static_cast<float>(vertex.z()));
+                writeValue(static_cast<float>(normal.x()));
+                writeValue(static_cast<float>(normal.y()));
+                writeValue(static_cast<float>(normal.z()));
+                writeValue(uv.x());
+                writeValue(uv.y());
+            }
+            for (std::uint32_t index : indices)
+                writeValue(index);
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+                writeValue(std::uint16_t{ 0 });
+            ++mSurfaceCount;
+            mVertexCount += vertices->size();
+            mTriangleCount += indices.size() / 3;
+        }
+
+        template <class T>
+        void writeValue(const T& value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            mOutput.write(reinterpret_cast<const char*>(&value), sizeof(T));
+        }
+
+        void writeString(std::string_view value)
+        {
+            if (value.size() > std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("OpenNV actor skeleton string exceeds uint32 range");
+            writeValue(static_cast<std::uint32_t>(value.size()));
+            mOutput.write(value.data(), static_cast<std::streamsize>(value.size()));
+        }
+
+        void writeMatrix(const osg::Matrixf& matrix)
+        {
+            for (unsigned int row = 0; row < 4; ++row)
+                for (unsigned int column = 0; column < 4; ++column)
+                    writeValue(matrix(row, column));
+        }
+
+        static void appendTriangleIndices(const osg::Geometry& geometry, std::vector<std::uint32_t>& result)
+        {
+            const auto emit = [&](unsigned int a, unsigned int b, unsigned int c) {
+                result.push_back(a);
+                result.push_back(b);
+                result.push_back(c);
+            };
+            for (unsigned int p = 0; p < geometry.getNumPrimitiveSets(); ++p)
+            {
+                const osg::PrimitiveSet* primitive = geometry.getPrimitiveSet(p);
+                const unsigned int count = primitive == nullptr ? 0 : primitive->getNumIndices();
+                if (primitive == nullptr || count < 3)
+                    continue;
+                if (primitive->getMode() == GL_TRIANGLES)
+                {
+                    for (unsigned int i = 0; i + 2 < count; i += 3)
+                        emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
+                }
+                else if (primitive->getMode() == GL_TRIANGLE_STRIP)
+                {
+                    for (unsigned int i = 0; i + 2 < count; ++i)
+                    {
+                        if ((i & 1u) == 0)
+                            emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
+                        else
+                            emit(primitive->index(i + 1), primitive->index(i), primitive->index(i + 2));
+                    }
+                }
+            }
+        }
+
+        std::string texturePath(const osg::Drawable& drawable, const osg::Geometry& geometry) const
+        {
+            std::string result;
+            const auto gather = [&](const osg::StateSet* state) {
+                const auto* texture = state == nullptr ? nullptr
+                    : dynamic_cast<const osg::Texture2D*>(
+                        state->getTextureAttribute(0, osg::StateAttribute::TEXTURE));
+                const osg::Image* image = texture == nullptr ? nullptr : texture->getImage();
+                if (image != nullptr && !image->getFileName().empty())
+                    result = image->getFileName();
+            };
+            for (const osg::Node* node : getNodePath())
+                if (node != nullptr)
+                    gather(node->getStateSet());
+            gather(geometry.getStateSet());
+            gather(drawable.getStateSet());
+            return result;
+        }
+
+        std::ostream& mOutput;
+        osg::Matrixd mWorldToActor;
+        std::streampos mSurfaceCountOffset;
+        std::size_t mSurfaceCount = 0;
+        std::size_t mVertexCount = 0;
+        std::size_t mTriangleCount = 0;
+    };
+
+    bool exportOpenNvActorMesh(const MWWorld::Ptr& actor, std::size_t index)
+    {
+        const char* rootValue = std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_ROOT");
+        osg::Node* root = actor.isEmpty() ? nullptr : actor.getRefData().getBaseNode();
+        if (rootValue == nullptr || rootValue[0] == '\0' || root == nullptr)
+            return false;
+        const std::filesystem::path directory(rootValue);
+        std::filesystem::create_directories(directory);
+        std::ostringstream stem;
+        stem << "actor-" << std::setw(3) << std::setfill('0') << index;
+        const std::filesystem::path skeletonPath = directory / (stem.str() + ".onvskel");
+        if (std::filesystem::exists(skeletonPath) && std::filesystem::file_size(skeletonPath) > 16)
+            return true;
+        std::ofstream skeleton(skeletonPath, std::ios::binary);
+        if (!skeleton)
+            return false;
+        osg::NodePath actorPath;
+        const osg::NodePathList parentPaths = root->getParentalNodePaths();
+        if (!parentPaths.empty())
+            actorPath = parentPaths.front();
+        if (actorPath.empty() || actorPath.back() != root)
+            actorPath.push_back(root);
+        osg::Matrixd worldToActor;
+        if (!worldToActor.invert(osg::computeLocalToWorld(actorPath)))
+            throw std::runtime_error("OpenNV actor world transform is singular");
+        OpenNvActorSkeletonVisitor skeletonVisitor(skeleton, worldToActor);
+        root->accept(skeletonVisitor);
+        skeletonVisitor.finish();
+        Log(skeletonVisitor.getSurfaceCount() > 0 ? Debug::Info : Debug::Error)
+            << "OpenNV actor skeletal export: index=" << index << " actor=" << actor.toString()
+            << " skeletalSurfaces=" << skeletonVisitor.getSurfaceCount()
+            << " skeletalVertices=" << skeletonVisitor.getVertexCount()
+            << " skeletalTriangles=" << skeletonVisitor.getTriangleCount()
+            << " skeletalPath=" << skeletonPath.string();
+        return skeletonVisitor.getSurfaceCount() > 0;
+    }
+
 
     enum class FalloutProofSkinRole : std::size_t
     {
@@ -4702,6 +5005,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static const int fnvRealSaveD01FramesPerCategory
         = std::max(60, readProofInt("OPENMW_FNV_REAL_SAVE_D01_FRAMES_PER_CATEGORY", 90));
     static int fnvRealSaveD01ActiveCategory = -1;
+    static int fnvRealSaveD01PresentationReadyFrame = -1;
+    static int fnvRealSaveD01InteractionSettledFrame = -1;
+    static int fnvRealSaveD01NextActionFrame = -1;
     static std::size_t fnvRealSaveD01CapturedFrames = 0;
     static int fnvRealSaveD01ExitReadyFrame = -1;
     static bool fnvRealSaveD01Failed = false;
@@ -6383,11 +6689,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     if (fnvRealSaveD01Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
     {
-        const int d01Elapsed = proofWorldReadyFrames - fnvRealSaveD01FirstReadyFrame;
+        const int d01RouteElapsed = proofWorldReadyFrames - fnvRealSaveD01FirstReadyFrame;
         auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
         constexpr std::array<std::string_view, 5> d01Categories = { "WEAP", "APP", "AID", "MISC", "AMMO" };
 
-        if (d01Elapsed >= 0 && !fnvRealSaveD01Failed)
+        if (d01RouteElapsed >= 0 && !fnvRealSaveD01Failed)
         {
             if (!mWorld->isFirstPerson())
                 mWorld->togglePOV(true);
@@ -6399,47 +6705,89 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
                 mWindowManager->setFalloutPipBoyPresentation(true);
 
+            MWRender::RenderingManager* const renderingManager = mWorld->getRenderingManager();
+            if (fnvRealSaveD01PresentationReadyFrame < 0 && renderingManager != nullptr
+                && renderingManager->isFalloutPipBoyPresentationHeld())
+            {
+                fnvRealSaveD01PresentationReadyFrame = proofWorldReadyFrames;
+                Log(Debug::Info) << "FNV D01 inventory route: presentation=authored-held"
+                                 << " waitFrames=" << d01RouteElapsed
+                                 << " action=schedule-after-animation-completion status=pass";
+            }
+
             if (physicalWindowManager == nullptr)
             {
                 fnvRealSaveD01Failed = true;
                 Log(Debug::Error) << "FNV D01 inventory route: missing physical window manager status=fail";
             }
-            else
+            else if (fnvRealSaveD01PresentationReadyFrame >= 0)
             {
-                const int category = std::min(4, d01Elapsed / fnvRealSaveD01FramesPerCategory);
-                if (fnvRealSaveD01ActiveCategory != category)
+                if (fnvRealSaveD01ActiveCategory < 0)
                 {
-                    bool categorySelected = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
-                    for (int index = 0; categorySelected && index < category; ++index)
-                        categorySelected = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
-                    fnvRealSaveD01ActiveCategory = categorySelected ? category : -2;
+                    const bool categorySelected
+                        = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
+                    fnvRealSaveD01ActiveCategory = categorySelected ? 0 : -2;
+                    fnvRealSaveD01InteractionSettledFrame
+                        = categorySelected ? proofWorldReadyFrames + 30 : -1;
                     Log(categorySelected ? Debug::Info : Debug::Error)
-                        << "FNV D01 inventory route: category=" << d01Categories[static_cast<std::size_t>(category)]
-                        << " index=" << category << " action=physical-pipboy-category-navigation"
+                        << "FNV D01 inventory route: category=" << d01Categories[0]
+                        << " index=0 action=physical-pipboy-category-navigation"
                         << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
                         << " source=production-Pip-Boy-items-tab status="
                         << (categorySelected ? "pass" : "fail");
                     if (!categorySelected)
                         fnvRealSaveD01Failed = true;
                 }
+                else if (fnvRealSaveD01ActiveCategory >= 0)
+                {
+                    const int category = fnvRealSaveD01ActiveCategory;
+                    if (fnvRealSaveD01InteractionSettledFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01InteractionSettledFrame
+                        && fnvRealSaveD01CapturedFrames == static_cast<std::size_t>(category))
+                    {
+                        if (mScreenCaptureHandler == nullptr)
+                        {
+                            fnvRealSaveD01Failed = true;
+                            Log(Debug::Error) << "FNV D01 native frame: missing ScreenCaptureHandler status=fail";
+                        }
+                        else
+                        {
+                            Log(Debug::Info) << "FNV D01 native frame: category="
+                                             << d01Categories[static_cast<std::size_t>(category)]
+                                             << " index=" << fnvRealSaveD01CapturedFrames
+                                             << " presentation=authored-held source=ScreenCaptureHandler";
+                            mScreenCaptureHandler->setFramesToCapture(1);
+                            mScreenCaptureHandler->captureNextFrame(*mViewer);
+                            ++fnvRealSaveD01CapturedFrames;
+                            fnvRealSaveD01NextActionFrame = proofWorldReadyFrames
+                                + std::max(30, fnvRealSaveD01FramesPerCategory - 30);
+                        }
+                    }
 
-                const int categoryElapsed = d01Elapsed - category * fnvRealSaveD01FramesPerCategory;
-                if (!fnvRealSaveD01Failed && categoryElapsed >= 30
-                    && fnvRealSaveD01CapturedFrames == static_cast<std::size_t>(category)
-                    && mScreenCaptureHandler != nullptr)
-                {
-                    Log(Debug::Info) << "FNV D01 native frame: category="
-                                     << d01Categories[static_cast<std::size_t>(category)]
-                                     << " index=" << fnvRealSaveD01CapturedFrames
-                                     << " source=ScreenCaptureHandler";
-                    mScreenCaptureHandler->setFramesToCapture(1);
-                    mScreenCaptureHandler->captureNextFrame(*mViewer);
-                    ++fnvRealSaveD01CapturedFrames;
-                }
-                else if (!fnvRealSaveD01Failed && categoryElapsed >= 30 && mScreenCaptureHandler == nullptr)
-                {
-                    fnvRealSaveD01Failed = true;
-                    Log(Debug::Error) << "FNV D01 native frame: missing ScreenCaptureHandler status=fail";
+                    if (!fnvRealSaveD01Failed && category < 4
+                        && fnvRealSaveD01CapturedFrames > static_cast<std::size_t>(category)
+                        && fnvRealSaveD01NextActionFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01NextActionFrame)
+                    {
+                        const bool categorySelected
+                            = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                        if (categorySelected)
+                        {
+                            ++fnvRealSaveD01ActiveCategory;
+                            fnvRealSaveD01InteractionSettledFrame = proofWorldReadyFrames + 30;
+                            fnvRealSaveD01NextActionFrame = -1;
+                        }
+                        Log(categorySelected ? Debug::Info : Debug::Error)
+                            << "FNV D01 inventory route: category="
+                            << d01Categories[static_cast<std::size_t>(category + 1)]
+                            << " index=" << category + 1
+                            << " action=single-physical-pipboy-category-step"
+                            << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                            << " interaction=single-paced-step status="
+                            << (categorySelected ? "pass" : "fail");
+                        if (!categorySelected)
+                            fnvRealSaveD01Failed = true;
+                    }
                 }
             }
         }
@@ -10186,6 +10534,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 << proofSayActor << "\" w=" << clipPoint.w() << "; rejecting actor alignment";
                         }
                     }
+                    // A data-only actor export does not consume the proof camera. Dead, sleeping,
+                    // seated, and creature poses legitimately fail the upright/full-body portrait
+                    // tests even though their assembled scene graph is ready to serialize. The
+                    // exporter below still validates the resolved actor, drawables, rig data, and
+                    // written payload; bypass only the screenshot framing decision here.
+                    if (std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_NO_SCREENSHOT") != nullptr)
+                        actorFocusInFrame = true;
                     if (actorFocusInFrame)
                     {
                         proofActorCameraAligned = true;
@@ -13366,7 +13721,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             worldViewerTrace(frameNumber, "actor-draw-wait-lua-finish.end");
             return true;
         }
-        if (!proofActorPoseReadyForScreenshot)
+        const bool skeletalExportBypassesPortraitGates
+            = std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_NO_SCREENSHOT") != nullptr;
+        if (!proofActorPoseReadyForScreenshot && !skeletalExportBypassesPortraitGates)
         {
             static int proofActorPoseLastWaitLogFrame = -1000000;
             if (static_cast<int>(frameNumber) - proofActorPoseLastWaitLogFrame >= 30)
@@ -13384,7 +13741,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             worldViewerTrace(frameNumber, "actor-pose-wait-lua-finish.end");
             return true;
         }
-        if (!proofPortraitClear)
+        if (!proofPortraitClear && !skeletalExportBypassesPortraitGates)
         {
             worldViewerTrace(frameNumber, "portrait-clear-wait-render.begin");
             mViewer->renderingTraversals();
@@ -13406,6 +13763,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
 
         worldViewerTrace(frameNumber, "screenshot-queue.begin");
+        if (!proofActorBatchPrevious.isEmpty())
+        {
+            const bool exported = exportOpenNvActorMesh(proofActorBatchPrevious, proofActorBatchIndex);
+            if (exported && std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_EXIT_AFTER_BATCH") != nullptr
+                && proofActorBatchIndex + 1 >= proofActorBatchTargets.size())
+            {
+                Log(Debug::Info) << "OpenNV skeletal actor export batch complete; exiting cleanly actors="
+                                 << proofActorBatchTargets.size();
+                mStateManager->requestQuit();
+            }
+        }
+        const bool suppressActorExportScreenshot
+            = std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_NO_SCREENSHOT") != nullptr;
+        if (suppressActorExportScreenshot)
+        {
+            if (proofScreenshotFrameReached)
+                ++proofScreenshotFrameIndex;
+            Log(Debug::Info) << "OpenNV skeletal actor export suppressed native screenshot frame="
+                             << frameNumber << " nextActor=" << proofScreenshotFrameIndex;
+        }
+        else
+        {
         if (proofPortraitClearRequired)
         {
             Log(Debug::Info) << "World viewer portrait capture accepted: frame=" << frameNumber
@@ -13430,6 +13809,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             proofActorAlignedScreenshotQueued = true;
         if (proofPortraitClearRequired)
             proofPortraitClearFrames = 0;
+        }
         worldViewerTrace(frameNumber, "screenshot-queue.end");
     }
 

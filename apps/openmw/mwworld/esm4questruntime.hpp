@@ -394,6 +394,9 @@ namespace MWWorld
         bool forceActiveQuest(std::string_view id);
         bool forceActiveQuest(ESM::FormId id);
         void executeResultSource(std::string_view source);
+        /// Execute a TERM/INFO-style result script transactionally. Supported compiled bytecode uses the same
+        /// decoder and mutation handlers as quest-stage results; authored source is the fallback.
+        bool executeResultScript(const ESM4::ScriptDefinition& script);
         bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions);
 
         int countSavedGameRecords() const;

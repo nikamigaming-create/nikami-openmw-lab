@@ -58,12 +58,19 @@ namespace
             writer.writeHNT("RCNT", std::uint32_t{ 0 });
         if (version >= 5)
             writer.writeHNT("MCNT", std::uint32_t{ 0 });
+        if (version >= 9)
+        {
+            writer.writeHNT("TCNT", std::uint32_t{ 0 });
+            writer.writeHNT("NCNT", std::uint32_t{ 0 });
+        }
         if (version >= 6)
         {
             writer.writeHNT("FTEN", std::uint8_t{ 1 });
             writer.writeHNT("WTEN", std::uint8_t{ 1 });
             writer.writeHNT("FTKP", std::uint8_t{ 0 });
         }
+        if (version >= 8)
+            writer.writeHNT("VCNT", std::uint32_t{ 0 });
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -193,6 +200,52 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     ESM::ESMReader reader;
     reader.open(std::move(stream), "unchanged-fallout-player-runtime");
     EXPECT_FALSE(reader.hasMoreRecs());
+}
+
+TEST(FalloutPlayerRuntimeStateTest, PersistsTerminalStateByRemappedPlacement)
+{
+    const ESM::FormId placement{ .mIndex = 0x11a30a, .mContentFile = 2 };
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(2));
+    EXPECT_EQ(runtime.getTerminalState(placement), MWWorld::FalloutTerminalState::None);
+    ASSERT_TRUE(runtime.setTerminalState(placement,
+        MWWorld::FalloutTerminalState::LockedOut
+            | MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+    const ESM::FormId note{ .mIndex = 0xfd776, .mContentFile = 2 };
+    ASSERT_TRUE(runtime.addNote(note));
+    EXPECT_FALSE(runtime.addNote(note));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(
+        runtime.getTerminalState(placement), MWWorld::FalloutTerminalState::LockedOut));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(runtime.getTerminalState(placement),
+        MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        runtime.write(writer);
+    }
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-terminal-placement-runtime");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
+    reader.getRecHeader();
+
+    MWWorld::FalloutPlayerRuntimeState restored;
+    restored.initialize(makeBaseState(7));
+    restored.readRecord(reader);
+    const ESM::FormId remappedPlacement{ .mIndex = placement.mIndex, .mContentFile = 7 };
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(
+        restored.getTerminalState(remappedPlacement), MWWorld::FalloutTerminalState::LockedOut));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(restored.getTerminalState(remappedPlacement),
+        MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+    const ESM::FormId remappedNote{ .mIndex = note.mIndex, .mContentFile = 7 };
+    EXPECT_TRUE(restored.hasNote(remappedNote));
+    ASSERT_TRUE(restored.setTerminalState(remappedPlacement, MWWorld::FalloutTerminalState::Hacked));
+    EXPECT_EQ(restored.getTerminalState(remappedPlacement), MWWorld::FalloutTerminalState::Hacked);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, AppliesAndPersistsRetailEnableFastTravelArguments)

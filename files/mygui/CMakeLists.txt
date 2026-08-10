@@ -43,6 +43,7 @@ set(MYGUI_FILES
     openmw_hud_box.skin.xml
     openmw_hud_energybar.skin.xml
     openmw_infobox.layout
+    openmw_fnv_menu.layout
     openmw_interactive_messagebox.layout
     openmw_interactive_messagebox_notransp.layout
     openmw_inventory_window.layout

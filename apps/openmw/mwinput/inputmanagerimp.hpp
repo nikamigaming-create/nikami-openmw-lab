@@ -2,12 +2,18 @@
 #define MWINPUT_MWINPUTMANAGERIMP_H
 
 #include <memory>
+#include <chrono>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include <osg/ref_ptr>
 #include <osgViewer/ViewerEventHandlers>
 
 #include <components/sdlutil/events.hpp>
 #include <components/settings/settings.hpp>
+#include <components/esm/formid.hpp>
 #include <filesystem>
 
 #include "../mwbase/inputmanager.hpp"
@@ -119,6 +125,36 @@ namespace MWInput
     protected:
 //## VR_PATCH END
         bool mControlsDisabled;
+
+        enum class SelfDriveEventKind
+        {
+            Controller,
+            Screenshot,
+            Action,
+            StageNearForm,
+            ActivateFacedForm,
+            ActivateForm,
+        };
+
+        struct SelfDriveEvent
+        {
+            std::uint32_t mAtMilliseconds = 0;
+            SelfDriveEventKind mKind = SelfDriveEventKind::Controller;
+            std::uint8_t mControllerButton = 0;
+            int mAction = 0;
+            std::string mContentFile;
+            std::uint32_t mFormIndex = 0;
+            std::uint32_t mDistance = 0;
+        };
+
+        void loadSelfDriveInputScript();
+        void maintainSelfDriveFacing();
+        void updateSelfDriveInput();
+
+        std::vector<SelfDriveEvent> mSelfDriveEvents;
+        std::size_t mNextSelfDriveEvent = 0;
+        std::chrono::steady_clock::time_point mSelfDriveStarted;
+        std::optional<ESM::FormId> mSelfDriveFacingRef;
 
         void saveBindings() override;
 

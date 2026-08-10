@@ -3154,6 +3154,55 @@ namespace MWWorld
             mUnsupportedStageCommands.emplace_back("unterminated result-script conditional");
     }
 
+    bool ESM4QuestRuntime::executeResultScript(const ESM4::ScriptDefinition& script)
+    {
+        CompiledStageScript prepared;
+        if (!prepareStageScript(script, prepared))
+            return false;
+        if (script.compiledData.empty() || prepared.mUseSourceFallback)
+        {
+            if (script.scriptSource.empty())
+                return script.compiledData.empty();
+            executeResultSource(script.scriptSource);
+            return true;
+        }
+
+        CompiledStageWorkingState working{ mStates, mActiveQuest };
+        std::vector<CompiledConditionalFrame> conditionalStack;
+        for (const CompiledQuestCommand& command : prepared.mCommands)
+        {
+            bool execute = true;
+            if (!updateCompiledConditionalState(command, working.mStates, conditionalStack, execute))
+                return false;
+            if (!execute)
+                continue;
+            if (command.mType == CompiledQuestCommandType::SetAlly
+                || command.mType == CompiledQuestCommandType::SetEnemy)
+            {
+                const auto owner = working.mStates.find(command.mQuest);
+                if (owner == working.mStates.end())
+                    return false;
+                if (command.mType == CompiledQuestCommandType::SetAlly)
+                    recordAllyPair(owner->second, command.mQuest, command.mTarget);
+                else
+                    recordEnemyRelation(owner->second, command.mQuest, command.mTarget,
+                        command.mValue, command.mSecondaryValue);
+                working.mExternalEffects.push_back({ command.mType, command.mQuest, command.mTarget,
+                    command.mTopic, command.mValue, command.mSecondaryValue });
+                continue;
+            }
+            if (!executePureCompiledCommand(command, working))
+                return false;
+        }
+        if (!conditionalStack.empty())
+            return false;
+
+        mStates.swap(working.mStates);
+        mActiveQuest.swap(working.mActiveQuest);
+        flushCompiledExternalEffects(working.mExternalEffects);
+        return true;
+    }
+
     const ESM4QuestState* ESM4QuestRuntime::search(std::string_view id) const
     {
         const ESM4::Quest* quest = resolveQuest(id);

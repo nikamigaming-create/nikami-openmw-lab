@@ -17,6 +17,7 @@
 
 #include <osgUtil/IncrementalCompileOperation>
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <span>
@@ -278,6 +279,10 @@ namespace MWRender
 
         // camera stuff
         Camera* getCamera() { return mCamera.get(); }
+
+        /// True only after the loaded first-person Pip-Boy raise clip has
+        /// naturally reached its authored held state.
+        bool isFalloutPipBoyPresentationHeld() const;
 
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);

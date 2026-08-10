@@ -14,6 +14,8 @@ namespace MyGUI
 
 namespace MWGui
 {
+    struct FnvMenuXmlDocument;
+    struct FnvHackingMenuPresentation;
     class InteractiveMessageBox;
     class MessageBoxManager;
     class MessageBox;
@@ -27,6 +29,10 @@ namespace MWGui
         void removeStaticMessageBox();
         bool createInteractiveMessageBox(std::string_view message, const std::vector<std::string>& buttons,
             bool immediate = false, int defaultFocus = -1);
+        bool createInteractiveFnvMenuMessageBox(const FnvMenuXmlDocument& menu, std::string_view frameTile,
+            std::string_view messageTile, std::string_view buttonTile, std::string_view message,
+            const std::vector<std::string>& buttons, bool immediate = false, int defaultFocus = -1,
+            const FnvHackingMenuPresentation* hacking = nullptr);
         bool isInteractiveMessageBox();
 
         std::size_t getMessagesCount();
@@ -96,13 +102,16 @@ namespace MWGui
     {
     public:
         InteractiveMessageBox(MessageBoxManager& parMessageBoxManager, const std::string& message,
-            const std::vector<std::string>& buttons, bool immediate, size_t defaultFocus);
+            const std::vector<std::string>& buttons, bool immediate, size_t defaultFocus,
+            const FnvMenuXmlDocument* fnvMenu = nullptr, std::string_view frameTile = {},
+            std::string_view messageTile = {}, std::string_view buttonTile = {},
+            const FnvHackingMenuPresentation* hacking = nullptr);
         void mousePressed(MyGUI::Widget* widget);
         int readPressedButton();
 
         MyGUI::Widget* getDefaultKeyFocus() override;
 
-        bool exit() override { return false; }
+        bool exit() override;
 
         void closeDefault();
 
@@ -112,15 +121,22 @@ namespace MWGui
 
     private:
         void buttonActivated(MyGUI::Widget* widget);
+        void mouseMoved(MyGUI::Widget* widget, int left, int top);
+        void setHackingFocus(std::size_t buttonIndex);
+        void finish(int result);
 
         MessageBoxManager& mMessageBoxManager;
         MyGUI::EditBox* mMessageWidget;
         MyGUI::Widget* mButtonsWidget;
         std::vector<MyGUI::Button*> mButtons;
+        std::vector<int> mButtonValues;
+        std::vector<MyGUI::EditBox*> mHackingLabels;
+        std::vector<std::size_t> mHackingControllerButtons;
 
         int mButtonPressed;
         size_t mDefaultFocus;
         bool mImmediate;
+        bool mHacking;
         size_t mControllerFocus = 0;
     };
 

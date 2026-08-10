@@ -89,6 +89,8 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
@@ -144,6 +146,8 @@ namespace MWWorld
         mPerks.assign(perks.begin(), perks.end());
         mReputations.clear();
         mMapMarkerStates.clear();
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
@@ -165,6 +169,8 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
@@ -186,7 +192,8 @@ namespace MWWorld
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
             || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
-            || !mReputations.empty() || !mMapMarkerStates.empty() || !mFastTravelEnabled
+            || !mReputations.empty() || !mMapMarkerStates.empty() || !mTerminalStates.empty() || !mNotes.empty()
+            || !mFastTravelEnabled
             || !mWaitEnabled || mFastTravelKeepOnCellChange);
     }
 
@@ -333,6 +340,33 @@ namespace MWWorld
             return false;
         mMapMarkerStates[marker] = state;
         return true;
+    }
+
+    FalloutTerminalState FalloutPlayerRuntimeState::getTerminalState(ESM::FormId placement) const
+    {
+        const auto found = mTerminalStates.find(placement);
+        return found != mTerminalStates.end() ? found->second : FalloutTerminalState::None;
+    }
+
+    bool FalloutPlayerRuntimeState::setTerminalState(ESM::FormId placement, FalloutTerminalState state)
+    {
+        constexpr std::uint8_t validMask = static_cast<std::uint8_t>(FalloutTerminalState::Hacked)
+            | static_cast<std::uint8_t>(FalloutTerminalState::LockedOut)
+            | static_cast<std::uint8_t>(FalloutTerminalState::ComputerWhizRetryConsumed);
+        const std::uint8_t value = static_cast<std::uint8_t>(state);
+        if (!mBase || placement.isZeroOrUnset() || (value & ~validMask) != 0
+            || (hasFalloutTerminalState(state, FalloutTerminalState::Hacked)
+                && value != static_cast<std::uint8_t>(FalloutTerminalState::Hacked)))
+            return false;
+        if (state == FalloutTerminalState::None)
+            return mTerminalStates.erase(placement) != 0;
+        return mTerminalStates.insert_or_assign(placement, state).second
+            || mTerminalStates.at(placement) == state;
+    }
+
+    bool FalloutPlayerRuntimeState::addNote(ESM::FormId note)
+    {
+        return mBase && !note.isZeroOrUnset() && mNotes.insert(note).second;
     }
 
     bool FalloutPlayerRuntimeState::setScriptedFastTravel(
@@ -508,6 +542,15 @@ namespace MWWorld
             writer.writeFormId(marker, true, "MPID");
             writer.writeHNT("MPST", state);
         }
+        writer.writeHNT("TCNT", static_cast<std::uint32_t>(mTerminalStates.size()));
+        for (const auto& [placement, state] : mTerminalStates)
+        {
+            writer.writeFormId(placement, true, "TPID");
+            writer.writeHNT("TPST", static_cast<std::uint8_t>(state));
+        }
+        writer.writeHNT("NCNT", static_cast<std::uint32_t>(mNotes.size()));
+        for (const ESM::FormId note : mNotes)
+            writer.writeFormId(note, true, "NTID");
         writer.writeHNT("FTEN", static_cast<std::uint8_t>(mFastTravelEnabled));
         writer.writeHNT("WTEN", static_cast<std::uint8_t>(mWaitEnabled));
         writer.writeHNT("FTKP", static_cast<std::uint8_t>(mFastTravelKeepOnCellChange));
@@ -631,6 +674,43 @@ namespace MWWorld
                     invalidSave("invalid or duplicate map marker identity");
             }
         }
+        std::map<ESM::FormId, FalloutTerminalState> terminalStates;
+        if (version >= 9)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "TCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId placement = reader.getFormId(true, "TPID");
+                const bool placementContentAvailable = reader.applyContentFileMapping(placement);
+                std::uint8_t rawState = 0;
+                reader.getHNT(rawState, "TPST");
+                constexpr std::uint8_t validMask = static_cast<std::uint8_t>(FalloutTerminalState::Hacked)
+                    | static_cast<std::uint8_t>(FalloutTerminalState::LockedOut)
+                    | static_cast<std::uint8_t>(FalloutTerminalState::ComputerWhizRetryConsumed);
+                const FalloutTerminalState state = static_cast<FalloutTerminalState>(rawState);
+                if (rawState == 0 || (rawState & ~validMask) != 0
+                    || (hasFalloutTerminalState(state, FalloutTerminalState::Hacked)
+                        && rawState != static_cast<std::uint8_t>(FalloutTerminalState::Hacked)))
+                    invalidSave("invalid terminal placement state");
+                if (placementContentAvailable && (placement.isZeroOrUnset()
+                    || !terminalStates.emplace(placement, static_cast<FalloutTerminalState>(rawState)).second))
+                    invalidSave("invalid or duplicate terminal placement identity");
+            }
+        }
+        std::set<ESM::FormId> notes;
+        if (version >= 9)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "NCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId note = reader.getFormId(true, "NTID");
+                const bool noteContentAvailable = reader.applyContentFileMapping(note);
+                if (noteContentAvailable && (note.isZeroOrUnset() || !notes.insert(note).second))
+                    invalidSave("invalid or duplicate terminal note identity");
+            }
+        }
         std::uint8_t fastTravelEnabled = 1;
         std::uint8_t waitEnabled = 1;
         std::uint8_t fastTravelKeepOnCellChange = 0;
@@ -707,6 +787,8 @@ namespace MWWorld
         mPerks = std::move(perks);
         mReputations = std::move(reputations);
         mMapMarkerStates = std::move(mapMarkerStates);
+        mTerminalStates = std::move(terminalStates);
+        mNotes = std::move(notes);
         mFastTravelEnabled = fastTravelEnabled != 0;
         mWaitEnabled = waitEnabled != 0;
         mFastTravelKeepOnCellChange = fastTravelKeepOnCellChange != 0;

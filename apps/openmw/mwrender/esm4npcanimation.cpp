@@ -8974,6 +8974,14 @@ namespace MWRender
         Log(mPipBoyRetailWaverBound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy retail held-arm waver: source=" << pipBoyWaverKf
             << " bound=" << mPipBoyRetailWaverBound;
+        const std::string pipBoyManipulateKf = "meshes/characters/_male/idleanims/pipboymanipulate.kf";
+        const std::shared_ptr<AnimSource> pipBoyManipulateSource = addSingleAnimSource(
+            pipBoyManipulateKf, std::string(skeleton), false, {}, "pipboymanipulate");
+        mPipBoyRetailManipulateBound = pipBoyManipulateSource != nullptr && hasAnimation("pipboymanipulate")
+            && getAnimationSourceName("pipboymanipulate") == pipBoyManipulateKf;
+        Log(mPipBoyRetailManipulateBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy retail right-arm manipulation: source=" << pipBoyManipulateKf
+            << " bound=" << mPipBoyRetailManipulateBound;
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
@@ -9140,6 +9148,8 @@ namespace MWRender
                 disable("pipboy");
             if (isPlaying("pipboywaver"))
                 disable("pipboywaver");
+            if (isPlaying("pipboymanipulate"))
+                disable("pipboymanipulate");
             mPipBoyRetailInteractionPoseHeld = false;
             mPipBoyInteractionProgress = 0.f;
             resetActiveGroups();
@@ -9157,30 +9167,33 @@ namespace MWRender
 
         if (mPipBoyRetailInteractionBound)
         {
-            auto raiseState = mStates.find("pipboy");
-            if (raiseState != mStates.end())
-            {
-                const float sequenceSpan
-                    = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
-                const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
-                    * (3.f - 2.f * mPipBoyPresentationProgress);
-                raiseState->second.setTime(raiseState->second.mStartTime + sequenceSpan * authoredProgress);
-                raiseState->second.mSpeedMult = 0.f;
-                raiseState->second.mPlaying = true;
-                raiseState->second.mAutoDisable = false;
-            }
+            const bool wasHeld = mPipBoyRetailInteractionPoseHeld;
+            float raiseCompletion = 0.f;
+            const bool hasRaiseState = getInfo("pipboy", &raiseCompletion, nullptr, nullptr);
+            // The loaded KF advances through Animation::runAnimation, including
+            // while the physical menu pauses simulation. Retain its authored
+            // final frame by using a non-auto-disabling state, then hand the
+            // left arm to the authored held waver only after playback actually
+            // reaches the end. No C++ clock samples or writes KF time.
             mPipBoyRetailInteractionPoseHeld
-                = raiseState != mStates.end() && mPipBoyPresentationProgress >= 0.999f;
+                = hasRaiseState && !isPlaying("pipboy") && raiseCompletion >= 0.999f;
             if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
             {
                 play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
                     "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
             }
+            if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailManipulateBound
+                && !isPlaying("pipboymanipulate"))
+            {
+                play("pipboymanipulate", Animation::AnimPriority(12), BlendMask_RightArm, false, 1.f,
+                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+            }
             resetActiveGroups();
-            if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
+            if (mPipBoyRetailInteractionPoseHeld && !wasHeld)
                 Log(Debug::Info) << "FNV Pip-Boy recovery hold: raise="
                                  << getAnimationSourceName("pipboy") << " left="
                                  << getAnimationSourceName("pipboywaver")
+                                 << " right=" << getAnimationSourceName("pipboymanipulate")
                                  << " frozenMode3Removed=1"
                                  << " completeArmMeshes=1 screenAndControls=live";
         }
@@ -9196,8 +9209,6 @@ namespace MWRender
         const float previousProgress = mPipBoyInteractionProgress;
         mPipBoyInteractionProgress = std::clamp(progress, 0.f, 1.f);
         if (mPipBoyPresentationProgress <= 0.001f)
-            return;
-        if (mPipBoyInteractionProgress <= 0.001f)
             return;
         if (previousProgress > 0.55f && mPipBoyInteractionProgress <= 0.55f)
             Log(Debug::Info) << "FNV Pip-Boy replay stack physical input: pulse=" << mPipBoyInteractionProgress
