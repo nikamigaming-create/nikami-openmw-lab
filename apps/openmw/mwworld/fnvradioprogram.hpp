@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include <components/esm/formid.hpp>
 
@@ -57,6 +58,26 @@ namespace MWWorld
         ESM::FormId mInfo{};
         ESM::FormId mSound{};
     };
+
+    struct PreparedFnvRadioTrack
+    {
+        ESM::FormId mTopic{};
+        ESM::FormId mInfo{};
+        ESM::FormId mSound{};
+    };
+
+    struct PreparedFnvRadioProgram
+    {
+        ESM::FormId mStation{};
+        ESM::FormId mQuest{};
+        std::vector<PreparedFnvRadioTrack> mTracks;
+    };
+
+    // Build the currently playable, authored station program.  Unlike the
+    // narrow activation bootstrap below, this follows the station's QUST,
+    // DTYP_Radio DIAL and conditioned INFO/TRDT records.  TACT SNAM/INAM are
+    // receiver/static beds and are deliberately not treated as the program.
+    std::optional<PreparedFnvRadioProgram> prepareFnvRadioProgram(const FnvRadioProgramContext& context);
 
     std::optional<PreparedFnvRadioOneShot> prepareFnvRadioOneShot(
         const FnvRadioProgramContext& context, FnvRadioProgramPreparationError* error = nullptr);

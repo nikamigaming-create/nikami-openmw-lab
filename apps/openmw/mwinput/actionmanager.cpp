@@ -235,8 +235,14 @@ namespace MWInput
             && !window->isGuiMode() && !window->isFalloutPipBoyPhysicalPresentation() && world->isFirstPerson()
             && stats.getDrawState() == MWMechanics::DrawState::Weapon
             && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive;
-        if (requested == mFalloutAimDown)
+        if (requested && mFalloutAimPreparationRejected)
             return;
+        if (requested == mFalloutAimDown)
+        {
+            if (!requested)
+                mFalloutAimPreparationRejected = false;
+            return;
+        }
 
         MWRender::RenderingManager* const rendering = world->getRenderingManager();
         MWRender::ESM4NpcAnimation* const firstPerson = rendering != nullptr
@@ -261,6 +267,7 @@ namespace MWInput
                 && firstPerson->hasAnimation("weaponpose");
             if (!prepared)
             {
+                mFalloutAimPreparationRejected = true;
                 Log(Debug::Error) << "FNV ADS: state=raise prepared=0 firstPerson=" << (firstPerson != nullptr)
                                   << " weapon=" << (weapon != nullptr ? weapon->mEditorId : std::string("none"));
                 return;
@@ -268,14 +275,17 @@ namespace MWInput
 
             firstPerson->play("weaponpose", MWRender::Animation::AnimPriority(2), MWRender::BlendMask_All,
                 false, 1.f, "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), true);
-            if (rendering != nullptr && !rendering->isFieldOfViewOverridden())
+            const float sightFov = weapon->mData.sightFov;
+            if (rendering != nullptr && std::isfinite(sightFov) && sightFov > 0.f
+                && !rendering->isFieldOfViewOverridden())
             {
-                rendering->overrideFieldOfView(35.f);
+                rendering->overrideFieldOfView(sightFov);
                 mFalloutAimFovOwnsOverride = true;
             }
+            mFalloutAimPreparationRejected = false;
             mFalloutAimDown = true;
             Log(Debug::Info) << "FNV ADS: state=raise prepared=1 weapon=" << weapon->mEditorId
-                             << " fov=" << (mFalloutAimFovOwnsOverride ? 35.f : rendering->getFieldOfView());
+                             << " sightFov=" << sightFov << " fovOverridden=" << mFalloutAimFovOwnsOverride;
             return;
         }
 
@@ -285,6 +295,7 @@ namespace MWInput
             rendering->resetFieldOfView();
         mFalloutAimFovOwnsOverride = false;
         mFalloutAimDown = false;
+        mFalloutAimPreparationRejected = false;
         Log(Debug::Info) << "FNV ADS: state=lower";
     }
 

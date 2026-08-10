@@ -1,7 +1,11 @@
 #include "imagemanager.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
+#include <sstream>
+#include <vector>
 #include <osgDB/Registry>
 
 #include <components/debug/debuglog.hpp>
@@ -116,6 +120,83 @@ namespace Resource
             }
             catch (std::exception& e)
             {
+                // Fallout's menu XML names logical interface textures that are
+                // packed into InterfaceShared*.dds.  The authored .tai file is
+                // the mapping contract; resolve and crop that atlas entry
+                // before treating the logical DDS as missing.
+                const std::string requested(path.value());
+                const std::size_t slash = requested.find_last_of('/');
+                const std::string fileName = slash == std::string::npos ? requested : requested.substr(slash + 1);
+                if (requested.starts_with("textures/interface/") && fileName.ends_with(".dds"))
+                {
+                    try
+                    {
+                        const VFS::Path::Normalized taiPath("textures/interface/interfaceshared.tai");
+                        Files::IStreamPtr taiStream = mVFS->get(taiPath);
+                        std::string line;
+                        while (std::getline(*taiStream, line))
+                        {
+                            if (!line.starts_with(fileName))
+                                continue;
+                            std::string fieldsText = line.substr(fileName.size());
+                            std::vector<std::string> fields;
+                            std::size_t begin = 0;
+                            while (begin <= fieldsText.size())
+                            {
+                                const std::size_t comma = fieldsText.find(',', begin);
+                                std::string field = fieldsText.substr(begin,
+                                    comma == std::string::npos ? std::string::npos : comma - begin);
+                                const std::size_t first = field.find_first_not_of(" \t\r\n");
+                                const std::size_t last = field.find_last_not_of(" \t\r\n");
+                                fields.push_back(first == std::string::npos ? std::string()
+                                    : field.substr(first, last - first + 1));
+                                if (comma == std::string::npos)
+                                    break;
+                                begin = comma + 1;
+                            }
+                            if (fields.size() < 8 || fields[2] != "2D")
+                                break;
+
+                            const VFS::Path::Normalized atlasPath(
+                                "textures/interface/" + fields[0]);
+                            osg::ref_ptr<osg::Image> atlas = getImage(atlasPath, disableFlip);
+                            if (atlas == nullptr || atlas == mWarningImage || atlas->s() <= 0 || atlas->t() <= 0)
+                                break;
+
+                            const float u = std::stof(fields[3]);
+                            const float v = std::stof(fields[4]);
+                            const float width = std::stof(fields[6]);
+                            const float height = std::stof(fields[7]);
+                            const int left = std::clamp(
+                                static_cast<int>(std::lround(u * atlas->s() - 0.5f)), 0, atlas->s() - 1);
+                            const int top = std::clamp(
+                                static_cast<int>(std::lround(v * atlas->t() - 0.5f)), 0, atlas->t() - 1);
+                            const int right = std::clamp(
+                                static_cast<int>(std::lround((u + width) * atlas->s() - 0.5f)), left + 1, atlas->s());
+                            const int bottom = std::clamp(
+                                static_cast<int>(std::lround((v + height) * atlas->t() - 0.5f)), top + 1, atlas->t());
+
+                            osg::ref_ptr<osg::Image> image = new osg::Image;
+                            image->allocateImage(right - left, bottom - top, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+                            image->setFileName(requested);
+                            for (int y = 0; y < image->t(); ++y)
+                                for (int x = 0; x < image->s(); ++x)
+                                    image->setColor(atlas->getColor(left + x, top + y), x, y);
+
+                            Log(Debug::Info) << "Resolved Fallout interface texture " << path
+                                             << " from " << taiPath << " atlas=" << atlasPath
+                                             << " rect=" << left << ',' << top << ',' << image->s() << ','
+                                             << image->t();
+                            mCache->addEntryToObjectCache(path.value(), image);
+                            return image;
+                        }
+                    }
+                    catch (const std::exception& atlasError)
+                    {
+                        Log(Debug::Warning) << "Failed Fallout interface atlas lookup for " << path
+                                            << ": " << atlasError.what();
+                    }
+                }
                 Log(Debug::Error) << "Failed to open image: " << e.what();
                 mCache->addEntryToObjectCache(path.value(), mWarningImage);
                 return mWarningImage;

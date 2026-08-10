@@ -136,6 +136,7 @@ namespace MWGui
         std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewSide;
         std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewTop;
         bool mPaperDollProfiler = false;
+        int mFalloutPipBoyCategory = -1;
 
         bool mTrading;
         bool mUpdateNextFrame;

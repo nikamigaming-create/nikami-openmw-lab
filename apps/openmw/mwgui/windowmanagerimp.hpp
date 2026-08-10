@@ -424,6 +424,9 @@ namespace MWGui
         bool handleFalloutPipBoyAction(int action);
         int getFalloutPipBoySubmenu() const { return mFalloutPipBoySubmenu; }
         int getFalloutPipBoyListOffset() const { return mFalloutPipBoyListOffset; }
+        int getFalloutPipBoyRadioStationCount() const;
+        std::string getFalloutPipBoyRadioStationName(int index) const;
+        bool isFalloutPipBoyRadioStationPlaying(int index) const;
         bool isFalloutPipBoyWorldMap() const { return mFalloutPipBoyWorldMap; }
         float getFalloutPipBoyMapZoom() const { return mFalloutPipBoyMapZoom; }
         float getFalloutPipBoyMapPanX() const { return mFalloutPipBoyMapPanX; }

@@ -59,6 +59,71 @@ namespace
 
 namespace MWWorld
 {
+    std::optional<PreparedFnvRadioProgram> prepareFnvRadioProgram(const FnvRadioProgramContext& context)
+    {
+        if (context.mGame != ESM4Game::FalloutNewVegas || context.mStore == nullptr
+            || context.mQuestRuntime == nullptr || context.mStation == nullptr)
+            return std::nullopt;
+
+        const ESM4::TalkingActivator& station = *context.mStation;
+        if (context.mStore->get<ESM4::TalkingActivator>().search(ESM::RefId(station.mId)) != &station
+            || (station.mFlags & ESM4::TACT_RadioStation) == 0)
+            return std::nullopt;
+
+        const ESM4::Quest* stationQuest = nullptr;
+        for (const ESM4::Quest& quest : context.mStore->get<ESM4::Quest>())
+        {
+            if (!mentionsStation(quest, station.mId))
+                continue;
+            if (stationQuest != nullptr)
+                return std::nullopt;
+            stationQuest = &quest;
+        }
+        if (stationQuest == nullptr)
+            return std::nullopt;
+
+        const ESM4QuestState* questState = context.mQuestRuntime->search(stationQuest->mId);
+        if (questState == nullptr || (questState->mFlags & ESM4QuestState::Flag_Running) == 0)
+            return std::nullopt;
+
+        PreparedFnvRadioProgram program{ station.mId, stationQuest->mId, {} };
+        for (const ESM4::Dialogue& dialogue : context.mStore->get<ESM4::Dialogue>())
+        {
+            if (dialogue.mDialType != ESM4::DTYP_Radio || !hasQuest(dialogue, stationQuest->mId))
+                continue;
+            for (const ESM4::DialogInfo& info : context.mStore->get<ESM4::DialogInfo>())
+            {
+                if (info.mDialType != ESM4::DTYP_Radio || info.mQuest != stationQuest->mId
+                    || info.mTopic != dialogue.mId
+                    || !const_cast<ESM4QuestRuntime*>(context.mQuestRuntime)
+                            ->evaluateConditions(info.mTargetConditions))
+                    continue;
+                for (const ESM4::DialogResponse& response : info.mResponses)
+                {
+                    if (response.mData.sound == 0)
+                        continue;
+                    const ESM::FormId sound = ESM::FormId::fromUint32(response.mData.sound);
+                    if (context.mStore->get<ESM4::Sound>().search(ESM::RefId(sound)) == nullptr
+                        && context.mStore->get<ESM4::SoundReference>().search(ESM::RefId(sound)) == nullptr)
+                        continue;
+                    program.mTracks.push_back({ dialogue.mId, info.mId, sound });
+                }
+            }
+        }
+        std::sort(program.mTracks.begin(), program.mTracks.end(),
+            [](const PreparedFnvRadioTrack& lhs, const PreparedFnvRadioTrack& rhs) {
+                return lhs.mInfo.toUint32() < rhs.mInfo.toUint32();
+            });
+        program.mTracks.erase(std::unique(program.mTracks.begin(), program.mTracks.end(),
+                                  [](const PreparedFnvRadioTrack& lhs, const PreparedFnvRadioTrack& rhs) {
+                                      return lhs.mSound == rhs.mSound;
+                                  }),
+            program.mTracks.end());
+        if (program.mTracks.empty())
+            return std::nullopt;
+        return program;
+    }
+
     std::optional<PreparedFnvRadioOneShot> prepareFnvRadioOneShot(
         const FnvRadioProgramContext& context, FnvRadioProgramPreparationError* error)
     {

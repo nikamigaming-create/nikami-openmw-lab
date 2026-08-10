@@ -437,6 +437,9 @@ namespace MWGui
                     return SortFilterItemModel::Category_Ammo;
             }
         }();
+        if (mFalloutPipBoyCategory == category)
+            return;
+        mFalloutPipBoyCategory = category;
         mSortModel->setCategory(category);
         mFilterAll->setStateSelected(false);
         mFilterWeapon->setStateSelected(submenu == 0);
@@ -752,7 +755,7 @@ namespace MWGui
 
     void InventoryWindow::updateArmorRating()
     {
-        if (mPtr.isEmpty())
+        if (mPtr.isEmpty() || mArmorRating == nullptr)
             return;
 
         auto rating = MyGUI::utility::toString(static_cast<int>(mPtr.getClass().getArmorRating(mPtr, true)));

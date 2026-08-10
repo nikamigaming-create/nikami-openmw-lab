@@ -262,7 +262,7 @@ namespace MWWorld
 
         bool viewerTraceEnabled()
         {
-            return viewerEnvEnabled("OPENMW_WORLD_VIEWER_TRACE") || viewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+            return viewerEnvEnabled("OPENMW_WORLD_VIEWER_TRACE");
         }
 
         void viewerTrace(std::string_view phase)

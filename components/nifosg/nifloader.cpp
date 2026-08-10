@@ -191,12 +191,11 @@ namespace
         return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ENABLE_SKIN_PARTITION_FALLBACK");
     }
 
-    bool worldViewerMeshLoadTelemetryEnabled()
-    {
-        return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MESH_LOAD_TELEMETRY")
-            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
-            || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
-    }
+        bool worldViewerMeshLoadTelemetryEnabled()
+        {
+            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MESH_LOAD_TELEMETRY")
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        }
 
     bool worldViewerMaterialTelemetryEnabled()
     {

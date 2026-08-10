@@ -117,6 +117,8 @@ namespace MWRender
         std::vector<osg::ref_ptr<osg::StateSet>> mPipBoyScreenStateSets;
         float mPipBoyPresentationProgress = 0.f;
         float mPipBoyInteractionProgress = 0.f;
+        float mDefaultFirstPersonFieldOfView = 0.f;
+        float mPipBoyFirstPersonFieldOfView = 0.f;
         int mPipBoyArmTargetVariant = 0;
         int mPipBoyLastPane = -1;
         int mPipBoyLastSubmenu = -1;

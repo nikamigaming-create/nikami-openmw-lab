@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <ranges>
 #include <sstream>
 #include <thread>
 
@@ -17,6 +18,7 @@
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_ImageBox.h>
 #include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_PointerManager.h>
@@ -37,6 +39,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/esm3/esmreader.hpp>
@@ -93,6 +96,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/fnvradioprogram.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/player.hpp"
 
@@ -166,6 +170,107 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        struct PipBoyRadioStation
+        {
+            const ESM4::TalkingActivator* mRecord = nullptr;
+            ESM::FormId mQuest{};
+            std::vector<MWWorld::PreparedFnvRadioTrack> mTracks;
+        };
+
+        ESM::RefId sPipBoyRadioSound;
+        ESM::FormId sPipBoyRadioStation{};
+        std::vector<MWWorld::PreparedFnvRadioTrack> sPipBoyRadioTracks;
+        std::size_t sPipBoyRadioTrackIndex = 0;
+
+        std::vector<PipBoyRadioStation> getPipBoyRadioStations()
+        {
+            std::vector<PipBoyRadioStation> result;
+            MWBase::World* const world = MWBase::Environment::tryGetWorld();
+            if (world == nullptr)
+                return result;
+            const MWWorld::ESMStore& store = world->getStore();
+            for (const ESM4::TalkingActivator& station : store.get<ESM4::TalkingActivator>())
+            {
+                // NonProxy stations are physical/internal program endpoints
+                // (casino ambience, launch music, jukeboxes), not receiver
+                // entries exposed by the retail Pip-Boy tuner.
+                if ((station.mFlags & ESM4::TACT_RadioStation) == 0
+                    || (station.mFlags & ESM4::TACT_NonProxy) != 0 || station.mFullName.empty())
+                    continue;
+                const auto program = MWWorld::prepareFnvRadioProgram(
+                    { store.getESM4Game(), &store, &world->getESM4QuestRuntime(), &station });
+                if (!program)
+                    continue;
+                result.push_back({ &station, program->mQuest, program->mTracks });
+            }
+            std::ranges::sort(result, {}, [](const PipBoyRadioStation& station) {
+                return station.mRecord->mFullName;
+            });
+            return result;
+        }
+
+        std::string activatePipBoyRadioStation(int selectedRow)
+        {
+            const std::vector<PipBoyRadioStation> stations = getPipBoyRadioStations();
+            if (stations.empty())
+                return "NO SIGNAL";
+            const PipBoyRadioStation& station = stations[std::clamp(selectedRow, 0, static_cast<int>(stations.size()) - 1)];
+            MWBase::SoundManager* const sound = MWBase::Environment::get().getSoundManager();
+            if (sound == nullptr)
+                return "RADIO UNAVAILABLE";
+            const bool wasPlaying = station.mRecord->mId == sPipBoyRadioStation && !sPipBoyRadioSound.empty()
+                && sound->getSoundPlaying(MWWorld::Ptr(), sPipBoyRadioSound);
+            if (!sPipBoyRadioSound.empty())
+                sound->stopSound3D(MWWorld::Ptr(), sPipBoyRadioSound);
+            if (wasPlaying)
+            {
+                sPipBoyRadioSound = {};
+                sPipBoyRadioStation = {};
+                sPipBoyRadioTracks.clear();
+                sPipBoyRadioTrackIndex = 0;
+                Log(Debug::Info) << "FNV Pip-Boy radio: station=" << ESM::RefId(station.mRecord->mId).toDebugString()
+                                 << " name=\"" << station.mRecord->mFullName
+                                 << "\" operation=stop isPlaying=0 source=FalloutNV.esm-DIAL-INFO";
+                return "RADIO OFF";
+            }
+            sPipBoyRadioTracks = station.mTracks;
+            sPipBoyRadioTrackIndex = 0;
+            const MWWorld::PreparedFnvRadioTrack& track = sPipBoyRadioTracks.front();
+            const ESM::RefId selected(track.mSound);
+            sound->playSound(selected, 1.f, 1.f, MWSound::Type::Music, MWSound::PlayMode::Normal);
+            sPipBoyRadioSound = selected;
+            sPipBoyRadioStation = station.mRecord->mId;
+            const bool isPlaying = sound->getSoundPlaying(MWWorld::Ptr(), selected);
+            Log(isPlaying ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy radio: station=" << ESM::RefId(station.mRecord->mId).toDebugString()
+                << " name=\"" << station.mRecord->mFullName << "\" sound=" << selected.toDebugString()
+                << " quest=" << ESM::RefId(station.mQuest) << " topic=" << ESM::RefId(track.mTopic)
+                << " info=" << ESM::RefId(track.mInfo) << " authoredTracks=" << station.mTracks.size()
+                << " operation=play isPlaying=" << (isPlaying ? 1 : 0)
+                << " source=FalloutNV.esm-DIAL-INFO-TRDT";
+            return std::string(isPlaying ? "PLAYING " : "FAILED ") + station.mRecord->mFullName;
+        }
+
+        void updatePipBoyRadioProgram()
+        {
+            if (sPipBoyRadioStation.isZeroOrUnset() || sPipBoyRadioTracks.empty()
+                || sPipBoyRadioSound.empty())
+                return;
+            MWBase::SoundManager* const sound = MWBase::Environment::get().getSoundManager();
+            if (sound == nullptr || sound->getSoundPlaying(MWWorld::Ptr(), sPipBoyRadioSound))
+                return;
+            sPipBoyRadioTrackIndex = (sPipBoyRadioTrackIndex + 1) % sPipBoyRadioTracks.size();
+            const MWWorld::PreparedFnvRadioTrack& track = sPipBoyRadioTracks[sPipBoyRadioTrackIndex];
+            sPipBoyRadioSound = ESM::RefId(track.mSound);
+            sound->playSound(sPipBoyRadioSound, 1.f, 1.f, MWSound::Type::Music, MWSound::PlayMode::Normal);
+            Log(Debug::Info) << "FNV Pip-Boy radio: station=" << ESM::RefId(sPipBoyRadioStation)
+                             << " sound=" << sPipBoyRadioSound << " topic=" << ESM::RefId(track.mTopic)
+                             << " info=" << ESM::RefId(track.mInfo) << " operation=advance"
+                             << " source=FalloutNV.esm-DIAL-INFO-TRDT";
+        }
+    }
     struct FalloutDialogueCameraState
     {
         MWRender::Camera::Mode mMode = MWRender::Camera::Mode::FirstPerson;
@@ -373,7 +478,11 @@ namespace MWGui
             }
 
             if (pane == 2)
+            {
+                if (submenu == 2)
+                    return completeSelection(activatePipBoyRadioStation(selectedRow));
                 return completeSelection("SELECTED DATA ENTRY");
+            }
             return completeSelection("SELECTED");
         }
 
@@ -464,13 +573,12 @@ namespace MWGui
             const int selectedIndex = visibleRows > 0
                 ? std::min(listOffset, static_cast<int>(visibleRows) - 1)
                 : -1;
-            Log(Debug::Info) << "FNV D01 inventory: category=" << categoryName << " allRows=" << allRows
-                             << " visibleRows=" << visibleRows << " selectedIndex=" << selectedIndex
-                             << " source=restored-save330-inventory-model"
-                             << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
-
             if (!categoryRowsLogged[categoryIndex])
             {
+                Log(Debug::Info) << "FNV D01 inventory: category=" << categoryName << " allRows=" << allRows
+                                 << " visibleRows=" << visibleRows << " selectedIndex=" << selectedIndex
+                                 << " source=restored-save330-inventory-model"
+                                 << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
                 for (std::size_t index = 0; index < visibleRows; ++index)
                 {
                     const MWGui::ItemStack item = visibleModel->getItem(static_cast<int>(index));
@@ -499,8 +607,7 @@ namespace MWGui
             }
 
             std::ostringstream text;
-            text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n"
-                 << categoryName << "  LIVE SAVE330  " << visibleRows << " ROWS\n";
+            text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n";
             const std::size_t first = selectedIndex < 0 ? 0 : static_cast<std::size_t>(selectedIndex);
             const std::size_t last = std::min(visibleRows, first + 7);
             for (std::size_t index = first; index < last; ++index)
@@ -512,7 +619,6 @@ namespace MWGui
                 text << (static_cast<int>(index) == selectedIndex ? "> " : "  ")
                      << (equipped ? "[E] " : "    ") << name << "  " << item.mCount << "\n";
             }
-            text << "\nSOURCE: RESTORED SAVE330\nE EQUIP/USE  W/S SCROLL";
             return text.str();
         }
 
@@ -638,9 +744,26 @@ namespace MWGui
                             break;
                         case 2:
                         default:
+                        {
                             text << "RADIO\n";
-                            writeEntry(0, "NO SIGNAL", -1);
+                            const std::vector<PipBoyRadioStation> stations = getPipBoyRadioStations();
+                            if (stations.empty())
+                                writeEntry(0, "NO SIGNAL", -1);
+                            else
+                            {
+                                const std::size_t first = static_cast<std::size_t>(
+                                    std::clamp(selectedRow, 0, static_cast<int>(stations.size()) - 1));
+                                const std::size_t last = std::min(stations.size(), first + 7);
+                                for (std::size_t index = first; index < last; ++index)
+                                {
+                                    const bool playing = stations[index].mRecord->mId == sPipBoyRadioStation;
+                                    text << (index == first ? "> " : "  ") << (playing ? "[ON] " : "     ")
+                                         << stations[index].mRecord->mFullName << '\n';
+                                }
+                                text << "E: TUNE / TURN OFF";
+                            }
                             break;
+                        }
                     }
                     break;
                 case 3:
@@ -791,13 +914,9 @@ namespace MWGui
             mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
 //## VR_PATCH END
 
-        const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
-            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
-        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
-        if (useFnvMissingGuiFallback)
-            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
+        // Missing authored UI resources are an integration error. Do not
+        // synthesize replacement pixels and conceal broken VFS/layout wiring.
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(false);
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -1174,27 +1293,69 @@ namespace MWGui
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
-        // The physical Pip-Boy gets its own transparent screen layer.  It is
-        // rendered to the authentic PipBoyArm screen texture, not to the flat
-        // desktop UI, so every glyph follows the device as it moves in 3D.
+        // Fallout authors its Pip-Boy menus on the canvas declared by
+        // menus/globals.xml and supplies the CRT field in the interface BSA.
+        // Fit that authored canvas to the live viewport; do not invent a
+        // resolution-specific desktop layout.
+        int pipBoyAuthoredWidth = 0;
+        int pipBoyAuthoredHeight = 0;
+        const auto readAuthoredCanvasTrait = [&](std::string_view trait) {
+            const VFS::Manager* const vfs = mResourceSystem->getVFS();
+            if (vfs == nullptr)
+                return 0;
+            const VFS::Path::Normalized globals("menus/globals.xml");
+            if (!vfs->exists(globals))
+                return 0;
+            const auto stream = vfs->get(globals);
+            const std::string xml(std::istreambuf_iterator<char>(*stream), {});
+            const std::string open = "<" + std::string(trait) + ">";
+            const std::string close = "</" + std::string(trait) + ">";
+            const std::size_t begin = xml.find(open);
+            const std::size_t end = begin == std::string::npos ? std::string::npos : xml.find(close, begin + open.size());
+            if (begin == std::string::npos || end == std::string::npos)
+                return 0;
+            return std::max(0, std::atoi(xml.substr(begin + open.size(), end - begin - open.size()).c_str()));
+        };
+        pipBoyAuthoredWidth = readAuthoredCanvasTrait("_pipboy_width");
+        pipBoyAuthoredHeight = readAuthoredCanvasTrait("_pipboy_height");
+        if (pipBoyAuthoredWidth <= 0 || pipBoyAuthoredHeight <= 0)
+            throw std::runtime_error("Fallout Pip-Boy authored canvas is missing from menus/globals.xml");
+        const float pipBoyScale = std::min(
+            static_cast<float>(w) / pipBoyAuthoredWidth, static_cast<float>(h) / pipBoyAuthoredHeight);
+        const int pipBoyWidth = static_cast<int>(std::lround(pipBoyAuthoredWidth * pipBoyScale));
+        const int pipBoyHeight = static_cast<int>(std::lround(pipBoyAuthoredHeight * pipBoyScale));
+        const int pipBoyX = (w - pipBoyWidth) / 2;
+        const int pipBoyY = (h - pipBoyHeight) / 2;
+
         mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
         mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
+        MyGUI::ImageBox* const pipBoyBackground = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::ImageBox>(
+            "ImageBox", MyGUI::IntCoord(pipBoyX, pipBoyY, pipBoyWidth, pipBoyHeight), MyGUI::Align::Default);
+        pipBoyBackground->setImageTexture("textures\\interface\\shared\\background\\pipboy.dds");
+        pipBoyBackground->setNeedMouseFocus(false);
+        const MyGUI::Colour pipBoyAmber(1.f, 0.64f, 0.08f, 1.f);
         mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
+            "SandBrightText", MyGUI::IntCoord(pipBoyX + static_cast<int>(70 * pipBoyScale),
+                pipBoyY + static_cast<int>(50 * pipBoyScale), static_cast<int>(855 * pipBoyScale),
+                static_cast<int>(50 * pipBoyScale)), MyGUI::Align::Default);
         mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
-        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalHeader->setFontHeight(48);
+        mFalloutPipBoyTerminalHeader->setTextColour(pipBoyAmber);
+        mFalloutPipBoyTerminalHeader->setFontHeight(std::max(18, static_cast<int>(24 * pipBoyScale)));
         mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
+            "SandText", MyGUI::IntCoord(pipBoyX + static_cast<int>(50 * pipBoyScale),
+                pipBoyY + static_cast<int>(125 * pipBoyScale), static_cast<int>(855 * pipBoyScale),
+                static_cast<int>(500 * pipBoyScale)), MyGUI::Align::Default);
         mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
-        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalBody->setFontHeight(42);
+        mFalloutPipBoyTerminalBody->setTextColour(pipBoyAmber);
+        mFalloutPipBoyTerminalBody->setFontHeight(std::max(16, static_cast<int>(22 * pipBoyScale)));
         mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalRoot->setVisible(false);
-        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen canvas="
+                         << pipBoyAuthoredWidth << 'x' << pipBoyAuthoredHeight
+                         << " source=menus/globals.xml background=Interface/Shared/Background/pipboy.dds";
 
         mHud->setVisible(true);
 
@@ -1449,8 +1610,10 @@ namespace MWGui
             else if (falloutContent && mFalloutPipBoyPhysical && !VR::getVR())
             {
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
-                constexpr int falloutPaneMasks[4] = { GW_Map, GW_Inventory, GW_Magic, GW_Stats };
-                eff = falloutPaneMasks[activeIndex];
+                // Fallout's Pip-Boy menu is the active inventory surface.
+                // The Morrowind windows remain live as data/controller owners,
+                // but must not render underneath the authored Fallout surface.
+                eff = 0;
                 Log(Debug::Verbose) << "FNV Pip-Boy physical: activePane=" << activeIndex
                                     << " visibleMask=0x" << std::hex << eff << std::dec;
             }
@@ -1806,6 +1969,29 @@ namespace MWGui
         return found == mActiveControllerWindows.end() ? 3 : std::clamp(found->second, 0, 3);
     }
 
+    int WindowManager::getFalloutPipBoyRadioStationCount() const
+    {
+        return static_cast<int>(getPipBoyRadioStations().size());
+    }
+
+    std::string WindowManager::getFalloutPipBoyRadioStationName(int index) const
+    {
+        const std::vector<PipBoyRadioStation> stations = getPipBoyRadioStations();
+        if (index < 0 || index >= static_cast<int>(stations.size()))
+            return {};
+        return stations[static_cast<std::size_t>(index)].mRecord->mFullName;
+    }
+
+    bool WindowManager::isFalloutPipBoyRadioStationPlaying(int index) const
+    {
+        const std::vector<PipBoyRadioStation> stations = getPipBoyRadioStations();
+        MWBase::SoundManager* const sound = MWBase::Environment::get().getSoundManager();
+        if (sound == nullptr || index < 0 || index >= static_cast<int>(stations.size()))
+            return false;
+        return stations[static_cast<std::size_t>(index)].mRecord->mId == sPipBoyRadioStation
+            && !sPipBoyRadioSound.empty() && sound->getSoundPlaying(MWWorld::Ptr(), sPipBoyRadioSound);
+    }
+
     bool WindowManager::handleFalloutPipBoyAction(int action)
     {
         if (!isFalloutContentLoaded() || !mFalloutPipBoyPhysical || !containsMode(GM_Inventory))
@@ -1824,7 +2010,7 @@ namespace MWGui
         };
         const auto changeList = [this, pane, &changed](int delta) {
             static constexpr std::array<int, 5> itemRows = { 2, 2, 1, 2, 2 };
-            static constexpr std::array<int, 3> dataRows = { 2, 2, 1 };
+            const std::array<int, 3> dataRows = { 2, 2, std::max(1, getFalloutPipBoyRadioStationCount()) };
             const int submenuCount = getFalloutPipBoySubmenuCount(pane);
             mFalloutPipBoySubmenu = std::clamp(mFalloutPipBoySubmenu, 0, submenuCount - 1);
             int rowCount = 1;
@@ -2020,6 +2206,7 @@ namespace MWGui
     {
         handleScheduledMessageBoxes();
         updateFalloutDialogueCamera();
+        updatePipBoyRadioProgram();
         // A physical press needs time to read: approach, contact, and return.
         // The old 0.8-second envelope was shorter than the showcase's next
         // action, so the real off-hand was continuously reset and visibly

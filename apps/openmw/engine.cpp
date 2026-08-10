@@ -3311,27 +3311,6 @@ namespace
         }
     }
 
-    bool addProofInventoryItem(MWWorld::ContainerStore& inventory, std::string_view id, int count)
-    {
-        const ESM::RefId refId = ESM::RefId::stringRefId(id);
-        try
-        {
-            const int existing = inventory.count(refId);
-            const int missing = std::max(0, count - existing);
-            if (missing > 0)
-                inventory.add(refId, missing, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory "
-                             << (missing > 0 ? "added " : "retained ") << id << " x" << count
-                             << " previous=" << existing << " inserted=" << missing;
-            return true;
-        }
-        catch (const std::exception& e)
-        {
-            Log(Debug::Warning) << "FNV/ESM4 proof: starter proof inventory failed " << id << ": " << e.what();
-            return false;
-        }
-    }
-
     template <typename T>
     bool isFNVEditorItemEquipped(
         MWWorld::InventoryStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId)
@@ -3528,25 +3507,8 @@ namespace
             = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
 
-        // Fallback records keep the save usable if a partial content stack omits one of the core retail records.
-        // Never add both representations: a complete FalloutNV.esm load receives only the authored items above.
-        int proofAdded = 0;
-        if (!pistolAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
-        if (!rifleAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
-        if (!ammo9mmAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
-        if (!stimpakAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
-        if (!bobbyPinAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
-        if (!capsAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
-
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
-                         << " proofStarterItemKinds=" << proofAdded
                          << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
                          << " visualWeapon=WeapNVVarmintRifle"
                          << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
@@ -3791,8 +3753,10 @@ namespace
 
     bool worldViewerTraceEnabled()
     {
-        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE")
-            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        // Periodic state telemetry is bounded and is used by unattended validators. Per-phase frame tracing is a
+        // separate diagnostic: coupling the two emitted dozens of lines every rendered frame and made normal
+        // telemetry captures needlessly expensive and nearly unreadable.
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE");
     }
 
     void worldViewerTrace(unsigned int frameNumber, std::string_view phase)
@@ -4772,6 +4736,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int fnvRealSaveD02PoseStableFrames = 0;
     static bool fnvRealSaveD02PosePendingLogged = false;
     static bool fnvRealSaveD02PoseSettledLogged = false;
+    static bool fnvRealSaveD02CameraRestoreLogged = false;
     static std::size_t fnvRealSaveD02CapturedFrames = 0;
     static FNVSidecarScreenshot fnvRealSaveD02ScreenshotBaseline;
     static FNVSidecarScreenshot fnvRealSaveD02ScreenshotCandidate;
@@ -4783,6 +4748,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::string fnvRealSaveD02ScreenshotForm;
     static int fnvRealSaveD02ExitReadyFrame = -1;
     static bool fnvRealSaveD02Failed = false;
+    // D03 enumerates the production Pip-Boy RADIO rows built from loaded
+    // FalloutNV.esm TACT records, tunes each row through the normal device
+    // callback, verifies live playback, and retains one native frame per row.
+    static const bool fnvRealSaveD03Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_D03");
+    static const int fnvRealSaveD03FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_D03_FIRST_READY_FRAME"));
+    static const int fnvRealSaveD03FramesPerStation
+        = std::max(120, readProofInt("OPENMW_FNV_REAL_SAVE_D03_FRAMES_PER_STATION", 240));
+    static int fnvRealSaveD03StationCount = -1;
+    static int fnvRealSaveD03CurrentStation = 0;
+    static bool fnvRealSaveD03Failed = false;
+    static int fnvRealSaveD03ExitReadyFrame = -1;
     static bool proofQuickSaveQueued = false;
     static unsigned proofQuickSaveCompletedFrame = 0;
     static bool proofQuickSaveQuitRequested = false;
@@ -6512,8 +6489,114 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
+    if (fnvRealSaveD03Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        const int d03Elapsed = proofWorldReadyFrames - fnvRealSaveD03FirstReadyFrame;
+        auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+        if (d03Elapsed >= 0 && !fnvRealSaveD03Failed)
+        {
+            if (!mWorld->isFirstPerson())
+            {
+                if (MWRender::Camera* const camera = mWorld->getCamera())
+                    camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+            }
+            if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+            {
+                mWindowManager->setFalloutPipBoyPresentation(true);
+                mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            }
+            else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                mWindowManager->setFalloutPipBoyPresentation(true);
+
+            if (physicalWindowManager == nullptr)
+            {
+                fnvRealSaveD03Failed = true;
+                Log(Debug::Error) << "FNV D03 radio: missing physical window manager status=fail";
+            }
+            else if (fnvRealSaveD03StationCount < 0)
+            {
+                bool selected = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey3);
+                selected = selected && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                selected = selected && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                fnvRealSaveD03StationCount = physicalWindowManager->getFalloutPipBoyRadioStationCount();
+                Log((selected && fnvRealSaveD03StationCount > 0) ? Debug::Info : Debug::Error)
+                    << "FNV D03 radio roster: stations=" << fnvRealSaveD03StationCount
+                    << " pane=" << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                    << " source=FalloutNV.esm-TACT-to-production-Pip-Boy-radio status="
+                    << (selected && fnvRealSaveD03StationCount > 0 ? "pass" : "fail");
+                if (!selected || fnvRealSaveD03StationCount <= 0)
+                    fnvRealSaveD03Failed = true;
+            }
+            else if (fnvRealSaveD03CurrentStation < fnvRealSaveD03StationCount)
+            {
+                const int stationElapsed = d03Elapsed
+                    - fnvRealSaveD03CurrentStation * fnvRealSaveD03FramesPerStation;
+                if (stationElapsed == 15)
+                {
+                    if (fnvRealSaveD03CurrentStation > 0)
+                        physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                    const bool activated = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                    const std::string name = physicalWindowManager->getFalloutPipBoyRadioStationName(
+                        fnvRealSaveD03CurrentStation);
+                    const bool playing = physicalWindowManager->isFalloutPipBoyRadioStationPlaying(
+                        fnvRealSaveD03CurrentStation);
+                    Log((activated && playing) ? Debug::Info : Debug::Error)
+                        << "FNV D03 radio station: index=" << fnvRealSaveD03CurrentStation << " name=\"" << name
+                        << "\" activated=" << (activated ? 1 : 0) << " isPlaying=" << (playing ? 1 : 0)
+                        << " source=production-Pip-Boy-radio-row status="
+                        << (activated && playing ? "pass" : "fail");
+                    if (!activated || !playing)
+                        fnvRealSaveD03Failed = true;
+                }
+                if (!fnvRealSaveD03Failed && stationElapsed == 90)
+                {
+                    const std::string name = physicalWindowManager->getFalloutPipBoyRadioStationName(
+                        fnvRealSaveD03CurrentStation);
+                    Log(Debug::Info) << "FNV D03 native frame: index=" << fnvRealSaveD03CurrentStation
+                                     << " name=\"" << name << "\" source=ScreenCaptureHandler";
+                    if (mScreenCaptureHandler == nullptr)
+                        fnvRealSaveD03Failed = true;
+                    else
+                    {
+                        mScreenCaptureHandler->setFramesToCapture(1);
+                        mScreenCaptureHandler->captureNextFrame(*mViewer);
+                    }
+                }
+                if (!fnvRealSaveD03Failed && stationElapsed >= fnvRealSaveD03FramesPerStation - 1)
+                    ++fnvRealSaveD03CurrentStation;
+            }
+        }
+
+        if (!fnvRealSaveD03Failed && fnvRealSaveD03StationCount > 0
+            && fnvRealSaveD03CurrentStation >= fnvRealSaveD03StationCount && fnvRealSaveD03ExitReadyFrame < 0)
+        {
+            fnvRealSaveD03ExitReadyFrame = proofWorldReadyFrames + 60;
+            Log(Debug::Info) << "FNV D03 radio: phase=complete stations=" << fnvRealSaveD03StationCount
+                             << " captured=" << fnvRealSaveD03CurrentStation
+                             << " source=production-Pip-Boy-radio status=pass";
+        }
+        if (fnvRealSaveD03Failed)
+        {
+            Log(Debug::Error) << "FNV D03 radio: phase=complete stations=" << fnvRealSaveD03StationCount
+                              << " captured=" << fnvRealSaveD03CurrentStation << " status=fail";
+            mStateManager->requestQuit();
+            fnvRealSaveD03ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+        else if (fnvRealSaveD03ExitReadyFrame >= 0 && proofWorldReadyFrames >= fnvRealSaveD03ExitReadyFrame)
+        {
+            mStateManager->requestQuit();
+            fnvRealSaveD03ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+    }
+
     if (fnvRealSaveD02Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
     {
+        // This unattended route supplies no host input, so keep the normal
+        // idle timer from entering the Lua vanity camera halfway through the
+        // ten-weapon matrix. This changes no gameplay input or actor state.
+        if (MWBase::InputManager* const input = MWBase::Environment::get().getInputManager())
+            input->resetIdleTime();
         const int d02Elapsed = proofWorldReadyFrames - fnvRealSaveD02FirstReadyFrame;
         if (d02Elapsed >= 0 && fnvRealSaveD02WeaponStartFrame < 0)
             fnvRealSaveD02WeaponStartFrame = proofWorldReadyFrames;
@@ -6584,6 +6667,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         const bool d02NativeFrameReady = pollD02NativeFrame();
         const bool d02ReadyForNextAction = d02NativeFrameReady && !fnvRealSaveD02ScreenshotPending
             && (fnvRealSaveD02NextActionFrame < 0 || proofWorldReadyFrames >= fnvRealSaveD02NextActionFrame);
+        bool d02AdvancedThisFrame = false;
 
         // A completed native frame is the only transition that advances the
         // roster. This preserves the physical Pip-Boy route while allowing a
@@ -6597,12 +6681,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             fnvRealSaveD02ActiveWeapon = -1;
             fnvRealSaveD02CapturedCurrent = false;
             fnvRealSaveD02NextActionFrame = -1;
+            d02AdvancedThisFrame = true;
             Log(Debug::Info) << "FNV D02 weapon selection: index=" << fnvRealSaveD02CurrentWeapon
                              << " action=advance-after-stable-native-frame"
                              << " source=production-pipboy-weapon-selection status=pass";
         }
 
-        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction)
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction && !d02AdvancedThisFrame)
         {
             const bool needsPipBoyOpen = !fnvRealSaveD02MenuClosed || weaponIndex != fnvRealSaveD02ActiveWeapon;
             if (needsPipBoyOpen)
@@ -6683,6 +6768,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         fnvRealSaveD02PoseStableFrames = 0;
                         fnvRealSaveD02PosePendingLogged = false;
                         fnvRealSaveD02PoseSettledLogged = false;
+                        fnvRealSaveD02CameraRestoreLogged = false;
                         Log(tabSelected ? Debug::Info : Debug::Error)
                             << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
                             << " action=physical-pipboy-items-weapons source=production-pipboy-navigation status="
@@ -6749,42 +6835,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     if (!fnvRealSaveD02Failed && weaponElapsed >= 60 && fnvRealSaveD02MenuClosed
                         && fnvRealSaveD02EquipmentBridgeObserved && !fnvRealSaveD02ControllerSynchronized)
                     {
-                        if (mMechanicsManager == nullptr)
-                        {
-                            failD02("mechanics-manager-unavailable-for-controller-sync");
-                        }
-                        else
-                        {
-                            // Normal ActionEquip has already placed the selected
-                            // ESM4 weapon in the Player's authoritative carried
-                            // right slot. Let the ordinary controller consume it
-                            // only after the Pip-Boy closes; do not synthesize
-                            // ammo, a slot, or any animation.
-                            mMechanicsManager->forceStateUpdate(mWorld->getPlayerPtr());
-                            fnvRealSaveD02ControllerSynchronized = true;
-                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
-                                             << " form=" << target
-                                             << " action=production-controller-state-update"
-                                             << " path=MechanicsManager::forceStateUpdate status=pass";
-                        }
-                    }
-
-                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02ControllerSynchronized
-                        && !fnvRealSaveD02ReloadCalled)
-                    {
-                        fnvRealSaveD02ReloadCalled = true;
-                        if (mMechanicsManager != nullptr)
-                        {
-                            fnvRealSaveD02ReloadRequested = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
-                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
-                                             << " form=" << target << " requested="
-                                             << fnvRealSaveD02ReloadRequested
-                                             << " path=MechanicsManager::reloadFalloutWeapon";
-                        }
-                        else
-                        {
-                            failD02("mechanics-manager-unavailable-for-reload");
-                        }
+                        // ActionEquip has already changed the authoritative
+                        // carried-right slot. From here the ordinary per-frame
+                        // CharacterController owns the authored unequip/equip/
+                        // aim transition. A forced state reset here cancels the
+                        // new family mid-transition and can resurrect the old
+                        // completed arm group.
+                        fnvRealSaveD02ControllerSynchronized = true;
+                        Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                         << " form=" << target
+                                         << " action=production-controller-state-update"
+                                         << " path=ordinary-CharacterController-update status=pass";
                     }
 
                     // The captured hand/weapon pose is not a countdown.  It is
@@ -6795,6 +6856,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     // two update frames.  This observes production state only;
                     // it neither plays, rewinds, nor writes an animation.
                     const auto observeD02FirstPersonPose = [&]() {
+                        if (!mWorld->isFirstPerson())
+                        {
+                            if (MWRender::Camera* const camera = mWorld->getCamera())
+                                camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                            if (!fnvRealSaveD02CameraRestoreLogged)
+                            {
+                                Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                                 << " form=" << target
+                                                 << " action=restore-declared-first-person-camera"
+                                                 << " source=canonical-self-drive-pov-boundary status=pass";
+                                fnvRealSaveD02CameraRestoreLogged = true;
+                            }
+                        }
                         const MWWorld::Ptr player = mWorld->getPlayerPtr();
                         MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
                         const std::string poseSource = firstPerson != nullptr
@@ -6815,27 +6889,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             = weaponParent != nullptr ? weaponParent->getName() : std::string();
                         const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
                             && weaponPart->getParent(0) == weaponNode;
-                        const bool visible = firstPerson != nullptr && firstPerson->getWeaponsShown()
-                            && mWorld->isFirstPerson();
+                        const bool cameraReady = firstPerson != nullptr && mWorld->isFirstPerson();
+                        const bool weaponsShownBeforeRender
+                            = firstPerson != nullptr && firstPerson->getWeaponsShown();
                         const bool weaponPosePlaying
                             = firstPerson != nullptr && firstPerson->isPlaying("weaponpose");
-                        const bool expectedMount = weaponParentName == "Bip01 Translate";
+                        // The weapon must remain attached to the authored skeleton node.
+                        // Different first-person skeletons legitimately parent `Weapon`
+                        // beneath the hand or a family-specific intermediary, so the
+                        // proof must not require the synthetic root mount used by the
+                        // regressed implementation.
+                        const bool expectedMount = weaponNode != nullptr && weaponNode->getName() == "Weapon"
+                            && weaponNode->getNumParents() == 1 && weaponParent != nullptr;
                         const bool nonIdentity
                             = weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
                         const bool observed = !poseSource.empty() && weaponPosePlaying
-                            && activeRightArm == "weaponpose" && expectedMount && directPart && visible && nonIdentity;
+                            && activeRightArm == "weaponpose" && expectedMount && directPart && cameraReady
+                            && nonIdentity;
 
                         if (observed)
                         {
                             const osg::Matrix& matrix = weaponTransform->getMatrix();
-                            if (fnvRealSaveD02PoseSampleValid && matrix == fnvRealSaveD02PoseSample)
-                                ++fnvRealSaveD02PoseStableFrames;
-                            else
-                            {
-                                fnvRealSaveD02PoseSample = matrix;
-                                fnvRealSaveD02PoseSampleValid = true;
-                                fnvRealSaveD02PoseStableFrames = 1;
-                            }
+                            // A held aim KF may contain authored breathing or
+                            // sway, so transform equality is not a valid
+                            // stability test. Stability here means continuous
+                            // ownership by the same data-resolved weaponpose;
+                            // retain the latest non-identity sample while
+                            // counting consecutive observed frames.
+                            fnvRealSaveD02PoseSample = matrix;
+                            fnvRealSaveD02PoseSampleValid = true;
+                            ++fnvRealSaveD02PoseStableFrames;
                         }
                         else
                         {
@@ -6843,14 +6926,23 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             fnvRealSaveD02PoseStableFrames = 0;
                         }
 
-                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= 2;
-                        if (!settled && !fnvRealSaveD02PosePendingLogged)
+                        // Two render samples can fit in the single-frame gap
+                        // between an outgoing auto-disabled unequip and the
+                        // incoming controller's equip start. Require a short
+                        // continuous hold so that transient bridge pose cannot
+                        // be mistaken for ownership by the newly equipped
+                        // production controller.
+                        constexpr int d02StableHoldFrames = 8;
+                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= d02StableHoldFrames;
+                        const bool periodicPoseTelemetry = proofWorldReadyFrames % 120 == 0;
+                        if (!settled && (!fnvRealSaveD02PosePendingLogged || periodicPoseTelemetry))
                         {
                             Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
                                              << " form=" << target << " source=\"" << poseSource
                                              << "\" activeRightArm=\"" << activeRightArm
                                              << "\" weaponNodeParent=\"" << weaponParentName
-                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << "\" directPart=" << directPart << " cameraReady=" << cameraReady
+                                             << " weaponsShownBeforeRender=" << weaponsShownBeforeRender
                                              << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
                                              << " stableFrames=" << fnvRealSaveD02PoseStableFrames
                                              << " action=observed-authored-first-person-pose status=pending";
@@ -6862,7 +6954,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                              << " form=" << target << " source=\"" << poseSource
                                              << "\" activeRightArm=\"" << activeRightArm
                                              << "\" weaponNodeParent=\"" << weaponParentName
-                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << "\" directPart=" << directPart << " cameraReady=" << cameraReady
+                                             << " weaponsShownBeforeRender=" << weaponsShownBeforeRender
                                              << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
                                              << " stableFrames=" << fnvRealSaveD02PoseStableFrames
                                              << " action=observed-authored-first-person-pose status=pass";
@@ -6870,6 +6963,34 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                         return settled;
                     };
+
+                    // Do not race a reload request against the outgoing
+                    // weapon family. First observe the ordinary controller in
+                    // the new weapon's stable authored hold, then issue the
+                    // same production reload action as player input. A ranged
+                    // reload can take the arm masks again, so require a second
+                    // stable authored hold before auditing or capturing.
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02MenuClosed
+                        && fnvRealSaveD02ControllerSynchronized && !fnvRealSaveD02ReloadCalled
+                        && observeD02FirstPersonPose())
+                    {
+                        fnvRealSaveD02ReloadCalled = true;
+                        if (mMechanicsManager != nullptr)
+                        {
+                            fnvRealSaveD02ReloadRequested
+                                = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
+                                             << " form=" << target << " requested="
+                                             << fnvRealSaveD02ReloadRequested
+                                             << " path=MechanicsManager::reloadFalloutWeapon";
+                            fnvRealSaveD02PoseSampleValid = false;
+                            fnvRealSaveD02PoseStableFrames = 0;
+                            fnvRealSaveD02PosePendingLogged = false;
+                            fnvRealSaveD02PoseSettledLogged = false;
+                        }
+                        else
+                            failD02("mechanics-manager-unavailable-for-reload");
+                    }
 
                     bool d02FirstPersonPoseReady = false;
                     if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized

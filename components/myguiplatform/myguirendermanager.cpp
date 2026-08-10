@@ -113,6 +113,13 @@ namespace MyGUIPlatform
 
             mReadFrom = (mReadFrom + 1) % sNumBuffers;
             const std::vector<Batch>& vec = mBatchVector[mReadFrom];
+            if (mFilter == "PipBoyScreen")
+            {
+                static unsigned sPipBoyDrawTraceCount = 0;
+                if (sPipBoyDrawTraceCount++ < 12)
+                    Log(Debug::Info) << "FNV Pip-Boy RTT draw: buffer=" << mReadFrom
+                                     << " batches=" << vec.size();
+            }
             for (std::vector<Batch>::const_iterator it = vec.begin(); it != vec.end(); ++it)
             {
                 const Batch& batch = *it;
@@ -185,6 +192,7 @@ namespace MyGUIPlatform
             MyGUIPlatform::GUICamera* camera = nullptr)
             : mParent(parent)
             , mStateSet(stateset)
+            , mFilter(std::move(filter))
             , mWriteTo(0)
             , mReadFrom(0)
         {
@@ -192,7 +200,7 @@ namespace MyGUIPlatform
 
             osg::ref_ptr<CollectDrawCalls> collectDrawCalls = new CollectDrawCalls;
             collectDrawCalls->setCamera(camera);
-            collectDrawCalls->setFilter(filter);
+            collectDrawCalls->setFilter(mFilter);
             setCullCallback(collectDrawCalls);
 
             if (mParent)
@@ -216,6 +224,7 @@ namespace MyGUIPlatform
             : osg::Drawable(copy, copyop)
             , mParent(copy.mParent)
             , mStateSet(copy.mStateSet)
+            , mFilter(copy.mFilter)
             , mWriteTo(0)
             , mReadFrom(0)
             , mDummyTexture(copy.mDummyTexture)
@@ -267,6 +276,7 @@ namespace MyGUIPlatform
         mutable int mReadFrom;
 
         osg::ref_ptr<osg::Texture2D> mDummyTexture;
+        std::string mFilter;
     };
 
     class OSGVertexBuffer : public MyGUI::IVertexBuffer

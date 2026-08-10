@@ -2785,9 +2785,6 @@ namespace MWRender
                 firstPersonRoot->setNodeMask(showFirstPersonPlayer ? Mask_FirstPerson : 0);
         }
 
-        if (mFalloutPlayerFirstPersonAnimation)
-            mFalloutPlayerFirstPersonAnimation->emitFalloutFirstPersonWeaponPostKfAudit();
-
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
         float fogStart = mFog->getFogStart(isUnderwater);

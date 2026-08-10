@@ -24,6 +24,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <set>
 #include <stdexcept>
@@ -100,6 +102,57 @@ namespace MWRender
 {
     namespace
     {
+        std::optional<float> readFalloutPipBoyFieldOfView(Resource::ResourceSystem* resourceSystem)
+        {
+            const VFS::Manager* const vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+            const VFS::Path::Normalized esmPath("falloutnv.esm");
+            if (vfs == nullptr || !vfs->exists(esmPath))
+                return std::nullopt;
+
+            constexpr std::string_view directoryPrefix = "DIR: ";
+            const std::string archive = vfs->getArchive(esmPath);
+            if (!archive.starts_with(directoryPrefix))
+                return std::nullopt;
+
+            const std::filesystem::path dataDirectory(archive.substr(directoryPrefix.size()));
+            const std::filesystem::path iniPath = dataDirectory.parent_path() / "Fallout_default.ini";
+            std::ifstream stream(iniPath);
+            if (!stream)
+                return std::nullopt;
+
+            std::string line;
+            while (std::getline(stream, line))
+            {
+                const std::size_t separator = line.find('=');
+                if (separator == std::string::npos)
+                    continue;
+                std::string key = line.substr(0, separator);
+                key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char value) {
+                    return std::isspace(value) != 0;
+                }), key.end());
+                Misc::StringUtils::lowerCaseInPlace(key);
+                if (key != "fpipboy1stpersonfov")
+                    continue;
+
+                try
+                {
+                    const float value = std::stof(line.substr(separator + 1));
+                    if (std::isfinite(value) && value > 0.f && value < 180.f)
+                    {
+                        Log(Debug::Info) << "FNV Pip-Boy projection: fov=" << value
+                                         << " source=" << iniPath.string()
+                                         << " key=fPipboy1stPersonFOV";
+                        return value;
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    return std::nullopt;
+                }
+            }
+            return std::nullopt;
+        }
+
         class FirstPersonArmorArmsOnlyVisitor final : public osg::NodeVisitor
         {
         public:
@@ -127,21 +180,13 @@ namespace MWRender
         private:
             void filter(osg::Drawable& drawable)
             {
-                SceneUtil::RigGeometry* const rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
-                if (rig == nullptr)
+                if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) == nullptr)
                     return;
 
                 const std::string name = Misc::StringUtils::lowerCase(drawable.getName());
-                const bool genericArms = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
-                const bool namedPipBoyOn
-                    = name == "pipboyon" || Misc::StringUtils::ciStartsWith(name, "pipboyon:");
-                const bool keep = genericArms || namedPipBoyOn;
+                const bool keep = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
                 if (keep)
-                {
-                    // Keep retail's complete two-arm mesh and both PipBoyOn sleeve/cuff meshes intact.
-                    // Removing skin partitions here creates the missing arm and open sleeve seams.
                     ++mKept;
-                }
                 else
                 {
                     drawable.setNodeMask(0u);
@@ -158,8 +203,7 @@ namespace MWRender
 
         bool worldViewerActorTelemetryEnabled()
         {
-            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
-                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+            return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
         }
 
         bool worldViewerSkipMissingActorParts()
@@ -830,7 +874,13 @@ namespace MWRender
                 return false;
             ActorVisualAuditVisitor visitor;
             node->accept(visitor);
-            return visitor.mRenderableGeometry > 0;
+            // Several converted Bethesda weapon drawables expose their live
+            // render implementation and valid bounds without presenting an
+            // osg::Geometry source array to the audit visitor. They are still
+            // production-renderable; rejecting them prevents the exact
+            // first-person animation family from binding after an equip.
+            return visitor.mRenderableGeometry > 0 || visitor.mRigRenderGeometry > 0
+                || visitor.mDrawables > 0;
         }
 
         class ForceActorPartMaskVisitor : public osg::NodeVisitor
@@ -8752,6 +8802,9 @@ namespace MWRender
         constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
         constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
         constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
+        mDefaultFirstPersonFieldOfView = state.mFieldOfView;
+        mPipBoyFirstPersonFieldOfView
+            = readFalloutPipBoyFieldOfView(mResourceSystem).value_or(mDefaultFirstPersonFieldOfView);
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || !traits->mIsFONV)
             throw std::runtime_error("native first-person profile requires an FNV NPC");
@@ -8833,14 +8886,13 @@ namespace MWRender
                 mFirstPersonArmorArmsPart = attachedNode;
                 FirstPersonArmorArmsOnlyVisitor armsOnly;
                 attachedNode->accept(armsOnly);
-                const bool exactArmPartition = armsOnly.mKept == 3 && armsOnly.mHidden == 3;
+                const bool exactArmPartition = armsOnly.mKept == 1 && armsOnly.mHidden == 5;
                 Log(exactArmPartition ? Debug::Info : Debug::Error)
                     << "FNV first-person armor filter: actor=" << traits->mEditorId
                     << " selected=" << path << " keptArms=" << armsOnly.mKept
-                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=3/3 intact=1";
+                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=1/5";
                 if (!exactArmPartition)
-                    throw std::runtime_error(
-                        "native FNV first-person armor did not expose intact Arms plus both PipBoyOn sleeves");
+                    throw std::runtime_error("native FNV first-person armor did not expose the exact Arms partition");
             }
             if (attached)
                 ++mFirstPersonAttachedPartCount;
@@ -8891,27 +8943,13 @@ namespace MWRender
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        // The raw skeleton's internal Weapon helper remains below the right
-        // hand, but retail moves the active rendered weapon mount to an
-        // identity `Weapon` child of Bip01 Translate before the 1hpaim track
-        // starts.  Materialize that same runtime topology and bind the
-        // authored KF target to it.  It must retain the native NIF transform
-        // representation: KeyframeController updates its decomposed rotation
-        // and scale channels, which a generic osg::MatrixTransform cannot
-        // represent safely. There is intentionally no authored transform
-        // here: the existing retail Weapon controller owns it.
-        const NodeMap& firstPersonNodes = getNodeMap();
-        const auto translateIt = firstPersonNodes.find("Bip01 Translate");
-        if (translateIt == firstPersonNodes.end() || translateIt->second == nullptr)
-            throw std::runtime_error("native FNV first-person profile is missing retail Bip01 Translate mount");
-        mFalloutWeaponDrawFrame = new NifOsg::MatrixTransform(Nif::NiTransform::getIdentity());
-        mFalloutWeaponDrawFrame->setName("Weapon");
-        mFalloutWeaponDrawFrame->setNodeMask(~0u);
-        translateIt->second->addChild(mFalloutWeaponDrawFrame.get());
-        translateIt->second->dirtyBound();
-        mNodeMap["Weapon"] = mFalloutWeaponDrawFrame;
-        Log(Debug::Info) << "FNV first-person retail weapon mount: node=Weapon parent=Bip01 Translate"
-                         << " local=identity controller=authored-kf source=xNVSE-save330-retail";
+        // Keep the rendered weapon on the skeleton's authored Weapon node.
+        // The retained 5fb9e4e0aa baseline visibly renders the Save330 weapon
+        // matrix through this path, and the family KF already owns this node's
+        // placement. Do not replace it with a synthetic identity mount.
+        if (findBestAttachmentNode(getNodeMap(), { "Weapon", "weapon" }) == nullptr)
+            throw std::runtime_error("native FNV first-person profile is missing authored Weapon mount");
+        Log(Debug::Info) << "FNV first-person weapon mount: node=Weapon source=authored-skeleton";
         const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
             std::string(baseIdle), std::string(skeleton), false, aimOverlay, "idle");
         const std::string pipBoyInteractionKf = female
@@ -8932,6 +8970,27 @@ namespace MWRender
         Log(mPipBoyRetailWaverBound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy retail held-arm waver: source=" << pipBoyWaverKf
             << " bound=" << mPipBoyRetailWaverBound;
+        // The retained retail Save330 sequence keeps these two authored H2H
+        // layers beneath the Pip-Boy raise and held-arm clips. h2hidle carries
+        // a legacy "idle" key, so isolate its explicit semantic alias instead
+        // of allowing it to replace the normal mtidle production state.
+        const std::string pipBoyBaseIdleKf = "meshes/characters/_1stperson/h2hidle.kf";
+        const std::shared_ptr<AnimSource> pipBoyBaseIdleSource = addSingleAnimSource(
+            pipBoyBaseIdleKf, std::string(skeleton), false, {}, "pipboybaseidle", true);
+        mPipBoyRetailBaseIdleBound = pipBoyBaseIdleSource != nullptr && hasAnimation("pipboybaseidle")
+            && getAnimationSourceName("pipboybaseidle") == pipBoyBaseIdleKf;
+        Log(mPipBoyRetailBaseIdleBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy retail base idle: source=" << pipBoyBaseIdleKf
+            << " bound=" << mPipBoyRetailBaseIdleBound;
+
+        const std::string pipBoyBaseAimKf = "meshes/characters/_1stperson/h2haim.kf";
+        const std::shared_ptr<AnimSource> pipBoyBaseAimSource = addSingleAnimSource(
+            pipBoyBaseAimKf, std::string(skeleton), false, {}, "pipboybaseaim");
+        mPipBoyRetailBaseAimBound = pipBoyBaseAimSource != nullptr && hasAnimation("pipboybaseaim")
+            && getAnimationSourceName("pipboybaseaim") == pipBoyBaseAimKf;
+        Log(mPipBoyRetailBaseAimBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy retail base aim: source=" << pipBoyBaseAimKf
+            << " bound=" << mPipBoyRetailBaseAimBound;
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
@@ -9098,58 +9157,47 @@ namespace MWRender
                 disable("pipboy");
             if (isPlaying("pipboywaver"))
                 disable("pipboywaver");
+            if (isPlaying("pipboybaseidle"))
+                disable("pipboybaseidle");
+            if (isPlaying("pipboybaseaim"))
+                disable("pipboybaseaim");
             mPipBoyRetailInteractionPoseHeld = false;
             mPipBoyInteractionProgress = 0.f;
             resetActiveGroups();
+            setFirstPersonActorRootFieldOfView(*mObjectRoot, mDefaultFirstPersonFieldOfView);
             return;
         }
 
+        setFirstPersonActorRootFieldOfView(*mObjectRoot, mPipBoyFirstPersonFieldOfView);
+
         if (previousProgress <= 0.001f && mPipBoyRetailInteractionBound)
         {
-            play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
+            if (mPipBoyRetailBaseIdleBound)
+                play("pipboybaseidle", Animation::AnimPriority(8), BlendMask_All, false, 1.f,
+                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), true);
+            if (mPipBoyRetailBaseAimBound)
+                play("pipboybaseaim", Animation::AnimPriority(9), BlendMask_All, false, 1.f,
+                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), true);
+            play("pipboy", Animation::AnimPriority(10), BlendMask_All, true, 1.f, "start", "stop", 0.f, 0,
                 false);
             Log(isPlaying("pipboy") ? Debug::Info : Debug::Error)
                 << "FNV Pip-Boy retail raise: played=" << isPlaying("pipboy")
                 << " source=" << getAnimationSourceName("pipboy");
         }
 
-        if (mPipBoyRetailInteractionBound)
+        if (!isPlaying("pipboy") && mPipBoyRetailInteractionBound && !mPipBoyRetailInteractionPoseHeld)
         {
-            const bool held = mPipBoyPresentationProgress >= 0.999f;
-            if (!isPlaying("pipboy"))
-                play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f,
+            if (isPlaying("pipboybaseidle"))
+                disable("pipboybaseidle");
+            if (mPipBoyRetailWaverBound)
+                play("pipboywaver", Animation::AnimPriority(10), BlendMask_LeftArm, false, 1.f,
                     "start", "stop", 0.f, 0, false);
-            // The retained retail scene-graph trace reaches Pip-Boy mode 3 at
-            // frame 934 with pipboy.kf at exactly 0.333333 seconds. That is the
-            // fully raised two-arm contact pose. The clip continues to 0.733333
-            // as the toggle lowers, so its terminal sample is not a held pose.
-            // Replay the stock controllers up to retail's recorded transition
-            // frame and retain that sample while the physical menu is open.
-            if (isPlaying("pipboywaver"))
-                disable("pipboywaver");
-
-            auto raiseState = mStates.find("pipboy");
-            if (raiseState != mStates.end())
-            {
-                constexpr float retailRaisedContactSeconds = 10.f / 30.f;
-                const float sequenceSpan
-                    = std::max(0.f, raiseState->second.mStopTime - raiseState->second.mStartTime - 0.001f);
-                const float authoredProgress = mPipBoyPresentationProgress * mPipBoyPresentationProgress
-                    * (3.f - 2.f * mPipBoyPresentationProgress);
-                const float raisedSpan = std::min(sequenceSpan, retailRaisedContactSeconds);
-                raiseState->second.setTime(raiseState->second.mStartTime + raisedSpan * authoredProgress);
-                raiseState->second.mSpeedMult = 0.f;
-                raiseState->second.mPlaying = true;
-                raiseState->second.mAutoDisable = false;
-            }
-            mPipBoyRetailInteractionPoseHeld = held && raiseState != mStates.end();
+            mPipBoyRetailInteractionPoseHeld = mPipBoyRetailWaverBound && isPlaying("pipboywaver");
             resetActiveGroups();
-            if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
-                Log(Debug::Info) << "FNV Pip-Boy retail screen-facing hold: source="
-                                 << getAnimationSourceName("pipboy")
-                                 << " range=start-to-retail-mode3 sample=0.333333 waver=disabled"
-                                 << " right=retail-pipboy-kf"
-                                 << " completeArmMeshes=1 screenAndControls=live";
+            Log(mPipBoyRetailInteractionPoseHeld ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy authored held composition: waver=" << getAnimationSourceName("pipboywaver")
+                << " baseAim=" << getAnimationSourceName("pipboybaseaim")
+                << " source=retail-Save330-sequence-stack active=" << mPipBoyRetailInteractionPoseHeld;
         }
 
         mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
@@ -9913,10 +9961,8 @@ namespace MWRender
         std::string_view targetName;
         if (showWeapon)
         {
-            // Retail's active first-person weapon is the identity child of
-            // Bip01 Translate installed above; the raw skeleton's same-named
-            // helper below the hand is not the visible render mount. Its
-            // existing animation controller supplies all placement and motion.
+            // Prefer an explicitly supplied draw frame when one exists;
+            // otherwise use the skeleton's authored Weapon target.
             if (mFirstPersonView && mFalloutWeaponDrawFrame != nullptr)
             {
                 targetName = "Weapon";
@@ -9942,6 +9988,11 @@ namespace MWRender
                                 << "\" gate=weapon-draw-state-attachment";
             return;
         }
+
+        if (mFalloutWeaponPart->getNumParents() == 1
+            && mFalloutWeaponPart->getParent(0) == target
+            && mFalloutWeaponPart->getNodeMask() != 0)
+            return;
 
         while (mFalloutWeaponPart->getNumParents() > 0)
         {
@@ -10246,10 +10297,12 @@ namespace MWRender
                              << " cullFace=off renderParent=FirstPersonRoot"
                              << makeActorVisualAuditDetails(mFalloutWeaponPart.get());
         }
+        bool firstPersonDrawableImplementation = false;
         if (mFirstPersonView && mFalloutWeaponPart != nullptr)
         {
             ForceActorPartMaskVisitor firstPersonMask(Mask_FirstPerson);
             mFalloutWeaponPart->accept(firstPersonMask);
+            firstPersonDrawableImplementation = firstPersonMask.mDrawables > 0;
             Log(Debug::Info) << "FNV first-person weapon mask normalization: model=" << weaponModel
                              << " mask=0x" << std::hex << Mask_FirstPerson << std::dec
                              << " nodes=" << firstPersonMask.mNodes << " geodes=" << firstPersonMask.mGeodes
@@ -10270,7 +10323,8 @@ namespace MWRender
                 mFalloutWeaponPart->setNodeMask(0);
         }
 
-        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
+        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get())
+            || firstPersonDrawableImplementation;
         Log(renderable ? Debug::Info : Debug::Error)
             << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
             << " weapon=" << mFalloutActionWeapon->mEditorId
@@ -10621,6 +10675,14 @@ namespace MWRender
         const bool pipBoyOwnsArms = mFirstPersonView && mPipBoyWeaponSuppressed;
         const bool weaponDrawn
             = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
+        // A first-person authored hold is an equipped visual state. Keep the
+        // model visibility synchronized with that controller boundary even if
+        // an actor-side equip proxy outlives its camera-space one-shot. The
+        // Pip-Boy suppression flag remains authoritative while the wrist UI
+        // owns the arms.
+        if (mFirstPersonView && !pipBoyOwnsArms && weaponDrawn && !mFalloutWeaponsShown
+            && getActiveGroup(BoneGroup_RightArm) == "weaponpose" && isPlaying("weaponpose"))
+            showWeapons(true);
         const bool idleArmRelaxed = !pipBoyOwnsArms
             && applyFalloutIdleArmRelaxIk(getNodeMap(), mSkeleton, mPtr, *traits);
         const bool weaponIkSupported = !pipBoyOwnsArms && weaponDrawn

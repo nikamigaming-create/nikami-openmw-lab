@@ -5592,7 +5592,41 @@ namespace MWRender
         AnimStateMap::iterator foundstateiter = mStates.find(groupname);
         if (foundstateiter != mStates.end())
         {
-            foundstateiter->second.mPriority = priority;
+            // Dynamic Fallout weapon families intentionally publish the same
+            // semantic groups (weaponpose/equip/reload/attack) from different
+            // authored KF files. If a new source was appended after this state
+            // was created, reusing the old AnimState keeps its old mSource and
+            // makes the visible mount lag one equipment selection behind.
+            // Resolve the source exactly as the creation path below does and
+            // rebuild only when semantic ownership has changed.
+            std::shared_ptr<AnimSource> selectedSource;
+            AnimState probe;
+            for (AnimSourceList::reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend();
+                 ++source)
+            {
+                if (reset(probe, (*source)->getTextKeys(), groupname, start, stop, startpoint, loopfallback))
+                {
+                    selectedSource = *source;
+                    break;
+                }
+            }
+            if (selectedSource != nullptr && foundstateiter->second.mSource != selectedSource)
+            {
+                if (falloutNpc)
+                    Log(Debug::Info) << "FNV/ESM4 animation semantic source refresh: actor="
+                                     << mPtr.getCellRef().getRefId() << " group=" << groupname
+                                     << " previous=" << foundstateiter->second.mSource->mSourceName
+                                     << " selected=" << selectedSource->mSourceName;
+                mStates.erase(foundstateiter);
+                foundstateiter = mStates.end();
+            }
+            else
+            {
+                foundstateiter->second.mPriority = priority;
+                foundstateiter->second.mBlendMask = blendMask;
+                foundstateiter->second.mAutoDisable = autodisable;
+                foundstateiter->second.mSpeedMult = speedmult;
+            }
         }
 
         AnimStateMap::iterator stateiter = mStates.begin();
@@ -6124,12 +6158,22 @@ namespace MWRender
         {
             AnimStateMap::const_iterator active = mStates.end();
             std::map<std::string, AnimStateMap::const_iterator> activeControllers;
+            bool falloutPipBoyComposition = false;
 
             AnimStateMap::const_iterator state = mStates.begin();
             for (; state != mStates.end(); ++state)
             {
                 if (!state->second.blendMaskContains(blendMask) || !state->second.mSource)
                     continue;
+
+                // Disabled Pip-Boy states remain in mStates long enough for
+                // transition bookkeeping.  They must not switch the entire
+                // first-person rig to per-controller composition after the
+                // Pip-Boy has closed; doing so mixes the next weapon-family
+                // clip with stale arm controllers.
+                falloutPipBoyComposition = falloutPipBoyComposition
+                    || (state->second.mPlaying
+                        && Misc::StringUtils::ciStartsWith(state->second.mGroupname, "pipboy"));
 
                 if (active == mStates.end()
                     || active->second.mPriority[(BoneGroup)blendMask] < state->second.mPriority[(BoneGroup)blendMask])
@@ -6148,7 +6192,12 @@ namespace MWRender
             mAnimationTimePtr[blendMask]->setTimePtr(
                 active == mStates.end() ? std::shared_ptr<float>() : active->second.mTime);
 
-            if (!falloutNpc && active != mStates.end())
+            // Per-controller composition exists for the concurrent retail
+            // Pip-Boy arm clips. Normal weapon/equip/attack groups retain the
+            // original whole-source priority rule; applying partial-source
+            // composition to them mixed unrelated bind poses and produced
+            // invisible weapons and exploded first-person arms.
+            if ((!falloutNpc || !falloutPipBoyComposition) && active != mStates.end())
             {
                 activeControllers.clear();
                 for (const auto& controller : active->second.mSource->mControllerMap[blendMask])
@@ -6186,7 +6235,7 @@ namespace MWRender
                                      << " source=" << animsrc->mSourceName
                                      << " time=" << active->second.getTime();
                 }
-                if (falloutNpc)
+                if (falloutNpc && falloutPipBoyComposition)
                 {
                     auto controllerTime = std::make_shared<AnimationTime>();
                     controllerTime->setTimePtr(active->second.mTime);

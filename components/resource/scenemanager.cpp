@@ -654,8 +654,7 @@ namespace Resource
         bool worldViewerMeshLoadTelemetryEnabled()
         {
             return worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_MESH_LOAD_TELEMETRY")
-                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY")
-                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+                || worldViewerEnvEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
         }
 
         bool worldViewerForceFlatTemplateMaterials()

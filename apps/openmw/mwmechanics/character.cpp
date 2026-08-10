@@ -1453,8 +1453,12 @@ namespace MWMechanics
         }
         else
         {
-            actionAnimation->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start",
-                "stop", 0.f, 0);
+            // A separate action animation is the native Fallout player proxy;
+            // the CharacterController's actor animation remains the authority
+            // for transition progress. The proxy action is therefore always
+            // a one-shot camera-space layer.
+            actionAnimation->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, true,
+                1.f, "start", "stop", 0.f, 0);
         }
         const bool playing = actionAnimation != nullptr && actionAnimation->isPlaying(mCurrentWeapon);
 
@@ -1476,7 +1480,11 @@ namespace MWMechanics
                 && firstPerson->hasAnimation(mCurrentWeapon);
             if (firstPersonPrepared)
             {
-                firstPerson->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start",
+                // The actor action state owns transition progress and cleanup.
+                // Its camera-space proxy is a one-shot visual layer; remove it
+                // at the authored stop key so a completed equip/reload cannot
+                // continue owning the arm masks over the looping weaponpose.
+                firstPerson->play(mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, true, 1.f, "start",
                     "stop", 0.f, 0);
                 firstPersonPlaying = firstPerson->isPlaying(mCurrentWeapon);
             }
@@ -1518,6 +1526,24 @@ namespace MWMechanics
         const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
         setFalloutWeaponGroup(mCurrentWeapon, relativeDuration);
         detachFalloutWeaponTextKeys();
+
+        // The player camera rig is a separate animation object from the
+        // actor/controller that owns action progress. Restore its already
+        // loaded, data-resolved aim semantic when an equip/reload/attack hands
+        // the weapon back to the held state. refreshIdleAnims only targets the
+        // actor animation and cannot release camera-space arm masks itself.
+        if (MWRender::Animation* const firstPerson = getFalloutWeaponAnimation(true);
+            firstPerson != nullptr && firstPerson->hasAnimation("weaponpose"))
+        {
+            MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
+            weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+            weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+            if (firstPerson->isPlaying("weaponpose"))
+                firstPerson->disable("weaponpose");
+            firstPerson->play("weaponpose", weaponPosePriority,
+                MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.f, "start", "stop", 0.f,
+                std::numeric_limits<std::uint32_t>::max(), true);
+        }
         return true;
     }
 
@@ -2518,6 +2544,19 @@ namespace MWMechanics
     {
         bool forceStateUpdate = false;
         MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (MWRender::Animation* const firstPerson = getFalloutWeaponAnimation(true))
+        {
+            const std::string completedArmGroup(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm));
+            if (!completedArmGroup.empty() && completedArmGroup != "weaponpose"
+                && !firstPerson->isPlaying(completedArmGroup))
+            {
+                firstPerson->disable(completedArmGroup);
+                refreshIdleAnims(mIdleState, true);
+                Log(Debug::Info) << "FNV first-person action cleanup: actor=" << mPtr.toString()
+                                 << " removed=" << completedArmGroup
+                                 << " restored=weaponpose source=authored-controller-state";
+            }
+        }
         const auto failVisualClosed = [&]() {
             mFalloutAttackDelivery = {};
             showFalloutWeapons(false);
@@ -2538,9 +2577,18 @@ namespace MWMechanics
             showFalloutWeapons(mFalloutWeapon != nullptr);
             detachFalloutWeaponTextKeys();
             mUpperBodyState = UpperBodyState::WeaponEquipped;
+            // Auto-disabled one-shot clips report Interrupted after their
+            // final controller has already been removed. That is a valid
+            // visual completion fallback, but it must still hand both arm
+            // masks back to the authored held pose. Otherwise a stale equip
+            // time source remains active while no controller is playing and
+            // standing first-person actors never recover weaponpose.
+            const bool primaryRestored = restoreFalloutPrimaryWeaponGroup(mWeaponType);
+            if (primaryRestored)
+                refreshIdleAnims(mIdleState, true);
             Log(Debug::Warning) << "FNV mechanics retained usable weapon without exact visual action: actor="
                                 << mPtr.toString() << " weaponType=" << mWeaponType << " reason=" << reason
-                                << " gameplayAvailable=1";
+                                << " gameplayAvailable=1 authoredHoldRestored=" << primaryRestored;
         };
         const auto updateAiming = [&]() {
             const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
@@ -2583,8 +2631,31 @@ namespace MWMechanics
         const bool actionStateExists
             = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
             && actionAnimation->getInfo(mCurrentWeapon, &complete);
+        MWRender::Animation* const firstPersonActionAnimation = getFalloutWeaponAnimation(true);
+        const bool firstPersonActionCompleted = semanticActionPlaying && !mCurrentWeapon.empty()
+            && isFalloutPlayerActor(mPtr) && firstPersonActionAnimation != nullptr
+            && !firstPersonActionAnimation->isPlaying(mCurrentWeapon)
+            && firstPersonActionAnimation->getActiveGroup(MWRender::BoneGroup_RightArm) == "weaponpose";
+        if (isFalloutPlayerActor(mPtr) && firstPersonActionAnimation != nullptr
+            && firstPersonActionAnimation->getActiveGroup(MWRender::BoneGroup_RightArm) == "weaponpose"
+            && !firstPersonActionAnimation->getWeaponsShown())
+        {
+            static unsigned int hiddenHeldFrames = 0;
+            if (++hiddenHeldFrames % 120 == 0)
+                Log(Debug::Info) << "FNV first-person hidden held-state: upperBodyState="
+                                 << static_cast<int>(mUpperBodyState) << " currentGroup=" << mCurrentWeapon
+                                 << " actionStateExists=" << actionStateExists << " complete=" << complete
+                                 << " cameraProxyCompleted=" << firstPersonActionCompleted;
+        }
+        // Camera/actor one-shots are intentionally auto-disabled at their
+        // authored stop key. When the controller still owns the corresponding
+        // semantic state, disappearance of that state is completion—not an
+        // external interruption. Explicit cancellations normalize
+        // mUpperBodyState before reaching this path.
         const MWRender::FonvWeaponActionProgress actionProgress
-            = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
+            = firstPersonActionCompleted || (semanticActionPlaying && !actionStateExists)
+            ? MWRender::FonvWeaponActionProgress::Completed
+            : MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
 
         const bool vatsSuppressesPlayerTrigger = mPtr == getPlayer()
             && MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().isVatsActive();
@@ -2629,6 +2700,7 @@ namespace MWMechanics
 
         if (semanticActionPlaying)
         {
+            bool refreshWeaponPoseAfterAction = false;
             if (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutAttackDelivery.isPending())
             {
                 const FalloutAttackDelivery pending = mFalloutAttackDelivery;
@@ -2648,11 +2720,22 @@ namespace MWMechanics
                 Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
                                   << " group=" << mCurrentWeapon;
                 if (mUpperBodyState == UpperBodyState::Unequipping)
+                {
+                    // Auto-disable removes the one-shot at its authored stop
+                    // before getInfo can report a final sample. Clear the old
+                    // family, then continue this same update so the requested
+                    // carried-right ESM weapon can enter its equip state. An
+                    // early return here leaves some weapon swaps permanently
+                    // hidden with a valid inventory slot but no controller.
                     failVisualClosed();
+                    forceStateUpdate = true;
+                }
                 else
+                {
                     settleUsableWithoutAction("action-interrupted");
-                updateAiming();
-                return true;
+                    updateAiming();
+                    return true;
+                }
             }
             disableFalloutWeaponGroup(mCurrentWeapon);
             detachFalloutWeaponTextKeys();
@@ -2663,6 +2746,8 @@ namespace MWMechanics
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
                         settleUsableWithoutAction("missing-primary-after-equip");
+                    else
+                        refreshWeaponPoseAfterAction = true;
                     if (mFalloutReloadQueued)
                     {
                         mFalloutReloadQueued = false;
@@ -2676,10 +2761,19 @@ namespace MWMechanics
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
                         settleUsableWithoutAction("missing-primary-after-attack");
+                    else
+                        refreshWeaponPoseAfterAction = true;
                     break;
                 default:
                     break;
             }
+            // The one-shot equip/attack group owned both arm masks. Once it
+            // completes, immediately rebuild the ordinary idle overlays so
+            // the authored weaponpose takes those masks back. Waiting for a
+            // locomotion-state change leaves a completed action state visible
+            // indefinitely while the player stands still.
+            if (refreshWeaponPoseAfterAction)
+                refreshIdleAnims(mIdleState, true);
             forceStateUpdate = true;
         }
 
@@ -2880,6 +2974,9 @@ namespace MWMechanics
         const bool visualAction
             = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Reload, priority);
 
+        if (!visualAction)
+            return fail("authored-reload-animation-unavailable");
+
         const int removed = inventory->remove(*ammoId, transfer);
         if (removed != transfer)
         {
@@ -2889,15 +2986,11 @@ namespace MWMechanics
         }
         inventory->setFalloutAmmoSelection(weaponId, *ammoId);
         inventory->setFalloutLoadedAmmo(weaponId, loaded + transfer);
-        if (visualAction)
-            mUpperBodyState = UpperBodyState::AttackEnd;
+        mUpperBodyState = UpperBodyState::AttackEnd;
         Log(Debug::Info) << "FNV reload: actor=" << mPtr.toString() << " weapon=" << weaponId
                          << " ammo=" << *ammoId << " loadedBefore=" << loaded
                          << " transferred=" << transfer << " loadedAfter=" << (loaded + transfer)
                          << " capacity=" << capacity << " visualAction=" << visualAction << " status=pass";
-        if (!visualAction)
-            Log(Debug::Warning) << "FNV reload used gameplay fallback because the authored reload animation "
-                                << "could not be played: actor=" << mPtr.toString() << " weapon=" << weaponId;
         return true;
     }
 
@@ -4473,8 +4566,11 @@ namespace MWMechanics
 
     bool CharacterController::updateWeaponState(float duration)
     {
-        // If the current animation is scripted, we can't do anything here.
-        if (isScriptedAnimPlaying())
+        // TES3 scripted animation queues own TES3 weapon state. Fallout's
+        // player weapon controller is a separate KF/WEAP semantic path; a
+        // legacy queued entry must not freeze equip, reload, attack, or model
+        // visibility after an ordinary Pip-Boy selection.
+        if (isScriptedAnimPlaying() && !isFalloutPlayerActor(mPtr))
             return false;
 
         const auto world = MWBase::Environment::get().getWorld();
@@ -4503,7 +4599,14 @@ namespace MWMechanics
             requestedFalloutWeapon = (mPtr.getType() == ESM::REC_NPC_4 || isFalloutPlayerActor(mPtr))
                 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr)
                 : nullptr;
-            weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
+            // ESM record addresses are an implementation detail and may
+            // change when an equipped DLC record is resolved through the
+            // live inventory bridge. Weapon identity is the authored FormID;
+            // pointer comparison can endlessly restart equip for the same
+            // carried-right item.
+            weaponChanged = (requestedFalloutWeapon == nullptr) != (mFalloutWeapon == nullptr)
+                || (requestedFalloutWeapon != nullptr && mFalloutWeapon != nullptr
+                    && requestedFalloutWeapon->mId != mFalloutWeapon->mId);
         }
         else if (cls.hasInventoryStore(mPtr))
         {
@@ -6150,7 +6253,19 @@ namespace MWMechanics
         mCastingScriptedSpell = false;
         setAttackingOrSpell(false);
         if (mUpperBodyState != UpperBodyState::None)
+        {
+            if (isFalloutWeaponType(mWeaponType) && !mCurrentWeapon.empty())
+            {
+                // A forced production state refresh cancels the current
+                // one-shot action. Remove its retained arm controllers before
+                // rebuilding idle; otherwise a completed equip can keep both
+                // arm masks forever and prevent weaponpose, jump, and attack
+                // overlays from becoming active.
+                disableFalloutWeaponGroup(mCurrentWeapon);
+                restoreFalloutPrimaryWeaponGroup(mWeaponType);
+            }
             mUpperBodyState = UpperBodyState::WeaponEquipped;
+        }
 
         refreshCurrentAnims(mIdleState, mMovementState, mJumpState, true);
 
