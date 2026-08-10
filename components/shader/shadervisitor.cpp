@@ -1,5 +1,6 @@
 #include "shadervisitor.hpp"
 
+#include <cstdlib>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -283,7 +284,9 @@ namespace Shader
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
         "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1",
-        "hairPaletteMap" };
+        "hairPaletteMap", "poreNormalMap", "daoTintMask", "daoAgeDiffuseMap", "daoAgeNormalMap",
+        "daoEmotionMask0", "daoEmotionMask1", "daoEmotionNormalMap", "daoBrowStubbleMap",
+        "daoBrowStubbleNormalMap", "daoTattooMask" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))
@@ -564,6 +567,14 @@ namespace Shader
         std::string shaderPrefix;
         if (node.getUserValue("shaderPrefix", shaderPrefix))
             mRequirements.back().mShaderPrefix = std::move(shaderPrefix);
+
+        const char* daoFaceShader = std::getenv("OPENMW_DAO_FACE_SHADER");
+        if (daoFaceShader != nullptr && *daoFaceShader != '\0' && std::string_view(daoFaceShader) != "0")
+        {
+            const std::string nodeName = Misc::StringUtils::lowerCase(node.getName());
+            if (nodeName.find("face") != std::string::npos)
+                mRequirements.back().mShaderPrefix = "bs/dao_face";
+        }
     }
 
     void ShaderVisitor::popRequirements()
