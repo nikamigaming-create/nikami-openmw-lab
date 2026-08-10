@@ -3311,27 +3311,6 @@ namespace
         }
     }
 
-    bool addProofInventoryItem(MWWorld::ContainerStore& inventory, std::string_view id, int count)
-    {
-        const ESM::RefId refId = ESM::RefId::stringRefId(id);
-        try
-        {
-            const int existing = inventory.count(refId);
-            const int missing = std::max(0, count - existing);
-            if (missing > 0)
-                inventory.add(refId, missing, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory "
-                             << (missing > 0 ? "added " : "retained ") << id << " x" << count
-                             << " previous=" << existing << " inserted=" << missing;
-            return true;
-        }
-        catch (const std::exception& e)
-        {
-            Log(Debug::Warning) << "FNV/ESM4 proof: starter proof inventory failed " << id << ": " << e.what();
-            return false;
-        }
-    }
-
     template <typename T>
     bool isFNVEditorItemEquipped(
         MWWorld::InventoryStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId)
@@ -3528,25 +3507,8 @@ namespace
             = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
 
-        // Fallback records keep the save usable if a partial content stack omits one of the core retail records.
-        // Never add both representations: a complete FalloutNV.esm load receives only the authored items above.
-        int proofAdded = 0;
-        if (!pistolAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
-        if (!rifleAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
-        if (!ammo9mmAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
-        if (!stimpakAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
-        if (!bobbyPinAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
-        if (!capsAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
-
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
-                         << " proofStarterItemKinds=" << proofAdded
                          << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
                          << " visualWeapon=WeapNVVarmintRifle"
                          << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
@@ -3791,8 +3753,10 @@ namespace
 
     bool worldViewerTraceEnabled()
     {
-        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE")
-            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        // Periodic state telemetry is bounded and is used by unattended validators. Per-phase frame tracing is a
+        // separate diagnostic: coupling the two emitted dozens of lines every rendered frame and made normal
+        // telemetry captures needlessly expensive and nearly unreadable.
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE");
     }
 
     void worldViewerTrace(unsigned int frameNumber, std::string_view phase)
@@ -6584,6 +6548,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         const bool d02NativeFrameReady = pollD02NativeFrame();
         const bool d02ReadyForNextAction = d02NativeFrameReady && !fnvRealSaveD02ScreenshotPending
             && (fnvRealSaveD02NextActionFrame < 0 || proofWorldReadyFrames >= fnvRealSaveD02NextActionFrame);
+        bool d02AdvancedThisFrame = false;
 
         // A completed native frame is the only transition that advances the
         // roster. This preserves the physical Pip-Boy route while allowing a
@@ -6597,12 +6562,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             fnvRealSaveD02ActiveWeapon = -1;
             fnvRealSaveD02CapturedCurrent = false;
             fnvRealSaveD02NextActionFrame = -1;
+            d02AdvancedThisFrame = true;
             Log(Debug::Info) << "FNV D02 weapon selection: index=" << fnvRealSaveD02CurrentWeapon
                              << " action=advance-after-stable-native-frame"
                              << " source=production-pipboy-weapon-selection status=pass";
         }
 
-        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction)
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction && !d02AdvancedThisFrame)
         {
             const bool needsPipBoyOpen = !fnvRealSaveD02MenuClosed || weaponIndex != fnvRealSaveD02ActiveWeapon;
             if (needsPipBoyOpen)
@@ -6749,42 +6715,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     if (!fnvRealSaveD02Failed && weaponElapsed >= 60 && fnvRealSaveD02MenuClosed
                         && fnvRealSaveD02EquipmentBridgeObserved && !fnvRealSaveD02ControllerSynchronized)
                     {
-                        if (mMechanicsManager == nullptr)
-                        {
-                            failD02("mechanics-manager-unavailable-for-controller-sync");
-                        }
-                        else
-                        {
-                            // Normal ActionEquip has already placed the selected
-                            // ESM4 weapon in the Player's authoritative carried
-                            // right slot. Let the ordinary controller consume it
-                            // only after the Pip-Boy closes; do not synthesize
-                            // ammo, a slot, or any animation.
-                            mMechanicsManager->forceStateUpdate(mWorld->getPlayerPtr());
-                            fnvRealSaveD02ControllerSynchronized = true;
-                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
-                                             << " form=" << target
-                                             << " action=production-controller-state-update"
-                                             << " path=MechanicsManager::forceStateUpdate status=pass";
-                        }
-                    }
-
-                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02ControllerSynchronized
-                        && !fnvRealSaveD02ReloadCalled)
-                    {
-                        fnvRealSaveD02ReloadCalled = true;
-                        if (mMechanicsManager != nullptr)
-                        {
-                            fnvRealSaveD02ReloadRequested = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
-                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
-                                             << " form=" << target << " requested="
-                                             << fnvRealSaveD02ReloadRequested
-                                             << " path=MechanicsManager::reloadFalloutWeapon";
-                        }
-                        else
-                        {
-                            failD02("mechanics-manager-unavailable-for-reload");
-                        }
+                        // ActionEquip has already changed the authoritative
+                        // carried-right slot. From here the ordinary per-frame
+                        // CharacterController owns the authored unequip/equip/
+                        // aim transition. A forced state reset here cancels the
+                        // new family mid-transition and can resurrect the old
+                        // completed arm group.
+                        fnvRealSaveD02ControllerSynchronized = true;
+                        Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                         << " form=" << target
+                                         << " action=production-controller-state-update"
+                                         << " path=ordinary-CharacterController-update status=pass";
                     }
 
                     // The captured hand/weapon pose is not a countdown.  It is
@@ -6795,6 +6736,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     // two update frames.  This observes production state only;
                     // it neither plays, rewinds, nor writes an animation.
                     const auto observeD02FirstPersonPose = [&]() {
+                        if (!mWorld->isFirstPerson())
+                        {
+                            if (MWRender::Camera* const camera = mWorld->getCamera())
+                                camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                            Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                             << " form=" << target
+                                             << " action=restore-declared-first-person-camera"
+                                             << " source=canonical-self-drive-pov-boundary status=pass";
+                        }
                         const MWWorld::Ptr player = mWorld->getPlayerPtr();
                         MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
                         const std::string poseSource = firstPerson != nullptr
@@ -6815,27 +6765,30 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             = weaponParent != nullptr ? weaponParent->getName() : std::string();
                         const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
                             && weaponPart->getParent(0) == weaponNode;
-                        const bool visible = firstPerson != nullptr && firstPerson->getWeaponsShown()
-                            && mWorld->isFirstPerson();
+                        const bool cameraReady = firstPerson != nullptr && mWorld->isFirstPerson();
+                        const bool weaponsShownBeforeRender
+                            = firstPerson != nullptr && firstPerson->getWeaponsShown();
                         const bool weaponPosePlaying
                             = firstPerson != nullptr && firstPerson->isPlaying("weaponpose");
                         const bool expectedMount = weaponParentName == "Bip01 Translate";
                         const bool nonIdentity
                             = weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
                         const bool observed = !poseSource.empty() && weaponPosePlaying
-                            && activeRightArm == "weaponpose" && expectedMount && directPart && visible && nonIdentity;
+                            && activeRightArm == "weaponpose" && expectedMount && directPart && cameraReady
+                            && nonIdentity;
 
                         if (observed)
                         {
                             const osg::Matrix& matrix = weaponTransform->getMatrix();
-                            if (fnvRealSaveD02PoseSampleValid && matrix == fnvRealSaveD02PoseSample)
-                                ++fnvRealSaveD02PoseStableFrames;
-                            else
-                            {
-                                fnvRealSaveD02PoseSample = matrix;
-                                fnvRealSaveD02PoseSampleValid = true;
-                                fnvRealSaveD02PoseStableFrames = 1;
-                            }
+                            // A held aim KF may contain authored breathing or
+                            // sway, so transform equality is not a valid
+                            // stability test. Stability here means continuous
+                            // ownership by the same data-resolved weaponpose;
+                            // retain the latest non-identity sample while
+                            // counting consecutive observed frames.
+                            fnvRealSaveD02PoseSample = matrix;
+                            fnvRealSaveD02PoseSampleValid = true;
+                            ++fnvRealSaveD02PoseStableFrames;
                         }
                         else
                         {
@@ -6843,14 +6796,23 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             fnvRealSaveD02PoseStableFrames = 0;
                         }
 
-                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= 2;
-                        if (!settled && !fnvRealSaveD02PosePendingLogged)
+                        // Two render samples can fit in the single-frame gap
+                        // between an outgoing auto-disabled unequip and the
+                        // incoming controller's equip start. Require a short
+                        // continuous hold so that transient bridge pose cannot
+                        // be mistaken for ownership by the newly equipped
+                        // production controller.
+                        constexpr int d02StableHoldFrames = 8;
+                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= d02StableHoldFrames;
+                        const bool periodicPoseTelemetry = proofWorldReadyFrames % 120 == 0;
+                        if (!settled && (!fnvRealSaveD02PosePendingLogged || periodicPoseTelemetry))
                         {
                             Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
                                              << " form=" << target << " source=\"" << poseSource
                                              << "\" activeRightArm=\"" << activeRightArm
                                              << "\" weaponNodeParent=\"" << weaponParentName
-                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << "\" directPart=" << directPart << " cameraReady=" << cameraReady
+                                             << " weaponsShownBeforeRender=" << weaponsShownBeforeRender
                                              << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
                                              << " stableFrames=" << fnvRealSaveD02PoseStableFrames
                                              << " action=observed-authored-first-person-pose status=pending";
@@ -6862,7 +6824,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                              << " form=" << target << " source=\"" << poseSource
                                              << "\" activeRightArm=\"" << activeRightArm
                                              << "\" weaponNodeParent=\"" << weaponParentName
-                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << "\" directPart=" << directPart << " cameraReady=" << cameraReady
+                                             << " weaponsShownBeforeRender=" << weaponsShownBeforeRender
                                              << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
                                              << " stableFrames=" << fnvRealSaveD02PoseStableFrames
                                              << " action=observed-authored-first-person-pose status=pass";
@@ -6870,6 +6833,34 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                         return settled;
                     };
+
+                    // Do not race a reload request against the outgoing
+                    // weapon family. First observe the ordinary controller in
+                    // the new weapon's stable authored hold, then issue the
+                    // same production reload action as player input. A ranged
+                    // reload can take the arm masks again, so require a second
+                    // stable authored hold before auditing or capturing.
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02MenuClosed
+                        && fnvRealSaveD02ControllerSynchronized && !fnvRealSaveD02ReloadCalled
+                        && observeD02FirstPersonPose())
+                    {
+                        fnvRealSaveD02ReloadCalled = true;
+                        if (mMechanicsManager != nullptr)
+                        {
+                            fnvRealSaveD02ReloadRequested
+                                = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
+                                             << " form=" << target << " requested="
+                                             << fnvRealSaveD02ReloadRequested
+                                             << " path=MechanicsManager::reloadFalloutWeapon";
+                            fnvRealSaveD02PoseSampleValid = false;
+                            fnvRealSaveD02PoseStableFrames = 0;
+                            fnvRealSaveD02PosePendingLogged = false;
+                            fnvRealSaveD02PoseSettledLogged = false;
+                        }
+                        else
+                            failD02("mechanics-manager-unavailable-for-reload");
+                    }
 
                     bool d02FirstPersonPoseReady = false;
                     if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized

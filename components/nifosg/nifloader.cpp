@@ -4743,7 +4743,6 @@ namespace NifOsg
                     || filename.find("characters\\_male\\lefthand") != std::string::npos
                     || filename.find("characters/_male/righthand") != std::string::npos
                     || filename.find("characters\\_male\\righthand") != std::string::npos
-                    || filename.find("armor/vaultsuit/m/outfit.nif") != std::string::npos
                     || falloutFlagPath;
                 if (falloutSkinProbe)
                 {

@@ -17,6 +17,7 @@
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_ImageBox.h>
 #include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_PointerManager.h>
@@ -464,13 +465,12 @@ namespace MWGui
             const int selectedIndex = visibleRows > 0
                 ? std::min(listOffset, static_cast<int>(visibleRows) - 1)
                 : -1;
-            Log(Debug::Info) << "FNV D01 inventory: category=" << categoryName << " allRows=" << allRows
-                             << " visibleRows=" << visibleRows << " selectedIndex=" << selectedIndex
-                             << " source=restored-save330-inventory-model"
-                             << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
-
             if (!categoryRowsLogged[categoryIndex])
             {
+                Log(Debug::Info) << "FNV D01 inventory: category=" << categoryName << " allRows=" << allRows
+                                 << " visibleRows=" << visibleRows << " selectedIndex=" << selectedIndex
+                                 << " source=restored-save330-inventory-model"
+                                 << " provenance=Save330-FOS-to-InventoryItemModel-to-TradeItemModel-to-SortFilterItemModel";
                 for (std::size_t index = 0; index < visibleRows; ++index)
                 {
                     const MWGui::ItemStack item = visibleModel->getItem(static_cast<int>(index));
@@ -499,8 +499,7 @@ namespace MWGui
             }
 
             std::ostringstream text;
-            text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n"
-                 << categoryName << "  LIVE SAVE330  " << visibleRows << " ROWS\n";
+            text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n";
             const std::size_t first = selectedIndex < 0 ? 0 : static_cast<std::size_t>(selectedIndex);
             const std::size_t last = std::min(visibleRows, first + 7);
             for (std::size_t index = first; index < last; ++index)
@@ -512,7 +511,6 @@ namespace MWGui
                 text << (static_cast<int>(index) == selectedIndex ? "> " : "  ")
                      << (equipped ? "[E] " : "    ") << name << "  " << item.mCount << "\n";
             }
-            text << "\nSOURCE: RESTORED SAVE330\nE EQUIP/USE  W/S SCROLL";
             return text.str();
         }
 
@@ -791,13 +789,9 @@ namespace MWGui
             mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
 //## VR_PATCH END
 
-        const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
-            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
-        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
-        if (useFnvMissingGuiFallback)
-            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
+        // Missing authored UI resources are an integration error. Do not
+        // synthesize replacement pixels and conceal broken VFS/layout wiring.
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(false);
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -1174,27 +1168,69 @@ namespace MWGui
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
-        // The physical Pip-Boy gets its own transparent screen layer.  It is
-        // rendered to the authentic PipBoyArm screen texture, not to the flat
-        // desktop UI, so every glyph follows the device as it moves in 3D.
+        // Fallout authors its Pip-Boy menus on the canvas declared by
+        // menus/globals.xml and supplies the CRT field in the interface BSA.
+        // Fit that authored canvas to the live viewport; do not invent a
+        // resolution-specific desktop layout.
+        int pipBoyAuthoredWidth = 0;
+        int pipBoyAuthoredHeight = 0;
+        const auto readAuthoredCanvasTrait = [&](std::string_view trait) {
+            const VFS::Manager* const vfs = mResourceSystem->getVFS();
+            if (vfs == nullptr)
+                return 0;
+            const VFS::Path::Normalized globals("menus/globals.xml");
+            if (!vfs->exists(globals))
+                return 0;
+            const auto stream = vfs->get(globals);
+            const std::string xml(std::istreambuf_iterator<char>(*stream), {});
+            const std::string open = "<" + std::string(trait) + ">";
+            const std::string close = "</" + std::string(trait) + ">";
+            const std::size_t begin = xml.find(open);
+            const std::size_t end = begin == std::string::npos ? std::string::npos : xml.find(close, begin + open.size());
+            if (begin == std::string::npos || end == std::string::npos)
+                return 0;
+            return std::max(0, std::atoi(xml.substr(begin + open.size(), end - begin - open.size()).c_str()));
+        };
+        pipBoyAuthoredWidth = readAuthoredCanvasTrait("_pipboy_width");
+        pipBoyAuthoredHeight = readAuthoredCanvasTrait("_pipboy_height");
+        if (pipBoyAuthoredWidth <= 0 || pipBoyAuthoredHeight <= 0)
+            throw std::runtime_error("Fallout Pip-Boy authored canvas is missing from menus/globals.xml");
+        const float pipBoyScale = std::min(
+            static_cast<float>(w) / pipBoyAuthoredWidth, static_cast<float>(h) / pipBoyAuthoredHeight);
+        const int pipBoyWidth = static_cast<int>(std::lround(pipBoyAuthoredWidth * pipBoyScale));
+        const int pipBoyHeight = static_cast<int>(std::lround(pipBoyAuthoredHeight * pipBoyScale));
+        const int pipBoyX = (w - pipBoyWidth) / 2;
+        const int pipBoyY = (h - pipBoyHeight) / 2;
+
         mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
         mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
+        MyGUI::ImageBox* const pipBoyBackground = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::ImageBox>(
+            "ImageBox", MyGUI::IntCoord(pipBoyX, pipBoyY, pipBoyWidth, pipBoyHeight), MyGUI::Align::Default);
+        pipBoyBackground->setImageTexture("textures\\interface\\shared\\background\\pipboy.dds");
+        pipBoyBackground->setNeedMouseFocus(false);
+        const MyGUI::Colour pipBoyAmber(1.f, 0.64f, 0.08f, 1.f);
         mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
+            "SandBrightText", MyGUI::IntCoord(pipBoyX + static_cast<int>(70 * pipBoyScale),
+                pipBoyY + static_cast<int>(50 * pipBoyScale), static_cast<int>(855 * pipBoyScale),
+                static_cast<int>(50 * pipBoyScale)), MyGUI::Align::Default);
         mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
-        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalHeader->setFontHeight(48);
+        mFalloutPipBoyTerminalHeader->setTextColour(pipBoyAmber);
+        mFalloutPipBoyTerminalHeader->setFontHeight(std::max(18, static_cast<int>(24 * pipBoyScale)));
         mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
+            "SandText", MyGUI::IntCoord(pipBoyX + static_cast<int>(50 * pipBoyScale),
+                pipBoyY + static_cast<int>(125 * pipBoyScale), static_cast<int>(855 * pipBoyScale),
+                static_cast<int>(500 * pipBoyScale)), MyGUI::Align::Default);
         mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
-        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalBody->setFontHeight(42);
+        mFalloutPipBoyTerminalBody->setTextColour(pipBoyAmber);
+        mFalloutPipBoyTerminalBody->setFontHeight(std::max(16, static_cast<int>(22 * pipBoyScale)));
         mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
         mFalloutPipBoyTerminalRoot->setVisible(false);
-        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen canvas="
+                         << pipBoyAuthoredWidth << 'x' << pipBoyAuthoredHeight
+                         << " source=menus/globals.xml background=Interface/Shared/Background/pipboy.dds";
 
         mHud->setVisible(true);
 
@@ -1449,8 +1485,10 @@ namespace MWGui
             else if (falloutContent && mFalloutPipBoyPhysical && !VR::getVR())
             {
                 const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
-                constexpr int falloutPaneMasks[4] = { GW_Map, GW_Inventory, GW_Magic, GW_Stats };
-                eff = falloutPaneMasks[activeIndex];
+                // Fallout's Pip-Boy menu is the active inventory surface.
+                // The Morrowind windows remain live as data/controller owners,
+                // but must not render underneath the authored Fallout surface.
+                eff = 0;
                 Log(Debug::Verbose) << "FNV Pip-Boy physical: activePane=" << activeIndex
                                     << " visibleMask=0x" << std::hex << eff << std::dec;
             }

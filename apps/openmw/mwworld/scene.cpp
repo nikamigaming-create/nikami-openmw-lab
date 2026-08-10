@@ -251,8 +251,7 @@ namespace
 
     bool worldViewerDiagnosticFilterEnabled()
     {
-        return envEnabled("OPENMW_WORLD_VIEWER_HIDE_DIAGNOSTIC_MODELS")
-            || envEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        return envEnabled("OPENMW_WORLD_VIEWER_HIDE_DIAGNOSTIC_MODELS");
     }
 
     bool worldViewerFreezeEsm4ActorMechanics()

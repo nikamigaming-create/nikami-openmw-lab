@@ -437,6 +437,9 @@ namespace MWGui
                     return SortFilterItemModel::Category_Ammo;
             }
         }();
+        if (mFalloutPipBoyCategory == category)
+            return;
+        mFalloutPipBoyCategory = category;
         mSortModel->setCategory(category);
         mFilterAll->setStateSelected(false);
         mFilterWeapon->setStateSelected(submenu == 0);

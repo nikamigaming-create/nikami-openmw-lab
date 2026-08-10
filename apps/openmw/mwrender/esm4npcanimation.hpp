@@ -55,7 +55,6 @@ namespace MWRender
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
-        void emitFalloutFirstPersonWeaponPostKfAudit();
         osg::Node* getEquippedWeaponNode() override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
@@ -95,21 +94,18 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
         osg::ref_ptr<osg::MatrixTransform> mFalloutWeaponCameraFrame;
-        osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponDrawFrame;
         bool mFalloutWeaponUsesWorldModelFallback = false;
         osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
         bool mFalloutWeaponShownTelemetryLogged = false;
-        bool mFalloutWeaponPostKfAuditLogged = false;
         bool mFirstPersonView = false;
         std::size_t mFirstPersonAttachedPartCount = 0;
         osg::ref_ptr<osg::Node> mPipBoyArmPart;
-        osg::ref_ptr<osg::Node> mFirstPersonArmorArmsPart;
-        osg::ref_ptr<osg::Node> mFirstPersonLeftHandPart;
         osg::ref_ptr<osg::Node> mFirstPersonRightHandPart;
         osg::ref_ptr<osg::MatrixTransform> mPipBoyPresentationRoot;
+        osg::ref_ptr<osg::MatrixTransform> mPipBoyInteractionHandRoot;
         PipBoyPhysicalControl mPipBoyTabKnob;
         PipBoyPhysicalControl mPipBoyScrollKnob;
         std::array<PipBoyPhysicalControl, 3> mPipBoyButtons;
@@ -118,25 +114,12 @@ namespace MWRender
         float mPipBoyPresentationProgress = 0.f;
         float mPipBoyInteractionProgress = 0.f;
         int mPipBoyArmTargetVariant = 0;
-        int mPipBoyLastPane = -1;
-        int mPipBoyLastSubmenu = -1;
-        int mPipBoyLastListOffset = -1;
-        bool mPipBoyLastWorldMap = false;
-        float mPipBoyLastMapZoom = 1.f;
-        float mPipBoyLastMapPanX = 0.f;
-        float mPipBoyLastMapPanY = 0.f;
-        float mPipBoyLastControlPulse = 0.f;
-        float mPipBoyScrollStartAngle = 1.57079632679f;
-        float mPipBoyScrollTargetAngle = 1.57079632679f;
-        float mPipBoyScrollDisplayAngle = 1.57079632679f;
-        bool mPipBoyRetailInteractionBound = false;
-        bool mPipBoyRetailWaverBound = false;
-        bool mPipBoyRetailBaseIdleBound = false;
-        bool mPipBoyRetailBaseAimBound = false;
         bool mPipBoyControlsInitialized = false;
         bool mPipBoyControlsInitializationAttempted = false;
+        bool mPipBoyRetailInteractionBound = false;
+        bool mPipBoyRetailWaverBound = false;
         bool mPipBoyRetailInteractionPoseHeld = false;
-        bool mPipBoyHeldCompositionAuditLogged = false;
+        bool mPipBoyInteractionPulseActive = false;
         // The game may refresh the first-person weapon after the Pip-Boy
         // renderer has opened. Keep the visual holster state authoritative
         // until the wrist has lowered again.
