@@ -1,5 +1,6 @@
 #include "shadervisitor.hpp"
 
+#include <cstdlib>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -282,7 +283,9 @@ namespace Shader
     // shader defines. Normal maps and normal height maps both get sent to the shader as a normal map, so the latter
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
-        "specularMap", "decalMap", "bumpMap", "glossMap" };
+        "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "poreNormalMap", "daoTintMask",
+        "daoAgeDiffuseMap", "daoAgeNormalMap", "daoEmotionMask0", "daoEmotionMask1", "daoEmotionNormalMap",
+        "daoBrowStubbleMap", "daoBrowStubbleNormalMap", "daoTattooMask" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))
@@ -725,6 +728,17 @@ namespace Shader
         std::string shaderPrefix;
         if (!node.getUserValue("shaderPrefix", shaderPrefix))
             shaderPrefix = mDefaultShaderPrefix;
+
+        const char* daoFaceShader = std::getenv("OPENMW_DAO_FACE_SHADER");
+        if (daoFaceShader != nullptr && *daoFaceShader != '\0' && std::string_view(daoFaceShader) != "0")
+        {
+            std::string surfaceName = node.getName() + " " + writableStateSet->getName();
+            if (const auto* material = dynamic_cast<const osg::Material*>(
+                    writableStateSet->getAttribute(osg::StateAttribute::MATERIAL)))
+                surfaceName += " " + material->getName();
+            if (Misc::StringUtils::lowerCase(surfaceName).find("face") != std::string::npos)
+                shaderPrefix = "bs/dao_face";
+        }
 
         auto program = mShaderManager.getProgram(shaderPrefix, defineMap, mProgramTemplate);
         writableStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
