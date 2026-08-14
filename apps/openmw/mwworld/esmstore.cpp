@@ -371,6 +371,18 @@ namespace
             Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player class FNV_Courier";
         }
 
+        if (falloutPlayerState != nullptr && !falloutPlayerState->mClass.isZeroOrUnset())
+        {
+            const ESM::RefId nativeClassId(falloutPlayerState->mClass);
+            if (classes.searchStatic(nativeClassId) == nullptr)
+            {
+                ESM::Class nativeClassAlias = *classes.find(classId);
+                nativeClassAlias.mId = nativeClassId;
+                classes.insertStatic(nativeClassAlias);
+                Log(Debug::Info) << "FNV/ESM4: inserted native player class save alias " << nativeClassId;
+            }
+        }
+
         if (races.begin() == races.end())
         {
             ESM::Race wastelander;
@@ -386,6 +398,18 @@ namespace
             }
             races.insertStatic(wastelander);
             Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player race FNV_Wastelander";
+        }
+
+        if (falloutPlayerState != nullptr && !falloutPlayerState->mRace.isZeroOrUnset())
+        {
+            const ESM::RefId nativeRaceId(falloutPlayerState->mRace);
+            if (races.searchStatic(nativeRaceId) == nullptr)
+            {
+                ESM::Race nativeRaceAlias = *races.find(raceId);
+                nativeRaceAlias.mId = nativeRaceId;
+                races.insertStatic(nativeRaceAlias);
+                Log(Debug::Info) << "FNV/ESM4: inserted native player race save alias " << nativeRaceId;
+            }
         }
 
         int insertedSkills = 0;

@@ -33,6 +33,36 @@ namespace
         float mValue;
     };
 
+    TEST(NifOsgControllerTest, shouldPreserveBaseEmissionForManagerControlledBlendSentinel)
+    {
+        Nif::NiBlendPoint3Interpolator blend;
+        blend.recType = Nif::RC_NiBlendPoint3Interpolator;
+        blend.mFlags = Nif::NiBlendInterpolator::Flag_ManagerControlled;
+        blend.mValue = osg::Vec3f(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max());
+
+        Nif::NiMaterialColorController source;
+        source.mTargetColor = Nif::NiMaterialColorController::TargetColor::Emissive;
+        source.mInterpolator = Nif::NiInterpolatorPtr(&blend);
+
+        osg::ref_ptr<osg::Material> base = new osg::Material;
+        base->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+
+        osg::ref_ptr<NifOsg::MaterialColorController> controller
+            = new NifOsg::MaterialColorController(&source, base);
+        controller->setSource(std::make_shared<ConstantControllerSource>(0.f));
+
+        osg::ref_ptr<NifOsg::MatrixTransform> node = new NifOsg::MatrixTransform;
+        node->addUpdateCallback(controller);
+        osg::NodeVisitor visitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
+        ASSERT_TRUE(node->getUpdateCallback()->run(node, &visitor));
+
+        const auto* material
+            = dynamic_cast<const osg::Material*>(node->getStateSet()->getAttribute(osg::StateAttribute::MATERIAL));
+        ASSERT_NE(material, nullptr);
+        EXPECT_EQ(material->getEmission(osg::Material::FRONT_AND_BACK), osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+    }
+
     class TestEmbeddedStateSetUpdater final : public SceneUtil::StateSetUpdater
     {
     public:

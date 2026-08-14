@@ -51,6 +51,9 @@ uniform float specStrength;
 uniform bool useTreeAnim;
 uniform float distortionStrength;
 uniform int falloutSlsMode;
+uniform bool falloutHairPaletteMode;
+uniform float falloutHairColorIndex;
+uniform bool falloutVertexAlphaOnly;
 
 #include "lib/core/fragment.h.glsl"
 #include "lib/light/lighting.glsl"
@@ -137,6 +140,8 @@ void main()
 #endif
 
     vec4 diffuseColor = getDiffuseColor();
+    if (falloutVertexAlphaOnly)
+        diffuseColor.rgb = gl_FrontMaterial.diffuse.rgb;
     if (!useTreeAnim)
         gl_FragData[0].a *= diffuseColor.a;
     gl_FragData[0].a = alphaTest(gl_FragData[0].a, alphaRef);
@@ -159,7 +164,8 @@ void main()
         // Bytecode translation of FNV SLS2011.pso.  Unlike OpenMW's generic
         // path this shader has no specular, point ambient, or inverse-distance
         // falloff: base * vertex/material diffuse * (ambient + sun + LUT point).
-        vec3 light = getAmbientColor().xyz * gl_LightModel.ambient.xyz;
+        vec3 ambientColor = falloutVertexAlphaOnly ? gl_FrontMaterial.ambient.xyz : getAmbientColor().xyz;
+        vec3 light = ambientColor * gl_LightModel.ambient.xyz;
         vec3 sunDirection = normalize(lcalcPosition(0));
         light += lcalcDiffuse(0) * clamp(dot(viewNormal, sunDirection), 0.0, 1.0);
 
@@ -225,7 +231,8 @@ void main()
     vec3 diffuseLight, ambientLight, specularLight;
     doLighting(passViewPos, viewNormal, gl_FrontMaterial.shininess, shadowing, diffuseLight, ambientLight, specularLight);
     vec3 diffuse = diffuseColor.xyz * diffuseLight;
-    vec3 ambient = getAmbientColor().xyz * ambientLight;
+    vec3 ambientColor = falloutVertexAlphaOnly ? gl_FrontMaterial.ambient.xyz : getAmbientColor().xyz;
+    vec3 ambient = ambientColor * ambientLight;
     vec3 emission = getEmissionColor().xyz * emissiveMult;
 #if @emissiveMap
     emission *= texture2D(emissiveMap, emissiveMapUV).xyz;

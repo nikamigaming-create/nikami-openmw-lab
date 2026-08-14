@@ -1,6 +1,7 @@
 #include "loadingscreen.hpp"
 
 #include <array>
+#include <cstdlib>
 
 #include <osgViewer/Viewer>
 
@@ -73,8 +74,15 @@ namespace MWGui
             VFS::Path::NormalizedView("textures/interface/loading/"),
             VFS::Path::NormalizedView("splash/"),
         };
-        for (const VFS::Path::NormalizedView splash : splashRoots)
+        const bool falloutFirstSmoke = std::getenv("OPENMW_FNV_FIRST_SMOKE") != nullptr;
+        for (std::size_t index = 0; index < splashRoots.size(); ++index)
         {
+            // The canonical FNV runtime also mounts Morrowind as a compatibility
+            // data source. Its legacy splash/ directory must never be eligible
+            // for a Fallout loading screen.
+            if (falloutFirstSmoke && index != 0)
+                continue;
+            const VFS::Path::NormalizedView splash = splashRoots[index];
             for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
             {
                 if (isSupportedExtension(Misc::getFileExtension(name)))
@@ -82,10 +90,13 @@ namespace MWGui
             }
         }
         if (mSplashScreens.empty())
-            Log(Debug::Warning) << "Warning: no splash screens found!";
+            Log(falloutFirstSmoke ? Debug::Error : Debug::Warning)
+                << (falloutFirstSmoke ? "FNV loading screen has no Fallout loading images"
+                                      : "Warning: no splash screens found!");
         else
-            Log(Debug::Verbose) << "FNV/ESM4 diag: found " << mSplashScreens.size()
-                             << " candidate loading screen image(s)";
+            Log(falloutFirstSmoke ? Debug::Info : Debug::Verbose) << "FNV/ESM4 diag: found " << mSplashScreens.size()
+                                 << " candidate loading screen image(s) roots="
+                                 << (falloutFirstSmoke ? "textures/interface/loading" : "all");
     }
 
     void LoadingScreen::setLabel(const std::string& label, bool important)

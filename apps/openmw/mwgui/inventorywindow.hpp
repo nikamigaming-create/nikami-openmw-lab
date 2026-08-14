@@ -89,6 +89,12 @@ namespace MWGui
         void itemAdded(const MWWorld::ConstPtr& item, int count) override;
         void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
 
+        /// Reflow and validate the Fallout inventory contents after the pause-menu
+        /// controller has assigned its final full-screen rectangle.
+        bool refreshFalloutPaneLayout();
+
+        void onInventoryUpdate(const MWWorld::Ptr& ptr) override;
+
         /// Cycle to previous/next weapon
         void cycle(bool next);
 

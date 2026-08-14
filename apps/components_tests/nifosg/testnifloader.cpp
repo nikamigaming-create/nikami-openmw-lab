@@ -543,6 +543,37 @@ osg::Group {
         EXPECT_FALSE(depth->getWriteMask());
     }
 
+    TEST_F(NifOsgLoaderTest, shouldRouteFalloutBsPpVertexAlphaWithoutRgbModulation)
+    {
+        FalloutMaterialOnlyGeometry fixture("Sign:0");
+        fixture.mData.mColors = { osg::Vec4f(0.f, 0.f, 0.f, 0.25f), osg::Vec4f(0.f, 0.f, 0.f, 0.5f),
+            osg::Vec4f(0.f, 0.f, 0.f, 0.75f) };
+
+        Nif::BSShaderPPLightingProperty shader;
+        shader.recType = Nif::RC_BSShaderPPLightingProperty;
+        shader.mTextureSet = nullptr;
+        shader.mController = nullptr;
+        shader.mShaderFlags1 = Nif::BSSFlag1_VertexAlpha;
+        fixture.mGeometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&shader));
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+
+        ASSERT_NE(result, nullptr);
+        FindNamedNodeStateSetVisitor visitor("Sign:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        const osg::Uniform* uniform = visitor.mStateSet->getUniform("falloutVertexAlphaOnly");
+        ASSERT_NE(uniform, nullptr);
+        bool value = false;
+        ASSERT_TRUE(uniform->get(value));
+        EXPECT_TRUE(value);
+    }
+
     std::string formatOsgNodeForBSShaderProperty(std::string_view shaderPrefix)
     {
         std::ostringstream oss;
