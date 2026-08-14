@@ -12784,10 +12784,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const bool barterOpen = mWindowManager->containsMode(MWGui::GM_Barter);
             const int caps = fnvR2ChetActor.isEmpty() ? 0
                 : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
-                    ESM::RefId(ESM::FormId::fromUint32(0x11031da3)));
+                    ESM::RefId(ESM::FormId::fromUint32(0x1031da3)));
             const int stimpaks = fnvR2ChetActor.isEmpty() ? 0
                 : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
-                    ESM::RefId(ESM::FormId::fromUint32(0x11015169)));
+                    ESM::RefId(ESM::FormId::fromUint32(0x1015169)));
             fnvR2ChetBarterPass = barterOpen && caps > 0 && stimpaks > 0;
             Log(fnvR2ChetBarterPass ? Debug::Info : Debug::Error)
                 << "FNV R2 Chet: authored-barter-open=" << (barterOpen ? 1 : 0) << " caps=" << caps
