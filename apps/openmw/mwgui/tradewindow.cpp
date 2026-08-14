@@ -6,7 +6,6 @@
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_InputManager.h>
 
-#include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/widgets/numericeditbox.hpp>
@@ -22,7 +21,6 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
 
-#include "../mwclass/esm4npc.hpp"
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 
@@ -213,15 +211,6 @@ namespace MWGui
         mCurrentBalance = 0;
         mCurrentMerchantOffer = 0;
         mFlatFalloutTrade = isFlatFalloutMerchant(actor);
-        if (actor.getType() == ESM4::Npc::sRecordId)
-        {
-            const auto* direct = actor.get<ESM4::Npc>();
-            const auto* traits = MWClass::ESM4Npc::getTraitsRecord(actor);
-            Log(Debug::Info) << "FNV barter: merchant=" << actor.toString()
-                             << " directFONV=" << (direct != nullptr && direct->mBase != nullptr && direct->mBase->mIsFONV)
-                             << " traitsFONV=" << (traits != nullptr && traits->mIsFONV)
-                             << " flat=" << mFlatFalloutTrade;
-        }
         mCurrency = mFlatFalloutTrade
             ? findFlatFalloutCurrency(*MWBase::Environment::get().getESMStore())
             : MWWorld::ContainerStore::sGoldId;
@@ -478,10 +467,13 @@ namespace MWGui
             }
         }
 
-        bool offerAccepted = haggle(player, mPtr, mCurrentBalance, mCurrentMerchantOffer);
+        // Fallout merchants use explicit Caps stacks rather than CreatureStats gold pools.
+        // Their compatibility pricing is a flat listed-item exchange, so do not invoke the
+        // Morrowind NPC-stat haggle model for an ESM4 Fallout merchant.
+        bool offerAccepted = mFlatFalloutTrade || haggle(player, mPtr, mCurrentBalance, mCurrentMerchantOffer);
 
         // apply disposition change if merchant is NPC
-        if (mPtr.getClass().isNpc())
+        if (!mFlatFalloutTrade && mPtr.getClass().isNpc())
         {
             int dispositionDelta = offerAccepted ? gmst.find("iBarterSuccessDisposition")->mValue.getInteger()
                                                  : gmst.find("iBarterFailDisposition")->mValue.getInteger();
@@ -712,6 +704,20 @@ namespace MWGui
         // This value has been determined by researching the limitations of the vanilla formula
         // and may not be sufficient if getBarterOffer behavior has been changed.
         const std::vector<ItemStack>& playerBorrowed = playerTradeModel->getItemsBorrowedToUs();
+        if (mFlatFalloutTrade)
+        {
+            for (const ItemStack& itemStack : playerBorrowed)
+                merchantOffer -= getEffectiveValue(itemStack.mBase, itemStack.mCount);
+            const std::vector<ItemStack>& merchantBorrowed = mTradeModel->getItemsBorrowedToUs();
+            for (const ItemStack& itemStack : merchantBorrowed)
+                merchantOffer += getEffectiveValue(itemStack.mBase, itemStack.mCount);
+
+            const int diff = merchantOffer - mCurrentMerchantOffer;
+            mCurrentMerchantOffer = merchantOffer;
+            mCurrentBalance += diff;
+            updateLabels();
+            return;
+        }
         for (const ItemStack& itemStack : playerBorrowed)
         {
             const int basePrice = getEffectiveValue(itemStack.mBase, itemStack.mCount);
