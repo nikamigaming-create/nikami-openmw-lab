@@ -5223,13 +5223,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvR2ChetBarterPass = false;
     static bool fnvR2ChetContainerTransferPass = false;
     static bool fnvR2ChetBarterCancelPass = false;
+    static bool fnvR2ChetTransactionPass = false;
     static ESM::RefId fnvR2ChetTransferredItem;
+    static ESM::RefId fnvR2ChetPurchasedItem;
     static int fnvR2ChetTransferredPlayerBefore = 0;
     static int fnvR2ChetTransferredContainerBefore = 0;
     static int fnvR2ChetPlayerItemsBeforeCancel = 0;
     static int fnvR2ChetMerchantItemsBeforeCancel = 0;
     static int fnvR2ChetPlayerCapsBeforeCancel = 0;
     static int fnvR2ChetMerchantCapsBeforeCancel = 0;
+    static int fnvR2ChetPurchasePrice = 0;
+    static int fnvR2ChetPurchasedPlayerBefore = 0;
+    static int fnvR2ChetPurchasedMerchantBefore = 0;
+    static int fnvR2ChetPurchasedPlayerCapsBefore = 0;
+    static int fnvR2ChetPurchasedMerchantCapsBefore = 0;
     static MWWorld::Ptr fnvR2ChetActor;
     static int fnvInteractionPhase = 0;
     static unsigned int fnvInteractionPhaseFrame = 0;
@@ -12639,7 +12646,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // R2.0 observes Chet's actual merchant state. The opt-in R2.1 route additionally transfers
     // one existing unlocked-container item through ContainerWindow's production ItemTransfer path,
     // then uses TradeWindow's production cancellation path to prove no barter delta.
-    const bool fnvR2ChetPersistentRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENT");
+    const bool fnvR2ChetTransactionRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_TRANSACTION");
+    const bool fnvR2ChetPersistentRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENT")
+        || fnvR2ChetTransactionRequested;
     const bool fnvR2ChetRequested = proofEnvEnabled("OPENMW_FNV_R2_CHET_OBSERVATION")
         || fnvR2ChetPersistentRequested;
     if (fnvR2ChetRequested && fnvR2ChetPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
@@ -12712,6 +12721,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << " barter=" << (fnvR2ChetBarterPass ? 1 : 0)
                 << " containerTransfer=" << (fnvR2ChetContainerTransferPass ? 1 : 0)
                 << " barterCancel=" << (fnvR2ChetBarterCancelPass ? 1 : 0)
+                << " transaction=" << (fnvR2ChetTransactionPass ? 1 : 0)
                 << " cell=" << playerCellId().toDebugString() << " frame=" << frameNumber;
             fnvR2ChetPhase = -1;
             mStateManager->requestQuit();
@@ -12729,6 +12739,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             fnvR2ChetDoorPass = authoredPair && activate(door, "goodsprings-general-store-exterior-door");
             if (!fnvR2ChetDoorPass)
                 finish(false, "authored Goodsprings General Store door activation failed");
+            else if (fnvR2ChetTransactionRequested)
+            {
+                MWGui::TradeWindow* const tradeWindow = mWindowManager->getTradeWindow();
+                if (tradeWindow == nullptr
+                    || !tradeWindow->purchaseFirstAffordableMerchantItem(fnvR2ChetPurchasedItem,
+                        fnvR2ChetPurchasePrice, fnvR2ChetPurchasedPlayerBefore,
+                        fnvR2ChetPurchasedMerchantBefore, fnvR2ChetPurchasedPlayerCapsBefore,
+                        fnvR2ChetPurchasedMerchantCapsBefore))
+                {
+                    finish(false, "no affordable authored Chet merchant item completed a production transaction");
+                }
+                else
+                {
+                    Log(Debug::Info) << "FNV R2 Chet: transaction-offer item=" << fnvR2ChetPurchasedItem
+                                     << " price=" << fnvR2ChetPurchasePrice
+                                     << " playerItemBefore=" << fnvR2ChetPurchasedPlayerBefore
+                                     << " merchantItemBefore=" << fnvR2ChetPurchasedMerchantBefore
+                                     << " playerCapsBefore=" << fnvR2ChetPurchasedPlayerCapsBefore
+                                     << " merchantCapsBefore=" << fnvR2ChetPurchasedMerchantCapsBefore;
+                    advance(7);
+                }
+            }
             else
             {
                 capture("goodsprings-general-store-exterior-door");
@@ -12910,6 +12942,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         : "authored barter did not expose Chet's live inventory");
             else if (!fnvR2ChetBarterPass)
                 finish(false, "authored barter did not expose Chet's live inventory after container transfer");
+            else if (fnvR2ChetTransactionRequested)
+            {
+                MWGui::TradeWindow* const tradeWindow = mWindowManager->getTradeWindow();
+                if (tradeWindow == nullptr
+                    || !tradeWindow->purchaseFirstAffordableMerchantItem(fnvR2ChetPurchasedItem,
+                        fnvR2ChetPurchasePrice, fnvR2ChetPurchasedPlayerBefore,
+                        fnvR2ChetPurchasedMerchantBefore, fnvR2ChetPurchasedPlayerCapsBefore,
+                        fnvR2ChetPurchasedMerchantCapsBefore))
+                {
+                    finish(false, "no affordable authored Chet merchant item completed a production transaction");
+                }
+                else
+                {
+                    Log(Debug::Info) << "FNV R2 Chet: transaction-offer item=" << fnvR2ChetPurchasedItem
+                                     << " price=" << fnvR2ChetPurchasePrice
+                                     << " playerItemBefore=" << fnvR2ChetPurchasedPlayerBefore
+                                     << " merchantItemBefore=" << fnvR2ChetPurchasedMerchantBefore
+                                     << " playerCapsBefore=" << fnvR2ChetPurchasedPlayerCapsBefore
+                                     << " merchantCapsBefore=" << fnvR2ChetPurchasedMerchantCapsBefore;
+                    advance(7);
+                }
+            }
             else
             {
                 MWWorld::InventoryStore& playerInventory
@@ -12956,6 +13010,34 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const bool pass = fnvR2ChetContainerTransferPass && fnvR2ChetBarterPass && fnvR2ChetBarterCancelPass;
             finish(pass, pass ? "ordinary container transfer and no-delta authored barter cancellation complete"
                               : "R2.1 transfer or barter-cancellation assertion failed");
+        }
+        else if (fnvR2ChetTransactionRequested && fnvR2ChetPhase == 7 && elapsed >= 30)
+        {
+            MWWorld::InventoryStore& playerInventory
+                = mWorld->getPlayerPtr().getClass().getInventoryStore(mWorld->getPlayerPtr());
+            MWWorld::ContainerStore& merchantInventory
+                = fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor);
+            const ESM::RefId caps = findEsm4EditorId<ESM4::MiscItem>(mWorld->getStore(), "Caps001");
+            const int playerItemAfter = playerInventory.count(fnvR2ChetPurchasedItem);
+            const int merchantItemAfter = merchantInventory.count(fnvR2ChetPurchasedItem);
+            const int playerCapsAfter = playerInventory.count(caps);
+            const int merchantCapsAfter = merchantInventory.count(caps);
+            fnvR2ChetTransactionPass = !fnvR2ChetPurchasedItem.empty()
+                && !mWindowManager->containsMode(MWGui::GM_Barter)
+                && playerItemAfter == fnvR2ChetPurchasedPlayerBefore + 1
+                && merchantItemAfter == fnvR2ChetPurchasedMerchantBefore - 1
+                && playerCapsAfter == fnvR2ChetPurchasedPlayerCapsBefore - fnvR2ChetPurchasePrice
+                && merchantCapsAfter == fnvR2ChetPurchasedMerchantCapsBefore + fnvR2ChetPurchasePrice;
+            Log(fnvR2ChetTransactionPass ? Debug::Info : Debug::Error)
+                << "FNV R2 Chet: transaction-result item=" << fnvR2ChetPurchasedItem
+                << " price=" << fnvR2ChetPurchasePrice << " playerItemAfter=" << playerItemAfter
+                << " merchantItemAfter=" << merchantItemAfter << " playerCapsAfter=" << playerCapsAfter
+                << " merchantCapsAfter=" << merchantCapsAfter
+                << " result=" << (fnvR2ChetTransactionPass ? "pass" : "fail");
+            capture("goodsprings-chet-live-transaction");
+            const bool pass = fnvR2ChetContainerTransferPass && fnvR2ChetBarterPass && fnvR2ChetTransactionPass;
+            finish(pass, pass ? "ordinary container transfer and authored Chet transaction complete"
+                              : "R2.2 container transfer or merchant transaction assertion failed");
         }
     }
 

@@ -534,6 +534,50 @@ namespace MWGui
         onCancelButtonClicked(mCancelButton);
     }
 
+    bool TradeWindow::purchaseFirstAffordableMerchantItem(ESM::RefId& purchasedItem, int& paidCurrency,
+        int& playerItemBefore, int& merchantItemBefore, int& playerCurrencyBefore, int& merchantCurrencyBefore)
+    {
+        purchasedItem = ESM::RefId();
+        paidCurrency = 0;
+        playerItemBefore = 0;
+        merchantItemBefore = 0;
+        playerCurrencyBefore = 0;
+        merchantCurrencyBefore = 0;
+        if (mTradeModel == nullptr || mPtr.isEmpty() || mCurrentBalance != 0)
+            return false;
+
+        const int availableCurrency = getPlayerGold();
+        for (std::size_t index = 0; index < mTradeModel->getItemCount(); ++index)
+        {
+            const ItemStack item = mTradeModel->getItem(index);
+            if (item.mCount <= 0 || item.mBase.isEmpty() || (item.mFlags & ItemStack::Flag_Bound))
+                continue;
+
+            // Borrowing and offering use the exact production calls used by a selected trade row.
+            mItemToSell = static_cast<int>(index);
+            sellItem(nullptr, 1);
+            const int cost = -mCurrentBalance;
+            if (mCurrentBalance < 0 && cost > 0 && cost <= availableCurrency)
+            {
+                purchasedItem = item.mBase.getCellRef().getRefId();
+                paidCurrency = cost;
+                MWWorld::Ptr player = MWMechanics::getPlayer();
+                MWWorld::ContainerStore& playerInventory = player.getClass().getContainerStore(player);
+                MWWorld::ContainerStore& merchantInventory = mPtr.getClass().getContainerStore(mPtr);
+                playerItemBefore = playerInventory.count(purchasedItem);
+                merchantItemBefore = merchantInventory.count(purchasedItem);
+                playerCurrencyBefore = playerInventory.count(mCurrency);
+                merchantCurrencyBefore = merchantInventory.count(mCurrency);
+                onOfferButtonClicked(mOfferButton);
+                return !MWBase::Environment::get().getWindowManager()->containsMode(GM_Barter);
+            }
+
+            // Re-selecting a borrowed stack returns it through the same model and restores its offer.
+            sellItem(nullptr, 1);
+        }
+        return false;
+    }
+
     void TradeWindow::onMaxSaleButtonClicked(MyGUI::Widget* /*sender*/)
     {
         mCurrentBalance = getMerchantGold();

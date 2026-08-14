@@ -44,6 +44,10 @@ namespace MWGui
         /// Uses the production cancellation path, including returning borrowed trade stacks.
         void cancelTrade();
 
+        /// Borrows and commits one affordable live merchant item through the normal trade model.
+        bool purchaseFirstAffordableMerchantItem(ESM::RefId& purchasedItem, int& paidCurrency,
+            int& playerItemBefore, int& merchantItemBefore, int& playerCurrencyBefore, int& merchantCurrencyBefore);
+
         void itemAdded(const MWWorld::ConstPtr& item, int count) override;
         void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
 
