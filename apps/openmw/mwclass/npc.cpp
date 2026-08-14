@@ -55,6 +55,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/fnvmovement.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/fnvplayerstate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/localscripts.hpp"
@@ -94,9 +95,7 @@ namespace
         MWBase::World* const world = MWBase::Environment::tryGetWorld();
         if (world == nullptr || world->getPlayerPtr().isEmpty() || ptr != world->getPlayerPtr())
             return nullptr;
-        const std::optional<MWWorld::FalloutPlayerState>& state
-            = MWBase::Environment::get().getESMStore()->getFalloutPlayerState();
-        return state ? &*state : nullptr;
+        return MWBase::Environment::get().getESMStore()->getFalloutPlayerState();
     }
 
     bool isEven(double d)
@@ -114,7 +113,7 @@ namespace
             return static_cast<int>(i);
         if (d > 0.5)
             return static_cast<int>(i) + 1;
-        if (is_even(i))
+        if (isEven(i))
             return static_cast<int>(i);
         return static_cast<int>(i) + 1;
     }
