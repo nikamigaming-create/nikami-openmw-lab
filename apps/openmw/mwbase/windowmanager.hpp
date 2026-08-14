@@ -61,6 +61,8 @@ namespace MWWorld
 namespace MWGui
 {
     class Layout;
+    struct FnvMenuXmlDocument;
+    struct FnvHackingMenuPresentation;
 
     class Console;
     class SpellWindow;
@@ -291,6 +293,13 @@ namespace MWBase
         virtual void interactiveMessageBox(std::string_view message, const std::vector<std::string>& buttons = {},
             bool block = false, int defaultFocus = -1)
             = 0;
+        virtual void interactiveFnvMenuMessageBox(const MWGui::FnvMenuXmlDocument& menu,
+            std::string_view frameTile, std::string_view messageTile, std::string_view buttonTile,
+            std::string_view message, const std::vector<std::string>& buttons = {}, bool block = false,
+            int defaultFocus = -1, const MWGui::FnvHackingMenuPresentation* hacking = nullptr)
+            = 0;
+        virtual void beginFalloutTerminalSession(const MWWorld::Ptr& target) = 0;
+        virtual void endFalloutTerminalSession() = 0;
 
         /// returns the index of the pressed button or -1 if no button was pressed
         /// (->MessageBoxmanager->InteractiveMessageBox)

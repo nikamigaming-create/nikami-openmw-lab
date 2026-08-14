@@ -143,6 +143,11 @@ namespace MyGUIPlatform
             const std::string& fragmentProgramFile) override;
 
         osg::ref_ptr<osg::Camera> createGUICamera(int order, std::string layerFilter);
+        /// Crop a filtered camera to a widget's live screen-space rectangle
+        /// while retaining the physical framebuffer viewport. This lets an
+        /// in-world display consume a normal MyGUI window without resizing or
+        /// mutating that window's persisted desktop layout.
+        void setGUICameraContentRect(osg::Camera* camera, const MyGUI::IntCoord& rect);
 //## VR_PATCH END
     };
 

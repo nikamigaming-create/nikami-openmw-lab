@@ -94,6 +94,7 @@ namespace SceneUtil
         bool hasResolvedParentSkeleton() const { return mSkeleton != nullptr; }
         bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
         void forceNextUpdate();
+        void requestFalloutHandPoseAudit();
         bool refreshFalloutSkinningForCurrentPose();
 
         void accept(osg::NodeVisitor& nv) override;
@@ -152,6 +153,8 @@ namespace SceneUtil
         bool mLoggedFalloutVertexSkinning{ false };
         bool mLoggedFalloutInfluenceSummary{ false };
         bool mLoggedFalloutSkinningModes{ false };
+        bool mFalloutHandPoseAuditRequested{ false };
+        bool mLoggedFalloutHandPoseAudit{ false };
         bool mLoggedFalloutPoseSanity{ false };
         bool mLoggedFalloutCullInitRecovery{ false };
         bool mFalloutDerivedInvBindComputed{ false };

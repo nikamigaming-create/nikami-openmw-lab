@@ -8,16 +8,19 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 
 #include <osgViewer/Viewer>
 
 #include <MyGUI_ClipboardManager.h>
-#include <MyGUI_Button.h>
+#include <MyGUI_EditBox.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_ImageBox.h>
 #include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_PointerManager.h>
@@ -33,12 +36,13 @@
 #include <SDL_keyboard.h>
 
 #include <components/debug/debuglog.hpp>
-#include <components/debug/fnvseamlesstelemetry.hpp>
 
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/esm3/esmreader.hpp>
@@ -66,6 +70,7 @@
 #include <components/widgets/widgets.hpp>
 
 #include <components/misc/frameratelimiter.hpp>
+#include <components/misc/resourcehelpers.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -125,6 +130,8 @@
 #include "hud.hpp"
 #include "inventorytabsoverlay.hpp"
 #include "inventorywindow.hpp"
+#include "fnvmenuxml.hpp"
+#include "itemmodel.hpp"
 #include "itemchargeview.hpp"
 #include "itemtransfer.hpp"
 #include "itemview.hpp"
@@ -145,6 +152,7 @@
 #include "screenfader.hpp"
 #include "scrollwindow.hpp"
 #include "settingswindow.hpp"
+#include "sortfilteritemmodel.hpp"
 #include "spellbuyingwindow.hpp"
 #include "spellview.hpp"
 #include "spellwindow.hpp"
@@ -244,6 +252,48 @@ namespace MWGui
             return inventory.end();
         }
 
+        bool falloutPipBoyItemMatchesCategory(const MWWorld::Ptr& item, int category)
+        {
+            switch (std::clamp(category, 0, 4))
+            {
+                case 0:
+                    return item.getType() == ESM4::Weapon::sRecordId;
+                case 1:
+                    return item.getType() == ESM4::Armor::sRecordId
+                        || item.getType() == ESM4::Clothing::sRecordId;
+                case 2:
+                    return item.getType() == ESM4::Potion::sRecordId
+                        || item.getType() == ESM4::Ingredient::sRecordId;
+                case 3:
+                    return item.getType() != ESM4::Weapon::sRecordId
+                        && item.getType() != ESM4::Armor::sRecordId
+                        && item.getType() != ESM4::Clothing::sRecordId
+                        && item.getType() != ESM4::Potion::sRecordId
+                        && item.getType() != ESM4::Ingredient::sRecordId
+                        && item.getType() != ESM4::Ammunition::sRecordId;
+                case 4:
+                default:
+                    return item.getType() == ESM4::Ammunition::sRecordId;
+            }
+        }
+
+        std::vector<MWWorld::Ptr> getFalloutPipBoyInventoryRows(
+            MWWorld::InventoryStore& inventory, int category)
+        {
+            std::vector<MWWorld::Ptr> rows;
+            for (MWWorld::ContainerStoreIterator it = inventory.begin(); it != inventory.end(); ++it)
+            {
+                if (it->getCellRef().getCount() > 0 && it->getClass().showsInInventory(*it)
+                    && falloutPipBoyItemMatchesCategory(*it, category))
+                    rows.push_back(*it);
+            }
+            std::stable_sort(rows.begin(), rows.end(), [](const MWWorld::Ptr& left, const MWWorld::Ptr& right) {
+                return Misc::StringUtils::ciLess(
+                    left.getClass().getName(left), right.getClass().getName(right));
+            });
+            return rows;
+        }
+
         std::string executeFalloutPipBoySelection(int pane, int submenu, int selectedRow)
         {
             MWBase::World* const world = MWBase::Environment::get().getWorld();
@@ -256,6 +306,42 @@ namespace MWGui
 
             MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
             const MWWorld::ESMStore& store = world->getStore();
+            const auto selectionState = [&]() {
+                std::ostringstream state;
+                const MWWorld::ConstContainerStoreIterator right
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                const MWWorld::ConstContainerStoreIterator ammunition
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+                const MWWorld::ConstContainerStoreIterator helmet
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_Helmet);
+                const MWWorld::ConstContainerStoreIterator body
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_Robe);
+                const ESM::RefId weaponId
+                    = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                state << "right="
+                      << (weaponId.empty() ? std::string("none") : weaponId.toDebugString())
+                      << ",ammo="
+                      << (ammunition == inventory.end() ? std::string("none")
+                                                        : ammunition->getCellRef().getRefId().toDebugString())
+                      << ",helmet="
+                      << (helmet == inventory.end() ? std::string("none")
+                                                    : helmet->getCellRef().getRefId().toDebugString())
+                      << ",body="
+                      << (body == inventory.end() ? std::string("none")
+                                                  : body->getCellRef().getRefId().toDebugString())
+                      << ",loaded=" << inventory.getFalloutLoadedAmmo(weaponId).value_or(0)
+                      << ",stimpak="
+                      << inventory.count(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"))
+                      << ",health=" << player.getClass().getCreatureStats(player).getHealth().getCurrent();
+                return state.str();
+            };
+            const std::string beforeState = selectionState();
+            const auto completeSelection = [&](std::string result) {
+                Log(Debug::Info) << "FNV Pip-Boy selection: pane=" << pane << " submenu=" << submenu
+                                 << " row=" << selectedRow << " result=\"" << result << "\" before={"
+                                 << beforeState << "} after={" << selectionState() << "}";
+                return result;
+            };
             const auto equip = [&](const ESM::RefId& id, int slot, std::string_view label) {
                 MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
                 if (item == inventory.end())
@@ -268,6 +354,33 @@ namespace MWGui
                 MWWorld::ContainerStoreIterator item = findFalloutInventoryItem(inventory, id);
                 if (item == inventory.end())
                     return std::string("MISSING ") + std::string(label);
+
+                if (item->getType() == ESM4::Potion::sRecordId)
+                {
+                    const ESM4::Potion& potion = *item->get<ESM4::Potion>()->mBase;
+                    // FNV's Stimpak is an ALCH record whose retail effect is
+                    // restorative. This production boundary consumes the real
+                    // loaded inventory record and synchronizes both live health
+                    // representations; broader ALCH effect execution remains
+                    // outside the Pip-Boy item-selection slice.
+                    if (potion.mEditorId != "Stimpak")
+                        return std::string("CANNOT APPLY ") + std::string(label);
+
+                    MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+                    MWMechanics::DynamicStat<float> health = stats.getHealth();
+                    const float applied = std::min(25.f, health.getModified() - health.getCurrent());
+                    if (applied <= 0.f)
+                        return std::string("HEALTH FULL ") + std::string(label);
+                    health.setCurrent(health.getCurrent() + applied);
+                    stats.setHealth(health);
+                    world->getFalloutPlayerRuntimeState().modCurrentActorValue(
+                        MWWorld::FalloutPlayerRuntimeState::HealthActorValue, applied);
+                    if (inventory.remove(*item, 1) != 1)
+                        return std::string("FAILED TO CONSUME ") + std::string(label);
+                    MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                    return std::string("USED ") + std::string(label);
+                }
+
                 std::unique_ptr<MWWorld::Action> action = (*item).getClass().use(*item, false);
                 if (action == nullptr)
                     return std::string("CANNOT USE ") + std::string(label);
@@ -275,43 +388,134 @@ namespace MWGui
                 MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
                 return std::string("USED ") + std::string(label);
             };
+            const auto toggleWearable = [&](const MWWorld::Ptr& item, std::string_view label) {
+                const std::vector<int>& slots = item.getClass().getEquipmentSlots(item).first;
+                if (slots.empty())
+                    return std::string("CANNOT EQUIP ") + std::string(label);
+
+                bool equipped = false;
+                for (const int slot : slots)
+                {
+                    const MWWorld::ContainerStoreIterator current = inventory.getSlot(slot);
+                    if (current != inventory.end()
+                        && current->getCellRef().getRefId() == item.getCellRef().getRefId())
+                    {
+                        equipped = true;
+                        inventory.unequipSlot(slot);
+                    }
+                }
+                if (equipped)
+                {
+                    MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                    return std::string("UNEQUIPPED ") + std::string(label);
+                }
+
+                std::unique_ptr<MWWorld::Action> action = item.getClass().use(item, false);
+                if (action == nullptr)
+                    return std::string("CANNOT EQUIP ") + std::string(label);
+                action->execute(player);
+                MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                for (const int slot : slots)
+                {
+                    const MWWorld::ContainerStoreIterator current = inventory.getSlot(slot);
+                    if (current != inventory.end()
+                        && current->getCellRef().getRefId() == item.getCellRef().getRefId())
+                        return std::string("EQUIPPED ") + std::string(label);
+                }
+                return std::string("FAILED TO EQUIP ") + std::string(label);
+            };
 
             if (pane == 1)
             {
+                std::vector<MWWorld::Ptr> rows = getFalloutPipBoyInventoryRows(inventory, submenu);
+                if (rows.empty())
+                    return completeSelection("EMPTY CATEGORY");
+                const int rowIndex = std::clamp(selectedRow, 0, static_cast<int>(rows.size()) - 1);
+                const MWWorld::Ptr selected = rows[static_cast<std::size_t>(rowIndex)];
+                const std::string selectedName(selected.getClass().getName(selected));
                 switch (submenu)
                 {
                     case 0:
                     {
-                        const ESM::RefId id = findFalloutEditorId<ESM4::Weapon>(
-                            store, selectedRow == 0 ? "WeapNV9mmPistol" : "WeapNVVarmintRifle");
-                        const std::string label = selectedRow == 0 ? "9MM PISTOL" : "VARMINT RIFLE";
-                        const std::string result = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, label);
+                        const ESM::RefId id = selected.getCellRef().getRefId();
+                        const std::string result
+                            = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, selectedName);
                         if (result.starts_with("EQUIPPED"))
+                        {
                             player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
-                        return result;
+                            const ESM4::Weapon& weapon = *selected.get<ESM4::Weapon>()->mBase;
+                            std::vector<ESM::FormId> ammoCandidates;
+                            if (store.get<ESM4::Ammunition>().search(weapon.mAmmo) != nullptr)
+                                ammoCandidates.push_back(weapon.mAmmo);
+                            else if (const ESM4::FormIdList* list
+                                = store.get<ESM4::FormIdList>().search(weapon.mAmmo))
+                                ammoCandidates = list->mObjects;
+
+                            const auto isOwnedAmmo = [&](ESM::FormId candidate) {
+                                return !candidate.isZeroOrUnset()
+                                    && store.get<ESM4::Ammunition>().search(candidate) != nullptr
+                                    && inventory.count(ESM::RefId::formIdRefId(candidate)) > 0;
+                            };
+                            const auto ownedAmmo = std::ranges::find_if(ammoCandidates, isOwnedAmmo);
+                            if (ownedAmmo != ammoCandidates.end())
+                            {
+                                const ESM::RefId ammunitionId = ESM::RefId::formIdRefId(*ownedAmmo);
+                                equip(ammunitionId, MWWorld::InventoryStore::Slot_Ammunition, "AMMUNITION");
+                                inventory.setFalloutAmmoSelection(id, ammunitionId);
+                            }
+                            else if (!ammoCandidates.empty())
+                                Log(Debug::Error) << "FNV Pip-Boy weapon equip: status=fail reason=no-owned-compatible-ammo"
+                                                  << " weapon=" << id << " authoredCandidates="
+                                                  << ammoCandidates.size();
+                            if (!inventory.getFalloutLoadedAmmo(id).has_value())
+                                inventory.setFalloutLoadedAmmo(id, 0);
+                        }
+                        return completeSelection(result);
                     }
                     case 1:
-                    {
-                        const ESM::RefId id = findFalloutEditorId<ESM4::Armor>(
-                            store, selectedRow == 0 ? "VaultSuit21" : "CowboyHat02");
-                        return use(id, selectedRow == 0 ? "VAULT 21 JUMPSUIT" : "COWBOY HAT");
-                    }
+                        return completeSelection(toggleWearable(selected, selectedName));
                     case 2:
-                        return use(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"), "STIMPAK");
+                        return completeSelection(use(selected.getCellRef().getRefId(), selectedName));
                     case 3:
-                        return selectedRow == 0 ? "SELECTED CAPS" : "SELECTED LOCKPICK";
+                        return completeSelection("SELECTED " + selectedName);
                     case 4:
                     default:
-                        return equip(findFalloutEditorId<ESM4::Ammunition>(
-                                         store, selectedRow == 0 ? "Ammo9mm" : "Ammo556mm"),
-                            MWWorld::InventoryStore::Slot_Ammunition,
-                            selectedRow == 0 ? "9MM ROUND" : "5.56 ROUND");
+                    {
+                        const MWWorld::ContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        if (right == inventory.end() || right->getType() != ESM4::Weapon::sRecordId)
+                            return completeSelection("NO EQUIPPED WEAPON FOR " + selectedName);
+
+                        const ESM4::Weapon& weapon = *right->get<ESM4::Weapon>()->mBase;
+                        const ESM::RefId weaponId = right->getCellRef().getRefId();
+                        const ESM::RefId ammunitionId = selected.getCellRef().getRefId();
+                        const ESM::FormId ammunitionForm = selected.get<ESM4::Ammunition>()->mBase->mId;
+                        bool compatible = weapon.mAmmo == ammunitionForm;
+                        if (!compatible)
+                        {
+                            if (const ESM4::FormIdList* list
+                                = store.get<ESM4::FormIdList>().search(weapon.mAmmo))
+                                compatible = std::ranges::find(list->mObjects, ammunitionForm)
+                                    != list->mObjects.end();
+                        }
+                        if (!compatible)
+                            return completeSelection("INCOMPATIBLE " + selectedName + " FOR "
+                                + std::string(right->getClass().getName(*right)));
+
+                        const std::string equipped = equip(
+                            ammunitionId, MWWorld::InventoryStore::Slot_Ammunition, selectedName);
+                        if (!equipped.starts_with("EQUIPPED"))
+                            return completeSelection(equipped);
+                        inventory.setFalloutAmmoSelection(weaponId, ammunitionId);
+                        return completeSelection("SELECTED " + selectedName + " FOR "
+                            + std::string(right->getClass().getName(*right)));
+                    }
                 }
             }
 
             if (pane == 2)
-                return "SELECTED DATA ENTRY";
-            return "SELECTED";
+                return completeSelection("SELECTED DATA ENTRY");
+            return completeSelection("SELECTED");
         }
 
         int getFalloutPipBoySubmenuCount(int pane)
@@ -328,180 +532,6 @@ namespace MWGui
                 default:
                     return 7; // CND / RAD / EFF / SPECIAL / SKILLS / PERKS / GENERAL
             }
-        }
-
-        std::string makeFalloutPipBoyTabRow(std::initializer_list<std::string_view> labels, int active)
-        {
-            std::ostringstream text;
-            int index = 0;
-            for (const std::string_view label : labels)
-            {
-                text << (index == active ? "[" : " ") << label << (index == active ? "]" : " ");
-                if (++index < static_cast<int>(labels.size()))
-                    text << ' ';
-            }
-            return text.str();
-        }
-
-        std::string makeFalloutPipBoyTerminalBody(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
-            float mapPanX, float mapPanY, std::string_view lastAction)
-        {
-            float healthCurrent = 0.f;
-            float healthMaximum = 0.f;
-            float actionCurrent = 0.f;
-            float actionMaximum = 0.f;
-            int pistolCount = 0;
-            int rifleCount = 0;
-            int ammo9mmCount = 0;
-            int ammo556Count = 0;
-            int stimpakCount = 0;
-            int capsCount = 0;
-            int lockpickCount = 0;
-            int vaultSuitCount = 0;
-            int cowboyHatCount = 0;
-
-            if (MWBase::World* const world = MWBase::Environment::get().getWorld())
-            {
-                const MWWorld::Ptr player = world->getPlayerPtr();
-                if (!player.isEmpty())
-                {
-                    const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
-                    healthCurrent = stats.getHealth().getCurrent();
-                    healthMaximum = stats.getHealth().getModified();
-                    actionCurrent = stats.getFatigue().getCurrent();
-                    actionMaximum = stats.getFatigue().getModified();
-
-                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
-                    const MWWorld::ESMStore& store = world->getStore();
-                    pistolCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNV9mmPistol"));
-                    rifleCount = inventory.count(findFalloutEditorId<ESM4::Weapon>(store, "WeapNVVarmintRifle"));
-                    ammo9mmCount = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo9mm"));
-                    ammo556Count = inventory.count(findFalloutEditorId<ESM4::Ammunition>(store, "Ammo556mm"));
-                    stimpakCount = inventory.count(findFalloutEditorId<ESM4::Potion>(store, "Stimpak"));
-                    capsCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Caps001"));
-                    lockpickCount = inventory.count(findFalloutEditorId<ESM4::MiscItem>(store, "Lockpick"));
-                    vaultSuitCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "VaultSuit21"));
-                    cowboyHatCount = inventory.count(findFalloutEditorId<ESM4::Armor>(store, "CowboyHat02"));
-                }
-            }
-
-            const auto asDisplayNumber = [](float value) { return static_cast<int>(std::lround(value)); };
-            std::ostringstream text;
-            pane = std::clamp(pane, 0, 3);
-            submenu = std::clamp(submenu, 0, getFalloutPipBoySubmenuCount(pane) - 1);
-            const int selectedRow = std::max(0, listOffset);
-            const auto writeEntry = [&text, selectedRow](int row, std::string_view label, int quantity) {
-                text << (row == selectedRow ? "> " : "  ") << label;
-                if (quantity >= 0)
-                    text << "  " << quantity;
-                text << '\n';
-            };
-
-            switch (pane)
-            {
-                case 0:
-                    text << (worldMap ? "MOJAVE WASTELAND" : "TESTMAP01 LOCAL MAP") << "\n"
-                         << "ZOOM "
-                         << static_cast<int>(std::lround(mapZoom * 100.f)) << "%\n"
-                         << "PAN " << static_cast<int>(std::lround(mapPanX * 100.f)) << ','
-                         << static_cast<int>(std::lround(mapPanY * 100.f)) << "  [YOU]"
-                         // The physical Fallout layout keeps the DATA sub-tabs
-                         // below the map rather than consuming the map viewport.
-                         << '\f' << makeFalloutPipBoyTabRow({ "LOCAL", "WORLD" }, worldMap ? 1 : 0);
-                    break;
-                case 1:
-                    text << makeFalloutPipBoyTabRow({ "WEAP", "APP", "AID", "MISC", "AMMO" }, submenu) << "\n\n";
-                    switch (submenu)
-                    {
-                        case 0:
-                            text << "WEAPONS\n";
-                            writeEntry(0, "9MM PISTOL", pistolCount);
-                            writeEntry(1, "VARMINT RIFLE", rifleCount);
-                            text << "E: EQUIP / UNEQUIP";
-                            break;
-                        case 1:
-                            text << "APPAREL\n";
-                            writeEntry(0, "VAULT 21 JUMPSUIT", vaultSuitCount);
-                            writeEntry(1, "COWBOY HAT", cowboyHatCount);
-                            break;
-                        case 2:
-                            text << "AID\n";
-                            writeEntry(0, "STIMPAK", stimpakCount);
-                            text << "E: USE";
-                            break;
-                        case 3:
-                            text << "MISC\n";
-                            writeEntry(0, "CAPS", capsCount);
-                            writeEntry(1, "LOCKPICK", lockpickCount);
-                            break;
-                        case 4:
-                        default:
-                            text << "AMMO\n";
-                            writeEntry(0, "9MM ROUND", ammo9mmCount);
-                            writeEntry(1, "5.56 ROUND", ammo556Count);
-                            break;
-                    }
-                    break;
-                case 2:
-                    text << makeFalloutPipBoyTabRow({ "QUESTS", "NOTES", "RADIO" }, submenu) << "\n\n";
-                    switch (submenu)
-                    {
-                        case 0:
-                            text << "QUESTS\n";
-                            writeEntry(0, "AIN'T THAT A KICK", -1);
-                            writeEntry(1, "TESTMAP01 CHECK", -1);
-                            text << "W/S SCROLL  E SELECT";
-                            break;
-                        case 1:
-                            text << "NOTES\n";
-                            writeEntry(0, "PIP-BOY ONLINE", -1);
-                            writeEntry(1, "FALLOUTNV.ESM ONLINE", -1);
-                            break;
-                        case 2:
-                        default:
-                            text << "RADIO\n";
-                            writeEntry(0, "NO SIGNAL", -1);
-                            break;
-                    }
-                    break;
-                case 3:
-                default:
-                    text << makeFalloutPipBoyTabRow({ "CND", "RAD", "EFF", "SPECIAL", "SKILLS", "PERKS", "GENERAL" }, submenu)
-                         << "\n";
-                    switch (submenu)
-                    {
-                        case 0:
-                            text << "LIMBS  RAD  EFF\n"
-                                 << "HP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
-                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum)
-                                 << "  RAD 000";
-                            break;
-                        case 1:
-                            text << "RADIATION\n\nRADS 000\nRESISTANCE 0%";
-                            break;
-                        case 2:
-                            text << "EFFECTS\n\nNO ACTIVE EFFECTS";
-                            break;
-                        case 3:
-                            text << "S.P.E.C.I.A.L.\n\nOPENMW FALLOUT PLAYER";
-                            break;
-                        case 4:
-                            text << "SKILLS\n\nSELECT A SKILL";
-                            break;
-                        case 5:
-                            text << "PERKS\n\nNO PERK DATA";
-                            break;
-                        case 6:
-                        default:
-                            text << "GENERAL\n\nHP " << asDisplayNumber(healthCurrent) << "/" << asDisplayNumber(healthMaximum)
-                                 << "  AP " << asDisplayNumber(actionCurrent) << "/" << asDisplayNumber(actionMaximum);
-                            break;
-                    }
-                    break;
-            }
-            if ((pane == 1 || pane == 2) && !lastAction.empty())
-                text << "\n" << lastAction;
-            return text.str();
         }
 
         std::string makeFalloutPipBoyTerminalHeader(int pane)
@@ -532,48 +562,6 @@ namespace MWGui
 
             guiWindow->setCoord(coord);
             window->onWindowResize(guiWindow);
-        }
-
-        void tintPipBoyTerminalText(MyGUI::Widget* widget)
-        {
-            if (widget == nullptr)
-                return;
-
-            // Keep the content widgets live; this only changes their terminal
-            // presentation.  Inventory state, drag/drop, map markers, and
-            // quest data still come from their existing windows.
-            const MyGUI::Colour terminalGreen(0.42f, 0.96f, 0.49f, 1.f);
-            if (MyGUI::TextBox* text = widget->castType<MyGUI::TextBox>(false))
-                text->setTextColour(terminalGreen);
-            if (MyGUI::Button* button = widget->castType<MyGUI::Button>(false))
-                button->setTextColour(terminalGreen);
-
-            for (size_t index = 0; index < widget->getChildCount(); ++index)
-                tintPipBoyTerminalText(widget->getChildAt(index));
-        }
-
-        void setPipBoyChrome(WindowBase* window, bool visible)
-        {
-            if (window == nullptr)
-                return;
-
-            for (const std::string_view name : { "PipBoyBackdrop", "PipBoyHeader", "PipBoyFooter" })
-                window->getWidget(name)->setVisible(visible);
-
-            // The pinned Morrowind window skin is retained for the OpenMW
-            // analogue, but its caption, pin, borders, and drag affordance
-            // must never leak through the dedicated Pip-Boy surface.
-            if (Window* guiWindow = window->mMainWidget->castType<Window>(false))
-            {
-                for (const std::string_view name : { "Action", "Caption", "Button" })
-                {
-                    for (MyGUI::Widget* skinWidget : guiWindow->getSkinWidgetsByName(std::string(name)))
-                        skinWidget->setVisible(!visible);
-                }
-            }
-
-            if (visible)
-                tintPipBoyTerminalText(window->mMainWidget);
         }
     }
 
@@ -654,11 +642,13 @@ namespace MWGui
             mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
 //## VR_PATCH END
 
-        // Missing authored UI resources are an integration error.  Do not
-        // synthesize replacement pixels: doing so hides bad VFS/layout wiring
-        // and makes the rendered result impossible to compare with the game
-        // data that is actually installed.
-        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(false);
+        const VFS::Manager* vfs = resourceSystem->getVFS();
+        const bool useFnvMissingGuiFallback = !VR::getVR()
+            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
+        if (useFnvMissingGuiFallback)
+            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -825,7 +815,6 @@ namespace MWGui
         trackWindow(mSpellWindow, makeSpellsWindowSettingValues());
 
         mGuiModeStates[GM_Inventory] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
-        mGuiModeStates[GM_FalloutPipBoy] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
         mGuiModeStates[GM_None] = GuiModeState({ mMap, mInventoryWindow, mSpellWindow, mStatsWindow });
 
         auto tradeWindow = std::make_unique<TradeWindow>();
@@ -1031,33 +1020,14 @@ namespace MWGui
         mWindows.push_back(std::move(inventoryTabsOverlay));
 
         mControllerTooltipEnabled = Settings::gui().mControllerTooltips;
-        mActiveControllerWindows[GM_Inventory] = 1; // OpenMW inventory page
-        mActiveControllerWindows[GM_FalloutPipBoy] = 1; // Fallout ITEMS page
+        mActiveControllerWindows[GM_Inventory] = 1; // Start on Inventory page
 
         mInputBlocker = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
             {}, 0, 0, w, h, MyGUI::Align::Stretch, "InputBlocker");
 
-        // The physical Pip-Boy gets its own transparent screen layer.  It is
-        // rendered to the authentic PipBoyArm screen texture, not to the flat
-        // desktop UI, so every glyph follows the device as it moves in 3D.
-        mFalloutPipBoyTerminalRoot = MyGUI::Gui::getInstance().createWidget<MyGUI::Widget>(
-            {}, 0, 0, w, h, MyGUI::Align::Stretch, "PipBoyScreen");
-        mFalloutPipBoyTerminalRoot->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalRoot->setNeedKeyFocus(false);
-        mFalloutPipBoyTerminalHeader = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandBrightText", MyGUI::IntCoord(96, 70, w - 192, 84), MyGUI::Align::Stretch);
-        mFalloutPipBoyTerminalHeader->setTextAlign(MyGUI::Align::Center);
-        mFalloutPipBoyTerminalHeader->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalHeader->setFontHeight(48);
-        mFalloutPipBoyTerminalHeader->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalBody = mFalloutPipBoyTerminalRoot->createWidget<MyGUI::TextBox>(
-            "SandText", MyGUI::IntCoord(128, 180, w - 256, h - 270), MyGUI::Align::Stretch);
-        mFalloutPipBoyTerminalBody->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
-        mFalloutPipBoyTerminalBody->setTextColour(MyGUI::Colour::White);
-        mFalloutPipBoyTerminalBody->setFontHeight(42);
-        mFalloutPipBoyTerminalBody->setNeedMouseFocus(false);
-        mFalloutPipBoyTerminalRoot->setVisible(false);
-        Log(Debug::Info) << "FNV Pip-Boy terminal surface: layer=PipBoyScreen source=live-player-data";
+        initializeFalloutPipBoyRetailInventory(w, h);
+        initializeFalloutPipBoyRetailStats(w, h);
+        initializeFalloutPipBoyRetailMap(w, h);
 
         mHud->setVisible(true);
 
@@ -1114,6 +1084,717 @@ namespace MWGui
         mStatsWatcher->forceUpdate();
     }
 
+    void WindowManager::initializeFalloutPipBoyRetailInventory(int width, int height)
+    {
+        FnvMenuXmlParseError parseError = FnvMenuXmlParseError::None;
+        const std::optional<FnvMenuXmlDocument> menu = loadFnvMenuXml(
+            *mResourceSystem->getVFS(), "menus/main/inventory_menu.xml", &parseError, true);
+        if (!menu)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail XML: status=fail path=menus/main/inventory_menu.xml error="
+                              << getFnvMenuXmlParseErrorName(parseError);
+            return;
+        }
+
+        constexpr float authoredWidth = 960.f;
+        constexpr float authoredHeight = 720.f;
+        const float scale = std::min(static_cast<float>(width) / authoredWidth,
+            static_cast<float>(height) / authoredHeight);
+        const int canvasWidth = std::max(1, static_cast<int>(std::lround(authoredWidth * scale)));
+        const int canvasHeight = std::max(1, static_cast<int>(std::lround(authoredHeight * scale)));
+        const int canvasX = (width - canvasWidth) / 2;
+        const int canvasY = (height - canvasHeight) / 2;
+        mFalloutPipBoyRetailCanvas = MyGUI::IntCoord(canvasX, canvasY, canvasWidth, canvasHeight);
+
+        const FnvMenuLayoutEvaluationContext layoutContext{
+            authoredWidth,
+            authoredHeight,
+            [](std::string_view symbol) -> std::optional<float> {
+                if (symbol == "true" || symbol == "highdef" || symbol == "scale" || symbol == "pipboy")
+                    return 1.f;
+                if (symbol == "false" || symbol == "xbox")
+                    return 0.f;
+                return std::nullopt;
+            },
+            [](std::string_view node, std::string_view trait) -> std::optional<float> {
+                if (node == "globals()" && trait == "_pipboy_width")
+                    return 960.f;
+                if (node == "globals()" && trait == "_pipboy_height")
+                    return 720.f;
+                return std::nullopt;
+            },
+        };
+        const auto required = [&](std::string_view node, std::string_view trait) -> std::optional<float> {
+            const std::optional<float> value
+                = evaluateFnvMenuNamedScalarTrait(menu->mRoot, node, trait, layoutContext);
+            if (!value)
+                Log(Debug::Error) << "FNV Pip-Boy retail XML: unresolved node=" << node << " trait=" << trait;
+            return value;
+        };
+
+        const std::optional<float> mainX = required("IM_MainRect", "x");
+        const std::optional<float> mainY = required("IM_MainRect", "y");
+        const std::optional<float> listX = required("IM_InventoryList", "x");
+        const std::optional<float> listY = required("IM_InventoryList", "y");
+        const std::optional<float> listWidth = required("IM_InventoryList", "width");
+        const std::optional<float> listHeight = required("IM_InventoryList", "height");
+        const std::optional<float> tabX = required("IM_Tabline", "x");
+        const std::optional<float> tabY = required("IM_Tabline", "y");
+        const std::optional<float> tabWidth = required("IM_Tabline", "width");
+        if (!mainX || !mainY || !listX || !listY || !listWidth || !listHeight || !tabX || !tabY || !tabWidth)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail XML: status=fail reason=required-authored-geometry";
+            return;
+        }
+
+        mFalloutPipBoyRetailLayout = std::make_unique<Layout>("openmw_fnv_menu.layout");
+        mFalloutPipBoyRetailRoot = mFalloutPipBoyRetailLayout->mMainWidget;
+        mFalloutPipBoyRetailRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
+        MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailRoot);
+        mFalloutPipBoyRetailRoot->setVisible(false);
+        MyGUI::ImageBox* background = nullptr;
+        MyGUI::Widget* textContainer = nullptr;
+        MyGUI::Widget* unusedMessage = nullptr;
+        mFalloutPipBoyRetailLayout->getWidget(background, "background");
+        mFalloutPipBoyRetailLayout->getWidget(unusedMessage, "message");
+        mFalloutPipBoyRetailLayout->getWidget(textContainer, "buttons");
+        unusedMessage->setVisible(false);
+        background->setVisible(false);
+
+        const auto scaled = [scale](float value) { return static_cast<int>(std::lround(value * scale)); };
+        const auto configureText = [&](MyGUI::TextBox* text, const MyGUI::IntCoord& coord, int fontHeight) {
+            text->setCoord(coord);
+            text->setFontName("MonoFont");
+            text->setFontHeight(std::max(1, scaled(static_cast<float>(fontHeight))));
+            text->setTextColour(MyGUI::Colour(0.18f, 1.f, 0.22f));
+            text->setTextAlign(MyGUI::Align::Left | MyGUI::Align::Top);
+            text->setNeedMouseFocus(false);
+            return text;
+        };
+        const auto setWholeImageTexture = [](MyGUI::ImageBox* image, const std::string& texture) {
+            image->setImageTexture(texture);
+            if (MyGUI::ITexture* source = MyGUI::RenderManager::getInstance().getTexture(texture))
+            {
+                const MyGUI::IntSize sourceSize(source->getWidth(), source->getHeight());
+                // ImageBox retains a one-pixel default source rectangle until
+                // an explicit image coordinate is supplied. Retail menu image
+                // tiles describe their destination size in XML and expect the
+                // complete DDS to be scaled into it.
+                image->setImageTile(sourceSize);
+                image->setImageCoord(MyGUI::IntCoord(0, 0, sourceSize.width, sourceSize.height));
+            }
+        };
+        std::unordered_map<std::string, MyGUI::Widget*> authoredWidgets;
+        struct AtlasEntry
+        {
+            std::string mTexture;
+            MyGUI::IntCoord mCoord;
+        };
+        std::unordered_map<std::string, AtlasEntry> sharedAtlas;
+        if (const Files::IStreamPtr stream = mResourceSystem->getVFS()->find(
+                VFS::Path::Normalized("textures/interface/interfaceshared.tai")))
+        {
+            const std::string source{ std::istreambuf_iterator<char>(*stream), std::istreambuf_iterator<char>() };
+            std::istringstream lines(source);
+            std::string line;
+            while (std::getline(lines, line))
+            {
+                if (line.empty() || line[0] == '#')
+                    continue;
+                std::replace(line.begin(), line.end(), ',', ' ');
+                std::istringstream fields(line);
+                std::string name;
+                std::string atlas;
+                int index = 0;
+                std::string type;
+                float x = 0.f;
+                float y = 0.f;
+                float z = 0.f;
+                float w = 0.f;
+                float h = 0.f;
+                if (!(fields >> name >> atlas >> index >> type >> x >> y >> z >> w >> h) || type != "2D")
+                    continue;
+                Misc::StringUtils::lowerCaseInPlace(name);
+                const std::string texture = normalizeFnvMenuTexturePath("interface/" + atlas);
+                sharedAtlas.emplace(name, AtlasEntry{ texture,
+                    MyGUI::IntCoord(static_cast<int>(std::lround(x * 1024.f)),
+                        static_cast<int>(std::lround(y * 1024.f)),
+                        std::max(1, static_cast<int>(std::lround(w * 1024.f))),
+                        std::max(1, static_cast<int>(std::lround(h * 1024.f)))) });
+            }
+        }
+        std::size_t renderedTiles = 0;
+        std::size_t unresolvedImages = 0;
+        const auto renderTiles = [&](const auto& self, const FnvMenuXmlNode& node, MyGUI::Widget* parent) -> void {
+            if (node.mType == "template")
+                return; // Retail instantiates templates from live list/tab data below.
+
+            const bool isTile = node.mType == "rect" || node.mType == "hotrect" || node.mType == "image"
+                || node.mType == "text";
+            MyGUI::Widget* widget = parent;
+            if (isTile)
+            {
+                const auto trait = [&](std::string_view name, float fallback) {
+                    if (std::none_of(node.mChildren.begin(), node.mChildren.end(),
+                            [name](const FnvMenuXmlNode& child) { return child.mType == name; }))
+                        return fallback;
+                    return evaluateFnvMenuNodeScalarTrait(menu->mRoot, node, name, layoutContext).value_or(fallback);
+                };
+                const int x = scaled(trait("x", 0.f));
+                const int y = scaled(trait("y", 0.f));
+                const bool structural = node.mType == "rect" || node.mType == "hotrect";
+                const float fallbackWidth = structural
+                    ? static_cast<float>(std::max(1, parent->getWidth())) / scale
+                    : (node.mType == "text" ? 400.f : 1.f);
+                const float fallbackHeight = structural
+                    ? static_cast<float>(std::max(1, parent->getHeight())) / scale
+                    : (node.mType == "text" ? 55.f : 1.f);
+                const int tileWidth = std::max(1, scaled(trait("width", fallbackWidth)));
+                const int tileHeight = std::max(1, scaled(trait("height", fallbackHeight)));
+                const MyGUI::IntCoord coord(x, y, tileWidth, tileHeight);
+
+                if (node.mType == "image")
+                {
+                    MyGUI::ImageBox* image = parent->createWidget<MyGUI::ImageBox>(
+                        MyGUI::WidgetStyle::Child, "ImageBox", coord, MyGUI::Align::Default);
+                    widget = image;
+                    const FnvMenuXmlNode* filenameNode = node.findChild("filename");
+                    if (filenameNode != nullptr && !filenameNode->mText.empty())
+                    {
+                        const std::string texture = normalizeFnvMenuTexturePath(filenameNode->mText);
+                        if (mResourceSystem->getVFS()->exists(texture))
+                            setWholeImageTexture(image, texture);
+                        else if (node.findChild("texatlas") != nullptr)
+                        {
+                            std::string atlasName(filenameNode->mText);
+                            atlasName.erase(0, atlasName.find_first_not_of(" \t\r\n"));
+                            atlasName.erase(atlasName.find_last_not_of(" \t\r\n") + 1);
+                            Misc::StringUtils::lowerCaseInPlace(atlasName);
+                            const auto found = sharedAtlas.find(atlasName);
+                            if (found != sharedAtlas.end()
+                                && mResourceSystem->getVFS()->exists(found->second.mTexture))
+                            {
+                                image->setImageTexture(found->second.mTexture);
+                                image->setImageTile(found->second.mCoord.size());
+                                image->setImageCoord(found->second.mCoord);
+                            }
+                            else
+                            {
+                                ++unresolvedImages;
+                                Log(Debug::Error) << "FNV Pip-Boy retail atlas: status=fail node="
+                                                  << node.getAttribute("name") << " entry=" << atlasName;
+                            }
+                        }
+                        else
+                        {
+                            ++unresolvedImages;
+                            Log(Debug::Error) << "FNV Pip-Boy retail tile: status=fail node="
+                                              << node.getAttribute("name") << " missingTexture=" << texture;
+                        }
+                    }
+                    image->setDepth(100);
+                }
+                else if (node.mType == "text")
+                {
+                    MyGUI::TextBox* text = parent->createWidget<MyGUI::TextBox>(
+                        MyGUI::WidgetStyle::Child, "NormalText", coord, MyGUI::Align::Default);
+                    const int fontId = static_cast<int>(std::lround(trait("font", 2.f)));
+                    // Fallout_default.ini binds IDs 2 and 4 to the archived
+                    // Monofonto fonts; their binary FNT headers declare base
+                    // sizes 31 and 36 respectively. Preserve those authored
+                    // metrics instead of deriving a size from the numeric ID.
+                    const int fontHeight = fontId == 4 ? 36 : (fontId == 2 ? 31 : 31);
+                    widget = configureText(text, coord, fontHeight);
+                    if (const FnvMenuXmlNode* string = node.findChild("string"); string != nullptr)
+                        text->setCaption(string->mText);
+                }
+                else
+                    widget = parent->createWidget<MyGUI::Widget>(
+                        MyGUI::WidgetStyle::Child, std::string{}, coord, MyGUI::Align::Default);
+
+                widget->setNeedMouseFocus(false);
+                widget->setVisible(trait("visible", 1.f) != 0.f);
+                const std::string name(node.getAttribute("name"));
+                if (!name.empty())
+                    authoredWidgets[name] = widget;
+                ++renderedTiles;
+            }
+
+            for (const FnvMenuXmlNode& child : node.mChildren)
+                self(self, child, widget);
+        };
+        renderTiles(renderTiles, menu->mRoot, textContainer);
+
+        const auto requireWidget = [&](std::string_view name) -> MyGUI::Widget* {
+            const auto found = authoredWidgets.find(std::string(name));
+            if (found != authoredWidgets.end())
+                return found->second;
+            Log(Debug::Error) << "FNV Pip-Boy retail tile: status=fail missingNode=" << name;
+            return nullptr;
+        };
+        mFalloutPipBoyRetailTitle = dynamic_cast<MyGUI::TextBox*>(requireWidget("IM_Headline_Title"));
+        MyGUI::Widget* list = requireWidget("IM_InventoryList");
+        mFalloutPipBoyRetailListHighlight = requireWidget("lb_highlight_box");
+        MyGUI::Widget* itemInfo = requireWidget("IM_ItemInfoRect");
+        mFalloutPipBoyRetailItemIcon = dynamic_cast<MyGUI::ImageBox*>(requireWidget("IM_ItemIcon"));
+        MyGUI::Widget* tabline = requireWidget("IM_Tabline");
+        MyGUI::Widget* buttons = requireWidget("IM_ButtonRect");
+        if (mFalloutPipBoyRetailTitle == nullptr || list == nullptr || mFalloutPipBoyRetailListHighlight == nullptr
+            || itemInfo == nullptr
+            || mFalloutPipBoyRetailItemIcon == nullptr || tabline == nullptr || buttons == nullptr)
+            return;
+        mFalloutPipBoyRetailItemIcon->setDepth(0);
+
+        mFalloutPipBoyRetailBody = list->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child,
+            "NormalText", MyGUI::IntCoord(scaled(32.f), 0, scaled(*listWidth - 32.f), scaled(*listHeight)),
+            MyGUI::Align::Default);
+        configureText(mFalloutPipBoyRetailBody, mFalloutPipBoyRetailBody->getCoord(), 31);
+        mFalloutPipBoyRetailBody->setVisible(false);
+
+        const FnvMenuXmlNode* const rowTemplate = menu->mRoot.findDescendantByName("IM_InventoryListTemplateRect");
+        const FnvMenuXmlNode* const rowTextTemplate
+            = rowTemplate != nullptr ? rowTemplate->findDescendantByName("ListItemText") : nullptr;
+        const FnvMenuXmlNode* const rowMarkerTemplate
+            = rowTemplate != nullptr ? rowTemplate->findDescendantByName("IM_Template_ItemMarker") : nullptr;
+        if (rowTemplate == nullptr || rowTextTemplate == nullptr || rowMarkerTemplate == nullptr)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail list template: status=fail"
+                              << " row=" << (rowTemplate != nullptr) << " text=" << (rowTextTemplate != nullptr)
+                              << " marker=" << (rowMarkerTemplate != nullptr);
+            return;
+        }
+
+        const int rowX = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowTemplate, "x", layoutContext).value_or(32.f));
+        const int rowWidth = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowTemplate, "width", layoutContext).value_or(*listWidth - 32.f));
+        const int rowHeight = scaled(56.f);
+        const int rowTextX = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowTextTemplate, "x", layoutContext).value_or(40.f));
+        const int rowTextY = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowTextTemplate, "y", layoutContext).value_or(20.f));
+        const int markerX = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowMarkerTemplate, "x", layoutContext).value_or(15.f));
+        const int markerY = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowMarkerTemplate, "y", layoutContext).value_or(18.f));
+        const int markerWidth = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowMarkerTemplate, "width", layoutContext).value_or(25.f));
+        const int markerHeight = scaled(evaluateFnvMenuNodeScalarTrait(
+            menu->mRoot, *rowMarkerTemplate, "height", layoutContext).value_or(25.f));
+
+        constexpr int visibleRetailRows = 7;
+        mFalloutPipBoyRetailItemRows.reserve(visibleRetailRows);
+        mFalloutPipBoyRetailItemRowLabels.reserve(visibleRetailRows);
+        mFalloutPipBoyRetailItemRowMarkers.reserve(visibleRetailRows);
+        for (int index = 0; index < visibleRetailRows; ++index)
+        {
+            MyGUI::Widget* row = list->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, std::string{},
+                MyGUI::IntCoord(rowX, index * rowHeight, rowWidth, rowHeight), MyGUI::Align::Default);
+            row->setNeedMouseFocus(false);
+            MyGUI::ImageBox* marker = row->createWidget<MyGUI::ImageBox>(MyGUI::WidgetStyle::Child, "ImageBox",
+                MyGUI::IntCoord(markerX, markerY, markerWidth, markerHeight), MyGUI::Align::Default);
+            if (const FnvMenuXmlNode* filename = rowMarkerTemplate->findChild("filename");
+                filename != nullptr && !filename->mText.empty())
+            {
+                std::string atlasName(filename->mText);
+                atlasName.erase(0, atlasName.find_first_not_of(" \t\r\n"));
+                atlasName.erase(atlasName.find_last_not_of(" \t\r\n") + 1);
+                Misc::StringUtils::lowerCaseInPlace(atlasName);
+                const auto found = sharedAtlas.find(atlasName);
+                if (found != sharedAtlas.end())
+                {
+                    marker->setImageTexture(found->second.mTexture);
+                    marker->setImageTile(found->second.mCoord.size());
+                    marker->setImageCoord(found->second.mCoord);
+                }
+            }
+            marker->setNeedMouseFocus(false);
+            MyGUI::TextBox* label = row->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child, "NormalText",
+                MyGUI::IntCoord(rowTextX, rowTextY, std::max(1, rowWidth - rowTextX), rowHeight - rowTextY),
+                MyGUI::Align::Default);
+            configureText(label, label->getCoord(), 31);
+            mFalloutPipBoyRetailItemRows.push_back(row);
+            mFalloutPipBoyRetailItemRowLabels.push_back(label);
+            mFalloutPipBoyRetailItemRowMarkers.push_back(marker);
+        }
+        mFalloutPipBoyRetailListHighlight->setNeedMouseFocus(false);
+        Log(Debug::Info) << "FNV Pip-Boy retail list template: status=ready source=IM_InventoryListTemplate"
+                         << " rows=" << visibleRetailRows << " row=" << rowX << "," << rowWidth << ","
+                         << rowHeight;
+        mFalloutPipBoyRetailItemInfo = itemInfo->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child,
+            "NormalText", MyGUI::IntCoord(0, 0, itemInfo->getWidth(), itemInfo->getHeight()), MyGUI::Align::Default);
+        configureText(mFalloutPipBoyRetailItemInfo, mFalloutPipBoyRetailItemInfo->getCoord(), 31);
+        mFalloutPipBoyRetailItemInfo->setDepth(0);
+        mFalloutPipBoyRetailTabs = tabline->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child,
+            "NormalText", MyGUI::IntCoord(0, 0, scaled(*tabWidth), scaled(60.f)), MyGUI::Align::Default);
+        configureText(mFalloutPipBoyRetailTabs, mFalloutPipBoyRetailTabs->getCoord(), 31);
+        mFalloutPipBoyRetailTabs->setDepth(0);
+        mFalloutPipBoyRetailTabs->setTextAlign(MyGUI::Align::HCenter | MyGUI::Align::Top);
+        mFalloutPipBoyRetailActions = buttons->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child,
+            "NormalText", MyGUI::IntCoord(scaled(-430.f), scaled(350.f), scaled(430.f), scaled(160.f)),
+            MyGUI::Align::Default);
+        configureText(mFalloutPipBoyRetailActions, mFalloutPipBoyRetailActions->getCoord(), 31);
+        mFalloutPipBoyRetailActions->setDepth(0);
+
+        mFalloutPipBoyRetailInventoryReady = true;
+        const auto absoluteCoord = [](const MyGUI::Widget* widget) {
+            if (widget == nullptr)
+                return std::string("missing");
+            const MyGUI::IntCoord coord = widget->getAbsoluteCoord();
+            return std::to_string(coord.left) + ',' + std::to_string(coord.top) + ','
+                + std::to_string(coord.width) + ',' + std::to_string(coord.height);
+        };
+        Log(Debug::Info) << "FNV Pip-Boy retail XML: status=ready path=menus/main/inventory_menu.xml"
+                         << " renderer=recursive-retail-tiles tiles=" << renderedTiles
+                         << " unresolvedImages=" << unresolvedImages << " canvas=" << canvasX << ',' << canvasY << ','
+                         << canvasWidth << ',' << canvasHeight << " main=" << *mainX << ',' << *mainY
+                         << " list=" << *listX << ',' << *listY << ',' << *listWidth << ',' << *listHeight
+                         << " tab=" << *tabX << ',' << *tabY << ',' << *tabWidth
+                         << " source=retail-menu-xml";
+        Log(Debug::Info) << "FNV Pip-Boy retail widget rectangles: root="
+                         << absoluteCoord(mFalloutPipBoyRetailRoot)
+                         << " container=" << absoluteCoord(textContainer)
+                         << " main=" << absoluteCoord(requireWidget("IM_MainRect"))
+                         << " title=" << absoluteCoord(mFalloutPipBoyRetailTitle)
+                         << " list=" << absoluteCoord(list)
+                         << " itemInfo=" << absoluteCoord(itemInfo)
+                         << " tab=" << absoluteCoord(tabline);
+    }
+
+    void WindowManager::initializeFalloutPipBoyRetailStats(int width, int height)
+    {
+        FnvMenuXmlParseError parseError = FnvMenuXmlParseError::None;
+        const std::optional<FnvMenuXmlDocument> menu
+            = loadFnvMenuXml(*mResourceSystem->getVFS(), "menus/main/stats_menu.xml", &parseError, true);
+        if (!menu)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail stats: status=fail path=menus/main/stats_menu.xml error="
+                              << getFnvMenuXmlParseErrorName(parseError);
+            return;
+        }
+
+        constexpr float authoredWidth = 960.f;
+        constexpr float authoredHeight = 720.f;
+        const float scale = std::min(static_cast<float>(width) / authoredWidth,
+            static_cast<float>(height) / authoredHeight);
+        const int canvasWidth = std::max(1, static_cast<int>(std::lround(authoredWidth * scale)));
+        const int canvasHeight = std::max(1, static_cast<int>(std::lround(authoredHeight * scale)));
+        const int canvasX = (width - canvasWidth) / 2;
+        const int canvasY = (height - canvasHeight) / 2;
+        const auto scaled = [scale](float value) { return static_cast<int>(std::lround(value * scale)); };
+
+        const FnvMenuLayoutEvaluationContext context{
+            authoredWidth,
+            authoredHeight,
+            [](std::string_view symbol) -> std::optional<float> {
+                if (symbol == "true" || symbol == "highdef" || symbol == "scale" || symbol == "pipboy"
+                    || symbol == "left")
+                    return 1.f;
+                if (symbol == "false" || symbol == "xbox" || symbol == "right")
+                    return 0.f;
+                return std::nullopt;
+            },
+            [](std::string_view node, std::string_view trait) -> std::optional<float> {
+                if (node == "globals()" && trait == "_pipboy_width")
+                    return 960.f;
+                if (node == "globals()" && trait == "_pipboy_height")
+                    return 720.f;
+                if (node == "globals()" && trait == "_background_fill_brightness")
+                    return 90.f;
+                if (node == "StatsMenu" && trait == "user0")
+                    return 0.f;
+                return std::nullopt;
+            },
+        };
+        const auto required = [&](std::string_view node, std::string_view trait) -> std::optional<float> {
+            const std::optional<float> value
+                = evaluateFnvMenuNamedScalarTrait(menu->mRoot, node, trait, context);
+            if (!value)
+                Log(Debug::Error) << "FNV Pip-Boy retail stats: unresolved node=" << node << " trait=" << trait;
+            return value;
+        };
+        const std::optional<float> statusX = required("stats_status_container", "x");
+        const std::optional<float> statusY = required("stats_status_container", "y");
+        const std::optional<float> statusWidth = required("stats_status_container", "width");
+        const std::optional<float> tailX = required("stats_tailline", "x");
+        const std::optional<float> tailY = required("stats_tailline", "y");
+        const std::optional<float> tailWidth = required("stats_tailline", "width");
+        if (!statusX || !statusY || !statusWidth || !tailX || !tailY || !tailWidth)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail stats: status=fail reason=required-authored-geometry";
+            return;
+        }
+
+        mFalloutPipBoyRetailStatsLayout = std::make_unique<Layout>("openmw_fnv_menu.layout");
+        mFalloutPipBoyRetailStatsRoot = mFalloutPipBoyRetailStatsLayout->mMainWidget;
+        mFalloutPipBoyRetailStatsRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
+        MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailStatsRoot);
+        mFalloutPipBoyRetailStatsRoot->setVisible(false);
+        MyGUI::ImageBox* background = nullptr;
+        MyGUI::Widget* content = nullptr;
+        MyGUI::Widget* unusedMessage = nullptr;
+        mFalloutPipBoyRetailStatsLayout->getWidget(background, "background");
+        mFalloutPipBoyRetailStatsLayout->getWidget(content, "buttons");
+        mFalloutPipBoyRetailStatsLayout->getWidget(unusedMessage, "message");
+        background->setVisible(false);
+        unusedMessage->setVisible(false);
+
+        const auto addText = [&](MyGUI::Widget* parent, const MyGUI::IntCoord& coord, std::string_view caption,
+                                 int font = 31, MyGUI::Align align = MyGUI::Align::Left | MyGUI::Align::Top) {
+            MyGUI::TextBox* text = parent->createWidget<MyGUI::TextBox>(
+                MyGUI::WidgetStyle::Child, "NormalText", coord, MyGUI::Align::Default);
+            text->setFontName("MonoFont");
+            text->setFontHeight(std::max(1, scaled(static_cast<float>(font))));
+            text->setTextColour(MyGUI::Colour(0.18f, 1.f, 0.22f));
+            text->setTextAlign(align);
+            text->setNeedMouseFocus(false);
+            text->setCaption(std::string(caption));
+            return text;
+        };
+        const auto addLine = [&](MyGUI::Widget* parent, int x, int y, int lineWidth, int lineHeight = 2) {
+            MyGUI::Widget* line = parent->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, "WhiteBox",
+                MyGUI::IntCoord(scaled(static_cast<float>(x)), scaled(static_cast<float>(y)),
+                    std::max(1, scaled(static_cast<float>(lineWidth))),
+                    std::max(1, scaled(static_cast<float>(lineHeight)))), MyGUI::Align::Default);
+            line->setColour(MyGUI::Colour(0.18f, 1.f, 0.22f));
+            line->setNeedMouseFocus(false);
+        };
+        const auto addImage = [&](MyGUI::Widget* parent, std::string_view nodeName, std::string_view texture,
+                                  const MyGUI::IntCoord& authoredCoord) -> MyGUI::ImageBox* {
+            const std::string normalized = normalizeFnvMenuTexturePath(texture);
+            if (!mResourceSystem->getVFS()->exists(normalized))
+            {
+                Log(Debug::Error) << "FNV Pip-Boy retail stats: status=fail node=" << nodeName
+                                  << " missingTexture=" << normalized;
+                return nullptr;
+            }
+            MyGUI::ImageBox* image = parent->createWidget<MyGUI::ImageBox>(MyGUI::WidgetStyle::Child, "ImageBox",
+                MyGUI::IntCoord(scaled(static_cast<float>(authoredCoord.left)),
+                    scaled(static_cast<float>(authoredCoord.top)), scaled(static_cast<float>(authoredCoord.width)),
+                    scaled(static_cast<float>(authoredCoord.height))), MyGUI::Align::Default);
+            image->setImageTexture(normalized);
+            if (MyGUI::ITexture* source = MyGUI::RenderManager::getInstance().getTexture(normalized))
+            {
+                const MyGUI::IntSize sourceSize(source->getWidth(), source->getHeight());
+                image->setImageTile(sourceSize);
+                image->setImageCoord(MyGUI::IntCoord(0, 0, sourceSize.width, sourceSize.height));
+            }
+            image->setNeedMouseFocus(false);
+            return image;
+        };
+
+        // STATUS/CND is the first executable authored slice. Geometry and
+        // resource identities below are taken directly from stats_menu.xml;
+        // runtime values are supplied by OpenMW just as the retail menu class
+        // fills its IO traits.
+        addLine(content, 50, 50, 50);
+        addLine(content, 50, 50, 2, 60);
+        addText(content, MyGUI::IntCoord(scaled(120.f), scaled(50.f), scaled(120.f), scaled(52.f)), "STATS", 36);
+        addLine(content, 250, 50, 60);
+        const auto addCard = [&](int x, int cardWidth, int valueX, std::string_view title, MyGUI::TextBox*& value) {
+            addLine(content, x, 50, cardWidth);
+            addLine(content, x + cardWidth - 2, 50, 2, 60);
+            addText(content, MyGUI::IntCoord(scaled(static_cast<float>(x + 5)), scaled(70.f),
+                scaled(static_cast<float>(std::max(1, valueX - 8))), scaled(38.f)),
+                title);
+            value = addText(content, MyGUI::IntCoord(scaled(static_cast<float>(x + valueX)), scaled(70.f),
+                scaled(static_cast<float>(cardWidth - valueX - 5)), scaled(38.f)), "--", 26);
+        };
+        addCard(270, 100, 50, "LVL", mFalloutPipBoyRetailStatsLevel);
+        addCard(380, 155, 42, "HP", mFalloutPipBoyRetailStatsHealth);
+        addCard(545, 135, 42, "AP", mFalloutPipBoyRetailStatsActionPoints);
+        addCard(690, 205, 42, "XP", mFalloutPipBoyRetailStatsExperience);
+
+        const int bodyOriginX = static_cast<int>(*statusX + (*statusWidth - 123.f) * 0.5f);
+        const int bodyOriginY = static_cast<int>(*statusY + 40.f);
+        bool resourcesReady = true;
+        resourcesReady &= addImage(content, "stats_player_head", "Interface\\Stats\\head.dds",
+                              MyGUI::IntCoord(bodyOriginX + 19, bodyOriginY, 123, 133)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_face", "Interface\\Stats\\face_00.dds",
+                              MyGUI::IntCoord(bodyOriginX + 49, bodyOriginY + 39, 70, 93)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_torso", "Interface\\Stats\\torso.dds",
+                              MyGUI::IntCoord(bodyOriginX, bodyOriginY + 125, 148, 186)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_leftarm", "Interface\\Stats\\left_arm.dds",
+                              MyGUI::IntCoord(bodyOriginX + 130, bodyOriginY + 125, 145, 75)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_rightarm", "Interface\\Stats\\right_arm.dds",
+                              MyGUI::IntCoord(bodyOriginX - 128, bodyOriginY + 118, 139, 78)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_leftleg", "Interface\\Stats\\left_leg.dds",
+                              MyGUI::IntCoord(bodyOriginX + 68, bodyOriginY + 250, 104, 162)) != nullptr;
+        resourcesReady &= addImage(content, "stats_player_rightleg", "Interface\\Stats\\right_leg.dds",
+                              MyGUI::IntCoord(bodyOriginX - 54, bodyOriginY + 245, 122, 162)) != nullptr;
+        mFalloutPipBoyRetailStatsPlayerName = addText(content,
+            MyGUI::IntCoord(scaled(static_cast<float>(bodyOriginX - 30)), scaled(565.f), scaled(220.f), scaled(44.f)),
+            "PLAYER", 31, MyGUI::Align::HCenter | MyGUI::Align::Top);
+
+        addText(content, MyGUI::IntCoord(scaled(50.f), scaled(120.f), scaled(125.f), scaled(42.f)), "[CND]");
+        addText(content, MyGUI::IntCoord(scaled(50.f), scaled(165.f), scaled(125.f), scaled(42.f)), "RAD");
+        addText(content, MyGUI::IntCoord(scaled(50.f), scaled(210.f), scaled(125.f), scaled(42.f)), "EFF");
+        addLine(content, static_cast<int>(*tailX), static_cast<int>(*tailY), static_cast<int>(*tailWidth));
+        addLine(content, static_cast<int>(*tailX), static_cast<int>(*tailY - 45.f), 2, 47);
+        addLine(content, static_cast<int>(*tailX + *tailWidth - 2.f), static_cast<int>(*tailY - 45.f), 2, 47);
+        addText(content, MyGUI::IntCoord(scaled(55.f), scaled(647.f), scaled(845.f), scaled(48.f)),
+            "[STATUS]     SPECIAL     SKILLS     PERKS     GENERAL", 31,
+            MyGUI::Align::HCenter | MyGUI::Align::Top);
+
+        if (!resourcesReady)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail stats: status=fail reason=required-authored-resource";
+            return;
+        }
+        mFalloutPipBoyRetailStatsReady = true;
+        Log(Debug::Info) << "FNV Pip-Boy retail stats: status=ready path=menus/main/stats_menu.xml"
+                         << " slice=STATUS/CND geometry=authored resources=authored dynamic=live"
+                         << " canvas=" << canvasX << ',' << canvasY << ',' << canvasWidth << ',' << canvasHeight;
+    }
+
+    void WindowManager::initializeFalloutPipBoyRetailMap(int width, int height)
+    {
+        FnvMenuXmlParseError parseError = FnvMenuXmlParseError::None;
+        const std::optional<FnvMenuXmlDocument> menu
+            = loadFnvMenuXml(*mResourceSystem->getVFS(), "menus/main/map_menu.xml", &parseError, true);
+        if (!menu)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail map: status=fail path=menus/main/map_menu.xml error="
+                              << getFnvMenuXmlParseErrorName(parseError);
+            return;
+        }
+
+        constexpr float authoredWidth = 960.f;
+        constexpr float authoredHeight = 720.f;
+        const float scale = std::min(static_cast<float>(width) / authoredWidth,
+            static_cast<float>(height) / authoredHeight);
+        const int canvasWidth = std::max(1, static_cast<int>(std::lround(authoredWidth * scale)));
+        const int canvasHeight = std::max(1, static_cast<int>(std::lround(authoredHeight * scale)));
+        const int canvasX = (width - canvasWidth) / 2;
+        const int canvasY = (height - canvasHeight) / 2;
+        const auto scaled = [scale](float value) { return static_cast<int>(std::lround(value * scale)); };
+        const FnvMenuLayoutEvaluationContext context{
+            authoredWidth,
+            authoredHeight,
+            [](std::string_view symbol) -> std::optional<float> {
+                if (symbol == "true" || symbol == "scale" || symbol == "pipboy" || symbol == "right")
+                    return 1.f;
+                if (symbol == "false" || symbol == "xbox" || symbol == "left")
+                    return 0.f;
+                return std::nullopt;
+            },
+            [](std::string_view node, std::string_view trait) -> std::optional<float> {
+                if (node == "globals()" && trait == "_pipboy_width")
+                    return 960.f;
+                if (node == "globals()" && trait == "_pipboy_height")
+                    return 720.f;
+                if (node == "globals()" && trait == "_line_thickness")
+                    return 2.f;
+                if (node == "MM_Tabline" && trait == "_CurrentTab")
+                    return 1.f;
+                return std::nullopt;
+            },
+        };
+        const auto required = [&](std::string_view node, std::string_view trait) -> std::optional<float> {
+            const std::optional<float> value
+                = evaluateFnvMenuNamedScalarTrait(menu->mRoot, node, trait, context);
+            if (!value)
+                Log(Debug::Error) << "FNV Pip-Boy retail map: unresolved node=" << node << " trait=" << trait;
+            return value;
+        };
+        const std::optional<float> mainX = required("MM_MainRect", "x");
+        const std::optional<float> mainY = required("MM_MainRect", "y");
+        const std::optional<float> mainWidth = required("MM_MainRect", "width");
+        const std::optional<float> mainHeight = required("MM_MainRect", "height");
+        const std::optional<float> clipY = required("MM_WorldMap_ClipWindow", "y");
+        const std::optional<float> clipWidth = required("MM_WorldMap_ClipWindow", "width");
+        const std::optional<float> clipHeight = required("MM_WorldMap_ClipWindow", "height");
+        const std::optional<float> tabX = required("MM_Tabline", "x");
+        const std::optional<float> tabY = required("MM_Tabline", "y");
+        const std::optional<float> tabWidth = required("MM_Tabline", "width");
+        if (!mainX || !mainY || !mainWidth || !mainHeight || !clipY || !clipWidth || !clipHeight
+            || !tabX || !tabY || !tabWidth)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail map: status=fail reason=required-authored-geometry";
+            return;
+        }
+
+        mFalloutPipBoyRetailMapLayout = std::make_unique<Layout>("openmw_fnv_menu.layout");
+        mFalloutPipBoyRetailMapRoot = mFalloutPipBoyRetailMapLayout->mMainWidget;
+        mFalloutPipBoyRetailMapRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
+        MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailMapRoot);
+        mFalloutPipBoyRetailMapRoot->setVisible(false);
+        MyGUI::ImageBox* background = nullptr;
+        MyGUI::Widget* content = nullptr;
+        MyGUI::Widget* unusedMessage = nullptr;
+        mFalloutPipBoyRetailMapLayout->getWidget(background, "background");
+        mFalloutPipBoyRetailMapLayout->getWidget(content, "buttons");
+        mFalloutPipBoyRetailMapLayout->getWidget(unusedMessage, "message");
+        background->setVisible(false);
+        unusedMessage->setVisible(false);
+        const auto addLine = [&](int x, int y, int lineWidth, int lineHeight = 2) {
+            MyGUI::Widget* line = content->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, "WhiteBox",
+                MyGUI::IntCoord(scaled(static_cast<float>(x)), scaled(static_cast<float>(y)),
+                    std::max(1, scaled(static_cast<float>(lineWidth))),
+                    std::max(1, scaled(static_cast<float>(lineHeight)))), MyGUI::Align::Default);
+            line->setColour(MyGUI::Colour(0.18f, 1.f, 0.22f));
+            line->setNeedMouseFocus(false);
+        };
+        const auto addText = [&](const MyGUI::IntCoord& coord, std::string_view caption,
+                                 MyGUI::Align align = MyGUI::Align::Left | MyGUI::Align::Top) {
+            MyGUI::TextBox* text = content->createWidget<MyGUI::TextBox>(
+                MyGUI::WidgetStyle::Child, "NormalText", coord, MyGUI::Align::Default);
+            text->setFontName("MonoFont");
+            text->setFontHeight(std::max(1, scaled(31.f)));
+            text->setTextColour(MyGUI::Colour(0.18f, 1.f, 0.22f));
+            text->setTextAlign(align);
+            text->setNeedMouseFocus(false);
+            text->setCaption(std::string(caption));
+            return text;
+        };
+        const int x = static_cast<int>(*mainX);
+        const int y = static_cast<int>(*mainY);
+        const int w = static_cast<int>(*mainWidth);
+        addLine(x, y, 50);
+        addLine(x, y, 2, 50);
+        addText(MyGUI::IntCoord(scaled(x + 70), scaled(y), scaled(110), scaled(50)), "DATA");
+        addLine(x + 180, y, w - 180);
+        addLine(x + w, y, 2, 50);
+        addLine(x, y + static_cast<int>(*clipY + *clipHeight), w);
+        addLine(static_cast<int>(*tabX), static_cast<int>(*tabY), static_cast<int>(*tabWidth));
+        mFalloutPipBoyRetailMapTabs = addText(MyGUI::IntCoord(scaled(static_cast<int>(*tabX)), scaled(static_cast<int>(*tabY)),
+                    scaled(static_cast<int>(*tabWidth)), scaled(50)),
+            "LOCAL MAP     [WORLD MAP]     QUESTS     MISC     RADIO", MyGUI::Align::HCenter | MyGUI::Align::Top);
+
+        const std::optional<float> questsX = required("MM_QuestsList", "x");
+        const std::optional<float> questsY = required("MM_QuestsList", "y");
+        const std::optional<float> questsWidth = required("MM_QuestsList", "width");
+        const std::optional<float> questsHeight = required("MM_QuestsList", "height");
+        if (!questsX || !questsY || !questsWidth || !questsHeight)
+        {
+            Log(Debug::Error) << "FNV Pip-Boy retail map: status=fail reason=required-authored-data-list-geometry";
+            return;
+        }
+        mFalloutPipBoyRetailDataPanel = content->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, "Widget",
+            MyGUI::IntCoord(scaled(*mainX + *questsX), scaled(*mainY + *questsY), scaled(*questsWidth),
+                scaled(*questsHeight)), MyGUI::Align::Default);
+        mFalloutPipBoyRetailDataPanel->setNeedMouseFocus(false);
+        mFalloutPipBoyRetailDataPanel->setVisible(false);
+        mFalloutPipBoyRetailDataHeading = addText(MyGUI::IntCoord(scaled(*mainX + *questsX + 15.f),
+            scaled(*mainY + *questsY), scaled(*questsWidth - 30.f), scaled(55.f)), "QUESTS");
+        mFalloutPipBoyRetailDataRows = addText(MyGUI::IntCoord(scaled(*mainX + *questsX + 15.f),
+            scaled(*mainY + *questsY + 55.f), scaled(*questsWidth - 30.f), scaled(*questsHeight - 55.f)),
+            "[ ] No active quest selected");
+        mFalloutPipBoyRetailDataHeading->setVisible(false);
+        mFalloutPipBoyRetailDataRows->setVisible(false);
+
+        mFalloutPipBoyRetailMapClip = MyGUI::IntCoord(canvasX + scaled(*mainX),
+            canvasY + scaled(*mainY + *clipY), scaled(*clipWidth), scaled(*clipHeight));
+
+        mFalloutPipBoyRetailMapReady = true;
+        Log(Debug::Info) << "FNV Pip-Boy retail map: status=ready path=menus/main/map_menu.xml"
+                         << " slice=DATA/WORLD-MAP+QUESTS/NOTES/RADIO geometry=authored dynamic=live"
+                         << " main=" << *mainX << ',' << *mainY << ',' << *mainWidth << ',' << *mainHeight
+                         << " clip=" << *clipY << ',' << *clipWidth << ',' << *clipHeight
+                         << " tab=" << *tabX << ',' << *tabY << ',' << *tabWidth
+                         << " source=retail-menu-xml";
+    }
+
     WindowManager::~WindowManager()
     {
         try
@@ -1137,6 +1818,13 @@ namespace MWGui
             mCharGen.reset();
 
             mKeyboardNavigation.reset();
+
+            mFalloutPipBoyRetailLayout.reset();
+            mFalloutPipBoyRetailRoot = nullptr;
+            mFalloutPipBoyRetailStatsLayout.reset();
+            mFalloutPipBoyRetailStatsRoot = nullptr;
+            mFalloutPipBoyRetailMapLayout.reset();
+            mFalloutPipBoyRetailMapRoot = nullptr;
 
             cleanupGarbage();
 
@@ -1238,16 +1926,13 @@ namespace MWGui
 
         const bool falloutContent = isFalloutContentLoaded();
 
-        // Fallout uses a Pip-Boy for menus, but its ordinary game-mode HUD still
-        // needs HP, AP, the crosshair, and the equipped-weapon readout.
+        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
         if (falloutContent)
         {
             setMinimapVisibility(false);
-            setWeaponVisibility((mAllowed & GW_Inventory) != 0);
+            setWeaponVisibility(false);
             setSpellVisibility(false);
-            setSneakVisibility(false);
-            mHud->setEffectVisible(false);
-            setHMSVisibility((mAllowed & GW_Stats) != 0);
+            setHMSVisibility(false);
         }
         else
         {
@@ -1259,14 +1944,7 @@ namespace MWGui
             setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
         }
 
-        const GuiMode currentMode = getMode();
-        const bool inventoryMode = isInventoryMode(currentMode);
-        const bool falloutPipBoyMode = isFalloutPipBoyMode(currentMode);
-        if (mInventoryTabsOverlay != nullptr)
-            mInventoryTabsOverlay->setPipBoyMode(currentMode == GM_FalloutPipBoy);
-        // Item drag/drop and equip actions use the inventory behavior while
-        // the outer mode decides whether this is the Pip-Boy or OpenMW shell.
-        mInventoryWindow->setGuiMode(currentMode == GM_FalloutPipBoy ? GM_Inventory : currentMode);
+        mInventoryWindow->setGuiMode(getMode());
 
         // If in game mode (or interactive messagebox), show the pinned windows
         if (mGuiModes.empty())
@@ -1285,7 +1963,7 @@ namespace MWGui
                 mInventoryTabsOverlay->setVisible(false);
             return;
         }
-        else if (!inventoryMode)
+        else if (getMode() != GM_Inventory)
         {
             mMap->setVisible(false);
             mStatsWindow->setVisible(false);
@@ -1299,7 +1977,7 @@ namespace MWGui
 
         mInventoryWindow->setTrading(mode == GM_Barter);
 
-        if (inventoryMode)
+        if (getMode() == GM_Inventory)
         {
             // For the inventory mode, compute the effective set of windows to show.
             // This is controlled both by what windows the
@@ -1315,7 +1993,7 @@ namespace MWGui
                 if (!loggedPaperDollProfiler)
                 {
                     Log(Debug::Info)
-                        << "FNV/ESM4: flat paper doll profiler owns inventory mode full-screen";
+                        << "FNV/ESM4 proof: flat paper doll profiler owns inventory mode full-screen";
                     loggedPaperDollProfiler = true;
                 }
             }
@@ -1335,11 +2013,6 @@ namespace MWGui
             setWindowVisibleIfChanged(mInventoryWindow, eff & GW_Inventory);
             setWindowVisibleIfChanged(mSpellWindow, eff & GW_Magic);
             setWindowVisibleIfChanged(mStatsWindow, eff & GW_Stats);
-
-            const bool useRetailPipBoyChrome = currentMode == GM_FalloutPipBoy;
-            for (WindowBase* window : { static_cast<WindowBase*>(mMap), static_cast<WindowBase*>(mInventoryWindow),
-                     static_cast<WindowBase*>(mSpellWindow), static_cast<WindowBase*>(mStatsWindow) })
-                setPipBoyChrome(window, useRetailPipBoyChrome);
 
             if (flatPaperDollProfiler)
             {
@@ -1611,7 +2284,7 @@ namespace MWGui
             mGuiModeStates[mode].mWindows[mActiveControllerWindows[mode]]->setActiveControllerWindow(true);
     }
 
-    void WindowManager::setActiveControllerWindow(GuiMode mode, size_t activeIndex)
+    void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
     {
         const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
         if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
@@ -1670,8 +2343,6 @@ namespace MWGui
             return;
 
         mFalloutPipBoyPhysical = physical;
-        if (physical)
-            mFalloutPipBoyInteractionPulse = 1.f;
         Log(Debug::Info) << "FNV Pip-Boy presentation: mode=" << (physical ? "physical" : "analog")
                          << " activePane=" << getFalloutPipBoyActivePane();
         updateVisible();
@@ -1696,16 +2367,29 @@ namespace MWGui
             setActiveControllerWindow(GM_Inventory, value);
             mFalloutPipBoySubmenu = 0;
             mFalloutPipBoyListOffset = 0;
+            if (value == 1 && mInventoryWindow != nullptr)
+                mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
             changed = true;
         };
         const auto changeList = [this, pane, &changed](int delta) {
-            static constexpr std::array<int, 5> itemRows = { 2, 2, 1, 2, 2 };
             static constexpr std::array<int, 3> dataRows = { 2, 2, 1 };
             const int submenuCount = getFalloutPipBoySubmenuCount(pane);
             mFalloutPipBoySubmenu = std::clamp(mFalloutPipBoySubmenu, 0, submenuCount - 1);
             int rowCount = 1;
             if (pane == 1)
-                rowCount = itemRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(itemRows.size()) - 1)];
+            {
+                if (MWBase::World* const world = MWBase::Environment::get().getWorld())
+                {
+                    const MWWorld::Ptr player = world->getPlayerPtr();
+                    if (!player.isEmpty())
+                    {
+                        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                        rowCount = std::max(1,
+                            static_cast<int>(getFalloutPipBoyInventoryRows(
+                                inventory, mFalloutPipBoySubmenu).size()));
+                    }
+                }
+            }
             else if (pane == 2)
                 rowCount = dataRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(dataRows.size()) - 1)];
             mFalloutPipBoyListOffset = std::clamp(mFalloutPipBoyListOffset + delta, 0, rowCount - 1);
@@ -1761,6 +2445,8 @@ namespace MWGui
                     const int count = getFalloutPipBoySubmenuCount(pane);
                     mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + count - 1) % count;
                     mFalloutPipBoyListOffset = 0;
+                    if (pane == 1 && mInventoryWindow != nullptr)
+                        mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
                     changed = true;
                 }
                 break;
@@ -1775,6 +2461,8 @@ namespace MWGui
                     const int count = getFalloutPipBoySubmenuCount(pane);
                     mFalloutPipBoySubmenu = (mFalloutPipBoySubmenu + 1) % count;
                     mFalloutPipBoyListOffset = 0;
+                    if (pane == 1 && mInventoryWindow != nullptr)
+                        mInventoryWindow->setFalloutPipBoyCategory(mFalloutPipBoySubmenu);
                     changed = true;
                 }
                 break;
@@ -1836,6 +2524,23 @@ namespace MWGui
         return true;
     }
 
+    void WindowManager::setFalloutPipBoyMapSelection(std::string_view name, ESM::FormId marker)
+    {
+        mFalloutPipBoyMapSelection = std::string(name) + " " + marker.toString();
+        updateFalloutPipBoyTerminalSurface();
+    }
+
+    void WindowManager::setFalloutPipBoyMapConfirmation(std::string_view text)
+    {
+        // The physical terminal has a deliberately small retail-sized text
+        // surface.  Once the production confirmation dialog opens, show its
+        // exact title in the available row instead of clipping it below the
+        // selected-marker annotation.
+        mFalloutPipBoyMapSelection.clear();
+        mFalloutPipBoyMapConfirmation = std::string(text);
+        updateFalloutPipBoyTerminalSurface();
+    }
+
     osg::Texture2D* WindowManager::getFalloutPipBoyLocalMapTexture()
     {
         if (mLocalMapRender == nullptr)
@@ -1850,24 +2555,340 @@ namespace MWGui
 
     std::string WindowManager::getFalloutPipBoyTerminalBody() const
     {
-        return makeFalloutPipBoyTerminalBody(getFalloutPipBoyActivePane(), mFalloutPipBoySubmenu,
-            mFalloutPipBoyListOffset, mFalloutPipBoyWorldMap, mFalloutPipBoyMapZoom, mFalloutPipBoyMapPanX,
-            mFalloutPipBoyMapPanY, mFalloutPipBoyLastAction);
+        // Screen content is supplied by the live native panes and the parsed
+        // retail Tile XML renderer. There is no generated terminal-text path.
+        return {};
     }
 
     void WindowManager::updateFalloutPipBoyTerminalSurface()
     {
-        if (mFalloutPipBoyTerminalRoot == nullptr || mFalloutPipBoyTerminalHeader == nullptr
-            || mFalloutPipBoyTerminalBody == nullptr)
-            return;
-
         const bool visible = !VR::getVR() && mFalloutPipBoyPhysical && containsMode(GM_Inventory);
-        mFalloutPipBoyTerminalRoot->setVisible(visible);
+        auto& windows = mGuiModeStates[GM_Inventory].mWindows;
+        if (windows.empty())
+            return;
+        const int activeIndex = std::clamp(getFalloutPipBoyActivePane(), 0, static_cast<int>(windows.size()) - 1);
+        const bool useRetailInventory
+            = visible && activeIndex == 1 && mFalloutPipBoyRetailInventoryReady && mFalloutPipBoyRetailRoot != nullptr;
+        const bool useRetailStats
+            = visible && activeIndex == 3 && mFalloutPipBoyRetailStatsReady && mFalloutPipBoyRetailStatsRoot != nullptr;
+        const bool useRetailMap
+            = visible && (activeIndex == 0 || activeIndex == 2) && mFalloutPipBoyRetailMapReady
+                && mFalloutPipBoyRetailMapRoot != nullptr;
+
+        for (std::size_t i = 0; i < windows.size() && i < mFalloutPipBoyOriginalLayers.size(); ++i)
+        {
+            MyGUI::Widget* widget = windows[i] != nullptr ? windows[i]->mMainWidget : nullptr;
+            if (widget == nullptr)
+                continue;
+
+            if (mFalloutPipBoyOriginalLayers[i].empty() && widget->getLayer() != nullptr
+                && widget->getLayer()->getName() != "PipBoyScreen")
+                mFalloutPipBoyOriginalLayers[i] = widget->getLayer()->getName();
+
+            // The authored inventory XML owns ITEMS. Until the other authored
+            // XML files have executable tile support, keep their real live
+            // panes usable instead of replacing them with a fabricated error
+            // page. The fallback is logged below and must not be called retail.
+            const bool renderOnDevice
+                = visible && !useRetailInventory && !useRetailStats && !useRetailMap
+                    && static_cast<int>(i) == activeIndex;
+            const std::string targetLayer
+                = renderOnDevice ? "PipBoyScreen" : mFalloutPipBoyOriginalLayers[i];
+            if (!targetLayer.empty()
+                && (widget->getLayer() == nullptr || widget->getLayer()->getName() != targetLayer))
+            {
+                MyGUI::LayerManager::getInstance().attachToLayerNode(targetLayer, widget);
+                Log(Debug::Info) << "FNV Pip-Boy native pane layer: pane=" << i << " layer=" << targetLayer;
+            }
+            widget->setVisible(renderOnDevice);
+        }
+
+        if (mFalloutPipBoyRetailRoot != nullptr)
+            mFalloutPipBoyRetailRoot->setVisible(useRetailInventory);
+        if (mFalloutPipBoyRetailStatsRoot != nullptr)
+            mFalloutPipBoyRetailStatsRoot->setVisible(useRetailStats);
+        if (mFalloutPipBoyRetailMapRoot != nullptr)
+            mFalloutPipBoyRetailMapRoot->setVisible(useRetailMap);
         if (!visible)
             return;
 
-        mFalloutPipBoyTerminalHeader->setCaption(getFalloutPipBoyTerminalHeader());
-        mFalloutPipBoyTerminalBody->setCaption(getFalloutPipBoyTerminalBody());
+        if (useRetailStats)
+        {
+            const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+            const MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
+            const MWMechanics::DynamicStat<float>& health = stats.getHealth();
+            mFalloutPipBoyRetailStatsLevel->setCaption(std::to_string(stats.getLevel()));
+            mFalloutPipBoyRetailStatsHealth->setCaption(std::to_string(std::max(0,
+                static_cast<int>(health.getCurrent()))) + "/" + std::to_string(std::max(0,
+                static_cast<int>(health.getModified(false)))));
+            const MWWorld::FalloutPlayerRuntimeState& runtime
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> actionPoints
+                = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+            const std::optional<float> maxActionPoints = runtime.getMaxActionPoints();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> experience
+                = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue);
+            if (actionPoints && maxActionPoints)
+                mFalloutPipBoyRetailStatsActionPoints->setCaption(std::to_string(std::max(0,
+                    static_cast<int>(actionPoints->mValue))) + "/" + std::to_string(std::max(0,
+                    static_cast<int>(*maxActionPoints))));
+            else
+                mFalloutPipBoyRetailStatsActionPoints->setCaption("ERR");
+            if (experience)
+                mFalloutPipBoyRetailStatsExperience->setCaption(
+                    std::to_string(std::max(0, static_cast<int>(experience->mValue))));
+            else
+                mFalloutPipBoyRetailStatsExperience->setCaption("ERR");
+            mFalloutPipBoyRetailStatsPlayerName->setCaption(std::string(player.getClass().getName(player)));
+            return;
+        }
+
+        if (useRetailMap)
+        {
+            const bool dataList = activeIndex == 2;
+            if (mFalloutPipBoyRetailDataPanel != nullptr)
+                mFalloutPipBoyRetailDataPanel->setVisible(dataList);
+            if (mFalloutPipBoyRetailDataHeading != nullptr)
+                mFalloutPipBoyRetailDataHeading->setVisible(dataList);
+            if (mFalloutPipBoyRetailDataRows != nullptr)
+                mFalloutPipBoyRetailDataRows->setVisible(dataList);
+            if (mFalloutPipBoyRetailMapTabs != nullptr)
+            {
+                if (!dataList)
+                    mFalloutPipBoyRetailMapTabs->setCaption("LOCAL MAP     [WORLD MAP]     QUESTS     MISC     RADIO");
+                else if (mFalloutPipBoySubmenu == 0)
+                    mFalloutPipBoyRetailMapTabs->setCaption("LOCAL MAP     WORLD MAP     [QUESTS]     MISC     RADIO");
+                else if (mFalloutPipBoySubmenu == 1)
+                    mFalloutPipBoyRetailMapTabs->setCaption("LOCAL MAP     WORLD MAP     QUESTS     [MISC]     RADIO");
+                else
+                    mFalloutPipBoyRetailMapTabs->setCaption("LOCAL MAP     WORLD MAP     QUESTS     MISC     [RADIO]");
+            }
+            if (dataList && mFalloutPipBoyRetailDataHeading != nullptr && mFalloutPipBoyRetailDataRows != nullptr)
+            {
+                const char* heading = mFalloutPipBoySubmenu == 0 ? "QUESTS"
+                    : mFalloutPipBoySubmenu == 1 ? "NOTES" : "RADIO";
+                mFalloutPipBoyRetailDataHeading->setCaption(heading);
+                mFalloutPipBoyRetailDataRows->setCaption(mFalloutPipBoyListOffset > 0
+                    ? "[ ] Previous entry\n[>] Selected entry" : "[>] Selected entry\n[ ] Next entry");
+            }
+            return;
+        }
+
+        if (!useRetailInventory)
+        {
+            static std::array<bool, 4> loggedFallback = { false, false, false, false };
+            if (!loggedFallback[activeIndex])
+            {
+                loggedFallback[activeIndex] = true;
+                const char* authoredPath = activeIndex == 0 ? "menus/main/stats_menu.xml"
+                    : activeIndex == 1                 ? "menus/main/inventory_menu.xml"
+                                                       : "menus/main/map_menu.xml";
+                Log(Debug::Warning) << "FNV Pip-Boy surface: pane=" << activeIndex
+                                    << " source=live-openmw-fallback authoredPath=" << authoredPath
+                                    << " reason=retail-xml-pane-not-executable";
+            }
+            return;
+        }
+
+        mFalloutPipBoyRetailTitle->setCaption("ITEMS");
+        mFalloutPipBoyRetailBody->setCaption({});
+        mFalloutPipBoyRetailItemIcon->setVisible(false);
+        mFalloutPipBoyRetailItemInfo->setCaption({});
+        if (MWBase::World* const world = MWBase::Environment::get().getWorld())
+        {
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty())
+                return;
+            MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+            std::vector<MWWorld::Ptr> categoryRows
+                = getFalloutPipBoyInventoryRows(inventory, mFalloutPipBoySubmenu);
+            const int selectedIndex = categoryRows.empty()
+                ? -1
+                : std::clamp(mFalloutPipBoyListOffset, 0, static_cast<int>(categoryRows.size()) - 1);
+            const int firstIndex = selectedIndex < 0
+                ? 0
+                : std::clamp(selectedIndex - static_cast<int>(mFalloutPipBoyRetailItemRows.size()) + 1,
+                    0, std::max(0, static_cast<int>(categoryRows.size())
+                        - static_cast<int>(mFalloutPipBoyRetailItemRows.size())));
+            for (std::size_t index = 0; index < mFalloutPipBoyRetailItemRows.size(); ++index)
+            {
+                const int inventoryIndex = firstIndex + static_cast<int>(index);
+                const bool hasItem = inventoryIndex < static_cast<int>(categoryRows.size());
+                mFalloutPipBoyRetailItemRows[index]->setVisible(hasItem);
+                if (!hasItem)
+                    continue;
+                const MWWorld::Ptr& item = categoryRows[static_cast<std::size_t>(inventoryIndex)];
+                const bool equipped = inventory.isEquipped(item.getCellRef().getRefId());
+                std::ostringstream label;
+                label << item.getClass().getName(item);
+                const int count = item.getCellRef().getCount();
+                if (count > 1)
+                    label << " (" << count << ')';
+                mFalloutPipBoyRetailItemRowLabels[index]->setCaption(label.str());
+                mFalloutPipBoyRetailItemRowLabels[index]->setTextColour(inventoryIndex == selectedIndex
+                        ? MyGUI::Colour(0.65f, 1.f, 0.65f)
+                        : MyGUI::Colour(0.18f, 1.f, 0.22f));
+                mFalloutPipBoyRetailItemRowMarkers[index]->setVisible(equipped);
+            }
+            if (mFalloutPipBoyRetailListHighlight != nullptr)
+            {
+                const int relativeIndex = selectedIndex < 0 ? 0 : selectedIndex - firstIndex;
+                MyGUI::IntCoord highlight = mFalloutPipBoyRetailListHighlight->getCoord();
+                highlight.top = relativeIndex * (mFalloutPipBoyRetailItemRows.empty()
+                        ? highlight.height
+                        : mFalloutPipBoyRetailItemRows.front()->getHeight());
+                mFalloutPipBoyRetailListHighlight->setCoord(highlight);
+                mFalloutPipBoyRetailListHighlight->setVisible(selectedIndex >= 0);
+            }
+
+            std::string icon;
+            std::ostringstream details;
+            if (selectedIndex >= 0)
+            {
+                const MWWorld::Ptr& selected = categoryRows[static_cast<std::size_t>(selectedIndex)];
+                icon = selected.getClass().getInventoryIcon(selected);
+                details << selected.getClass().getName(selected);
+                if (selected.getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon& weapon = *selected.get<ESM4::Weapon>()->mBase;
+                    details
+                            << "\n\nDAM  " << weapon.mData.damage
+                            << "     CND  " << weapon.mData.health
+                            << "\nWG   " << weapon.mData.weight
+                            << "     VAL  " << weapon.mData.value
+                            << "\nAMMO " << static_cast<unsigned int>(weapon.mData.clipSize);
+                }
+                else
+                {
+                    details << "\n\nWG   " << selected.getClass().getWeight(selected)
+                            << "     VAL  " << selected.getClass().getValue(selected);
+                }
+            }
+            if (!details.str().empty())
+                mFalloutPipBoyRetailItemInfo->setCaption(details.str());
+            if (!icon.empty())
+            {
+                const VFS::Manager* const vfs = mResourceSystem->getVFS();
+                const std::string texture = Misc::ResourceHelpers::correctTexturePath(icon, vfs);
+                if (vfs->exists(texture))
+                {
+                    mFalloutPipBoyRetailItemIcon->setImageTexture(texture);
+                    if (MyGUI::ITexture* source = MyGUI::RenderManager::getInstance().getTexture(texture))
+                    {
+                        const MyGUI::IntSize sourceSize(source->getWidth(), source->getHeight());
+                        mFalloutPipBoyRetailItemIcon->setImageTile(sourceSize);
+                        mFalloutPipBoyRetailItemIcon->setImageCoord(
+                            MyGUI::IntCoord(0, 0, sourceSize.width, sourceSize.height));
+                    }
+                    mFalloutPipBoyRetailItemIcon->setVisible(true);
+                }
+                else
+                    Log(Debug::Error) << "FNV Pip-Boy retail item icon: status=fail editorIcon=" << icon
+                                      << " corrected=" << texture;
+            }
+        }
+        InventoryWindow* const inventoryWindow = getInventoryWindow();
+        const std::array<std::string, 5> categoryLabels = inventoryWindow != nullptr
+            ? inventoryWindow->getFalloutPipBoyCategoryLabels()
+            : std::array<std::string, 5>{};
+        std::ostringstream categoryTabs;
+        bool categoryLabelsReady = true;
+        for (std::size_t index = 0; index < categoryLabels.size(); ++index)
+        {
+            if (categoryLabels[index].empty())
+            {
+                categoryLabelsReady = false;
+                static std::array<bool, 5> missingLogged{};
+                if (!missingLogged[index])
+                {
+                    missingLogged[index] = true;
+                    Log(Debug::Error) << "FNV Pip-Boy retail category label: status=fail index=" << index
+                                      << " source=native-inventory-filter-caption";
+                }
+                continue;
+            }
+            if (index != 0)
+                categoryTabs << "   ";
+            if (static_cast<int>(index) == mFalloutPipBoySubmenu)
+                categoryTabs << '[' << categoryLabels[index] << ']';
+            else
+                categoryTabs << categoryLabels[index];
+        }
+        mFalloutPipBoyRetailTabs->setCaption(categoryLabelsReady ? categoryTabs.str() : "ERROR: MISSING GMST");
+        MWBase::InputManager* const input = MWBase::Environment::get().getInputManager();
+        const auto binding = [input](int action, std::string_view fallback) {
+            if (input == nullptr)
+                return std::string(fallback);
+            const std::string value = input->getActionKeyBindingName(action);
+            return value.empty() ? std::string(fallback) : value;
+        };
+        std::ostringstream controls;
+        controls << binding(MWInput::A_Activate, "E") << " EQUIP/USE  "
+                 << binding(MWInput::A_MoveForward, "W") << '/'
+                 << binding(MWInput::A_MoveBackward, "S") << " SELECT  "
+                 << binding(MWInput::A_MoveLeft, "A") << '/'
+                 << binding(MWInput::A_MoveRight, "D") << " CATEGORY  1 STATS  2 ITEMS  3 DATA  4 MAP  "
+                 << binding(MWInput::A_FalloutPipBoy, "P") << " CLOSE";
+        mFalloutPipBoyRetailActions->setCaption(
+            mFalloutPipBoyLastAction.empty() ? controls.str() : mFalloutPipBoyLastAction + "   " + controls.str());
+        static bool loggedRetailVisibility = false;
+        if (!loggedRetailVisibility)
+        {
+            loggedRetailVisibility = true;
+            const auto visibility = [](const MyGUI::Widget* widget) {
+                if (widget == nullptr)
+                    return std::string("missing");
+                return std::to_string(widget->getVisible()) + '/'
+                    + std::to_string(widget->getInheritedVisible());
+            };
+            Log(Debug::Info) << "FNV Pip-Boy retail live visibility: root="
+                             << visibility(mFalloutPipBoyRetailRoot)
+                             << " title=" << visibility(mFalloutPipBoyRetailTitle)
+                             << " listRow=" << visibility(mFalloutPipBoyRetailItemRows.empty()
+                                    ? nullptr : mFalloutPipBoyRetailItemRows.front())
+                             << " icon=" << visibility(mFalloutPipBoyRetailItemIcon)
+                             << " iconParent=" << visibility(mFalloutPipBoyRetailItemIcon != nullptr
+                                    ? mFalloutPipBoyRetailItemIcon->getParent() : nullptr)
+                             << " info=" << visibility(mFalloutPipBoyRetailItemInfo)
+                             << " infoParent=" << visibility(mFalloutPipBoyRetailItemInfo != nullptr
+                                    ? mFalloutPipBoyRetailItemInfo->getParent() : nullptr)
+                             << " tabs=" << visibility(mFalloutPipBoyRetailTabs)
+                             << " tabsParent=" << visibility(mFalloutPipBoyRetailTabs != nullptr
+                                    ? mFalloutPipBoyRetailTabs->getParent() : nullptr);
+        }
+    }
+
+    void WindowManager::interactiveFnvMenuMessageBox(const FnvMenuXmlDocument& menu,
+        std::string_view frameTile, std::string_view messageTile, std::string_view buttonTile,
+        std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus,
+        const FnvHackingMenuPresentation* hacking)
+    {
+        mMessageBoxManager->createInteractiveFnvMenuMessageBox(
+            menu, frameTile, messageTile, buttonTile, message, buttons, block, defaultFocus, hacking);
+        updateVisible();
+
+        if (block)
+        {
+            Misc::FrameRateLimiter frameRateLimiter
+                = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
+            while (mMessageBoxManager->readPressedButton(false) == -1
+                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            {
+                const double dt
+                    = std::chrono::duration_cast<std::chrono::duration<double>>(frameRateLimiter.getLastFrameDuration())
+                          .count();
+                mKeyboardNavigation->onFrame();
+                mMessageBoxManager->onFrame(dt);
+                MWBase::Environment::get().getInputManager()->update(dt, true, false);
+                if (!mWindowVisible)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                else
+                    viewerTraversals();
+                mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
+                frameRateLimiter.limit();
+            }
+            mMessageBoxManager->resetInteractiveMessageBox();
+        }
     }
 
     void WindowManager::update(float frameDuration)
@@ -2445,6 +3466,105 @@ namespace MWGui
         Log(Debug::Info) << "FNV dialogue camera: restored player view";
     }
 
+    void WindowManager::beginFalloutTerminalSession(const MWWorld::Ptr& target)
+    {
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr || VR::getVR() || target.isEmpty() || !target.isInCell()
+            || world->getStore().getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return;
+
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        MWRender::Camera* const camera = world->getCamera();
+        MWRender::RenderingManager* const rendering = world->getRenderingManager();
+        if (player.isEmpty() || !player.isInCell() || player.getCell() != target.getCell() || camera == nullptr
+            || rendering == nullptr || camera->getMode() == MWRender::Camera::Mode::VR)
+            return;
+
+        endFalloutTerminalSession();
+        osg::Vec3f focus = target.getRefData().getPosition().asVec3();
+        const osg::Vec3f halfExtents = world->getHalfExtents(target, true);
+        focus.z() += std::max(24.f, halfExtents.z() * 0.65f);
+        osg::Vec3f playerFocus = player.getRefData().getPosition().asVec3();
+        playerFocus.z() += std::max(48.f, world->getHalfExtents(player, true).z());
+        osg::Vec3f outward = playerFocus - focus;
+        const float horizontal = std::hypot(outward.x(), outward.y());
+        if (horizontal < 1.f)
+            return;
+        outward.z() = std::clamp(outward.z(), -horizontal * 0.25f, horizontal * 0.25f);
+        outward.normalize();
+
+        const float desiredDistance = std::clamp(halfExtents.length() * 1.5f, 88.f, 160.f);
+        osg::Vec3f cameraPosition = focus + outward * desiredDistance;
+        MWPhysics::RayCastingResult hit{};
+        const std::array<MWWorld::Ptr, 1> ignored{ target };
+        if (world->castRenderingRay(hit, focus, cameraPosition, true, true, ignored))
+        {
+            const float available = (hit.mHitPos - focus).length() - 16.f;
+            if (available < 40.f)
+                return;
+            cameraPosition = focus + outward * std::min(desiredDistance, available);
+        }
+
+        auto previous = std::make_unique<FalloutDialogueCameraState>();
+        previous->mMode = camera->getMode();
+        previous->mPitch = camera->getPitch();
+        previous->mYaw = camera->getYaw();
+        previous->mRoll = camera->getRoll();
+        previous->mFieldOfView = rendering->getFieldOfView();
+        previous->mFieldOfViewWasOverridden = rendering->isFieldOfViewOverridden();
+        previous->mTarget = target;
+        previous->mCameraPosition = cameraPosition;
+
+        camera->setMode(MWRender::Camera::Mode::Static, true);
+        camera->setStaticPosition(cameraPosition);
+        const osg::Vec3f aimDelta = focus - cameraPosition;
+        camera->setPitch(std::atan2(aimDelta.z(), std::hypot(aimDelta.x(), aimDelta.y())), true);
+        camera->setYaw(-std::atan2(aimDelta.x(), aimDelta.y()), true);
+        camera->setRoll(0.f);
+        if (!rendering->isProjectionMatrixOverridden())
+        {
+            rendering->overrideFieldOfView(50.f);
+            previous->mChangedFieldOfView = true;
+        }
+        // Retail terminal interaction replaces the gameplay HUD while retaining the physical world and shell.
+        // Suppress only the HUD widget; the modal terminal presenter remains visible on its own layer.
+        if (mHud)
+            mHud->setVisible(false);
+        mFalloutTerminalCamera = std::move(previous);
+        Log(Debug::Info) << "FNV terminal camera: physical shell target=" << target.toString() << " focus=("
+                         << focus.x() << "," << focus.y() << "," << focus.z() << ") distance="
+                         << (cameraPosition - focus).length();
+    }
+
+    void WindowManager::endFalloutTerminalSession()
+    {
+        if (!mFalloutTerminalCamera)
+            return;
+        std::unique_ptr<FalloutDialogueCameraState> previous = std::move(mFalloutTerminalCamera);
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return;
+        if (MWRender::Camera* const camera = world->getCamera())
+        {
+            camera->setMode(previous->mMode, true);
+            camera->setPitch(previous->mPitch, true);
+            camera->setYaw(previous->mYaw, true);
+            camera->setRoll(previous->mRoll);
+        }
+        if (previous->mChangedFieldOfView)
+        {
+            if (MWRender::RenderingManager* const rendering = world->getRenderingManager())
+            {
+                if (previous->mFieldOfViewWasOverridden)
+                    rendering->overrideFieldOfView(previous->mFieldOfView);
+                else
+                    rendering->resetFieldOfView();
+            }
+        }
+        updateVisible();
+        Log(Debug::Info) << "FNV terminal camera: restored player view";
+    }
+
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
@@ -2462,7 +3582,7 @@ namespace MWGui
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg, bool force)
     {
-        if ((mode == GM_Inventory || mode == GM_FalloutPipBoy) && mAllowed == GW_None)
+        if (mode == GM_Inventory && mAllowed == GW_None)
             return;
 
         if (mGuiModes.empty() || mGuiModes.back() != mode)
@@ -2805,7 +3925,7 @@ namespace MWGui
 
     void WindowManager::toggleVisible(GuiWindow wnd)
     {
-        if (!isInventoryMode(getMode()))
+        if (getMode() != GM_Inventory)
             return;
 
         if (Settings::SettingValue<bool>* const hidden = findHiddenSetting(wnd))
@@ -3213,7 +4333,7 @@ namespace MWGui
         }
     }
 
-    size_t WindowManager::countSavedGameRecords() const
+    int WindowManager::countSavedGameRecords() const
     {
         return 1 // Global map
             + 1 // QuickKeysMenu
@@ -3449,12 +4569,6 @@ namespace MWGui
 
     void WindowManager::fadeScreenIn(const float time, bool clearQueue, float delay)
     {
-        Debug::FNVSeamlessTelemetry::Event("fade-request")
-            .string("operation", "fadeScreenIn")
-            .number("durationSeconds", time)
-            .boolean("clearQueue", clearQueue)
-            .number("delaySeconds", delay)
-            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeOut(time, delay);
@@ -3462,12 +4576,6 @@ namespace MWGui
 
     void WindowManager::fadeScreenOut(const float time, bool clearQueue, float delay)
     {
-        Debug::FNVSeamlessTelemetry::Event("fade-request")
-            .string("operation", "fadeScreenOut")
-            .number("durationSeconds", time)
-            .boolean("clearQueue", clearQueue)
-            .number("delaySeconds", delay)
-            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeIn(time, delay);
@@ -3475,13 +4583,6 @@ namespace MWGui
 
     void WindowManager::fadeScreenTo(const int percent, const float time, bool clearQueue, float delay)
     {
-        Debug::FNVSeamlessTelemetry::Event("fade-request")
-            .string("operation", "fadeScreenTo")
-            .integer("percent", percent)
-            .number("durationSeconds", time)
-            .boolean("clearQueue", clearQueue)
-            .number("delaySeconds", delay)
-            .emit();
         if (clearQueue)
             mScreenFader->clearQueue();
         mScreenFader->fadeTo(percent, time, delay);
@@ -3858,7 +4959,7 @@ namespace MWGui
     std::vector<std::string_view> WindowManager::getAllowedWindowIds(GuiMode mode) const
     {
         std::vector<std::string_view> res;
-        if (isInventoryMode(mode))
+        if (mode == GM_Inventory)
         {
             if (mAllowed & GW_Map)
                 res.push_back(mMap->getWindowIdForLua());
@@ -3985,7 +5086,7 @@ namespace MWGui
         if (getMode() == GM_Inventory && !VR::getVR())
         {
             mInventoryTabsOverlay->setVisible(true);
-            mInventoryTabsOverlay->setTab(mActiveControllerWindows[getMode()]);
+            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
             if (mInventoryTabsOverlay->mMainWidget != nullptr)
                 MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
         }

@@ -10,6 +10,7 @@
 #include <osg/Texture2D>
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,7 +56,8 @@ namespace MWRender
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
-        osg::Node* getEquippedWeaponNode();
+        void emitFalloutFirstPersonWeaponPostKfAudit();
+        osg::Node* getEquippedWeaponNode() override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
         bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) override;
@@ -65,9 +67,15 @@ namespace MWRender
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
         std::size_t getFirstPersonAttachedPartCount() const { return mFirstPersonAttachedPartCount; }
-        bool hasPipBoyPresentation() const { return mPipBoyPresentationRoot != nullptr; }
+        bool hasPipBoyPresentation() const { return mPipBoyArmPart != nullptr; }
+        bool isPipBoyPresentationHeld() const { return mPipBoyRetailInteractionPoseHeld; }
         bool setPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture = nullptr,
-            bool showMap = false, float mapZoom = 1.f, float mapPanX = 0.f, float mapPanY = 0.f);
+            bool showMap = false, float mapZoom = 1.f, float mapPanX = 0.f, float mapPanY = 0.f,
+            const osg::Vec4f& mapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f));
+        static bool bindPipBoyScreenTexture(osg::Node& pipBoyArm, osg::Texture2D* screenTexture,
+            osg::Texture2D* mapTexture = nullptr, bool showMap = false, float mapZoom = 1.f,
+            float mapPanX = 0.f, float mapPanY = 0.f,
+            const osg::Vec4f& mapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f));
         void setPipBoyPresentationProgress(float progress, bool interactionPoseActive);
         void setPipBoyInteractionProgress(float progress);
         void setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
@@ -80,13 +88,6 @@ namespace MWRender
             osg::Matrix mRootRelative;
         };
 
-        struct PipBoyPhysicalControl
-        {
-            osg::ref_ptr<osg::MatrixTransform> mRoot;
-            osg::Vec3f mPivot;
-            osg::Vec3f mAxis;
-        };
-
         std::vector<ProceduralPoseBone> mFo4ProceduralPoseBones;
         bool mFo4ProceduralPoseInitialized = false;
         std::string mFo4ProceduralGroup;
@@ -94,32 +95,33 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
         osg::ref_ptr<osg::MatrixTransform> mFalloutWeaponCameraFrame;
+        osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponDrawFrame;
         bool mFalloutWeaponUsesWorldModelFallback = false;
         osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
         bool mFalloutWeaponShownTelemetryLogged = false;
+        bool mFalloutWeaponPostKfAuditLogged = false;
         bool mFirstPersonView = false;
         std::size_t mFirstPersonAttachedPartCount = 0;
         osg::ref_ptr<osg::Node> mPipBoyArmPart;
+        osg::ref_ptr<osg::Node> mFirstPersonArmorArmsPart;
+        osg::ref_ptr<osg::Node> mFirstPersonLeftHandPart;
         osg::ref_ptr<osg::Node> mFirstPersonRightHandPart;
-        osg::ref_ptr<osg::MatrixTransform> mPipBoyPresentationRoot;
-        osg::ref_ptr<osg::MatrixTransform> mPipBoyInteractionHandRoot;
-        PipBoyPhysicalControl mPipBoyTabKnob;
-        PipBoyPhysicalControl mPipBoyScrollKnob;
-        std::array<PipBoyPhysicalControl, 3> mPipBoyButtons;
-        std::array<PipBoyPhysicalControl, 3> mPipBoyGlows;
         std::vector<osg::ref_ptr<osg::StateSet>> mPipBoyScreenStateSets;
+        std::vector<osg::ref_ptr<osg::Node>> mPipBoyScreenNodes;
+        std::vector<osg::ref_ptr<osg::Drawable>> mPipBoyScreenDrawables;
         float mPipBoyPresentationProgress = 0.f;
         float mPipBoyInteractionProgress = 0.f;
-        int mPipBoyArmTargetVariant = 0;
-        bool mPipBoyControlsInitialized = false;
-        bool mPipBoyControlsInitializationAttempted = false;
+        float mDefaultFirstPersonFieldOfView = 0.f;
+        float mPipBoyFirstPersonFieldOfView = 0.f;
         bool mPipBoyRetailInteractionBound = false;
         bool mPipBoyRetailWaverBound = false;
+        bool mPipBoyRetailManipulateBound = false;
+        bool mPipBoyRetailBaseAimBound = false;
         bool mPipBoyRetailInteractionPoseHeld = false;
-        bool mPipBoyInteractionPulseActive = false;
+        bool mPipBoyHeldCompositionAuditLogged = false;
         // The game may refresh the first-person weapon after the Pip-Boy
         // renderer has opened. Keep the visual holster state authoritative
         // until the wrist has lowered again.
@@ -135,8 +137,6 @@ namespace MWRender
         osg::ref_ptr<osg::Node> insertAttachedPart(
             std::string_view model, std::string_view preferredBone, std::string* authoredParent = nullptr);
         void initializeFirstPerson(const FirstPersonState& state);
-        void initializePipBoyPhysicalControls();
-
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,
             std::set<uint32_t>& usedHeadPartTypes, std::set<uint32_t>* attachedHeadPartTypes = nullptr,

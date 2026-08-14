@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <utility>
 
 #include <components/esm/defs.hpp>
@@ -18,15 +19,6 @@ namespace
         return !value.empty() && value.find('\0') == std::string_view::npos;
     }
 
-    bool isStrictEmptyScript(const ESM4::ScriptDefinition& script)
-    {
-        const ESM4::ScriptHeader& header = script.scriptHeader;
-        return header.unused == 0 && header.refCount == 0 && header.compiledSize == 0 && header.variableCount == 0
-            && header.type == 0 && header.flag == 1 && script.compiledData.empty() && script.scriptSource.empty()
-            && script.localVarData.empty() && script.localRefVarIndex.empty() && script.references.empty()
-            && script.globReference.isZeroOrUnset();
-    }
-
     bool hasRequiredBounds(const ESM4::Terminal& terminal)
     {
         return std::any_of(terminal.mObjectBounds.begin(), terminal.mObjectBounds.end(),
@@ -35,13 +27,7 @@ namespace
 
     bool hasSupportedDataShape(const ESM4::Terminal& terminal)
     {
-        // These are the only two byte-exact DNAM shapes in the frozen strict
-        // read-only subset. Their individual field meanings are intentionally
-        // not guessed by this runtime slice.
-        constexpr std::array<std::uint8_t, 4> baseShape{ 0x00, 0x02, 0x04, 0x00 };
-        constexpr std::array<std::uint8_t, 4> deadMoneyShape{ 0x00, 0x02, 0x08, 0x00 };
-        return terminal.mData.mSerializedSize == 4
-            && (terminal.mData.mBytes == baseShape || terminal.mData.mBytes == deadMoneyShape);
+        return terminal.mData.mSerializedSize == 3 || terminal.mData.mSerializedSize == 4;
     }
 
     std::optional<MWWorld::PreparedTerminalSession> fail(
@@ -55,35 +41,97 @@ namespace
 
 namespace MWWorld
 {
+    FnvTerminalAccessDecision resolveFnvTerminalAccess(const FnvTerminalAccessSource& source)
+    {
+        FnvTerminalAccessDecision result;
+        if ((source.mData.mSerializedSize != 3 && source.mData.mSerializedSize != 4)
+            || source.mData.mBytes[0] > static_cast<std::uint8_t>(FnvTerminalDifficulty::RequiresKey)
+            || !std::isfinite(source.mScience) || !std::isfinite(source.mRequiredScience)
+            || source.mRequiredScience < 0.f || source.mRequiredScience > 255.f)
+            return result;
+
+        result.mDifficulty = static_cast<FnvTerminalDifficulty>(source.mData.mBytes[0]);
+        result.mRequiredScience = result.mDifficulty == FnvTerminalDifficulty::RequiresKey
+            ? 255
+            : static_cast<std::uint8_t>(source.mRequiredScience);
+
+        constexpr std::uint8_t unlockedFlag = 1u << 1;
+        if (source.mReferenceUnlocked || source.mPreviouslyHacked || (source.mData.mBytes[1] & unlockedFlag) != 0)
+            result.mResult = FnvTerminalAccessResult::Open;
+        else if (source.mHasPassword)
+            result.mResult = FnvTerminalAccessResult::PasswordAccepted;
+        else if (source.mLockedOut)
+            result.mResult = source.mHasComputerWhiz && !source.mComputerWhizRetryConsumed
+                ? FnvTerminalAccessResult::ComputerWhizRetry
+                : FnvTerminalAccessResult::LockedOut;
+        else if (result.mDifficulty == FnvTerminalDifficulty::RequiresKey)
+            result.mResult = FnvTerminalAccessResult::RequiresKey;
+        else if (source.mScience < result.mRequiredScience)
+            result.mResult = FnvTerminalAccessResult::InsufficientScience;
+        else
+            result.mResult = FnvTerminalAccessResult::NeedsHacking;
+        return result;
+    }
+
+    std::string_view getFnvTerminalMinimumScienceGameSetting(FnvTerminalDifficulty difficulty)
+    {
+        constexpr std::array<std::string_view, 5> settings{
+            "fHackingMinSkillVeryEasy",
+            "fHackingMinSkillEasy",
+            "fHackingMinSkillAverage",
+            "fHackingMinSkillHard",
+            "fHackingMinSkillVeryHard",
+        };
+        const std::size_t index = static_cast<std::size_t>(difficulty);
+        return index < settings.size() ? settings[index] : std::string_view{};
+    }
+
     class FnvTerminalSessionBuilder
     {
     public:
-        static PreparedTerminalMenuItem makeMenuItem(std::string text, std::string resultText, bool redraw,
-            std::optional<ESM::FormId> displayNote = std::nullopt)
+        static PreparedTerminalMenuItem makeMenuItem(std::string text, std::string resultText, std::uint8_t flags,
+            std::optional<ESM::FormId> displayNote, std::optional<ESM::FormId> submenu,
+            std::optional<PreparedTerminalDisplayNote> displayNotePayload, ESM4::ScriptDefinition script,
+            std::vector<ESM4::TargetCondition> conditions)
         {
-            return PreparedTerminalMenuItem(std::move(text), std::move(resultText), redraw, std::move(displayNote));
+            return PreparedTerminalMenuItem(std::move(text), std::move(resultText), flags, std::move(displayNote),
+                std::move(submenu), std::move(displayNotePayload), std::move(script), std::move(conditions));
         }
 
-        static PreparedTerminalSession makeSession(
-            ESM::FormId terminal, std::string description, std::vector<PreparedTerminalMenuItem> menuItems)
+        static PreparedTerminalSession makeSession(ESM::FormId terminal, std::string name, std::string description,
+            ESM::FormId topLevelScript, ESM::FormId passwordNote, ESM::FormId sound,
+            ESM4::Terminal::Data data, std::vector<PreparedTerminalMenuItem> menuItems)
         {
-            return PreparedTerminalSession(terminal, std::move(description), std::move(menuItems));
+            return PreparedTerminalSession(terminal, std::move(name), std::move(description), topLevelScript,
+                passwordNote, sound, data, std::move(menuItems));
         }
     };
 
-    PreparedTerminalMenuItem::PreparedTerminalMenuItem(
-        std::string text, std::string resultText, bool redraw, std::optional<ESM::FormId> displayNote)
+    PreparedTerminalMenuItem::PreparedTerminalMenuItem(std::string text, std::string resultText,
+        std::uint8_t flags, std::optional<ESM::FormId> displayNote, std::optional<ESM::FormId> submenu,
+        std::optional<PreparedTerminalDisplayNote> displayNotePayload, ESM4::ScriptDefinition script,
+        std::vector<ESM4::TargetCondition> conditions)
         : mText(std::move(text))
         , mResultText(std::move(resultText))
-        , mRedraw(redraw)
+        , mFlags(flags)
         , mDisplayNote(std::move(displayNote))
+        , mDisplayNotePayload(std::move(displayNotePayload))
+        , mSubmenu(std::move(submenu))
+        , mScript(std::move(script))
+        , mConditions(std::move(conditions))
     {
     }
 
-    PreparedTerminalSession::PreparedTerminalSession(
-        ESM::FormId terminal, std::string description, std::vector<PreparedTerminalMenuItem> menuItems)
+    PreparedTerminalSession::PreparedTerminalSession(ESM::FormId terminal, std::string name,
+        std::string description, ESM::FormId topLevelScript, ESM::FormId passwordNote, ESM::FormId sound,
+        ESM4::Terminal::Data data, std::vector<PreparedTerminalMenuItem> menuItems)
         : mTerminal(terminal)
+        , mName(std::move(name))
         , mDescription(std::move(description))
+        , mTopLevelScript(topLevelScript)
+        , mPasswordNote(passwordNote)
+        , mSound(sound)
+        , mData(data)
         , mMenuItems(std::move(menuItems))
     {
     }
@@ -91,12 +139,6 @@ namespace MWWorld
     std::optional<PreparedTerminalSession> prepareFnvTerminalSession(
         const FnvTerminalSessionSource& source, FnvTerminalPreparationError* error)
     {
-        // Frozen English Ultimate Edition numerator: 14/1,350 menu items,
-        // 7/515 winning live TERM records, and 7/357 placed terminal REFRs.
-        // Ten of those items are DATA=1 NOTE links on exactly four TERM records
-        // and four placements; the other four items retain the pre-existing
-        // RNAM path. This is runtime coverage only: no retail visual parity or
-        // certified subsystem parity is claimed.
         if (error != nullptr)
             *error = FnvTerminalPreparationError::None;
 
@@ -112,16 +154,11 @@ namespace MWWorld
             return fail(FnvTerminalPreparationError::MissingTarget, error);
 
         const ESM4::Terminal& terminal = *source.mTerminal;
-        if (terminal.mFlags != 0)
-            return fail(FnvTerminalPreparationError::UnsupportedRecordFlags, error);
+        if ((terminal.mFlags & ESM4::Rec_Deleted) != 0)
+            return fail(FnvTerminalPreparationError::DeletedTarget, error);
         if (terminal.mId.isZeroOrUnset() || !hasRenderableText(terminal.mEditorId)
-            || !hasRenderableText(terminal.mFullName) || !hasRenderableText(terminal.mModel)
-            || !hasRequiredBounds(terminal) || !hasRenderableText(terminal.mText) || terminal.mMenuItems.empty())
+            || !hasRequiredBounds(terminal) || terminal.mMenuItems.empty())
             return fail(FnvTerminalPreparationError::MissingRequiredField, error);
-        if (!terminal.mScriptId.isZeroOrUnset() || !terminal.mSound.isZeroOrUnset()
-            || !terminal.mPasswordNote.isZeroOrUnset() || !terminal.mModelData.empty()
-            || !terminal.mModelTextureSwaps.empty())
-            return fail(FnvTerminalPreparationError::UnsupportedTopLevelField, error);
         if (!hasSupportedDataShape(terminal))
             return fail(FnvTerminalPreparationError::UnsupportedDataShape, error);
 
@@ -129,12 +166,12 @@ namespace MWWorld
         preparedItems.reserve(terminal.mMenuItems.size());
         for (const ESM4::Terminal::MenuItem& item : terminal.mMenuItems)
         {
-            if (!hasRenderableText(item.mText) || (item.mFlags != 0 && item.mFlags != 2) || item.mSubmenu.has_value()
-                || !item.mConditions.empty() || !isStrictEmptyScript(item.mScript))
+            if (!hasRenderableText(item.mText) || item.mFlags > 3)
                 return fail(FnvTerminalPreparationError::UnsupportedMenuItem, error);
 
             std::string resultText;
             std::optional<ESM::FormId> displayNote;
+            std::optional<PreparedTerminalDisplayNote> displayNotePayload;
             if (item.mDisplayNote.has_value())
             {
                 if (source.mStore == nullptr)
@@ -142,24 +179,52 @@ namespace MWWorld
                 const ESM4::Note* note = source.mStore->get<ESM4::Note>().search(ESM::RefId(*item.mDisplayNote));
                 if (note == nullptr)
                     return fail(FnvTerminalPreparationError::MissingDisplayNote, error);
-                if (note->mId != *item.mDisplayNote || note->mFlags != 0 || note->mData != 1
-                    || !hasRenderableText(note->mText) || !note->mImage.empty() || !note->mVoiceTopic.isZeroOrUnset()
-                    || !note->mVoiceSpeaker.isZeroOrUnset() || !note->mQuests.empty())
+                if (note->mId != *item.mDisplayNote || (note->mFlags & ESM4::Rec_Deleted) != 0)
                 {
                     return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
                 }
-                resultText = note->mText;
+                switch (note->mData)
+                {
+                    case 0:
+                        if (!note->mText.empty() || !note->mImage.empty() || !note->mVoiceTopic.isZeroOrUnset()
+                            || !note->mVoiceSpeaker.isZeroOrUnset())
+                            return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                        break;
+                    case 1:
+                        if (!hasRenderableText(note->mText) || !note->mImage.empty()
+                            || !note->mVoiceTopic.isZeroOrUnset() || !note->mVoiceSpeaker.isZeroOrUnset())
+                            return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                        resultText = note->mText;
+                        break;
+                    case 2:
+                        if (!hasRenderableText(note->mImage) || !note->mText.empty()
+                            || !note->mVoiceTopic.isZeroOrUnset() || !note->mVoiceSpeaker.isZeroOrUnset())
+                            return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                        resultText = item.mResultText;
+                        break;
+                    case 3:
+                        if (note->mVoiceTopic.isZeroOrUnset() || !note->mText.empty() || !note->mImage.empty())
+                            return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                        resultText = item.mResultText;
+                        break;
+                    default:
+                        return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                }
                 displayNote = *item.mDisplayNote;
+                displayNotePayload = PreparedTerminalDisplayNote{ note->mId, note->mFullName, note->mData,
+                    note->mText, note->mImage, note->mVoiceTopic, note->mVoiceSpeaker, note->mQuests };
             }
             else
             {
-                if (!hasRenderableText(item.mResultText))
+                if (!item.mSubmenu.has_value() && item.mScript.scriptSource.empty()
+                    && item.mScript.compiledData.empty() && !hasRenderableText(item.mResultText))
                     return fail(FnvTerminalPreparationError::UnsupportedMenuItem, error);
                 resultText = item.mResultText;
             }
 
             preparedItems.push_back(FnvTerminalSessionBuilder::makeMenuItem(
-                item.mText, std::move(resultText), item.mFlags == 2, std::move(displayNote)));
+                item.mText, std::move(resultText), item.mFlags, std::move(displayNote), item.mSubmenu,
+                std::move(displayNotePayload), item.mScript, item.mConditions));
         }
 
         // loadterm keeps this compatibility mirror synchronized with the final
@@ -168,7 +233,8 @@ namespace MWWorld
         if (terminal.mResultText != terminal.mMenuItems.back().mResultText)
             return fail(FnvTerminalPreparationError::MissingRequiredField, error);
 
-        return FnvTerminalSessionBuilder::makeSession(terminal.mId, terminal.mText, std::move(preparedItems));
+        return FnvTerminalSessionBuilder::makeSession(terminal.mId, terminal.mFullName, terminal.mText,
+            terminal.mScriptId, terminal.mPasswordNote, terminal.mSound, terminal.mData, std::move(preparedItems));
     }
 
     std::string_view getFnvTerminalPreparationErrorName(FnvTerminalPreparationError error)
@@ -185,12 +251,8 @@ namespace MWWorld
                 return "wrong-target-type";
             case FnvTerminalPreparationError::DeletedTarget:
                 return "deleted-target";
-            case FnvTerminalPreparationError::UnsupportedRecordFlags:
-                return "unsupported-record-flags";
             case FnvTerminalPreparationError::MissingRequiredField:
                 return "missing-required-field";
-            case FnvTerminalPreparationError::UnsupportedTopLevelField:
-                return "unsupported-top-level-field";
             case FnvTerminalPreparationError::UnsupportedDataShape:
                 return "unsupported-data-shape";
             case FnvTerminalPreparationError::UnsupportedMenuItem:

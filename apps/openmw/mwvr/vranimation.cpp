@@ -94,6 +94,8 @@
 #include "vrpointer.hpp"
 #include "vrtracking.hpp"
 
+#include "../mwrender/esm4npcanimation.hpp"
+
 namespace MWVR
 {
     float getEnvFloat(std::string_view name, float fallback)
@@ -4059,6 +4061,7 @@ namespace MWVR
                              << mFalloutVrHandSurfaceNodes.size() << " parentLinks=" << parentLinksRemoved;
 
         mFalloutVrHandSurfaceNodes.clear();
+        mFalloutVrPipBoySurfaceNodes.clear();
         mFalloutVrHandSurfacesAttached = false;
     }
 
@@ -4774,6 +4777,8 @@ namespace MWVR
 
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
             mFalloutVrHandSurfaceNodes.push_back(attached);
+            if (pipBoyArm)
+                mFalloutVrPipBoySurfaceNodes.push_back(attached);
             ++attachedCount;
             if (riggedHandPart)
                 ++(surface.left ? leftHandSurfaceCount : rightHandSurfaceCount);
@@ -4800,6 +4805,23 @@ namespace MWVR
             << " attachedSurfaces=" << attachedCount << " requestedSurfaces=" << mFalloutVrHandSurfaces.size();
         Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly attached surfaces count=" << attachedCount
                          << " requested=" << mFalloutVrHandSurfaces.size();
+    }
+
+    bool VRAnimation::setFalloutVrPipBoyScreenTexture(osg::Texture2D* screenTexture,
+        osg::Texture2D* mapTexture, bool showMap, float mapZoom, float mapPanX, float mapPanY,
+        const osg::Vec4f& mapClip)
+    {
+        bool bound = false;
+        for (const osg::ref_ptr<osg::Node>& pipBoy : mFalloutVrPipBoySurfaceNodes)
+        {
+            if (pipBoy != nullptr)
+                bound = MWRender::ESM4NpcAnimation::bindPipBoyScreenTexture(
+                    *pipBoy, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip) || bound;
+        }
+        Log(bound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy VR physical: screenBinding=" << (bound ? "ready" : "missing")
+            << " surfaceCount=" << mFalloutVrPipBoySurfaceNodes.size();
+        return bound;
     }
 
     void VRAnimation::updateFalloutVrHandSurfaceVisibility()

@@ -23,7 +23,7 @@ namespace MWWorld
     bool FalloutPlayerRuntimeState::isSupported(std::uint32_t actorValue)
     {
         return actorValue == HealthActorValue || actorValue == ActionPointsActorValue
-            || actorValue == ExperienceActorValue
+            || actorValue == SpeedMultiplierActorValue || actorValue == ExperienceActorValue
             || (actorValue >= SpecialActorValueBegin && actorValue <= SpecialActorValueEnd)
             || (actorValue >= SkillActorValueBegin && actorValue <= SkillActorValueEnd);
     }
@@ -54,25 +54,20 @@ namespace MWWorld
             mBase->mSkillValues, result.mSkills.begin(), [](std::uint8_t value) { return static_cast<float>(value); });
         result.mActionPoints = 65.f + 3.f
             * result.mSpecial[static_cast<std::size_t>(FalloutSpecial::Agility)];
+        result.mSpeedMultiplier = static_cast<float>(mBase->mStatsConfig.speedMultiplier);
         const auto addModifiers = [&](std::uint32_t actorValue, float& value) {
             value += mPermanentModifiers[actorValue] + mDamageModifiers[actorValue]
                 + mTemporaryModifiers[actorValue];
         };
         addModifiers(HealthActorValue, result.mHealth);
         addModifiers(ActionPointsActorValue, result.mActionPoints);
+        addModifiers(SpeedMultiplierActorValue, result.mSpeedMultiplier);
         addModifiers(ExperienceActorValue, result.mExperience);
         for (std::size_t index = 0; index < result.mSpecial.size(); ++index)
             addModifiers(SpecialActorValueBegin + static_cast<std::uint32_t>(index), result.mSpecial[index]);
         for (std::size_t index = 0; index < result.mSkills.size(); ++index)
             addModifiers(SkillActorValueBegin + static_cast<std::uint32_t>(index), result.mSkills[index]);
         return result;
-    }
-
-    float FalloutPlayerRuntimeState::makeBaseKarma() const
-    {
-        if (!mBase || !std::isfinite(mBase->mStatsConfig.karma))
-            return 0.f;
-        return std::clamp(mBase->mStatsConfig.karma, -1000.f, 1000.f);
     }
 
     void FalloutPlayerRuntimeState::initialize(const std::optional<FalloutPlayerState>& base)
@@ -94,15 +89,13 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
-        mKnownNotes.clear();
-        mQuestObjects.clear();
-        mAchievements.clear();
-        mEssentialOverrides.clear();
-        mKarma = makeBaseKarma();
-        mSpecialPoints = 0;
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mCurrent = makeBaseCurrent();
         mVatsActive = false;
     }
@@ -153,15 +146,13 @@ namespace MWWorld
         mPerks.assign(perks.begin(), perks.end());
         mReputations.clear();
         mMapMarkerStates.clear();
-        mKnownNotes.clear();
-        mQuestObjects.clear();
-        mAchievements.clear();
-        mEssentialOverrides.clear();
-        mKarma = makeBaseKarma();
-        mSpecialPoints = 0;
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mCurrent = makeBaseCurrent();
         if (const std::optional<float> maximum = getMaxActionPoints())
             mCurrent.mActionPoints = std::clamp(mCurrent.mActionPoints, 0.f, *maximum);
@@ -178,15 +169,13 @@ namespace MWWorld
         mPerks.clear();
         mReputations.clear();
         mMapMarkerStates.clear();
-        mKnownNotes.clear();
-        mQuestObjects.clear();
-        mAchievements.clear();
-        mEssentialOverrides.clear();
-        mKarma = 0.f;
-        mSpecialPoints = 0;
+        mTerminalStates.clear();
+        mNotes.clear();
         mFastTravelEnabled = true;
         mWaitEnabled = true;
         mFastTravelKeepOnCellChange = false;
+        mProofForceEnemiesNearby = false;
+        mProofForceInvalidDestination = false;
         mVatsActive = false;
     }
 
@@ -203,9 +192,8 @@ namespace MWWorld
         };
         return mBase && (mCurrent != makeBaseCurrent() || hasModifier(mPermanentModifiers)
             || hasModifier(mDamageModifiers) || hasModifier(mTemporaryModifiers) || !mPerks.empty()
-            || !mReputations.empty() || !mMapMarkerStates.empty() || !mKnownNotes.empty()
-            || !mQuestObjects.empty() || !mAchievements.empty() || !mEssentialOverrides.empty()
-            || mKarma != makeBaseKarma() || mSpecialPoints != 0 || !mFastTravelEnabled
+            || !mReputations.empty() || !mMapMarkerStates.empty() || !mTerminalStates.empty() || !mNotes.empty()
+            || !mFastTravelEnabled
             || !mWaitEnabled || mFastTravelKeepOnCellChange);
     }
 
@@ -221,6 +209,9 @@ namespace MWWorld
             const float agility = static_cast<float>(mBase->getSpecial(FalloutSpecial::Agility));
             return FalloutRuntimeActorValue{ 65.f + 3.f * agility, std::nullopt };
         }
+        if (actorValue == SpeedMultiplierActorValue)
+            return FalloutRuntimeActorValue{
+                static_cast<float>(mBase->mStatsConfig.speedMultiplier), std::nullopt };
         if (actorValue == ExperienceActorValue)
             return FalloutRuntimeActorValue{ 0.f, std::nullopt };
         if (const auto index = specialIndex(actorValue))
@@ -240,6 +231,8 @@ namespace MWWorld
             return FalloutRuntimeActorValue{ mCurrent.mHealth, std::nullopt };
         if (actorValue == ActionPointsActorValue)
             return FalloutRuntimeActorValue{ mCurrent.mActionPoints, std::nullopt };
+        if (actorValue == SpeedMultiplierActorValue)
+            return FalloutRuntimeActorValue{ mCurrent.mSpeedMultiplier, std::nullopt };
         if (actorValue == ExperienceActorValue)
             return FalloutRuntimeActorValue{ mCurrent.mExperience, std::nullopt };
         if (const auto index = specialIndex(actorValue))
@@ -276,6 +269,15 @@ namespace MWWorld
         return std::isfinite(maximum) ? std::optional<float>(maximum) : std::nullopt;
     }
 
+    std::optional<FalloutRuntimeActorValueModifierStack> FalloutPlayerRuntimeState::getActorValueModifierStack(
+        std::uint32_t actorValue) const
+    {
+        if (!mBase || actorValue >= ActorValueCount)
+            return std::nullopt;
+        return FalloutRuntimeActorValueModifierStack{ mPermanentModifiers[actorValue], mDamageModifiers[actorValue],
+            mTemporaryModifiers[actorValue] };
+    }
+
     float FalloutPlayerRuntimeState::getSavedDamageModifier(std::uint32_t actorValue) const
     {
         return actorValue < mDamageModifiers.size() ? mDamageModifiers[actorValue] : 0.f;
@@ -295,35 +297,6 @@ namespace MWWorld
         if (found == mPerks.end())
             return std::nullopt;
         return found->mRankByte;
-    }
-
-    bool FalloutPlayerRuntimeState::addPerk(
-        ESM::FormId perk, std::uint8_t rankCount, bool alternate)
-    {
-        if (!mBase || perk.isZeroOrUnset() || rankCount == 0)
-            return false;
-        const auto found = std::ranges::find_if(
-            mPerks, [&](const FalloutSavePlayerHeaderState::PerkRank& entry) {
-                return entry.mPerk == perk && entry.mAlternate == alternate;
-            });
-        if (found == mPerks.end())
-        {
-            mPerks.push_back({ perk, 0, alternate, 0 });
-            return true;
-        }
-        if (static_cast<unsigned int>(found->mRankByte) + 1u < rankCount)
-            ++found->mRankByte;
-        return true;
-    }
-
-    bool FalloutPlayerRuntimeState::removePerk(ESM::FormId perk, bool alternate)
-    {
-        if (!mBase || perk.isZeroOrUnset())
-            return false;
-        std::erase_if(mPerks, [&](const FalloutSavePlayerHeaderState::PerkRank& entry) {
-            return entry.mPerk == perk && entry.mAlternate == alternate;
-        });
-        return true;
     }
 
     std::optional<FalloutReputationValue> FalloutPlayerRuntimeState::getReputation(
@@ -353,36 +326,6 @@ namespace MWWorld
         return true;
     }
 
-    bool FalloutPlayerRuntimeState::setReputationValue(
-        ESM::FormId reputation, bool fame, float maximum, float amount)
-    {
-        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
-            || !std::isfinite(amount))
-            return false;
-
-        FalloutReputationValue value = mReputations[reputation];
-        (fame ? value.mFame : value.mInfamy) = std::clamp(amount, 0.f, maximum);
-        if (value == FalloutReputationValue{})
-            mReputations.erase(reputation);
-        else
-            mReputations[reputation] = value;
-        return true;
-    }
-
-    bool FalloutPlayerRuntimeState::addReputationExact(
-        ESM::FormId reputation, bool fame, float maximum, float amount)
-    {
-        if (!mBase || reputation.isZeroOrUnset() || !std::isfinite(maximum) || maximum <= 0.f
-            || !std::isfinite(amount))
-            return false;
-
-        const FalloutReputationValue value = mReputations[reputation];
-        const float current = fame ? value.mFame : value.mInfamy;
-        const double result = std::clamp(
-            static_cast<double>(current) + static_cast<double>(amount), 0.0, static_cast<double>(maximum));
-        return setReputationValue(reputation, fame, maximum, static_cast<float>(result));
-    }
-
     std::optional<std::uint8_t> FalloutPlayerRuntimeState::getMapMarkerState(ESM::FormId marker) const
     {
         if (!mBase || marker.isZeroOrUnset())
@@ -399,100 +342,31 @@ namespace MWWorld
         return true;
     }
 
-    bool FalloutPlayerRuntimeState::hasNote(ESM::FormId note) const
+    FalloutTerminalState FalloutPlayerRuntimeState::getTerminalState(ESM::FormId placement) const
     {
-        return mBase && !note.isZeroOrUnset() && mKnownNotes.contains(note);
+        const auto found = mTerminalStates.find(placement);
+        return found != mTerminalStates.end() ? found->second : FalloutTerminalState::None;
     }
 
-    bool FalloutPlayerRuntimeState::setNoteKnown(ESM::FormId note, bool known)
+    bool FalloutPlayerRuntimeState::setTerminalState(ESM::FormId placement, FalloutTerminalState state)
     {
-        if (!mBase || note.isZeroOrUnset())
+        constexpr std::uint8_t validMask = static_cast<std::uint8_t>(FalloutTerminalState::Hacked)
+            | static_cast<std::uint8_t>(FalloutTerminalState::LockedOut)
+            | static_cast<std::uint8_t>(FalloutTerminalState::ComputerWhizRetryConsumed);
+        const std::uint8_t value = static_cast<std::uint8_t>(state);
+        if (!mBase || placement.isZeroOrUnset() || (value & ~validMask) != 0
+            || (hasFalloutTerminalState(state, FalloutTerminalState::Hacked)
+                && value != static_cast<std::uint8_t>(FalloutTerminalState::Hacked)))
             return false;
-        if (known)
-            mKnownNotes.insert(note);
-        else
-            mKnownNotes.erase(note);
-        return true;
+        if (state == FalloutTerminalState::None)
+            return mTerminalStates.erase(placement) != 0;
+        return mTerminalStates.insert_or_assign(placement, state).second
+            || mTerminalStates.at(placement) == state;
     }
 
-    bool FalloutPlayerRuntimeState::isQuestObject(ESM::FormId item) const
+    bool FalloutPlayerRuntimeState::addNote(ESM::FormId note)
     {
-        return mBase && !item.isZeroOrUnset() && mQuestObjects.contains(item);
-    }
-
-    bool FalloutPlayerRuntimeState::setQuestObject(ESM::FormId item, bool questObject)
-    {
-        if (!mBase || item.isZeroOrUnset())
-            return false;
-        if (questObject)
-            mQuestObjects.insert(item);
-        else
-            mQuestObjects.erase(item);
-        return true;
-    }
-
-    bool FalloutPlayerRuntimeState::hasAchievement(std::uint32_t achievement) const
-    {
-        return mBase && achievement != 0 && mAchievements.contains(achievement);
-    }
-
-    bool FalloutPlayerRuntimeState::unlockAchievement(std::uint32_t achievement)
-    {
-        if (!mBase || achievement == 0)
-            return false;
-        mAchievements.insert(achievement);
-        return true;
-    }
-
-    std::optional<bool> FalloutPlayerRuntimeState::getEssentialOverride(ESM::FormId actorBase) const
-    {
-        if (!mBase || actorBase.isZeroOrUnset())
-            return std::nullopt;
-        const auto found = mEssentialOverrides.find(actorBase);
-        return found != mEssentialOverrides.end() ? std::optional<bool>(found->second) : std::nullopt;
-    }
-
-    bool FalloutPlayerRuntimeState::setEssentialOverride(ESM::FormId actorBase, bool essential)
-    {
-        if (!mBase || actorBase.isZeroOrUnset())
-            return false;
-        mEssentialOverrides.insert_or_assign(actorBase, essential);
-        return true;
-    }
-
-    std::optional<float> FalloutPlayerRuntimeState::getKarma() const
-    {
-        return mBase ? std::optional<float>(mKarma) : std::nullopt;
-    }
-
-    bool FalloutPlayerRuntimeState::setKarma(float value)
-    {
-        if (!mBase || !std::isfinite(value))
-            return false;
-        mKarma = std::clamp(value, -1000.f, 1000.f);
-        return true;
-    }
-
-    bool FalloutPlayerRuntimeState::rewardKarma(int amount)
-    {
-        if (!mBase || amount == 0)
-            return false;
-        const double value = static_cast<double>(mKarma) + static_cast<double>(amount);
-        return setKarma(static_cast<float>(std::clamp(value, -1000.0, 1000.0)));
-    }
-
-    std::optional<std::int32_t> FalloutPlayerRuntimeState::getSpecialPoints() const
-    {
-        return mBase ? std::optional<std::int32_t>(mSpecialPoints) : std::nullopt;
-    }
-
-    bool FalloutPlayerRuntimeState::addSpecialPoints(int amount)
-    {
-        if (!mBase || amount <= 0
-            || amount > std::numeric_limits<std::int32_t>::max() - mSpecialPoints)
-            return false;
-        mSpecialPoints += amount;
-        return true;
+        return mBase && !note.isZeroOrUnset() && mNotes.insert(note).second;
     }
 
     bool FalloutPlayerRuntimeState::setScriptedFastTravel(
@@ -599,6 +473,8 @@ namespace MWWorld
             const float maximum = getMaxActionPoints().value_or(value);
             mCurrent.mActionPoints = std::clamp(value, 0.f, maximum);
         }
+        else if (actorValue == SpeedMultiplierActorValue)
+            mCurrent.mSpeedMultiplier = value;
         else if (actorValue == ExperienceActorValue)
             mCurrent.mExperience = value;
         else if (const auto index = specialIndex(actorValue))
@@ -607,18 +483,6 @@ namespace MWWorld
             mCurrent.mSkills[*index] = value;
         else
             return FalloutActorValueMutationResult::Unsupported;
-        return FalloutActorValueMutationResult::Applied;
-    }
-
-    FalloutActorValueMutationResult FalloutPlayerRuntimeState::setCurrentSpecial(
-        const std::array<float, FalloutPlayerState::SpecialCount>& values)
-    {
-        if (!mBase)
-            return FalloutActorValueMutationResult::Uninitialized;
-        if (!std::ranges::all_of(values, [](float value) { return std::isfinite(value); }))
-            return FalloutActorValueMutationResult::NonFinite;
-
-        mCurrent.mSpecial = values;
         return FalloutActorValueMutationResult::Applied;
     }
 
@@ -651,6 +515,7 @@ namespace MWWorld
         writer.writeHNT("HLTH", mCurrent.mHealth);
         writer.writeHNT("ACTP", mCurrent.mActionPoints);
         writer.writeHNT("EXPR", mCurrent.mExperience);
+        writer.writeHNT("SPDM", mCurrent.mSpeedMultiplier);
         for (const float value : mCurrent.mSpecial)
             writer.writeHNT("SPEC", value);
         for (const float value : mCurrent.mSkills)
@@ -677,25 +542,41 @@ namespace MWWorld
             writer.writeFormId(marker, true, "MPID");
             writer.writeHNT("MPST", state);
         }
+        writer.writeHNT("TCNT", static_cast<std::uint32_t>(mTerminalStates.size()));
+        for (const auto& [placement, state] : mTerminalStates)
+        {
+            writer.writeFormId(placement, true, "TPID");
+            writer.writeHNT("TPST", static_cast<std::uint8_t>(state));
+        }
+        writer.writeHNT("NCNT", static_cast<std::uint32_t>(mNotes.size()));
+        for (const ESM::FormId note : mNotes)
+            writer.writeFormId(note, true, "NTID");
         writer.writeHNT("FTEN", static_cast<std::uint8_t>(mFastTravelEnabled));
         writer.writeHNT("WTEN", static_cast<std::uint8_t>(mWaitEnabled));
         writer.writeHNT("FTKP", static_cast<std::uint8_t>(mFastTravelKeepOnCellChange));
-        writer.writeHNT("KARM", mKarma);
-        writer.writeHNT("SPPT", mSpecialPoints);
-        writer.writeHNT("NCNT", static_cast<std::uint32_t>(mKnownNotes.size()));
-        for (const ESM::FormId note : mKnownNotes)
-            writer.writeFormId(note, true, "NOTE");
-        writer.writeHNT("QCNT", static_cast<std::uint32_t>(mQuestObjects.size()));
-        for (const ESM::FormId item : mQuestObjects)
-            writer.writeFormId(item, true, "QOBJ");
-        writer.writeHNT("ACNT", static_cast<std::uint32_t>(mAchievements.size()));
-        for (const std::uint32_t achievement : mAchievements)
-            writer.writeHNT("ACHV", achievement);
-        writer.writeHNT("ECNT", static_cast<std::uint32_t>(mEssentialOverrides.size()));
-        for (const auto& [actorBase, essential] : mEssentialOverrides)
+        std::uint32_t modifierCount = 0;
+        for (std::size_t actorValue = 0; actorValue < ActorValueCount; ++actorValue)
         {
-            writer.writeFormId(actorBase, true, "EBID");
-            writer.writeHNT("ESNT", static_cast<std::uint8_t>(essential));
+            if (mPermanentModifiers[actorValue] != 0.f)
+                ++modifierCount;
+            if (mDamageModifiers[actorValue] != 0.f)
+                ++modifierCount;
+            if (mTemporaryModifiers[actorValue] != 0.f)
+                ++modifierCount;
+        }
+        writer.writeHNT("VCNT", modifierCount);
+        const auto writeModifier = [&](std::size_t actorValue, std::uint8_t kind, float value) {
+            if (value == 0.f)
+                return;
+            writer.writeHNT("VACT", static_cast<std::uint8_t>(actorValue));
+            writer.writeHNT("VKND", kind);
+            writer.writeHNT("VVAL", value);
+        };
+        for (std::size_t actorValue = 0; actorValue < ActorValueCount; ++actorValue)
+        {
+            writeModifier(actorValue, 0, mPermanentModifiers[actorValue]);
+            writeModifier(actorValue, 1, mDamageModifiers[actorValue]);
+            writeModifier(actorValue, 2, mTemporaryModifiers[actorValue]);
         }
         writer.endRecord(ESM::REC_FPLR);
     }
@@ -712,14 +593,6 @@ namespace MWWorld
 
         ESM::FormId player = reader.getFormId(true, "FORM");
         const bool contentAvailable = reader.applyContentFileMapping(player);
-        if (!contentAvailable)
-        {
-            // The record belongs to a content file that is no longer loaded. Its versioned payload may not match
-            // the active runtime schema, so consume it opaquely and leave the current player state untouched.
-            while (reader.hasMoreSubs())
-                reader.skipHSub();
-            return;
-        }
 
         CurrentState restored;
         reader.getHNT(restored.mHealth, "HLTH");
@@ -729,6 +602,10 @@ namespace MWWorld
             restored.mActionPoints = makeBaseCurrent().mActionPoints;
         if (version >= 3)
             reader.getHNT(restored.mExperience, "EXPR");
+        if (version >= 7)
+            reader.getHNT(restored.mSpeedMultiplier, "SPDM");
+        else
+            restored.mSpeedMultiplier = static_cast<float>(mBase->mStatsConfig.speedMultiplier);
         for (float& value : restored.mSpecial)
             reader.getHNT(value, "SPEC");
         for (float& value : restored.mSkills)
@@ -797,6 +674,43 @@ namespace MWWorld
                     invalidSave("invalid or duplicate map marker identity");
             }
         }
+        std::map<ESM::FormId, FalloutTerminalState> terminalStates;
+        if (version >= 9)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "TCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId placement = reader.getFormId(true, "TPID");
+                const bool placementContentAvailable = reader.applyContentFileMapping(placement);
+                std::uint8_t rawState = 0;
+                reader.getHNT(rawState, "TPST");
+                constexpr std::uint8_t validMask = static_cast<std::uint8_t>(FalloutTerminalState::Hacked)
+                    | static_cast<std::uint8_t>(FalloutTerminalState::LockedOut)
+                    | static_cast<std::uint8_t>(FalloutTerminalState::ComputerWhizRetryConsumed);
+                const FalloutTerminalState state = static_cast<FalloutTerminalState>(rawState);
+                if (rawState == 0 || (rawState & ~validMask) != 0
+                    || (hasFalloutTerminalState(state, FalloutTerminalState::Hacked)
+                        && rawState != static_cast<std::uint8_t>(FalloutTerminalState::Hacked)))
+                    invalidSave("invalid terminal placement state");
+                if (placementContentAvailable && (placement.isZeroOrUnset()
+                    || !terminalStates.emplace(placement, static_cast<FalloutTerminalState>(rawState)).second))
+                    invalidSave("invalid or duplicate terminal placement identity");
+            }
+        }
+        std::set<ESM::FormId> notes;
+        if (version >= 9)
+        {
+            std::uint32_t count = 0;
+            reader.getHNT(count, "NCNT");
+            for (std::uint32_t index = 0; index < count; ++index)
+            {
+                ESM::FormId note = reader.getFormId(true, "NTID");
+                const bool noteContentAvailable = reader.applyContentFileMapping(note);
+                if (noteContentAvailable && (note.isZeroOrUnset() || !notes.insert(note).second))
+                    invalidSave("invalid or duplicate terminal note identity");
+            }
+        }
         std::uint8_t fastTravelEnabled = 1;
         std::uint8_t waitEnabled = 1;
         std::uint8_t fastTravelKeepOnCellChange = 0;
@@ -810,76 +724,56 @@ namespace MWWorld
             if (fastTravelEnabled != 0 && waitEnabled == 0)
                 invalidSave("fast travel cannot be enabled while waiting is disabled");
         }
-        float karma = makeBaseKarma();
-        std::int32_t specialPoints = 0;
-        std::set<ESM::FormId> knownNotes;
-        std::set<ESM::FormId> questObjects;
-        std::set<std::uint32_t> achievements;
-        std::map<ESM::FormId, bool> essentialOverrides;
-        if (version >= 7)
+        std::array<float, ActorValueCount> permanentModifiers{};
+        std::array<float, ActorValueCount> damageModifiers{};
+        std::array<float, ActorValueCount> temporaryModifiers{};
+        if (version >= 8)
         {
-            constexpr std::uint32_t MaximumSavedEntries = 1'000'000;
-            reader.getHNT(karma, "KARM");
-            reader.getHNT(specialPoints, "SPPT");
-            if (!std::isfinite(karma) || karma < -1000.f || karma > 1000.f || specialPoints < 0)
-                invalidSave("invalid Karma or S.P.E.C.I.A.L. point state");
-
-            const auto readFormSet = [&](ESM::NAME countName, ESM::NAME valueName,
-                                         std::set<ESM::FormId>& values) {
-                std::uint32_t count = 0;
-                reader.getHNT(count, countName);
-                if (count > MaximumSavedEntries)
-                    invalidSave("unreasonable persistent FormID count");
-                for (std::uint32_t index = 0; index < count; ++index)
+            std::uint32_t modifierCount = 0;
+            reader.getHNT(modifierCount, "VCNT");
+            if (modifierCount > ActorValueCount * 3)
+                invalidSave("too many actor-value modifier entries");
+            std::array<std::array<bool, ActorValueCount>, 3> seen{};
+            for (std::uint32_t index = 0; index < modifierCount; ++index)
+            {
+                std::uint8_t actorValue = 0;
+                std::uint8_t kind = 0;
+                float value = 0.f;
+                reader.getHNT(actorValue, "VACT");
+                reader.getHNT(kind, "VKND");
+                reader.getHNT(value, "VVAL");
+                if (actorValue >= ActorValueCount || kind > 2 || !std::isfinite(value) || value == 0.f)
+                    invalidSave("invalid actor-value modifier entry");
+                if (seen[kind][actorValue])
+                    invalidSave("duplicate actor-value modifier entry");
+                seen[kind][actorValue] = true;
+                switch (kind)
                 {
-                    ESM::FormId value = reader.getFormId(true, valueName);
-                    const bool valueContentAvailable = reader.applyContentFileMapping(value);
-                    if (valueContentAvailable
-                        && (value.isZeroOrUnset() || !values.insert(value).second))
-                        invalidSave("invalid or duplicate persistent FormID");
+                    case 0:
+                        permanentModifiers[actorValue] = value;
+                        break;
+                    case 1:
+                        damageModifiers[actorValue] = value;
+                        break;
+                    case 2:
+                        temporaryModifiers[actorValue] = value;
+                        break;
                 }
-            };
-            readFormSet("NCNT", "NOTE", knownNotes);
-            readFormSet("QCNT", "QOBJ", questObjects);
-
-            std::uint32_t achievementCount = 0;
-            reader.getHNT(achievementCount, "ACNT");
-            if (achievementCount > MaximumSavedEntries)
-                invalidSave("unreasonable achievement count");
-            for (std::uint32_t index = 0; index < achievementCount; ++index)
-            {
-                std::uint32_t achievement = 0;
-                reader.getHNT(achievement, "ACHV");
-                if (achievement == 0 || !achievements.insert(achievement).second)
-                    invalidSave("invalid or duplicate achievement");
-            }
-
-            std::uint32_t essentialCount = 0;
-            reader.getHNT(essentialCount, "ECNT");
-            if (essentialCount > MaximumSavedEntries)
-                invalidSave("unreasonable essential override count");
-            for (std::uint32_t index = 0; index < essentialCount; ++index)
-            {
-                ESM::FormId actorBase = reader.getFormId(true, "EBID");
-                const bool actorContentAvailable = reader.applyContentFileMapping(actorBase);
-                std::uint8_t essential = 0;
-                reader.getHNT(essential, "ESNT");
-                if (essential > 1)
-                    invalidSave("invalid essential override flag");
-                if (actorContentAvailable && (actorBase.isZeroOrUnset()
-                    || !essentialOverrides.emplace(actorBase, essential != 0).second))
-                    invalidSave("invalid or duplicate essential override");
             }
         }
         if (reader.hasMoreSubs())
             invalidSave("unexpected trailing subrecord");
 
         if (!std::isfinite(restored.mHealth) || !std::isfinite(restored.mActionPoints)
-            || !std::isfinite(restored.mExperience)
+            || !std::isfinite(restored.mSpeedMultiplier) || !std::isfinite(restored.mExperience)
             || !std::ranges::all_of(restored.mSpecial, [](float value) { return std::isfinite(value); })
             || !std::ranges::all_of(restored.mSkills, [](float value) { return std::isfinite(value); }))
             invalidSave("non-finite actor value");
 
+        // Match the existing ESM4 quest-save contract: consume and validate the complete record, but do not apply
+        // state whose source content is no longer present in the current load order.
+        if (!contentAvailable)
+            return;
         if (player != mBase->mBaseRecord)
             invalidSave("mapped FORM does not identify the current native Player base record");
         if (skillOffsets != mBase->mSkillOffsets)
@@ -887,18 +781,14 @@ namespace MWWorld
 
         // Apply only after the whole record and every invariant has been validated.
         mCurrent = restored;
-        mPermanentModifiers = {};
-        mDamageModifiers = {};
-        mTemporaryModifiers = {};
+        mPermanentModifiers = permanentModifiers;
+        mDamageModifiers = damageModifiers;
+        mTemporaryModifiers = temporaryModifiers;
         mPerks = std::move(perks);
         mReputations = std::move(reputations);
         mMapMarkerStates = std::move(mapMarkerStates);
-        mKnownNotes = std::move(knownNotes);
-        mQuestObjects = std::move(questObjects);
-        mAchievements = std::move(achievements);
-        mEssentialOverrides = std::move(essentialOverrides);
-        mKarma = karma;
-        mSpecialPoints = specialPoints;
+        mTerminalStates = std::move(terminalStates);
+        mNotes = std::move(notes);
         mFastTravelEnabled = fastTravelEnabled != 0;
         mWaitEnabled = waitEnabled != 0;
         mFastTravelKeepOnCellChange = fastTravelKeepOnCellChange != 0;

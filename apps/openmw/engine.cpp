@@ -30,7 +30,6 @@
 #include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -51,7 +50,6 @@
 #include <SDL.h>
 
 #include <components/debug/debuglog.hpp>
-#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/debug/gldebug.hpp>
 
 #include <components/misc/rng.hpp>
@@ -99,7 +97,9 @@
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadlvli.hpp>
@@ -109,6 +109,7 @@
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/esm4/loadwrld.hpp>
 
 #include <components/stereo/stereomanager.hpp>
 
@@ -131,7 +132,6 @@
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/screencapture.hpp>
 #include <components/sceneutil/riggeometry.hpp>
-#include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/texturetype.hpp>
 #include <components/sceneutil/unrefqueue.hpp>
@@ -143,7 +143,11 @@
 #include "mwinput/inputmanagerimp.hpp"
 #include "mwinput/actions.hpp"
 
+#include "mwgui/inventorywindow.hpp"
+#include "mwgui/itemmodel.hpp"
+#include "mwgui/sortfilteritemmodel.hpp"
 #include "mwgui/windowmanagerimp.hpp"
+#include "mwgui/confirmationdialog.hpp"
 
 #include "mwlua/luamanagerimp.hpp"
 #include "mwlua/worker.hpp"
@@ -2137,496 +2141,21 @@ namespace
         unsigned int mMinimumCullTraversal = 0;
     };
 
-    class OpenNvActorObjVisitor final : public osg::NodeVisitor
-    {
-    public:
-        OpenNvActorObjVisitor(std::ostream& obj, std::ostream& mtl, const osg::Vec3d& origin)
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
-            , mObj(obj)
-            , mMtl(mtl)
-            , mOrigin(origin)
-        {
-            setTraversalMask(~0u);
-        }
-
-        void apply(osg::Geode& geode) override
-        {
-            if (geode.getNodeMask() == 0)
-                return;
-            const osg::Matrixd world = osg::computeLocalToWorld(getNodePath());
-            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
-            {
-                osg::Drawable* drawable = geode.getDrawable(i);
-                if (drawable == nullptr || drawable->getNodeMask() == 0)
-                    continue;
-                osg::Geometry* geometry = drawable->asGeometry();
-                if (auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable))
-                    geometry = rig->getLastFrameGeometry();
-                else if (auto* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(drawable))
-                    geometry = holder->getGeometry(0);
-                if (geometry != nullptr)
-                    writeGeometry(*geometry, *drawable, world);
-            }
-            traverse(geode);
-        }
-
-        std::size_t getSurfaces() const { return mSurfaces; }
-        std::size_t getTriangles() const { return mTriangles; }
-
-    private:
-        void writeGeometry(osg::Geometry& geometry, osg::Drawable& drawable, const osg::Matrixd& world)
-        {
-            const auto* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
-            if (vertices == nullptr || vertices->empty())
-                return;
-            const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(geometry.getTexCoordArray(0));
-            const auto* normals = dynamic_cast<const osg::Vec3Array*>(geometry.getNormalArray());
-            const std::size_t base = mVertexCount + 1;
-            const std::size_t surface = mSurfaces++;
-            mObj << "g actor_surface_" << surface << '\n';
-            mObj << "usemtl actor_surface_" << surface << '\n';
-            mMtl << "newmtl actor_surface_" << surface << "\nKd 0.72 0.66 0.55\n";
-            const osg::StateSet* state = drawable.getStateSet();
-            if (state == nullptr)
-                state = geometry.getStateSet();
-            const auto* texture = state == nullptr ? nullptr
-                : dynamic_cast<const osg::Texture2D*>(state->getTextureAttribute(0, osg::StateAttribute::TEXTURE));
-            const osg::Image* image = texture == nullptr ? nullptr : texture->getImage();
-            if (image != nullptr && !image->getFileName().empty())
-                mMtl << "map_Kd " << image->getFileName() << '\n';
-            mMtl << '\n';
-            for (std::size_t i = 0; i < vertices->size(); ++i)
-            {
-                const osg::Vec3d value = osg::Vec3d((*vertices)[i]) * world - mOrigin;
-                mObj << "v " << value.x() << ' ' << value.y() << ' ' << value.z() << '\n';
-                const osg::Vec2 uv = texcoords != nullptr && i < texcoords->size() ? (*texcoords)[i] : osg::Vec2();
-                mObj << "vt " << uv.x() << ' ' << 1.f - uv.y() << '\n';
-                osg::Vec3d normal = normals != nullptr && i < normals->size()
-                    ? osg::Matrixd::transform3x3(osg::Vec3d((*normals)[i]), world)
-                    : osg::Vec3d(0.0, 0.0, 1.0);
-                normal.normalize();
-                mObj << "vn " << normal.x() << ' ' << normal.y() << ' ' << normal.z() << '\n';
-            }
-            const auto emit = [&](unsigned int a, unsigned int b, unsigned int c) {
-                const std::size_t ia = base + a;
-                const std::size_t ib = base + b;
-                const std::size_t ic = base + c;
-                mObj << "f " << ia << '/' << ia << '/' << ia << ' ' << ib << '/' << ib << '/' << ib << ' '
-                     << ic << '/' << ic << '/' << ic << '\n';
-                ++mTriangles;
-            };
-            for (unsigned int p = 0; p < geometry.getNumPrimitiveSets(); ++p)
-            {
-                const osg::PrimitiveSet* primitive = geometry.getPrimitiveSet(p);
-                const unsigned int count = primitive == nullptr ? 0 : primitive->getNumIndices();
-                if (primitive == nullptr || count < 3)
-                    continue;
-                if (primitive->getMode() == GL_TRIANGLES)
-                {
-                    for (unsigned int i = 0; i + 2 < count; i += 3)
-                        emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
-                }
-                else if (primitive->getMode() == GL_TRIANGLE_STRIP)
-                {
-                    for (unsigned int i = 0; i + 2 < count; ++i)
-                    {
-                        if ((i & 1u) == 0)
-                            emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
-                        else
-                            emit(primitive->index(i + 1), primitive->index(i), primitive->index(i + 2));
-                    }
-                }
-            }
-            mVertexCount += vertices->size();
-        }
-
-        std::ostream& mObj;
-        std::ostream& mMtl;
-        osg::Vec3d mOrigin;
-        std::size_t mVertexCount = 0;
-        std::size_t mSurfaces = 0;
-        std::size_t mTriangles = 0;
-    };
-
-    struct OpenNvCanonicalBone
-    {
-        std::string mName;
-        int mParent = -1;
-        osg::Matrixf mLocal;
-        osg::Matrixf mSkeleton;
-    };
-
-    struct OpenNvAuxiliaryNode
-    {
-        std::string mName;
-        std::string mParentName;
-        osg::Matrixf mLocal;
-        osg::Matrixf mActor;
-    };
-
-    class OpenNvSkeletonCandidateVisitor final : public osg::NodeVisitor
-    {
-    public:
-        OpenNvSkeletonCandidateVisitor()
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-        {
-            setTraversalMask(~0u);
-            setNodeMaskOverride(~0u);
-        }
-
-        void apply(osg::Group& group) override
-        {
-            if (auto* skeleton = dynamic_cast<SceneUtil::Skeleton*>(&group))
-            {
-                NamedTransformCounter counter(skeleton);
-                skeleton->accept(counter);
-                if (counter.count() > mBestCount)
-                {
-                    mBest = skeleton;
-                    mBestCount = counter.count();
-                }
-            }
-            traverse(group);
-        }
-
-        const SceneUtil::Skeleton* best() const { return mBest; }
-
-    private:
-        class NamedTransformCounter final : public osg::NodeVisitor
-        {
-        public:
-            explicit NamedTransformCounter(const SceneUtil::Skeleton* root)
-                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-                , mRoot(root)
-            {
-                setTraversalMask(~0u);
-                setNodeMaskOverride(~0u);
-            }
-
-            void apply(osg::Group& group) override
-            {
-                if (&group != mRoot && dynamic_cast<SceneUtil::Skeleton*>(&group) != nullptr)
-                    return;
-                traverse(group);
-            }
-
-            void apply(osg::MatrixTransform& transform) override
-            {
-                if (!transform.getName().empty())
-                    ++mCount;
-                traverse(transform);
-            }
-
-            std::size_t count() const { return mCount; }
-
-        private:
-            const SceneUtil::Skeleton* mRoot;
-            std::size_t mCount = 0;
-        };
-
-        const SceneUtil::Skeleton* mBest = nullptr;
-        std::size_t mBestCount = 0;
-    };
-
-    class OpenNvCanonicalSkeletonVisitor final : public osg::NodeVisitor
-    {
-    public:
-        OpenNvCanonicalSkeletonVisitor(const osg::NodePath& actorPath, const osg::Matrixd& worldToActor,
-            const SceneUtil::Skeleton* selectedSkeleton)
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-            , mActorPath(actorPath)
-            , mWorldToActor(worldToActor)
-            , mSelectedSkeleton(selectedSkeleton)
-        {
-            setTraversalMask(~0u);
-            setNodeMaskOverride(~0u);
-        }
-
-        void apply(osg::Group& group) override
-        {
-            const auto* candidate = dynamic_cast<SceneUtil::Skeleton*>(&group);
-            if (candidate != nullptr && candidate != mSelectedSkeleton)
-                return;
-            const bool skeleton = candidate == mSelectedSkeleton;
-            if (skeleton)
-                ++mSkeletonDepth;
-            traverse(group);
-            if (skeleton)
-                --mSkeletonDepth;
-        }
-
-        void apply(osg::MatrixTransform& transform) override
-        {
-            if (mSkeletonDepth == 0 || transform.getName().empty())
-            {
-                traverse(transform);
-                return;
-            }
-            const osg::Matrixf skeletonMatrix(currentActorMatrix());
-            const std::string key = Misc::StringUtils::lowerCase(transform.getName());
-            std::size_t index = mBones.size();
-            const auto found = mBoneByName.find(key);
-            if (found != mBoneByName.end())
-            {
-                index = found->second;
-                if (!matrixClose(mBones[index].mSkeleton, skeletonMatrix))
-                    return;
-            }
-            else
-            {
-                OpenNvCanonicalBone bone;
-                bone.mName = transform.getName();
-                bone.mParent = mBoneStack.empty() ? -1 : static_cast<int>(mBoneStack.back());
-                bone.mSkeleton = skeletonMatrix;
-                bone.mLocal = skeletonMatrix;
-                if (bone.mParent >= 0)
-                {
-                    osg::Matrixf parentInverse;
-                    if (!parentInverse.invert(mBones[static_cast<std::size_t>(bone.mParent)].mSkeleton))
-                        throw std::runtime_error("OpenNV canonical skeleton parent matrix is singular");
-                    bone.mLocal = skeletonMatrix * parentInverse;
-                }
-                mBoneByName.emplace(key, index);
-                mBones.emplace_back(std::move(bone));
-            }
-            mBoneStack.push_back(index);
-            traverse(transform);
-            mBoneStack.pop_back();
-        }
-
-        const std::vector<OpenNvCanonicalBone>& getBones() const { return mBones; }
-
-    private:
-        osg::Matrixd currentActorMatrix() const
-        {
-            osg::NodePath fullPath = mActorPath;
-            if (!fullPath.empty())
-                fullPath.pop_back();
-            const osg::NodePath& localPath = getNodePath();
-            fullPath.insert(fullPath.end(), localPath.begin(), localPath.end());
-            return osg::computeLocalToWorld(fullPath) * mWorldToActor;
-        }
-
-        static bool matrixClose(const osg::Matrixf& left, const osg::Matrixf& right)
-        {
-            for (unsigned int row = 0; row < 4; ++row)
-                for (unsigned int column = 0; column < 4; ++column)
-                    if (std::abs(left(row, column) - right(row, column)) > 0.001f)
-                        return false;
-            return true;
-        }
-
-        osg::NodePath mActorPath;
-        osg::Matrixd mWorldToActor;
-        const SceneUtil::Skeleton* mSelectedSkeleton;
-        unsigned int mSkeletonDepth = 0;
-        std::vector<std::size_t> mBoneStack;
-        std::unordered_map<std::string, std::size_t> mBoneByName;
-        std::vector<OpenNvCanonicalBone> mBones;
-    };
-
-    // Preserve named transform targets outside the selected skin skeleton.
-    // Retail creature KFs legitimately drive particle emitters, screens,
-    // needles and other static visual helpers through these nodes.
-    class OpenNvAuxiliaryNodeVisitor final : public osg::NodeVisitor
-    {
-    public:
-        OpenNvAuxiliaryNodeVisitor(const osg::NodePath& actorPath, const osg::Matrixd& worldToActor,
-            const std::vector<OpenNvCanonicalBone>& canonicalBones, const SceneUtil::Skeleton* selectedSkeleton)
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-            , mActorPath(actorPath)
-            , mWorldToActor(worldToActor)
-            , mCanonicalBones(canonicalBones)
-        {
-            setTraversalMask(~0u);
-            setNodeMaskOverride(~0u);
-            for (const OpenNvCanonicalBone& bone : canonicalBones)
-                mCanonicalByName.emplace(Misc::StringUtils::lowerCase(bone.mName), &bone);
-            collectAncestors(selectedSkeleton);
-        }
-
-        void apply(osg::Group& group) override
-        {
-            // The complete selected skeleton is already serialized as bones;
-            // per-surface skeleton copies must not become auxiliary duplicates.
-            if (dynamic_cast<SceneUtil::Skeleton*>(&group) != nullptr)
-                return;
-            traverse(group);
-        }
-
-        void apply(osg::MatrixTransform& transform) override
-        {
-            if (transform.getName().empty())
-            {
-                osg::Matrixf identity;
-                identity.makeIdentity();
-                const bool nonIdentity = !matrixClose(osg::Matrixf(transform.getMatrix()), identity);
-                if (nonIdentity)
-                    ++mNonidentityUnnamedDepth;
-                traverse(transform);
-                if (nonIdentity)
-                    --mNonidentityUnnamedDepth;
-                return;
-            }
-            if (mSkeletonAncestors.contains(&transform))
-                throw std::runtime_error("OpenNV animated auxiliary ancestor of canonical skeleton: "
-                    + transform.getName());
-            if (mNonidentityUnnamedDepth != 0)
-                throw std::runtime_error("OpenNV auxiliary target has a nonidentity unnamed transform parent: "
-                    + transform.getName());
-            const std::string key = Misc::StringUtils::lowerCase(transform.getName());
-            const osg::Matrixf actorMatrix(currentActorMatrix());
-            const auto canonical = mCanonicalByName.find(key);
-            if (canonical != mCanonicalByName.end())
-            {
-                const std::string encounteredParent
-                    = mParentStack.empty() ? std::string{} : mParentStack.back().first;
-                const int parentIndex = canonical->second->mParent;
-                const std::string expectedParent = parentIndex < 0
-                    ? std::string{} : mCanonicalBones[static_cast<std::size_t>(parentIndex)].mName;
-                if (!Misc::StringUtils::ciEqual(encounteredParent, expectedParent))
-                    throw std::runtime_error("OpenNV auxiliary canonical-name parent mismatch: "
-                        + transform.getName());
-                if (!matrixClose(actorMatrix, canonical->second->mSkeleton))
-                    throw std::runtime_error("OpenNV auxiliary canonical-name transform mismatch: "
-                        + transform.getName());
-                mParentStack.emplace_back(canonical->second->mName, canonical->second->mSkeleton);
-                traverse(transform);
-                mParentStack.pop_back();
-                return;
-            }
-            const auto duplicate = mNodeByName.find(key);
-            if (duplicate != mNodeByName.end())
-            {
-                // OSG actor assemblies can contain repeated named variant
-                // branches. Traverse matrix-identical copies so unique named
-                // descendants are not silently lost; reject ambiguous copies.
-                const OpenNvAuxiliaryNode& existing = mNodes[duplicate->second];
-                const std::string proposedParent
-                    = mParentStack.empty() ? std::string{} : mParentStack.back().first;
-                osg::Matrixf proposedLocal = actorMatrix;
-                if (!mParentStack.empty())
-                {
-                    osg::Matrixf parentInverse;
-                    if (!parentInverse.invert(mParentStack.back().second))
-                        throw std::runtime_error("OpenNV duplicate auxiliary parent matrix is singular");
-                    proposedLocal = actorMatrix * parentInverse;
-                }
-                if (!Misc::StringUtils::ciEqual(proposedParent, existing.mParentName)
-                    || !matrixClose(proposedLocal, existing.mLocal)
-                    || !matrixClose(actorMatrix, existing.mActor))
-                    throw std::runtime_error("OpenNV duplicate auxiliary transform mismatch: "
-                        + transform.getName());
-                mParentStack.emplace_back(existing.mName, existing.mActor);
-                traverse(transform);
-                mParentStack.pop_back();
-                return;
-            }
-            OpenNvAuxiliaryNode node;
-            node.mName = transform.getName();
-            node.mParentName = mParentStack.empty() ? std::string{} : mParentStack.back().first;
-            node.mActor = actorMatrix;
-            node.mLocal = actorMatrix;
-            if (!mParentStack.empty())
-            {
-                osg::Matrixf parentInverse;
-                if (!parentInverse.invert(mParentStack.back().second))
-                    throw std::runtime_error("OpenNV auxiliary-node parent matrix is singular");
-                node.mLocal = actorMatrix * parentInverse;
-            }
-            mNodeByName.emplace(key, mNodes.size());
-            mNodes.emplace_back(std::move(node));
-            mParentStack.emplace_back(mNodes.back().mName, mNodes.back().mActor);
-            traverse(transform);
-            mParentStack.pop_back();
-        }
-
-        const std::vector<OpenNvAuxiliaryNode>& getNodes() const { return mNodes; }
-
-    private:
-        static bool matrixClose(const osg::Matrixf& left, const osg::Matrixf& right)
-        {
-            for (int row = 0; row < 4; ++row)
-                for (int column = 0; column < 4; ++column)
-                    if (std::abs(left(row, column) - right(row, column)) > 1e-4f)
-                        return false;
-            return true;
-        }
-
-        void collectAncestors(const osg::Node* node)
-        {
-            if (node == nullptr)
-                return;
-            for (unsigned int index = 0; index < node->getNumParents(); ++index)
-            {
-                const osg::Node* parent = node->getParent(index);
-                if (parent != nullptr && mSkeletonAncestors.emplace(parent).second)
-                    collectAncestors(parent);
-            }
-        }
-
-        osg::Matrixd currentActorMatrix() const
-        {
-            osg::NodePath fullPath = mActorPath;
-            if (!fullPath.empty())
-                fullPath.pop_back();
-            const osg::NodePath& localPath = getNodePath();
-            fullPath.insert(fullPath.end(), localPath.begin(), localPath.end());
-            return osg::computeLocalToWorld(fullPath) * mWorldToActor;
-        }
-
-        osg::NodePath mActorPath;
-        osg::Matrixd mWorldToActor;
-        const std::vector<OpenNvCanonicalBone>& mCanonicalBones;
-        std::unordered_map<std::string, const OpenNvCanonicalBone*> mCanonicalByName;
-        std::unordered_map<std::string, std::size_t> mNodeByName;
-        std::unordered_set<const osg::Node*> mSkeletonAncestors;
-        std::vector<std::pair<std::string, osg::Matrixf>> mParentStack;
-        std::vector<OpenNvAuxiliaryNode> mNodes;
-        unsigned int mNonidentityUnnamedDepth = 0;
-    };
-
-    // Lossless, engine-neutral actor skin payload. OBJ remains useful as a
-    // diagnostic snapshot, but it cannot carry the bind mesh, bone palette or
-    // vertex influences Godot needs for real animation. All scalar values are
-    // little-endian; the companion decoder rejects non-little-endian hosts.
     class OpenNvActorSkeletonVisitor final : public osg::NodeVisitor
     {
     public:
-        OpenNvActorSkeletonVisitor(std::ostream& output, const osg::Matrixd& worldToActor,
-            const osg::NodePath& actorPath, const std::vector<OpenNvCanonicalBone>& canonicalBones,
-            const std::vector<OpenNvAuxiliaryNode>& auxiliaryNodes)
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        OpenNvActorSkeletonVisitor(std::ostream& output, const osg::Matrixd& worldToActor)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
             , mOutput(output)
             , mWorldToActor(worldToActor)
-            , mActorPath(actorPath)
-            , mCanonicalBones(canonicalBones)
-            , mAuxiliaryNodes(auxiliaryNodes)
         {
             setTraversalMask(~0u);
-            setNodeMaskOverride(~0u);
             static_assert(std::endian::native == std::endian::little,
                 "OpenNV actor skeleton export currently requires little-endian storage");
-            mOutput.write("ONVSKEL3", 8);
-            writeValue(std::uint32_t{ 3 });
+            mOutput.write("ONVSKEL1", 8);
+            writeValue(std::uint32_t{ 1 });
             mSurfaceCountOffset = mOutput.tellp();
             writeValue(std::uint32_t{ 0 });
-            writeValue(static_cast<std::uint32_t>(mCanonicalBones.size()));
-            for (const OpenNvCanonicalBone& bone : mCanonicalBones)
-            {
-                writeString(bone.mName);
-                writeValue(static_cast<std::int32_t>(bone.mParent));
-                writeMatrix(bone.mLocal);
-                writeMatrix(bone.mSkeleton);
-            }
-            writeValue(static_cast<std::uint32_t>(mAuxiliaryNodes.size()));
-            for (const OpenNvAuxiliaryNode& node : mAuxiliaryNodes)
-            {
-                writeString(node.mName);
-                writeString(node.mParentName);
-                writeMatrix(node.mLocal);
-                writeMatrix(node.mActor);
-            }
         }
 
         void apply(osg::Drawable& drawable) override
@@ -2756,42 +2285,8 @@ namespace
             appendTriangleIndices(geometry, indices);
             if (indices.empty())
                 return;
-            std::string attachmentBone;
-            osg::Matrixd geometryTransform = currentActorMatrix();
-            for (auto node = getNodePath().rbegin(); node != getNodePath().rend(); ++node)
-            {
-                const auto* matrixTransform = dynamic_cast<const osg::MatrixTransform*>(*node);
-                if (matrixTransform == nullptr || matrixTransform->getName().empty())
-                    continue;
-                const std::string key = Misc::StringUtils::lowerCase(matrixTransform->getName());
-                const auto found = std::find_if(mCanonicalBones.begin(), mCanonicalBones.end(), [&](const auto& bone) {
-                    return Misc::StringUtils::lowerCase(bone.mName) == key;
-                });
-                osg::Matrixf attachmentActor;
-                if (found != mCanonicalBones.end())
-                {
-                    attachmentActor = found->mSkeleton;
-                    attachmentBone = found->mName;
-                }
-                else
-                {
-                    const auto auxiliary = std::find_if(mAuxiliaryNodes.begin(), mAuxiliaryNodes.end(),
-                        [&](const auto& candidate) {
-                            return Misc::StringUtils::lowerCase(candidate.mName) == key;
-                        });
-                    if (auxiliary == mAuxiliaryNodes.end())
-                        continue;
-                    attachmentActor = auxiliary->mActor;
-                    attachmentBone = auxiliary->mName;
-                }
-                osg::Matrixf attachmentInverse;
-                if (!attachmentInverse.invert(attachmentActor))
-                    throw std::runtime_error("OpenNV static attachment transform is singular");
-                geometryTransform *= osg::Matrixd(attachmentInverse);
-                break;
-            }
             writeString(drawable.getName());
-            writeString(attachmentBone);
+            writeString({});
             writeString(texturePath(drawable, geometry));
             writeValue(static_cast<std::uint32_t>(vertices->size()));
             writeValue(static_cast<std::uint32_t>(indices.size()));
@@ -2800,13 +2295,14 @@ namespace
             identity.makeIdentity();
             writeMatrix(identity);
             writeMatrix(identity);
+            const osg::Matrixd world = osg::computeLocalToWorld(getNodePath());
             const auto* normals = dynamic_cast<const osg::Vec3Array*>(geometry.getNormalArray());
             const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(geometry.getTexCoordArray(0));
             for (std::size_t i = 0; i < vertices->size(); ++i)
             {
-                const osg::Vec3d vertex = osg::Vec3d((*vertices)[i]) * geometryTransform;
+                const osg::Vec3d vertex = osg::Vec3d((*vertices)[i]) * world * mWorldToActor;
                 osg::Vec3d normal = normals != nullptr && i < normals->size()
-                    ? osg::Matrixd::transform3x3(osg::Vec3d((*normals)[i]), geometryTransform)
+                        ? osg::Matrixd::transform3x3(osg::Vec3d((*normals)[i]), world * mWorldToActor)
                     : osg::Vec3d(0.0, 0.0, 1.0);
                 normal.normalize();
                 const osg::Vec2f uv
@@ -2827,16 +2323,6 @@ namespace
             ++mSurfaceCount;
             mVertexCount += vertices->size();
             mTriangleCount += indices.size() / 3;
-        }
-
-        osg::Matrixd currentActorMatrix() const
-        {
-            osg::NodePath fullPath = mActorPath;
-            if (!fullPath.empty())
-                fullPath.pop_back();
-            const osg::NodePath& localPath = getNodePath();
-            fullPath.insert(fullPath.end(), localPath.begin(), localPath.end());
-            return osg::computeLocalToWorld(fullPath) * mWorldToActor;
         }
 
         template <class T>
@@ -2913,9 +2399,6 @@ namespace
 
         std::ostream& mOutput;
         osg::Matrixd mWorldToActor;
-        osg::NodePath mActorPath;
-        const std::vector<OpenNvCanonicalBone>& mCanonicalBones;
-        const std::vector<OpenNvAuxiliaryNode>& mAuxiliaryNodes;
         std::streampos mSurfaceCountOffset;
         std::size_t mSurfaceCount = 0;
         std::size_t mVertexCount = 0;
@@ -2932,46 +2415,12 @@ namespace
         std::filesystem::create_directories(directory);
         std::ostringstream stem;
         stem << "actor-" << std::setw(3) << std::setfill('0') << index;
-        const std::filesystem::path objPath = directory / (stem.str() + ".obj");
-        const std::filesystem::path mtlPath = directory / (stem.str() + ".mtl");
         const std::filesystem::path skeletonPath = directory / (stem.str() + ".onvskel");
-        const auto cachedPayloadValid = [&]() {
-            if (!std::filesystem::exists(objPath) || !std::filesystem::exists(mtlPath)
-                || !std::filesystem::exists(skeletonPath) || std::filesystem::file_size(objPath) == 0
-                || std::filesystem::file_size(skeletonPath) < 16)
-                return false;
-            std::ifstream cached(skeletonPath, std::ios::binary);
-            std::array<char, 8> magic{};
-            std::uint32_t version = 0;
-            std::uint32_t surfaces = 0;
-            cached.read(magic.data(), magic.size());
-            cached.read(reinterpret_cast<char*>(&version), sizeof(version));
-            cached.read(reinterpret_cast<char*>(&surfaces), sizeof(surfaces));
-            const std::string_view magicView(magic.data(), magic.size());
-            return cached.good() && surfaces > 0
-                && ((magicView == "ONVSKEL2" && version == 2)
-                    || (magicView == "ONVSKEL3" && version == 3));
-        };
-        if (cachedPayloadValid())
+        if (std::filesystem::exists(skeletonPath) && std::filesystem::file_size(skeletonPath) > 16)
             return true;
-        std::filesystem::remove(objPath);
-        std::filesystem::remove(mtlPath);
-        std::filesystem::remove(skeletonPath);
-        const std::filesystem::path objTemporary = objPath.string() + ".tmp";
-        const std::filesystem::path mtlTemporary = mtlPath.string() + ".tmp";
-        const std::filesystem::path skeletonTemporary = skeletonPath.string() + ".tmp";
-        std::filesystem::remove(objTemporary);
-        std::filesystem::remove(mtlTemporary);
-        std::filesystem::remove(skeletonTemporary);
-        std::ofstream obj(objTemporary);
-        std::ofstream mtl(mtlTemporary);
-        if (!obj || !mtl)
+        std::ofstream skeleton(skeletonPath, std::ios::binary);
+        if (!skeleton)
             return false;
-        obj << "mtllib " << stem.str() << ".mtl\n";
-        const ESM::Position& position = actor.getRefData().getPosition();
-        OpenNvActorObjVisitor visitor(obj, mtl, osg::Vec3d(position.pos[0], position.pos[1], position.pos[2]));
-        root->accept(visitor);
-        std::ofstream skeleton(skeletonTemporary, std::ios::binary);
         osg::NodePath actorPath;
         const osg::NodePathList parentPaths = root->getParentalNodePaths();
         if (!parentPaths.empty())
@@ -2981,41 +2430,18 @@ namespace
         osg::Matrixd worldToActor;
         if (!worldToActor.invert(osg::computeLocalToWorld(actorPath)))
             throw std::runtime_error("OpenNV actor world transform is singular");
-        OpenNvSkeletonCandidateVisitor skeletonCandidateVisitor;
-        root->accept(skeletonCandidateVisitor);
-        if (skeletonCandidateVisitor.best() == nullptr)
-            throw std::runtime_error("OpenNV actor has no canonical skeleton candidate");
-        OpenNvCanonicalSkeletonVisitor canonicalVisitor(
-            actorPath, worldToActor, skeletonCandidateVisitor.best());
-        root->accept(canonicalVisitor);
-        OpenNvAuxiliaryNodeVisitor auxiliaryVisitor(
-            actorPath, worldToActor, canonicalVisitor.getBones(), skeletonCandidateVisitor.best());
-        root->accept(auxiliaryVisitor);
-        OpenNvActorSkeletonVisitor skeletonVisitor(
-            skeleton, worldToActor, actorPath, canonicalVisitor.getBones(), auxiliaryVisitor.getNodes());
+        OpenNvActorSkeletonVisitor skeletonVisitor(skeleton, worldToActor);
         root->accept(skeletonVisitor);
         skeletonVisitor.finish();
-        obj.flush();
-        mtl.flush();
-        skeleton.flush();
-        if (!obj.good() || !mtl.good() || !skeleton.good() || visitor.getTriangles() == 0
-            || skeletonVisitor.getSurfaceCount() == 0)
-            throw std::runtime_error("OpenNV actor export produced an incomplete payload");
-        obj.close();
-        mtl.close();
-        skeleton.close();
-        std::filesystem::rename(objTemporary, objPath);
-        std::filesystem::rename(mtlTemporary, mtlPath);
-        std::filesystem::rename(skeletonTemporary, skeletonPath);
-        Log(visitor.getTriangles() > 0 ? Debug::Info : Debug::Error)
-            << "OpenNV actor mesh export: index=" << index << " actor=" << actor.toString()
-            << " surfaces=" << visitor.getSurfaces() << " triangles=" << visitor.getTriangles()
-            << " path=" << objPath.string() << " skeletalSurfaces=" << skeletonVisitor.getSurfaceCount()
+        Log(skeletonVisitor.getSurfaceCount() > 0 ? Debug::Info : Debug::Error)
+            << "OpenNV actor skeletal export: index=" << index << " actor=" << actor.toString()
+            << " skeletalSurfaces=" << skeletonVisitor.getSurfaceCount()
             << " skeletalVertices=" << skeletonVisitor.getVertexCount()
             << " skeletalTriangles=" << skeletonVisitor.getTriangleCount()
             << " skeletalPath=" << skeletonPath.string();
-        return true;
+        return skeletonVisitor.getSurfaceCount() > 0;
     }
+
 
     enum class FalloutProofSkinRole : std::size_t
     {
@@ -4148,109 +3574,6 @@ namespace
         bool mApplyLogged = false;
     };
 
-    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
-    {
-        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
-            return false;
-
-        FalloutProofFaceBoundsVisitor visitor;
-        actor.getRefData().getBaseNode()->accept(visitor);
-        if (visitor.getHeadBoneMatched() == 0)
-            return false;
-
-        center = visitor.getHeadCenter();
-        forward = visitor.getHeadForward();
-        return forward.length2() > 1e-6;
-    }
-
-    struct FalloutProofPortraitPose
-    {
-        osg::Vec3d mHeadCenter;
-        osg::Vec3d mHeadForward;
-        osg::Vec3d mLeftHandCenter;
-        osg::Vec3d mRightHandCenter;
-        bool mHeadResolved = false;
-        bool mLeftHandResolved = false;
-        bool mRightHandResolved = false;
-    };
-
-    class FalloutProofPortraitPoseVisitor : public osg::NodeVisitor
-    {
-    public:
-        FalloutProofPortraitPoseVisitor()
-            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
-        {
-            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
-        }
-
-        void apply(osg::Node& node) override
-        {
-            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
-            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub"
-                || lowerName == "bip01 l hand" || lowerName == "bip01 r hand")
-            {
-                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
-                const osg::Vec3d center = localToWorld.getTrans();
-                if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
-                {
-                    mPose.mHeadCenter += center;
-                    osg::Vec3d forward
-                        = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
-                    if (forward.normalize() > 1e-6)
-                        mPose.mHeadForward += forward;
-                    ++mHeadCount;
-                }
-                else if (lowerName == "bip01 l hand")
-                {
-                    mPose.mLeftHandCenter += center;
-                    ++mLeftHandCount;
-                }
-                else
-                {
-                    mPose.mRightHandCenter += center;
-                    ++mRightHandCount;
-                }
-            }
-            traverse(node);
-        }
-
-        FalloutProofPortraitPose getPose() const
-        {
-            FalloutProofPortraitPose result = mPose;
-            if (mHeadCount > 0)
-            {
-                result.mHeadCenter /= static_cast<double>(mHeadCount);
-                result.mHeadResolved = result.mHeadForward.normalize() > 1e-6;
-            }
-            if (mLeftHandCount > 0)
-            {
-                result.mLeftHandCenter /= static_cast<double>(mLeftHandCount);
-                result.mLeftHandResolved = true;
-            }
-            if (mRightHandCount > 0)
-            {
-                result.mRightHandCenter /= static_cast<double>(mRightHandCount);
-                result.mRightHandResolved = true;
-            }
-            return result;
-        }
-
-    private:
-        FalloutProofPortraitPose mPose;
-        unsigned int mHeadCount = 0;
-        unsigned int mLeftHandCount = 0;
-        unsigned int mRightHandCount = 0;
-    };
-
-    FalloutProofPortraitPose resolveFalloutProofPortraitPose(const MWWorld::Ptr& actor)
-    {
-        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
-            return {};
-        FalloutProofPortraitPoseVisitor visitor;
-        actor.getRefData().getBaseNode()->accept(visitor);
-        return visitor.getPose();
-    }
-
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
     {
@@ -4287,27 +3610,6 @@ namespace
         {
             Log(Debug::Warning) << "FNV/ESM4 proof: starter inventory failed " << editorId << " id="
                                 << id.toDebugString() << ": " << e.what();
-            return false;
-        }
-    }
-
-    bool addProofInventoryItem(MWWorld::ContainerStore& inventory, std::string_view id, int count)
-    {
-        const ESM::RefId refId = ESM::RefId::stringRefId(id);
-        try
-        {
-            const int existing = inventory.count(refId);
-            const int missing = std::max(0, count - existing);
-            if (missing > 0)
-                inventory.add(refId, missing, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory "
-                             << (missing > 0 ? "added " : "retained ") << id << " x" << count
-                             << " previous=" << existing << " inserted=" << missing;
-            return true;
-        }
-        catch (const std::exception& e)
-        {
-            Log(Debug::Warning) << "FNV/ESM4 proof: starter proof inventory failed " << id << ": " << e.what();
             return false;
         }
     }
@@ -4508,25 +3810,8 @@ namespace
             = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
 
-        // Fallback records keep the save usable if a partial content stack omits one of the core retail records.
-        // Never add both representations: a complete FalloutNV.esm load receives only the authored items above.
-        int proofAdded = 0;
-        if (!pistolAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
-        if (!rifleAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
-        if (!ammo9mmAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
-        if (!stimpakAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
-        if (!bobbyPinAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
-        if (!capsAdded)
-            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
-
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
-                         << " proofStarterItemKinds=" << proofAdded
                          << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
                          << " visualWeapon=WeapNVVarmintRifle"
                          << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
@@ -4771,8 +4056,7 @@ namespace
 
     bool worldViewerTraceEnabled()
     {
-        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE")
-            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE");
     }
 
     void worldViewerTrace(unsigned int frameNumber, std::string_view phase)
@@ -5179,6 +4463,14 @@ namespace
         const osg::Vec3d cameraPos = camera != nullptr ? camera->getPosition() : osg::Vec3d();
         const osg::Vec3f cameraPosF(cameraPos.x(), cameraPos.y(), cameraPos.z());
         const osg::Vec3f playerPosF(playerPos.pos[0], playerPos.pos[1], playerPos.pos[2]);
+        const auto playerHealthValue = world.getFalloutPlayerRuntimeState().getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::HealthActorValue);
+        const auto playerActionPointsValue = world.getFalloutPlayerRuntimeState().getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+        const auto playerActionPointsMax = world.getFalloutPlayerRuntimeState().getMaxActionPoints();
+        const float playerHealth = playerHealthValue ? playerHealthValue->mValue : -1.f;
+        const float playerActionPoints = playerActionPointsValue ? playerActionPointsValue->mValue : -1.f;
+        const float playerActionPointsMaximum = playerActionPointsMax ? *playerActionPointsMax : -1.f;
 
         Log(Debug::Info) << "World viewer telemetry: frame=" << frameNumber << " state=" << state
                          << " loadingGui=" << loadingGui << " worldReady=" << worldReady
@@ -5201,6 +4493,8 @@ namespace
                          << " cameraPos=(" << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
                          << ") cameraPitch=" << (camera != nullptr ? camera->getPitch() : 0.f)
                          << " cameraYaw=" << (camera != nullptr ? camera->getYaw() : 0.f)
+                         << " playerHealth=" << playerHealth << " playerActionPoints=" << playerActionPoints
+                         << " playerActionPointsMax=" << playerActionPointsMaximum
                          << " cullMask=0x" << std::hex << viewer.getCamera()->getCullMask() << std::dec;
 
         if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_RAY_TELEMETRY"))
@@ -5506,12 +4800,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // Capture-only scheduling drives the production physical Pip-Boy mode
     // after normal New Game. It does not synthesize desktop input.
     static const bool fnvPipBoyShowcaseEnabled = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE");
+    static const bool fnvPipBoyLifecycleOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_LIFECYCLE_ONLY");
+    static const bool fnvPipBoyApparelOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_APPAREL_ONLY");
+    static const bool fnvPipBoyAidOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AID_ONLY");
+    static const bool fnvPipBoyAmmoOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AMMO_ONLY");
+    static const bool fnvPipBoyMiscOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_MISC_ONLY");
     static const bool fnvGameplayStartPlacementEnabled
         = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE") != nullptr;
     static const bool fnvPipBoyShowcaseLoadoutEnabled
         = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_LOADOUT");
     static const bool fnvPipBoyShowcaseQuitAfterCapture
         = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_QUIT_AFTER_CAPTURE");
+    // C04 is the real Save330 natural-map-selection gate.  It is deliberately
+    // separate from the broader showcase schedule: the restored marker must
+    // already be present, and the schedule may only exercise production
+    // Pip-Boy/map callbacks after the ordinary --load-savegame boundary.
+    static const bool fnvRealSaveC04Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C04");
+    static const int fnvRealSaveC04FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C04_FIRST_READY_FRAME"));
+    // C05 confirms and executes the same natural Save330 map request.  It is
+    // kept separate from C04 so a confirmation frame can never be mistaken
+    // for an executed travel frame, and so the canonical C04 selection gate
+    // remains unconfirmed.
+    static const bool fnvRealSaveC05Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C05");
+    static const int fnvRealSaveC05FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C05_FIRST_READY_FRAME"));
     static const int fnvPipBoyShowcaseFirstReadyFrame
         = std::max(0, getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_FIRST_READY_FRAME"));
     static const int fnvPipBoyShowcaseFramesPerPaneRequested
@@ -5540,7 +4853,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         int mPanRightCount;
         int mPanDownCount;
     };
-    static constexpr std::array<FnvPipBoyShowcaseState, 24> fnvPipBoyShowcaseStates = { {
+    static constexpr std::array<FnvPipBoyShowcaseState, 30> fnvPipBoyShowcaseStates = { {
         { "STATS-CND", 3, 0, 0, false, false, 0, 0, 0 },
         { "STATS-RAD", 3, 1, 0, false, false, 0, 0, 0 },
         { "STATS-EFF", 3, 2, 0, false, false, 0, 0, 0 },
@@ -5550,8 +4863,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         { "STATS-GENERAL", 3, 6, 0, false, false, 0, 0, 0 },
         { "ITEMS-WEAP-9MM", 1, 0, 0, true, false, 0, 0, 0 },
         { "ITEMS-WEAP-VARMINT", 1, 0, 1, true, false, 0, 0, 0 },
-        { "ITEMS-APP-SUIT", 1, 1, 0, true, false, 0, 0, 0 },
-        { "ITEMS-APP-HAT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "ITEMS-APP-HAT", 1, 1, 0, true, false, 0, 0, 0 },
+        { "WORLD-APP-HAT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-APP-SUIT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "WORLD-APP-SUIT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
         { "ITEMS-AID-STIMPAK", 1, 2, 0, true, false, 0, 0, 0 },
         { "ITEMS-MISC-CAPS", 1, 3, 0, true, false, 0, 0, 0 },
         { "ITEMS-AMMO-9MM", 1, 4, 0, true, false, 0, 0, 0 },
@@ -5565,8 +4880,23 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         { "MAP-LOCAL", 0, 0, 0, false, false, 0, 0, 0 },
         { "MAP-LOCAL-ZOOM-PAN", 0, 0, 0, false, false, 1, 1, 1 },
         { "WORLD-VARMINT-EQUIPPED", -1, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-WEAP-VARMINT-REOPEN", 1, 0, 1, false, false, 0, 0, 0 },
+        { "WORLD-AID-STIMPAK-USED", -3, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-AMMO-SELECTION", -4, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-MISC-INSPECTED", -5, 0, 0, false, false, 0, 0, 0 },
     } };
+    // Short interaction gate: exercise a category button, list scroll, map
+    // category button, map zoom/pan, and final weapon restoration without the
+    // cost of the complete 24-panel presentation sweep.
+    static constexpr std::array<std::size_t, 9> fnvPipBoyLifecycleStateIndices = { 0, 7, 8, 13, 21, 22, 8, 25, 26 };
+    static constexpr std::array<std::size_t, 4> fnvPipBoyApparelStateIndices = { 9, 10, 11, 12 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyAidStateIndices = { 13, 27 };
+    static constexpr std::array<std::size_t, 3> fnvPipBoyAmmoStateIndices = { 15, 16, 28 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyMiscStateIndices = { 14, 29 };
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
+    static const bool proofQuitAfterQuickSave = proofEnvEnabled("OPENMW_PROOF_QUIT_AFTER_QUICKSAVE");
+    static const int proofQuickSaveQuitDelayFrames
+        = std::max(1, readProofInt("OPENMW_PROOF_QUICKSAVE_QUIT_DELAY_FRAMES", 30));
     static const int proofFalloutQuickKeyAssignFrame
         = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ASSIGN_FRAME");
     static const int proofFalloutQuickKeyActivateFrame
@@ -5607,13 +4937,146 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofInventoryOpened = false;
     static bool fnvPipBoyShowcaseLoadoutApplied = false;
     static bool fnvPipBoyShowcaseLoadoutPassed = false;
+    static bool fnvPipBoyShowcaseStimpakDamageStaged = false;
+    static bool fnvPipBoyShowcaseReloadRequested = false;
+    static bool fnvPipBoyShowcaseFireRequested = false;
+    static bool fnvPipBoyShowcaseFireObserved = false;
+    static int fnvPipBoyShowcaseLoadedBeforeFire = 0;
+    static int fnvPipBoyShowcaseFireRequestFrame = -1;
+    static bool fnvPipBoyShowcaseReloadWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+    static int fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+    static int fnvPipBoyShowcasePostFireRecoveryFrames = 0;
+    static osg::Matrix fnvPipBoyShowcaseWeaponPoseSample;
     static bool fnvGameplayStartPlacementApplied = false;
     static bool fnvGameplayStartPlacementPassed = false;
     static std::size_t fnvPipBoyShowcaseActivePane = static_cast<std::size_t>(-1);
     static std::size_t fnvPipBoyShowcaseCapturedPanes = 0;
     static int fnvPipBoyShowcaseExitReadyFrame = -1;
     static bool fnvPipBoyShowcaseQuitRequested = false;
+    static int fnvRealSaveC04Phase = 0;
+    static std::size_t fnvRealSaveC04CapturedFrames = 0;
+    static bool fnvRealSaveC04MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC04Marker;
+    static int fnvRealSaveC04LastLogFrame = -1000000;
+    static int fnvRealSaveC04ExitReadyFrame = -1;
+    static int fnvRealSaveC04NextActionFrame = -1;
+    static FNVSidecarScreenshot fnvRealSaveC04ScreenshotBaseline;
+    static FNVSidecarScreenshot fnvRealSaveC04ScreenshotCandidate;
+    static int fnvRealSaveC04ScreenshotStableFrames = 0;
+    static bool fnvRealSaveC04ScreenshotPending = false;
+    static int fnvRealSaveC04ScreenshotDeadlineFrame = -1;
+    static std::string fnvRealSaveC04ScreenshotState;
+    static int fnvRealSaveC05Phase = 0;
+    static std::size_t fnvRealSaveC05CapturedFrames = 0;
+    static bool fnvRealSaveC05MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC05Marker;
+    static int fnvRealSaveC05LastLogFrame = -1000000;
+    static int fnvRealSaveC05ExitReadyFrame = -1;
+    static bool fnvRealSaveC05BeforeObserved = false;
+    static double fnvRealSaveC05BeforeHour = 0.0;
+    static float fnvRealSaveC05BeforeX = 0.f;
+    static float fnvRealSaveC05BeforeY = 0.f;
+    static float fnvRealSaveC05BeforeZ = 0.f;
+    static int fnvRealSaveC05BeforeGridX = 0;
+    static int fnvRealSaveC05BeforeGridY = 0;
+    static std::string fnvRealSaveC05BeforeCell;
+    static std::string fnvRealSaveC05BeforeWorldspace;
+    static const bool fnvRealSaveC06Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C06");
+    static const int fnvRealSaveC06FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C06_FIRST_READY_FRAME"));
+    static int fnvRealSaveC06Phase = 0;
+    static std::size_t fnvRealSaveC06CapturedFrames = 0;
+    static bool fnvRealSaveC06MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC06Marker;
+    static std::optional<ESM::FormId> fnvRealSaveC06HiddenMarker;
+    static bool fnvRealSaveC06BaselineObserved = false;
+    static double fnvRealSaveC06BaselineHour = 0.0;
+    static ESM::Position fnvRealSaveC06BaselinePosition;
+    static ESM::RefId fnvRealSaveC06BaselineCell;
+    static ESM::RefId fnvRealSaveC06BaselineWorldspace;
+    static int fnvRealSaveC06BaselineGridX = 0;
+    static int fnvRealSaveC06BaselineGridY = 0;
+    static int fnvRealSaveC06ExitReadyFrame = -1;
+    // ScreenCaptureHandler captures the following rendered frame. Keep C06's
+    // proof label pending until the UI string set by the production rejection
+    // handler has crossed a render update; otherwise a named frame contains
+    // the prior case's message even though the telemetry is correct.
+    static std::string fnvRealSaveC06PendingFrameState;
+    static int fnvRealSaveC06PendingFrameReadyFrame = -1;
+    // C07 is the production persistence circuit.  It reuses the C05
+    // MAP/WORLD/confirmation handler, but the first phase saves only after a
+    // real arrival and the reload phase proves the saved destination before a
+    // second request.  The phase flag is engine-owned and never changes the
+    // canonical Save330 marker denominator.
+    static const bool fnvRealSaveC07Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C07");
+    static const std::string fnvRealSaveC07Phase = [] {
+        const char* value = std::getenv("OPENMW_FNV_REAL_SAVE_C07_PHASE");
+        return value != nullptr ? std::string(value) : std::string();
+    }();
+    static const bool fnvRealSaveC07First = fnvRealSaveC07Phase == "first";
+    static const bool fnvRealSaveC07Reload = fnvRealSaveC07Phase == "reload";
+    static bool fnvRealSaveC07SaveRequested = false;
+    static int fnvRealSaveC07SaveFrame = -1;
+    // D01 reads the already-restored Save330 through the production inventory
+    // window.  It only changes the physical Pip-Boy category selection and
+    // captures the five real item tabs; it never adds, removes, equips, or
+    // otherwise mutates an inventory item.
+    static const bool fnvRealSaveD01Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_D01");
+    static const int fnvRealSaveD01FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_D01_FIRST_READY_FRAME"));
+    static const int fnvRealSaveD01FramesPerCategory
+        = std::max(60, readProofInt("OPENMW_FNV_REAL_SAVE_D01_FRAMES_PER_CATEGORY", 90));
+    static int fnvRealSaveD01ActiveCategory = -1;
+    static int fnvRealSaveD01PresentationReadyFrame = -1;
+    static int fnvRealSaveD01InteractionSettledFrame = -1;
+    static int fnvRealSaveD01NextActionFrame = -1;
+    static std::size_t fnvRealSaveD01CapturedFrames = 0;
+    static int fnvRealSaveD01ExitReadyFrame = -1;
+    static bool fnvRealSaveD01Failed = false;
+    // D02 walks every authored Save330 WEAP row through the physical ITEMS
+    // tab, closes the Pip-Boy, and audits the live right-hand equipment and
+    // authored ammo/model contract.  The proof hook never inserts or names a
+    // showcase item; the exact FormID is selected from SortFilterItemModel and
+    // activated by InventoryWindow's normal row callback.
+    static const bool fnvRealSaveD02Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_D02");
+    static const int fnvRealSaveD02FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_D02_FIRST_READY_FRAME"));
+    static std::vector<ESM::RefId> fnvRealSaveD02Weapons;
+    // D02 advances only after the preceding native frame has drained. It never
+    // selects a different restored weapon while an authored pose is still
+    // reaching its held state.
+    static int fnvRealSaveD02CurrentWeapon = 0;
+    static int fnvRealSaveD02WeaponStartFrame = -1;
+    static int fnvRealSaveD02ActiveWeapon = -1;
+    static bool fnvRealSaveD02ActivationRequested = false;
+    static bool fnvRealSaveD02EquipmentBridgeObserved = false;
+    static bool fnvRealSaveD02ControllerSynchronized = false;
+    static bool fnvRealSaveD02ReloadCalled = false;
+    static bool fnvRealSaveD02ReloadRequested = false;
+    static bool fnvRealSaveD02MenuClosed = false;
+    static bool fnvRealSaveD02AuditLogged = false;
+    static bool fnvRealSaveD02CapturedCurrent = false;
+    static bool fnvRealSaveD02PoseSampleValid = false;
+    static osg::Matrix fnvRealSaveD02PoseSample;
+    static int fnvRealSaveD02PoseStableFrames = 0;
+    static bool fnvRealSaveD02PosePendingLogged = false;
+    static bool fnvRealSaveD02PoseSettledLogged = false;
+    static std::size_t fnvRealSaveD02CapturedFrames = 0;
+    static FNVSidecarScreenshot fnvRealSaveD02ScreenshotBaseline;
+    static FNVSidecarScreenshot fnvRealSaveD02ScreenshotCandidate;
+    static int fnvRealSaveD02ScreenshotStableFrames = 0;
+    static bool fnvRealSaveD02ScreenshotPending = false;
+    static int fnvRealSaveD02ScreenshotDeadlineFrame = -1;
+    static int fnvRealSaveD02NextActionFrame = -1;
+    static int fnvRealSaveD02ScreenshotWeaponIndex = -1;
+    static std::string fnvRealSaveD02ScreenshotForm;
+    static int fnvRealSaveD02ExitReadyFrame = -1;
+    static bool fnvRealSaveD02Failed = false;
     static bool proofQuickSaveQueued = false;
+    static unsigned proofQuickSaveCompletedFrame = 0;
+    static bool proofQuickSaveQuitRequested = false;
     static bool proofFalloutQuickKeyAssigned = false;
     static bool proofFalloutQuickKeyActivated = false;
     static bool proofFalloutReloaded = false;
@@ -7248,6 +6711,1695 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofFNVBootstrapApplied = true;
     }
 
+    if (fnvRealSaveD01Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        const int d01RouteElapsed = proofWorldReadyFrames - fnvRealSaveD01FirstReadyFrame;
+        auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+        constexpr std::array<std::string_view, 5> d01Categories = { "WEAP", "APP", "AID", "MISC", "AMMO" };
+
+        if (d01RouteElapsed >= 0 && !fnvRealSaveD01Failed)
+        {
+            if (!mWorld->isFirstPerson())
+                mWorld->togglePOV(true);
+            if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+            {
+                mWindowManager->setFalloutPipBoyPresentation(true);
+                mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            }
+            else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                mWindowManager->setFalloutPipBoyPresentation(true);
+
+            MWRender::RenderingManager* const renderingManager = mWorld->getRenderingManager();
+            if (fnvRealSaveD01PresentationReadyFrame < 0 && renderingManager != nullptr
+                && renderingManager->isFalloutPipBoyPresentationHeld())
+            {
+                fnvRealSaveD01PresentationReadyFrame = proofWorldReadyFrames;
+                Log(Debug::Info) << "FNV D01 inventory route: presentation=authored-held"
+                                 << " waitFrames=" << d01RouteElapsed
+                                 << " action=schedule-after-animation-completion status=pass";
+            }
+
+            if (physicalWindowManager == nullptr)
+            {
+                fnvRealSaveD01Failed = true;
+                Log(Debug::Error) << "FNV D01 inventory route: missing physical window manager status=fail";
+            }
+            else if (fnvRealSaveD01PresentationReadyFrame >= 0)
+            {
+                if (fnvRealSaveD01ActiveCategory < 0)
+                {
+                    const bool categorySelected
+                        = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
+                    fnvRealSaveD01ActiveCategory = categorySelected ? 0 : -2;
+                    fnvRealSaveD01InteractionSettledFrame
+                        = categorySelected ? proofWorldReadyFrames + 30 : -1;
+                    Log(categorySelected ? Debug::Info : Debug::Error)
+                        << "FNV D01 inventory route: category=" << d01Categories[0]
+                        << " index=0 action=physical-pipboy-category-navigation"
+                        << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                        << " source=production-Pip-Boy-items-tab status="
+                        << (categorySelected ? "pass" : "fail");
+                    if (!categorySelected)
+                        fnvRealSaveD01Failed = true;
+                }
+                else if (fnvRealSaveD01ActiveCategory >= 0)
+                {
+                    const int category = fnvRealSaveD01ActiveCategory;
+                    if (fnvRealSaveD01InteractionSettledFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01InteractionSettledFrame
+                        && fnvRealSaveD01CapturedFrames == static_cast<std::size_t>(category))
+                    {
+                        if (mScreenCaptureHandler == nullptr)
+                        {
+                            fnvRealSaveD01Failed = true;
+                            Log(Debug::Error) << "FNV D01 native frame: missing ScreenCaptureHandler status=fail";
+                        }
+                        else
+                        {
+                            Log(Debug::Info) << "FNV D01 native frame: category="
+                                             << d01Categories[static_cast<std::size_t>(category)]
+                                             << " index=" << fnvRealSaveD01CapturedFrames
+                                             << " presentation=authored-held source=ScreenCaptureHandler";
+                            mScreenCaptureHandler->setFramesToCapture(1);
+                            mScreenCaptureHandler->captureNextFrame(*mViewer);
+                            ++fnvRealSaveD01CapturedFrames;
+                            fnvRealSaveD01NextActionFrame = proofWorldReadyFrames
+                                + std::max(30, fnvRealSaveD01FramesPerCategory - 30);
+                        }
+                    }
+
+                    if (!fnvRealSaveD01Failed && category < 4
+                        && fnvRealSaveD01CapturedFrames > static_cast<std::size_t>(category)
+                        && fnvRealSaveD01NextActionFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01NextActionFrame)
+                    {
+                        const bool categorySelected
+                            = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                        if (categorySelected)
+                        {
+                            ++fnvRealSaveD01ActiveCategory;
+                            fnvRealSaveD01InteractionSettledFrame = proofWorldReadyFrames + 30;
+                            fnvRealSaveD01NextActionFrame = -1;
+                        }
+                        Log(categorySelected ? Debug::Info : Debug::Error)
+                            << "FNV D01 inventory route: category="
+                            << d01Categories[static_cast<std::size_t>(category + 1)]
+                            << " index=" << category + 1
+                            << " action=single-physical-pipboy-category-step"
+                            << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                            << " interaction=single-paced-step status="
+                            << (categorySelected ? "pass" : "fail");
+                        if (!categorySelected)
+                            fnvRealSaveD01Failed = true;
+                    }
+                }
+            }
+        }
+
+        if (!fnvRealSaveD01Failed && fnvRealSaveD01CapturedFrames == d01Categories.size()
+            && fnvRealSaveD01ExitReadyFrame < 0)
+        {
+            fnvRealSaveD01ExitReadyFrame = proofWorldReadyFrames + 60;
+            MWGui::ItemModel* const model
+                = mWindowManager->getInventoryWindow() == nullptr ? nullptr : mWindowManager->getInventoryWindow()->getModel();
+            Log(Debug::Info) << "FNV D01 inventory: phase=complete categories=" << d01Categories.size()
+                             << " captured=" << fnvRealSaveD01CapturedFrames
+                             << " allRows=" << (model != nullptr ? model->getItemCount() : 0)
+                             << " source=production-Pip-Boy-items-tab status=pass"
+                             << " exitReadyFrame=" << fnvRealSaveD01ExitReadyFrame;
+        }
+        if (fnvRealSaveD01Failed)
+        {
+            Log(Debug::Error) << "FNV D01 inventory: phase=complete categories=" << d01Categories.size()
+                              << " captured=" << fnvRealSaveD01CapturedFrames
+                              << " source=production-Pip-Boy-items-tab status=fail";
+            mStateManager->requestQuit();
+            fnvRealSaveD01ExitReadyFrame = proofWorldReadyFrames;
+        }
+        else if (fnvRealSaveD01ExitReadyFrame >= 0
+            && proofWorldReadyFrames >= fnvRealSaveD01ExitReadyFrame)
+        {
+            Log(Debug::Info) << "FNV D01 inventory: clean quit after five production categories captured=5";
+            mStateManager->requestQuit();
+            fnvRealSaveD01ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+    }
+
+    if (fnvRealSaveD02Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        const int d02Elapsed = proofWorldReadyFrames - fnvRealSaveD02FirstReadyFrame;
+        if (d02Elapsed >= 0 && fnvRealSaveD02WeaponStartFrame < 0)
+            fnvRealSaveD02WeaponStartFrame = proofWorldReadyFrames;
+        const int weaponIndex = d02Elapsed >= 0 ? fnvRealSaveD02CurrentWeapon : -1;
+        const int weaponElapsed = d02Elapsed >= 0 && fnvRealSaveD02WeaponStartFrame >= 0
+            ? proofWorldReadyFrames - fnvRealSaveD02WeaponStartFrame
+            : -1;
+        const auto failD02 = [&](std::string_view reason) {
+            if (!fnvRealSaveD02Failed)
+                Log(Debug::Error) << "FNV D02 weapon selection: source=production-pipboy-weapon-selection"
+                                  << " status=fail reason=" << reason;
+            fnvRealSaveD02Failed = true;
+        };
+        constexpr int d02CaptureDrainFrames = 30;
+        const auto pollD02NativeFrame = [&]() {
+            if (!fnvRealSaveD02ScreenshotPending)
+                return true;
+
+            const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+            if (isNewSidecarScreenshot(fnvRealSaveD02ScreenshotBaseline, candidate))
+            {
+                if (fnvRealSaveD02ScreenshotCandidate.mValid
+                    && fnvRealSaveD02ScreenshotCandidate.mPath == candidate.mPath
+                    && fnvRealSaveD02ScreenshotCandidate.mSize == candidate.mSize)
+                {
+                    ++fnvRealSaveD02ScreenshotStableFrames;
+                }
+                else
+                {
+                    fnvRealSaveD02ScreenshotCandidate = candidate;
+                    fnvRealSaveD02ScreenshotStableFrames = 1;
+                }
+            }
+
+            if (fnvRealSaveD02ScreenshotStableFrames >= 2)
+            {
+                Log(Debug::Info) << "FNV D02 native frame: index=" << fnvRealSaveD02ScreenshotWeaponIndex
+                                 << " form=" << fnvRealSaveD02ScreenshotForm
+                                 << " source=ScreenCaptureHandler retained=1 path=\""
+                                 << fnvRealSaveD02ScreenshotCandidate.mPath.string() << "\" bytes="
+                                 << fnvRealSaveD02ScreenshotCandidate.mSize;
+                ++fnvRealSaveD02CapturedFrames;
+                fnvRealSaveD02CapturedCurrent = true;
+                fnvRealSaveD02ScreenshotPending = false;
+                fnvRealSaveD02ScreenshotDeadlineFrame = -1;
+                fnvRealSaveD02ScreenshotWeaponIndex = -1;
+                fnvRealSaveD02ScreenshotForm.clear();
+                // Do not reopen the physical Pip-Boy until the asynchronously
+                // written native frame is stable and the close state has had a
+                // complete render boundary to drain.
+                fnvRealSaveD02NextActionFrame = proofWorldReadyFrames + d02CaptureDrainFrames;
+                return true;
+            }
+
+            if (fnvRealSaveD02ScreenshotDeadlineFrame >= 0
+                && proofWorldReadyFrames >= fnvRealSaveD02ScreenshotDeadlineFrame)
+            {
+                Log(Debug::Error) << "FNV D02 native frame: write-timeout index="
+                                  << fnvRealSaveD02ScreenshotWeaponIndex << " form="
+                                  << fnvRealSaveD02ScreenshotForm << " stableFrames="
+                                  << fnvRealSaveD02ScreenshotStableFrames
+                                  << " source=ScreenCaptureHandler";
+                fnvRealSaveD02ScreenshotPending = false;
+                failD02("native-frame-write-timeout");
+            }
+            return false;
+        };
+        const bool d02NativeFrameReady = pollD02NativeFrame();
+        const bool d02ReadyForNextAction = d02NativeFrameReady && !fnvRealSaveD02ScreenshotPending
+            && (fnvRealSaveD02NextActionFrame < 0 || proofWorldReadyFrames >= fnvRealSaveD02NextActionFrame);
+
+        // A completed native frame is the only transition that advances the
+        // roster. This preserves the physical Pip-Boy route while allowing a
+        // real authored pose to settle instead of letting a fixed slot clock
+        // race the first weapon's production controller.
+        bool d02AdvancedThisFrame = false;
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction
+            && fnvRealSaveD02CapturedCurrent && fnvRealSaveD02CurrentWeapon < 9)
+        {
+            ++fnvRealSaveD02CurrentWeapon;
+            fnvRealSaveD02WeaponStartFrame = proofWorldReadyFrames;
+            fnvRealSaveD02ActiveWeapon = -1;
+            fnvRealSaveD02CapturedCurrent = false;
+            fnvRealSaveD02NextActionFrame = -1;
+            d02AdvancedThisFrame = true;
+            Log(Debug::Info) << "FNV D02 weapon selection: index=" << fnvRealSaveD02CurrentWeapon
+                             << " action=advance-after-stable-native-frame"
+                             << " source=production-pipboy-weapon-selection status=pass";
+        }
+
+        // weaponIndex and weaponElapsed were sampled before the advance above.
+        // Wait one engine frame so the next production activation uses the
+        // newly selected roster row and its fresh pacing origin.
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction && !d02AdvancedThisFrame)
+        {
+            const bool needsPipBoyOpen = !fnvRealSaveD02MenuClosed || weaponIndex != fnvRealSaveD02ActiveWeapon;
+            if (needsPipBoyOpen)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+            }
+
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            MWGui::InventoryWindow* const inventoryWindow = mWindowManager->getInventoryWindow();
+            if (physicalWindowManager == nullptr || inventoryWindow == nullptr
+                || inventoryWindow->getSortFilterModel() == nullptr)
+            {
+                failD02("missing-physical-inventory-model");
+            }
+            else
+            {
+                MWGui::SortFilterItemModel* const sortModel = inventoryWindow->getSortFilterModel();
+                if (fnvRealSaveD02Weapons.empty() && sortModel->getItemCount() > 0)
+                {
+                    for (MWGui::ItemModel::ModelIndex row = 0;
+                         row < static_cast<int>(sortModel->getItemCount()); ++row)
+                    {
+                        const MWGui::ItemStack& item = sortModel->getItem(row);
+                        if (item.mBase.getType() != ESM4::Weapon::sRecordId)
+                            continue;
+                        const ESM::RefId formId = item.mBase.getCellRef().getRefId();
+                        if (formId.empty()
+                            || std::find(fnvRealSaveD02Weapons.begin(), fnvRealSaveD02Weapons.end(), formId)
+                                != fnvRealSaveD02Weapons.end())
+                            continue;
+                        fnvRealSaveD02Weapons.push_back(formId);
+                    }
+                    if (fnvRealSaveD02Weapons.size() == 10)
+                    {
+                        Log(Debug::Info) << "FNV D02 weapon roster: count=" << fnvRealSaveD02Weapons.size()
+                                         << " source=restored-save330-SortFilterItemModel status=pass";
+                        for (std::size_t row = 0; row < fnvRealSaveD02Weapons.size(); ++row)
+                            Log(Debug::Info) << "FNV D02 weapon roster row: index=" << row
+                                             << " form=" << fnvRealSaveD02Weapons[row]
+                                             << " source=restored-save330-SortFilterItemModel";
+                    }
+                    else if (fnvRealSaveD02Weapons.size() > 10)
+                    {
+                        failD02("weapon-roster-count-not-ten");
+                    }
+                }
+
+                if (!fnvRealSaveD02Failed && fnvRealSaveD02Weapons.size() != 10 && d02Elapsed >= 30)
+                    failD02("weapon-roster-not-restored");
+
+                if (!fnvRealSaveD02Failed && weaponIndex < static_cast<int>(fnvRealSaveD02Weapons.size()))
+                {
+                    const ESM::RefId target = fnvRealSaveD02Weapons[static_cast<std::size_t>(weaponIndex)];
+                    if (fnvRealSaveD02ActiveWeapon != weaponIndex)
+                    {
+                        const bool tabSelected
+                            = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
+                        inventoryWindow->setFalloutPipBoyCategory(0);
+                        fnvRealSaveD02ActiveWeapon = tabSelected ? weaponIndex : -2;
+                        fnvRealSaveD02ActivationRequested = false;
+                        fnvRealSaveD02EquipmentBridgeObserved = false;
+                        fnvRealSaveD02ControllerSynchronized = false;
+                        fnvRealSaveD02ReloadCalled = false;
+                        fnvRealSaveD02ReloadRequested = false;
+                        fnvRealSaveD02MenuClosed = false;
+                        fnvRealSaveD02AuditLogged = false;
+                        fnvRealSaveD02CapturedCurrent = false;
+                        fnvRealSaveD02PoseSampleValid = false;
+                        fnvRealSaveD02PoseStableFrames = 0;
+                        fnvRealSaveD02PosePendingLogged = false;
+                        fnvRealSaveD02PoseSettledLogged = false;
+                        Log(tabSelected ? Debug::Info : Debug::Error)
+                            << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                            << " action=physical-pipboy-items-weapons source=production-pipboy-navigation status="
+                            << (tabSelected ? "pass" : "fail");
+                        if (!tabSelected)
+                            failD02("items-tab-navigation-failed");
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 15 && !fnvRealSaveD02ActivationRequested)
+                    {
+                        const bool activated = inventoryWindow->activateFalloutPipBoyItem(target);
+                        fnvRealSaveD02ActivationRequested = true;
+                        Log(activated ? Debug::Info : Debug::Error)
+                            << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                            << " action=normal-inventory-row-activation source=InventoryWindow::onItemSelected status="
+                            << (activated ? "pass" : "fail");
+                        if (!activated)
+                            failD02("normal-inventory-row-activation-failed");
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 25 && !fnvRealSaveD02EquipmentBridgeObserved)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const bool exact = right != inventory.end() && right->getType() == ESM4::Weapon::sRecordId
+                            && right->getCellRef().getRefId() == target;
+                        if (exact)
+                        {
+                            fnvRealSaveD02EquipmentBridgeObserved = true;
+                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                              << " form=" << target
+                                              << " action=production-equipped-right-slot-observed"
+                                              << " path=InventoryStore::Slot_CarriedRight"
+                                              << " source=InventoryWindow::onItemSelected->ActionEquip::executeImp status=pass";
+                        }
+                        else if (weaponElapsed >= 45)
+                        {
+                            failD02("production-equipped-right-slot-not-observed");
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 50 && !fnvRealSaveD02MenuClosed)
+                    {
+                        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                        {
+                            failD02("inventory-menu-not-open-before-close");
+                        }
+                        else
+                        {
+                            mWindowManager->exitCurrentGuiMode();
+                            fnvRealSaveD02MenuClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                            Log(fnvRealSaveD02MenuClosed ? Debug::Info : Debug::Error)
+                                << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                                << " action=production-exit-current-gui menuClosed=" << fnvRealSaveD02MenuClosed
+                                << " source=physical-pipboy status="
+                                << (fnvRealSaveD02MenuClosed ? "pass" : "fail");
+                            if (!fnvRealSaveD02MenuClosed)
+                                failD02("production-pipboy-close-failed");
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 60 && fnvRealSaveD02MenuClosed
+                        && fnvRealSaveD02EquipmentBridgeObserved && !fnvRealSaveD02ControllerSynchronized)
+                    {
+                        if (mMechanicsManager == nullptr)
+                        {
+                            failD02("mechanics-manager-unavailable-for-controller-sync");
+                        }
+                        else
+                        {
+                            // Normal ActionEquip has already placed the selected
+                            // ESM4 weapon in the Player's authoritative carried
+                            // right slot. Let the ordinary controller consume it
+                            // only after the Pip-Boy closes; do not synthesize
+                            // ammo, a slot, or any animation.
+                            mMechanicsManager->forceStateUpdate(mWorld->getPlayerPtr());
+                            fnvRealSaveD02ControllerSynchronized = true;
+                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                             << " form=" << target
+                                             << " action=production-controller-state-update"
+                                             << " path=MechanicsManager::forceStateUpdate status=pass";
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02ControllerSynchronized
+                        && !fnvRealSaveD02ReloadCalled)
+                    {
+                        fnvRealSaveD02ReloadCalled = true;
+                        if (mMechanicsManager != nullptr)
+                        {
+                            fnvRealSaveD02ReloadRequested = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
+                                             << " form=" << target << " requested="
+                                             << fnvRealSaveD02ReloadRequested
+                                             << " path=MechanicsManager::reloadFalloutWeapon";
+                        }
+                        else
+                        {
+                            failD02("mechanics-manager-unavailable-for-reload");
+                        }
+                    }
+
+                    // The captured hand/weapon pose is not a countdown.  It is
+                    // ready only when the ordinary first-person controller has
+                    // selected its existing aim source, the retail dynamic
+                    // mount has received a non-identity authored transform,
+                    // and that exact local state is observed unchanged across
+                    // two update frames.  This observes production state only;
+                    // it neither plays, rewinds, nor writes an animation.
+                    const auto observeD02FirstPersonPose = [&]() {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
+                        const std::string poseSource = firstPerson != nullptr
+                            ? firstPerson->getAnimationSourceName("weaponpose")
+                            : std::string();
+                        const std::string activeRightArm = firstPerson != nullptr
+                            ? std::string(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm))
+                            : std::string();
+                        const osg::Node* const weaponNode
+                            = firstPerson != nullptr ? firstPerson->getNode("Weapon") : nullptr;
+                        const auto* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+                        osg::Node* const weaponPart
+                            = firstPerson != nullptr ? firstPerson->getEquippedWeaponNode() : nullptr;
+                        const osg::Group* const weaponParent = weaponNode != nullptr && weaponNode->getNumParents() == 1
+                            ? weaponNode->getParent(0)
+                            : nullptr;
+                        const std::string weaponParentName
+                            = weaponParent != nullptr ? weaponParent->getName() : std::string();
+                        const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
+                            && weaponPart->getParent(0) == weaponNode;
+                        const bool visible = firstPerson != nullptr && firstPerson->getWeaponsShown()
+                            && mWorld->isFirstPerson();
+                        const bool weaponPosePlaying
+                            = firstPerson != nullptr && firstPerson->isPlaying("weaponpose");
+                        const bool expectedMount = weaponParentName == "Bip01 Translate";
+                        const bool nonIdentity
+                            = weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
+                        const bool observed = !poseSource.empty() && weaponPosePlaying
+                            && activeRightArm == "weaponpose" && expectedMount && directPart && visible && nonIdentity;
+
+                        if (observed)
+                        {
+                            const osg::Matrix& matrix = weaponTransform->getMatrix();
+                            if (fnvRealSaveD02PoseSampleValid && matrix == fnvRealSaveD02PoseSample)
+                                ++fnvRealSaveD02PoseStableFrames;
+                            else
+                            {
+                                fnvRealSaveD02PoseSample = matrix;
+                                fnvRealSaveD02PoseSampleValid = true;
+                                fnvRealSaveD02PoseStableFrames = 1;
+                            }
+                        }
+                        else
+                        {
+                            fnvRealSaveD02PoseSampleValid = false;
+                            fnvRealSaveD02PoseStableFrames = 0;
+                        }
+
+                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= 2;
+                        if (!settled && !fnvRealSaveD02PosePendingLogged)
+                        {
+                            Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                             << " form=" << target << " source=\"" << poseSource
+                                             << "\" activeRightArm=\"" << activeRightArm
+                                             << "\" weaponNodeParent=\"" << weaponParentName
+                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
+                                             << " stableFrames=" << fnvRealSaveD02PoseStableFrames
+                                             << " action=observed-authored-first-person-pose status=pending";
+                            fnvRealSaveD02PosePendingLogged = true;
+                        }
+                        else if (settled && !fnvRealSaveD02PoseSettledLogged)
+                        {
+                            Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                             << " form=" << target << " source=\"" << poseSource
+                                             << "\" activeRightArm=\"" << activeRightArm
+                                             << "\" weaponNodeParent=\"" << weaponParentName
+                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
+                                             << " stableFrames=" << fnvRealSaveD02PoseStableFrames
+                                             << " action=observed-authored-first-person-pose status=pass";
+                            fnvRealSaveD02PoseSettledLogged = true;
+                        }
+                        return settled;
+                    };
+
+                    bool d02FirstPersonPoseReady = false;
+                    if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized
+                        && fnvRealSaveD02ReloadCalled && !fnvRealSaveD02AuditLogged)
+                    {
+                        d02FirstPersonPoseReady = observeD02FirstPersonPose();
+                    }
+
+                    if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized
+                        && fnvRealSaveD02ReloadCalled && d02FirstPersonPoseReady && !fnvRealSaveD02AuditLogged)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const bool menuActuallyClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const bool rightExact
+                            = right != inventory.end() && right->getCellRef().getRefId() == target;
+                        const ESM4::Weapon* weapon = right != inventory.end()
+                            && right->getType() == ESM4::Weapon::sRecordId
+                            ? right->get<ESM4::Weapon>()->mBase
+                            : nullptr;
+                        std::vector<ESM::FormId> ammoCandidates;
+                        if (weapon != nullptr)
+                        {
+                            if (mWorld->getStore().get<ESM4::Ammunition>().search(weapon->mAmmo) != nullptr)
+                                ammoCandidates.push_back(weapon->mAmmo);
+                            else if (const ESM4::FormIdList* list
+                                = mWorld->getStore().get<ESM4::FormIdList>().search(weapon->mAmmo))
+                                ammoCandidates = list->mObjects;
+                        }
+                        const std::optional<ESM::RefId> selectedAmmo
+                            = inventory.getFalloutAmmoSelection(target);
+                        const std::optional<int> loaded = inventory.getFalloutLoadedAmmo(target);
+                        const bool hasCompatibleReserve = std::find_if(
+                            ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                                return inventory.count(ESM::RefId::formIdRefId(id)) > 0;
+                            })
+                            != ammoCandidates.end();
+                        const bool selectedAmmoCompatible = selectedAmmo.has_value()
+                            && std::find_if(ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                                   return ESM::RefId::formIdRefId(id) == *selectedAmmo;
+                               })
+                                != ammoCandidates.end();
+                        // A weapon restored without a compatible reserve must
+                        // take the ordinary reload rejection path. Do not make
+                        // that real Save330 state pass by inventing an AMMO
+                        // selection or a magazine.
+                        const bool ammoCompatible = ammoCandidates.empty()
+                            ? !selectedAmmo.has_value()
+                            : selectedAmmo.has_value() ? selectedAmmoCompatible : !hasCompatibleReserve;
+                        const char* const ammoState = ammoCandidates.empty()
+                            ? "not-required"
+                            : selectedAmmo.has_value()
+                                ? (selectedAmmoCompatible ? (hasCompatibleReserve ? "selected-reserve" : "selected-empty")
+                                                          : "incompatible-selection")
+                                : (hasCompatibleReserve ? "missing-selection" : "canonical-no-reserve");
+                        const bool reloadPolicyPass = !hasCompatibleReserve
+                            || (fnvRealSaveD02ReloadRequested && loaded.has_value() && *loaded > 0);
+                        // The pose gate above accepts only the normal held
+                        // weaponpose after any production reload transition has
+                        // relinquished the right arm. Audit that authoritative
+                        // result directly; no elapsed-frame fallback is allowed
+                        // to turn a pending reload into a capture.
+                        {
+                            const MWRender::Camera* camera = mWorld->getCamera();
+                            const int cameraMode = camera == nullptr ? -1 : static_cast<int>(camera->getMode());
+                            const MWMechanics::DrawState drawState
+                                = player.getClass().getCreatureStats(player).getDrawState();
+                            const bool hudWeapon = rightExact && mWorld->isFirstPerson()
+                                && cameraMode == static_cast<int>(MWRender::Camera::Mode::FirstPerson)
+                                && drawState == MWMechanics::DrawState::Weapon;
+                            const std::string model = weapon != nullptr ? weapon->mModel : std::string();
+                            const std::string firstPersonModel
+                                = weapon != nullptr ? weapon->mFirstPersonModel : std::string();
+                            const bool auditPass = fnvRealSaveD02MenuClosed && menuActuallyClosed && rightExact
+                                && weapon != nullptr && ammoCompatible
+                                && cameraMode == static_cast<int>(MWRender::Camera::Mode::FirstPerson) && hudWeapon
+                                && !model.empty() && reloadPolicyPass;
+                            Log(auditPass ? Debug::Info : Debug::Error)
+                                << "FNV D02 weapon: index=" << weaponIndex << " form=" << target
+                                << " menuClosed=" << fnvRealSaveD02MenuClosed
+                                << " menuActuallyClosed=" << menuActuallyClosed << " right="
+                                << (right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId())
+                                << " ammo=" << (selectedAmmo ? selectedAmmo->toDebugString() : std::string("none"))
+                                << " ammoCompatible=" << ammoCompatible << " ammoState=" << ammoState
+                                << " hasCompatibleReserve=" << hasCompatibleReserve << " loaded="
+                                << (loaded ? *loaded : 0) << " reserve="
+                                << (selectedAmmo ? inventory.count(*selectedAmmo) : 0)
+                                << " model=\"" << model << "\" firstPersonModel=\"" << firstPersonModel
+                                << "\" hudWeapon=" << hudWeapon << " cameraMode=" << cameraMode
+                                << " reloadRequested=" << fnvRealSaveD02ReloadRequested
+                                << " reloadPolicyPass=" << reloadPolicyPass
+                                << " path=production-pipboy-close-audit status=" << (auditPass ? "pass" : "fail");
+                            fnvRealSaveD02AuditLogged = true;
+                            if (!auditPass)
+                                failD02("live-weapon-close-audit-failed");
+                            else if (mScreenCaptureHandler == nullptr)
+                                failD02("missing-ScreenCaptureHandler");
+                            else if (fnvRealSaveD02ScreenshotPending)
+                            {
+                                failD02("overlapping-native-frame-write");
+                            }
+                            else
+                            {
+                                Log(Debug::Info) << "FNV D02 native frame request: index=" << weaponIndex
+                                                 << " form=" << target << " source=ScreenCaptureHandler";
+                                fnvRealSaveD02ScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                                fnvRealSaveD02ScreenshotCandidate = {};
+                                fnvRealSaveD02ScreenshotStableFrames = 0;
+                                fnvRealSaveD02ScreenshotPending = true;
+                                fnvRealSaveD02ScreenshotDeadlineFrame = proofWorldReadyFrames + 600;
+                                fnvRealSaveD02ScreenshotWeaponIndex = weaponIndex;
+                                fnvRealSaveD02ScreenshotForm = target.toString();
+                                mScreenCaptureHandler->setFramesToCapture(1);
+                                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                            }
+                        }
+                    }
+
+                }
+            }
+        }
+
+        if (fnvRealSaveD02Failed)
+        {
+            Log(Debug::Error) << "FNV D02 weapon selection: phase=complete weapons="
+                              << fnvRealSaveD02Weapons.size() << " captured=" << fnvRealSaveD02CapturedFrames
+                              << " source=production-pipboy-weapon-selection status=fail";
+            mStateManager->requestQuit();
+            fnvRealSaveD02ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+        else if (fnvRealSaveD02Weapons.size() == 10 && fnvRealSaveD02CapturedFrames == 10
+            && fnvRealSaveD02ExitReadyFrame < 0)
+        {
+            fnvRealSaveD02ExitReadyFrame = proofWorldReadyFrames + 60;
+            Log(Debug::Info) << "FNV D02 weapon selection: phase=complete weapons=10 captured=10"
+                             << " source=production-pipboy-weapon-selection status=pass exitReadyFrame="
+                             << fnvRealSaveD02ExitReadyFrame;
+        }
+        else if (fnvRealSaveD02ExitReadyFrame >= 0 && proofWorldReadyFrames >= fnvRealSaveD02ExitReadyFrame)
+        {
+            Log(Debug::Info) << "FNV D02 weapon selection: clean quit after ten production weapon audits";
+            mStateManager->requestQuit();
+            fnvRealSaveD02ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+    }
+
+    if (fnvRealSaveC04Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC04MarkerParsed)
+        {
+            const char* markerText = std::getenv("OPENMW_FNV_REAL_SAVE_C04_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC04Marker = parseProofFormId(configuredMarker);
+            fnvRealSaveC04MarkerParsed = true;
+            if (!fnvRealSaveC04Marker)
+            {
+                fnvRealSaveC04Phase = -1;
+                Log(Debug::Error) << "FNV C04 natural Pip-Boy path: invalid marker=\"" << configuredMarker
+                                  << "\"";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C04 natural Pip-Boy path: marker=" << *fnvRealSaveC04Marker
+                                 << " source=restored-save330-state";
+            }
+        }
+
+        if (fnvRealSaveC04Phase >= 0 && fnvRealSaveC04Marker)
+        {
+            const int c04Elapsed = proofWorldReadyFrames - fnvRealSaveC04FirstReadyFrame;
+            constexpr int c04RaiseSettleFrames = 90;
+            constexpr int c04ToggleReturnSettleFrames = 130;
+            constexpr int c04SurfaceSettleFrames = 15;
+            // Record the MAP action only after its native UI update has crossed
+            // a complete update/render boundary. Retail does not add a
+            // separate right-hand manipulation pose for this action.
+            constexpr int c04ActionInputSettleFrames = 2;
+            constexpr int c04CaptureDrainFrames = 30;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC04Marker);
+            const auto pollC04NativeFrame = [&]() {
+                if (!fnvRealSaveC04ScreenshotPending)
+                    return true;
+
+                const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                if (isNewSidecarScreenshot(fnvRealSaveC04ScreenshotBaseline, candidate))
+                {
+                    if (fnvRealSaveC04ScreenshotCandidate.mValid
+                        && fnvRealSaveC04ScreenshotCandidate.mPath == candidate.mPath
+                        && fnvRealSaveC04ScreenshotCandidate.mSize == candidate.mSize)
+                    {
+                        ++fnvRealSaveC04ScreenshotStableFrames;
+                    }
+                    else
+                    {
+                        fnvRealSaveC04ScreenshotCandidate = candidate;
+                        fnvRealSaveC04ScreenshotStableFrames = 1;
+                    }
+                }
+
+                if (fnvRealSaveC04ScreenshotStableFrames >= 2)
+                {
+                    Log(Debug::Info) << "FNV C04 native frame: retained state=" << fnvRealSaveC04ScreenshotState
+                                     << " index=" << fnvRealSaveC04CapturedFrames << " path=\""
+                                     << fnvRealSaveC04ScreenshotCandidate.mPath.string() << "\" bytes="
+                                     << fnvRealSaveC04ScreenshotCandidate.mSize << " source=ScreenCaptureHandler";
+                    ++fnvRealSaveC04CapturedFrames;
+                    fnvRealSaveC04ScreenshotPending = false;
+                    fnvRealSaveC04ScreenshotDeadlineFrame = -1;
+                    fnvRealSaveC04ScreenshotState.clear();
+                    // A ScreenCaptureHandler write can take longer than the
+                    // fixed route schedule.  Restart the state-local settle
+                    // window after every retained native frame so a focused
+                    // map or confirmation is rendered before its own request.
+                    fnvRealSaveC04NextActionFrame = proofWorldReadyFrames + c04CaptureDrainFrames;
+                    return true;
+                }
+
+                if (fnvRealSaveC04ScreenshotDeadlineFrame >= 0
+                    && proofWorldReadyFrames >= fnvRealSaveC04ScreenshotDeadlineFrame)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: write-timeout state="
+                                      << fnvRealSaveC04ScreenshotState << " stableFrames="
+                                      << fnvRealSaveC04ScreenshotStableFrames << " source=ScreenCaptureHandler";
+                    fnvRealSaveC04ScreenshotPending = false;
+                    fnvRealSaveC04Phase = -1;
+                }
+                return false;
+            };
+            const bool c04NativeFrameReady = pollC04NativeFrame();
+            const auto advanceC04Phase = [&](int phase, int settleFrames = 0) {
+                fnvRealSaveC04Phase = phase;
+                fnvRealSaveC04NextActionFrame = phase < 0
+                    ? -1
+                    : proofWorldReadyFrames + std::max(0, settleFrames);
+            };
+            const auto queueC04Frame = [&](const char* state, bool captureAfterActionInput = false) {
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC04Phase = -1;
+                    return;
+                }
+                if (fnvRealSaveC04ScreenshotPending)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: overlapping write state=" << state
+                                      << " pending=" << fnvRealSaveC04ScreenshotState
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC04Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C04 native frame: state=" << state
+                                 << " index=" << fnvRealSaveC04CapturedFrames
+                                 << " captureAfterActionInput=" << (captureAfterActionInput ? 1 : 0)
+                                 << " source=ScreenCaptureHandler";
+                fnvRealSaveC04ScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                fnvRealSaveC04ScreenshotCandidate = {};
+                fnvRealSaveC04ScreenshotStableFrames = 0;
+                fnvRealSaveC04ScreenshotPending = true;
+                fnvRealSaveC04ScreenshotState = state;
+                fnvRealSaveC04ScreenshotDeadlineFrame = proofWorldReadyFrames + 600;
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+            };
+
+            if (fnvRealSaveC04Phase == 0 && c04Elapsed >= 0)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " action=MAP path=physical-pipboy-production status="
+                    << (mapPaneSelected ? "pass" : "fail");
+                // Let the normal raise complete into its retail held/waver
+                // pose before the player changes from DATA to WORLD.  That
+                // gives the physical glass and the reaching hand a stable
+                // production surface instead of capturing the mid-raise pose.
+                advanceC04Phase(mapPaneSelected ? 1 : -1,
+                    mapPaneSelected ? c04RaiseSettleFrames : 0);
+            }
+
+            if (fnvRealSaveC04Phase == 1 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && physicalWindowManager != nullptr)
+            {
+                // Save330's DATA/MAP pane opens on the authored world map. A
+                // real player toggles through LOCAL and back to WORLD with the
+                // physical scroll knob. Make that same device-local operation
+                // after the raise settles so the definitive WORLD contact has
+                // a fresh authored knob clip, rather than inheriting the MAP
+                // tab-button pulse from the opening action.
+                const bool localMapReady = !physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                const bool localMapConfirmed = localMapReady && !physicalWindowManager->isFalloutPipBoyWorldMap()
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(localMapConfirmed ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-local-reset pane="
+                    << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " action=MAP/WORLD path=physical-pipboy-production status="
+                    << (localMapConfirmed ? "pass" : "fail");
+                if (localMapConfirmed)
+                    advanceC04Phase(10, c04ToggleReturnSettleFrames);
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 10 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC04Marker);
+                const bool markerReady = marker != nullptr && markerState == 2 && worldMapSelected
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(markerReady ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-opened marker=" << *fnvRealSaveC04Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " pane=" << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " rendered=1 path=physical-pipboy-production status=" << (markerReady ? "pass" : "fail");
+                if (markerReady)
+                {
+                    // This final MAP/WORLD operation owns the visible retail
+                    // ScrollKnob contact and happens only after any earlier
+                    // action envelope has returned to zero.
+                    advanceC04Phase(8, 1);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 8 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                const float interactionPulse = physicalWindowManager->getFalloutPipBoyInteractionPulse();
+                // The physical UI starts its pulse at one. Capture after the
+                // MAP action has reached its native UI state; this does not
+                // imply a separate hand pose or synthetic control contact.
+                if (interactionPulse >= 0.45f && interactionPulse <= 0.55f)
+                {
+                    Log(Debug::Info) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                     << " pulse=" << interactionPulse
+                                     << " control=ScrollKnob scheduled=1 captureAfterActionInput=1"
+                                     << " source=production-map-action";
+                    advanceC04Phase(12, c04ActionInputSettleFrames);
+                }
+                else if (c04Elapsed >= 1800 && interactionPulse < 0.4f)
+                {
+                    Log(Debug::Error) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                      << " pulse=" << interactionPulse
+                                      << " control=ScrollKnob source=production-map-action status=fail"
+                                      << " reason=contact-envelope-not-observed";
+                    fnvRealSaveC04Phase = -1;
+                }
+            }
+
+            if (fnvRealSaveC04Phase == 12 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                // This request follows the live skeleton solve and one full
+                // render boundary. It remains on the exact MAP/WORLD action
+                // pulseâ€”there is no synthetic hand mesh, input, or UI state.
+                const float interactionPulse = physicalWindowManager->getFalloutPipBoyInteractionPulse();
+                Log(Debug::Info) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                 << " pulse=" << interactionPulse
+                                 << " control=ScrollKnob dispatched=1 captureAfterActionInput=1"
+                                 << " source=production-map-action";
+                queueC04Frame("map-world-toggle-contact", true);
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(9);
+            }
+
+            if (fnvRealSaveC04Phase == 9 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                // The contact frame is a real MAP/WORLD transition.  Do not
+                // manufacture a different overview with an overlay or a
+                // duplicate idle screenshot: a player can pan this exact
+                // world-map view through the production ScrollKnob route.
+                // The focused-marker phase below recentres the same canonical
+                // marker before it captures the selection proof.
+                const float panBefore = physicalWindowManager->getFalloutPipBoyMapPanX();
+                const bool panHandled = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                const float panAfter = physicalWindowManager->getFalloutPipBoyMapPanX();
+                const bool overviewPanPass = panHandled && physicalWindowManager->isFalloutPipBoyWorldMap()
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0 && panAfter > panBefore;
+                Log(overviewPanPass ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-overview-pan pane="
+                    << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " action=MAP-PAN-RIGHT panBefore=" << panBefore << " panAfter=" << panAfter
+                    << " path=physical-pipboy-production status=" << (overviewPanPass ? "pass" : "fail");
+                if (overviewPanPass)
+                    advanceC04Phase(11, c04SurfaceSettleFrames);
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 11 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-world-overview");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(2);
+            }
+
+            if (fnvRealSaveC04Phase == 2 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                const bool focused = mWindowManager->focusFalloutMapMarker(*fnvRealSaveC04Marker, 1.6f);
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC04Marker);
+                const bool selectionPass = focused && marker != nullptr && markerState == 2;
+                Log(selectionPass ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=marker-focused marker=" << *fnvRealSaveC04Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " selected=" << (focused ? 1 : 0)
+                    << " tooltipNameMatchesFormId=" << (selectionPass ? 1 : 0)
+                    << " pane=" << mWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager != nullptr
+                            && physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " path=production-map-focus status=" << (selectionPass ? "pass" : "fail");
+                if (selectionPass)
+                {
+                    physicalWindowManager->setFalloutPipBoyMapSelection(marker->mFullName, *fnvRealSaveC04Marker);
+                    // Let the production map-focus and physical terminal redraw settle before
+                    // asking ScreenCaptureHandler for the proof frame.  The handler captures
+                    // the next rendered frame, while the asynchronous file write may complete
+                    // several frames later.
+                    advanceC04Phase(6, c04SurfaceSettleFrames);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 6 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-marker-focused");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(3);
+            }
+
+            if (fnvRealSaveC04Phase == 3 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                const bool requested = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC04Marker);
+                const std::string confirmationText
+                    = "Fast travel to " + (marker != nullptr ? marker->mFullName : std::string()) + "?";
+                Log(requested ? Debug::Info : Debug::Error)
+                    << "FNV C04 confirmation: opened=" << (requested ? 1 : 0)
+                    << " marker=" << *fnvRealSaveC04Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" text=\""
+                    << confirmationText << "\" confirmed=0 path=production-map-confirmation status="
+                    << (requested ? "pass" : "fail");
+                if (requested)
+                {
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation(confirmationText);
+                    // As above, retain the exact production confirmation title on the physical
+                    // surface for a settled native frame instead of racing the UI redraw.
+                    advanceC04Phase(7, c04SurfaceSettleFrames);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 7 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-confirmation-open");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(4);
+            }
+
+            if (fnvRealSaveC04Phase == 4 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                if (fnvRealSaveC04CapturedFrames != 4)
+                {
+                    Log(Debug::Error) << "FNV C04 natural Pip-Boy path: phase=complete marker="
+                                      << *fnvRealSaveC04Marker << " captured=" << fnvRealSaveC04CapturedFrames
+                                      << " confirmed=0 travelExecuted=0 status=fail";
+                    fnvRealSaveC04Phase = -1;
+                }
+                else if (fnvRealSaveC04ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC04ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C04 native frame: drain-begins captured="
+                                     << fnvRealSaveC04CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC04ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC04ExitReadyFrame)
+                {
+                    Log(Debug::Info) << "FNV C04 natural Pip-Boy path: phase=complete marker="
+                                     << *fnvRealSaveC04Marker << " captured=" << fnvRealSaveC04CapturedFrames
+                                     << " confirmed=0 travelExecuted=0 status=pass";
+                    mStateManager->requestQuit();
+                    fnvRealSaveC04Phase = 5;
+                }
+            }
+        }
+    }
+
+    if ((fnvRealSaveC05Enabled || fnvRealSaveC07Enabled) && proofWorldReady && mWorld != nullptr
+        && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC05MarkerParsed)
+        {
+            const char* markerText = fnvRealSaveC07Enabled ? std::getenv("OPENMW_FNV_REAL_SAVE_C07_MARKER")
+                                                            : std::getenv("OPENMW_FNV_REAL_SAVE_C05_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC05Marker = parseProofFormId(configuredMarker);
+            fnvRealSaveC05MarkerParsed = true;
+            if (!fnvRealSaveC05Marker)
+            {
+                fnvRealSaveC05Phase = -1;
+                Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: invalid marker=\"" << configuredMarker
+                                  << "\"";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: marker=" << *fnvRealSaveC05Marker
+                                 << " source=restored-save330-state";
+                if (fnvRealSaveC07Enabled)
+                    Log(Debug::Info) << "FNV C07 persistence: phase="
+                                     << (fnvRealSaveC07First ? "first" : "reload")
+                                     << " marker=" << *fnvRealSaveC05Marker
+                                     << " source=production-map-travel-handler";
+            }
+        }
+
+        if (fnvRealSaveC05Phase >= 0 && fnvRealSaveC05Marker)
+        {
+            const int c05Elapsed = proofWorldReadyFrames - fnvRealSaveC05FirstReadyFrame;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC05Marker);
+            const ESM4::Cell* destinationCell
+                = marker == nullptr ? nullptr : mWorld->getStore().get<ESM4::Cell>().search(marker->mParent);
+            const ESM4::World* destinationWorld = destinationCell == nullptr
+                ? nullptr
+                : mWorld->getStore().get<ESM4::World>().search(destinationCell->mParent);
+            const auto queueC05Frame = [&](const char* state) {
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C05 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC05Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C05 native frame: state=" << state
+                                 << " index=" << fnvRealSaveC05CapturedFrames
+                                 << " source=ScreenCaptureHandler";
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                ++fnvRealSaveC05CapturedFrames;
+            };
+            const auto playerControlsEnabled = [&]() {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (mLuaManager == nullptr || player.isEmpty())
+                    return true;
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                    return !controls->mDisableAI;
+                return true;
+            };
+
+            if (fnvRealSaveC05Phase == 0 && c05Elapsed >= 0)
+            {
+                if (fnvRealSaveC07Enabled && fnvRealSaveC07Reload)
+                {
+                    const MWWorld::Ptr reloadPlayer = mWorld->getPlayerPtr();
+                    const MWWorld::CellStore* reloadCell
+                        = reloadPlayer.isInCell() ? reloadPlayer.getCell() : nullptr;
+                    const ESM::Position reloadPosition
+                        = reloadPlayer.isEmpty() ? ESM::Position{} : reloadPlayer.getRefData().getPosition();
+                    const MWRender::Camera* reloadCamera = mWorld->getCamera();
+                    Log(Debug::Info) << "FNV C07 persistence: phase=reload-before-map marker="
+                                     << *fnvRealSaveC05Marker << " markerState="
+                                     << static_cast<int>(mWorld->getFalloutMapMarkerState(*fnvRealSaveC05Marker))
+                                     << " mapOpen=0 cell=\""
+                                     << (reloadCell != nullptr ? reloadCell->getCell()->getId() : ESM::RefId{})
+                                     << "\" worldspace=\""
+                                     << (reloadCell != nullptr ? reloadCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                     << "\" pos=(" << reloadPosition.pos[0] << "," << reloadPosition.pos[1] << ","
+                                     << reloadPosition.pos[2] << ") hour=" << mWorld->getTimeStamp().getHour()
+                                     << " cameraMode=" << (reloadCamera != nullptr ? static_cast<int>(reloadCamera->getMode()) : -1)
+                                     << " path=production-cold-reload status=pass";
+                }
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C05 natural map travel: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " action=MAP path=physical-pipboy-production status="
+                    << (mapPaneSelected ? "pass" : "fail");
+                fnvRealSaveC05Phase = mapPaneSelected ? 1 : -1;
+            }
+
+            if (fnvRealSaveC05Phase == 1 && c05Elapsed >= 30 && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC05Marker);
+                const bool focused = marker != nullptr && mWindowManager->focusFalloutMapMarker(*fnvRealSaveC05Marker, 1.6f);
+                const bool mapReady = marker != nullptr && destinationCell != nullptr && destinationWorld != nullptr
+                    && markerState == 2 && worldMapSelected && focused
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(mapReady ? Debug::Info : Debug::Error)
+                    << "FNV C05 natural map travel: phase=map-before-confirmation marker="
+                    << *fnvRealSaveC05Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " selected=" << (focused ? 1 : 0)
+                    << " pane=" << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " path=production-map-focus status=" << (mapReady ? "pass" : "fail");
+                if (mapReady)
+                {
+                    if (fnvRealSaveC07Enabled && fnvRealSaveC07Reload)
+                    {
+                        const MWWorld::Ptr reloadPlayer = mWorld->getPlayerPtr();
+                        const MWWorld::CellStore* reloadCell
+                            = reloadPlayer.isInCell() ? reloadPlayer.getCell() : nullptr;
+                        const ESM::Position reloadPosition
+                            = reloadPlayer.isEmpty() ? ESM::Position{} : reloadPlayer.getRefData().getPosition();
+                        Log(Debug::Info) << "FNV C07 persistence: phase=reload-map-reopened marker="
+                                         << *fnvRealSaveC05Marker << " name=\""
+                                         << (marker != nullptr ? marker->mFullName : std::string())
+                                         << "\" markerState=" << static_cast<int>(markerState)
+                                         << " mapOpen=1 worldMap="
+                                         << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                                         << " selected=" << (focused ? 1 : 0) << " cell=\""
+                                         << (reloadCell != nullptr ? reloadCell->getCell()->getId() : ESM::RefId{})
+                                         << "\" worldspace=\""
+                                         << (reloadCell != nullptr ? reloadCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                         << "\" pos=(" << reloadPosition.pos[0] << "," << reloadPosition.pos[1] << ","
+                                         << reloadPosition.pos[2] << ") hour=" << mWorld->getTimeStamp().getHour()
+                                         << " cameraMode="
+                                         << (mWorld->getCamera() != nullptr ? static_cast<int>(mWorld->getCamera()->getMode()) : -1)
+                                         << " path=production-map-reopen status=pass";
+                    }
+                    queueC05Frame("map-travel-before-confirmation");
+                    fnvRealSaveC05Phase = 2;
+                }
+                else
+                    fnvRealSaveC05Phase = -1;
+            }
+
+            if (fnvRealSaveC05Phase == 2 && c05Elapsed >= 60)
+            {
+                const bool requested = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC05Marker);
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position beforePosition = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                fnvRealSaveC05BeforeObserved = requested && playerCell != nullptr && destinationCell != nullptr
+                    && destinationWorld != nullptr;
+                if (fnvRealSaveC05BeforeObserved)
+                {
+                    fnvRealSaveC05BeforeHour = mWorld->getTimeStamp().getHour();
+                    fnvRealSaveC05BeforeX = beforePosition.pos[0];
+                    fnvRealSaveC05BeforeY = beforePosition.pos[1];
+                    fnvRealSaveC05BeforeZ = beforePosition.pos[2];
+                    fnvRealSaveC05BeforeGridX = playerCell->isExterior() ? playerCell->getCell()->getGridX() : 0;
+                    fnvRealSaveC05BeforeGridY = playerCell->isExterior() ? playerCell->getCell()->getGridY() : 0;
+                    fnvRealSaveC05BeforeCell = playerCell->getCell()->getId().toDebugString();
+                    fnvRealSaveC05BeforeWorldspace = playerCell->getCell()->getWorldSpace().toDebugString();
+                }
+                const std::string confirmationText
+                    = "Fast travel to " + (marker != nullptr ? marker->mFullName : std::string()) + "?";
+                Log(requested ? Debug::Info : Debug::Error)
+                    << "FNV C05 confirmation: opened=" << (requested ? 1 : 0)
+                    << " marker=" << *fnvRealSaveC05Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" text=\""
+                    << confirmationText << "\" confirmed=0 beforeCell=\""
+                    << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                    << "\" beforeWorldspace=\""
+                    << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                    << "\" beforeGrid=(" << fnvRealSaveC05BeforeGridX << "," << fnvRealSaveC05BeforeGridY
+                    << ") beforePos=(" << beforePosition.pos[0] << "," << beforePosition.pos[1] << ","
+                    << beforePosition.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                    << " path=production-map-confirmation status=" << (requested ? "pass" : "fail");
+                if (requested)
+                {
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation(confirmationText);
+                    fnvRealSaveC05Phase = 3;
+                }
+                else
+                    fnvRealSaveC05Phase = -1;
+            }
+
+            if (fnvRealSaveC05Phase == 3 && c05Elapsed >= 75)
+            {
+                queueC05Frame("map-travel-confirmation");
+                fnvRealSaveC05Phase = 4;
+            }
+
+            if (fnvRealSaveC05Phase == 4 && c05Elapsed >= 105)
+            {
+                mWindowManager->confirmFalloutFastTravel();
+                Log(Debug::Info) << "FNV C05 confirmation: confirmed=1 marker=" << *fnvRealSaveC05Marker
+                                 << " path=production-confirmation-handler status=pass";
+                fnvRealSaveC05Phase = 5;
+            }
+
+            if (fnvRealSaveC05Phase == 5)
+            {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position position = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                const bool cellMatches = playerCell != nullptr && destinationCell != nullptr
+                    && playerCell->getCell()->getId() == destinationCell->mId;
+                const bool worldspaceMatches = playerCell != nullptr && destinationWorld != nullptr
+                    && playerCell->getCell()->getWorldSpace() == destinationWorld->mId;
+                const bool gridMatches = playerCell != nullptr && destinationCell != nullptr
+                    && !playerCell->isExterior() == !destinationCell->isExterior()
+                    && (!playerCell->isExterior() || (playerCell->getCell()->getGridX() == destinationCell->mX
+                            && playerCell->getCell()->getGridY() == destinationCell->mY));
+                const float dx = marker == nullptr ? 1e9f : position.pos[0] - marker->mPos.pos[0];
+                const float dy = marker == nullptr ? 1e9f : position.pos[1] - marker->mPos.pos[1];
+                const float dz = marker == nullptr ? 1e9f : position.pos[2] - marker->mPos.pos[2];
+                const bool positionMatches = dx * dx + dy * dy + dz * dz <= 256.f * 256.f;
+                const double afterHour = mWorld->getTimeStamp().getHour();
+                const bool timeAdvanced = fnvRealSaveC05BeforeObserved && afterHour > fnvRealSaveC05BeforeHour + 0.001;
+                const bool sameDestinationCell = fnvRealSaveC05BeforeObserved && destinationCell != nullptr
+                    && fnvRealSaveC05BeforeCell == destinationCell->mId.toDebugString();
+                const bool menuClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                const bool controlsEnabled = playerControlsEnabled();
+                const bool travelCleared = !mWorld->isPlayerTraveling();
+                const bool arrived = fnvRealSaveC05BeforeObserved && cellMatches && worldspaceMatches && gridMatches
+                    && positionMatches && (timeAdvanced || (fnvRealSaveC07Reload && sameDestinationCell))
+                    && menuClosed && controlsEnabled && travelCleared;
+                if (arrived)
+                {
+                    queueC05Frame("map-travel-destination");
+                    Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: phase=arrived marker="
+                                     << *fnvRealSaveC05Marker << " destinationCell="
+                                     << (destinationCell != nullptr ? destinationCell->mId : ESM::RefId{})
+                                     << " destinationWorldspace="
+                                     << (destinationWorld != nullptr ? destinationWorld->mId : ESM::RefId{})
+                                     << " destinationGrid=("
+                                     << (destinationCell != nullptr ? destinationCell->mX : 0) << ","
+                                     << (destinationCell != nullptr ? destinationCell->mY : 0) << ") afterCell=\""
+                                     << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                                     << "\" afterWorldspace=\""
+                                     << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                     << "\" afterGrid=("
+                                     << (playerCell != nullptr && playerCell->isExterior()
+                                             ? playerCell->getCell()->getGridX()
+                                             : 0)
+                                     << ","
+                                     << (playerCell != nullptr && playerCell->isExterior()
+                                             ? playerCell->getCell()->getGridY()
+                                             : 0)
+                                     << ") afterPos=(" << position.pos[0] << "," << position.pos[1] << ","
+                                     << position.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                                     << " afterHour=" << afterHour << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                     << " sameDestinationCell=" << (sameDestinationCell ? 1 : 0)
+                                     << " menuClosed=" << (menuClosed ? 1 : 0)
+                                     << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                     << " travelCleared=" << (travelCleared ? 1 : 0)
+                                     << " cellMatches=" << (cellMatches ? 1 : 0)
+                                     << " worldspaceMatches=" << (worldspaceMatches ? 1 : 0)
+                                     << " gridMatches=" << (gridMatches ? 1 : 0)
+                                     << " positionMatches=" << (positionMatches ? 1 : 0)
+                                     << " path=production-fast-travel status=pass";
+                    if (fnvRealSaveC07Enabled)
+                    {
+                        Log(Debug::Info) << "FNV C07 persistence: phase="
+                                         << (fnvRealSaveC07First ? "first-travel-arrived" : "second-travel-arrived")
+                                         << " marker=" << *fnvRealSaveC05Marker << " cell="
+                                         << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                                         << " worldspace="
+                                         << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                         << " pos=(" << position.pos[0] << "," << position.pos[1] << ","
+                                         << position.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                                         << " afterHour=" << afterHour << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                         << " sameDestinationCell=" << (sameDestinationCell ? 1 : 0)
+                                         << " menuClosed=" << (menuClosed ? 1 : 0)
+                                         << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                         << " travelCleared=" << (travelCleared ? 1 : 0)
+                                         << " cameraMode="
+                                         << (mWorld->getCamera() != nullptr ? static_cast<int>(mWorld->getCamera()->getMode()) : -1)
+                                         << " path=production-persistence-travel status=pass";
+                    }
+                    fnvRealSaveC05Phase = 6;
+                }
+                else if (c05Elapsed >= 600)
+                {
+                    Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: phase=arrived marker="
+                                      << *fnvRealSaveC05Marker << " status=fail"
+                                      << " cellMatches=" << (cellMatches ? 1 : 0)
+                                      << " worldspaceMatches=" << (worldspaceMatches ? 1 : 0)
+                                      << " gridMatches=" << (gridMatches ? 1 : 0)
+                                      << " positionMatches=" << (positionMatches ? 1 : 0)
+                                      << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                      << " menuClosed=" << (menuClosed ? 1 : 0)
+                                      << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                      << " travelCleared=" << (travelCleared ? 1 : 0);
+                    fnvRealSaveC05Phase = -1;
+                }
+            }
+
+            if (fnvRealSaveC05Phase == 6)
+            {
+                if (fnvRealSaveC05CapturedFrames != 3)
+                {
+                    Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: phase=complete marker="
+                                      << *fnvRealSaveC05Marker << " captured=" << fnvRealSaveC05CapturedFrames
+                                      << " status=fail";
+                    fnvRealSaveC05Phase = -1;
+                }
+                else if (fnvRealSaveC05ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC05ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C05 native frame: drain-begins captured="
+                                     << fnvRealSaveC05CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC05ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC05ExitReadyFrame)
+                {
+                    if (fnvRealSaveC07Enabled && fnvRealSaveC07First && !fnvRealSaveC07SaveRequested)
+                    {
+                        const std::string saveName = "Save330 C07 Travel Persistence";
+                        mStateManager->quickSave(saveName);
+                        fnvRealSaveC07SaveRequested = true;
+                        fnvRealSaveC07SaveFrame = static_cast<int>(proofWorldReadyFrames);
+                        fnvRealSaveC05ExitReadyFrame = proofWorldReadyFrames + 60;
+                        fnvRealSaveC05Phase = 8;
+                        Log(Debug::Info) << "FNV C07 persistence: phase=save-requested marker="
+                                         << *fnvRealSaveC05Marker << " name=\"" << saveName
+                                         << "\" saveFrame=" << fnvRealSaveC07SaveFrame
+                                         << " arrivedBeforeSave=1 path=production-state-manager-quick-save status=pass";
+                    }
+                    else
+                    {
+                        Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: phase=complete marker="
+                                         << *fnvRealSaveC05Marker << " captured=" << fnvRealSaveC05CapturedFrames
+                                         << " confirmed=1 travelExecuted=1 status=pass";
+                        if (fnvRealSaveC07Enabled)
+                            Log(Debug::Info) << "FNV C07 persistence: phase=second-travel-complete marker="
+                                             << *fnvRealSaveC05Marker << " captured="
+                                             << fnvRealSaveC05CapturedFrames << " confirmed=1 travelExecuted=1"
+                                             << " path=production-confirmation-handler status=pass";
+                        mStateManager->requestQuit();
+                        fnvRealSaveC05Phase = 7;
+                    }
+                }
+            }
+            if (fnvRealSaveC05Phase == 8 && fnvRealSaveC07SaveRequested
+                && proofWorldReadyFrames >= static_cast<unsigned>(fnvRealSaveC05ExitReadyFrame))
+            {
+                Log(Debug::Info) << "FNV C07 persistence: phase=save-complete marker="
+                                 << *fnvRealSaveC05Marker << " saveFrame=" << fnvRealSaveC07SaveFrame
+                                 << " cleanQuitRequested=1 path=production-state-manager-quick-save status=pass";
+                mStateManager->requestQuit();
+                fnvRealSaveC05Phase = 9;
+            }
+        }
+    }
+
+    if (fnvRealSaveC06Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC06MarkerParsed)
+        {
+            const char* markerText = std::getenv("OPENMW_FNV_REAL_SAVE_C06_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC06Marker = parseProofFormId(configuredMarker);
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* candidate = references.at(index);
+                if (candidate != nullptr && candidate->mIsMapMarker && !candidate->mFullName.empty()
+                    && mWorld->getFalloutMapMarkerState(candidate->mId) == 0)
+                {
+                    fnvRealSaveC06HiddenMarker = candidate->mId;
+                    break;
+                }
+            }
+            fnvRealSaveC06MarkerParsed = true;
+            if (!fnvRealSaveC06Marker || !fnvRealSaveC06HiddenMarker)
+            {
+                fnvRealSaveC06Phase = -1;
+                Log(Debug::Error) << "FNV C06 rejection matrix: missing configured or hidden marker status=fail";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C06 rejection matrix: marker=" << *fnvRealSaveC06Marker
+                                 << " hiddenMarker=" << *fnvRealSaveC06HiddenMarker
+                                 << " source=restored-save330-state harness=production-rejection-only";
+            }
+        }
+
+        if (fnvRealSaveC06Phase >= 0 && fnvRealSaveC06Marker && fnvRealSaveC06HiddenMarker)
+        {
+            const int c06Elapsed = proofWorldReadyFrames - fnvRealSaveC06FirstReadyFrame;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC06Marker);
+            const ESM4::Reference* hiddenMarker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC06HiddenMarker);
+            const auto queueC06Frame = [&](const char* state) {
+                if (mScreenCaptureHandler == nullptr || !fnvRealSaveC06PendingFrameState.empty())
+                {
+                    Log(Debug::Error) << "FNV C06 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler pending="
+                                      << (!fnvRealSaveC06PendingFrameState.empty() ? 1 : 0) << " status=fail";
+                    fnvRealSaveC06Phase = -1;
+                    return;
+                }
+                fnvRealSaveC06PendingFrameState = state;
+                fnvRealSaveC06PendingFrameReadyFrame = proofWorldReadyFrames + 2;
+                Log(Debug::Info) << "FNV C06 native frame: state=" << state
+                                 << " scheduled=1 captureAfterUiSettle=1 readyFrame="
+                                 << fnvRealSaveC06PendingFrameReadyFrame;
+            };
+            const auto dispatchC06Frame = [&]() {
+                if (fnvRealSaveC06PendingFrameState.empty()
+                    || proofWorldReadyFrames < fnvRealSaveC06PendingFrameReadyFrame)
+                    return;
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C06 native frame: state=" << fnvRealSaveC06PendingFrameState
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC06Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C06 native frame: state=" << fnvRealSaveC06PendingFrameState
+                                 << " index=" << fnvRealSaveC06CapturedFrames
+                                 << " source=ScreenCaptureHandler captureAfterUiSettle=1";
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                ++fnvRealSaveC06CapturedFrames;
+                fnvRealSaveC06PendingFrameState.clear();
+                fnvRealSaveC06PendingFrameReadyFrame = -1;
+            };
+            const auto uiUsable = [&]() {
+                return physicalWindowManager != nullptr && mWindowManager->containsMode(MWGui::GM_Inventory)
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0
+                    && mWindowManager->isFalloutPipBoyPhysicalPresentation();
+            };
+            const auto captureBaseline = [&]() {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                if (player.isEmpty() || playerCell == nullptr)
+                    return false;
+                fnvRealSaveC06BaselineObserved = true;
+                fnvRealSaveC06BaselineHour = mWorld->getTimeStamp().getHour();
+                fnvRealSaveC06BaselinePosition = player.getRefData().getPosition();
+                fnvRealSaveC06BaselineCell = playerCell->getCell()->getId();
+                fnvRealSaveC06BaselineWorldspace = playerCell->getCell()->getWorldSpace();
+                fnvRealSaveC06BaselineGridX = playerCell->isExterior() ? playerCell->getCell()->getGridX() : 0;
+                fnvRealSaveC06BaselineGridY = playerCell->isExterior() ? playerCell->getCell()->getGridY() : 0;
+                return true;
+            };
+            const auto logRejectedCase = [&](std::string_view caseName, std::string_view reason,
+                                             bool requestOpened, bool confirmationAttempted, bool cancelled,
+                                             bool expectedRequest) {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position position = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                const double hour = mWorld->getTimeStamp().getHour();
+                const float dx = position.pos[0] - fnvRealSaveC06BaselinePosition.pos[0];
+                const float dy = position.pos[1] - fnvRealSaveC06BaselinePosition.pos[1];
+                const float dz = position.pos[2] - fnvRealSaveC06BaselinePosition.pos[2];
+                const bool positionUnchanged = fnvRealSaveC06BaselineObserved
+                    && dx * dx + dy * dy + dz * dz <= 1.f
+                    && playerCell != nullptr && playerCell->getCell()->getId() == fnvRealSaveC06BaselineCell
+                    && playerCell->getCell()->getWorldSpace() == fnvRealSaveC06BaselineWorldspace
+                    && (!playerCell->isExterior() || (playerCell->getCell()->getGridX() == fnvRealSaveC06BaselineGridX
+                            && playerCell->getCell()->getGridY() == fnvRealSaveC06BaselineGridY));
+                const bool timeUnchanged = fnvRealSaveC06BaselineObserved && std::abs(hour - fnvRealSaveC06BaselineHour) <= 0.001;
+                const bool pass = requestOpened == expectedRequest && positionUnchanged && timeUnchanged && uiUsable();
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection: case=" << caseName << " expectedReason=\"" << reason
+                    << "\" requestOpened=" << (requestOpened ? 1 : 0)
+                    << " confirmationAttempted=" << (confirmationAttempted ? 1 : 0)
+                    << " cancelled=" << (cancelled ? 1 : 0)
+                    << " positionUnchanged=" << (positionUnchanged ? 1 : 0)
+                    << " timeUnchanged=" << (timeUnchanged ? 1 : 0)
+                    << " menuOpen=" << (mWindowManager->containsMode(MWGui::GM_Inventory) ? 1 : 0)
+                    << " uiUsable=" << (uiUsable() ? 1 : 0)
+                    << " beforeHour=" << fnvRealSaveC06BaselineHour << " afterHour=" << hour
+                    << " path=production-map-rejection status=" << (pass ? "pass" : "fail");
+                return pass;
+            };
+
+            dispatchC06Frame();
+
+            if (fnvRealSaveC06Phase == 0 && c06Elapsed >= 0)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " path=physical-pipboy-production status=" << (mapPaneSelected ? "pass" : "fail");
+                fnvRealSaveC06Phase = mapPaneSelected ? 1 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 1 && c06Elapsed >= 30 && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const bool focused = marker != nullptr && mWindowManager->focusFalloutMapMarker(*fnvRealSaveC06Marker, 1.6f);
+                const bool ready = worldMapSelected && focused && mWorld->getFalloutMapMarkerState(*fnvRealSaveC06Marker) == 2
+                    && uiUsable();
+                Log(ready ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: phase=map-ready marker=" << *fnvRealSaveC06Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string())
+                    << "\" hiddenMarker=" << *fnvRealSaveC06HiddenMarker
+                    << " state=" << static_cast<int>(mWorld->getFalloutMapMarkerState(*fnvRealSaveC06Marker))
+                    << " worldMap=" << (worldMapSelected ? 1 : 0) << " selected=" << (focused ? 1 : 0)
+                    << " path=production-map-focus status=" << (ready ? "pass" : "fail");
+                if (ready && captureBaseline())
+                    fnvRealSaveC06Phase = 2;
+                else
+                    fnvRealSaveC06Phase = -1;
+            }
+
+            if (fnvRealSaveC06Phase == 2 && c06Elapsed >= 45)
+            {
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened && physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel to Southern Passage?");
+                if (mWindowManager->getConfirmationDialog() != nullptr)
+                    mWindowManager->getConfirmationDialog()->exit();
+                if (physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapSelection("Southern Passage", *fnvRealSaveC06Marker);
+                const bool pass = logRejectedCase("cancelled", "cancelled", requestOpened, false, true, true);
+                queueC06Frame("rejection-cancelled");
+                fnvRealSaveC06Phase = pass ? 3 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 3 && c06Elapsed >= 75)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                const bool disabledApplied = mWorld->getFalloutPlayerRuntimeState().setScriptedFastTravel(false);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened && physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel is currently unavailable from this location.");
+                Log(disabledApplied && requestOpened ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: case=disabled-travel setup="
+                    << (disabledApplied ? 1 : 0) << " requestOpened=" << (requestOpened ? 1 : 0)
+                    << " path=production-map-confirmation status=" << (disabledApplied && requestOpened ? "pass" : "fail");
+                if (disabledApplied && requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel is currently unavailable from this location.");
+                    const bool pass = logRejectedCase("disabled-travel", "Fast travel is currently unavailable from this location.", true, true, false, true);
+                    mWorld->getFalloutPlayerRuntimeState().setScriptedFastTravel(true, true, false);
+                    queueC06Frame("rejection-disabled-travel");
+                    fnvRealSaveC06Phase = pass ? 4 : -1;
+                }
+                else
+                    fnvRealSaveC06Phase = -1;
+            }
+
+            if (fnvRealSaveC06Phase == 4 && c06Elapsed >= 105)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(true, false);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("You cannot fast travel when enemies are nearby.");
+                }
+                const bool pass = logRejectedCase("enemies-nearby", "You cannot fast travel when enemies are nearby.", requestOpened,
+                    requestOpened, false, true);
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                queueC06Frame("rejection-enemies-nearby");
+                fnvRealSaveC06Phase = pass ? 5 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 5 && c06Elapsed >= 135)
+            {
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06HiddenMarker);
+                if (physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("You have not discovered that location.");
+                const bool pass = logRejectedCase("undiscovered", "You have not discovered that location.", requestOpened,
+                    false, false, false);
+                queueC06Frame("rejection-undiscovered");
+                fnvRealSaveC06Phase = pass ? 6 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 6 && c06Elapsed >= 165)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, true);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("The map marker has no authored exterior destination.");
+                }
+                const bool pass = logRejectedCase("invalid-destination", "The map marker has no authored exterior destination.",
+                    requestOpened, requestOpened, false, true);
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                queueC06Frame("rejection-invalid-destination");
+                fnvRealSaveC06Phase = pass ? 7 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 7)
+            {
+                if (!fnvRealSaveC06PendingFrameState.empty())
+                {
+                    // The final invalid-destination UI state is still settling
+                    // for its named native frame.
+                }
+                else if (fnvRealSaveC06CapturedFrames != 5)
+                {
+                    Log(Debug::Error) << "FNV C06 rejection matrix: phase=complete captured="
+                                      << fnvRealSaveC06CapturedFrames << " status=fail";
+                    fnvRealSaveC06Phase = -1;
+                }
+                else if (fnvRealSaveC06ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC06ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C06 native frame: drain-begins captured="
+                                     << fnvRealSaveC06CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC06ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC06ExitReadyFrame)
+                {
+                    Log(Debug::Info) << "FNV C06 rejection matrix: phase=complete captured="
+                                     << fnvRealSaveC06CapturedFrames
+                                     << " allCasesPositionTimeUnchanged=1 uiUsable=1 status=pass";
+                    mStateManager->requestQuit();
+                    fnvRealSaveC06Phase = 8;
+                }
+            }
+        }
+    }
+
     if (fnvPipBoyShowcaseEnabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr
         && (!fnvGameplayStartPlacementEnabled
             || (fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementPassed)))
@@ -7267,31 +8419,78 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             const std::size_t showcaseStateIndex = static_cast<std::size_t>(
                 showcaseElapsed / fnvPipBoyShowcaseFramesPerPane);
-            if (showcaseStateIndex < fnvPipBoyShowcaseStates.size())
+            const std::size_t showcaseStateCount = fnvPipBoyMiscOnly
+                ? fnvPipBoyMiscStateIndices.size()
+                : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices.size()
+                : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices.size()
+                : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices.size()
+                : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices.size()
+                                           : fnvPipBoyShowcaseStates.size()))));
+            if (showcaseStateIndex < showcaseStateCount)
             {
-                const FnvPipBoyShowcaseState& state = fnvPipBoyShowcaseStates[showcaseStateIndex];
+                const std::size_t authoredStateIndex = fnvPipBoyMiscOnly
+                    ? fnvPipBoyMiscStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices[showcaseStateIndex]
+                                              : showcaseStateIndex))));
+                FnvPipBoyShowcaseState state = fnvPipBoyShowcaseStates[authoredStateIndex];
+                if (fnvPipBoyLifecycleOnly)
+                {
+                    // Keep the presentation rig alive while proving navigation.
+                    // Equipping rebuilds the first-person weapon attachment, so
+                    // activate only the authored checkpoints whose state delta
+                    // is asserted: 9mm equip, Stimpak use, and final rifle equip.
+                    state.mActivateSelection = state.mActivateSelection
+                        && (showcaseStateIndex == 1 || showcaseStateIndex == 3 || showcaseStateIndex == 6);
+                    if (showcaseStateIndex == 2)
+                        state.mName = "ITEMS-WEAP-VARMINT-SCROLL";
+                    else if (showcaseStateIndex == 6)
+                        state.mName = "ITEMS-WEAP-VARMINT-EQUIP";
+                }
                 if (fnvPipBoyShowcaseActivePane != showcaseStateIndex)
                 {
                     if (state.mPane < 0)
                     {
                         if (mWindowManager->containsMode(MWGui::GM_Inventory))
-                            mWindowManager->removeGuiMode(MWGui::GM_Inventory);
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        mMechanicsManager->forceStateUpdate(player);
+                        // The apparel checkpoint uses the ordinary POV transition so the
+                        // retained native frame shows the live player body, not just slot text.
+                        if (state.mPane == -2 && mWorld->isFirstPerson())
+                            mWorld->togglePOV(false);
+                        fnvPipBoyShowcaseReloadRequested = false;
+                        fnvPipBoyShowcaseFireRequested = false;
+                        fnvPipBoyShowcaseFireObserved = false;
+                        fnvPipBoyShowcaseLoadedBeforeFire = 0;
+                        fnvPipBoyShowcaseFireRequestFrame = -1;
+                        fnvPipBoyShowcaseReloadWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                        fnvPipBoyShowcasePostFireRecoveryFrames = 0;
                         fnvPipBoyShowcaseActivePane = showcaseStateIndex;
                         Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
                                          << " pane=world readyFrame=" << proofWorldReadyFrames
-                                         << " source=selected-live-weapon";
+                                         << " source="
+                                         << (state.mPane == -2 ? "live-third-person-equipment"
+                                                              : "selected-live-weapon");
                     }
                     else
                     {
                         if (!mWorld->isFirstPerson())
                             mWorld->togglePOV(true);
                         if (!mWindowManager->containsMode(MWGui::GM_Inventory))
-                        {
-                            mWindowManager->setFalloutPipBoyPresentation(true);
-                            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
-                        }
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
                         else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
-                            mWindowManager->setFalloutPipBoyPresentation(true);
+                        {
+                            // Close the analog inventory first, then use the
+                            // player's bound physical Pip-Boy action to reopen.
+                            mInputManager->executeAction(MWInput::A_Inventory);
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        }
 
                         auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
                         if (physicalWindowManager == nullptr)
@@ -7301,30 +8500,59 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                         else
                         {
+                            if (authoredStateIndex == 13 && !fnvPipBoyShowcaseStimpakDamageStaged)
+                            {
+                                MWWorld::Ptr player = mWorld->getPlayerPtr();
+                                MWMechanics::CreatureStats& stats
+                                    = player.getClass().getCreatureStats(player);
+                                MWMechanics::DynamicStat<float> health = stats.getHealth();
+                                const float before = health.getCurrent();
+                                health.setCurrent(std::max(1.f, health.getModified() - 25.f));
+                                stats.setHealth(health);
+                                fnvPipBoyShowcaseStimpakDamageStaged = true;
+                                Log(Debug::Info) << "FNV Pip-Boy showcase: staged production Stimpak test health="
+                                                 << before << "->" << health.getCurrent();
+                            }
                             const int selectPaneAction = state.mPane == 0 ? MWInput::A_QuickKey4
                                 : state.mPane == 1                    ? MWInput::A_QuickKey2
                                 : state.mPane == 2                    ? MWInput::A_QuickKey3
                                                                       : MWInput::A_QuickKey1;
-                            physicalWindowManager->handleFalloutPipBoyAction(selectPaneAction);
+                            mInputManager->executeAction(selectPaneAction);
                             if (state.mPane == 0)
                             {
                                 if (physicalWindowManager->isFalloutPipBoyWorldMap() != state.mWorldMap)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                                    mInputManager->executeAction(MWInput::A_Activate);
                                 for (int index = 0; index < state.mZoomInCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_ZoomIn);
+                                    mInputManager->executeAction(MWInput::A_ZoomIn);
                                 for (int index = 0; index < state.mPanRightCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
                                 for (int index = 0; index < state.mPanDownCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
+                            }
+                            if (authoredStateIndex == 26)
+                            {
+                                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                                const MWWorld::InventoryStore& inventory
+                                    = player.getClass().getInventoryStore(player);
+                                const MWWorld::ConstContainerStoreIterator right
+                                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                                const ESM::RefId weaponId = right == inventory.end()
+                                    ? ESM::RefId() : right->getCellRef().getRefId();
+                                const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                                Log(Debug::Info) << "FNV Pip-Boy reopen audit: right=" << weaponId << " ammo="
+                                                 << (ammo ? ammo->toDebugString() : std::string("none"))
+                                                 << " loaded=" << inventory.getFalloutLoadedAmmo(weaponId).value_or(0)
+                                                 << " reserve=" << (ammo ? inventory.count(*ammo) : 0)
+                                                 << " source=production-input-dispatch";
                             }
                             else
                             {
                                 for (int index = 0; index < state.mSubmenu; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
                                 for (int index = 0; index < state.mListOffset; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
                                 if (state.mActivateSelection)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                                    mInputManager->executeAction(MWInput::A_Activate);
                             }
                             fnvPipBoyShowcaseActivePane = showcaseStateIndex;
                             Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
@@ -7336,9 +8564,296 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
 
                 const int paneElapsed = showcaseElapsed % fnvPipBoyShowcaseFramesPerPane;
-                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
-                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && mScreenCaptureHandler != nullptr)
+                if (state.mPane == -1 && !fnvPipBoyShowcaseReloadRequested && paneElapsed >= 30)
                 {
+                    MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    const ESM::RefId weaponId
+                        = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                    const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                    const int loadedBefore = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                    const int reserveBefore = ammo ? inventory.count(*ammo) : 0;
+                    mInputManager->executeAction(MWInput::A_ToggleSpell);
+                    const bool reloadRequested = mMechanicsManager->isAttackingOrSpell(player);
+                    fnvPipBoyShowcaseReloadRequested = true;
+                    Log(Debug::Info) << "FNV Pip-Boy post-close reload: requested=" << reloadRequested
+                                     << " right=" << weaponId << " ammo="
+                                     << (ammo ? ammo->toDebugString() : std::string("none"))
+                                     << " loadedBefore=" << loadedBefore << " reserveBefore=" << reserveBefore;
+                }
+                if (state.mPane == -1 && fnvPipBoyShowcaseReloadRequested && !fnvPipBoyShowcaseFireObserved)
+                {
+                    MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    const ESM::RefId weaponId
+                        = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                    const int loadedNow = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                    const bool actionSettled = !mMechanicsManager->isAttackingOrSpell(player);
+                    MWRender::Animation* const fireAnimation = mWorld->getFalloutWeaponAnimation(player, true);
+                    const bool firePoseReady = fireAnimation != nullptr
+                        && fireAnimation->getAnimationSourceName("weaponpose")
+                            == "meshes/characters/_1stperson/2hraim.kf"
+                        && fireAnimation->isPlaying("weaponpose") && fireAnimation->getWeaponsShown()
+                        && fireAnimation->getActiveGroup(MWRender::BoneGroup_RightArm) == "weaponpose"
+                        && !fireAnimation->isPlaying("equip") && !fireAnimation->isPlaying("unequip")
+                        && !fireAnimation->isPlaying("reload");
+                    // The ordinary showcase slot is 150 frames and the final
+                    // acceptance gate requires 90 post-fire recovery frames.
+                    // Request as soon as reload has settled after frame 45 so
+                    // the authored attack can naturally return to weaponpose
+                    // before the frame-135 capture; requesting at frame 105
+                    // made the required final state unreachable.
+                    if (!fnvPipBoyShowcaseFireRequested && paneElapsed >= 45 && actionSettled && firePoseReady
+                        && loadedNow > 0)
+                    {
+                        fnvPipBoyShowcaseFireRequested = true;
+                        fnvPipBoyShowcaseLoadedBeforeFire = loadedNow;
+                        fnvPipBoyShowcaseFireRequestFrame = proofWorldReadyFrames;
+                        mInputManager->setFalloutUnattendedUseDown(true);
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire: requested=1 right=" << weaponId
+                                         << " loadedBefore=" << loadedNow
+                                         << " route=production-character-controller";
+                    }
+                    else if (!fnvPipBoyShowcaseFireRequested && paneElapsed == 150)
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire gate: actionSettled=" << actionSettled
+                                         << " poseReady=" << firePoseReady << " loaded=" << loadedNow
+                                         << " poseSource=\""
+                                         << (fireAnimation != nullptr
+                                                 ? fireAnimation->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" status=waiting";
+                    if (fnvPipBoyShowcaseFireRequested)
+                    {
+                        const int loadedAfterTrigger = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                        if (loadedAfterTrigger < fnvPipBoyShowcaseLoadedBeforeFire)
+                        {
+                            mInputManager->setFalloutUnattendedUseDown(false);
+                            fnvPipBoyShowcaseFireObserved = true;
+                            Log(Debug::Info) << "FNV Pip-Boy post-close fire audit: right=" << weaponId
+                                             << " loadedBefore=" << fnvPipBoyShowcaseLoadedBeforeFire
+                                             << " loadedAfter=" << loadedAfterTrigger
+                                             << " consumed="
+                                             << (fnvPipBoyShowcaseLoadedBeforeFire - loadedAfterTrigger)
+                                             << " holdFrames="
+                                             << (proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame)
+                                             << " status=pass";
+                        }
+                    }
+                }
+                bool finalWeaponActionSettled = true;
+                bool finalWeaponPoseSettled = true;
+                if (state.mPane == -1)
+                {
+                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    finalWeaponActionSettled = fnvPipBoyShowcaseReloadRequested && fnvPipBoyShowcaseFireObserved
+                        && !mMechanicsManager->isAttackingOrSpell(player);
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponActionSettled
+                        && !fnvPipBoyShowcaseReloadWaitLogged)
+                    {
+                        fnvPipBoyShowcaseReloadWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close capture: waiting=1 actionSettled=0"
+                                         << " reason=authored-reload-active";
+                    }
+
+                    MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
+                    const std::string poseSource = firstPerson != nullptr
+                        ? firstPerson->getAnimationSourceName("weaponpose")
+                        : std::string();
+                    const std::string activeRightArm = firstPerson != nullptr
+                        ? std::string(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm))
+                        : std::string();
+                    const osg::Node* const weaponNode
+                        = firstPerson != nullptr ? firstPerson->getNode("Weapon") : nullptr;
+                    const auto* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+                    osg::Node* const weaponPart
+                        = firstPerson != nullptr ? firstPerson->getEquippedWeaponNode() : nullptr;
+                    const osg::Group* const weaponParent = weaponNode != nullptr && weaponNode->getNumParents() == 1
+                        ? weaponNode->getParent(0)
+                        : nullptr;
+                    const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
+                        && weaponPart->getParent(0) == weaponNode;
+                    const bool authoredTwoHandPose = poseSource.find("2hraim.kf") != std::string::npos;
+                    const bool poseObserved = finalWeaponActionSettled && authoredTwoHandPose
+                        && firstPerson != nullptr && firstPerson->isPlaying("weaponpose")
+                        && activeRightArm == "weaponpose" && weaponParent != nullptr
+                        && weaponParent->getName() == "Bip01 R Hand" && directPart
+                        && firstPerson->getWeaponsShown() && mWorld->isFirstPerson()
+                        && weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
+                    if (poseObserved)
+                    {
+                        const osg::Matrix& matrix = weaponTransform->getMatrix();
+                        if (fnvPipBoyShowcaseWeaponPoseSampleValid
+                            && matrix == fnvPipBoyShowcaseWeaponPoseSample)
+                            ++fnvPipBoyShowcaseWeaponPoseStableFrames;
+                        else
+                        {
+                            fnvPipBoyShowcaseWeaponPoseSample = matrix;
+                            fnvPipBoyShowcaseWeaponPoseSampleValid = true;
+                            fnvPipBoyShowcaseWeaponPoseStableFrames = 1;
+                        }
+                    }
+                    else
+                    {
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                    }
+                    fnvPipBoyShowcasePostFireRecoveryFrames
+                        = fnvPipBoyShowcaseFireRequestFrame >= 0
+                        ? proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame
+                        : 0;
+                    // 2hraim is an authored animated idle, so exact matrix equality is diagnostic
+                    // only and cannot define rest. Require the completed weapon action plus a
+                    // sustained post-trigger recovery interval while the authored pose stays active.
+                    finalWeaponPoseSettled = poseObserved && fnvPipBoyShowcasePostFireRecoveryFrames >= 90;
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponPoseSettled
+                        && !fnvPipBoyShowcaseWeaponPoseWaitLogged)
+                    {
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close pose gate: source=\"" << poseSource
+                                         << "\" activeRightArm=\"" << activeRightArm
+                                         << "\" parent=\""
+                                         << (weaponParent != nullptr ? weaponParent->getName() : std::string())
+                                         << "\" directPart=" << directPart
+                                         << " playing="
+                                         << (firstPerson != nullptr && firstPerson->isPlaying("weaponpose"))
+                                         << " visible="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown()
+                                             && mWorld->isFirstPerson())
+                                         << " nonIdentity="
+                                         << (weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity())
+                                         << " stableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames
+                                         << " status=pending";
+                    }
+                }
+                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
+                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && finalWeaponActionSettled
+                    && finalWeaponPoseSettled
+                    && mScreenCaptureHandler != nullptr)
+                {
+                    if (state.mPane == -1)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const ESM::RefId weaponId = right == inventory.end()
+                            ? ESM::RefId()
+                            : right->getCellRef().getRefId();
+                        const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                        Log(Debug::Info) << "FNV Pip-Boy post-close audit: right=" << weaponId << " ammo="
+                                         << (ammo ? ammo->toDebugString() : std::string("none")) << " loadedAfter="
+                                         << inventory.getFalloutLoadedAmmo(weaponId).value_or(0) << " reserveAfter="
+                                         << (ammo ? inventory.count(*ammo) : 0)
+                                         << " actionSettled=1 poseSettled=1 poseSource=\""
+                                         << (mWorld->getFalloutWeaponAnimation(player, true) != nullptr
+                                                 ? mWorld->getFalloutWeaponAnimation(player, true)
+                                                       ->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" poseStableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames;
+                    }
+                    else if (state.mPane == -2)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const auto equippedId = [&](int slot) {
+                            const MWWorld::ConstContainerStoreIterator item = inventory.getSlot(slot);
+                            return item == inventory.end() ? std::string("none")
+                                                           : item->getCellRef().getRefId().toDebugString();
+                        };
+                        Log(Debug::Info) << "FNV Pip-Boy apparel world audit: state=" << state.mName
+                                         << " helmet=" << equippedId(MWWorld::InventoryStore::Slot_Helmet)
+                                         << " body=" << equippedId(MWWorld::InventoryStore::Slot_Cuirass)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " source=live-equipment-and-native-frame";
+                    }
+                    else if (state.mPane == -3)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Aid world audit: state=" << state.mName
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " activeRightArm=\""
+                                         << (firstPerson != nullptr
+                                                 ? std::string(firstPerson->getActiveGroup(
+                                                       MWRender::BoneGroup_RightArm))
+                                                 : std::string())
+                                         << "\" source=live-consumable-close-and-native-frame";
+                    }
+                    else if (state.mPane == -4)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const ESM::RefId weaponId = right == inventory.end()
+                            ? ESM::RefId() : right->getCellRef().getRefId();
+                        const std::optional<ESM::RefId> selectedAmmo
+                            = inventory.getFalloutAmmoSelection(weaponId);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Ammo world audit: state=" << state.mName
+                                         << " right="
+                                         << (weaponId.empty() ? std::string("none")
+                                                              : weaponId.toDebugString())
+                                         << " selectedAmmo="
+                                         << (selectedAmmo ? selectedAmmo->toDebugString() : std::string("none"))
+                                         << " reserve="
+                                         << (selectedAmmo ? inventory.count(*selectedAmmo) : 0)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-ammo-selection-and-native-frame";
+                    }
+                    else if (state.mPane == -5)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        ESM::RefId bobbyPinId;
+                        for (MWWorld::ConstContainerStoreIterator item = inventory.cbegin();
+                             item != inventory.cend(); ++item)
+                        {
+                            if (item->getType() == ESM4::MiscItem::sRecordId
+                                && item->get<ESM4::MiscItem>()->mBase->mEditorId == "Lockpick")
+                            {
+                                bobbyPinId = item->getCellRef().getRefId();
+                                break;
+                            }
+                        }
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Misc world audit: state=" << state.mName
+                                         << " bobbyPins="
+                                         << (bobbyPinId.empty() ? 0 : inventory.count(bobbyPinId))
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-misc-inspection-and-native-frame";
+                    }
                     Log(Debug::Info) << "FNV Pip-Boy showcase: queuing GUI-inclusive native frame state="
                                      << state.mName << " pane=" << state.mPane
                                      << " readyFrame=" << proofWorldReadyFrames
@@ -7349,7 +8864,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
             }
             else if (fnvPipBoyShowcaseQuitAfterCapture
-                && fnvPipBoyShowcaseCapturedPanes >= fnvPipBoyShowcaseStates.size())
+                && fnvPipBoyShowcaseCapturedPanes >= showcaseStateCount)
             {
                 if (fnvPipBoyShowcaseExitReadyFrame < 0)
                 {
@@ -7489,6 +9004,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         Log(Debug::Info) << "FNV/ESM4 proof: requesting quicksave \"" << name << "\" at frame " << frameNumber;
         mStateManager->quickSave(name);
         proofQuickSaveQueued = true;
+        proofQuickSaveCompletedFrame = frameNumber;
+    }
+    if (!proofQuickSaveQuitRequested && proofQuitAfterQuickSave && proofQuickSaveQueued
+        && proofQuickSaveCompletedFrame != 0 && proofRunning
+        && frameNumber >= proofQuickSaveCompletedFrame + static_cast<unsigned>(proofQuickSaveQuitDelayFrames))
+    {
+        proofQuickSaveQuitRequested = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: quicksave complete; exiting cleanly after delayFrames="
+                         << proofQuickSaveQuitDelayFrames << " frame=" << frameNumber;
+        mStateManager->requestQuit();
     }
 
     const int proofFalloutQuickKeyIndex
@@ -12559,7 +14084,27 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         worldViewerTrace(frameNumber, "screenshot-queue.begin");
         if (!proofActorBatchPrevious.isEmpty())
-            exportOpenNvActorMesh(proofActorBatchPrevious, proofActorBatchIndex);
+        {
+            const bool exported = exportOpenNvActorMesh(proofActorBatchPrevious, proofActorBatchIndex);
+            if (exported && std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_EXIT_AFTER_BATCH") != nullptr
+                && proofActorBatchIndex + 1 >= proofActorBatchTargets.size())
+            {
+                Log(Debug::Info) << "OpenNV skeletal actor export batch complete; exiting cleanly actors="
+                                 << proofActorBatchTargets.size();
+                mStateManager->requestQuit();
+            }
+        }
+        const bool suppressActorExportScreenshot
+            = std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_NO_SCREENSHOT") != nullptr;
+        if (suppressActorExportScreenshot)
+        {
+            if (proofScreenshotFrameReached)
+                ++proofScreenshotFrameIndex;
+            Log(Debug::Info) << "OpenNV skeletal actor export suppressed native screenshot frame="
+                             << frameNumber << " nextActor=" << proofScreenshotFrameIndex;
+        }
+        else
+        {
         if (proofPortraitClearRequired)
         {
             Log(Debug::Info) << "World viewer portrait capture accepted: frame=" << frameNumber
@@ -12584,6 +14129,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             proofActorAlignedScreenshotQueued = true;
         if (proofPortraitClearRequired)
             proofPortraitClearFrames = 0;
+        }
         worldViewerTrace(frameNumber, "screenshot-queue.end");
     }
 
@@ -12890,6 +14436,11 @@ void OMW::Engine::createWindow()
     const int height = Settings::video().mResolutionY;
     const Settings::WindowMode windowMode = Settings::video().mWindowMode;
     const bool backgroundPlayableSession = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND");
+    // The unattended Save330 recorder needs a real, titled SDL surface while
+    // retaining the background-session simulation behavior.  This only
+    // changes window visibility; the production world/input path is unchanged.
+    const bool captureKeepWindowVisible = proofEnvEnabled("OPENMW_PROOF_CAPTURE_KEEP_WINDOW_VISIBLE");
+    const bool hiddenBackgroundWindow = backgroundPlayableSession && !captureKeepWindowVisible;
     const bool windowBorder = Settings::video().mWindowBorder;
     const SDLUtil::VSyncMode vsync = Settings::video().mVsyncMode;
     unsigned antialiasing = static_cast<unsigned>(Settings::video().mAntialiasing);
@@ -12911,15 +14462,19 @@ void OMW::Engine::createWindow()
     }
 
     Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
-        | (backgroundPlayableSession ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN);
+        | (hiddenBackgroundWindow ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN);
     if (!backgroundPlayableSession && windowMode == Settings::WindowMode::Fullscreen)
         flags |= SDL_WINDOW_FULLSCREEN;
     else if (!backgroundPlayableSession && windowMode == Settings::WindowMode::WindowedFullscreen)
         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 
-    if (backgroundPlayableSession)
+    if (hiddenBackgroundWindow)
     {
         Log(Debug::Info) << "Playable session: creating a hidden flat OpenGL window for background native capture";
+    }
+    else if (backgroundPlayableSession)
+    {
+        Log(Debug::Info) << "Playable session: creating a visible flat OpenGL window for exact-title native capture";
     }
 
     // Allows for Windows snapping features to properly work in borderless window

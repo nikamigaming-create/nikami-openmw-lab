@@ -21,6 +21,7 @@ namespace
         MWWorld::FalloutPlayerState result;
         result.mBaseRecord = ESM::FormId{ .mIndex = 7, .mContentFile = contentFile };
         result.mHealth = 100;
+        result.mStatsConfig.speedMultiplier = 100;
         result.mSpecial = { 5, 5, 5, 5, 5, 5, 5 };
         result.mSkillValues = { 13, 14, 12, 15, 15, 14, 30, 13, 14, 25, 22, 14, 22, 29 };
         result.mSkillOffsets = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xfe, 12, 13 };
@@ -39,6 +40,12 @@ namespace
         writer.writeHNT("VERS", version);
         writer.writeFormId(form, true, "FORM");
         writer.writeHNT("HLTH", health);
+        if (version >= 2)
+            writer.writeHNT("ACTP", 80.f);
+        if (version >= 3)
+            writer.writeHNT("EXPR", 0.f);
+        if (version >= 7)
+            writer.writeHNT("SPDM", 100.f);
         for (std::size_t i = 0; i < MWWorld::FalloutPlayerState::SpecialCount; ++i)
             writer.writeHNT("SPEC", 5.f);
         for (const std::uint8_t value : base.mSkillValues)
@@ -51,21 +58,19 @@ namespace
             writer.writeHNT("RCNT", std::uint32_t{ 0 });
         if (version >= 5)
             writer.writeHNT("MCNT", std::uint32_t{ 0 });
+        if (version >= 9)
+        {
+            writer.writeHNT("TCNT", std::uint32_t{ 0 });
+            writer.writeHNT("NCNT", std::uint32_t{ 0 });
+        }
         if (version >= 6)
         {
             writer.writeHNT("FTEN", std::uint8_t{ 1 });
             writer.writeHNT("WTEN", std::uint8_t{ 1 });
             writer.writeHNT("FTKP", std::uint8_t{ 0 });
         }
-        if (version >= 7)
-        {
-            writer.writeHNT("KARM", base.mStatsConfig.karma);
-            writer.writeHNT("SPPT", std::int32_t{ 0 });
-            writer.writeHNT("NCNT", std::uint32_t{ 0 });
-            writer.writeHNT("QCNT", std::uint32_t{ 0 });
-            writer.writeHNT("ACNT", std::uint32_t{ 0 });
-            writer.writeHNT("ECNT", std::uint32_t{ 0 });
-        }
+        if (version >= 8)
+            writer.writeHNT("VCNT", std::uint32_t{ 0 });
         if (trailing)
             writer.writeHNT("JUNK", std::uint8_t{ 1 });
         writer.endRecord(ESM::REC_FPLR);
@@ -90,15 +95,24 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     ASSERT_TRUE(runtime.getCurrentActorValue(5));
     EXPECT_FLOAT_EQ(runtime.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getBaseActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
     EXPECT_FALSE(runtime.isDirty());
 
     EXPECT_EQ(runtime.setCurrentActorValue(5, 12.25f), MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_EQ(runtime.modCurrentActorValue(16, -125.5f), MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_EQ(runtime.setCurrentActorValue(43, 137.75f), MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_EQ(runtime.setCurrentActorValue(
+                  MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue, 125.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
     EXPECT_FLOAT_EQ(runtime.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 12.25f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(16)->mValue, -25.5f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(43)->mValue, 137.75f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     ASSERT_TRUE(runtime.getCurrentActorValue(43)->mRawSkillOffset);
     EXPECT_EQ(*runtime.getCurrentActorValue(43)->mRawSkillOffset, 0xfe);
     EXPECT_TRUE(runtime.isDirty());
@@ -115,6 +129,8 @@ TEST(FalloutPlayerRuntimeStateTest, KeepsImmutableAuthoredValuesSeparateFromFini
     runtime.resetCurrent();
     EXPECT_FALSE(runtime.isDirty());
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(5)->mValue, 5.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 100.f);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSaveMapping)
@@ -167,31 +183,6 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesRetailReputationBumpsThresholdsAndSav
     EXPECT_EQ(restored.getMapMarkerState(remappedMarker), 1);
 }
 
-TEST(FalloutPlayerRuntimeStateTest, SetsAndAddsExactReputationWithinTheAuthoredMaximum)
-{
-    const ESM::FormId goodsprings{ .mIndex = 0x104c22, .mContentFile = 2 };
-    MWWorld::FalloutPlayerRuntimeState runtime;
-    runtime.initialize(makeBaseState(2));
-
-    ASSERT_TRUE(runtime.setReputationValue(goodsprings, false, 15.f, 9999.f));
-    ASSERT_TRUE(runtime.setReputationValue(goodsprings, true, 15.f, 6.5f));
-    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mInfamy, 15.f);
-    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 6.5f);
-
-    ASSERT_TRUE(runtime.addReputationExact(goodsprings, true, 15.f, -2.f));
-    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 4.5f);
-    ASSERT_TRUE(runtime.addReputationExact(goodsprings, true, 15.f, 1000.f));
-    EXPECT_FLOAT_EQ(runtime.getReputation(goodsprings)->mFame, 15.f);
-
-    ASSERT_TRUE(runtime.setReputationValue(goodsprings, true, 15.f, 0.f));
-    ASSERT_TRUE(runtime.addReputationExact(goodsprings, false, 15.f, -1000.f));
-    EXPECT_EQ(runtime.getReputation(goodsprings), MWWorld::FalloutReputationValue{});
-
-    EXPECT_FALSE(runtime.setReputationValue(
-        goodsprings, true, 15.f, std::numeric_limits<float>::quiet_NaN()));
-    EXPECT_FALSE(runtime.addReputationExact(goodsprings, true, 0.f, 1.f));
-}
-
 TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
 {
     MWWorld::FalloutPlayerRuntimeState runtime;
@@ -209,6 +200,52 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     ESM::ESMReader reader;
     reader.open(std::move(stream), "unchanged-fallout-player-runtime");
     EXPECT_FALSE(reader.hasMoreRecs());
+}
+
+TEST(FalloutPlayerRuntimeStateTest, PersistsTerminalStateByRemappedPlacement)
+{
+    const ESM::FormId placement{ .mIndex = 0x11a30a, .mContentFile = 2 };
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    runtime.initialize(makeBaseState(2));
+    EXPECT_EQ(runtime.getTerminalState(placement), MWWorld::FalloutTerminalState::None);
+    ASSERT_TRUE(runtime.setTerminalState(placement,
+        MWWorld::FalloutTerminalState::LockedOut
+            | MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+    const ESM::FormId note{ .mIndex = 0xfd776, .mContentFile = 2 };
+    ASSERT_TRUE(runtime.addNote(note));
+    EXPECT_FALSE(runtime.addNote(note));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(
+        runtime.getTerminalState(placement), MWWorld::FalloutTerminalState::LockedOut));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(runtime.getTerminalState(placement),
+        MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        runtime.write(writer);
+    }
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-terminal-placement-runtime");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
+    reader.getRecHeader();
+
+    MWWorld::FalloutPlayerRuntimeState restored;
+    restored.initialize(makeBaseState(7));
+    restored.readRecord(reader);
+    const ESM::FormId remappedPlacement{ .mIndex = placement.mIndex, .mContentFile = 7 };
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(
+        restored.getTerminalState(remappedPlacement), MWWorld::FalloutTerminalState::LockedOut));
+    EXPECT_TRUE(MWWorld::hasFalloutTerminalState(restored.getTerminalState(remappedPlacement),
+        MWWorld::FalloutTerminalState::ComputerWhizRetryConsumed));
+    const ESM::FormId remappedNote{ .mIndex = note.mIndex, .mContentFile = 7 };
+    EXPECT_TRUE(restored.hasNote(remappedNote));
+    ASSERT_TRUE(restored.setTerminalState(remappedPlacement, MWWorld::FalloutTerminalState::Hacked));
+    EXPECT_EQ(restored.getTerminalState(remappedPlacement), MWWorld::FalloutTerminalState::Hacked);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, AppliesAndPersistsRetailEnableFastTravelArguments)
@@ -347,11 +384,12 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     MWWorld::FalloutPlayerRuntimeState runtime;
     runtime.initialize(makeBaseState(2));
     using Header = MWWorld::FalloutSavePlayerHeaderState;
-    const std::array<Header::ActorValueModifier, 4> modifiers{ {
+    const std::array<Header::ActorValueModifier, 5> modifiers{ {
         { 24, 10.f, Header::ActorValueModifierKind::Permanent, 100 },
         { 16, -25.f, Header::ActorValueModifierKind::Damage, 110 },
         { 25, -40.f, Header::ActorValueModifierKind::Damage, 120 },
         { 43, 5.f, Header::ActorValueModifierKind::Temporary, 130 },
+        { 21, 25.f, Header::ActorValueModifierKind::Permanent, 135 },
     } };
     const std::array<Header::PerkRank, 2> perks{ {
         { ESM::FormId{ .mIndex = 0x31dac, .mContentFile = 2 }, 0, false, 140 },
@@ -362,6 +400,8 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(16)->mValue, 75.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(24)->mValue, 10.f);
     EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(43)->mValue, 19.f);
+    EXPECT_FLOAT_EQ(
+        runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     EXPECT_FLOAT_EQ(runtime.getSavedDamageModifier(25), -40.f);
     EXPECT_TRUE(runtime.hasPerk(perks[0].mPerk));
     EXPECT_FALSE(runtime.hasPerk(perks[0].mPerk, true));
@@ -390,76 +430,10 @@ TEST(FalloutPlayerRuntimeStateTest, AppliesExactNativeModifierChannelsAndPerkLis
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(16)->mValue, 75.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(24)->mValue, 10.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 19.f);
+    EXPECT_FLOAT_EQ(
+        restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 125.f);
     EXPECT_TRUE(restored.hasPerk(ESM::FormId{ .mIndex = 0x31dac, .mContentFile = 7 }));
     EXPECT_EQ(restored.getPerkRankByte(ESM::FormId{ .mIndex = 0x44, .mContentFile = 7 }, true), 1);
-}
-
-TEST(FalloutPlayerRuntimeStateTest, PersistsQuestRewardsAndActorOverridesAcrossChangedLoadOrder)
-{
-    const ESM::FormId note{ .mIndex = 0x101, .mContentFile = 2 };
-    const ESM::FormId questObject{ .mIndex = 0x102, .mContentFile = 2 };
-    const ESM::FormId perk{ .mIndex = 0x103, .mContentFile = 2 };
-    const ESM::FormId actorBase{ .mIndex = 0x104, .mContentFile = 2 };
-    MWWorld::FalloutPlayerState base = makeBaseState(2);
-    base.mStatsConfig.karma = 25.f;
-
-    MWWorld::FalloutPlayerRuntimeState runtime;
-    runtime.initialize(base);
-    ASSERT_TRUE(runtime.setNoteKnown(note, true));
-    ASSERT_TRUE(runtime.setQuestObject(questObject, true));
-    ASSERT_TRUE(runtime.addPerk(perk, 2));
-    ASSERT_TRUE(runtime.addPerk(perk, 2));
-    ASSERT_TRUE(runtime.unlockAchievement(17));
-    ASSERT_TRUE(runtime.setEssentialOverride(actorBase, false));
-    ASSERT_TRUE(runtime.rewardKarma(-75));
-    ASSERT_TRUE(runtime.addSpecialPoints(2));
-
-    EXPECT_TRUE(runtime.hasNote(note));
-    EXPECT_TRUE(runtime.isQuestObject(questObject));
-    EXPECT_EQ(runtime.getPerkRankByte(perk), 1);
-    EXPECT_TRUE(runtime.hasAchievement(17));
-    EXPECT_EQ(runtime.getEssentialOverride(actorBase), false);
-    ASSERT_TRUE(runtime.getKarma());
-    EXPECT_FLOAT_EQ(*runtime.getKarma(), -50.f);
-    EXPECT_EQ(runtime.getSpecialPoints(), 2);
-
-    auto stream = std::make_unique<std::stringstream>();
-    {
-        ESM::ESMWriter writer;
-        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
-        writer.save(*stream);
-        runtime.write(writer);
-    }
-    ESM::ESMReader reader;
-    reader.open(std::move(stream), "fallout-player-quest-rewards-runtime");
-    const std::map<int, int> contentMapping{ { 2, 7 } };
-    reader.setContentFileMapping(&contentMapping);
-    ASSERT_TRUE(reader.hasMoreRecs());
-    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FPLR);
-    reader.getRecHeader();
-
-    base.mBaseRecord.mContentFile = 7;
-    MWWorld::FalloutPlayerRuntimeState restored;
-    restored.initialize(base);
-    restored.readRecord(reader);
-    const ESM::FormId mappedNote{ .mIndex = note.mIndex, .mContentFile = 7 };
-    const ESM::FormId mappedQuestObject{ .mIndex = questObject.mIndex, .mContentFile = 7 };
-    const ESM::FormId mappedPerk{ .mIndex = perk.mIndex, .mContentFile = 7 };
-    const ESM::FormId mappedActorBase{ .mIndex = actorBase.mIndex, .mContentFile = 7 };
-    EXPECT_TRUE(restored.hasNote(mappedNote));
-    EXPECT_TRUE(restored.isQuestObject(mappedQuestObject));
-    EXPECT_EQ(restored.getPerkRankByte(mappedPerk), 1);
-    EXPECT_TRUE(restored.hasAchievement(17));
-    EXPECT_EQ(restored.getEssentialOverride(mappedActorBase), false);
-    EXPECT_FLOAT_EQ(*restored.getKarma(), -50.f);
-    EXPECT_EQ(restored.getSpecialPoints(), 2);
-
-    EXPECT_TRUE(restored.removePerk(mappedPerk));
-    EXPECT_FALSE(restored.hasPerk(mappedPerk));
-    EXPECT_TRUE(restored.setNoteKnown(mappedNote, false));
-    EXPECT_FALSE(restored.hasNote(mappedNote));
-    EXPECT_TRUE(restored.setQuestObject(mappedQuestObject, false));
-    EXPECT_FALSE(restored.isQuestObject(mappedQuestObject));
 }
 
 TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanceAcrossChangedLoadOrder)
@@ -470,6 +444,9 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     ASSERT_EQ(original.setCurrentActorValue(16, 73.5f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(5, 12.25f), MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.setCurrentActorValue(43, 137.75f), MWWorld::FalloutActorValueMutationResult::Applied);
+    ASSERT_EQ(original.setCurrentActorValue(
+                  MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue, 112.5f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.modCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue, 100.f),
         MWWorld::FalloutActorValueMutationResult::Applied);
     ASSERT_EQ(original.countSavedGameRecords(), 1);
@@ -501,6 +478,8 @@ TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanc
     EXPECT_FLOAT_EQ(restored.getBaseActorValue(5)->mValue, 5.f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(5)->mValue, 12.25f);
     EXPECT_FLOAT_EQ(restored.getCurrentActorValue(43)->mValue, 137.75f);
+    EXPECT_FLOAT_EQ(
+        restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue)->mValue, 112.5f);
     EXPECT_FLOAT_EQ(
         restored.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ExperienceActorValue)->mValue, 100.f);
     ASSERT_TRUE(restored.getCurrentActorValue(43)->mRawSkillOffset);

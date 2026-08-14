@@ -1,14 +1,34 @@
 #include "fnvplayerstate.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <numbers>
+#include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
 
+#include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/common.hpp>
+#include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadwrld.hpp>
+#include <components/debug/debuglog.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include "store.hpp"
 
@@ -68,6 +88,130 @@ namespace
         return { std::nullopt, std::move(message) };
     }
 
+    MWWorld::FalloutSaveLoadPlanResolution loadFailure(std::string message)
+    {
+        return { std::nullopt, std::move(message) };
+    }
+
+    MWWorld::FalloutNativePlayerRecordsResolution nativeRecordsFailure(std::string message)
+    {
+        return { std::nullopt, std::move(message) };
+    }
+
+    MWWorld::FalloutExteriorPlayerPlacementResolution placementFailure(std::string message)
+    {
+        return { std::nullopt, std::move(message) };
+    }
+
+    struct FalloutInventoryRecordResolution
+    {
+        std::optional<ESM::FormId> mRecord;
+        std::string mError;
+
+        explicit operator bool() const { return mRecord.has_value(); }
+    };
+
+    FalloutInventoryRecordResolution resolveFalloutInventoryRecord(ESM::FormId record,
+        const MWWorld::Store<ESM4::FormIdList>& formLists,
+        const MWWorld::Store<ESM4::Ammunition>& ammunition)
+    {
+        if (record.isZeroOrUnset())
+            return { std::nullopt, "inventory identity is null" };
+
+        const ESM4::FormIdList* list = formLists.search(ESM::RefId(record));
+        if (list == nullptr)
+        {
+            if (const ESM4::Ammunition* ammo = ammunition.search(ESM::RefId(record));
+                ammo != nullptr && (ammo->mId != record || (ammo->mFlags & ESM4::Rec_Deleted) != 0))
+            {
+                return { std::nullopt, "inventory AMMO is deleted or has the wrong typed FormID: " + record.toString() };
+            }
+            return { record, {} };
+        }
+        if (list->mId != record)
+            return { std::nullopt, "inventory FLST resolved with the wrong typed FormID: " + record.toString() };
+        if ((list->mFlags & ESM4::Rec_Deleted) != 0)
+            return { std::nullopt, "inventory FLST is deleted: " + record.toString() };
+        if (list->mObjects.empty())
+            return { std::nullopt, "inventory FLST is empty: " + record.toString() };
+
+        for (const ESM::FormId member : list->mObjects)
+        {
+            if (member.isZeroOrUnset())
+                return { std::nullopt, "inventory FLST contains a null member: " + record.toString() };
+            const ESM4::Ammunition* ammo = ammunition.search(ESM::RefId(member));
+            if (ammo == nullptr || ammo->mId != member || (ammo->mFlags & ESM4::Rec_Deleted) != 0)
+            {
+                return { std::nullopt,
+                    "inventory FLST is not an exact AMMO-only list of live records: " + record.toString() };
+            }
+        }
+        return { list->mObjects.front(), {} };
+    }
+
+    std::vector<std::size_t> findContentFileIndices(
+        std::span<const std::string> contentFiles, std::string_view fileName)
+    {
+        std::vector<std::size_t> result;
+        for (std::size_t index = 0; index < contentFiles.size(); ++index)
+        {
+            if (Misc::StringUtils::ciEqual(contentFiles[index], fileName))
+                result.push_back(index);
+        }
+        return result;
+    }
+
+    std::vector<std::size_t> findSaveMasterIndices(const ESM4::FONVSaveGamePrefix& save, std::string_view fileName)
+    {
+        std::vector<std::size_t> result;
+        for (std::size_t index = 0; index < save.mMasters.size(); ++index)
+        {
+            if (Misc::StringUtils::ciEqual(save.mMasters[index].mFileName.mValue, fileName))
+                result.push_back(index);
+        }
+        return result;
+    }
+
+    std::vector<std::size_t> findCurrentFalloutPluginIndices(std::span<const std::string> contentFiles)
+    {
+        std::vector<std::size_t> result;
+        for (std::size_t index = 0; index < contentFiles.size(); ++index)
+        {
+            if (Misc::StringUtils::ciEndsWith(contentFiles[index], ".esm")
+                || Misc::StringUtils::ciEndsWith(contentFiles[index], ".esp"))
+            {
+                result.push_back(index);
+            }
+        }
+        return result;
+    }
+
+    std::optional<ESM::FormId> normalizeSavedFormId(
+        std::uint32_t rawFormId, std::span<const std::size_t> currentPluginIndices)
+    {
+        const std::size_t saveOwnerIndex = rawFormId >> 24;
+        const std::uint32_t objectIndex = rawFormId & 0x00ffffffu;
+        if (objectIndex == 0 || saveOwnerIndex >= currentPluginIndices.size())
+            return std::nullopt;
+        const std::size_t currentOwnerIndex = currentPluginIndices[saveOwnerIndex];
+        if (currentOwnerIndex > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+            return std::nullopt;
+        return ESM::FormId{ objectIndex, static_cast<std::int32_t>(currentOwnerIndex) };
+    }
+
+    std::vector<std::string> falloutSaveLoadBlockers()
+    {
+        return {
+            "player-runtime-actor-value-unidentified-arrays-244-4b0",
+            "player-perk-entry-point-effects",
+            "player-reputation-crime-disguise",
+            "quest-stages-objectives-variables",
+            "global-variables",
+            "world-change-forms-doors-containers-actors-unloaded-references",
+            "dynamic-forms-refid-array-visited-worldspaces",
+        };
+    }
+
     template <class T, std::size_t Size>
     std::array<std::uint8_t, Size> bytesOf(const T& value)
     {
@@ -80,6 +224,21 @@ namespace
 
 namespace MWWorld
 {
+    float convertFalloutReferenceFovToOpenMwVertical(float horizontalReferenceFov)
+    {
+        if (!std::isfinite(horizontalReferenceFov) || horizontalReferenceFov <= 0.f || horizontalReferenceFov >= 180.f)
+        {
+            throw std::invalid_argument("Fallout reference FOV must be finite and in (0, 180)");
+        }
+
+        constexpr double referenceAspect = 4.0 / 3.0;
+        constexpr double radiansPerDegree = std::numbers::pi_v<double> / 180.0;
+        constexpr double degreesPerRadian = 180.0 / std::numbers::pi_v<double>;
+        const double horizontalRadians = static_cast<double>(horizontalReferenceFov) * radiansPerDegree;
+        return static_cast<float>(
+            2.0 * std::atan(std::tan(horizontalRadians * 0.5) / referenceAspect) * degreesPerRadian);
+    }
+
     std::uint8_t FalloutPlayerState::getSpecial(FalloutSpecial value) const
     {
         return mSpecial.at(static_cast<std::size_t>(value));
@@ -139,8 +298,7 @@ namespace MWWorld
         const CategoryResolution stats = resolveCategory(npcs, *player, ESM4::Npc::Template_UseStats, "stats");
         if (stats.mRecord == nullptr)
             return failure(stats.mError);
-        const CategoryResolution factions
-            = resolveCategory(npcs, *player, ESM4::Npc::Template_UseFactions, "factions");
+        const CategoryResolution factions = resolveCategory(npcs, *player, ESM4::Npc::Template_UseFactions, "factions");
         if (factions.mRecord == nullptr)
             return failure(factions.mError);
         const CategoryResolution ai = resolveCategory(npcs, *player, ESM4::Npc::Template_UseAIData, "AI data");
@@ -153,6 +311,10 @@ namespace MWWorld
             = resolveCategory(npcs, *player, ESM4::Npc::Template_UseBaseData, "base data");
         if (baseData.mRecord == nullptr)
             return failure(baseData.mError);
+        const CategoryResolution inventory
+            = resolveCategory(npcs, *player, ESM4::Npc::Template_UseInventory, "inventory");
+        if (inventory.mRecord == nullptr)
+            return failure(inventory.mError);
 
         if (!stats.mRecord->mHasFNVData)
             return failure("resolved Player stats record lacks exact 11-byte DATA");
@@ -178,6 +340,7 @@ namespace MWWorld
         result.mAIDataRecord = ai.mRecord->mId;
         result.mModelRecord = model.mRecord->mId;
         result.mBaseDataRecord = baseData.mRecord->mId;
+        result.mInventoryRecord = inventory.mRecord->mId;
         result.mEditorId = player->mEditorId;
         result.mFullName = baseData.mRecord->mFullName;
         result.mModel = model.mRecord->mModel;
@@ -188,6 +351,23 @@ namespace MWWorld
         result.mVoiceType = traits.mRecord->mVoiceType;
         result.mRecordFlags = baseData.mRecord->mFlags;
         result.mFactions = factions.mRecord->mFactions;
+        std::map<ESM::FormId, std::int64_t> authoredInventory;
+        for (const ESM4::InventoryItem& item : inventory.mRecord->mInventory)
+        {
+            const ESM::FormId record = ESM::FormId::fromUint32(item.item);
+            if (record.isZeroOrUnset())
+                return failure("resolved Player inventory contains a null CNTO FormID");
+            if (item.count == 0)
+                continue;
+
+            std::int64_t& total = authoredInventory[record];
+            total += static_cast<std::int64_t>(item.count);
+            if (total > std::numeric_limits<std::int32_t>::max())
+                return failure("resolved Player inventory CNTO count exceeds the compatibility carrier range");
+        }
+        result.mInventoryItems.reserve(authoredInventory.size());
+        for (const auto& [record, count] : authoredInventory)
+            result.mInventoryItems.push_back(FalloutInventoryItem{ record, static_cast<std::int32_t>(count) });
         result.mStatsConfig = stats.mRecord->mBaseConfig.fo3;
         result.mAIData = ai.mRecord->mFNVAIData;
         result.mHealth = stats.mRecord->mFNVData.health;
@@ -201,6 +381,873 @@ namespace MWWorld
         return { std::move(result), {} };
     }
 
+    FalloutPlayerStateResolution resolveFalloutPlayerIdentity(
+        const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId, ESM::FormId normalizedPlayerReferenceFormId)
+    {
+        FalloutPlayerStateResolution resolution = resolveFalloutPlayerState(npcs, normalizedPlayerFormId);
+        if (!resolution)
+            return resolution;
+
+        // FormID 0x14 is the engine-reserved Player reference. It is serialized by FNV saves but is not an authored
+        // ACHR record in FalloutNV.esm, so it must never be resolved through the content ActorCharacter store.
+        if (!normalizedPlayerReferenceFormId.hasContentFile() || normalizedPlayerReferenceFormId.mIndex != 0x14)
+            return failure("FNV engine-reserved Player reference is not canonical FormID 0x00000014");
+        if (normalizedPlayerReferenceFormId.mContentFile != normalizedPlayerFormId.mContentFile)
+        {
+            return failure(
+                "FNV engine-reserved Player reference FormID 0x00000014 is not in the Player NPC_ content "
+                "namespace");
+        }
+
+        resolution.mState->mReferenceRecord = normalizedPlayerReferenceFormId;
+        resolution.mState->mReferenceBaseRecord = normalizedPlayerFormId;
+        return resolution;
+    }
+
+    FalloutPlayerStateResolution resolveFalloutPlayerInventoryFormLists(FalloutPlayerState state,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition)
+    {
+        std::map<ESM::FormId, std::int64_t> resolvedInventory;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
+                return failure("resolved Player inventory has an invalid item before FLST resolution");
+            const FalloutInventoryRecordResolution record
+                = resolveFalloutInventoryRecord(item.mRecord, formLists, ammunition);
+            if (!record)
+                return failure("resolved Player " + record.mError);
+
+            std::int64_t& total = resolvedInventory[*record.mRecord];
+            total += item.mCount;
+            if (total > std::numeric_limits<std::int32_t>::max())
+            {
+                return failure(
+                    "resolved Player inventory total exceeds the compatibility carrier range after FLST resolution");
+            }
+        }
+
+        state.mInventoryItems.clear();
+        state.mInventoryItems.reserve(resolvedInventory.size());
+        for (const auto& [record, count] : resolvedInventory)
+            state.mInventoryItems.push_back(FalloutInventoryItem{ record, static_cast<std::int32_t>(count) });
+        return { std::move(state), {} };
+    }
+
+    FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
+        const Store<ESM4::Class>& classes, const Store<ESM4::Race>& races, const FalloutPlayerState& playerState)
+    {
+        if (!playerState.mBaseRecord.hasContentFile() || playerState.mBaseRecord.mIndex != 7)
+        {
+            return nativeRecordsFailure(
+                "native FNV Player state does not identify exact normalized NPC_ FormID 0x00000007");
+        }
+        if (!playerState.mReferenceRecord.hasContentFile() || playerState.mReferenceRecord.mIndex != 0x14
+            || playerState.mReferenceRecord.mContentFile != playerState.mBaseRecord.mContentFile)
+        {
+            return nativeRecordsFailure(
+                "native FNV Player state does not identify exact normalized ACHR FormID 0x00000014 in the Player "
+                "content namespace");
+        }
+        if (playerState.mEditorId != "Player")
+            return nativeRecordsFailure("native FNV Player state does not preserve EDID Player");
+        if (playerState.mReferenceBaseRecord != playerState.mBaseRecord)
+            return nativeRecordsFailure("native FNV Player state does not preserve the ACHR-to-NPC_ base relation");
+        if (!playerState.mClass.hasContentFile() || playerState.mClass.mIndex == 0)
+            return nativeRecordsFailure("native FNV Player CLAS identity has no normalized content provenance");
+        if (!playerState.mRace.hasContentFile() || playerState.mRace.mIndex == 0)
+            return nativeRecordsFailure("native FNV Player RACE identity has no normalized content provenance");
+
+        const std::array<std::pair<std::string_view, ESM::FormId>, 4> identities{ {
+            { "NPC_", playerState.mBaseRecord },
+            { "ACHR", playerState.mReferenceRecord },
+            { "CLAS", playerState.mClass },
+            { "RACE", playerState.mRace },
+        } };
+        for (std::size_t left = 0; left < identities.size(); ++left)
+        {
+            for (std::size_t right = left + 1; right < identities.size(); ++right)
+            {
+                if (identities[left].second == identities[right].second)
+                {
+                    return nativeRecordsFailure("native FNV Player record identities collide: "
+                        + std::string(identities[left].first) + " and " + std::string(identities[right].first));
+                }
+            }
+        }
+
+        const ESM4::Npc* baseNpc = npcs.search(ESM::RefId(playerState.mBaseRecord));
+        if (baseNpc == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player NPC_ " + playerState.mBaseRecord.toString());
+        if (baseNpc->mId != playerState.mBaseRecord)
+            return nativeRecordsFailure("native FNV Player NPC_ resolved with the wrong typed FormID");
+        if (!baseNpc->mIsFONV)
+            return nativeRecordsFailure("native FNV Player NPC_ is not marked as an FNV record");
+        if (baseNpc->mEditorId != "Player")
+            return nativeRecordsFailure("native FNV Player NPC_ does not have EDID Player");
+        if (baseNpc->mClass != playerState.mClass)
+            return nativeRecordsFailure("native FNV Player NPC_ does not preserve the resolved CLAS identity");
+        if (baseNpc->mRace != playerState.mRace)
+            return nativeRecordsFailure("native FNV Player NPC_ does not preserve the resolved RACE identity");
+
+        const ESM4::Class* playerClass = classes.search(ESM::RefId(playerState.mClass));
+        if (playerClass == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player CLAS " + playerState.mClass.toString());
+        if (playerClass->mId != playerState.mClass)
+            return nativeRecordsFailure("native FNV Player CLAS resolved with the wrong typed FormID");
+        if (!playerClass->mHasFalloutData)
+            return nativeRecordsFailure("native FNV Player CLAS lacks exact 28-byte DATA");
+        if (!playerClass->mHasFalloutAttributes)
+            return nativeRecordsFailure("native FNV Player CLAS lacks exact 7-byte ATTR");
+
+        const ESM4::Race* playerRace = races.search(ESM::RefId(playerState.mRace));
+        if (playerRace == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player RACE " + playerState.mRace.toString());
+        if (playerRace->mId != playerState.mRace)
+            return nativeRecordsFailure("native FNV Player RACE resolved with the wrong typed FormID");
+        if (!playerRace->mHasFalloutData)
+            return nativeRecordsFailure("native FNV Player RACE lacks exact 36-byte DATA");
+
+        return { FalloutNativePlayerRecords{ baseNpc, playerClass, playerRace }, {} };
+    }
+
+    FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
+        const FalloutPlayerState* nativePlayerState, const Store<ESM4::FormIdList>& formLists,
+        const Store<ESM4::Ammunition>& ammunition, std::span<const std::string> currentContentFiles)
+    {
+        constexpr std::string_view falloutMaster = "FalloutNV.esm";
+        if (nativePlayerState == nullptr)
+            return loadFailure("missing resolved native FNV Player state");
+
+        const std::vector<std::size_t> currentMasterIndices
+            = findContentFileIndices(currentContentFiles, falloutMaster);
+        if (currentMasterIndices.empty())
+            return loadFailure("current content has no FalloutNV.esm master for native Player FormID 0x00000007");
+        if (currentMasterIndices.size() != 1)
+            return loadFailure("current content has ambiguous duplicate FalloutNV.esm masters");
+
+        const std::vector<std::size_t> saveMasterIndices = findSaveMasterIndices(save, falloutMaster);
+        if (saveMasterIndices.empty())
+            return loadFailure("FNV save master table has no FalloutNV.esm Player provenance");
+        if (saveMasterIndices.size() != 1)
+            return loadFailure("FNV save master table has ambiguous duplicate FalloutNV.esm Player provenance");
+
+        const std::vector<std::size_t> currentPluginIndices = findCurrentFalloutPluginIndices(currentContentFiles);
+        if (currentPluginIndices.size() < save.mMasters.size())
+        {
+            std::ostringstream message;
+            message << "current ESM/ESP content does not contain the complete FNV save master prefix: expected "
+                    << save.mMasters.size() << " saved files [";
+            for (std::size_t i = 0; i < save.mMasters.size(); ++i)
+            {
+                if (i != 0)
+                    message << ", ";
+                message << save.mMasters[i].mFileName.mValue;
+            }
+            message << "], got " << currentPluginIndices.size() << " [";
+            for (std::size_t i = 0; i < currentPluginIndices.size(); ++i)
+            {
+                if (i != 0)
+                    message << ", ";
+                message << currentContentFiles[currentPluginIndices[i]];
+            }
+            message << ']';
+            return loadFailure(message.str());
+        }
+        for (std::size_t position = 0; position < save.mMasters.size(); ++position)
+        {
+            const std::string& current = currentContentFiles[currentPluginIndices[position]];
+            const std::string& expected = save.mMasters[position].mFileName.mValue;
+            if (!Misc::StringUtils::ciEqual(current, expected))
+            {
+                return loadFailure("current ESM/ESP content order does not exactly match the FNV save master table at "
+                    + std::to_string(position) + ": expected " + expected + ", got " + current);
+            }
+        }
+        if (currentPluginIndices.size() > save.mMasters.size())
+        {
+            Log(Debug::Info) << "FNV save load plan: preserved exact " << save.mMasters.size()
+                             << "-file saved master prefix and accepted "
+                             << (currentPluginIndices.size() - save.mMasters.size())
+                             << " appended ESM/ESP content file(s)";
+        }
+
+        const std::size_t currentMasterIndex = currentMasterIndices.front();
+        if (currentMasterIndex > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+            return loadFailure("current FalloutNV.esm master index cannot be represented by a normalized FormID");
+        const ESM::FormId expectedPlayerId{ 7, static_cast<std::int32_t>(currentMasterIndex) };
+        if (nativePlayerState->mBaseRecord != expectedPlayerId)
+        {
+            return loadFailure("resolved native FNV Player state is not exact winning FalloutNV.esm FormID "
+                + expectedPlayerId.toString());
+        }
+        if (nativePlayerState->mEditorId != "Player")
+            return loadFailure("resolved native FNV Player state does not have EDID Player");
+
+        const ESM::FormId expectedPlayerReferenceId{ 0x14, static_cast<std::int32_t>(currentMasterIndex) };
+        if (nativePlayerState->mReferenceRecord != expectedPlayerReferenceId
+            || nativePlayerState->mReferenceBaseRecord != expectedPlayerId)
+        {
+            return loadFailure(
+                "resolved native FNV Player identity does not preserve the exact FalloutNV.esm "
+                "ACHR 0x00000014 -> NPC_ 0x00000007 relation");
+        }
+
+        const ESM4::FONVSaveChangedFormEnvelope* playerChange = nullptr;
+        try
+        {
+            playerChange = &save.requirePlayerReferenceChangeForm();
+        }
+        catch (const ESM4::FONVSaveError& error)
+        {
+            return loadFailure(
+                std::string("FNV save has no unique canonical Player ACHR change form: ") + error.what());
+        }
+
+        const std::uint32_t level = save.mHeader.mPlayerLevel.mValue;
+        if (level == 0)
+            return loadFailure("FNV save header player level must be nonzero");
+
+        FalloutSaveLoadPlan plan;
+        plan.mPlayer.mBaseRecord = expectedPlayerId;
+        plan.mPlayer.mReferenceRecord = expectedPlayerReferenceId;
+        plan.mPlayer.mSaveFalloutNewVegasMasterIndex = saveMasterIndices.front();
+        plan.mPlayer.mCurrentFalloutNewVegasMasterIndex = currentMasterIndex;
+        plan.mPlayer.mReferenceChangeFlags = playerChange->mChangeFlags.mValue;
+        plan.mPlayer.mReferencePayloadOffset = playerChange->mUnparsedPayload.mRange.mOffset;
+        plan.mPlayer.mReferencePayloadBytes = playerChange->mUnparsedPayload.mRange.mSize;
+        plan.mPlayer.mSaveNumber = save.mHeader.mSaveNumber.mValue;
+        plan.mPlayer.mName = save.mHeader.mPlayerName.mValue;
+        plan.mPlayer.mKarmaTitle = save.mHeader.mPlayerKarmaTitle.mValue;
+        plan.mPlayer.mLevel = level;
+        plan.mPlayer.mLocationLabel = save.mHeader.mPlayerLocation.mValue;
+        plan.mPlayer.mPlayTimeLabel = save.mHeader.mPlayTime.mValue;
+
+        if (save.mGlobalVariables)
+        {
+            std::set<ESM::FormId> variables;
+            plan.mGlobals.reserve(save.mGlobalVariables->mVariables.size());
+            for (const ESM4::FONVSaveGlobalVariable& saved : save.mGlobalVariables->mVariables)
+            {
+                if (!saved.mVariable.mResolvedFormId)
+                    return loadFailure("FNV save global-variable RefID did not resolve");
+                const std::optional<ESM::FormId> variable
+                    = normalizeSavedFormId(*saved.mVariable.mResolvedFormId, currentPluginIndices);
+                if (!variable)
+                    return loadFailure("FNV save global-variable FormID has unsupported provenance");
+                if (!variables.insert(*variable).second)
+                    return loadFailure("FNV save has duplicate global-variable identities");
+                plan.mGlobals.push_back(
+                    FalloutSaveLoadPlan::GlobalValue{ *variable, saved.mValue.mValue, saved.mRange.mOffset });
+            }
+        }
+
+        if (!save.mPlayerProcessInventoryData)
+            return loadFailure("FNV save does not expose the canonical Player process/inventory state");
+        const ESM4::FONVSavePlayerProcessInventoryData& processInventory = *save.mPlayerProcessInventoryData;
+        if (processInventory.mProcessLevel.mValue != 0)
+            return loadFailure("FNV save Player process level is not canonical high process");
+        plan.mPlayer.mProcessLevel = processInventory.mProcessLevel.mValue;
+        if (!save.mPlayerMobileObjectProcessState)
+            return loadFailure("FNV save does not expose the canonical Player weapon-out state");
+        const ESM4::FONVSaveField<std::uint8_t>& weaponOut
+            = save.mPlayerMobileObjectProcessState->mMiddleHighProcess.mWeaponOut;
+        if (weaponOut.mValue > 1)
+            return loadFailure("FNV save Player weapon-out state is not a canonical boolean");
+        plan.mPlayer.mWeaponDrawn = weaponOut.mValue != 0;
+        const ESM4::FONVSaveField<std::int16_t>& currentAction
+            = save.mPlayerMobileObjectProcessState->mHighProcess.mCurrentAction;
+        if (currentAction.mValue < -1 || currentAction.mValue > 13)
+            return loadFailure("FNV save Player current weapon action is outside the retail action domain");
+        plan.mPlayer.mCurrentWeaponAction = currentAction.mValue;
+        plan.mPlayer.mCurrentWeaponActionSourceOffset = currentAction.mRange.mOffset;
+        std::set<ESM::FormId> changedFactions;
+        for (const ESM4::FONVSavePlayerActorExtraData& extra : processInventory.mActorExtraData)
+        {
+            if (extra.mType.mValue != ESM4::sFONVExtraFactionChangesType)
+                continue;
+            for (const ESM4::FONVSavePlayerFactionChange& change : extra.mFactionChanges)
+            {
+                if (!change.mFaction.mResolvedFormId)
+                    return loadFailure("FNV save Player faction-change RefID did not resolve");
+                const std::optional<ESM::FormId> faction
+                    = normalizeSavedFormId(*change.mFaction.mResolvedFormId, currentPluginIndices);
+                if (!faction)
+                    return loadFailure("FNV save Player faction-change FormID has unsupported provenance");
+                if (!changedFactions.insert(*faction).second)
+                    return loadFailure("FNV save Player has duplicate faction-change identities");
+                plan.mPlayer.mFactionChanges.push_back(FalloutSavePlayerHeaderState::FactionChange{
+                    *faction, change.mRank.mValue, change.mRange.mOffset });
+            }
+        }
+
+        if (!save.mPlayerActorValueData)
+            return loadFailure("FNV save does not expose canonical Player actor-value arrays");
+        const ESM4::FONVSavePlayerActorValueData& actorValues = *save.mPlayerActorValueData;
+        for (std::size_t actorValue = 0; actorValue < actorValues.mActorValues378.size(); ++actorValue)
+        {
+            const ESM4::FONVSaveField<float>& modifier = actorValues.mActorValues378[actorValue];
+            if (modifier.mValue == 0.f)
+                continue;
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                static_cast<std::uint8_t>(actorValue), modifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Permanent, modifier.mRange.mOffset });
+        }
+        for (const ESM4::FONVSavePlayerProcessModifier& modifier
+            : save.mPlayerMobileObjectProcessState->mLowProcess.mDamageModifiers)
+        {
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                modifier.mActorValue.mValue, modifier.mModifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Damage, modifier.mRange.mOffset });
+        }
+        for (const ESM4::FONVSavePlayerProcessModifier& modifier
+            : save.mPlayerMobileObjectProcessState->mMiddleLowProcess.mTempModifiers)
+        {
+            plan.mPlayer.mActorValueModifiers.push_back(FalloutSavePlayerHeaderState::ActorValueModifier{
+                modifier.mActorValue.mValue, modifier.mModifier.mValue,
+                FalloutSavePlayerHeaderState::ActorValueModifierKind::Temporary, modifier.mRange.mOffset });
+        }
+
+        std::set<std::pair<bool, ESM::FormId>> savedPerks;
+        const auto appendPerks = [&](std::span<const ESM4::FONVSavePlayerCharacterPerkEntry> entries,
+                                     bool alternate) -> std::string {
+            for (const ESM4::FONVSavePlayerCharacterPerkEntry& entry : entries)
+            {
+                if (!entry.mPerk.mResolvedFormId)
+                    return "FNV save Player perk RefID did not resolve";
+                const std::optional<ESM::FormId> perk
+                    = normalizeSavedFormId(*entry.mPerk.mResolvedFormId, currentPluginIndices);
+                if (!perk)
+                    return "FNV save Player perk FormID has unsupported provenance";
+                if (!savedPerks.emplace(alternate, *perk).second)
+                    return "FNV save Player has duplicate perk identities in one rank list";
+                plan.mPlayer.mPerks.push_back(FalloutSavePlayerHeaderState::PerkRank{
+                    *perk, entry.mByt004.mValue, alternate, entry.mRange.mOffset });
+            }
+            return {};
+        };
+        if (save.mPlayerCharacterListsState)
+        {
+            if (const std::string error = appendPerks(save.mPlayerCharacterListsState->mPerks, false);
+                !error.empty())
+            {
+                return loadFailure(error);
+            }
+        }
+        if (save.mPlayerCharacterFinalState)
+        {
+            if (const std::string error = appendPerks(save.mPlayerCharacterFinalState->mPerksAD4, true);
+                !error.empty())
+            {
+                return loadFailure(error);
+            }
+        }
+
+        std::map<ESM::FormId, std::int64_t> inventoryTotals;
+        std::map<ESM::FormId, std::int64_t> conditionedTotals;
+        std::array<bool, 8> assignedHotkeys{};
+        std::map<ESM::FormId, ESM::FormId> selectedAmmo;
+        for (const FalloutInventoryItem& item : nativePlayerState->mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
+                return loadFailure("resolved native FNV Player state has an invalid authored inventory item");
+            if (!inventoryTotals.emplace(item.mRecord, item.mCount).second)
+                return loadFailure("resolved native FNV Player state has duplicate authored inventory identities");
+            plan.mPlayer.mInventoryContributions.push_back(FalloutInventoryContribution{
+                item.mRecord, item.mRecord, item.mCount, false, 0, 0, 0, 0 });
+        }
+        for (const ESM4::FONVSavePlayerInventoryEntry& entry : processInventory.mInventoryEntries)
+        {
+            if (!entry.mType.mResolvedFormId)
+                return loadFailure("FNV save Player inventory RefID did not resolve");
+            const std::optional<ESM::FormId> normalized
+                = normalizeSavedFormId(*entry.mType.mResolvedFormId, currentPluginIndices);
+            if (!normalized)
+                return loadFailure("FNV save Player inventory FormID has unsupported provenance");
+            const FalloutInventoryRecordResolution record
+                = resolveFalloutInventoryRecord(*normalized, formLists, ammunition);
+            if (!record)
+                return loadFailure("FNV save Player " + record.mError);
+            const ESM::FormId inventoryRecord = *record.mRecord;
+            inventoryTotals[inventoryRecord] += static_cast<std::int64_t>(entry.mDelta.mValue);
+            plan.mPlayer.mInventoryContributions.push_back(FalloutInventoryContribution{ inventoryRecord,
+                *normalized, entry.mDelta.mValue, true, entry.mRange.mOffset, entry.mRange.mSize,
+                entry.mType.mEncoded.mRange.mOffset, entry.mType.mEncoded.mRange.mSize });
+
+            for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
+            {
+                std::int32_t stackCount = 1;
+                std::optional<float> health;
+                std::optional<std::uint64_t> wornOffset;
+                std::optional<ESM4::FONVSaveField<std::uint8_t>> hotkey;
+                const ESM4::FONVSavePlayerInventoryExtraData* ammoExtra = nullptr;
+                bool sawCount = false;
+                for (const ESM4::FONVSavePlayerInventoryExtraData& extra : extend.mExtraData)
+                {
+                    switch (extra.mType.mValue)
+                    {
+                        case ESM4::sFONVExtraCountType:
+                            if (sawCount || !extra.mCount || extra.mCount->mValue <= 0)
+                                return loadFailure("FNV save Player inventory has an invalid ExtraCount stack");
+                            sawCount = true;
+                            stackCount = extra.mCount->mValue;
+                            break;
+                        case ESM4::sFONVExtraHealthType:
+                            if (health || !extra.mHealth || !std::isfinite(extra.mHealth->mValue)
+                                || extra.mHealth->mValue < 0.f)
+                            {
+                                return loadFailure("FNV save Player inventory has an invalid ExtraHealth stack");
+                            }
+                            health = extra.mHealth->mValue;
+                            break;
+                        case ESM4::sFONVExtraWornType:
+                            if (wornOffset)
+                                return loadFailure("FNV save Player inventory stack has duplicate ExtraWorn state");
+                            wornOffset = extra.mType.mRange.mOffset;
+                            break;
+                        case ESM4::sFONVExtraCannotWearType:
+                            // Canonical inventory-stack metadata with no payload. It controls retail UI/equip
+                            // eligibility but does not alter the saved stack count, condition, hotkey, ammo, or worn
+                            // state restored by this load plan.
+                            break;
+                        case ESM4::sFONVExtraHotkeyType:
+                            if (hotkey || !extra.mHotkey || extra.mHotkey->mValue >= assignedHotkeys.size())
+                                return loadFailure("FNV save Player inventory has an invalid ExtraHotkey stack");
+                            hotkey = *extra.mHotkey;
+                            break;
+                        case ESM4::sFONVExtraAmmoType:
+                            if (ammoExtra != nullptr || !extra.mAmmo || !extra.mAmmo->mResolvedFormId
+                                || !extra.mAmmoCount)
+                            {
+                                return loadFailure("FNV save Player inventory has an invalid ExtraAmmo stack");
+                            }
+                            ammoExtra = &extra;
+                            break;
+                        default:
+                            return loadFailure("FNV save Player inventory exposes an unsupported extra-data type");
+                    }
+                }
+                if (health)
+                {
+                    conditionedTotals[inventoryRecord] += stackCount;
+                    plan.mPlayer.mConditionedStacks.push_back(FalloutSavePlayerHeaderState::ConditionedStack{
+                        inventoryRecord, stackCount, *health, extend.mRange.mOffset });
+                }
+                if (wornOffset)
+                {
+                    if (stackCount != 1)
+                        return loadFailure("FNV save Player ExtraWorn state applies to a non-singleton stack");
+                    plan.mPlayer.mWornVisualItems.push_back(
+                        FalloutSavePlayerHeaderState::WornVisualItem{ inventoryRecord, health, *wornOffset });
+                }
+                if (hotkey)
+                {
+                    if (assignedHotkeys[hotkey->mValue])
+                        return loadFailure("FNV save Player inventory has duplicate ExtraHotkey assignments");
+                    assignedHotkeys[hotkey->mValue] = true;
+                    plan.mPlayer.mHotkeyItems.push_back(FalloutSavePlayerHeaderState::HotkeyItem{
+                        hotkey->mValue, inventoryRecord, hotkey->mRange.mOffset });
+                }
+                if (ammoExtra != nullptr)
+                {
+                    const std::optional<ESM::FormId> ammo
+                        = normalizeSavedFormId(*ammoExtra->mAmmo->mResolvedFormId, currentPluginIndices);
+                    if (!ammo)
+                        return loadFailure("FNV save Player ExtraAmmo FormID has unsupported provenance");
+                    const FalloutInventoryRecordResolution ammoRecord
+                        = resolveFalloutInventoryRecord(*ammo, formLists, ammunition);
+                    if (!ammoRecord)
+                        return loadFailure("FNV save Player ExtraAmmo " + ammoRecord.mError);
+                    const auto [existing, inserted] = selectedAmmo.emplace(inventoryRecord, *ammoRecord.mRecord);
+                    if (!inserted && existing->second != *ammoRecord.mRecord)
+                        return loadFailure("FNV save Player has conflicting ExtraAmmo selections for one weapon");
+                    if (inserted)
+                    {
+                        plan.mPlayer.mAmmoSelections.push_back(FalloutSavePlayerHeaderState::AmmoSelection{
+                            inventoryRecord, *ammoRecord.mRecord, ammoExtra->mAmmoCount->mValue,
+                            ammoExtra->mType.mRange.mOffset });
+                    }
+                }
+            }
+        }
+        plan.mPlayer.mInventoryItems.reserve(inventoryTotals.size());
+        for (const auto& [record, total] : inventoryTotals)
+        {
+            if (total <= 0)
+                continue;
+            if (total > std::numeric_limits<std::int32_t>::max())
+                return loadFailure("FNV save Player inventory total exceeds the compatibility carrier range");
+            plan.mPlayer.mInventoryItems.push_back(
+                FalloutInventoryItem{ record, static_cast<std::int32_t>(total) });
+        }
+        for (const auto& [record, total] : conditionedTotals)
+        {
+            const auto inventory = inventoryTotals.find(record);
+            if (inventory == inventoryTotals.end() || inventory->second <= 0 || total > inventory->second)
+                return loadFailure("FNV save Player conditioned stacks exceed the final inventory total");
+        }
+
+        if (!save.mPlayerReferenceMovement)
+            return loadFailure("FNV save does not expose a proven canonical Player reference-movement prefix");
+        const ESM4::FONVSavePlayerReferenceMovement& movement = *save.mPlayerReferenceMovement;
+        if (!movement.mCellOrWorldspace.mResolvedFormId)
+            return loadFailure("FNV save Player movement CELL/WRLD RefID did not resolve");
+        const std::optional<ESM::FormId> normalizedContainer
+            = normalizeSavedFormId(*movement.mCellOrWorldspace.mResolvedFormId, currentPluginIndices);
+        if (!normalizedContainer)
+            return loadFailure("FNV save Player movement CELL/WRLD FormID has unsupported provenance");
+        plan.mTransform.mCellOrWorldspaceRecord = *normalizedContainer;
+        for (std::size_t index = 0; index < plan.mTransform.mPosition.size(); ++index)
+        {
+            plan.mTransform.mPosition[index] = movement.mPosition[index].mValue;
+            plan.mTransform.mRotationRadians[index] = movement.mRotationRadians[index].mValue;
+        }
+
+        if (!save.mPlayerCharacterScalarReferenceState)
+            return loadFailure("FNV save does not expose the canonical Player camera/FOV state");
+        const ESM4::FONVSavePlayerCharacterScalarReferenceState& camera = *save.mPlayerCharacterScalarReferenceState;
+        if (camera.mFirstPersonMode.mValue > 1)
+            return loadFailure("FNV save Player camera mode is not a canonical boolean");
+        if (!std::isfinite(camera.mFirstPersonModelFov.mValue) || camera.mFirstPersonModelFov.mValue <= 0.f
+            || camera.mFirstPersonModelFov.mValue >= 180.f || !std::isfinite(camera.mWorldFov.mValue)
+            || camera.mWorldFov.mValue <= 0.f || camera.mWorldFov.mValue >= 180.f)
+        {
+            return loadFailure("FNV save Player camera FOV values must be finite and in (0, 180)");
+        }
+        plan.mCamera.mThirdPersonMode = camera.mFirstPersonMode.mValue;
+        plan.mCamera.mFirstPerson = camera.mFirstPersonMode.mValue == 0;
+        plan.mCamera.mFirstPersonModelFov = camera.mFirstPersonModelFov.mValue;
+        plan.mCamera.mWorldFov = camera.mWorldFov.mValue;
+        plan.mCamera.mModeOffset = camera.mFirstPersonMode.mRange.mOffset;
+        plan.mCamera.mFirstPersonModelFovOffset = camera.mFirstPersonModelFov.mRange.mOffset;
+        plan.mCamera.mWorldFovOffset = camera.mWorldFov.mRange.mOffset;
+
+        if (save.mPlayerCharacterListsState)
+        {
+            ESM4SavedQuestProgress progress;
+            progress.mStages.reserve(save.mPlayerCharacterListsState->mStages.size());
+            for (const ESM4::FONVSavePlayerCharacterStageEntry& entry
+                : save.mPlayerCharacterListsState->mStages)
+            {
+                if (!entry.mQuest.mResolvedFormId)
+                    return loadFailure("FNV save quest-stage QUST RefID did not resolve");
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(*entry.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!quest)
+                    return loadFailure("FNV save quest-stage QUST FormID has unsupported provenance");
+                progress.mStages.push_back({ *quest, entry.mStage.mValue, entry.mLogEntry.mValue });
+            }
+
+            progress.mObjectives.reserve(save.mPlayerCharacterListsState->mObjectives.size());
+            for (const ESM4::FONVSavePlayerCharacterObjectiveEntry& entry
+                : save.mPlayerCharacterListsState->mObjectives)
+            {
+                if (!entry.mQuest.mResolvedFormId)
+                    return loadFailure("FNV save quest-objective QUST RefID did not resolve");
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(*entry.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!quest || entry.mObjective.mValue > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                    return loadFailure("FNV save quest-objective state is outside the supported range");
+                progress.mObjectives.push_back({ *quest, static_cast<std::int32_t>(entry.mObjective.mValue) });
+            }
+
+            std::map<ESM::FormId, std::uint8_t> savedQuestStates;
+            std::map<std::pair<ESM::FormId, std::uint32_t>, float> savedQuestVariables;
+            for (const ESM4::FONVSaveQuestChange& change : save.mQuestChanges)
+            {
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(change.mResolvedFormId, currentPluginIndices);
+                if (!quest)
+                    return loadFailure("FNV save changed QUST FormID has unsupported provenance");
+                if (change.mQuestFlags)
+                    savedQuestStates.insert_or_assign(*quest, change.mQuestFlags->mValue);
+                for (const ESM4::FONVSaveQuestScriptVariable& variable : change.mVariables)
+                {
+                    const std::uint32_t index = variable.mFlagAndVariableId.mValue & 0x7fffffffu;
+                    if (index == 0)
+                        return loadFailure("FNV save changed QUST has a zero script-variable index");
+                    const std::pair key{ *quest, index };
+                    if (variable.mReferenceValue)
+                    {
+                        savedQuestVariables.erase(key);
+                        continue;
+                    }
+                    if (!variable.mNumericValue
+                        || variable.mNumericValue->mValue < -std::numeric_limits<float>::max()
+                        || variable.mNumericValue->mValue > std::numeric_limits<float>::max())
+                    {
+                        return loadFailure("FNV save changed QUST numeric variable is outside the runtime range");
+                    }
+                    savedQuestVariables.insert_or_assign(key, static_cast<float>(variable.mNumericValue->mValue));
+                }
+            }
+            for (const auto& [quest, flags] : savedQuestStates)
+                progress.mStates.push_back({ quest, flags });
+            for (const auto& [key, value] : savedQuestVariables)
+                progress.mVariables.push_back({ key.first, key.second, value });
+
+            if (camera.mQuest.mResolvedFormId)
+            {
+                progress.mActiveQuest
+                    = normalizeSavedFormId(*camera.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!progress.mActiveQuest)
+                    return loadFailure("FNV save active QUST FormID has unsupported provenance");
+            }
+            plan.mQuestProgress = std::move(progress);
+        }
+
+        std::map<ESM::FormId, std::vector<FalloutSaveLoadPlan::FactionRelation>> savedFactionRelations;
+        for (const ESM4::FONVSaveFactionChange& change : save.mFactionChanges)
+        {
+            if (!change.mReactionCount)
+                continue;
+            const std::optional<ESM::FormId> faction
+                = normalizeSavedFormId(change.mResolvedFormId, currentPluginIndices);
+            if (!faction)
+                return loadFailure("FNV save changed FACT FormID has unsupported provenance");
+
+            std::vector<FalloutSaveLoadPlan::FactionRelation> relations;
+            relations.reserve(change.mReactions.size());
+            for (const ESM4::FONVSaveFactionReaction& saved : change.mReactions)
+            {
+                if (!saved.mFaction.mResolvedFormId)
+                    return loadFailure("FNV save changed FACT relation has no target identity");
+                const std::optional<ESM::FormId> target
+                    = normalizeSavedFormId(*saved.mFaction.mResolvedFormId, currentPluginIndices);
+                if (!target)
+                    return loadFailure("FNV save changed FACT relation has unsupported target provenance");
+                if (saved.mReaction.mValue
+                    > static_cast<std::uint32_t>(ESM4::Faction::GroupCombatReaction::Friend))
+                {
+                    return loadFailure("FNV save changed FACT has an invalid group-combat reaction");
+                }
+                relations.push_back({ *target, saved.mModifier.mValue, saved.mReaction.mValue });
+            }
+            savedFactionRelations.insert_or_assign(*faction, std::move(relations));
+        }
+        for (auto& [faction, relations] : savedFactionRelations)
+            plan.mFactions.push_back({ faction, std::move(relations) });
+
+        plan.mWorldReferenceTransforms.reserve(save.mWorldReferenceMovements.size());
+        for (const ESM4::FONVSaveWorldReferenceMovement& saved : save.mWorldReferenceMovements)
+        {
+            const std::optional<ESM::FormId> reference
+                = normalizeSavedFormId(saved.mResolvedFormId, currentPluginIndices);
+            if (!reference)
+                return loadFailure("FNV save moved world reference FormID has unsupported provenance");
+            if (!saved.mMovement.mCellOrWorldspace.mResolvedFormId)
+                return loadFailure("FNV save moved world reference has no CELL/WRLD identity");
+            const std::optional<ESM::FormId> cellOrWorldspace
+                = normalizeSavedFormId(*saved.mMovement.mCellOrWorldspace.mResolvedFormId, currentPluginIndices);
+            if (!cellOrWorldspace)
+                return loadFailure("FNV save moved world reference CELL/WRLD has unsupported provenance");
+
+            FalloutSaveLoadPlan::WorldReferenceTransform transform;
+            transform.mReference = *reference;
+            transform.mChangeType = saved.mChangeType;
+            transform.mCellOrWorldspace = *cellOrWorldspace;
+            for (std::size_t i = 0; i < transform.mPosition.size(); ++i)
+            {
+                transform.mPosition[i] = saved.mMovement.mPosition[i].mValue;
+                transform.mRotationRadians[i] = saved.mMovement.mRotationRadians[i].mValue;
+            }
+            transform.mSourceOffset = saved.mMovement.mRange.mOffset;
+            plan.mWorldReferenceTransforms.push_back(std::move(transform));
+        }
+        plan.mWorldReferenceFlags.reserve(save.mWorldReferenceFlags.size());
+        for (const ESM4::FONVSaveWorldReferenceFlags& saved : save.mWorldReferenceFlags)
+        {
+            const std::optional<ESM::FormId> reference
+                = normalizeSavedFormId(saved.mResolvedFormId, currentPluginIndices);
+            if (!reference)
+                return loadFailure("FNV save changed world-reference flags have unsupported provenance");
+            plan.mWorldReferenceFlags.push_back(
+                { *reference, saved.mChangeType, saved.mFlags.mValue, saved.mFlags.mRange.mOffset });
+        }
+
+        if (!save.mSky)
+            return loadFailure("FNV save does not expose a proven Sky global-data payload");
+        const ESM4::FONVSaveSkyState& sky = *save.mSky;
+        if (!sky.mCurrentWeather.mResolvedFormId || !sky.mDefaultWeather.mResolvedFormId)
+            return loadFailure("FNV save Sky state has no current/default weather identity");
+        const std::optional<ESM::FormId> currentWeather
+            = normalizeSavedFormId(*sky.mCurrentWeather.mResolvedFormId, currentPluginIndices);
+        const std::optional<ESM::FormId> defaultWeather
+            = normalizeSavedFormId(*sky.mDefaultWeather.mResolvedFormId, currentPluginIndices);
+        if (!currentWeather || !defaultWeather)
+            return loadFailure("FNV save Sky weather FormID has unsupported provenance");
+        plan.mScene.mCurrentWeather = *currentWeather;
+        plan.mScene.mDefaultWeather = *defaultWeather;
+        auto normalizeOptionalWeather
+            = [&](const ESM4::FONVSaveResolvedReferenceId& source, std::optional<ESM::FormId>& destination) {
+                  if (!source.mResolvedFormId)
+                      return true;
+                  destination = normalizeSavedFormId(*source.mResolvedFormId, currentPluginIndices);
+                  return destination.has_value();
+              };
+        if (!normalizeOptionalWeather(sky.mTransitionWeather, plan.mScene.mTransitionWeather)
+            || !normalizeOptionalWeather(sky.mOverrideWeather, plan.mScene.mOverrideWeather))
+        {
+            return loadFailure("FNV save optional Sky weather FormID has unsupported provenance");
+        }
+        plan.mScene.mGameHour = sky.mGameHour.mValue;
+        plan.mScene.mLastUpdateHour = sky.mLastUpdateHour.mValue;
+        plan.mScene.mWeatherPercent = sky.mWeatherPercent.mValue;
+        plan.mScene.mFogPower = sky.mFogPower.mValue;
+        plan.mScene.mFlags = sky.mFlags.mValue;
+        plan.mScene.mSkyMode = sky.mSkyMode.mValue;
+        plan.mScene.mPayloadOffset = sky.mRange.mOffset;
+        plan.mScene.mPayloadBytes = sky.mRange.mSize;
+        plan.mUncoveredState = falloutSaveLoadBlockers();
+        if (std::ranges::any_of(save.mFactionChanges, [](const ESM4::FONVSaveFactionChange& faction) {
+                return faction.mFormFlags.has_value() || faction.mFactionFlags.has_value()
+                    || faction.mCrimeCount44.has_value() || faction.mCrimeCount48.has_value();
+            }))
+        {
+            plan.mUncoveredState.push_back("faction-form-flags-and-crime-counts");
+        }
+        if (plan.mPlayer.mCurrentWeaponAction != -1)
+            plan.mUncoveredState.push_back("player-nonidle-weapon-action-animation-resume");
+        if (plan.mQuestProgress)
+        {
+            const auto blocker = std::ranges::find(plan.mUncoveredState, "quest-stages-objectives-variables");
+            if (blocker != plan.mUncoveredState.end())
+            {
+                if (save.mQuestChanges.empty())
+                    *blocker = "quest-variables";
+                else
+                {
+                    const bool hasReferenceVariables = std::ranges::any_of(save.mQuestChanges,
+                        [](const ESM4::FONVSaveQuestChange& quest) {
+                            return std::ranges::any_of(quest.mVariables,
+                                [](const ESM4::FONVSaveQuestScriptVariable& variable) {
+                                    return variable.mReferenceValue.has_value();
+                                });
+                        });
+                    if (hasReferenceVariables)
+                        *blocker = "quest-reference-variables";
+                    else
+                        plan.mUncoveredState.erase(blocker);
+                }
+            }
+        }
+        if (save.mGlobalVariables)
+        {
+            const auto blocker = std::ranges::find(plan.mUncoveredState, "global-variables");
+            if (blocker != plan.mUncoveredState.end())
+                plan.mUncoveredState.erase(blocker);
+        }
+        return { std::move(plan), {} };
+    }
+
+    FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(const Store<ESM4::World>& worlds,
+        const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform)
+    {
+        if (transform.mCellOrWorldspaceRecord.isZeroOrUnset())
+            return placementFailure("Player movement has no normalized CELL/WRLD identity");
+
+        const ESM::RefId worldspaceId(transform.mCellOrWorldspaceRecord);
+        const ESM4::World* worldspace = worlds.search(worldspaceId);
+        if (worldspace == nullptr)
+        {
+            return placementFailure(
+                "Player movement container is not a loaded WRLD; interior CELL placement remains "
+                "unsupported");
+        }
+        if (worldspace->mId != transform.mCellOrWorldspaceRecord)
+            return placementFailure("Player movement WRLD resolved with a different normalized FormID");
+
+        const ESM::ExteriorCellLocation location
+            = ESM::positionToExteriorCellLocation(transform.mPosition[0], transform.mPosition[1], worldspaceId);
+        const ESM4::Cell* cell = cells.searchExterior(location);
+        if (cell == nullptr)
+            return placementFailure("Player movement position has no authored exterior CELL in the resolved WRLD");
+        if (!cell->isExterior() || cell->mParent != worldspaceId || cell->mX != location.mX || cell->mY != location.mY)
+        {
+            return placementFailure("Player movement exterior CELL identity does not match its WRLD/grid index");
+        }
+        const ESM::FormId* cellFormId = cell->mId.getIf<ESM::FormId>();
+        if (cellFormId == nullptr)
+            return placementFailure("Player movement exterior CELL does not preserve a native FormID identity");
+
+        FalloutExteriorPlayerPlacement placement;
+        placement.mWorldspaceRecord = transform.mCellOrWorldspaceRecord;
+        placement.mCellRecord = *cellFormId;
+        placement.mCellX = location.mX;
+        placement.mCellY = location.mY;
+        return { std::move(placement), {} };
+    }
+
+    bool targetsFalloutExteriorCell(const FalloutSaveLoadPlan::WorldReferenceTransform& transform,
+        const FalloutExteriorPlayerPlacement& placement)
+    {
+        if (transform.mCellOrWorldspace == placement.mCellRecord)
+            return true;
+        if (transform.mCellOrWorldspace != placement.mWorldspaceRecord)
+            return false;
+        const ESM::ExteriorCellLocation location = ESM::positionToExteriorCellLocation(
+            transform.mPosition[0], transform.mPosition[1], ESM::RefId(transform.mCellOrWorldspace));
+        return location.mX == placement.mCellX && location.mY == placement.mCellY;
+    }
+
+    void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state)
+    {
+        if (proxy.mId != ESM::RefId::stringRefId("Player"))
+            throw std::runtime_error("FNV save header target is not the Player compatibility carrier");
+        if (state.mBaseRecord.mIndex != 7 || state.mReferenceRecord.mIndex != 0x14 || state.mProcessLevel != 0
+            || state.mLevel == 0
+            || state.mLevel > static_cast<std::uint32_t>(std::numeric_limits<std::int16_t>::max()))
+        {
+            throw std::runtime_error("invalid semantically available FNV save Player header state");
+        }
+
+        if (!state.mName.empty())
+            proxy.mName = state.mName;
+        proxy.mNpdt.mLevel = static_cast<std::int16_t>(state.mLevel);
+        proxy.mInventory.mList.clear();
+        proxy.mInventory.mList.reserve(state.mInventoryItems.size());
+        std::unordered_set<ESM::FormId> seen;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0 || !seen.insert(item.mRecord).second)
+                throw std::runtime_error("invalid normalized FNV save Player inventory total");
+            proxy.mInventory.mList.push_back(ESM::ContItem{ item.mCount, ESM::RefId(item.mRecord) });
+        }
+    }
+
+    void applyFalloutSavePlayerFactionChanges(
+        FalloutPlayerState& player, std::span<const FalloutSavePlayerHeaderState::FactionChange> changes)
+    {
+        for (const FalloutSavePlayerHeaderState::FactionChange& change : changes)
+        {
+            const auto found = std::ranges::find_if(player.mFactions, [&](const ESM4::ActorFaction& membership) {
+                return ESM::FormId::fromUint32(membership.faction) == change.mFaction;
+            });
+            if (change.mRank < 0)
+            {
+                if (found != player.mFactions.end())
+                    player.mFactions.erase(found);
+                continue;
+            }
+            if (found != player.mFactions.end())
+                found->rank = change.mRank;
+            else
+                player.mFactions.push_back(ESM4::ActorFaction{ change.mFaction.toUint32(), change.mRank, 0, 0, 0 });
+        }
+    }
+
+    void applyFalloutSaveFactionState(ESM4::Faction& faction, const FalloutSaveLoadPlan::FactionState& state)
+    {
+        if (faction.mId != state.mFaction)
+            throw std::logic_error("native FNV faction state identity does not match the target FACT");
+        faction.mRelations.clear();
+        faction.mRelations.reserve(state.mRelations.size());
+        for (const FalloutSaveLoadPlan::FactionRelation& relation : state.mRelations)
+        {
+            faction.mRelations.push_back({ relation.mFaction, relation.mModifier,
+                static_cast<ESM4::Faction::GroupCombatReaction>(relation.mGroupCombatReaction) });
+        }
+    }
+
     void seedFalloutPlayerProxy(ESM::NPC& proxy, const FalloutPlayerState& state)
     {
         if (!state.mFullName.empty())
@@ -209,9 +1256,25 @@ namespace MWWorld
         proxy.mNpdt.mLevel = state.mStatsConfig.levelOrMult;
         proxy.mNpdt.mHealth = static_cast<std::uint16_t>(state.mHealth);
         proxy.mNpdt.mFatigue = state.mStatsConfig.fatigue;
+        // The native Fallout player currently travels through OpenMW's shared ESM3 NPC proxy. Movement reads the
+        // proxy Speed attribute, so leaving it at NPC::blank()'s zero silently reduces every new/load-game player to
+        // the minimum Morrowind walk speed. SpeedMult is the corresponding authored per-actor Fallout value.
+        const int speedIndex = ESM::Attribute::refIdToIndex(ESM::Attribute::Speed);
+        proxy.mNpdt.mAttributes[static_cast<std::size_t>(speedIndex)] = static_cast<std::uint8_t>(
+            std::min<std::uint16_t>(state.mStatsConfig.speedMultiplier, std::numeric_limits<std::uint8_t>::max()));
         if ((state.mStatsConfig.flags & ESM4::Npc::FO3_Female) != 0)
             proxy.mFlags |= ESM::NPC::Female;
         else
             proxy.mFlags &= ~ESM::NPC::Female;
+
+        proxy.mInventory.mList.clear();
+        proxy.mInventory.mList.reserve(state.mInventoryItems.size());
+        std::unordered_set<ESM::FormId> seen;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0 || !seen.insert(item.mRecord).second)
+                throw std::runtime_error("invalid native FNV Player authored inventory total");
+            proxy.mInventory.mList.push_back(ESM::ContItem{ item.mCount, ESM::RefId(item.mRecord) });
+        }
     }
 }

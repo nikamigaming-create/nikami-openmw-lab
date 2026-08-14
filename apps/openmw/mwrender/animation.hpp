@@ -17,6 +17,9 @@
 #include <components/sceneutil/util.hpp>
 #include <components/vfs/pathutil.hpp>
 
+#include <osg/Node>
+#include <osg/StateSet>
+
 #include <map>
 #include <span>
 #include <string>
@@ -159,10 +162,6 @@ namespace MWRender
 
             osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
             bool mFalloutProcedureIdle = false;
-            // A KF that explicitly animates Camera1st owns a first-person cinematic transform branch.  Keep this
-            // semantic on the source rather than on an individual quest or cell so translation policy follows the
-            // shipped controller contract.
-            bool mFalloutAuthoredCamera = false;
         };
 
         struct AnimState
@@ -186,9 +185,7 @@ namespace MWRender
 
             std::string mGroupname;
             std::string mStartKey;
-            std::string mStopKey;
 
-            float getCompletion() const;
             float getTime() const { return *mTime; }
             void setTime(float time) { *mTime = time; }
             bool blendMaskContains(size_t blendMask) const { return (mBlendMask & (1 << blendMask)); }
@@ -209,7 +206,11 @@ namespace MWRender
         osg::ref_ptr<osg::Group> mObjectRoot;
         SceneUtil::Skeleton* mSkeleton;
 
+        osg::ref_ptr<osg::MatrixTransform> mFalloutCorpseTransform;
+        bool mFalloutCorpsePoseApplied = false;
+
         virtual void applyPostManualFalloutActorPose() {}
+        void applyFalloutDeathPoseFallback();
 
         // The node expected to accumulate movement during movement animations.
         osg::ref_ptr<osg::Node> mAccumRoot;
@@ -271,12 +272,6 @@ namespace MWRender
         bool mProofPreviewAnimation;
         bool mProofPreviewGameplayAudit;
         int mBethesdaBoneLodLevel;
-        bool mFalloutScriptPackageCameraTarget = false;
-        // Camera1st is parented beneath the retail first-person Bip01 rig.
-        // Keep a dedicated target map for that authored hierarchy so a
-        // cinematic KF's Bip/neck/root controllers do not get split between
-        // the first-person camera branch and the visible third-person body.
-        NodeMap mFalloutScriptPackageCameraNodes;
 
         const NodeMap& getNodeMap() const;
 
@@ -332,16 +327,13 @@ namespace MWRender
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
          * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
          * @param falloutSemanticGroup Optional semantic alias synthesized for a selected Fallout creature source.
+         * @param falloutIsolateExistingGroups When a selected Fallout source carries a legacy group that would
+         *        otherwise replace an already-bound production group, retain only the requested semantic alias.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
         std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
             bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
-            std::string_view falloutSemanticGroup = {}, bool forceFalloutActorContext = false);
-
-        /// Fallout cinematic KFs can own a Camera1st controller even though the shared body skeleton deliberately
-        /// has no permanent camera transform.  Materialise that authored target on the visual only when a scripted
-        /// package actually requires it, so the normal player camera rig remains untouched.
-        bool ensureFalloutScriptPackageCameraTarget();
+            std::string_view falloutSemanticGroup = {}, bool falloutIsolateExistingGroups = false);
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
@@ -364,8 +356,6 @@ namespace MWRender
             const AnimBlendStateData& stateData, const osg::ref_ptr<const SceneUtil::AnimBlendRules>& blendRules,
             const AnimState& active);
 
-        void animationEnded(AnimState& state) const;
-
     public:
         Animation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
@@ -376,6 +366,9 @@ namespace MWRender
         MWWorld::ConstPtr getPtr() const { return mPtr; }
 
         MWWorld::Ptr getPtr() { return mPtr; }
+
+        bool addFalloutDialogueAnimSource(
+            const std::string& model, const std::string& baseModel, std::string_view semanticGroup);
 
         void setProofPreviewAnimation(bool enabled);
         void setProofPreviewGameplayAudit(bool enabled);
@@ -414,6 +407,8 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
+        /// Render every authored VATS limb as an amber wireframe and the selected limb as green.
+        /// Passing false restores every node's exact prior StateSet.
         void setFalloutVatsWireframes(
             std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled);
 
@@ -425,16 +420,30 @@ namespace MWRender
         /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
         std::string getAnimationSourceName(std::string_view anim) const;
 
+        struct SourceOverrideBinding
+        {
+            bool mLoaded = false;
+            std::string mGroup;
+            std::string mPreviousGroup;
+            std::string mPreviousSource;
+            std::string mSelectedSource;
+            unsigned int mControllerMask = 0;
+        };
+
+        /// Load a path-based compatibility animation as the highest-priority
+        /// source for a group and report the exact source it displaced.
+        SourceOverrideBinding bindSourceOverride(
+            std::string_view path, std::string_view requestedGroup = {});
+
+        /// Remove one path override from the source stack and prove that the
+        /// original source selected before installation is active again.
+        SourceOverrideBinding restoreSourceOverride(std::string_view path, std::string_view installedGroup,
+            std::string_view expectedPreviousSource, std::string_view previousGroup = {});
+
         /// Return the first group from a specific source whose name begins with the requested prefix.
         /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
         std::string getAnimationGroupFromSource(
             std::string_view sourceName, std::string_view groupPrefix = {}) const;
-
-        /// Bind an authored Fallout script-package KF to this already rendered actor and expose it under a caller
-        /// supplied semantic group. Script packages can be attached after the actor enters a cell, so this is
-        /// deliberately separate from the constructor-time NPC animation manifests.
-        bool addFalloutScriptPackageAnimationSource(std::string_view model, std::string_view semanticGroup);
-        bool hasFalloutScriptPackageCameraTarget() const { return mFalloutScriptPackageCameraTarget; }
 
         /// Attach or clear a Fallout ANIO model for the duration of an authored idle group.
         virtual bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) { return false; }
@@ -508,7 +517,7 @@ namespace MWRender
          * \return True if the animation is active, false otherwise.
          */
         bool getInfo(std::string_view groupname, float* complete = nullptr, float* speedmult = nullptr,
-            uint32_t* loopcount = nullptr) const;
+            size_t* loopcount = nullptr) const;
 
         /// Returns the group name of the animation currently active on that bone group.
         std::string_view getActiveGroup(BoneGroup boneGroup) const;
@@ -554,6 +563,7 @@ namespace MWRender
         virtual bool useShieldAnimations() const { return false; }
         virtual bool getWeaponsShown() const { return false; }
         virtual void showWeapons(bool showWeapon) {}
+        virtual osg::Node* getEquippedWeaponNode() { return nullptr; }
         virtual bool getCarriedLeftShown() const { return false; }
         virtual void showCarriedLeft(bool show) {}
         virtual void setWeaponGroup(const std::string& group, bool relativeDuration) {}
@@ -588,6 +598,11 @@ namespace MWRender
 
         virtual void removeFromScene();
 
+//## VR_PATCH BEGIN
+        virtual void updateCrosshairs(){}
+        bool useSmoothAnimationTransitions() const;
+
+//## VR_PATCH END
     private:
         Animation(const Animation&);
         void operator=(Animation&);

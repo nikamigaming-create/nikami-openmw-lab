@@ -23,8 +23,10 @@
 #include <osg/FrameStamp>
 #include <osg/Geode>
 #include <osg/LightModel>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
+#include <osg/PolygonMode>
 #include <osg/Switch>
 
 #include <osgParticle/ParticleProcessor>
@@ -59,6 +61,7 @@
 
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/nifosg/falloutkf.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -86,6 +89,7 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "actorutil.hpp"
@@ -94,8 +98,28 @@
 #include "util.hpp"
 #include "vismask.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwmechanics/actorutil.hpp"
+//## VR_PATCH END
+
 namespace
 {
+    class MarkDrawablesVisitor : public osg::NodeVisitor
+    {
+    public:
+        MarkDrawablesVisitor(osg::Node::NodeMask mask)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mMask(mask)
+        {
+        }
+
+        void apply(osg::Drawable& drawable) override { drawable.setNodeMask(mMask); }
+
+    private:
+        osg::Node::NodeMask mMask = 0;
+    };
+
     /// Removes all particle systems and related nodes in a subgraph.
     class RemoveParticlesVisitor : public osg::NodeVisitor
     {
@@ -238,6 +262,17 @@ namespace
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
         return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV && !ref->mBase->mIsFO3;
+    }
+
+    bool isFalloutDeathFallbackContext(const MWWorld::Ptr& ptr)
+    {
+        if (isFalloutNpcAnimationContext(ptr))
+            return true;
+        if (ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -3077,23 +3112,6 @@ namespace MWRender
         float mAlpha;
     };
 
-// The Fallout branch extends AnimSource in animation.hpp; the 0.51 source
-// previously owned this shorter definition.  Keep one canonical definition.
-#if 0
-    struct Animation::AnimSource
-    {
-        osg::ref_ptr<const SceneUtil::KeyframeHolder> mKeyframes;
-
-        typedef std::map<std::string, osg::ref_ptr<SceneUtil::KeyframeController>> ControllerMap;
-
-        ControllerMap mControllerMap[sNumBlendMasks];
-
-        const SceneUtil::TextKeyMap& getTextKeys() const;
-
-        osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
-    };
-#endif
-
     void UpdateVfxCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
         traverse(node, nv);
@@ -3111,7 +3129,7 @@ namespace MWRender
         double duration = newTime - mStartingTime;
         mStartingTime = newTime;
 
-        mParams.mAnimTime->addTime(static_cast<float>(duration));
+        mParams.mAnimTime->addTime(duration);
         if (mParams.mAnimTime->getTime() >= mParams.mMaxControllerLength)
         {
             if (mParams.mLoop)
@@ -3138,7 +3156,14 @@ namespace MWRender
             osg::Matrix mat = transform->getMatrix();
             osg::Vec3f position = mat.getTrans();
             position = mResetAllTranslation ? osg::Vec3f() : osg::componentMultiply(mResetAxes, position);
-            mat.setTrans(position);
+            if (mBindRotation)
+            {
+                const osg::Vec3f scale = mat.getScale();
+                mat = osg::Matrix::scale(scale) * osg::Matrix::rotate(*mBindRotation)
+                    * osg::Matrix::translate(position);
+            }
+            else
+                mat.setTrans(position);
             transform->setMatrix(mat);
 
             traverse(transform, nv);
@@ -3157,9 +3182,15 @@ namespace MWRender
             mResetAllTranslation = resetAll;
         }
 
+        void setBindRotation(std::optional<osg::Quat> rotation)
+        {
+            mBindRotation = std::move(rotation);
+        }
+
     private:
         osg::Vec3f mResetAxes;
         bool mResetAllTranslation = false;
+        std::optional<osg::Quat> mBindRotation;
     };
 
     Animation::Animation(
@@ -3235,7 +3266,7 @@ namespace MWRender
             "Bip01 Neck", /* Head */
         };
 
-        while (node != mObjectRoot)
+        while (node != nullptr && node != mObjectRoot)
         {
             const std::string& name = node->getName();
             for (size_t i = 1; i < sNumBlendMasks; i++)
@@ -3244,7 +3275,13 @@ namespace MWRender
                     return i;
             }
 
-            assert(node->getNumParents() > 0);
+            // Runtime equipment changes can leave an animation target detached while
+            // a new weapon-family source is being prepared. It is still a valid
+            // controller target, but it no longer has an ancestry path to the actor
+            // root. Treat it as a full-body track instead of following parent 0 from
+            // an empty parent list.
+            if (node->getNumParents() == 0)
+                break;
 
             node = node->getParent(0);
         }
@@ -3274,21 +3311,21 @@ namespace MWRender
 
         path.replace(extensionStart, path.size() - extensionStart, "/");
 
-        constexpr VFS::Path::ExtensionView kf("kf");
         for (const VFS::Path::Normalized& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(path))
-            if (name.extension() == kf)
+        {
+            if (Misc::getFileExtension(name) == "kf")
+            {
                 addSingleAnimSource(name, baseModel);
+            }
+        }
     }
 
     void Animation::addAnimSource(std::string_view model, const std::string& baseModel)
     {
-        constexpr VFS::Path::ExtensionView kf("kf");
-        constexpr VFS::Path::ExtensionView nif("nif");
-
         VFS::Path::Normalized kfname(model);
 
-        if (kfname.extension() == nif)
-            kfname.changeExtension(kf);
+        if (Misc::getFileExtension(kfname) == "nif")
+            kfname.changeExtension("kf");
 
         addSingleAnimSource(kfname, baseModel);
 
@@ -3298,12 +3335,6 @@ namespace MWRender
 
     std::vector<std::string> getFonvBoneAliases(const std::string& name)
     {
-        // Fallout 3/New Vegas author a small set of shared cinematic KFs
-        // against the short root name `Bip`, while their shipped humanoid
-        // skeleton exposes that same root as `Bip01`. This is a skeleton
-        // dialect alias, not a content-record exception.
-        if (name == "bip")
-            return { "bip01" };
         if (name == "bip01 l finger0")
             return { "bip01 l thumb1" };
         if (name == "bip01 l finger01")
@@ -3542,32 +3573,11 @@ namespace MWRender
         return wrapper;
     }
 
-    osg::ref_ptr<osg::Group> correctFalloutCreatureForwardAxis(
-        osg::ref_ptr<osg::Group> objectRoot, const MWWorld::Ptr& ptr)
+    bool Animation::addFalloutDialogueAnimSource(
+        const std::string& model, const std::string& baseModel, std::string_view semanticGroup)
     {
-        if (objectRoot == nullptr || ptr.getType() != ESM4::Creature::sRecordId)
-            return objectRoot;
-
-        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
-        if (ref == nullptr || ref->mBase == nullptr || !ref->mBase->mIsFONV)
-            return objectRoot;
-
-        std::string model = Misc::StringUtils::lowerCase(std::string(ptr.getClass().getModel(ptr)));
-        std::replace(model.begin(), model.end(), '\\', '/');
-        if (model.find("/nvsecuritron/") == std::string::npos)
-            return objectRoot;
-
-        // The FNV securitron skeleton's authored screen/front points along -X while OpenMW actor movement and
-        // facing use +Y. The gameplay controller therefore turned correctly while Victor's rendered body looked
-        // a quarter-turn away from its target. Keep actor/world yaw authoritative and correct only this known
-        // authored visual assembly. Other creature families retain their native axes until measured independently.
-        osg::ref_ptr<osg::MatrixTransform> wrapper = new osg::MatrixTransform;
-        wrapper->setName("FNV Securitron Forward Axis");
-        wrapper->setMatrix(osg::Matrixf::rotate(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)));
-        wrapper->addChild(objectRoot);
-        return wrapper;
+        return addSingleAnimSource(model, baseModel, false, {}, semanticGroup) != nullptr;
     }
-
 
     float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
@@ -4116,8 +4126,9 @@ namespace MWRender
         if (!normalizeFiniteQuat(left) || !normalizeFiniteQuat(right))
             return 0.f;
 
-        const double dot = std::clamp(std::abs(left.x() * right.x() + left.y() * right.y() + left.z() * right.z()
-                                         + left.w() * right.w()),
+        const double dot = std::clamp(
+            static_cast<double>(std::abs(left.x() * right.x() + left.y() * right.y() + left.z() * right.z()
+                + left.w() * right.w())),
             0.0, 1.0);
         return static_cast<float>(2.0 * std::acos(dot) * 180.0 / osg::PI);
     }
@@ -4449,42 +4460,14 @@ namespace MWRender
         if (stem.find("wave") != std::string::npos || stem.find("gesture") != std::string::npos
             || stem == "specialidle_mtponder" || stem == "specialidle_salutes")
             return "wave";
-        if (stem == "swimidle")
-            return "swimidle";
         if (stem.find("flyaway") != std::string::npos)
             return "flyforward";
         if (stem.find("specialidle") != std::string::npos)
             return "idle2";
+        if (const std::string_view movement = NifOsg::getFalloutKfMovementGroup(kfname); !movement.empty())
+            return std::string(movement);
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
-            return "turnleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
-            return "turnright";
-        if (stem == "mtforward")
-            return "walkforward";
-        if (stem == "mtbackward")
-            return "walkback";
-        if (stem == "mtleft")
-            return "walkleft";
-        if (stem == "mtright")
-            return "walkright";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastforward") || Misc::StringUtils::ciEndsWith(stem, "runforward"))
-            return "runforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastbackward") || Misc::StringUtils::ciEndsWith(stem, "runbackward"))
-            return "runback";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastleft") || Misc::StringUtils::ciEndsWith(stem, "runleft"))
-            return "runleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastright") || Misc::StringUtils::ciEndsWith(stem, "runright"))
-            return "runright";
-        if (Misc::StringUtils::ciEndsWith(stem, "forward") || Misc::StringUtils::ciEndsWith(stem, "walkforward"))
-            return "walkforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "backward") || Misc::StringUtils::ciEndsWith(stem, "walkbackward"))
-            return "walkback";
-        if (Misc::StringUtils::ciEndsWith(stem, "left") || Misc::StringUtils::ciEndsWith(stem, "walkleft"))
-            return "walkleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
-            return "walkright";
         return {};
     }
 
@@ -4582,15 +4565,16 @@ namespace MWRender
     bool isSyntheticFalloutLoopingGroup(std::string_view group)
     {
         return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
-            || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
+            || group == "idleswim" || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
             || group == "talk" || group == "flyforward"
             || group.starts_with("walk") || group.starts_with("run")
-            || group.starts_with("turn") || group.starts_with("sneak");
+            || group.starts_with("turn") || group.starts_with("sneak") || group.starts_with("swimwalk")
+            || group.starts_with("swimrun") || group.starts_with("swimturn");
     }
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
         const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
-        std::string_view falloutSemanticGroup, bool forceFalloutActorContext)
+        std::string_view falloutSemanticGroup, bool falloutIsolateExistingGroups)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4611,11 +4595,11 @@ namespace MWRender
                 {
                     animsrc->mKeyframes = mergeFonvWeaponControllerOverlay(*animsrc->mKeyframes, *overlay);
                     Log(Debug::Verbose) << "FNV/ESM4 diag: merged " << overlay->mKeyframeControllers.size()
-                                        << " hand-grip controller(s) from " << overlayPath << " over " << kfname;
+                                        << " controller(s) from " << overlayPath << " over " << kfname;
                 }
             }
             else
-                Log(Debug::Warning) << "FNV/ESM4: weapon hand-grip overlay is absent: " << overlayPath;
+                Log(Debug::Warning) << "FNV/ESM4: controller overlay is absent: " << overlayPath;
         }
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
@@ -4636,32 +4620,23 @@ namespace MWRender
             return nullptr;
         }
         const bool isFonvActorAnim
-            = (forceFalloutActorContext
-                  || shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup))
+            = shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup)
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
+                || lowerKf.find("meshes/characters/_1stperson/") != std::string::npos
+                || lowerKf.find("meshes\\characters\\_1stperson\\") != std::string::npos
                 || lowerKf.find("characters/_male/") != std::string::npos
                 || lowerKf.find("characters\\_male\\") != std::string::npos
+                || lowerKf.find("characters/_1stperson/") != std::string::npos
+                || lowerKf.find("characters\\_1stperson\\") != std::string::npos
                 || lowerBaseModel.find("characters\\_male\\") != std::string::npos
-                || lowerBaseModel.find("characters/_male/") != std::string::npos);
+                || lowerBaseModel.find("characters/_male/") != std::string::npos
+                || lowerBaseModel.find("characters\\_1stperson\\") != std::string::npos
+                || lowerBaseModel.find("characters/_1stperson/") != std::string::npos);
         const bool isFonvCreatureAnim = lowerKf.find("meshes/creatures/") != std::string::npos
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
         const bool isFonvAnim = isFonvActorAnim || isFonvCreatureAnim;
-
-        const bool scriptedFalloutCamera = forceFalloutActorContext && isFonvActorAnim && animsrc->mKeyframes
-            && std::any_of(animsrc->mKeyframes->mKeyframeControllers.begin(),
-                animsrc->mKeyframes->mKeyframeControllers.end(), [](const auto& controller) {
-                    return Misc::StringUtils::lowerCase(controller.first) == "camera1st";
-                });
-        if (scriptedFalloutCamera && !ensureFalloutScriptPackageCameraTarget())
-        {
-            Log(Debug::Warning) << "FNV/ESM4 scripted package: unable to materialise authored Camera1st target for "
-                                << kfname;
-            return nullptr;
-        }
-        animsrc->mFalloutAuthoredCamera = scriptedFalloutCamera;
-
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
             // Callers that selected an exact retail action manifest provide the semantic group explicitly. Filename
@@ -4708,6 +4683,38 @@ namespace MWRender
             animsrc->mKeyframes = keyframes;
             Log(Debug::Verbose) << "FNV/ESM4 diag: aliased selected creature KF " << kfname
                                 << " to semantic group '" << group << "'";
+        }
+        if (animsrc->mKeyframes && isFonvCreatureAnim
+            && falloutSemanticGroup == FonvCreatureHitReactionSemanticGroup)
+        {
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutCreatureHitReactionTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected creature hit KF " << kfname
+                                    << " from generic idle groups";
+            }
+        }
+        if (animsrc->mKeyframes && isFonvActorAnim && falloutIsolateExistingGroups
+            && !falloutSemanticGroup.empty())
+        {
+            // Exact Fallout source selection is not allowed to replace an
+            // unrelated production group merely because the KF also exposes a
+            // legacy text-key name. Keep the selected semantic interval and
+            // its raw controllers, but remove the conflicting aliases before
+            // this source enters the reverse-priority source stack.
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutSelectedSourceTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup, { "idle" }))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected Fallout source " << kfname
+                                    << " to semantic group '" << falloutSemanticGroup
+                                    << "' by removing conflicting legacy group(s)";
+            }
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
         {
@@ -4825,30 +4832,31 @@ namespace MWRender
             const std::vector<std::string> explicitAliases
                 = isFonvAnim ? getFonvBoneAliases(authoredBonename) : std::vector<std::string>{};
             std::string resolutionKind = "missing";
-            const NodeMap& targetNodeMap
-                = scriptedFalloutCamera ? mFalloutScriptPackageCameraNodes : nodeMap;
-            NodeMap::const_iterator found = targetNodeMap.find(bonename);
-            if (found != targetNodeMap.end())
+            NodeMap::const_iterator found = nodeMap.find(bonename);
+            if (found != nodeMap.end())
             {
                 bonename = found->first;
-                resolutionKind = scriptedFalloutCamera ? "first-person-exact" : "exact";
+                resolutionKind = "exact";
                 ++exactControllers;
             }
-            if (found == targetNodeMap.end() && isFonvAnim)
+            if (found == nodeMap.end() && isFonvAnim)
             {
-                found = findFonvAnimationBone(targetNodeMap, authoredBonename, bonename);
-                if (found != targetNodeMap.end())
+                found = findFonvAnimationBone(nodeMap, authoredBonename, bonename);
+                if (found != nodeMap.end())
                 {
-                    resolutionKind
-                        = scriptedFalloutCamera ? "first-person-explicit-alias" : "explicit-alias";
+                    resolutionKind = "explicit-alias";
                     ++aliasedControllers;
                     Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << authoredBonename << "' to '"
                                      << bonename << "' for " << kfname;
                 }
             }
-            const bool requiredSkeletonTarget
-                = !isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename);
-            if (found == targetNodeMap.end() && !requiredSkeletonTarget)
+            const bool optionalFirstPersonPipBoyPauldron
+                = lowerKf.find("pipboymanipulate.kf") != std::string::npos
+                && authoredBonename == "bip01 rpauldron"
+                && lowerBaseModel.find("characters/_1stperson/") != std::string::npos;
+            const bool requiredSkeletonTarget = !optionalFirstPersonPipBoyPauldron
+                && (!isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename));
+            if (found == nodeMap.end() && !requiredSkeletonTarget)
                 resolutionKind = "deferred-visual";
             if (auditFalloutControllerTargets)
             {
@@ -4859,13 +4867,13 @@ namespace MWRender
                         aliases << ',';
                     aliases << explicitAliases[aliasIndex];
                 }
-                Log(found != targetNodeMap.end() ? Debug::Info : Debug::Warning)
+                Log(found != nodeMap.end() ? Debug::Info : Debug::Warning)
                     << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='" << authoredBonename
                     << "' resolution=" << resolutionKind << " resolved='"
-                    << (found != targetNodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
+                    << (found != nodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
                     << aliases.str() << ']';
             }
-            if (found == targetNodeMap.end())
+            if (found == nodeMap.end())
             {
                 if (isFonvAnim && !requiredSkeletonTarget)
                 {
@@ -4878,15 +4886,19 @@ namespace MWRender
                 {
                     ++missingRequiredControllers;
                     if (isFonvAnim)
+                    {
                         Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
                                             << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                        if (lowerKf.find("pipboymanipulate.kf") != std::string::npos)
+                            Log(Debug::Warning) << "FNV Pip-Boy retail manipulate missing controller target='"
+                                                << bonename << "' base=" << baseModel;
+                    }
                     else
                         Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
                                             << baseModel << " (referenced by " << kfname << ")";
                 }
                 continue;
             }
-            const std::string transformBasisBone = bonename;
             const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
             if (isFonvActorAnim && shouldSkipFalloutSyntheticAttachmentHelperControllers(mPtr)
                 && isFalloutSyntheticAttachmentHelperName(lowerResolvedBone)
@@ -4904,14 +4916,6 @@ namespace MWRender
                 continue;
             }
             osg::Node* node = found->second;
-            if (scriptedFalloutCamera)
-            {
-                // Controller maps resolve through the animation's shared node
-                // map. Give dedicated first-person nodes stable internal keys
-                // so later non-cinematic sources still bind to the visible rig.
-                bonename = "__fallout_script_package_camera__/" + bonename;
-                mNodeMap.emplace(bonename, found->second);
-            }
 
             // FO3/FNV author the held-weapon transform as a root-level "Weapon" KF target. The scene-node match
             // can resolve through a synthetic attachment helper, so the authored controller-map key is the stable
@@ -4937,7 +4941,7 @@ namespace MWRender
                     if (const auto* nifTarget = dynamic_cast<const NifOsg::MatrixTransform*>(found->second.get()))
                         bindScale = nifTarget->mScale;
                     nifController->setFalloutActorTransformBasis(
-                        transformBasisBone, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
+                        bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
                         bindScale);
                     if (std::getenv("OPENMW_FNV_CONTROLLER_KEY_AUDIT") != nullptr)
                     {
@@ -5042,7 +5046,6 @@ namespace MWRender
                                  << " keys=[" << summarizeFalloutTextKeys(animsrc->getTextKeys()) << "]";
             }
             animsrc->mFalloutProcedureIdle = isProcedureIdle;
-
             Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
                              << missingRequiredControllers << ", skippedSyntheticAttachmentHelpers "
@@ -5133,14 +5136,12 @@ namespace MWRender
         }
 
         // Get the blending rules
-        if (Settings::game().mSmoothAnimTransitions)
+        if (useSmoothAnimationTransitions())
         {
-            constexpr VFS::Path::ExtensionView yaml("yaml");
-
             // Note, even if the actual config is .json - we should send a .yaml path to AnimBlendRulesManager, the
             // manager will check for .json if it will not find a specified .yaml file.
             VFS::Path::Normalized blendConfigPath(kfname);
-            blendConfigPath.changeExtension(yaml);
+            blendConfigPath.changeExtension("yaml");
 
             // globalBlendConfigPath is only used with actors! Objects have no default blending.
             constexpr VFS::Path::NormalizedView globalBlendConfigPath("animations/animation-config.yaml");
@@ -5202,6 +5203,147 @@ namespace MWRender
         return {};
     }
 
+    Animation::SourceOverrideBinding Animation::bindSourceOverride(
+        std::string_view path, std::string_view requestedGroup)
+    {
+        SourceOverrideBinding result;
+        if (path.empty())
+            return result;
+
+        const std::string sourcePath = VFS::Path::toNormalized(path);
+        const bool sourceExists = mResourceSystem != nullptr
+            && mResourceSystem->getVFS()->exists(VFS::Path::Normalized(sourcePath));
+        Log(Debug::Info) << "FNV kNVSE source override begin actor=" << mPtr.getCellRef().getRefId()
+                         << " path=" << sourcePath << " requestedGroup=" << requestedGroup
+                         << " vfsExists=" << sourceExists;
+        if (!sourceExists)
+        {
+            Log(Debug::Error) << "FNV kNVSE source override rejected missing path=" << sourcePath;
+            return result;
+        }
+
+        std::vector<std::pair<std::string, std::string>> previousSources;
+        for (const std::string& group : getAnimationGroups())
+            previousSources.emplace_back(group, getAnimationSourceName(group));
+
+        const std::string semanticGroup(requestedGroup);
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        if (addSingleAnimSource(sourcePath, baseModel, false, {}, semanticGroup) == nullptr)
+        {
+            Log(Debug::Error) << "FNV kNVSE source override rejected controller binding actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath
+                              << " baseModel=" << baseModel << " requestedGroup=" << semanticGroup;
+            return result;
+        }
+
+        result.mGroup
+            = semanticGroup.empty() ? getAnimationGroupFromSource(sourcePath) : semanticGroup;
+        if (result.mGroup.empty())
+            return result;
+
+        for (const auto& [group, source] : previousSources)
+        {
+            if (group == result.mGroup)
+            {
+                result.mPreviousGroup = group;
+                result.mPreviousSource = source;
+                break;
+            }
+        }
+        // A custom SpecialIdle can introduce a group that had no source at
+        // installation time. In that case the actor's ordinary idle is the
+        // observable baseline to which native locomotion returns after the
+        // one-shot source is unregistered.
+        if (result.mPreviousSource.empty())
+        {
+            for (const auto& [group, source] : previousSources)
+            {
+                if (group == "idle" && !source.empty())
+                {
+                    result.mPreviousGroup = group;
+                    result.mPreviousSource = source;
+                    break;
+                }
+            }
+        }
+        result.mSelectedSource = getAnimationSourceName(result.mGroup);
+        result.mControllerMask = getAnimationGroupControllerMask(result.mGroup);
+        result.mLoaded = !result.mSelectedSource.empty() && result.mControllerMask != 0;
+        Log(result.mLoaded ? Debug::Info : Debug::Error)
+            << "FNV kNVSE source override result actor=" << mPtr.getCellRef().getRefId()
+            << " loaded=" << result.mLoaded << " group=" << result.mGroup
+            << " previousGroup=" << result.mPreviousGroup << " previousSource=" << result.mPreviousSource
+            << " selectedSource=" << result.mSelectedSource
+            << " controllerMask=" << result.mControllerMask;
+        return result;
+    }
+
+    Animation::SourceOverrideBinding Animation::restoreSourceOverride(std::string_view path,
+        std::string_view installedGroup, std::string_view expectedPreviousSource, std::string_view previousGroup)
+    {
+        SourceOverrideBinding result;
+        result.mGroup = previousGroup.empty() ? std::string(installedGroup) : std::string(previousGroup);
+        result.mPreviousGroup = result.mGroup;
+        result.mPreviousSource = std::string(expectedPreviousSource);
+        if (path.empty() || installedGroup.empty() || result.mGroup.empty())
+            return result;
+
+        const std::string sourcePath = VFS::Path::toNormalized(path);
+        const std::string group(installedGroup);
+        const std::string selectedOverride = getAnimationSourceName(group);
+        if (!Misc::StringUtils::ciEqual(selectedOverride, sourcePath))
+        {
+            Log(Debug::Error) << "FNV kNVSE source restore rejected non-selected override actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath << " group=" << group
+                              << " selectedSource=" << selectedOverride;
+            return result;
+        }
+
+        disable(group);
+        auto found = mAnimSources.rend();
+        for (auto source = mAnimSources.rbegin(); source != mAnimSources.rend(); ++source)
+        {
+            if (Misc::StringUtils::ciEqual((*source)->mSourceName, sourcePath)
+                && (*source)->getTextKeys().hasGroupStart(group))
+            {
+                found = source;
+                break;
+            }
+        }
+        if (found == mAnimSources.rend())
+        {
+            Log(Debug::Error) << "FNV kNVSE source restore could not locate installed source actor="
+                              << mPtr.getCellRef().getRefId() << " path=" << sourcePath << " group=" << group;
+            return result;
+        }
+
+        // mSupportedAnimations contains views owned by the sources, so release
+        // the views before erasing and rebuild them from the surviving stack.
+        mSupportedAnimations.clear();
+        mAnimSources.erase(std::next(found).base());
+        for (const std::shared_ptr<AnimSource>& source : mAnimSources)
+        {
+            for (const std::string& supportedGroup : source->getTextKeys().getGroups())
+                mSupportedAnimations.insert(supportedGroup);
+        }
+        mSupportedDirections.clear();
+
+        result.mSelectedSource = getAnimationSourceName(result.mGroup);
+        result.mControllerMask = getAnimationGroupControllerMask(result.mGroup);
+        const bool sourceRestored = expectedPreviousSource.empty()
+            ? getAnimationSourceName(group).empty()
+            : Misc::StringUtils::ciEqual(result.mSelectedSource, expectedPreviousSource);
+        result.mLoaded = sourceRestored
+            && (expectedPreviousSource.empty() || result.mControllerMask != 0);
+        Log(result.mLoaded ? Debug::Info : Debug::Error)
+            << "FNV kNVSE source restore result actor=" << mPtr.getCellRef().getRefId()
+            << " restored=" << result.mLoaded << " removedPath=" << sourcePath
+            << " removedGroup=" << group << " selectedGroup=" << result.mGroup
+            << " expectedSource=" << expectedPreviousSource << " selectedSource=" << result.mSelectedSource
+            << " controllerMask=" << result.mControllerMask;
+        return result;
+    }
+
     std::string Animation::getAnimationGroupFromSource(
         std::string_view sourceName, std::string_view groupPrefix) const
     {
@@ -5217,133 +5359,6 @@ namespace MWRender
             }
         }
         return {};
-    }
-
-    bool Animation::addFalloutScriptPackageAnimationSource(std::string_view model, std::string_view semanticGroup)
-    {
-        if (model.empty() || semanticGroup.empty() || mResourceSystem == nullptr)
-            return false;
-
-        std::string source(model);
-        VFS::Path::normalizeFilenameInPlace(source);
-        if (!source.starts_with("meshes/"))
-            source = "meshes/" + source;
-        if (!Misc::StringUtils::ciEndsWith(source, ".kf"))
-            return false;
-
-        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
-        if (baseModel.empty())
-        {
-            Log(Debug::Warning) << "FNV/ESM4 scripted package: actor has no compatible animation root actor="
-                                << mPtr.getCellRef().getRefId() << " source=" << source;
-            return false;
-        }
-
-        mFalloutScriptPackageCameraTarget = false;
-        const std::shared_ptr<AnimSource> animationSource
-            = addSingleAnimSource(source, baseModel, false, {}, semanticGroup, true);
-        const bool bound = animationSource != nullptr && hasAnimation(semanticGroup);
-        Log(bound ? Debug::Info : Debug::Warning)
-            << "FNV/ESM4 scripted package: animation source=" << source
-            << " actor=" << mPtr.getCellRef().getRefId() << " group=" << semanticGroup
-            << " bound=" << bound;
-        return bound;
-    }
-
-    bool Animation::ensureFalloutScriptPackageCameraTarget()
-    {
-        if (!mObjectRoot)
-            return false;
-
-        if (mFalloutScriptPackageCameraNodes.find("Camera1st") != mFalloutScriptPackageCameraNodes.end())
-        {
-            mFalloutScriptPackageCameraTarget = true;
-            return true;
-        }
-
-        // The shipped Fallout first-person skeleton owns Camera1st beneath its
-        // Bip01 hierarchy. Import that complete authored hierarchy. Cinematic
-        // KFs animate `Bip` (the short dialect alias for Bip01), NonAccum, neck,
-        // and Camera1st together; cloning only the lower branch drops the root
-        // track and points the camera away from the authored subject.
-        (void)getNodeMap();
-
-        if (mResourceSystem == nullptr)
-            return false;
-
-        const VFS::Path::Normalized firstPersonSkeleton
-            = VFS::Path::toNormalized("meshes/characters/_1stperson/skeleton.nif");
-        if (!mResourceSystem->getVFS()->exists(firstPersonSkeleton))
-        {
-            Log(Debug::Warning) << "FNV/ESM4 scripted package: missing retail first-person skeleton for authored "
-                                << "Camera1st target " << mPtr.getCellRef().getRefId();
-            return false;
-        }
-
-        try
-        {
-            osg::ref_ptr<osg::Node> sourceSkeleton
-                = mResourceSystem->getSceneManager()->getInstance(firstPersonSkeleton);
-            SceneUtil::FindByNameVisitor sourceRootVisitor("Bip01");
-            sourceSkeleton->accept(sourceRootVisitor);
-            NifOsg::MatrixTransform* const sourceRoot
-                = dynamic_cast<NifOsg::MatrixTransform*>(sourceRootVisitor.mFoundNode);
-            if (sourceRoot == nullptr)
-            {
-                Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton has no NIF "
-                                    << "Bip01 root for " << mPtr.getCellRef().getRefId();
-                return false;
-            }
-
-            osg::ref_ptr<osg::Node> clonedBranch
-                = static_cast<osg::Node*>(sourceRoot->clone(osg::CopyOp::DEEP_COPY_NODES));
-            NifOsg::MatrixTransform* const cameraRoot
-                = dynamic_cast<NifOsg::MatrixTransform*>(clonedBranch.get());
-            SceneUtil::FindByNameVisitor targetVisitor("Camera1st");
-            clonedBranch->accept(targetVisitor);
-            NifOsg::MatrixTransform* const target
-                = dynamic_cast<NifOsg::MatrixTransform*>(targetVisitor.mFoundNode);
-            if (cameraRoot == nullptr || target == nullptr)
-            {
-                Log(Debug::Warning) << "FNV/ESM4 scripted package: retail first-person skeleton lacks a usable "
-                                    << "Camera1st branch for " << mPtr.getCellRef().getRefId();
-                return false;
-            }
-
-            mObjectRoot->addChild(cameraRoot);
-            mFalloutScriptPackageCameraNodes.clear();
-            SceneUtil::NodeMapVisitor cameraNodeVisitor(mFalloutScriptPackageCameraNodes);
-            cameraRoot->accept(cameraNodeVisitor);
-            if (mFalloutScriptPackageCameraNodes.find("Bip01") == mFalloutScriptPackageCameraNodes.end()
-                || mFalloutScriptPackageCameraNodes.find("Bip01 NonAccum")
-                    == mFalloutScriptPackageCameraNodes.end()
-                || mFalloutScriptPackageCameraNodes.find("Camera1st")
-                    == mFalloutScriptPackageCameraNodes.end())
-            {
-                mObjectRoot->removeChild(cameraRoot);
-                mFalloutScriptPackageCameraNodes.clear();
-                Log(Debug::Warning) << "FNV/ESM4 scripted package: cloned first-person hierarchy is incomplete for "
-                                    << mPtr.getCellRef().getRefId();
-                return false;
-            }
-            mFalloutScriptPackageCameraTarget = true;
-            Log(Debug::Info) << "FNV/ESM4 scripted package: materialised complete retail first-person Camera1st rig for "
-                             << mPtr.getCellRef().getRefId() << " root=Bip01 source="
-                             << firstPersonSkeleton.value() << " targetCount="
-                             << mFalloutScriptPackageCameraNodes.size() << " rootLocal=("
-                             << cameraRoot->getMatrix().getTrans().x() << ","
-                             << cameraRoot->getMatrix().getTrans().y() << ","
-                             << cameraRoot->getMatrix().getTrans().z() << ") targetLocal=("
-                             << target->getMatrix().getTrans().x() << "," << target->getMatrix().getTrans().y()
-                             << "," << target->getMatrix().getTrans().z() << ")";
-            return true;
-        }
-        catch (const std::exception& e)
-        {
-            Log(Debug::Warning) << "FNV/ESM4 scripted package: unable to load retail first-person Camera1st branch "
-                                << "for " << mPtr.getCellRef().getRefId() << ": " << e.what();
-            return false;
-        }
     }
 
     bool Animation::prepareFalloutHitReaction()
@@ -5584,10 +5599,7 @@ namespace MWRender
         while (stateiter != mStates.end())
         {
             if (stateiter->second.mPriority == priority && stateiter->first != groupname)
-            {
-                animationEnded(stateiter->second);
-                stateiter = mStates.erase(stateiter);
-            }
+                mStates.erase(stateiter++);
             else
                 ++stateiter;
         }
@@ -5816,6 +5828,36 @@ namespace MWRender
         return mNodeMap;
     }
 
+//## VR_PATCH BEGIN
+// VR needs some bones to just do nothing.
+    static bool vrOverride(const std::string& groupname, const std::string& bone)
+    {
+        if (VR::getKBMouseModeActive() || !VR::getVR())
+            return false;
+
+        // TODO: It's difficult to design a good override system when
+        // I don't have a good understanding of the animation code. So for
+        // now i just hardcode blocking of updaters for nodes that should not be animated in VR.
+        // Add any bone+groupname pair that is messing with Vr comfort here.
+        using Overrides = std::set<std::string>;
+        using GroupOverrides = std::map<std::string, Overrides>;
+        static GroupOverrides sVrOverrides = {
+            { "crossbow", { "weapon bone" } },
+            { "throwweapon", { "weapon bone" } },
+            { "bowandarrow", { "weapon bone" } },
+        };
+
+        bool override = false;
+        auto find = sVrOverrides.find(groupname);
+        if (find != sVrOverrides.end())
+        {
+            override = !!find->second.count(bone);
+        }
+
+        return override;
+    }
+
+//## VR_PATCH END
     template <typename ControllerType>
     inline osg::Callback* Animation::handleBlendTransform(const osg::ref_ptr<osg::Node>& node,
         osg::ref_ptr<SceneUtil::KeyframeController> keyframeController,
@@ -5968,7 +6010,7 @@ namespace MWRender
                 return static_cast<int>(value);
         }
 
-        const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::Ptr player = MWMechanics::getPlayer();
         if (mPtr == player
             || Misc::StringUtils::ciEqual(mPtr.getCellRef().getRefId().serializeText(), "player"))
             return 0;
@@ -6054,6 +6096,10 @@ namespace MWRender
 
     void Animation::resetActiveGroups()
     {
+//## VR_PATCH BEGIN
+        const bool isPlayer = (mPtr == MWMechanics::getPlayer());
+
+//## VR_PATCH END
         // REC_NPC_4 is shared by Oblivion and the later Bethesda formats.  The
         // accumulation reset, bone-LOD handling, native callback traversal, and
         // direct (non-smoothed) controller path below reproduce FO3/FNV runtime
@@ -6062,6 +6108,7 @@ namespace MWRender
         size_t falloutAddedControllers = 0;
         size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
+        bool activeFalloutProcedureIdle = false;
         const int requestedBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
         if (mBethesdaBoneLodLevel < 0 || !shouldDeferBethesdaBoneLodChange())
             mBethesdaBoneLodLevel = requestedBoneLodLevel;
@@ -6076,93 +6123,148 @@ namespace MWRender
         for (size_t blendMask = 0; blendMask < sNumBlendMasks; blendMask++)
         {
             AnimStateMap::const_iterator active = mStates.end();
+            std::map<std::string, AnimStateMap::const_iterator> activeControllers;
 
             AnimStateMap::const_iterator state = mStates.begin();
             for (; state != mStates.end(); ++state)
             {
-                if (!state->second.blendMaskContains(blendMask))
+                if (!state->second.blendMaskContains(blendMask) || !state->second.mSource)
                     continue;
 
                 if (active == mStates.end()
                     || active->second.mPriority[(BoneGroup)blendMask] < state->second.mPriority[(BoneGroup)blendMask])
                     active = state;
+
+                for (const auto& controller : state->second.mSource->mControllerMap[blendMask])
+                {
+                    auto [selected, inserted] = activeControllers.emplace(controller.first, state);
+                    if (!inserted
+                        && selected->second->second.mPriority[(BoneGroup)blendMask]
+                            < state->second.mPriority[(BoneGroup)blendMask])
+                        selected->second = state;
+                }
             }
 
             mAnimationTimePtr[blendMask]->setTimePtr(
                 active == mStates.end() ? std::shared_ptr<float>() : active->second.mTime);
 
-            // add external controllers for the AnimSource active in this blend mask
-            if (active != mStates.end())
+            if (!falloutNpc && active != mStates.end())
             {
+                activeControllers.clear();
+                for (const auto& controller : active->second.mSource->mControllerMap[blendMask])
+                    activeControllers.emplace(controller.first, active);
+            }
+
+            // Fallout first-person clips commonly author only one arm inside the same coarse upper-body mask.
+            // Select the highest-priority controller for each bone so the partial overlay does not drop the
+            // complementary base-pose controllers that retail keeps playing. Other animation systems retain their
+            // original whole-source selection above.
+            for (const auto& [controllerName, controllerState] : activeControllers)
+            {
+                active = controllerState;
                 std::shared_ptr<AnimSource> animsrc = active->second.mSource;
+                activeFalloutProcedureIdle = activeFalloutProcedureIdle || animsrc->mFalloutProcedureIdle;
                 const AnimBlendStateData stateData
                     = { .mGroupname = active->second.mGroupname, .mStartKey = active->second.mStartKey };
 
-                for (AnimSource::ControllerMap::iterator it = animsrc->mControllerMap[blendMask].begin();
-                     it != animsrc->mControllerMap[blendMask].end(); ++it)
+                AnimSource::ControllerMap::iterator it = animsrc->mControllerMap[blendMask].find(controllerName);
+                if (it == animsrc->mControllerMap[blendMask].end())
+                    continue;
+                if (falloutNpc && std::getenv("OPENMW_FNV_HAND_POSE_AUDIT") != nullptr
+                    && (active->second.mGroupname == "pipboywaver"
+                        || active->second.mGroupname == "pipboybaseaim")
+                    && (controllerName == "bip01 nonaccum" || controllerName == "bip01 l clavicle"
+                        || controllerName == "bip01 l upperarm" || controllerName == "bip01 l forearm"
+                        || controllerName == "bip01 luparmtwistbone" || controllerName == "bip01 l foretwist"
+                        || controllerName == "bip01 l hand" || controllerName == "bip01 r clavicle"
+                        || controllerName == "bip01 r upperarm" || controllerName == "bip01 r forearm"
+                        || controllerName == "bip01 r foretwist" || controllerName == "bip01 r hand"))
                 {
-                    osg::ref_ptr<osg::Node> node = getNodeMap().at(
-                        it->first); // this should not throw, we already checked for the node existing in addAnimSource
+                    Log(Debug::Info) << "FNV Pip-Boy controller ownership: bone=" << controllerName
+                                     << " blendMask=" << blendMask
+                                     << " group=" << active->second.mGroupname
+                                     << " source=" << animsrc->mSourceName
+                                     << " time=" << active->second.getTime();
+                }
+                if (falloutNpc)
+                {
+                    auto controllerTime = std::make_shared<AnimationTime>();
+                    controllerTime->setTimePtr(active->second.mTime);
+                    it->second->setSource(std::move(controllerTime));
+                }
+                osg::ref_ptr<osg::Node> node = getNodeMap().at(
+                    it->first); // this should not throw, we already checked for the node existing in addAnimSource
 
-                    if (falloutNpc && isBethesdaBoneLodSuppressed(node))
+                if (falloutNpc && isBethesdaBoneLodSuppressed(node))
+                {
+                    ++falloutBoneLodSuppressedControllers;
+                    continue;
+                }
+
+                const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
+
+                osg::Callback* callback = it->second->getAsCallback();
+                auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
+                const bool propertyController
+                    = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
+                const bool transformController
+                    = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
+                // A compound Fallout KF controller owns its transform and render-property channels atomically.
+                // Feeding it into a transform-only blender would discard material/UV animation.
+                if (useSmoothAnims && !propertyController)
+                {
+                    if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
                     {
-                        ++falloutBoneLodSuppressedControllers;
-                        continue;
+                        callback = handleBlendTransform<NifAnimBlendController>(node, it->second,
+                            mAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
                     }
-
-                    const bool useSmoothAnims = !falloutNpc && Settings::game().mSmoothAnimTransitions;
-
-                    osg::Callback* callback = it->second->getAsCallback();
-                    auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
-                    const bool propertyController
-                        = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
-                    const bool transformController
-                        = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
-                    // A compound Fallout KF controller owns its transform and render-property channels atomically.
-                    // Feeding it into a transform-only blender would discard material/UV animation.
-                    if (useSmoothAnims && !propertyController)
+                    else if (dynamic_cast<osgAnimation::Bone*>(node.get()))
                     {
-                        if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
-                        {
-                            callback = handleBlendTransform<NifAnimBlendController>(node, it->second,
-                                mAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
-                        }
-                        else if (dynamic_cast<osgAnimation::Bone*>(node.get()))
-                        {
-                            callback = handleBlendTransform<BoneAnimBlendController>(node, it->second,
-                                mBoneAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
-                        }
+                        callback = handleBlendTransform<BoneAnimBlendController>(node, it->second,
+                            mBoneAnimBlendControllers, stateData, animsrc->mAnimBlendRules, active->second);
                     }
-                    node->setDataVariance(osg::Object::DYNAMIC);
-                    const bool addSceneGraphCallback
-                        = propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks();
-                    if (addSceneGraphCallback)
-                    {
-                        node->addUpdateCallback(callback);
-                        mActiveControllers.emplace_back(node, callback);
-                        if (falloutNpc)
-                            ++falloutAddedControllers;
-                    }
+                }
+//## VR_PATCH BEGIN
+                // Some bones need to be still and do nothing in VR
+                // I'm SURE we'll TOTALLY make a cleaner solution for this before the end of 2090
+                node->setDataVariance(osg::Object::DYNAMIC);
+                const bool addSceneGraphCallback
+                    = (propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
+                    && (!isPlayer || !vrOverride(active->first, it->first));
+                if (addSceneGraphCallback)
+//## VR_PATCH END
+                {
+                    node->addUpdateCallback(callback);
+                    mActiveControllers.emplace_back(node, callback);
+                    if (falloutNpc)
+                        ++falloutAddedControllers;
+                }
 
-                    if (transformController && blendMask == 0 && node == mAccumRoot)
-                    {
-                        mAccumCtrl = it->second;
+                if (transformController && blendMask == 0 && node == mAccumRoot)
+                {
+                    mAccumCtrl = it->second;
 
-                        // Bethesda locomotion stores actor displacement on the accumulation root. Apply that
-                        // displacement to gameplay movement, then clear its accumulated axes from the rendered
-                        // skeleton just like the native engine. Leaving the callback off for Fallout actors makes
-                        // the complete body surge away from and back to its physics reference every animation cycle.
-                        if (!mResetAccumRootCallback)
-                        {
-                            mResetAccumRootCallback = new ResetAccumRootCallback;
-                            mResetAccumRootCallback->setAccumulate(mAccumulate);
-                        }
-                        mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
-                        // Keep the reset last in the callback chain so it sees the sampled controller value.
-                        mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
-                        mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
-                        accumResetAttached = true;
+                    // Bethesda locomotion stores actor displacement on the accumulation root. Apply that
+                    // displacement to gameplay movement, then clear its accumulated axes from the rendered
+                    // skeleton just like the native engine. Leaving the callback off for Fallout actors makes
+                    // the complete body surge away from and back to its physics reference every animation cycle.
+                    if (!mResetAccumRootCallback)
+                    {
+                        mResetAccumRootCallback = new ResetAccumRootCallback;
+                        mResetAccumRootCallback->setAccumulate(mAccumulate);
                     }
+                    mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
+                    const bool restoreFalloutBindRotation = falloutNpc
+                        && Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                        && !animsrc->mFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+                    auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+                    mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                            ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                            : std::nullopt);
+                    // Keep the reset last in the callback chain so it sees the sampled controller value.
+                    mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
+                    mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
+                    accumResetAttached = true;
                 }
             }
         }
@@ -6178,6 +6280,12 @@ namespace MWRender
                 mResetAccumRootCallback->setAccumulate(mAccumulate);
             }
             mResetAccumRootCallback->setResetAllTranslation(true);
+            const bool restoreFalloutBindRotation = Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                && !activeFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+            auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+            mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                    ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                    : std::nullopt);
             mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
             mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
         }
@@ -6211,7 +6319,7 @@ namespace MWRender
         return false;
     }
 
-    bool Animation::getInfo(std::string_view groupname, float* complete, float* speedmult, uint32_t* loopcount) const
+    bool Animation::getInfo(std::string_view groupname, float* complete, float* speedmult, size_t* loopcount) const
     {
         AnimStateMap::const_iterator iter = mStates.find(groupname);
         if (iter == mStates.end())
@@ -6227,7 +6335,11 @@ namespace MWRender
 
         if (complete)
         {
-            *complete = iter->second.getCompletion();
+            if (iter->second.mStopTime > iter->second.mStartTime)
+                *complete = (iter->second.getTime() - iter->second.mStartTime)
+                    / (iter->second.mStopTime - iter->second.mStartTime);
+            else
+                *complete = (iter->second.mPlaying ? 0.0f : 1.0f);
         }
         if (speedmult)
             *speedmult = iter->second.mSpeedMult;
@@ -6259,10 +6371,7 @@ namespace MWRender
     {
         AnimStateMap::iterator iter = mStates.find(groupname);
         if (iter != mStates.end())
-        {
-            animationEnded(iter->second);
             mStates.erase(iter);
-        }
         resetActiveGroups();
     }
 
@@ -6472,8 +6581,7 @@ namespace MWRender
 
             if (!state.mPlaying && state.mAutoDisable)
             {
-                animationEnded(stateiter->second);
-                stateiter = mStates.erase(stateiter);
+                mStates.erase(stateiter++);
 
                 resetActiveGroups();
             }
@@ -6648,18 +6756,9 @@ namespace MWRender
                         }
                     }
                     const bool accumulationBone = isFalloutAccumulationBone(lowerAppliedBone);
-                    // Camera1st and its immediate NonAccum parent are an authored first-person branch, not visible
-                    // skeleton displacement. Their KF translation tracks are therefore mandatory even when the
-                    // optional body-bone translation policy is disabled. This is selected from the KF's explicit
-                    // controller target names and applies to any Fallout package that carries that branch.
-                    const bool authoredCameraTransform = animsrc && animsrc->mFalloutAuthoredCamera
-                        && (lowerAppliedBone == "camera1st" || lowerAppliedBone == "bip01 nonaccum");
-                    const bool allowAccumulationTranslation
-                        = authoredCameraTransform || !accumulationBone || falloutProcedureIdle;
-                    const bool applyBoneTranslation = (authoredCameraTransform
-                                                           || (falloutProcedureIdle
-                                                                   ? shouldApplyFalloutProcedureBoneTranslations()
-                                                                   : shouldApplyFalloutBoneTranslations()))
+                    const bool allowAccumulationTranslation = !accumulationBone || falloutProcedureIdle;
+                    const bool applyBoneTranslation = (falloutProcedureIdle ? shouldApplyFalloutProcedureBoneTranslations()
+                                                                            : shouldApplyFalloutBoneTranslations())
                         && allowAccumulationTranslation
                         && keyframe.mTranslation
                         && isSafeFalloutBoneTranslation(*keyframe.mTranslation, before.getTrans());
@@ -7262,6 +7361,8 @@ namespace MWRender
             }
         }
 
+        applyFalloutDeathPoseFallback();
+
         if (esm4Npc && mObjectRoot != nullptr
             && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
         {
@@ -7284,6 +7385,67 @@ namespace MWRender
             auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
+    }
+
+    void Animation::applyFalloutDeathPoseFallback()
+    {
+        if (mFalloutCorpseTransform == nullptr || !isFalloutDeathFallbackContext(mPtr)
+            || !mPtr.getClass().isActor())
+            return;
+
+        const bool dead = mPtr.getClass().getCreatureStats(mPtr).isDead();
+        if (!dead)
+        {
+            if (mFalloutCorpsePoseApplied)
+            {
+                mFalloutCorpseTransform->setMatrix(osg::Matrixf::identity());
+                mFalloutCorpseTransform->dirtyBound();
+                mFalloutCorpsePoseApplied = false;
+                Log(Debug::Info) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                 << " state=resurrected pose=identity";
+            }
+            return;
+        }
+
+        static constexpr std::array<std::string_view, 5> sDeathGroups{
+            "death1", "death2", "death3", "death4", "death5"
+        };
+        if (std::any_of(sDeathGroups.begin(), sDeathGroups.end(),
+                [&](std::string_view group) { return hasAnimation(group); }))
+            return;
+        if (mFalloutCorpsePoseApplied || mFalloutCorpseTransform->getNumChildren() == 0)
+            return;
+
+        osg::ComputeBoundsVisitor boundsVisitor;
+        mFalloutCorpseTransform->getChild(0)->accept(boundsVisitor);
+        const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+        if (!bounds.valid())
+        {
+            Log(Debug::Warning) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                << " state=failed reason=invalid-bounds";
+            return;
+        }
+
+        const osg::Vec3f pivot = bounds.center();
+        const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+        const float direction = !refId.empty() && (static_cast<unsigned char>(refId.back()) & 1u) ? -1.f : 1.f;
+        osg::Matrixf pose = osg::Matrixf::translate(-pivot)
+            * osg::Matrixf::rotate(direction * osg::PI_2, osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Matrixf::translate(pivot);
+
+        float transformedMinZ = std::numeric_limits<float>::max();
+        for (unsigned int corner = 0; corner < 8; ++corner)
+            transformedMinZ = std::min(transformedMinZ, (bounds.corner(corner) * pose).z());
+        const float groundShift = bounds.zMin() - transformedMinZ;
+        pose = pose * osg::Matrixf::translate(0.f, 0.f, groundShift);
+
+        mFalloutCorpseTransform->setMatrix(pose);
+        mFalloutCorpseTransform->dirtyBound();
+        mFalloutCorpsePoseApplied = true;
+        Log(Debug::Info) << "FNV combat death: actor=" << mPtr.getCellRef().getRefId()
+                         << " dead=1 visual=procedural-grounded-side-pose status=pass angle="
+                         << direction * 90.f << " groundShift=" << groundShift
+                         << " boundsMinZ=" << bounds.zMin() << " boundsMaxZ=" << bounds.zMax();
     }
 
     void Animation::setLoopingEnabled(std::string_view groupname, bool enabled)
@@ -7395,11 +7557,11 @@ namespace MWRender
         }
         mObjectRoot = nullptr;
         mSkeleton = nullptr;
+        mFalloutCorpseTransform = nullptr;
+        mFalloutCorpsePoseApplied = false;
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        mFalloutScriptPackageCameraNodes.clear();
-        mFalloutScriptPackageCameraTarget = false;
         mAccumRoot = nullptr;
         mAccumCtrl = nullptr;
 
@@ -7443,19 +7605,18 @@ namespace MWRender
         }
 
         const auto isDefaultActorModel = [](std::string_view path) {
-            const VFS::Path::Normalized normalizedPath(path);
-            return normalizedPath == Settings::models().mXbaseanim.get()
-                || normalizedPath == Settings::models().mXbaseanim1st.get()
-                || normalizedPath == Settings::models().mXbaseanimfemale.get()
-                || normalizedPath == Settings::models().mXargonianswimkna.get()
-                || normalizedPath == Settings::models().mBaseanim.get()
-                || normalizedPath == Settings::models().mBaseanimkna.get()
-                || normalizedPath == Settings::models().mBaseanimkna1st.get()
-                || normalizedPath == Settings::models().mBaseanimfemale.get()
-                || normalizedPath == Settings::models().mBaseanimfemale1st.get()
-                || normalizedPath == VFS::Path::Normalized("characters/_male/skeleton.nif")
-                || normalizedPath == VFS::Path::Normalized("actors/character/character assets/skeleton.nif")
-                || normalizedPath == VFS::Path::Normalized("actors/character/_1stperson/skeleton.nif");
+            return VFS::Path::pathEqual(Settings::models().mXbaseanim.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXbaseanim1st.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXbaseanimfemale.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXargonianswimkna.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanim.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimkna.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimkna1st.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale1st.get(), path)
+                || VFS::Path::pathEqual("characters/_male/skeleton.nif", path)
+                || VFS::Path::pathEqual("actors/character/character assets/skeleton.nif", path)
+                || VFS::Path::pathEqual("actors/character/_1stperson/skeleton.nif", path);
         };
         const bool useEmptyMissingDefaultActorRoot
             = !model.empty() && isDefaultActorModel(model) && !mResourceSystem->getVFS()->exists(VFS::Path::toNormalized(model));
@@ -7514,14 +7675,14 @@ namespace MWRender
             }
         }
 
-        if (osg::ref_ptr<osg::Group> correctedRoot = correctFalloutCreatureForwardAxis(mObjectRoot, mPtr))
+        if (isFalloutDeathFallbackContext(mPtr))
         {
-            if (correctedRoot.get() != mObjectRoot.get())
-            {
-                mInsert->removeChild(mObjectRoot);
-                mObjectRoot = correctedRoot;
-                mInsert->addChild(mObjectRoot);
-            }
+            mInsert->removeChild(mObjectRoot);
+            mFalloutCorpseTransform = new osg::MatrixTransform;
+            mFalloutCorpseTransform->setName("FNV Actor Corpse Pose");
+            mFalloutCorpseTransform->addChild(mObjectRoot);
+            mObjectRoot = mFalloutCorpseTransform;
+            mInsert->addChild(mObjectRoot);
         }
 
         // osgAnimation formats with skeletons should have their nodemap be bone instances
@@ -7604,7 +7765,7 @@ namespace MWRender
                 highlight(&drawable);
             }
 
-            std::size_t mHighlightedRigs = 0;
+            std::size_t mHighlightedRigs{ 0 };
 
         private:
             std::span<const std::string_view> mTargetNodes;
@@ -7706,6 +7867,9 @@ namespace MWRender
 
         node->setNodeMask(Mask_Effect);
 
+        MarkDrawablesVisitor markVisitor(Mask_Effect);
+        node->accept(markVisitor);
+
         params.mMaxControllerLength = findMaxLengthVisitor.getMaxLength();
         params.mLoop = loop;
         params.mEffectId = effectId;
@@ -7720,7 +7884,7 @@ namespace MWRender
         // Notify that this animation has attached magic effects
         mHasMagicEffects = true;
 
-        overrideFirstRootTexture(VFS::Path::toNormalized(texture), mResourceSystem, *node);
+        overrideFirstRootTexture(texture, mResourceSystem, *node);
     }
 
     void Animation::removeEffect(std::string_view effectId)
@@ -7787,14 +7951,6 @@ namespace MWRender
 
     const osg::Node* Animation::getNode(std::string_view name) const
     {
-        if (mFalloutScriptPackageCameraTarget && Misc::StringUtils::ciEqual(name, "Camera1st"))
-        {
-            const NodeMap::const_iterator camera
-                = mFalloutScriptPackageCameraNodes.find("Camera1st");
-            if (camera != mFalloutScriptPackageCameraNodes.end())
-                return camera->second;
-        }
-
         const NodeMap& nodeMap = getNodeMap();
         NodeMap::const_iterator found = nodeMap.find(name);
         if (found == nodeMap.end() && isFalloutActor(mPtr))
@@ -7941,6 +8097,11 @@ namespace MWRender
         removeFromSceneImpl();
     }
 
+    bool Animation::useSmoothAnimationTransitions() const
+    {
+        return Settings::game().mSmoothAnimTransitions && !(VR::getVR() && mPtr == MWMechanics::getPlayer());
+    }
+
     void Animation::removeFromSceneImpl()
     {
         // External keyframe callbacks hold animation/controller state that belongs to this Animation instance.
@@ -7954,12 +8115,6 @@ namespace MWRender
 
         if (mObjectRoot != nullptr)
             mInsert->removeChild(mObjectRoot);
-    }
-
-    void Animation::animationEnded(AnimState& state) const
-    {
-        MWBase::Environment::get().getLuaManager()->animationEnded(
-            mPtr, state.mGroupname, state.getTime(), state.getCompletion(), state.mStartKey, state.mStopKey);
     }
 
     MWWorld::MovementDirectionFlags Animation::getSupportedMovementDirections(
@@ -8104,13 +8259,5 @@ namespace MWRender
                                     << ") parents";
             mNode->getParent(0)->removeChild(mNode);
         }
-    }
-
-    float Animation::AnimState::getCompletion() const
-    {
-        if (mStopTime > mStartTime)
-            return (getTime() - mStartTime) / (mStopTime - mStartTime);
-        else
-            return mPlaying ? 0.0f : 1.0f;
     }
 }

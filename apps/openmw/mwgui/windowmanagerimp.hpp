@@ -47,6 +47,7 @@ namespace MyGUI
     class UString;
     class ImageBox;
     class TextBox;
+    class EditBox;
 }
 
 namespace MWWorld
@@ -297,6 +298,12 @@ namespace MWGui
         void removeStaticMessageBox() override;
         void interactiveMessageBox(std::string_view message, const std::vector<std::string>& buttons = {},
             bool block = false, int defaultFocus = -1) override;
+        void interactiveFnvMenuMessageBox(const FnvMenuXmlDocument& menu, std::string_view frameTile,
+            std::string_view messageTile, std::string_view buttonTile, std::string_view message,
+            const std::vector<std::string>& buttons = {}, bool block = false, int defaultFocus = -1,
+            const FnvHackingMenuPresentation* hacking = nullptr) override;
+        void beginFalloutTerminalSession(const MWWorld::Ptr& target) override;
+        void endFalloutTerminalSession() override;
 
         int readPressedButton() override; ///< returns the index of the pressed button or -1 if no button was pressed
                                           ///< (->MessageBoxmanager->InteractiveMessageBox)
@@ -354,7 +361,7 @@ namespace MWGui
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) override;
         void readRecord(ESM::ESMReader& reader, uint32_t type) override;
-        size_t countSavedGameRecords() const override;
+        int countSavedGameRecords() const override;
 
         /// Does the current stack of GUI-windows permit saving?
         bool isSavingAllowed() const override;
@@ -417,7 +424,7 @@ namespace MWGui
         WindowBase* getActiveControllerWindow() override;
         int getControllerMenuHeight() override;
         void cycleActiveControllerWindow(bool next) override;
-        void setActiveControllerWindow(GuiMode mode, size_t activeIndex) override;
+        void setActiveControllerWindow(GuiMode mode, int activeIndex) override;
         void setFalloutPipBoyPresentation(bool physical) override;
         bool isFalloutPipBoyPhysicalPresentation() const override { return mFalloutPipBoyPhysical; }
         int getFalloutPipBoyActivePane() const override;
@@ -429,6 +436,11 @@ namespace MWGui
         float getFalloutPipBoyMapPanX() const { return mFalloutPipBoyMapPanX; }
         float getFalloutPipBoyMapPanY() const { return mFalloutPipBoyMapPanY; }
         float getFalloutPipBoyInteractionPulse() const { return mFalloutPipBoyInteractionPulse; }
+        bool isFalloutPipBoyRetailInventoryReady() const { return mFalloutPipBoyRetailInventoryReady; }
+        const MyGUI::IntCoord& getFalloutPipBoyRetailMapClip() const { return mFalloutPipBoyRetailMapClip; }
+        MyGUI::IntCoord getFalloutPipBoyRetailCanvas() const { return mFalloutPipBoyRetailCanvas; }
+        void setFalloutPipBoyMapSelection(std::string_view name, ESM::FormId marker);
+        void setFalloutPipBoyMapConfirmation(std::string_view text);
         osg::Texture2D* getFalloutPipBoyLocalMapTexture();
         std::string getFalloutPipBoyTerminalHeader() const override;
         std::string getFalloutPipBoyTerminalBody() const override;
@@ -525,6 +537,40 @@ namespace MWGui
 
         MyGUI::Widget* mInputBlocker;
 
+        // Flat Fallout presentation sourced from the retail menu document.
+        // Dynamic rows still come from the live OpenMW inventory model, just
+        // as the retail executable populates its authored list template.
+        std::unique_ptr<Layout> mFalloutPipBoyRetailLayout;
+        MyGUI::Widget* mFalloutPipBoyRetailRoot = nullptr;
+        std::unique_ptr<Layout> mFalloutPipBoyRetailStatsLayout;
+        MyGUI::Widget* mFalloutPipBoyRetailStatsRoot = nullptr;
+        std::unique_ptr<Layout> mFalloutPipBoyRetailMapLayout;
+        MyGUI::Widget* mFalloutPipBoyRetailMapRoot = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailMapTabs = nullptr;
+        MyGUI::Widget* mFalloutPipBoyRetailDataPanel = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailDataHeading = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailDataRows = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailStatsLevel = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailStatsHealth = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailStatsActionPoints = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailStatsExperience = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailStatsPlayerName = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailTitle = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailBody = nullptr;
+        MyGUI::Widget* mFalloutPipBoyRetailListHighlight = nullptr;
+        std::vector<MyGUI::Widget*> mFalloutPipBoyRetailItemRows;
+        std::vector<MyGUI::TextBox*> mFalloutPipBoyRetailItemRowLabels;
+        std::vector<MyGUI::ImageBox*> mFalloutPipBoyRetailItemRowMarkers;
+        MyGUI::TextBox* mFalloutPipBoyRetailItemInfo = nullptr;
+        MyGUI::ImageBox* mFalloutPipBoyRetailItemIcon = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailTabs = nullptr;
+        MyGUI::TextBox* mFalloutPipBoyRetailActions = nullptr;
+        bool mFalloutPipBoyRetailInventoryReady = false;
+        bool mFalloutPipBoyRetailStatsReady = false;
+        bool mFalloutPipBoyRetailMapReady = false;
+        MyGUI::IntCoord mFalloutPipBoyRetailCanvas;
+        MyGUI::IntCoord mFalloutPipBoyRetailMapClip;
+
         bool mHudEnabled;
         bool mLegacyHudSuppressed;
         bool mCursorVisible;
@@ -554,6 +600,7 @@ namespace MWGui
         // The currently active stack of GUI modes (top mode is the one we are in).
         std::vector<GuiMode> mGuiModes;
         std::unique_ptr<FalloutDialogueCameraState> mFalloutDialogueCamera;
+        std::unique_ptr<FalloutDialogueCameraState> mFalloutTerminalCamera;
         // The active window for controller mode for each GUI mode.
         std::map<GuiMode, int> mActiveControllerWindows;
         // Separate from the conventional OpenMW inventory/map layout.  The
@@ -575,15 +622,15 @@ namespace MWGui
         // interaction on the native first-person rig.
         float mFalloutPipBoyInteractionPulse = 0.f;
         std::string mFalloutPipBoyLastAction;
+        std::string mFalloutPipBoyMapSelection;
+        std::string mFalloutPipBoyMapConfirmation;
         int mFalloutPipBoyLocalMapX = 0;
         int mFalloutPipBoyLocalMapY = 0;
-        // A transparent, dedicated MyGUI layer used only as the texture source
-        // for PipBoyArm's real in-world screen.  It deliberately does not
-        // reuse the desktop inventory windows, whose opaque chrome does not
-        // fit the device's terminal display.
-        MyGUI::Widget* mFalloutPipBoyTerminalRoot = nullptr;
-        MyGUI::TextBox* mFalloutPipBoyTerminalHeader = nullptr;
-        MyGUI::TextBox* mFalloutPipBoyTerminalBody = nullptr;
+        // The native inventory panes temporarily move to the PipBoyScreen RTT
+        // layer while the physical device is raised, then return to the layer
+        // declared by their MyGUI layout. This preserves their real models,
+        // selection state, and input handlers instead of drawing a duplicate.
+        std::array<std::string, 4> mFalloutPipBoyOriginalLayers;
         // Current tooltip visibility state (can be disabled by mouse movement)
         bool mControllerTooltipVisible = false;
         // User preference for tooltips (persists across mouse/controller switches)
@@ -609,6 +656,9 @@ namespace MWGui
         bool mRestAllowed;
 
         void updateVisible(); // Update visibility of all windows based on mode, shown and allowed settings
+        void initializeFalloutPipBoyRetailInventory(int width, int height);
+        void initializeFalloutPipBoyRetailStats(int width, int height);
+        void initializeFalloutPipBoyRetailMap(int width, int height);
         void updateFalloutPipBoyTerminalSurface();
 
         void updateMap();

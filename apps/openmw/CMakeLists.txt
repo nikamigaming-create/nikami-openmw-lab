@@ -25,8 +25,15 @@ add_openmw_dir (mwrender
     bulletdebugdraw globalmap characterpreview camera localmap water terrainstorage ripplesimulation
     renderbin actoranimation landmanager navmesh actorspaths recastmesh fogmanager objectpaging groundcover
     postprocessor pingpongcull luminancecalculator pingpongcanvas transparentpass precipitationocclusion ripples
-    actorutil distortion animationpriority bonegroup blendmask animblendcontroller occlusionculling
+    falloutlodselection actorutil distortion animationpriority bonegroup blendmask animblendcontroller
     )
+
+# This translation unit contains the large Fallout actor and Pip-Boy integration path.
+# Keep local MSVC iteration practical: /Od only affects this file, while the rest of
+# RelWithDebInfo retains its normal optimization level.
+if(MSVC)
+    set_source_files_properties(mwrender/esm4npcanimation.cpp PROPERTIES COMPILE_OPTIONS "/Od")
+endif()
 
 add_openmw_dir (mwinput
     actions actionmanager bindingsmanager controllermanager controlswitch
@@ -35,6 +42,7 @@ add_openmw_dir (mwinput
 
 add_openmw_dir (mwgui
     layout textinput widgets race class birth review windowmanagerimp console dialogue
+    fnvmenuxml
     windowbase statswindow messagebox journalwindow charactercreation
     mapwindow windowpinnablebase tooltips scrollwindow bookwindow resourceskin
     formatting inventorywindow container hud countdialog tradewindow settingswindow
@@ -42,7 +50,7 @@ add_openmw_dir (mwgui
     itemselection spellbuyingwindow loadingscreen levelupdialog waitdialog spellcreationdialog
     enchantingdialog trainingwindow travelwindow exposedwindow cursor spellicons
     merchantrepair repair soulgemdialog companionwindow bookpage journalviewmodel journalbooks
-    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview
+    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview falloutquestlistpolicy
     tradeitemmodel companionitemmodel pickpocketitemmodel controllers savegamedialog
     recharge mode videowidget backgroundimage itemwidget screenfader debugwindow spellmodel spellview
     draganddrop timeadvancer jailscreen itemchargeview keyboardnavigation textcolours statswatcher
@@ -50,7 +58,7 @@ add_openmw_dir (mwgui
     )
 
 add_openmw_dir (mwdialogue
-    dialoguemanagerimp esm4dialogueutils esm4resultscript journalimp journalentry quest topic filter selectwrapper keywordsearch scripttest
+    dialoguemanagerimp esm4dialogueutils esm4resultscript journalimp journalentry quest topic filter selectwrapper hypertextparser keywordsearch scripttest
     )
 
 add_openmw_dir (mwscript
@@ -61,19 +69,20 @@ add_openmw_dir (mwscript
     )
 
 add_openmw_dir (mwlua
-    luamanagerimp object objectlists triggervolume userdataserializer luaevents engineevents objectvariant loadscripts contentbindings
+    luamanagerimp object objectlists triggervolume userdataserializer luaevents engineevents objectvariant
     context menuscripts globalscripts localscripts playerscripts luabindings objectbindings cellbindings coremwscriptbindings
     mwscriptbindings camerabindings vfsbindings uibindings soundbindings inputbindings nearbybindings dialoguebindings
     postprocessingbindings stats recordstore debugbindings corebindings worldbindings worker landbindings magicbindings factionbindings
-    classbindings itemdata inputprocessor animationbindings birthsignbindings racebindings markupbindings weatherbindings regionbindings obscriptbindings obscriptcompiler vrbindings
+    classbindings itemdata inputprocessor animationbindings birthsignbindings racebindings markupbindings weatherbindings regionbindings obscriptbindings obscriptcompiler
+    vrbindings
     types/types types/door types/item types/actor types/container types/lockable types/weapon types/npc
     types/creature types/player types/activator types/book types/lockpick types/probe types/apparatus
     types/potion types/ingredient types/misc types/repair types/armor types/light types/static
-    types/clothing types/levelledlist types/terminal magictypebindings
+    types/clothing types/levelledlist types/terminal
     )
 
 add_openmw_dir (mwsound
-    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer sounddecoder soundoutput
+    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer falloutsoundpath sounddecoder soundoutput
     loudness movieaudiofactory alext efx efxpresets regionsoundselector saysequence watersoundupdater
     )
 
@@ -84,8 +93,8 @@ add_openmw_dir (mwworld
     actionfnvcrafting fnvradioprogram
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
-    esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime
-    fnvweather fnvfasttravel
+    esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime fnvterminalhacking
+    fnvweather fnvsavepreflight fnvfasttravel
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry
     positioncellgrid
@@ -93,22 +102,22 @@ add_openmw_dir (mwworld
 
 add_openmw_dir (mwphysics
     physicssystem trace collisiontype actor convert object heightfield closestnotmerayresultcallback
-    contacttestresultcallback stepper movementsolver projectile
+    contacttestresultcallback deepestnotmecontacttestresultcallback stepper movementsolver projectile
     actorconvexcallback raycasting mtphysics contacttestwrapper projectileconvexcallback
     )
 
 add_openmw_dir (mwclass
     classes activator creature npc weapon armor potion apparatus book clothing container door
     ingredient creaturelevlist itemlevlist light lockpick misc probe repair static actor bodypart
-    esm4base esm4activator esm4container esm4creature esm4npc fnvaipackage fnvsandbox fnvfurnitureplacement esm4talkingactivator esm4terminal light4
+    esm4base esm4activator esm4container esm4creature esm4npc fnvaipackage fnvsandbox esm4talkingactivator esm4terminal light4
     )
 
 add_openmw_dir (mwmechanics
-    mechanicsmanagerimp stat creaturestats magiceffects movement actorutil spelllist
+    mechanicsmanagerimp ownership stat creaturestats magiceffects movement actorutil spelllist
     drawstate spells activespells npcstats aipackage aisequence aipursue alchemy aiwander aitravel aifollow aiavoiddoor aibreathe
     aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellcasting spellresistance
     disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction summoning
-    character dialoguefacing falloutactorstate falloutcombat ownership actors objects aistate weaponpriority spellpriority weapontype spellutil
+    character dialoguefacing falloutcombat falloutweaponsound actors objects aistate weaponpriority spellpriority weapontype spellutil
     spelleffects
     )
 
@@ -122,12 +131,12 @@ add_openmw_dir (mwbase
     )
 
 add_openmw_dir (mwvr
-    openxrinput
-    fnvxrliveframesurface
-    radialmenu realisticcombat
-    vranimation vrgui vrinputmanager vrinput vrlistbox vrmetamenu vrpingpongcallback vrpointer vrtracking vrtypes
-    vrutil vrvirtualkeyboard
+     openxrinput
+     fnvxrliveframesurface
+     radialmenu realisticcombat
+     vranimation vrgui vrinputmanager vrinput vrlistbox vrmetamenu vrpingpongcallback vrpointer vrtracking vrtypes vrutil vrvirtualkeyboard
     )
+
 
 # Main executable
 
@@ -203,6 +212,9 @@ if(BUILD_OPENMW)
 
     target_link_libraries(openmw openmw-lib)
 
+    openmw_add_executable(fnv-save330-denominator fnvsave330denominator.cpp)
+    target_link_libraries(fnv-save330-denominator openmw-lib)
+
     # Workaround necessary to ensure osgAnimation::MatrixLinearSampler dynamic casts work under Clang
     # NOTE: it's unclear whether the broken behavior is spec-compliant
     if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
@@ -268,8 +280,8 @@ set(OPENMW_LIB_LINK_LIBRARIES
     ${MyGUI_LIBRARIES}
     SDL2::SDL2
     ${RecastNavigation_LIBRARIES}
-    osg-ffmpeg-videoplayer
-    oics
+    "osg-ffmpeg-videoplayer"
+    "oics"
     components
 )
 target_link_libraries(openmw-lib ${OPENMW_LIB_LINK_LIBRARIES})
@@ -302,6 +314,8 @@ if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
         <vector>
     )
 endif()
+
+add_definitions(-DMYGUI_DONT_USE_OBSOLETE=ON)
 
 if (ANDROID)
     target_link_libraries(openmw-lib EGL android log z)
@@ -337,40 +351,44 @@ if (UNIX AND NOT APPLE)
     endif()
 endif()
 
-if(APPLE AND BUILD_OPENMW)
+if(APPLE AND (BUILD_OPENMW OR BUILD_OPENMW_VR))
     set(BUNDLE_RESOURCES_DIR "${APP_BUNDLE_DIR}/Contents/Resources")
 
     set(OPENMW_RESOURCES_ROOT ${BUNDLE_RESOURCES_DIR})
 
     add_subdirectory(../../files/ ${CMAKE_CURRENT_BINARY_DIR}/files)
 
+    configure_file("${OpenMW_BINARY_DIR}/overrides.bin" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/defaults.bin" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/openmw.cfg" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/gamecontrollerdb.txt" ${BUNDLE_RESOURCES_DIR} COPYONLY)
 
-    add_custom_command(TARGET openmw
-        POST_BUILD
-        COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${BUNDLE_RESOURCES_DIR}/resources")
-
     find_library(COCOA_FRAMEWORK Cocoa)
     find_library(IOKIT_FRAMEWORK IOKit)
-    target_link_libraries(openmw ${COCOA_FRAMEWORK} ${IOKIT_FRAMEWORK})
+
+    ### VR_PATCH.
+    #Use a commond list of link targets for openmw and openmw_vr
+    set(OPENMW_LINK_TARGETS ${COCOA_FRAMEWORK} ${IOKIT_FRAMEWORK})
 
     if (FFmpeg_FOUND)
-        target_link_options(openmw PRIVATE "LINKER:SHELL:-framework CoreVideo"
+        set(OPENMW_LINK_OPTIONS PRIVATE "LINKER:SHELL:-framework CoreVideo"
                                            "LINKER:SHELL:-framework CoreMedia"
                                            "LINKER:SHELL:-framework VideoToolbox"
                                            "LINKER:SHELL:-framework AudioToolbox"
                                            "LINKER:SHELL:-framework VideoDecodeAcceleration")
     endif()
+    ### /VR_PATCH
 endif()
 
 if (BUILD_WITH_CODE_COVERAGE)
     target_compile_options(openmw-lib PRIVATE --coverage)
     target_link_libraries(openmw-lib gcov)
     if (NOT ANDROID AND BUILD_OPENMW)
-        target_compile_options(openmw PRIVATE --coverage)
-        target_link_libraries(openmw gcov)
+        ### VR_PATCH.
+        #Use a commond list of link targets for openmw and openmw_vr
+        set(OPENMW_COMPILE_OPTIONS PRIVATE --coverage)
+        list(APPEND OPENMW_LINK_TARGETS gcov)
+        ### /VR_PATCH
     endif()
 endif()
 

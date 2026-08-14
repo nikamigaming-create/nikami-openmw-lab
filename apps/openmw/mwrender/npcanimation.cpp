@@ -18,6 +18,7 @@
 #include <components/esm3/loadbody.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -44,7 +45,6 @@
 #include "actorutil.hpp"
 #include "postprocessor.hpp"
 #include "renderbin.hpp"
-#include "renderingmanager.hpp"
 #include "rotatecontroller.hpp"
 #include "vismask.hpp"
 
@@ -331,6 +331,7 @@ namespace MWRender
 
             mStateSet = new osg::StateSet;
             mStateSet->setAttributeAndModes(new osg::ColorMask(false, false, false, false), osg::StateAttribute::ON);
+            mStateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
         }
 
         void drawImplementation(
@@ -374,9 +375,8 @@ namespace MWRender
     class OverrideFieldOfViewCallback : public osg::NodeCallback
     {
     public:
-        OverrideFieldOfViewCallback(float fov, RenderingManager* renderingManager)
+        OverrideFieldOfViewCallback(float fov)
             : mFov(fov)
-            , mRenderingManager(renderingManager)
         {
         }
 
@@ -389,15 +389,6 @@ namespace MWRender
                 fov = mFov;
                 osg::ref_ptr<osg::RefMatrix> newProjectionMatrix = new osg::RefMatrix();
                 newProjectionMatrix->makePerspective(fov, aspect, zNear, zFar);
-
-                osg::Vec2f offset = mRenderingManager->getProjectionOffset();
-
-                double offsetX = (offset.x() / cv->getViewport()->width()) * 2.0;
-                double offsetY = (offset.y() / cv->getViewport()->height()) * 2.0;
-
-                const osg::Matrix translation = osg::Matrix::translate(offsetX, offsetY, 0.0);
-                newProjectionMatrix->postMult(translation);
-
                 osg::ref_ptr<osg::RefMatrix> invertedOldMatrix = cv->getProjectionMatrix();
                 invertedOldMatrix = new osg::RefMatrix(osg::RefMatrix::inverse(*invertedOldMatrix));
                 osg::ref_ptr<osg::RefMatrix> viewMatrix = new osg::RefMatrix(*cv->getModelViewMatrix());
@@ -411,14 +402,15 @@ namespace MWRender
                 traverse(node, nv);
         }
 
+        void setFov(float fov) { mFov = fov; }
+
     private:
         float mFov;
-        RenderingManager* mRenderingManager;
     };
 
-    void NpcAnimation::setRenderBin()
+    namespace
     {
-        if (mViewMode == VM_FirstPerson)
+        void configureFirstPersonRenderBin(osg::Group& root)
         {
             [[maybe_unused]] static const bool prototypeAdded = [&] {
                 osg::ref_ptr<osgUtil::RenderBin> depthClearBin(new osgUtil::RenderBin);
@@ -426,9 +418,40 @@ namespace MWRender
                 osgUtil::RenderBin::addRenderBinPrototype("DepthClear", depthClearBin);
                 return true;
             }();
-            mObjectRoot->getOrCreateStateSet()->setRenderBinDetails(
+            root.getOrCreateStateSet()->setRenderBinDetails(
                 RenderBin_FirstPerson, "DepthClear", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
         }
+    }
+
+    void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView)
+    {
+        configureFirstPersonRenderBin(root);
+        root.setNodeMask(Mask_FirstPerson);
+        root.addCullCallback(new OverrideFieldOfViewCallback(fieldOfView));
+    }
+
+    bool setFirstPersonActorRootFieldOfView(osg::Group& root, float fieldOfView)
+    {
+        if (!std::isfinite(fieldOfView) || fieldOfView <= 0.f || fieldOfView >= 180.f)
+            return false;
+
+        osg::Callback* callback = root.getCullCallback();
+        while (callback != nullptr)
+        {
+            if (OverrideFieldOfViewCallback* const override = dynamic_cast<OverrideFieldOfViewCallback*>(callback))
+            {
+                override->setFov(fieldOfView);
+                return true;
+            }
+            callback = callback->getNestedCallback();
+        }
+        return false;
+    }
+
+    void NpcAnimation::setRenderBin()
+    {
+        if (mViewMode == VM_FirstPerson)
+            configureFirstPersonRenderBin(*mObjectRoot);
         else if (osg::StateSet* stateset = mObjectRoot->getStateSet())
             stateset->setRenderBinToInherit();
     }
@@ -542,8 +565,7 @@ namespace MWRender
         if (is1stPerson)
         {
             mObjectRoot->setNodeMask(Mask_FirstPerson);
-            mObjectRoot->addCullCallback(new OverrideFieldOfViewCallback(
-                mFirstPersonFieldOfView, MWBase::Environment::get().getWorld()->getRenderingManager()));
+            mObjectRoot->addCullCallback(new OverrideFieldOfViewCallback(mFirstPersonFieldOfView));
         }
 
         mWeaponAnimationTime->updateStartTime();
@@ -953,7 +975,9 @@ namespace MWRender
                 }
             }
         }
-        else if (mViewMode == VM_Normal)
+//## VR_PATCH BEGIN
+        else if (mViewMode != VM_HeadOnly)
+//## VR_PATCH END
         {
             WeaponAnimation::addControllers(mNodeMap, mActiveControllers, mObjectRoot.get());
         }
@@ -972,10 +996,16 @@ namespace MWRender
             MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (weapon != inv.end())
             {
-                osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
-                const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
-                addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
-                    !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                // Native Fallout weapons are attached by the ESM4 player-equipment bridge using the retail
+                // Bip01 weapon nodes. The ESM3 part path targets "Weapon Bone", which does not exist in Fallout
+                // skeletons and used to emit an error every time a saved weapon was switched or redrawn.
+                if (weapon->getType() != ESM4::Weapon::sRecordId)
+                {
+                    osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
+                    const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
+                    addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
+                        !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                }
 
                 // Crossbows start out with a bolt attached
                 if (weapon->getType() == ESM::Weapon::sRecordId

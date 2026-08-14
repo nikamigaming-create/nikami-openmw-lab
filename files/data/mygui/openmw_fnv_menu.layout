@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<MyGUI type="Layout">
+    <Widget type="Widget" skin="" layer="Modal" position="0 0 1024 768" align="Center" name="_Main">
+        <Widget type="ImageBox" skin="ImageBox" position="0 0 1024 768" align="Stretch" name="background"/>
+        <Widget type="EditBox" skin="" position="0 0 1024 160" align="Left Top Stretch" name="message">
+            <Property key="FontName" value="MonoFont"/>
+            <Property key="TextAlign" value="Left Top"/>
+            <Property key="Static" value="true"/>
+            <Property key="WordWrap" value="true"/>
+            <Property key="MultiLine" value="1"/>
+            <Property key="NeedKey" value="false"/>
+        </Widget>
+        <Widget type="Widget" skin="" position="0 0 1024 768" align="Stretch" name="buttons"/>
+    </Widget>
+</MyGUI>

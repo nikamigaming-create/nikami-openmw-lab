@@ -17,6 +17,7 @@
 
 #include <osgUtil/IncrementalCompileOperation>
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <span>
@@ -279,6 +280,10 @@ namespace MWRender
         // camera stuff
         Camera* getCamera() { return mCamera.get(); }
 
+        /// True only after the loaded first-person Pip-Boy raise clip has
+        /// naturally reached its authored held state.
+        bool isFalloutPipBoyPresentationHeld() const;
+
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);
         /// Temporarily override the complete projection contract. This is used when a source engine's
@@ -411,9 +416,10 @@ namespace MWRender
         // authored screen material.  It is never a floating screen-space pane.
         osg::ref_ptr<osg::Node> mFalloutPipBoyGuiRtt;
         std::string mFalloutPipBoyGuiLayer;
-        // The physical display owns a compact, dynamic terminal texture. It
-        // is UV-mapped onto the retail PipBoyArm screen mesh, rather than
-        // borrowed from the desktop MyGUI window hierarchy.
+        int mFalloutPipBoyGuiPane = -1;
+        // The physical display consumes the active native GUI pane. It is
+        // UV-mapped onto the retail PipBoyArm screen mesh and omitted from the
+        // desktop camera while the device is raised.
         osg::ref_ptr<osg::Image> mFalloutPipBoyTerminalImage;
         osg::ref_ptr<osg::Texture2D> mFalloutPipBoyTerminalTexture;
         osg::ref_ptr<osg::Texture2D> mFalloutPipBoyWorldMapTexture;
@@ -427,6 +433,8 @@ namespace MWRender
         std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
         std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
         bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
+        ESM::RefId mFalloutVrHandWeaponSignature;
+        bool mFalloutVrHandWeaponSignatureObserved = false;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;

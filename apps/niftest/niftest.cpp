@@ -25,9 +25,7 @@
 #include <components/nif/niffile.hpp>
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
-#include <components/nif/extra.hpp>
 #include <components/nif/particle.hpp>
-#include <components/nif/texture.hpp>
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/sceneutil/keyframe.hpp>
@@ -454,29 +452,30 @@ int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesyst
     NifOsg::Loader::loadKf(*kfFile, keyframes);
     if (keyframes.mKeyframeControllers.empty())
         throw std::runtime_error("KF contains no transform controllers");
-    float duration = requestedDuration > 0.f && std::isfinite(requestedDuration) ? requestedDuration : 0.f;
-    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+
+    float duration = requestedDuration;
+    if (!(duration > 0.f))
     {
-        (void)name;
-        const auto function = controller->getFunction();
-        if (function && std::isfinite(function->getMaximum()))
-            duration = std::max(duration, function->getMaximum());
-    }
-    for (const auto& [time, text] : keyframes.mTextKeys)
-    {
-        (void)text;
-        if (std::isfinite(time))
-            duration = std::max(duration, time);
+        duration = 0.f;
+        for (const auto& [time, text] : keyframes.mTextKeys)
+        {
+            (void)text;
+            if (std::isfinite(time))
+                duration = std::max(duration, time);
+        }
     }
     if (!(duration > 0.f))
         duration = 4.f;
     const std::uint32_t frameCount = static_cast<std::uint32_t>(std::ceil(duration * sampleRate)) + 1u;
     if (frameCount > 36000u)
         throw std::runtime_error("animation dump exceeds 36000 frames");
+
     std::ofstream out(outPath, std::ios::binary);
     if (!out)
         throw std::runtime_error("failed to open animation output path");
-    const auto writeValue = [&out](const auto& value) { out.write(reinterpret_cast<const char*>(&value), sizeof(value)); };
+    const auto writeValue = [&out](const auto& value) {
+        out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
     const auto writeString = [&out, &writeValue](const std::string& value) {
         const std::uint32_t size = static_cast<std::uint32_t>(value.size());
         writeValue(size);
@@ -494,6 +493,7 @@ int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesyst
         writeValue(time);
         writeString(text);
     }
+
     auto timeSource = std::make_shared<MutableAnimationDumpTimeSource>();
     for (const auto& [name, controller] : keyframes.mKeyframeControllers)
     {
@@ -503,13 +503,16 @@ int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesyst
         for (std::uint32_t frame = 0; frame < frameCount; ++frame)
         {
             timeSource->mTime = std::min(duration, static_cast<float>(frame) / sampleRate);
-            const SceneUtil::KeyframeController::KfTransform transform = mutableController->getCurrentTransformation(nullptr);
+            const SceneUtil::KeyframeController::KfTransform transform
+                = mutableController->getCurrentTransformation(nullptr);
             const std::uint8_t flags = (transform.mTranslation ? 1u : 0u)
                 | (transform.mRotation ? 2u : 0u) | (transform.mScale ? 4u : 0u);
             writeValue(flags);
             if (transform.mTranslation)
             {
-                writeValue(transform.mTranslation->x()); writeValue(transform.mTranslation->y()); writeValue(transform.mTranslation->z());
+                writeValue(transform.mTranslation->x());
+                writeValue(transform.mTranslation->y());
+                writeValue(transform.mTranslation->z());
             }
             if (transform.mRotation)
             {
@@ -547,9 +550,7 @@ public:
         const osg::Matrixf world = local * parentWorld;
         mWorldByNode[&node] = world;
 
-        const bool keep = !node.getName().empty()
-            && (Misc::StringUtils::ciStartsWith(node.getName(), "Bip01")
-                || Misc::StringUtils::ciEqual(node.getName(), "Camera1st"));
+        const bool keep = !node.getName().empty() && Misc::StringUtils::ciStartsWith(node.getName(), "Bip01");
         if (keep)
         {
             TransformDumpNode item;
@@ -583,7 +584,6 @@ private:
 bool isImportantFNVHumanBone(const std::string& lowerName)
 {
     static const std::set<std::string> sImportant = {
-        "camera1st",
         "bip01",
         "bip01 nonaccum",
         "bip01 pelvis",
@@ -769,15 +769,9 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
 
     std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
     std::vector<FnvGeometryDumpInfo> geometries;
-    int bsxFlags = 0;
     for (const Nif::Record* record : meshFile->mRoots)
         if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
-        {
             collectNifGeometryInfos(root, osg::Matrixf::identity(), geometries);
-            for (const auto& extra : root->getExtraList())
-                if (!extra.empty() && extra->recType == Nif::RC_BSXFlags)
-                    bsxFlags = static_cast<const Nif::NiIntegerExtraData*>(extra.getPtr())->mData;
-        }
 
     std::ofstream out(outPath);
     if (!out)
@@ -786,7 +780,6 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
     out << std::setprecision(9);
     out << "{\n";
     out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
-    out << "  \"bsxFlags\": " << bsxFlags << ",\n";
     out << "  \"geometryCount\": " << geometries.size() << ",\n";
     out << "  \"geometries\": [";
 
@@ -847,30 +840,6 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         const Nif::BSShaderProperty* shaderProperty = geometry->mShaderProperty.empty()
             ? nullptr
             : geometry->mShaderProperty.getPtr();
-        std::string diffuseTexture;
-        const auto resolveShaderTexture = [&](const Nif::BSShaderProperty* shader) {
-            if (const auto* effect = dynamic_cast<const Nif::BSEffectShaderProperty*>(shader))
-                return effect->mSourceTexture;
-            if (const auto* pp = dynamic_cast<const Nif::BSShaderPPLightingProperty*>(shader))
-            {
-                if (!pp->mTextureSet.empty() && !pp->mTextureSet->mTextures.empty())
-                    return pp->mTextureSet->mTextures.front();
-            }
-            if (const auto* lighting = dynamic_cast<const Nif::BSLightingShaderProperty*>(shader))
-            {
-                if (!lighting->mTextureSet.empty() && !lighting->mTextureSet->mTextures.empty())
-                    return lighting->mTextureSet->mTextures.front();
-            }
-            if (const auto* noLighting = dynamic_cast<const Nif::BSShaderNoLightingProperty*>(shader))
-                return noLighting->mFilename;
-            if (const auto* sky = dynamic_cast<const Nif::SkyShaderProperty*>(shader))
-                return sky->mFilename;
-            if (const auto* grass = dynamic_cast<const Nif::TallGrassShaderProperty*>(shader))
-                return grass->mFilename;
-            if (const auto* tile = dynamic_cast<const Nif::TileShaderProperty*>(shader))
-                return tile->mFilename;
-            return std::string();
-        };
         for (const auto& property : geometry->mProperties)
         {
             if (property.empty())
@@ -878,23 +847,8 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             if (property->recType == Nif::RC_NiAlphaProperty)
                 alphaProperty = static_cast<const Nif::NiAlphaProperty*>(property.getPtr());
             if (const auto* shader = dynamic_cast<const Nif::BSShaderProperty*>(property.getPtr()))
-            {
                 shaderProperty = shader;
-                if (diffuseTexture.empty())
-                    diffuseTexture = resolveShaderTexture(shader);
-            }
-            if (diffuseTexture.empty())
-            {
-                if (const auto* texturing = dynamic_cast<const Nif::NiTexturingProperty*>(property.getPtr()))
-                {
-                    if (!texturing->mTextures.empty() && texturing->mTextures.front().mEnabled
-                        && !texturing->mTextures.front().mSourceTexture.empty())
-                        diffuseTexture = texturing->mTextures.front().mSourceTexture->mFile;
-                }
-            }
         }
-        if (diffuseTexture.empty())
-            diffuseTexture = resolveShaderTexture(shaderProperty);
 
         out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
             << ",\"avFlags\":" << geometry->mFlags
@@ -934,13 +888,10 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             << (alphaProperty == nullptr ? -1 : alphaProperty->destinationBlendMode())
             << ",\"shaderFlags1\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags1)
             << ",\"shaderFlags2\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags2)
-            << ",\"shaderRecord\":\""
-            << jsonEscape(shaderProperty == nullptr ? std::string() : shaderProperty->recName) << "\""
             << ",\"shaderDepthTest\":"
             << (shaderProperty != nullptr && shaderProperty->depthTest() ? "true" : "false")
             << ",\"shaderDepthWrite\":"
             << (shaderProperty != nullptr && shaderProperty->depthWrite() ? "true" : "false")
-            << ",\"diffuseTexture\":\"" << jsonEscape(diffuseTexture) << "\""
             << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
             << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
             << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
@@ -999,16 +950,6 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
                     firstIndex = false;
                     out << index;
                 }
-        }
-        out << "],\"stripLengths\":[";
-        if (triStrips != nullptr)
-        {
-            for (std::size_t i = 0; i < triStrips->mStrips.size(); ++i)
-            {
-                if (i != 0)
-                    out << ',';
-                out << triStrips->mStrips[i].size();
-            }
         }
         out << "]";
 
@@ -1100,6 +1041,68 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         out << "}";
     }
 
+    out << "\n  ],\n";
+    out << "  \"controllers\": [";
+    bool firstController = true;
+    for (const auto& record : meshFile->mRecords)
+    {
+        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
+        if (object == nullptr)
+            continue;
+
+        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+             controller = controller->mNext)
+        {
+            if (!firstController)
+                out << ",";
+            firstController = false;
+            out << "\n    {\"node\":\"" << jsonEscape(object->mName) << "\""
+                << ",\"type\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"flags\":" << controller->mFlags
+                << ",\"frequency\":" << controller->mFrequency
+                << ",\"phase\":" << controller->mPhase
+                << ",\"start\":" << controller->mTimeStart
+                << ",\"stop\":" << controller->mTimeStop;
+
+            const auto* transformController
+                = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr());
+            const auto* transformInterpolator = transformController == nullptr
+                ? nullptr
+                : dynamic_cast<const Nif::NiTransformInterpolator*>(
+                    transformController->mInterpolator.getPtr());
+            if (transformInterpolator != nullptr)
+            {
+                out << ",\"defaultTranslation\":"
+                    << formatVec3Json(transformInterpolator->mDefaultValue.mTranslation)
+                    << ",\"defaultRotation\":"
+                    << formatQuatJson(transformInterpolator->mDefaultValue.mRotation)
+                    << ",\"defaultScale\":" << transformInterpolator->mDefaultValue.mScale;
+                if (!transformInterpolator->mData.empty())
+                {
+                    const Nif::NiKeyframeData& data = *transformInterpolator->mData.getPtr();
+                    out << ",\"translations\":[";
+                    for (std::size_t i = 0; i < data.mTranslations->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mTranslations->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":"
+                            << formatVec3Json(key.mValue) << "}";
+                    }
+                    out << "],\"scales\":[";
+                    for (std::size_t i = 0; i < data.mScales->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mScales->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":" << key.mValue << "}";
+                    }
+                    out << "]";
+                }
+            }
+            out << "}";
+        }
+    }
     out << "\n  ]\n";
     out << "}\n";
     return 0;
@@ -2115,8 +2118,8 @@ void readVFS(std::unique_ptr<VFS::Archive>&& archive, const std::filesystem::pat
     if (!archivePath.empty() && !isBSA(archivePath))
     {
         const Files::Collections fileCollections({ archivePath });
-        const Files::MultiDirCollection& bsaCol = fileCollections.getCollection("bsa");
-        const Files::MultiDirCollection& ba2Col = fileCollections.getCollection("ba2");
+        const Files::MultiDirCollection& bsaCol = fileCollections.getCollection(".bsa");
+        const Files::MultiDirCollection& ba2Col = fileCollections.getCollection(".ba2");
         for (const Files::MultiDirCollection& collection : { bsaCol, ba2Col })
         {
             for (auto& file : collection)

@@ -5,7 +5,6 @@
 #include <osg/Vec3f>
 #include <osgViewer/ViewerEventHandlers>
 
-#include <cstddef>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -34,6 +33,7 @@ namespace MWInput
         void update(float dt);
 
         void executeAction(int action);
+        void setFalloutUnattendedUseDown(bool down) { mFalloutUnattendedUseDown = down; }
 
         bool checkAllowedToUseItems() const;
 
@@ -66,8 +66,6 @@ namespace MWInput
 
         void handleGuiArrowKey(int action);
         bool isFalloutContent() const;
-        void openFalloutPipBoy(std::size_t pane);
-        void openOpenMWInventory();
         void toggleFalloutVats();
         bool selectFalloutVatsTarget(const MWWorld::Ptr& target);
         void cycleFalloutVatsTarget(int direction);
@@ -106,7 +104,9 @@ namespace MWInput
         std::string mFalloutVatsBodyPartTargetNode;
         unsigned int mFalloutVatsHitChance = 0;
         bool mFalloutPlayerUseDown = false;
+        bool mFalloutUnattendedUseDown = false;
         bool mFalloutAimDown = false;
+        bool mFalloutAimPreparationRejected = false;
         bool mFalloutAimFovOwnsOverride = false;
         int mFalloutVatsPreviousCameraMode = -1;
         float mFalloutVatsPreviousCameraDistance = 0.f;

@@ -2907,18 +2907,46 @@ namespace MWWorld
         const ESM4::World* currentWorld
             = currentCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(currentCell->mParent);
 
-        FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, destinationCell,
-            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld,
-            mFalloutPlayerRuntimeState.isFastTravelEnabled(), mPlayer->enemiesNearby());
+        const bool proofInvalidDestination = mFalloutPlayerRuntimeState.isFastTravelProofInvalidDestination();
+        const ESM4::Cell* resolutionDestinationCell = proofInvalidDestination ? nullptr : destinationCell;
+        const ESM4::World* resolutionDestinationWorld = proofInvalidDestination ? nullptr : destinationWorld;
+        const bool enemiesNearby = mPlayer->enemiesNearby() || mFalloutPlayerRuntimeState.isFastTravelProofEnemiesNearby();
+        FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, resolutionDestinationCell,
+            resolutionDestinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld,
+            mFalloutPlayerRuntimeState.isFastTravelEnabled(), enemiesNearby);
         if (!resolution)
         {
             error = std::move(resolution.mError);
             Log(Debug::Warning) << "FNV/ESM4 map: fast travel rejected marker="
-                                << ESM::RefId(marker).serializeText() << " reason=\"" << error << "\"";
+                                << ESM::RefId(marker).serializeText() << " reason=\"" << error << "\""
+                                << " proofEnemiesNearby="
+                                << (mFalloutPlayerRuntimeState.isFastTravelProofEnemiesNearby() ? 1 : 0)
+                                << " proofInvalidDestination="
+                                << (mFalloutPlayerRuntimeState.isFastTravelProofInvalidDestination() ? 1 : 0);
             return false;
         }
 
         const FalloutFastTravelDestination& destination = *resolution.mDestination;
+        const MWWorld::Ptr player = getPlayerPtr();
+        const ESM4::Cell* currentExteriorCell
+            = currentCell != nullptr && currentCell->isExterior() ? currentCell : nullptr;
+        const bool exteriorTravel = currentExteriorCell != nullptr && destinationCell != nullptr
+            && currentExteriorCell->isExterior() && destinationCell->isExterior();
+        int travelHours = 0;
+        if (exteriorTravel)
+        {
+            const osg::Vec2f currentPosition(
+                player.getRefData().getPosition().pos[0], player.getRefData().getPosition().pos[1]);
+            const osg::Vec2f destinationPosition(destination.mPosition.pos[0], destination.mPosition.pos[1]);
+            const float travelTimeMultiplier = mStore.get<ESM::GameSetting>().find("fTravelTimeMult")->mValue.getFloat();
+            if (travelTimeMultiplier > 0.f)
+                travelHours = static_cast<int>((destinationPosition - currentPosition).length() / travelTimeMultiplier);
+            if (travelHours > 0)
+            {
+                MWBase::Environment::get().getMechanicsManager()->rest(travelHours, true);
+                advanceTime(travelHours);
+            }
+        }
         setPlayerTraveling(true);
         // Use the normal gameplay teleport path so the player render node,
         // camera, physics state, and followers all move with the cell change.
@@ -2928,13 +2956,17 @@ namespace MWWorld
         Log(Debug::Info) << "FNV/ESM4 map: fast travel complete marker="
                          << ESM::RefId(marker).serializeText() << " cell=" << destination.mCell << " pos=("
                          << destination.mPosition.pos[0] << ", " << destination.mPosition.pos[1] << ", "
-                         << destination.mPosition.pos[2] << ")";
+                         << destination.mPosition.pos[2] << ") hours=" << travelHours
+                         << " currentWorldspace=" << (currentWorld != nullptr ? currentWorld->mId : ESM::RefId{})
+                         << " destinationWorldspace=" << (destinationWorld != nullptr ? destinationWorld->mId : ESM::RefId{});
         error.clear();
         return true;
     }
 
     void World::discoverFalloutMapMarkersNearPlayer()
     {
+        if (std::getenv("OPENMW_FNV_B04_PERSISTENCE_TELEMETRY") != nullptr)
+            Log(Debug::Info) << "FNV C02 proximity discovery boundary: phase=post-load";
         const MWWorld::Ptr player = getPlayerPtr();
         if (!player.isInCell() || player.getCell()->getCell() == nullptr || !player.getCell()->getCell()->isExterior())
             return;
@@ -3098,6 +3130,12 @@ namespace MWWorld
                     mIdsRebuilt = true;
                 }
 
+                // Dynamic NPC records precede PLAY in OpenMW saves. Validate
+                // their race/class references before Player::load creates NPC
+                // custom data, which performs required lookups immediately.
+                // The normal post-read validation is too late for FNV saves
+                // whose compatibility Player references FNV_Wastelander.
+                mStore.validateDynamic();
                 mStore.checkPlayer();
                 mPlayer->readRecord(reader, type);
                 break;

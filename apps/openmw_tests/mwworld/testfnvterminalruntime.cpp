@@ -19,6 +19,7 @@
 #include "apps/openmw/mwworld/actionesm4terminal.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/fnvterminalruntime.hpp"
+#include "apps/openmw/mwworld/fnvterminalhacking.hpp"
 
 namespace
 {
@@ -159,6 +160,43 @@ namespace
             return 0;
         }
     };
+
+    class RecordingTerminalRuntime final : public MWWorld::TerminalSessionRuntime
+    {
+    public:
+        bool mConditionsPass = true;
+        std::size_t mConditionCalls = 0;
+        std::vector<std::string> mExecutedSources;
+        std::vector<ESM::FormId> mAddedNotes;
+        std::vector<const ESM4::Terminal*> mSubmenus;
+        std::vector<ESM::FormId> mPreparedSubmenus;
+
+        bool conditionsPass(const std::vector<ESM4::TargetCondition>& conditions) override
+        {
+            EXPECT_FALSE(conditions.empty());
+            ++mConditionCalls;
+            return mConditionsPass;
+        }
+
+        void addNote(ESM::FormId note) override { mAddedNotes.push_back(note); }
+
+        void executeResultScript(const ESM4::ScriptDefinition& script) override
+        {
+            if (!script.scriptSource.empty())
+                mExecutedSources.push_back(script.scriptSource);
+        }
+
+        std::optional<MWWorld::PreparedTerminalSession> prepareSubmenu(ESM::FormId terminal) override
+        {
+            mPreparedSubmenus.push_back(terminal);
+            for (const ESM4::Terminal* candidate : mSubmenus)
+            {
+                if (candidate->mId == terminal)
+                    return prepare(*candidate);
+            }
+            return std::nullopt;
+        }
+    };
 }
 
 static_assert(!std::is_assignable_v<MWWorld::PreparedTerminalMenuItem&, const MWWorld::PreparedTerminalMenuItem&>);
@@ -166,6 +204,162 @@ static_assert(!std::is_assignable_v<MWWorld::PreparedTerminalSession&, const MWW
 static_assert(!std::is_constructible_v<MWWorld::PreparedTerminalMenuItem, std::string, std::string, bool>);
 static_assert(!std::is_constructible_v<MWWorld::PreparedTerminalSession, ESM::FormId, std::string,
     std::vector<MWWorld::PreparedTerminalMenuItem>>);
+
+TEST(FnvTerminalRuntimeTest, ResolvesDataDrivenAccessDifficultyPasswordAndLockout)
+{
+    ESM4::Terminal::Data data;
+    data.mSerializedSize = 4;
+    data.mBytes = { 3, 0, 4, 0 };
+
+    MWWorld::FnvTerminalAccessSource source{ data, 74.f, 75.f };
+    MWWorld::FnvTerminalAccessDecision decision = MWWorld::resolveFnvTerminalAccess(source);
+    EXPECT_EQ(decision.mDifficulty, MWWorld::FnvTerminalDifficulty::Hard);
+    EXPECT_EQ(decision.mRequiredScience, 75);
+    EXPECT_EQ(decision.mResult, MWWorld::FnvTerminalAccessResult::InsufficientScience);
+
+    source.mScience = 75.f;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::NeedsHacking);
+    source.mLockedOut = true;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::LockedOut);
+    source.mHasComputerWhiz = true;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult,
+        MWWorld::FnvTerminalAccessResult::ComputerWhizRetry);
+    source.mComputerWhizRetryConsumed = true;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::LockedOut);
+    source.mHasComputerWhiz = false;
+    source.mComputerWhizRetryConsumed = false;
+    source.mHasPassword = true;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::PasswordAccepted);
+    source.mHasPassword = false;
+    source.mReferenceUnlocked = true;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::Open);
+
+    source.mReferenceUnlocked = false;
+    source.mData.mBytes[0] = 5;
+    source.mLockedOut = false;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::RequiresKey);
+    source.mData.mBytes[0] = 2;
+    source.mData.mBytes[1] = 2;
+    EXPECT_EQ(MWWorld::resolveFnvTerminalAccess(source).mResult, MWWorld::FnvTerminalAccessResult::Open);
+}
+
+TEST(FnvTerminalRuntimeTest, RunsRetailHackingAttemptsLikenessDudsAndAllowanceReset)
+{
+    MWWorld::FnvTerminalHackingSession session({ "COLD", "CORD", "WARM", "CARD" }, 1);
+    ASSERT_TRUE(session.isValid());
+    EXPECT_EQ(MWWorld::getFnvTerminalWordLikeness("COLD", "CORD"), 3);
+
+    MWWorld::FnvTerminalGuessOutcome guess = session.guess(0);
+    EXPECT_EQ(guess.mResult, MWWorld::FnvTerminalGuessResult::Incorrect);
+    EXPECT_EQ(guess.mLikeness, 3);
+    EXPECT_EQ(guess.mAttemptsRemaining, 3);
+    EXPECT_TRUE(session.removeDud(2));
+    EXPECT_FALSE(session.isWordActive(2));
+    EXPECT_FALSE(session.removeDud(1));
+    EXPECT_TRUE(session.resetAllowance());
+    EXPECT_EQ(session.getAttemptsRemaining(), 4);
+
+    guess = session.guess(1);
+    EXPECT_EQ(guess.mResult, MWWorld::FnvTerminalGuessResult::Correct);
+    EXPECT_TRUE(session.isSolved());
+    EXPECT_FALSE(session.isLockedOut());
+}
+
+TEST(FnvTerminalRuntimeTest, LocksAfterFourWrongGuessesAndFindsSameRowBracketPairs)
+{
+    MWWorld::FnvTerminalHackingSession session({ "AAAA", "BBBB", "CCCC", "DDDD", "EEEE" }, 4);
+    ASSERT_TRUE(session.isValid());
+    for (std::size_t i = 0; i < 3; ++i)
+        EXPECT_EQ(session.guess(i).mResult, MWWorld::FnvTerminalGuessResult::Incorrect);
+    EXPECT_EQ(session.guess(3).mResult, MWWorld::FnvTerminalGuessResult::LockedOut);
+    EXPECT_TRUE(session.isLockedOut());
+    EXPECT_EQ(session.getAttemptsRemaining(), 0);
+    EXPECT_EQ(session.guess(4).mResult, MWWorld::FnvTerminalGuessResult::Invalid);
+
+    EXPECT_EQ(MWWorld::findFnvTerminalBracketPairs("@(<abc>)..[xy]..{z}"),
+        (std::vector<MWWorld::FnvTerminalBracketPair>{ { 1, 7 }, { 2, 6 }, { 10, 13 }, { 16, 18 } }));
+}
+
+TEST(FnvTerminalRuntimeTest, BuildsDeterministicSameLengthWordSetsFromAuthoredDictionaryText)
+{
+    const std::vector<std::string> dictionary = MWWorld::parseFnvTerminalDictionary(
+        "JUNK CODE CODES CRANE CLEAN CRATE STONE STORE STOLE invalid TOO-LONG");
+    EXPECT_EQ(dictionary.size(), 9u);
+    const std::vector<std::string> first = MWWorld::buildFnvTerminalWordSet(
+        dictionary, MWWorld::FnvTerminalDifficulty::VeryEasy, 0x11a30a, 5);
+    const std::vector<std::string> second = MWWorld::buildFnvTerminalWordSet(
+        dictionary, MWWorld::FnvTerminalDifficulty::VeryEasy, 0x11a30a, 5);
+    ASSERT_GE(first.size(), 2u);
+    EXPECT_EQ(first, second);
+    EXPECT_LE(first.size(), 5u);
+    for (const std::string& word : first)
+        EXPECT_EQ(word.size(), first.front().size());
+    EXPECT_TRUE(MWWorld::buildFnvTerminalWordSet(
+        dictionary, MWWorld::FnvTerminalDifficulty::RequiresKey, 1).empty());
+}
+
+TEST(FnvTerminalRuntimeTest, BuildsAuthoredTwoColumnHackingMemoryBoard)
+{
+    const std::vector<std::string> words{ "TERMINAL", "PASSWORD", "SECURITY", "ALLOWANCE" };
+    const MWWorld::FnvTerminalBoard board = MWWorld::buildFnvTerminalHackingBoard(words, 0x12345678);
+    ASSERT_TRUE(board.isValid());
+    ASSERT_EQ(board.mRows.size(), 56u);
+    ASSERT_EQ(board.mWords.size(), words.size());
+    for (const std::string& row : board.mRows)
+    {
+        EXPECT_EQ(row.size(), MWWorld::FnvTerminalBoardDisplayCharactersPerRow);
+        EXPECT_EQ(row.substr(0, 2), "0x");
+        EXPECT_EQ(row[6], ' ');
+    }
+    EXPECT_EQ(board.mRows, MWWorld::buildFnvTerminalHackingBoard(words, 0x12345678).mRows);
+
+    std::string memory;
+    for (const std::string& row : board.mRows)
+        memory += row.substr(7);
+    for (const MWWorld::FnvTerminalBoardWord& placed : board.mWords)
+        EXPECT_EQ(memory.substr(placed.mBegin, placed.mEnd - placed.mBegin + 1), words[placed.mWord]);
+    EXPECT_EQ(std::count_if(board.mTargets.begin(), board.mTargets.end(), [](const auto& target) {
+        return target.mKind == MWWorld::FnvTerminalBoardTargetKind::Word;
+    }), words.size());
+}
+
+TEST(FnvTerminalRuntimeTest, ConsumesBracketForExactlyOneRetailSpecialEffect)
+{
+    MWWorld::FnvTerminalHackingSession resetSession({ "COLD", "CORD", "WARM", "CARD" }, 1);
+    ASSERT_EQ(resetSession.guess(0).mAttemptsRemaining, 3);
+    const MWWorld::FnvTerminalBracketOutcome reset = resetSession.activateBracket(2);
+    EXPECT_EQ(reset.mResult, MWWorld::FnvTerminalBracketResult::AllowanceReset);
+    EXPECT_EQ(reset.mAttemptsRemaining, 4);
+
+    MWWorld::FnvTerminalHackingSession dudSession({ "COLD", "CORD", "WARM", "CARD" }, 1);
+    const MWWorld::FnvTerminalBracketOutcome dud = dudSession.activateBracket(1);
+    EXPECT_EQ(dud.mResult, MWWorld::FnvTerminalBracketResult::DudRemoved);
+    EXPECT_NE(dud.mRemovedWord, 1u);
+    EXPECT_FALSE(dudSession.isWordActive(dud.mRemovedWord));
+}
+
+TEST(FnvTerminalRuntimeTest, CalculatesHackingWordCountFromAuthoredSettingsAndScience)
+{
+    using Difficulty = MWWorld::FnvTerminalDifficulty;
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(0.f, Difficulty::VeryEasy, 5, 20, 0.25f), 20u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(100.f, Difficulty::VeryEasy, 5, 20, 0.25f), 5u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(25.f, Difficulty::Easy, 5, 20, 0.25f), 20u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(100.f, Difficulty::Easy, 5, 20, 0.25f), 5u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(100.f, Difficulty::VeryHard, 5, 20, 0.25f), 12u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(0.f, Difficulty::RequiresKey, 5, 20, 0.25f), 0u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(0.f, Difficulty::VeryEasy, 20, 5, 0.25f), 0u);
+    EXPECT_EQ(MWWorld::getFnvTerminalWordCount(0.f, Difficulty::VeryEasy, 5, 40, 0.25f), 20u);
+    EXPECT_EQ(MWWorld::getFnvTerminalXpRewardGameSetting(Difficulty::VeryEasy),
+        "iXPRewardHackComputerVeryEasy");
+    EXPECT_EQ(MWWorld::getFnvTerminalXpRewardGameSetting(Difficulty::VeryHard),
+        "iXPRewardHackComputerVeryHard");
+    EXPECT_TRUE(MWWorld::getFnvTerminalXpRewardGameSetting(Difficulty::RequiresKey).empty());
+    EXPECT_EQ(MWWorld::getFnvTerminalMinimumScienceGameSetting(Difficulty::VeryEasy),
+        "fHackingMinSkillVeryEasy");
+    EXPECT_EQ(MWWorld::getFnvTerminalMinimumScienceGameSetting(Difficulty::VeryHard),
+        "fHackingMinSkillVeryHard");
+    EXPECT_TRUE(MWWorld::getFnvTerminalMinimumScienceGameSetting(Difficulty::RequiresKey).empty());
+}
 
 TEST(FnvTerminalRuntimeTest, PreparesExactlyDecodedThreeItemOfficialSubset)
 {
@@ -380,9 +574,6 @@ TEST(FnvTerminalRuntimeTest, RejectsMissingAndUnsupportedDisplayNotesBeforePrese
     note.mVoiceTopic = ESM::FormId::fromUint32(0x000e9abb);
     expectUnsupported("DATA=1 with voice state", note);
     note = makeTextDisplayNote(noteId, "text");
-    note.mQuests.push_back(ESM::FormId::fromUint32(0x00000001));
-    expectUnsupported("DATA=1 with quest state", note);
-    note = makeTextDisplayNote(noteId, "text");
     note.mFlags = ESM4::Rec_Deleted;
     expectUnsupported("non-live NOTE flags", note);
 
@@ -391,14 +582,11 @@ TEST(FnvTerminalRuntimeTest, RejectsMissingAndUnsupportedDisplayNotesBeforePrese
     terminal.mMenuItems.push_back(makeStrictMenuItem("Later bad item", "Must not render", 0));
     terminal.mMenuItems.back().mConditions.emplace_back();
     terminal.mResultText = terminal.mMenuItems.back().mResultText;
-    const std::optional<MWWorld::PreparedTerminalSession> rejected = prepare(terminal, &error, &validStore);
-    EXPECT_FALSE(rejected.has_value());
-    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedMenuItem);
-
-    RecordingPresenter presenter;
-    if (rejected)
-        (void)MWWorld::runPreparedTerminalSession(*rejected, presenter);
-    EXPECT_TRUE(presenter.mCalls.empty());
+    const std::optional<MWWorld::PreparedTerminalSession> prepared = prepare(terminal, &error, &validStore);
+    ASSERT_TRUE(prepared.has_value());
+    ASSERT_EQ(prepared->getMenuItems().size(), 2);
+    EXPECT_EQ(prepared->getMenuItems()[0].getResultText(), "Prepared text");
+    EXPECT_EQ(prepared->getMenuItems()[1].getConditions().size(), 1);
 }
 
 TEST(FnvTerminalRuntimeTest, PresentsPreparedTextNoteThroughExistingReadOnlyPath)
@@ -444,7 +632,7 @@ TEST(FnvTerminalRuntimeTest, RejectsNonFnvMissingWrongAndDeletedTargets)
     EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::MissingTarget);
 }
 
-TEST(FnvTerminalRuntimeTest, RejectsUnknownFlagsMissingFieldsAndUnsupportedTopFields)
+TEST(FnvTerminalRuntimeTest, PreservesTopLevelFieldsAndRejectsMissingParserIdentity)
 {
     const auto expectRejected
         = [](std::string_view label, ESM4::Terminal terminal, MWWorld::FnvTerminalPreparationError expected) {
@@ -456,10 +644,10 @@ TEST(FnvTerminalRuntimeTest, RejectsUnknownFlagsMissingFieldsAndUnsupportedTopFi
 
     ESM4::Terminal terminal = makeBaseRetailTerminal();
     terminal.mFlags = ESM4::Rec_Constant;
-    expectRejected("unknown record flag", terminal, MWWorld::FnvTerminalPreparationError::UnsupportedRecordFlags);
+    EXPECT_TRUE(prepare(terminal).has_value());
     terminal = makeBaseRetailTerminal();
     terminal.mFlags = ESM4::Rec_Deleted;
-    expectRejected("deleted base flag", terminal, MWWorld::FnvTerminalPreparationError::UnsupportedRecordFlags);
+    expectRejected("deleted base flag", terminal, MWWorld::FnvTerminalPreparationError::DeletedTarget);
 
     const auto expectMissing = [&expectRejected](std::string_view label, auto mutate) {
         ESM4::Terminal value = makeBaseRetailTerminal();
@@ -468,61 +656,108 @@ TEST(FnvTerminalRuntimeTest, RejectsUnknownFlagsMissingFieldsAndUnsupportedTopFi
     };
     expectMissing("id", [](ESM4::Terminal& value) { value.mId = {}; });
     expectMissing("EDID", [](ESM4::Terminal& value) { value.mEditorId.clear(); });
-    expectMissing("FULL", [](ESM4::Terminal& value) { value.mFullName.clear(); });
-    expectMissing("MODL", [](ESM4::Terminal& value) { value.mModel.clear(); });
     expectMissing("OBND", [](ESM4::Terminal& value) { value.mObjectBounds = {}; });
-    expectMissing("DESC", [](ESM4::Terminal& value) { value.mText.clear(); });
     expectMissing("ITXT sequence", [](ESM4::Terminal& value) { value.mMenuItems.clear(); });
     expectMissing("RNAM mirror", [](ESM4::Terminal& value) { value.mResultText = "stale"; });
 
-    const auto expectUnsupportedTop = [&expectRejected](std::string_view label, auto mutate) {
-        ESM4::Terminal value = makeBaseRetailTerminal();
-        mutate(value);
-        expectRejected(label, std::move(value), MWWorld::FnvTerminalPreparationError::UnsupportedTopLevelField);
-    };
-    expectUnsupportedTop("SCRI", [](ESM4::Terminal& value) { value.mScriptId = ESM::FormId::fromUint32(0x00000001); });
-    expectUnsupportedTop("SNAM", [](ESM4::Terminal& value) { value.mSound = ESM::FormId::fromUint32(0x00000002); });
-    expectUnsupportedTop(
-        "PNAM", [](ESM4::Terminal& value) { value.mPasswordNote = ESM::FormId::fromUint32(0x00000003); });
-    expectUnsupportedTop("MODT", [](ESM4::Terminal& value) { value.mModelData.push_back(1); });
-    expectUnsupportedTop("MODS", [](ESM4::Terminal& value) { value.mModelTextureSwaps.push_back(1); });
+    terminal = makeBaseRetailTerminal();
+    terminal.mScriptId = ESM::FormId::fromUint32(0x00000001);
+    terminal.mSound = ESM::FormId::fromUint32(0x00000002);
+    terminal.mPasswordNote = ESM::FormId::fromUint32(0x00000003);
+    terminal.mModelData.push_back(1);
+    terminal.mModelTextureSwaps.push_back(1);
+    const std::optional<MWWorld::PreparedTerminalSession> prepared = prepare(terminal);
+    ASSERT_TRUE(prepared.has_value());
+    EXPECT_EQ(prepared->getTopLevelScript(), terminal.mScriptId);
+    EXPECT_EQ(prepared->getSound(), terminal.mSound);
+    EXPECT_EQ(prepared->getPasswordNote(), terminal.mPasswordNote);
 }
 
-TEST(FnvTerminalRuntimeTest, AllowsOnlyTwoOpaqueExactDnamShapes)
+TEST(FnvTerminalRuntimeTest, PreservesAuthoredImageAndVoiceDisplayNotePayloads)
 {
-    const std::array<std::array<std::uint8_t, 4>, 2> accepted{
+    const ESM::FormId noteId = ESM::FormId::fromUint32(0x000fd774);
+    ESM4::Terminal terminal = makeSingleDisplayNoteTerminal(
+        ESM::FormId::fromUint32(0x000fd76b), false, noteId);
+
+    MWWorld::ESMStore imageStore;
+    ESM4::Note image;
+    image.mId = noteId;
+    image.mEditorId = "ImageNote";
+    image.mFullName = "Facility Map";
+    image.mData = 2;
+    image.mImage = "Architecture\\Urban\\MetroMap.dds";
+    imageStore.overrideRecord(image);
+    const auto imageSession = prepare(terminal, nullptr, &imageStore);
+    ASSERT_TRUE(imageSession.has_value());
+    ASSERT_TRUE(imageSession->getMenuItems()[0].getDisplayNotePayload().has_value());
+    EXPECT_EQ(imageSession->getMenuItems()[0].getDisplayNotePayload()->mImage, image.mImage);
+
+    MWWorld::ESMStore voiceStore;
+    ESM4::Note voice;
+    voice.mId = noteId;
+    voice.mEditorId = "VoiceNote";
+    voice.mFullName = "Recorded Message";
+    voice.mData = 3;
+    voice.mVoiceTopic = ESM::FormId::fromUint32(0x000e9abb);
+    voice.mVoiceSpeaker = ESM::FormId::fromUint32(0x000e9ac0);
+    voice.mQuests.push_back(ESM::FormId::fromUint32(0x000104eae));
+    voiceStore.overrideRecord(voice);
+    const auto voiceSession = prepare(terminal, nullptr, &voiceStore);
+    ASSERT_TRUE(voiceSession.has_value());
+    ASSERT_TRUE(voiceSession->getMenuItems()[0].getDisplayNotePayload().has_value());
+    EXPECT_EQ(voiceSession->getMenuItems()[0].getDisplayNotePayload()->mVoiceTopic, voice.mVoiceTopic);
+    EXPECT_EQ(voiceSession->getMenuItems()[0].getDisplayNotePayload()->mVoiceSpeaker, voice.mVoiceSpeaker);
+    EXPECT_EQ(voiceSession->getMenuItems()[0].getDisplayNotePayload()->mQuests, voice.mQuests);
+}
+
+TEST(FnvTerminalRuntimeTest, AddsAuthoredNoteWhenMenuItemRequestsIt)
+{
+    const ESM::FormId noteId = ESM::FormId::fromUint32(0x000fd774);
+    MWWorld::ESMStore store;
+    store.overrideRecord(makeTextDisplayNote(noteId, "Acquired terminal note"));
+    ESM4::Terminal terminal = makeSingleDisplayNoteTerminal(
+        ESM::FormId::fromUint32(0x000fd76b), false, noteId);
+    terminal.mMenuItems[0].mFlags = 1;
+    const std::optional<MWWorld::PreparedTerminalSession> session = prepare(terminal, nullptr, &store);
+    ASSERT_TRUE(session.has_value());
+    RecordingPresenter presenter;
+    presenter.mResponses = { 0, 0 };
+    RecordingTerminalRuntime runtime;
+    EXPECT_EQ(MWWorld::runPreparedTerminalSession(*session, presenter, &runtime),
+        MWWorld::TerminalSessionRunResult::Completed);
+    EXPECT_EQ(runtime.mAddedNotes, (std::vector<ESM::FormId>{ noteId }));
+}
+
+TEST(FnvTerminalRuntimeTest, PreservesEveryParserValidatedDnamShape)
+{
+    const std::array<std::array<std::uint8_t, 4>, 4> accepted{
         std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x04, 0x00 },
         std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x08, 0x00 },
+        std::array<std::uint8_t, 4>{ 0x01, 0x03, 0x05, 0x01 },
+        std::array<std::uint8_t, 4>{ 0xff, 0xff, 0xff, 0xff },
     };
     for (const auto& shape : accepted)
     {
         ESM4::Terminal terminal = makeBaseRetailTerminal();
         terminal.mData.mBytes = shape;
-        EXPECT_TRUE(prepare(terminal).has_value());
+        const auto prepared = prepare(terminal);
+        ASSERT_TRUE(prepared.has_value());
+        EXPECT_EQ(prepared->getData().mBytes, shape);
     }
 
-    for (const std::array<std::uint8_t, 4>& shape : {
-             std::array<std::uint8_t, 4>{ 0x01, 0x02, 0x04, 0x00 },
-             std::array<std::uint8_t, 4>{ 0x00, 0x03, 0x04, 0x00 },
-             std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x05, 0x00 },
-             std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x08, 0x01 },
-         })
-    {
-        ESM4::Terminal terminal = makeBaseRetailTerminal();
-        terminal.mData.mBytes = shape;
-        MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::None;
-        EXPECT_FALSE(prepare(terminal, &error));
-        EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedDataShape);
-    }
+    ESM4::Terminal threeBytes = makeBaseRetailTerminal();
+    threeBytes.mData.mSerializedSize = 3;
+    ASSERT_TRUE(prepare(threeBytes).has_value());
+    EXPECT_EQ(prepare(threeBytes)->getData().mSerializedSize, 3);
 
     ESM4::Terminal wrongSize = makeBaseRetailTerminal();
-    wrongSize.mData.mSerializedSize = 3;
+    wrongSize.mData.mSerializedSize = 2;
     MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::None;
     EXPECT_FALSE(prepare(wrongSize, &error));
     EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedDataShape);
 }
 
-TEST(FnvTerminalRuntimeTest, RejectsEveryUnsupportedMenuFieldAndNonemptyScriptBody)
+TEST(FnvTerminalRuntimeTest, PreservesAuthoredMenuLinksConditionsAndScripts)
 {
     const auto expectUnsupported = [](std::string_view label, auto mutate) {
         SCOPED_TRACE(label);
@@ -537,32 +772,33 @@ TEST(FnvTerminalRuntimeTest, RejectsEveryUnsupportedMenuFieldAndNonemptyScriptBo
     expectUnsupported("empty ITXT", [](ESM4::Terminal::MenuItem& item) { item.mText.clear(); });
     expectUnsupported(
         "embedded NUL ITXT", [](ESM4::Terminal::MenuItem& item) { item.mText = std::string("hidden\0text", 11); });
-    expectUnsupported("empty RNAM", [](ESM4::Terminal::MenuItem& item) { item.mResultText.clear(); });
-    expectUnsupported("ANAM 1", [](ESM4::Terminal::MenuItem& item) { item.mFlags = 1; });
-    expectUnsupported("ANAM 3", [](ESM4::Terminal::MenuItem& item) { item.mFlags = 3; });
-    expectUnsupported(
-        "TNAM", [](ESM4::Terminal::MenuItem& item) { item.mSubmenu = ESM::FormId::fromUint32(0x00000101); });
-    expectUnsupported("CTDA", [](ESM4::Terminal::MenuItem& item) { item.mConditions.emplace_back(); });
-    expectUnsupported("SCHR unused", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.unused = 1; });
-    expectUnsupported("SCHR refs", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.refCount = 1; });
-    expectUnsupported(
-        "SCHR compiled size", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.compiledSize = 1; });
-    expectUnsupported(
-        "SCHR variables", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.variableCount = 1; });
-    expectUnsupported("SCHR type", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.type = 1; });
-    expectUnsupported("SCHR disabled", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptHeader.flag = 0; });
-    expectUnsupported("SCDA", [](ESM4::Terminal::MenuItem& item) { item.mScript.compiledData.push_back(0); });
-    expectUnsupported("SCTX", [](ESM4::Terminal::MenuItem& item) { item.mScript.scriptSource = "return"; });
-    expectUnsupported("SLSD SCVR",
-        [](ESM4::Terminal::MenuItem& item) { item.mScript.localVarData.push_back({ 1, 0, 0, 0, 0, 0, "local" }); });
-    expectUnsupported("SCRV", [](ESM4::Terminal::MenuItem& item) { item.mScript.localRefVarIndex.push_back(1); });
-    expectUnsupported("SCRO",
-        [](ESM4::Terminal::MenuItem& item) { item.mScript.references.push_back(ESM::FormId::fromUint32(0x00000102)); });
-    expectUnsupported("legacy SCRO mirror",
-        [](ESM4::Terminal::MenuItem& item) { item.mScript.globReference = ESM::FormId::fromUint32(0x00000103); });
+    ESM4::Terminal terminal = makeBaseRetailTerminal();
+    ESM4::Terminal::MenuItem& item = terminal.mMenuItems[0];
+    item.mFlags = 3;
+    item.mResultText.clear();
+    item.mSubmenu = ESM::FormId::fromUint32(0x00000101);
+    item.mConditions.emplace_back();
+    item.mScript.scriptHeader = { 0, 1, 1, 1, 1, 1 };
+    item.mScript.compiledData.push_back(0);
+    item.mScript.scriptSource = "return";
+    item.mScript.localVarData.push_back({ 1, 0, 0, 0, 0, 0, "local" });
+    item.mScript.localRefVarIndex.push_back(1);
+    item.mScript.references.push_back(ESM::FormId::fromUint32(0x00000102));
+    item.mScript.globReference = ESM::FormId::fromUint32(0x00000103);
+    terminal.mResultText.clear();
+
+    const auto prepared = prepare(terminal);
+    ASSERT_TRUE(prepared.has_value());
+    ASSERT_EQ(prepared->getMenuItems().size(), 1);
+    const MWWorld::PreparedTerminalMenuItem& actual = prepared->getMenuItems()[0];
+    EXPECT_EQ(actual.getFlags(), 3);
+    EXPECT_EQ(actual.getSubmenu(), item.mSubmenu);
+    EXPECT_EQ(actual.getConditions().size(), 1);
+    EXPECT_EQ(actual.getScript().compiledData, item.mScript.compiledData);
+    EXPECT_EQ(actual.getScript().scriptSource, item.mScript.scriptSource);
 }
 
-TEST(FnvTerminalRuntimeTest, RejectsExactScriptedDeadMoneyFixtureAndLaterBadItemBeforeUi)
+TEST(FnvTerminalRuntimeTest, AcceptsExactScriptedDeadMoneyFixtureAndConditionalItems)
 {
     // DeadMoney.esm TERM 01003514 exact payload SHA-256:
     // 4a8ec0c85d0683734036a537aaf4841a26c97eeb2dc4f1304abb53c65d4d6f28.
@@ -572,21 +808,18 @@ TEST(FnvTerminalRuntimeTest, RejectsExactScriptedDeadMoneyFixtureAndLaterBadItem
         "Currently patrolling default route.", 2, true);
     scripted.mScriptId = ESM::FormId::fromUint32(0x010000d5);
     MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::None;
-    EXPECT_FALSE(prepare(scripted, &error));
-    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedTopLevelField);
+    const auto scriptedSession = prepare(scripted, &error);
+    ASSERT_TRUE(scriptedSession.has_value());
+    EXPECT_EQ(scriptedSession->getTopLevelScript(), scripted.mScriptId);
 
     ESM4::Terminal laterBad = makeBaseRetailTerminal();
     laterBad.mMenuItems.push_back(makeStrictMenuItem("Looks safe", "But is not", 0));
     laterBad.mMenuItems.back().mConditions.emplace_back();
     laterBad.mResultText = laterBad.mMenuItems.back().mResultText;
-    const std::optional<MWWorld::PreparedTerminalSession> rejected = prepare(laterBad, &error);
-    EXPECT_FALSE(rejected.has_value());
-    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedMenuItem);
-
-    RecordingPresenter presenter;
-    if (rejected)
-        (void)MWWorld::runPreparedTerminalSession(*rejected, presenter);
-    EXPECT_TRUE(presenter.mCalls.empty());
+    const std::optional<MWWorld::PreparedTerminalSession> prepared = prepare(laterBad, &error);
+    ASSERT_TRUE(prepared.has_value());
+    ASSERT_EQ(prepared->getMenuItems().size(), 2);
+    EXPECT_EQ(prepared->getMenuItems()[1].getConditions().size(), 1);
 }
 
 TEST(FnvTerminalRuntimeTest, PresentsBlockingDescriptionItemAndResultInOrder)
@@ -608,6 +841,54 @@ TEST(FnvTerminalRuntimeTest, PresentsBlockingDescriptionItemAndResultInOrder)
     // reference state is available to this runner to mutate.
     EXPECT_EQ(terminal.mMenuItems[0].mFlags, 0);
     EXPECT_EQ(terminal.mResultText, "System Offline...");
+}
+
+TEST(FnvTerminalRuntimeTest, FiltersConditionsAndExecutesOnlySelectedAuthoredResultScript)
+{
+    ESM4::Terminal terminal = makeBaseRetailTerminal();
+    terminal.mMenuItems[0].mConditions.emplace_back();
+    terminal.mMenuItems.push_back(makeStrictMenuItem("Visible command", "Command complete", 0));
+    terminal.mMenuItems.back().mScript.scriptSource = "SetStage VMS01 10";
+    terminal.mResultText = terminal.mMenuItems.back().mResultText;
+    const auto session = prepare(terminal);
+    ASSERT_TRUE(session.has_value());
+
+    RecordingPresenter presenter;
+    presenter.mResponses = { 0, 0 };
+    RecordingTerminalRuntime runtime;
+    runtime.mConditionsPass = false;
+    EXPECT_EQ(MWWorld::runPreparedTerminalSession(*session, presenter, &runtime),
+        MWWorld::TerminalSessionRunResult::Completed);
+
+    ASSERT_EQ(presenter.mCalls.size(), 2);
+    EXPECT_EQ(presenter.mCalls[0].mButtons, (std::vector<std::string>{ "Visible command" }));
+    EXPECT_EQ(runtime.mConditionCalls, 1);
+    EXPECT_EQ(runtime.mExecutedSources, (std::vector<std::string>{ "SetStage VMS01 10" }));
+}
+
+TEST(FnvTerminalRuntimeTest, FollowsAuthoredSubmenuLinkBeforeRunningDestinationItem)
+{
+    ESM4::Terminal root = makeBaseRetailTerminal();
+    ESM4::Terminal child = makeStrictTerminal(ESM::FormId::fromUint32(0x000abcde), "ChildTerminal",
+        "Child page", { 0x00, 0x02, 0x04, 0x00 }, "Run child command", "Child complete", 0);
+    root.mMenuItems[0].mResultText.clear();
+    root.mMenuItems[0].mSubmenu = child.mId;
+    root.mResultText.clear();
+    const auto session = prepare(root);
+    ASSERT_TRUE(session.has_value());
+
+    RecordingPresenter presenter;
+    presenter.mResponses = { 0, 0, 0 };
+    RecordingTerminalRuntime runtime;
+    runtime.mSubmenus.push_back(&child);
+    EXPECT_EQ(MWWorld::runPreparedTerminalSession(*session, presenter, &runtime),
+        MWWorld::TerminalSessionRunResult::Completed);
+
+    ASSERT_EQ(presenter.mCalls.size(), 3);
+    EXPECT_EQ(presenter.mCalls[0].mMessage, "Hello Billy boy!");
+    EXPECT_EQ(presenter.mCalls[1].mMessage, "Child page");
+    EXPECT_EQ(presenter.mCalls[2].mMessage, "Child complete");
+    EXPECT_EQ(runtime.mPreparedSubmenus, (std::vector<ESM::FormId>{ child.mId }));
 }
 
 TEST(FnvTerminalRuntimeTest, AnamTwoRedrawsAndSeventeenthWouldBeRedrawStopsDefensively)

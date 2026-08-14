@@ -423,6 +423,11 @@ namespace MyGUIPlatform
         void collectDrawCalls(std::string filter);
 
         void setViewSize(MyGUI::IntSize viewSize);
+        void setContentRect(const MyGUI::IntCoord& rect)
+        {
+            mContentRect = rect;
+            mUpdate = true;
+        }
 
         void update();
 
@@ -431,6 +436,8 @@ namespace MyGUIPlatform
         MyGUI::RenderTargetInfo mInfo;
         bool mUpdate;
         std::string mFilter;
+        MyGUI::IntCoord mContentRect;
+        unsigned int mPipBoyScreenBatchTraceCount = 0;
     };
 
     void GuiCameraUpdate::operator()(GUICamera* camera, osg::NodeVisitor* nv)
@@ -567,11 +574,25 @@ namespace MyGUIPlatform
     void GUICamera::doRender(MyGUI::IVertexBuffer* buffer, MyGUI::ITexture* texture, size_t count)
 //## VR_PATCH END
     {
+        if (count == 0)
+            return;
+
+        auto* const osgBuffer = static_cast<OSGVertexBuffer*>(buffer);
+        osg::VertexBufferObject* const vertexBuffer = osgBuffer != nullptr ? osgBuffer->getVertexBuffer() : nullptr;
+        osg::Array* const vertexArray = osgBuffer != nullptr ? osgBuffer->getVertexArray() : nullptr;
+        if (vertexBuffer == nullptr || vertexArray == nullptr)
+        {
+            Log(Debug::Error) << "MyGUI render batch rejected: filter=" << mFilter << " vertices=" << count
+                              << " vertexBuffer=" << (vertexBuffer != nullptr)
+                              << " vertexArray=" << (vertexArray != nullptr);
+            return;
+        }
+
         Drawable::Batch batch;
         batch.mVertexCount = count;
-        batch.mVertexBuffer = static_cast<OSGVertexBuffer*>(buffer)->getVertexBuffer();
-        batch.mArray = static_cast<OSGVertexBuffer*>(buffer)->getVertexArray();
-        static_cast<OSGVertexBuffer*>(buffer)->markUsed();
+        batch.mVertexBuffer = vertexBuffer;
+        batch.mArray = vertexArray;
+        osgBuffer->markUsed();
 
         if (OSGTexture* osgtexture = static_cast<OSGTexture*>(texture))
         {
@@ -586,8 +607,7 @@ namespace MyGUIPlatform
 
         if (mFilter == "PipBoyScreen" && count > 0)
         {
-            static unsigned sPipBoyScreenBatchTraceCount = 0;
-            if (sPipBoyScreenBatchTraceCount++ < 8 && batch.mArray != nullptr)
+            if (mPipBoyScreenBatchTraceCount++ < 24 && batch.mArray != nullptr)
             {
                 const auto* const bytes = static_cast<const unsigned char*>(batch.mArray->getDataPointer());
                 const auto readFloat = [&bytes](std::size_t offset) {
@@ -597,10 +617,24 @@ namespace MyGUIPlatform
                     return *reinterpret_cast<const unsigned int*>(bytes + offset);
                 };
                 const std::size_t last = (count - 1) * sizeof(MyGUI::Vertex);
+                float minimumX = readFloat(0);
+                float maximumX = minimumX;
+                float minimumY = readFloat(sizeof(float));
+                float maximumY = minimumY;
+                for (std::size_t index = 1; index < count; ++index)
+                {
+                    const std::size_t offset = index * sizeof(MyGUI::Vertex);
+                    minimumX = std::min(minimumX, readFloat(offset));
+                    maximumX = std::max(maximumX, readFloat(offset));
+                    minimumY = std::min(minimumY, readFloat(offset + sizeof(float)));
+                    maximumY = std::max(maximumY, readFloat(offset + sizeof(float)));
+                }
                 Log(Debug::Info) << "FNV Pip-Boy RTT glyph batch: vertices=" << count
                                  << " texture=" << (batch.mTexture != nullptr ? batch.mTexture->getName() : "none")
                                  << " firstXY=(" << readFloat(0) << ',' << readFloat(sizeof(float)) << ')'
                                  << " lastXY=(" << readFloat(last) << ',' << readFloat(last + sizeof(float)) << ')'
+                                 << " bounds=(" << minimumX << ',' << minimumY << ")-("
+                                 << maximumX << ',' << maximumY << ')'
                                  << " firstColor=0x" << std::hex << readColor(sizeof(float) * 3) << std::dec;
             }
         }
@@ -697,13 +731,18 @@ namespace MyGUIPlatform
 
     void GUICamera::setViewSize(MyGUI::IntSize viewSize)
     {
-        setViewport(0, 0, viewSize.width, viewSize.height);
+        const bool crop = mContentRect.width > 0 && mContentRect.height > 0;
+        setViewport(0, 0, crop ? mContentRect.width : viewSize.width,
+            crop ? mContentRect.height : viewSize.height);
         mInfo.maximumDepth = 1;
-        mInfo.hOffset = 0;
-        mInfo.vOffset = 0;
-        mInfo.aspectCoef = float(viewSize.height) / float(viewSize.width);
-        mInfo.pixScaleX = 1.0f / float(viewSize.width);
-        mInfo.pixScaleY = 1.0f / float(viewSize.height);
+        const float logicalWidth = crop ? static_cast<float>(mContentRect.width) : static_cast<float>(viewSize.width);
+        const float logicalHeight
+            = crop ? static_cast<float>(mContentRect.height) : static_cast<float>(viewSize.height);
+        mInfo.hOffset = crop ? -static_cast<float>(mContentRect.left) / logicalWidth : 0.f;
+        mInfo.vOffset = crop ? -static_cast<float>(mContentRect.top) / logicalHeight : 0.f;
+        mInfo.aspectCoef = logicalHeight / logicalWidth;
+        mInfo.pixScaleX = 1.f / logicalWidth;
+        mInfo.pixScaleY = 1.f / logicalHeight;
         mUpdate = true;
     }
 
@@ -711,7 +750,9 @@ namespace MyGUIPlatform
     {
         auto viewSize = mParent->getViewSize();
         auto viewport = getViewport();
-        if (!viewport || viewport->width() != viewSize.width || viewport->height() != viewSize.height)
+        const int targetWidth = mContentRect.width > 0 ? mContentRect.width : viewSize.width;
+        const int targetHeight = mContentRect.height > 0 ? mContentRect.height : viewSize.height;
+        if (!viewport || viewport->width() != targetWidth || viewport->height() != targetHeight)
             setViewSize(viewSize);
     }
 
@@ -732,6 +773,15 @@ namespace MyGUIPlatform
 //## VR_PATCH END
     }
 
+    void RenderManager::setGUICameraContentRect(osg::Camera* camera, const MyGUI::IntCoord& rect)
+    {
+        if (auto* guiCamera = dynamic_cast<GUICamera*>(camera))
+        {
+            guiCamera->setContentRect(rect);
+            guiCamera->setViewSize(mViewSize);
+        }
+    }
+
     bool RenderManager::isFormatSupported(MyGUI::PixelFormat /*format*/, MyGUI::TextureUsage /*usage*/)
     {
         return true;
@@ -739,7 +789,8 @@ namespace MyGUIPlatform
 
     MyGUI::ITexture* RenderManager::createTexture(const std::string& name)
     {
-        const auto it = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager)).first;
+        const auto it
+            = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager, mUseMissingTextureFallback)).first;
         return &it->second;
     }
 

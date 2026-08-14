@@ -29,6 +29,15 @@ namespace MWWorld
         std::optional<std::uint8_t> mRawSkillOffset;
     };
 
+    struct FalloutRuntimeActorValueModifierStack
+    {
+        float mPermanent = 0.f;
+        float mDamage = 0.f;
+        float mTemporary = 0.f;
+
+        bool operator==(const FalloutRuntimeActorValueModifierStack&) const = default;
+    };
+
     enum class FalloutActorValueMutationResult
     {
         Applied,
@@ -45,10 +54,29 @@ namespace MWWorld
         bool operator==(const FalloutReputationValue&) const = default;
     };
 
+    enum class FalloutTerminalState : std::uint8_t
+    {
+        None = 0,
+        Hacked = 1u << 0,
+        LockedOut = 1u << 1,
+        ComputerWhizRetryConsumed = 1u << 2,
+    };
+
+    [[nodiscard]] constexpr bool hasFalloutTerminalState(FalloutTerminalState state, FalloutTerminalState flag)
+    {
+        return (static_cast<std::uint8_t>(state) & static_cast<std::uint8_t>(flag)) != 0;
+    }
+
+    [[nodiscard]] constexpr FalloutTerminalState operator|(FalloutTerminalState left, FalloutTerminalState right)
+    {
+        return static_cast<FalloutTerminalState>(
+            static_cast<std::uint8_t>(left) | static_cast<std::uint8_t>(right));
+    }
+
     /// Mutable Player actor values kept deliberately separate from the immutable NPC_ base record state.
     ///
-    /// This slice covers exact authored/current health, SPECIAL, the fourteen FNV skills, and runtime fame/infamy
-    /// reputation values. It does not project actor values into Morrowind attributes, skills, or formulas.
+    /// This slice covers exact authored/current health, SpeedMult, SPECIAL, the fourteen FNV skills, and runtime
+    /// fame/infamy reputation values. It does not project actor values into Morrowind attributes, skills, or formulas.
     /// Mutations are bounded to finite float values; retail modifier-stack and UI/allocation clamps are not
     /// inferred here.
     class FalloutPlayerRuntimeState
@@ -56,19 +84,21 @@ namespace MWWorld
     public:
         static constexpr std::uint32_t HealthActorValue = 16;
         static constexpr std::uint32_t ActionPointsActorValue = 12;
+        static constexpr std::uint32_t SpeedMultiplierActorValue = 21;
         static constexpr std::uint32_t ExperienceActorValue = 24;
         static constexpr std::uint32_t SpecialActorValueBegin = 5;
         static constexpr std::uint32_t SpecialActorValueEnd = 11;
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
         static constexpr std::size_t ActorValueCount = 96;
-        static constexpr std::uint32_t SaveVersion = 7;
+        static constexpr std::uint32_t SaveVersion = 10;
 
     private:
         struct CurrentState
         {
             float mHealth = 0.f;
             float mActionPoints = 0.f;
+            float mSpeedMultiplier = 0.f;
             float mExperience = 0.f;
             std::array<float, FalloutPlayerState::SpecialCount> mSpecial{};
             std::array<float, FalloutPlayerState::SkillCount> mSkills{};
@@ -86,17 +116,18 @@ namespace MWWorld
         // Per-player discovery state for Fallout world-map references. Values use the retail
         // GetMapMarkerVisible contract: 0 hidden, 1 visible, 2 visible and fast-travel enabled.
         std::map<ESM::FormId, std::uint8_t> mMapMarkerStates;
-        std::set<ESM::FormId> mKnownNotes;
-        std::set<ESM::FormId> mQuestObjects;
-        std::set<std::uint32_t> mAchievements;
-        std::map<ESM::FormId, bool> mEssentialOverrides;
-        float mKarma = 0.f;
-        std::int32_t mSpecialPoints = 0;
+        // Per-placement terminal state. TERM is a shared base record, so successful hacks and lockouts must be
+        // keyed by the placed reference FormId and remapped with the content load order on save/load.
+        std::map<ESM::FormId, FalloutTerminalState> mTerminalStates;
+        // NOTE records learned through authored terminal ANAM "Add Note" entries.
+        std::set<ESM::FormId> mNotes;
         // Vanilla EnableFastTravel state. The optional FNV arguments independently control waiting and whether
         // a cell transition may clear a scripted fast-travel block.
         bool mFastTravelEnabled = true;
         bool mWaitEnabled = true;
         bool mFastTravelKeepOnCellChange = false;
+        bool mProofForceEnemiesNearby = false;
+        bool mProofForceInvalidDestination = false;
         // Transient input/mechanics coordination only. V.A.T.S. owns its queue in ActionManager and this flag keeps
         // the ordinary held-attack path from firing an additional unqueued shot while targeting or executing.
         bool mVatsActive = false;
@@ -105,7 +136,6 @@ namespace MWWorld
         static std::optional<std::size_t> specialIndex(std::uint32_t actorValue);
         static std::optional<std::size_t> skillIndex(std::uint32_t actorValue);
         CurrentState makeBaseCurrent() const;
-        float makeBaseKarma() const;
 
     public:
         void initialize(const std::optional<FalloutPlayerState>& base);
@@ -123,44 +153,47 @@ namespace MWWorld
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
         [[nodiscard]] std::optional<float> getCarryCapacity() const;
         [[nodiscard]] std::optional<float> getMaxActionPoints() const;
+        [[nodiscard]] std::optional<FalloutRuntimeActorValueModifierStack> getActorValueModifierStack(
+            std::uint32_t actorValue) const;
         [[nodiscard]] float getSavedDamageModifier(std::uint32_t actorValue) const;
         [[nodiscard]] bool hasPerk(ESM::FormId perk, bool alternate = false) const;
         [[nodiscard]] std::optional<std::uint8_t> getPerkRankByte(
             ESM::FormId perk, bool alternate = false) const;
         [[nodiscard]] const std::vector<FalloutSavePlayerHeaderState::PerkRank>& getPerks() const { return mPerks; }
-        bool addPerk(ESM::FormId perk, std::uint8_t rankCount, bool alternate = false);
-        bool removePerk(ESM::FormId perk, bool alternate = false);
         [[nodiscard]] std::optional<FalloutReputationValue> getReputation(ESM::FormId reputation) const;
         [[nodiscard]] std::optional<int> getReputationThreshold(
             ESM::FormId reputation, float maximum, std::uint32_t axis) const;
         bool addReputationBump(ESM::FormId reputation, bool fame, float maximum, int bump);
-        bool setReputationValue(ESM::FormId reputation, bool fame, float maximum, float value);
-        bool addReputationExact(ESM::FormId reputation, bool fame, float maximum, float amount);
         [[nodiscard]] std::optional<std::uint8_t> getMapMarkerState(ESM::FormId marker) const;
+        [[nodiscard]] const std::map<ESM::FormId, std::uint8_t>& getMapMarkerStates() const
+        {
+            return mMapMarkerStates;
+        }
         bool setMapMarkerState(ESM::FormId marker, std::uint8_t state);
-        [[nodiscard]] bool hasNote(ESM::FormId note) const;
-        bool setNoteKnown(ESM::FormId note, bool known);
-        [[nodiscard]] bool isQuestObject(ESM::FormId item) const;
-        bool setQuestObject(ESM::FormId item, bool questObject);
-        [[nodiscard]] bool hasAchievement(std::uint32_t achievement) const;
-        bool unlockAchievement(std::uint32_t achievement);
-        [[nodiscard]] std::optional<bool> getEssentialOverride(ESM::FormId actorBase) const;
-        bool setEssentialOverride(ESM::FormId actorBase, bool essential);
-        [[nodiscard]] std::optional<float> getKarma() const;
-        bool setKarma(float value);
-        bool rewardKarma(int amount);
-        [[nodiscard]] std::optional<std::int32_t> getSpecialPoints() const;
-        bool addSpecialPoints(int amount);
+        [[nodiscard]] FalloutTerminalState getTerminalState(ESM::FormId placement) const;
+        bool setTerminalState(ESM::FormId placement, FalloutTerminalState state);
+        [[nodiscard]] const std::set<ESM::FormId>& getNotes() const { return mNotes; }
+        [[nodiscard]] bool hasNote(ESM::FormId note) const { return mNotes.contains(note); }
+        bool addNote(ESM::FormId note);
         [[nodiscard]] bool isFastTravelEnabled() const { return mFastTravelEnabled; }
         [[nodiscard]] bool isWaitEnabled() const { return mWaitEnabled; }
         [[nodiscard]] bool isFastTravelKeptOnCellChange() const { return mFastTravelKeepOnCellChange; }
         bool setScriptedFastTravel(bool canFastTravel, bool canWait = true, bool keepOnCellChange = false);
+        // Unserialized, engine-owned rejection fixtures used only by the
+        // unattended C06 production matrix. They exercise the same resolver
+        // and UI handlers without changing the canonical Save330 marker
+        // denominator or providing an unlock/teleport success path.
+        void setFastTravelProofOverrides(bool forceEnemiesNearby, bool forceInvalidDestination)
+        {
+            mProofForceEnemiesNearby = forceEnemiesNearby;
+            mProofForceInvalidDestination = forceInvalidDestination;
+        }
+        [[nodiscard]] bool isFastTravelProofEnemiesNearby() const { return mProofForceEnemiesNearby; }
+        [[nodiscard]] bool isFastTravelProofInvalidDestination() const { return mProofForceInvalidDestination; }
         void notifyCellChanged();
         bool isVatsActive() const { return mVatsActive; }
         void setVatsActive(bool active) { mVatsActive = active; }
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);
-        FalloutActorValueMutationResult setCurrentSpecial(
-            const std::array<float, FalloutPlayerState::SpecialCount>& values);
         FalloutActorValueMutationResult modCurrentActorValue(std::uint32_t actorValue, float delta);
 
         int countSavedGameRecords() const;

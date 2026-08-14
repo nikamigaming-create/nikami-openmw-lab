@@ -24,7 +24,10 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <components/misc/resourcehelpers.hpp>
@@ -63,6 +66,7 @@
 #include <osg/Shader>
 #include <osg/Switch>
 #include <osg/TexEnv>
+#include <osg/TexMat>
 #include <osg/Texture2D>
 #include <osg/Uniform>
 #include <osgAnimation/Bone>
@@ -86,6 +90,7 @@
 #include "../mwclass/fnvsandbox.hpp"
 #include "../mwworld/cell.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerstate.hpp"
 #include "../mwworld/timestamp.hpp"
 #include "falloutweaponanimation.hpp"
 #include "fonvpackageanimation.hpp"
@@ -98,6 +103,60 @@ namespace MWRender
 {
     namespace
     {
+        std::optional<float> readFalloutPipBoyFieldOfView(Resource::ResourceSystem* resourceSystem)
+        {
+            const VFS::Manager* const vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+            const VFS::Path::Normalized esmPath("falloutnv.esm");
+            if (vfs == nullptr || !vfs->exists(esmPath))
+                return std::nullopt;
+
+            constexpr std::string_view directoryPrefix = "DIR: ";
+            const std::string archive = vfs->getArchive(esmPath);
+            if (!archive.starts_with(directoryPrefix))
+                return std::nullopt;
+
+            const std::filesystem::path iniPath
+                = std::filesystem::path(archive.substr(directoryPrefix.size())).parent_path() / "Fallout_default.ini";
+            std::ifstream stream(iniPath);
+            std::string line;
+            while (stream && std::getline(stream, line))
+            {
+                const std::size_t separator = line.find('=');
+                if (separator == std::string::npos)
+                    continue;
+                std::string key = line.substr(0, separator);
+                key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char value) {
+                    return std::isspace(value) != 0;
+                }), key.end());
+                Misc::StringUtils::lowerCaseInPlace(key);
+                if (key != "fpipboy1stpersonfov")
+                    continue;
+                try
+                {
+                    const float value = std::stof(line.substr(separator + 1));
+                    if (std::isfinite(value) && value > 0.f && value < 180.f)
+                    {
+                        // This value drives Fallout's first-person model projection, not the
+                        // world-camera projection. Retained xNVSE Save330 frames show the
+                        // model callback changing from 55 to the authored value 47 directly.
+                        // Converting 47 through the 4:3 world-FOV helper yields 36.1233 and
+                        // incorrectly enlarges the wrist model.
+                        const float verticalFov = value;
+                        Log(Debug::Info) << "FNV Pip-Boy projection: referenceFov=" << value
+                                         << " verticalFov=" << verticalFov
+                                         << " source=" << iniPath.string()
+                                         << " key=fPipboy1stPersonFOV";
+                        return verticalFov;
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    return std::nullopt;
+                }
+            }
+            return std::nullopt;
+        }
+
         class FirstPersonArmorArmsOnlyVisitor final : public osg::NodeVisitor
         {
         public:
@@ -125,11 +184,17 @@ namespace MWRender
         private:
             void filter(osg::Drawable& drawable)
             {
-                if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) == nullptr)
+                SceneUtil::RigGeometry* const rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+                if (rig == nullptr)
                     return;
 
                 const std::string name = Misc::StringUtils::lowerCase(drawable.getName());
-                const bool keep = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
+                const bool genericArms = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
+                // Only the first-person Arms partition belongs in this actor-space
+                // composition. Retained native review rejected the outfit's two
+                // PipBoyOn body partitions: forcing them into the first-person rig
+                // produced displaced black geometry and did not repair either cuff.
+                const bool keep = genericArms;
                 if (keep)
                     ++mKept;
                 else
@@ -1758,7 +1823,7 @@ namespace MWRender
         {
         public:
             explicit PipBoyScreenTextureVisitor(osg::Texture2D* texture, osg::Texture2D* mapTexture, bool showMap,
-                float mapZoom, float mapPanX, float mapPanY)
+                float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTexture(texture)
                 , mMapTexture(mapTexture)
@@ -1766,38 +1831,157 @@ namespace MWRender
                 , mMapZoom(mapZoom)
                 , mMapPanX(mapPanX)
                 , mMapPanY(mapPanY)
+                , mMapClip(mapClip)
             {
             }
 
             void apply(osg::Node& node) override
             {
-                bindIfPipBoyScreen(node);
+                const bool isScreenOwner = isPipBoyScreenOwner(node);
+                const osg::StateSet* previousScreenState = mInheritedPipBoyScreenState;
+                if (isScreenOwner)
+                    mInheritedPipBoyScreenState = node.getStateSet();
                 traverse(node);
+                if (isScreenOwner)
+                    mInheritedPipBoyScreenState = previousScreenState;
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                const bool isScreenOwner = isPipBoyScreenOwner(geode);
+                const osg::StateSet* previousScreenState = mInheritedPipBoyScreenState;
+                if (isScreenOwner)
+                    mInheritedPipBoyScreenState = geode.getStateSet();
+                const bool ownsOrInheritsScreen = mInheritedPipBoyScreenState != nullptr;
+                for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                {
+                    if (osg::Drawable* drawable = geode.getDrawable(index))
+                    {
+                        auditPipBoyScreenUv(
+                            dynamic_cast<osg::Geometry*>(drawable), "geode", ownsOrInheritsScreen);
+                        apply(*drawable);
+                    }
+                }
+                traverse(geode);
+                if (isScreenOwner)
+                    mInheritedPipBoyScreenState = previousScreenState;
             }
 
             void apply(osg::Drawable& drawable) override
             {
-                bindIfPipBoyScreen(drawable);
+                const osg::StateSet* screenState = isPipBoyScreenOwner(drawable)
+                    ? drawable.getStateSet() : mInheritedPipBoyScreenState;
+                const bool ownsOrInheritsScreen = screenState != nullptr;
+                auditPipBoyScreenUv(dynamic_cast<osg::Geometry*>(&drawable), "drawable", ownsOrInheritsScreen);
+                bindIfPipBoyScreen(drawable, screenState);
                 if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
                 {
                     if (osg::Geometry* source = rig->getSourceGeometry())
-                        bindIfPipBoyScreen(*source);
+                    {
+                        auditPipBoyScreenUv(source, "source", ownsOrInheritsScreen);
+                        bindIfPipBoyScreen(*source, screenState);
+                    }
                     for (unsigned int i = 0; i < 2; ++i)
                     {
                         if (osg::Geometry* geometry = rig->getRenderGeometry(i))
-                            bindIfPipBoyScreen(*geometry);
+                        {
+                            auditPipBoyScreenUv(geometry, "render", ownsOrInheritsScreen);
+                            bindIfPipBoyScreen(*geometry, screenState);
+                        }
                     }
                 }
             }
 
             const std::vector<osg::ref_ptr<osg::StateSet>>& getBoundStateSets() const { return mBoundStateSets; }
+            const std::vector<osg::ref_ptr<osg::Node>>& getBoundNodes() const { return mBoundNodes; }
+            const std::vector<osg::ref_ptr<osg::Drawable>>& getBoundDrawables() const { return mBoundDrawables; }
             static void setLiveTexture(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
-                bool showMap, float mapZoom, float mapPanX, float mapPanY)
+                bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
             {
-                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+                float screenAspect = 1.f;
+                if (const osg::Uniform* uniform = stateSet.getUniform("pipBoyScreenAspect"))
+                    uniform->get(screenAspect);
+                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip, screenAspect);
             }
 
         private:
+            template <class StateOwner>
+            static bool isPipBoyScreenOwner(const StateOwner& owner)
+            {
+                // PipBoyArm.nif has two nearly coincident Screen.dds surfaces.
+                // Retail/xNVSE evidence identifies pipboyscreen as the live
+                // display; ScreenLit is the authored lighting layer and must
+                // retain its original material.
+                std::string name = owner.getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                return name.starts_with("pipboyscreen") && isPipBoyScreen(owner.getStateSet());
+            }
+
+            static void auditPipBoyScreenUv(osg::Geometry* geometry, std::string_view phase, bool screenOwner)
+            {
+                if (geometry == nullptr || !screenOwner)
+                    return;
+
+                static std::set<const osg::Geometry*> logged;
+                if (!logged.insert(geometry).second)
+                    return;
+
+                const osg::Vec2Array* const texcoords
+                    = dynamic_cast<const osg::Vec2Array*>(geometry->getTexCoordArray(0));
+                if (texcoords == nullptr || texcoords->empty())
+                {
+                    Log(Debug::Error) << "FNV Pip-Boy screen UV audit: phase=" << phase
+                                      << " geometry=" << geometry->getName() << " available=0";
+                    return;
+                }
+
+                osg::Vec2f minimum = texcoords->front();
+                osg::Vec2f maximum = minimum;
+                for (const osg::Vec2f& uv : *texcoords)
+                {
+                    minimum.x() = std::min(minimum.x(), uv.x());
+                    minimum.y() = std::min(minimum.y(), uv.y());
+                    maximum.x() = std::max(maximum.x(), uv.x());
+                    maximum.y() = std::max(maximum.y(), uv.y());
+                }
+                Log(Debug::Info) << "FNV Pip-Boy screen UV audit: phase=" << phase
+                                 << " geometry=" << geometry->getName() << " available=1"
+                                 << " vertices="
+                                 << (geometry->getVertexArray() != nullptr
+                                         ? geometry->getVertexArray()->getNumElements()
+                                         : 0)
+                                 << " texcoords=" << texcoords->size()
+                                 << " min=(" << minimum.x() << ',' << minimum.y() << ')'
+                                 << " max=(" << maximum.x() << ',' << maximum.y() << ')'
+                                 << " first=(" << texcoords->front().x() << ',' << texcoords->front().y() << ')'
+                                 << " last=(" << texcoords->back().x() << ',' << texcoords->back().y() << ')';
+            }
+
+            static void auditPipBoyScreenTextureTransform(const osg::StateSet& stateSet, std::string_view owner)
+            {
+                if (std::getenv("OPENMW_FNV_HAND_POSE_AUDIT") == nullptr)
+                    return;
+
+                static std::set<const osg::StateSet*> logged;
+                if (!logged.insert(&stateSet).second)
+                    return;
+
+                const osg::TexMat* const texMat = dynamic_cast<const osg::TexMat*>(
+                    stateSet.getTextureAttribute(0, osg::StateAttribute::TEXMAT));
+                if (texMat == nullptr)
+                {
+                    Log(Debug::Info) << "FNV Pip-Boy screen texture transform audit: owner=" << owner
+                                     << " texMat=none";
+                    return;
+                }
+
+                const osg::Matrix& matrix = texMat->getMatrix();
+                Log(Debug::Info) << "FNV Pip-Boy screen texture transform audit: owner=" << owner
+                                 << " texMat={(" << matrix(0, 0) << ',' << matrix(0, 1) << ',' << matrix(0, 3)
+                                 << ");(" << matrix(1, 0) << ',' << matrix(1, 1) << ',' << matrix(1, 3)
+                                 << ");trans=(" << matrix(3, 0) << ',' << matrix(3, 1) << ")}";
+            }
+
             static osg::Program* getPipBoyTerminalProgram()
             {
                 // The retail PipBoy screen is a no-lighting material whose
@@ -1813,22 +1997,31 @@ namespace MWRender
                     result->setName("FNV Pip-Boy live terminal screen");
                     result->addShader(new osg::Shader(osg::Shader::VERTEX, R"glsl(
                         #version 120
+                        uniform vec2 pipBoyTerminalUvScale;
                         varying vec2 pipBoyTerminalUv;
 
                         void main()
                         {
                             gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
-                            // NIF data stores the display inside a 76% atlas
-                            // island, but the OpenMW scene loader has already
-                            // normalized that island before this shader runs.
-                            // Applying the raw-NIF atlas conversion a second
-                            // time compressed content into the left/top and
-                            // clamped the right/bottom edges. Sample this
-                            // loader-normalized display coordinate directly.
-                            vec2 screenUv = gl_MultiTexCoord0.xy;
-                            // OSG image data is bottom-up while the terminal
-                            // raster is authored top-down. Keep glyphs upright.
-                            pipBoyTerminalUv = vec2(screenUv.x, 1.0 - screenUv.y);
+                            // The physical retail mesh stores its display in
+                            // a rectangular island of the source atlas. The
+                            // authenticated live mesh audit records the raw
+                            // range as x=[-0.0104533, 0.752926] and
+                            // y=[0.237521, 0.998031]. The live terminal RTT is
+                            // a full image, so normalize that exact authored
+                            // island once before sampling it. Treating these
+                            // raw atlas coordinates as 0..1 sampled only a
+                            // skewed sub-rectangle and produced the rejected
+                            // warped MAP display.
+                            const vec2 retailScreenAtlasMin = vec2(-0.0104533, 0.237521);
+                            const vec2 retailScreenAtlasSize = vec2(0.7633793, 0.76051);
+                            vec2 screenUv = (gl_MultiTexCoord0.xy - retailScreenAtlasMin)
+                                / retailScreenAtlasSize;
+                            // The MyGUI render target already applies its
+                            // top-left-origin texture transform while drawing
+                            // the pane into the FBO; sampling it needs no
+                            // second vertical flip.
+                            pipBoyTerminalUv = screenUv * pipBoyTerminalUvScale;
                         }
                     )glsl"));
                     result->addShader(new osg::Shader(osg::Shader::FRAGMENT, R"glsl(
@@ -1839,19 +2032,23 @@ namespace MWRender
                         uniform float pipBoyMapZoom;
                         uniform float pipBoyMapAspect;
                         uniform vec2 pipBoyMapPan;
+                        uniform vec4 pipBoyMapClip;
                         varying vec2 pipBoyTerminalUv;
 
                         void main()
                         {
                             vec4 source = texture2D(pipBoyTerminalMap, pipBoyTerminalUv);
-                            float glyph = max(source.a, max(source.r, max(source.g, source.b)));
+                            // Convert RGB luminance, not alpha, so the opaque
+                            // black window background remains black glass.
+                            float sourceLuma = dot(source.rgb, vec3(0.299, 0.587, 0.114));
+                            float glyph = smoothstep(0.08, 0.75, sourceLuma);
                             // MAP is an actual FNV world-map texture or OpenMW's
                             // live LocalMap render target. It is cropped, panned,
                             // and zoomed directly on the authored Pip-Boy glass.
                             if (pipBoyMapEnabled > 0.5)
                             {
-                                const vec2 mapOrigin = vec2(0.08, 0.26);
-                                const vec2 mapSize = vec2(0.84, 0.53);
+                                vec2 mapOrigin = pipBoyMapClip.xy;
+                                vec2 mapSize = pipBoyMapClip.zw;
                                 vec2 mapUv = (pipBoyTerminalUv - mapOrigin) / mapSize;
                                 if (mapUv.x >= 0.0 && mapUv.x <= 1.0 && mapUv.y >= 0.0 && mapUv.y <= 1.0)
                                 {
@@ -1860,7 +2057,7 @@ namespace MWRender
                                     // stretched into the wide display viewport.
                                     // Fit the real source aspect first, leaving
                                     // the unused glass black, then pan/zoom it.
-                                    const float viewportAspect = mapSize.x / mapSize.y;
+                                    float viewportAspect = mapSize.x / mapSize.y;
                                     float mapAspect = max(pipBoyMapAspect, 0.01);
                                     if (mapAspect > viewportAspect)
                                         mapUv.y = (mapUv.y - 0.5) * (mapAspect / viewportAspect) + 0.5;
@@ -1913,7 +2110,8 @@ namespace MWRender
             }
 
             static void decorateStateSet(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
-                bool showMap, float mapZoom, float mapPanX, float mapPanY)
+                bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip,
+                float screenAspect)
             {
                 constexpr auto flags = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE;
                 stateSet.setTextureAttributeAndModes(0, texture, flags);
@@ -1923,6 +2121,21 @@ namespace MWRender
                     stateSet.removeTextureAttribute(1, osg::StateAttribute::TEXTURE);
                 stateSet.setAttributeAndModes(getPipBoyTerminalProgram(), flags);
                 stateSet.addUniform(new osg::Uniform("pipBoyTerminalMap", 0));
+                int terminalWidth = texture != nullptr ? texture->getTextureWidth() : 0;
+                int terminalHeight = texture != nullptr ? texture->getTextureHeight() : 0;
+                if (texture != nullptr && (terminalWidth <= 0 || terminalHeight <= 0) && texture->getImage() != nullptr)
+                {
+                    terminalWidth = texture->getImage()->s();
+                    terminalHeight = texture->getImage()->t();
+                }
+                const float safeScreenAspect = std::max(screenAspect, 0.01f);
+                // The 512x512 Pip-Boy RTT already contains the complete
+                // authored pane in its final normalized coordinates. The
+                // former aspect-fit multiplier sampled only 77.8% of its Y
+                // range on the 1.284:1 curved glass and clipped the title/list.
+                const osg::Vec2f terminalUvScale(1.f, 1.f);
+                stateSet.addUniform(new osg::Uniform("pipBoyScreenAspect", safeScreenAspect));
+                stateSet.addUniform(new osg::Uniform("pipBoyTerminalUvScale", terminalUvScale));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapTexture", 1));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapEnabled", mapTexture != nullptr && showMap ? 1.f : 0.f));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapZoom", mapZoom));
@@ -1941,17 +2154,55 @@ namespace MWRender
                 }
                 stateSet.addUniform(new osg::Uniform("pipBoyMapAspect", mapAspect));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapPan", osg::Vec2f(mapPanX, mapPanY)));
+                stateSet.addUniform(new osg::Uniform("pipBoyMapClip", mapClip));
             }
 
             template <class StateOwner>
-            void bindIfPipBoyScreen(StateOwner& owner)
+            void bindIfPipBoyScreen(StateOwner& owner, const osg::StateSet* source)
             {
-                const osg::StateSet* source = owner.getStateSet();
-                if (!isPipBoyScreen(source))
+                if (source == nullptr)
                     return;
 
+                if (osg::Node* node = dynamic_cast<osg::Node*>(&owner))
+                    mBoundNodes.emplace_back(node);
+                if (osg::Drawable* drawable = dynamic_cast<osg::Drawable*>(&owner))
+                    mBoundDrawables.emplace_back(drawable);
+
+                auditPipBoyScreenTextureTransform(*source, owner.getName());
+
+                float screenAspect = 1.f;
+                std::size_t vertexCount = 0;
+                osg::BoundingBox geometryBounds;
+                if (const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(&owner))
+                {
+                    geometryBounds = geometry->getBoundingBox();
+                    vertexCount = geometry->getVertexArray() != nullptr
+                        ? geometry->getVertexArray()->getNumElements() : 0;
+                    std::array<float, 3> extents = {
+                        geometryBounds.xMax() - geometryBounds.xMin(),
+                        geometryBounds.yMax() - geometryBounds.yMin(),
+                        geometryBounds.zMax() - geometryBounds.zMin() };
+                    std::sort(extents.begin(), extents.end(), std::greater<float>());
+                    if (extents[1] > 0.0001f)
+                        screenAspect = extents[0] / extents[1];
+                }
+
+                static std::set<std::string> loggedOwners;
+                const std::string ownerKey = owner.getName() + ":" + std::to_string(vertexCount);
+                if (loggedOwners.insert(ownerKey).second)
+                {
+                    Log(Debug::Info) << "FNV Pip-Boy screen owner: name=" << owner.getName()
+                                     << " geometry=" << (vertexCount > 0)
+                                     << " vertices=" << vertexCount
+                                     << " boundsMin=(" << geometryBounds.xMin() << ',' << geometryBounds.yMin()
+                                     << ',' << geometryBounds.zMin() << ") boundsMax=(" << geometryBounds.xMax()
+                                     << ',' << geometryBounds.yMax() << ',' << geometryBounds.zMax() << ')'
+                                     << " derivedAspect=" << screenAspect;
+                }
+
                 osg::ref_ptr<osg::StateSet> bound = new osg::StateSet(*source, osg::CopyOp::SHALLOW_COPY);
-                decorateStateSet(*bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY);
+                decorateStateSet(*bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY,
+                    mMapClip, screenAspect);
                 owner.setStateSet(bound);
                 mBoundStateSets.push_back(std::move(bound));
             }
@@ -1962,83 +2213,11 @@ namespace MWRender
             float mMapZoom = 1.f;
             float mMapPanX = 0.f;
             float mMapPanY = 0.f;
+            osg::Vec4f mMapClip;
+            const osg::StateSet* mInheritedPipBoyScreenState = nullptr;
             std::vector<osg::ref_ptr<osg::StateSet>> mBoundStateSets;
-        };
-
-        // The PipBoyArm mesh already has individually named, retail-authored
-        // control nodes. Keep their authored geometry intact and insert a
-        // lightweight parent transform above each one; that makes the real
-        // TabKnob, ScrollKnob, buttons, and their glow lenses stateful without
-        // baking replacements or rotating the whole device.
-        class PipBoyControlLocator final : public osg::NodeVisitor
-        {
-        public:
-            PipBoyControlLocator()
-                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-            {
-            }
-
-            void apply(osg::Node& node) override
-            {
-                inspectNodeName(node, node.getName());
-                traverse(node);
-            }
-
-            void apply(osg::Geode& geode) override
-            {
-                inspectNodeName(geode, geode.getName());
-                for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
-                {
-                    osg::Drawable* const drawable = geode.getDrawable(index);
-                    if (drawable != nullptr)
-                        inspectDrawableName(geode, *drawable);
-                }
-                traverse(geode);
-            }
-
-            osg::Node* mTabKnob = nullptr;
-            osg::Node* mScrollKnob = nullptr;
-            std::array<osg::Node*, 3> mButtons{};
-            std::array<osg::Node*, 3> mGlows{};
-            std::vector<std::string> mRelevantNames;
-
-        private:
-            void remember(std::string_view kind, std::string_view name)
-            {
-                if (name.empty() || mRelevantNames.size() >= 48)
-                    return;
-                const std::string lower = Misc::StringUtils::lowerCase(name);
-                if (lower.find("pip") == std::string::npos && lower.find("knob") == std::string::npos
-                    && lower.find("button") == std::string::npos && lower.find("glow") == std::string::npos)
-                    return;
-                mRelevantNames.emplace_back(std::string(kind) + ':' + std::string(name));
-            }
-
-            void inspectNodeName(osg::Node& node, std::string_view name)
-            {
-                remember("node", name);
-                if (Misc::StringUtils::ciStartsWith(name, "TabKnob"))
-                    mTabKnob = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "ScrollKnob"))
-                    mScrollKnob = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton01"))
-                    mButtons[0] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton02"))
-                    mButtons[1] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton03"))
-                    mButtons[2] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "StatsGlow"))
-                    mGlows[0] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "ItemsGlow"))
-                    mGlows[1] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "DataGlow"))
-                    mGlows[2] = &node;
-            }
-
-            void inspectDrawableName(osg::Geode&, osg::Drawable& drawable)
-            {
-                remember("drawable", drawable.getName());
-            }
+            std::vector<osg::ref_ptr<osg::Node>> mBoundNodes;
+            std::vector<osg::ref_ptr<osg::Drawable>> mBoundDrawables;
         };
 
         void overrideFalloutPartTexture(std::string_view texture, std::string_view textureType, unsigned int unit,
@@ -3435,8 +3614,9 @@ namespace MWRender
         class ForceFalloutRigGeometryUpdateVisitor : public osg::NodeVisitor
         {
         public:
-            ForceFalloutRigGeometryUpdateVisitor()
+            explicit ForceFalloutRigGeometryUpdateVisitor(bool requestHandPoseAudit = false)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mRequestHandPoseAudit(requestHandPoseAudit)
             {
             }
 
@@ -3457,12 +3637,16 @@ namespace MWRender
             unsigned int mRefreshedRigGeometry = 0;
 
         private:
+            bool mRequestHandPoseAudit = false;
+
             void applyDrawable(osg::Drawable& drawable)
             {
                 if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
                 {
                     if (rig->isFalloutCharacterRig())
                     {
+                        if (mRequestHandPoseAudit)
+                            rig->requestFalloutHandPoseAudit();
                         rig->forceNextUpdate();
                         if (rig->refreshFalloutSkinningForCurrentPose())
                             ++mRefreshedRigGeometry;
@@ -3479,18 +3663,203 @@ namespace MWRender
             }
         };
 
-        unsigned int forceFalloutRigGeometryUpdate(osg::Node* root, unsigned int& holderCount, unsigned int& refreshCount)
+        unsigned int forceFalloutRigGeometryUpdate(
+            osg::Node* root, unsigned int& holderCount, unsigned int& refreshCount, bool requestHandPoseAudit = false)
         {
             holderCount = 0;
             refreshCount = 0;
             if (root == nullptr)
                 return 0;
 
-            ForceFalloutRigGeometryUpdateVisitor visitor;
+            ForceFalloutRigGeometryUpdateVisitor visitor(requestHandPoseAudit);
             root->accept(visitor);
             holderCount = visitor.mForcedRigGeometryHolder;
             refreshCount = visitor.mRefreshedRigGeometry;
             return visitor.mForcedRigGeometry;
+        }
+
+        bool getNodeWorldMatrixUnderAncestor(osg::Node* node, const osg::Node* ancestor, osg::Matrix& result);
+
+        class FalloutPipBoyScreenSurfaceCollector final : public osg::NodeVisitor
+        {
+        public:
+            FalloutPipBoyScreenSurfaceCollector(const osg::Matrix& worldToCamera, const osg::Node* livePartRoot)
+                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+                , mWorldToCamera(worldToCamera)
+                , mLivePartRoot(livePartRoot)
+            {
+            }
+
+            void apply(osg::Node& node) override { traverse(node); }
+            void apply(osg::Geode& geode) override { traverse(geode); }
+            void apply(osg::Drawable& drawable) override
+            {
+                std::string name = drawable.getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                if (!name.starts_with("pipboyscreen"))
+                    return;
+                SceneUtil::RigGeometry* const rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+                const osg::Geometry* geometry = rig != nullptr ? rig->getLastFrameGeometry()
+                                                               : dynamic_cast<osg::Geometry*>(&drawable);
+                const osg::Vec3Array* vertices = geometry != nullptr
+                    ? dynamic_cast<const osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
+                if (vertices == nullptr)
+                    return;
+                osg::Matrix geometryToWorld;
+                bool resolved = false;
+                for (unsigned int parentIndex = 0; parentIndex < drawable.getNumParents(); ++parentIndex)
+                {
+                    if (getNodeWorldMatrixUnderAncestor(drawable.getParent(parentIndex), mLivePartRoot, geometryToWorld))
+                    {
+                        resolved = true;
+                        break;
+                    }
+                }
+                if (!resolved)
+                    return;
+                ++mResolvedDrawables;
+                for (const osg::Vec3f& vertex : *vertices)
+                {
+                    const osg::Vec3d point = osg::Vec3d(vertex) * geometryToWorld * mWorldToCamera;
+                    mBounds.expandBy(osg::Vec3f(point.x(), point.y(), point.z()));
+                    ++mVertices;
+                }
+            }
+
+            osg::BoundingBox mBounds;
+            unsigned int mVertices = 0;
+            unsigned int mResolvedDrawables = 0;
+
+        private:
+            osg::Matrix mWorldToCamera;
+            const osg::Node* mLivePartRoot = nullptr;
+        };
+
+        struct FalloutWristSurfaceSample
+        {
+            std::vector<osg::Vec3f> mCameraVertices;
+            osg::Vec3f mNearestWristVertex;
+            float mNearestWristDistance = 1.e30f;
+            unsigned int mRigGeometry = 0;
+            unsigned int mSourceVertices = 0;
+            unsigned int mResolvedWorldPaths = 0;
+            unsigned int mUnresolvedWorldPaths = 0;
+        };
+
+        // Samples actual double-buffered post-skin vertices rather than
+        // template bounds. The outfit Arms partition and a hand NIF share
+        // animation bones but are independently skinned, which is exactly
+        // where a visible cuff seam can originate.
+        class FalloutWristSurfaceCollector final : public osg::NodeVisitor
+        {
+        public:
+            FalloutWristSurfaceCollector(const osg::Matrix& worldToCamera, const osg::Node* livePartRoot,
+                std::string_view rigNameFilter, const osg::Vec3f& wristCamera, float radius)
+                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+                , mWorldToCamera(worldToCamera)
+                , mLivePartRoot(livePartRoot)
+                , mRigNameFilter(rigNameFilter)
+                , mWristCamera(wristCamera)
+                , mRadiusSquared(radius * radius)
+            {
+            }
+
+            void apply(osg::Node& node) override { traverse(node); }
+            void apply(osg::Geode& geode) override { traverse(geode); }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                SceneUtil::RigGeometry* const rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+                if (rig == nullptr || !rig->isFalloutCharacterRig()
+                    || (!mRigNameFilter.empty()
+                        && !Misc::StringUtils::ciEqual(rig->getName(), mRigNameFilter)))
+                    return;
+
+                ++mSample.mRigGeometry;
+                const osg::Geometry* const render = rig->getLastFrameGeometry();
+                const osg::Vec3Array* const vertices = render != nullptr
+                    ? dynamic_cast<const osg::Vec3Array*>(render->getVertexArray())
+                    : nullptr;
+                if (vertices == nullptr)
+                    return;
+
+                mSample.mSourceVertices += static_cast<unsigned int>(vertices->size());
+                osg::Matrix geometryToWorld;
+                bool resolvedWorldPath = false;
+                if (mLivePartRoot != nullptr)
+                {
+                    for (unsigned int parentIndex = 0; parentIndex < rig->getNumParents(); ++parentIndex)
+                    {
+                        osg::Group* const parent = rig->getParent(parentIndex);
+                        if (getNodeWorldMatrixUnderAncestor(parent, mLivePartRoot, geometryToWorld))
+                        {
+                            resolvedWorldPath = true;
+                            break;
+                        }
+                    }
+                }
+                if (!resolvedWorldPath)
+                {
+                    ++mSample.mUnresolvedWorldPaths;
+                    return;
+                }
+
+                ++mSample.mResolvedWorldPaths;
+                for (const osg::Vec3f& vertex : *vertices)
+                {
+                    // The double-buffered RigGeometry vertices are in the
+                    // local space of their owning first-person part. Resolve
+                    // the exact live parent path before applying the camera
+                    // inverse; otherwise the saved world translation is
+                    // mistaken for a cuff-to-hand gap.
+                    const osg::Vec3d cameraPoint = osg::Vec3d(vertex) * geometryToWorld * mWorldToCamera;
+                    const osg::Vec3f camera(cameraPoint.x(), cameraPoint.y(), cameraPoint.z());
+                    const float wristDistance = (camera - mWristCamera).length();
+                    if (wristDistance < mSample.mNearestWristDistance)
+                    {
+                        mSample.mNearestWristDistance = wristDistance;
+                        mSample.mNearestWristVertex = camera;
+                    }
+                    if ((camera - mWristCamera).length2() <= mRadiusSquared)
+                        mSample.mCameraVertices.push_back(camera);
+                }
+            }
+
+            FalloutWristSurfaceSample mSample;
+
+        private:
+            osg::Matrix mWorldToCamera;
+            const osg::Node* mLivePartRoot;
+            std::string_view mRigNameFilter;
+            osg::Vec3f mWristCamera;
+            float mRadiusSquared;
+        };
+
+        struct FalloutWristSurfaceGap
+        {
+            float mDistance = 1.e30f;
+            osg::Vec3f mFirst;
+            osg::Vec3f mSecond;
+        };
+
+        FalloutWristSurfaceGap minimumFalloutWristSurfaceGap(
+            const FalloutWristSurfaceSample& first, const FalloutWristSurfaceSample& second)
+        {
+            FalloutWristSurfaceGap result;
+            for (const osg::Vec3f& firstVertex : first.mCameraVertices)
+            {
+                for (const osg::Vec3f& secondVertex : second.mCameraVertices)
+                {
+                    const float distance = (firstVertex - secondVertex).length();
+                    if (distance < result.mDistance)
+                    {
+                        result.mDistance = distance;
+                        result.mFirst = firstVertex;
+                        result.mSecond = secondVertex;
+                    }
+                }
+            }
+            return result;
         }
 
         bool isFallout3OrNewVegas(const ESM4::Npc& npc)
@@ -3724,7 +4093,6 @@ namespace MWRender
         public:
             HideFalloutDismemberGoreVisitor()
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-                , mIncludeStaticGeometry(includeStaticGeometry)
             {
             }
 
@@ -4578,7 +4946,14 @@ namespace MWRender
                 || lowered.find("characters/_male/femalelefthand1st.nif") != std::string::npos
                 || lowered.find("characters\\_male\\femalelefthand1st.nif") != std::string::npos
                 || lowered.find("characters/_male/femalerighthand1st.nif") != std::string::npos
-                || lowered.find("characters\\_male\\femalerighthand1st.nif") != std::string::npos;
+                || lowered.find("characters\\_male\\femalerighthand1st.nif") != std::string::npos
+                // The Save330 Pip-Boy Glove is a live skinned hand surface,
+                // not an actor-space armor limb.  Leaving it out of this
+                // classification mounts it in the generic Bip01 frame while
+                // the Pip-Boy itself follows L ForeTwist, opening the visible
+                // glove/cuff seam as soon as the retail Pip-Boy KF plays.
+                || lowered.find("lefthandpipboyglove") != std::string::npos
+                || lowered.find("righthandpipboyglove") != std::string::npos;
         }
 
         bool isFalloutLeftHandSurfaceModel(std::string_view model)
@@ -4587,7 +4962,7 @@ namespace MWRender
             Misc::StringUtils::lowerCaseInPlace(lowered);
             return lowered.find("lefthand.nif") != std::string::npos
                 || lowered.find("lefthand1st.nif") != std::string::npos
-                || lowered.find("lefthandpipboyglove1st.nif") != std::string::npos;
+                || lowered.find("lefthandpipboyglove") != std::string::npos;
         }
 
         bool isFalloutStaticHeadgearPart(std::string_view model)
@@ -4997,6 +5372,27 @@ namespace MWRender
                 return transform->getMatrix();
 
             return osg::Matrix::identity();
+        }
+
+        // A template node can have more than one parent path after a Fallout
+        // part is instanced.  The first parental path is not necessarily the
+        // rendered first-person branch.  Select the path containing the live
+        // owner explicitly whenever a screen/control measurement has to agree
+        // with the physical presentation root.
+        bool getNodeWorldMatrixUnderAncestor(osg::Node* node, const osg::Node* ancestor, osg::Matrix& result)
+        {
+            if (node == nullptr || ancestor == nullptr)
+                return false;
+
+            const osg::NodePathList paths = node->getParentalNodePaths();
+            for (const osg::NodePath& path : paths)
+            {
+                if (std::find(path.begin(), path.end(), ancestor) == path.end())
+                    continue;
+                result = osg::computeLocalToWorld(path);
+                return true;
+            }
+            return false;
         }
 
         osg::ref_ptr<osg::MatrixTransform> makeFalloutHeadFrameHelper(osg::Group& bip01, osg::Group& head)
@@ -5556,892 +5952,6 @@ namespace MWRender
                 || text.find("rifle") != std::string::npos || text.find("shotgun") != std::string::npos
                 || text.find("sniper") != std::string::npos || text.find("launcher") != std::string::npos
                 || text.find("minigun") != std::string::npos;
-        }
-
-        struct WorldViewerWeaponIkSolve
-        {
-            osg::Vec3f mMid;
-            osg::Vec3f mEnd;
-            float mError = -1.f;
-            bool mReachable = false;
-            bool mSolved = false;
-        };
-
-        struct WorldViewerWeaponIkRotationProbe
-        {
-            bool mSolved = false;
-            float mError = -1.f;
-            const char* mOrder = "none";
-        };
-
-        bool worldViewerFONVWeaponIkEnabled()
-        {
-            if (const char* value = std::getenv("OPENMW_FNV_WEAPON_IK"))
-                return value[0] != '0';
-            if (const char* value = std::getenv("OPENMW_ESM4_WEAPON_IK"))
-                return value[0] != '0';
-            return false;
-        }
-
-        bool worldViewerFONVWeaponFrameStabilizerEnabled()
-        {
-            // Diagnostic fallback only. Retail drives the Weapon node from the selected animation family.
-            return worldViewerEnvEnabled("OPENMW_FNV_WEAPON_FRAME_STABILIZER")
-                || worldViewerEnvEnabled("OPENMW_ESM4_WEAPON_FRAME_STABILIZER");
-        }
-
-        bool worldViewerFONVLongGunOffhandIkEnabled()
-        {
-            // Diagnostic fallback only. Authored 2hr/2ha/etc. sequences contain the retail offhand pose.
-            return worldViewerEnvEnabled("OPENMW_FNV_LONG_GUN_OFFHAND_IK")
-                || worldViewerEnvEnabled("OPENMW_ESM4_LONG_GUN_OFFHAND_IK");
-        }
-
-        osg::Vec3f normalizeFalloutIkVector(osg::Vec3f value, const osg::Vec3f& fallback)
-        {
-            if (value.normalize() <= 0.0001f)
-                return fallback;
-            return value;
-        }
-
-        float falloutIkDirectionAngleDegrees(osg::Vec3f left, osg::Vec3f right)
-        {
-            if (left.normalize() <= 0.0001f || right.normalize() <= 0.0001f)
-                return -1.f;
-            return std::acos(std::clamp(left * right, -1.f, 1.f)) * 57.29577951308232f;
-        }
-
-        void setFalloutIkTransformWorldMatrix(osg::MatrixTransform& transform, const osg::Matrix& desiredWorld)
-        {
-            osg::Group* parent = transform.getNumParents() > 0 ? transform.getParent(0) : nullptr;
-            osg::Matrixf local = desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent));
-            transform.setMatrix(local);
-            transform.dirtyBound();
-
-            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(&transform))
-            {
-                if (osgAnimation::Bone* boneParent = bone->getBoneParent())
-                    bone->setMatrixInSkeletonSpace(local * boneParent->getMatrixInSkeletonSpace());
-                else
-                    bone->setMatrixInSkeletonSpace(local);
-            }
-        }
-
-        WorldViewerWeaponIkSolve solveFalloutWeaponIkTwoBone(
-            const osg::Vec3f& root, const osg::Vec3f& mid, const osg::Vec3f& end,
-            const osg::Vec3f& requestedTarget, const osg::Vec3f& poleHint)
-        {
-            WorldViewerWeaponIkSolve result;
-            const float upperLength = std::clamp((mid - root).length(), 4.f, 36.f);
-            const float lowerLength = std::clamp((end - mid).length(), 4.f, 36.f);
-
-            osg::Vec3f rootToTarget = requestedTarget - root;
-            float targetDistance = rootToTarget.normalize();
-            if (targetDistance <= 0.0001f)
-                return result;
-
-            const float maxReach = std::max(0.001f, upperLength + lowerLength - 0.01f);
-            const osg::Vec3f target = root + rootToTarget * std::min(targetDistance, maxReach);
-            targetDistance = std::min(targetDistance, maxReach);
-            result.mReachable = targetDistance < maxReach - 0.05f;
-
-            const float along = std::clamp(
-                (upperLength * upperLength - lowerLength * lowerLength + targetDistance * targetDistance)
-                    / (2.f * targetDistance),
-                0.f, upperLength);
-            const float height = std::sqrt(std::max(0.f, upperLength * upperLength - along * along));
-            osg::Vec3f pole = poleHint - rootToTarget * (poleHint * rootToTarget);
-            if (pole.normalize() <= 0.0001f)
-                pole = normalizeFalloutIkVector(
-                    mid - (root + rootToTarget * ((mid - root) * rootToTarget)), osg::Vec3f(0.f, 0.f, -1.f));
-
-            result.mMid = root + rootToTarget * along + pole * height;
-            result.mEnd = target;
-            result.mError = (result.mEnd - requestedTarget).length();
-            result.mSolved = true;
-            return result;
-        }
-
-        WorldViewerWeaponIkRotationProbe rotateFalloutWeaponIkSegmentToBest(
-            osg::MatrixTransform& bone, osg::Node& endpoint, const osg::Vec3f& desiredSegmentEnd, float strength)
-        {
-            WorldViewerWeaponIkRotationProbe result;
-            const osg::Matrix originalWorld = getNodeWorldMatrix(&bone);
-            const osg::Vec3f boneOrigin = originalWorld.getTrans();
-            osg::Vec3f from = getNodeWorldMatrix(&endpoint).getTrans() - boneOrigin;
-            osg::Vec3f to = desiredSegmentEnd - boneOrigin;
-            if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
-                return result;
-
-            osg::Quat delta;
-            delta.makeRotate(from, to);
-            osg::Quat limitedDelta;
-            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
-
-            const osg::Vec3f worldScale = originalWorld.getScale();
-            const auto composeWorld = [&](const osg::Quat& rotation) {
-                // Starfield's human skeleton is wrapped in a 32x native-meter conversion. Replacing the
-                // candidate with rotation+translation alone strips that inherited world scale, shrinking the
-                // limb after the first IK iteration and making every later endpoint solve diverge.
-                return osg::Matrix::scale(worldScale) * osg::Matrix::rotate(rotation)
-                    * osg::Matrix::translate(boneOrigin);
-            };
-
-            const auto testCandidate = [&](const osg::Quat& rotation) {
-                setFalloutIkTransformWorldMatrix(bone, composeWorld(rotation));
-                return (getNodeWorldMatrix(&endpoint).getTrans() - desiredSegmentEnd).length();
-            };
-
-            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
-            const float preError = testCandidate(preRotation);
-            setFalloutIkTransformWorldMatrix(bone, originalWorld);
-
-            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
-            const float postError = testCandidate(postRotation);
-            setFalloutIkTransformWorldMatrix(bone, originalWorld);
-
-            if (preError <= postError)
-            {
-                setFalloutIkTransformWorldMatrix(bone, composeWorld(preRotation));
-                result.mError = preError;
-                result.mOrder = "pre";
-            }
-            else
-            {
-                setFalloutIkTransformWorldMatrix(bone, composeWorld(postRotation));
-                result.mError = postError;
-                result.mOrder = "post";
-            }
-            result.mSolved = true;
-            return result;
-        }
-
-        WorldViewerWeaponIkRotationProbe rotateFalloutWeaponIkAxisToBest(
-            osg::MatrixTransform& transform, const osg::Vec3f& localAxis,
-            const osg::Vec3f& desiredWorldAxis, float strength)
-        {
-            WorldViewerWeaponIkRotationProbe result;
-            const osg::Matrix originalWorld = getNodeWorldMatrix(&transform);
-            osg::Vec3f current = originalWorld.getRotate() * localAxis;
-            osg::Vec3f desired = desiredWorldAxis;
-            if (current.normalize() <= 0.0001f || desired.normalize() <= 0.0001f)
-                return result;
-
-            osg::Quat delta;
-            delta.makeRotate(current, desired);
-            osg::Quat limitedDelta;
-            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
-
-            const osg::Vec3f origin = originalWorld.getTrans();
-            const osg::Vec3f worldScale = originalWorld.getScale();
-            const auto composeWorld = [&](const osg::Quat& rotation) {
-                return osg::Matrix::scale(worldScale) * osg::Matrix::rotate(rotation)
-                    * osg::Matrix::translate(origin);
-            };
-            const auto testCandidate = [&](const osg::Quat& rotation) {
-                setFalloutIkTransformWorldMatrix(transform, composeWorld(rotation));
-                return falloutIkDirectionAngleDegrees(getNodeWorldMatrix(&transform).getRotate() * localAxis, desired);
-            };
-
-            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
-            const float preAngle = testCandidate(preRotation);
-            setFalloutIkTransformWorldMatrix(transform, originalWorld);
-
-            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
-            const float postAngle = testCandidate(postRotation);
-            setFalloutIkTransformWorldMatrix(transform, originalWorld);
-
-            const float beforeAngle = falloutIkDirectionAngleDegrees(current, desired);
-            if (beforeAngle >= 0.f && beforeAngle <= preAngle + 0.25f && beforeAngle <= postAngle + 0.25f)
-            {
-                result.mSolved = true;
-                result.mError = beforeAngle;
-                result.mOrder = "keep";
-                return result;
-            }
-
-            if (preAngle >= 0.f && (postAngle < 0.f || preAngle <= postAngle))
-            {
-                setFalloutIkTransformWorldMatrix(transform, composeWorld(preRotation));
-                result.mError = preAngle;
-                result.mOrder = "pre";
-            }
-            else
-            {
-                setFalloutIkTransformWorldMatrix(transform, composeWorld(postRotation));
-                result.mError = postAngle;
-                result.mOrder = "post";
-            }
-            result.mSolved = true;
-            return result;
-        }
-
-        struct WorldViewerHandOrientationProbe
-        {
-            bool mSolved = false;
-            float mForwardError = -1.f;
-            float mPalmError = -1.f;
-            float mScore = -1.f;
-            std::string mCandidate = "none";
-        };
-
-        osg::Vec3f projectFalloutIkDirectionOnPlane(
-            osg::Vec3f direction, const osg::Vec3f& planeNormal, const osg::Vec3f& fallback)
-        {
-            const osg::Vec3f normal = normalizeFalloutIkVector(planeNormal, osg::Vec3f(0.f, 0.f, 1.f));
-            direction -= normal * (direction * normal);
-            return normalizeFalloutIkVector(direction, fallback);
-        }
-
-        float signedFalloutIkAngleAroundAxis(osg::Vec3f from, osg::Vec3f to, osg::Vec3f axis)
-        {
-            axis = normalizeFalloutIkVector(axis, osg::Vec3f(0.f, 0.f, 1.f));
-            from = projectFalloutIkDirectionOnPlane(from, axis, osg::Vec3f(1.f, 0.f, 0.f));
-            to = projectFalloutIkDirectionOnPlane(to, axis, osg::Vec3f(1.f, 0.f, 0.f));
-            const float angle = std::acos(std::clamp(from * to, -1.f, 1.f));
-            const osg::Vec3f cross = from ^ to;
-            return cross * axis < 0.f ? -angle : angle;
-        }
-
-        WorldViewerHandOrientationProbe orientFalloutWeaponIkHandGripToBest(osg::MatrixTransform& hand,
-            const osg::Vec3f& desiredWorldForward, const osg::Vec3f& desiredWorldPalm,
-            float strength, std::string_view side, bool longGun)
-        {
-            struct AxisCandidate
-            {
-                osg::Vec3f mAxis;
-                const char* mName;
-            };
-
-            const std::array<AxisCandidate, 6> axes = { {
-                { osg::Vec3f(0.f, 1.f, 0.f), "+Y" },
-                { osg::Vec3f(1.f, 0.f, 0.f), "+X" },
-                { osg::Vec3f(-1.f, 0.f, 0.f), "-X" },
-                { osg::Vec3f(0.f, 0.f, 1.f), "+Z" },
-                { osg::Vec3f(0.f, 0.f, -1.f), "-Z" },
-                { osg::Vec3f(0.f, -1.f, 0.f), "-Y" },
-            } };
-
-            const osg::Matrix originalWorld = getNodeWorldMatrix(&hand);
-            const osg::Quat originalRotation = originalWorld.getRotate();
-            const osg::Vec3f origin = originalWorld.getTrans();
-            const osg::Vec3f targetForward
-                = normalizeFalloutIkVector(desiredWorldForward, osg::Vec3f(0.f, 1.f, 0.f));
-            const osg::Vec3f targetPalm = projectFalloutIkDirectionOnPlane(
-                desiredWorldPalm, targetForward, osg::Vec3f(1.f, 0.f, 0.f));
-            const std::string forced = [] {
-                const char* value = std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION");
-                return value != nullptr ? std::string(value) : std::string();
-            }();
-            const std::string forcedSide = [&] {
-                const char* value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION")
-                                                    : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION");
-                return value != nullptr ? std::string(value) : std::string();
-            }();
-            const std::string forcedClass = [&] {
-                const char* value = longGun ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_HAND_ORIENTATION")
-                                            : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_HAND_ORIENTATION");
-                return value != nullptr ? std::string(value) : std::string();
-            }();
-            const std::string forcedClassSide = [&] {
-                const char* value = nullptr;
-                if (longGun)
-                    value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_RIGHT_HAND_ORIENTATION")
-                                            : std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_LEFT_HAND_ORIENTATION");
-                else
-                    value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_RIGHT_HAND_ORIENTATION")
-                                            : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_LEFT_HAND_ORIENTATION");
-                return value != nullptr ? std::string(value) : std::string();
-            }();
-            const auto matchesForced = [&](const std::string& value, const std::string& candidate,
-                                           unsigned int candidateIndex, const char* forwardName,
-                                           const char* palmName) {
-                return value == candidate || value == std::to_string(candidateIndex)
-                    || value == std::string(forwardName) + "/" + palmName;
-            };
-
-            WorldViewerHandOrientationProbe best;
-            unsigned int index = 0;
-            for (const AxisCandidate& forwardAxis : axes)
-            {
-                for (const AxisCandidate& palmAxis : axes)
-                {
-                    if (std::abs(forwardAxis.mAxis * palmAxis.mAxis) > 0.01f)
-                        continue;
-
-                    std::ostringstream candidateName;
-                    candidateName << side << ":" << index << ":" << forwardAxis.mName << "/" << palmAxis.mName;
-                    const std::string candidate = candidateName.str();
-                    const bool hasForced = !forced.empty() || !forcedSide.empty() || !forcedClass.empty()
-                        || !forcedClassSide.empty();
-                    const bool forcedMatch = !hasForced
-                        || matchesForced(forcedClassSide, candidate, index, forwardAxis.mName, palmAxis.mName)
-                        || matchesForced(forcedSide, candidate, index, forwardAxis.mName, palmAxis.mName)
-                        || matchesForced(forcedClass, candidate, index, forwardAxis.mName, palmAxis.mName)
-                        || matchesForced(forced, candidate, index, forwardAxis.mName, palmAxis.mName);
-                    ++index;
-                    if (!forcedMatch)
-                        continue;
-
-                    osg::Vec3f currentForward = originalRotation * forwardAxis.mAxis;
-                    if (currentForward.normalize() <= 0.0001f)
-                        continue;
-
-                    osg::Quat forwardDelta;
-                    forwardDelta.makeRotate(currentForward, targetForward);
-                    osg::Quat targetRotation = forwardDelta * originalRotation;
-                    const osg::Vec3f palmAfterForward = projectFalloutIkDirectionOnPlane(
-                        targetRotation * palmAxis.mAxis, targetForward, targetPalm);
-                    osg::Quat rollDelta(
-                        signedFalloutIkAngleAroundAxis(palmAfterForward, targetPalm, targetForward), targetForward);
-                    targetRotation = rollDelta * targetRotation;
-
-                    osg::Quat limitedRotation;
-                    limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
-                    setFalloutIkTransformWorldMatrix(
-                        hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
-                    const osg::Quat appliedRotation = getNodeWorldMatrix(&hand).getRotate();
-                    const float forwardError
-                        = falloutIkDirectionAngleDegrees(appliedRotation * forwardAxis.mAxis, targetForward);
-                    const float palmError = falloutIkDirectionAngleDegrees(
-                        projectFalloutIkDirectionOnPlane(appliedRotation * palmAxis.mAxis, targetForward, targetPalm),
-                        targetPalm);
-                    if (forwardError < 0.f || palmError < 0.f)
-                    {
-                        setFalloutIkTransformWorldMatrix(hand, originalWorld);
-                        continue;
-                    }
-
-                    const float preference = (std::string(forwardAxis.mName) == "+Y" ? 0.f : 0.25f)
-                        + (side == "right" && std::string(palmAxis.mName) == "-X" ? 0.f : 0.05f)
-                        + (side == "left" && std::string(palmAxis.mName) == "+X" ? 0.f : 0.05f);
-                    const float score = forwardError * 4.f + palmError + preference;
-                    if (!best.mSolved || score < best.mScore)
-                    {
-                        best.mSolved = true;
-                        best.mForwardError = forwardError;
-                        best.mPalmError = palmError;
-                        best.mScore = score;
-                        best.mCandidate = candidate;
-                    }
-                    setFalloutIkTransformWorldMatrix(hand, originalWorld);
-                }
-            }
-
-            if (best.mSolved)
-            {
-                const std::string selected = best.mCandidate;
-                const std::size_t slash = selected.rfind('/');
-                const std::size_t colon = selected.rfind(':', slash == std::string::npos ? selected.size() : slash);
-                const std::string forwardName = colon == std::string::npos || slash == std::string::npos
-                    ? "+Y"
-                    : selected.substr(colon + 1, slash - colon - 1);
-                const std::string palmName = slash == std::string::npos ? "-X" : selected.substr(slash + 1);
-                const auto axisByName = [&](const std::string& name) {
-                    for (const AxisCandidate& axis : axes)
-                    {
-                        if (name == axis.mName)
-                            return axis.mAxis;
-                    }
-                    return osg::Vec3f(0.f, 1.f, 0.f);
-                };
-                const osg::Vec3f localForward = axisByName(forwardName);
-                const osg::Vec3f localPalm = axisByName(palmName);
-                osg::Vec3f currentForward = originalRotation * localForward;
-                currentForward.normalize();
-                osg::Quat forwardDelta;
-                forwardDelta.makeRotate(currentForward, targetForward);
-                osg::Quat targetRotation = forwardDelta * originalRotation;
-                const osg::Vec3f palmAfterForward = projectFalloutIkDirectionOnPlane(
-                    targetRotation * localPalm, targetForward, targetPalm);
-                osg::Quat rollDelta(
-                    signedFalloutIkAngleAroundAxis(palmAfterForward, targetPalm, targetForward), targetForward);
-                targetRotation = rollDelta * targetRotation;
-                osg::Quat limitedRotation;
-                limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
-                setFalloutIkTransformWorldMatrix(
-                    hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
-            }
-            else
-                setFalloutIkTransformWorldMatrix(hand, originalWorld);
-
-            return best;
-        }
-
-        osg::Vec3f falloutWeaponIkAxisFromName(std::string_view name)
-        {
-            if (Misc::StringUtils::ciEqual(name, "-X"))
-                return osg::Vec3f(-1.f, 0.f, 0.f);
-            if (Misc::StringUtils::ciEqual(name, "+Y") || Misc::StringUtils::ciEqual(name, "Y"))
-                return osg::Vec3f(0.f, 1.f, 0.f);
-            if (Misc::StringUtils::ciEqual(name, "-Y"))
-                return osg::Vec3f(0.f, -1.f, 0.f);
-            if (Misc::StringUtils::ciEqual(name, "+Z") || Misc::StringUtils::ciEqual(name, "Z"))
-                return osg::Vec3f(0.f, 0.f, 1.f);
-            if (Misc::StringUtils::ciEqual(name, "-Z"))
-                return osg::Vec3f(0.f, 0.f, -1.f);
-            return osg::Vec3f(1.f, 0.f, 0.f);
-        }
-
-        const char* falloutWeaponIkAxisName(const osg::Vec3f& axis)
-        {
-            if (axis.x() < -0.5f)
-                return "-X";
-            if (axis.y() > 0.5f)
-                return "+Y";
-            if (axis.y() < -0.5f)
-                return "-Y";
-            if (axis.z() > 0.5f)
-                return "+Z";
-            if (axis.z() < -0.5f)
-                return "-Z";
-            return "+X";
-        }
-
-        osg::Vec3f chooseFalloutWeaponIkAimAxis(osg::MatrixTransform& weaponFrame, const osg::Vec3f& forward)
-        {
-            if (const char* env = std::getenv("OPENMW_FNV_WEAPON_IK_AIM_AXIS"))
-                return falloutWeaponIkAxisFromName(env);
-
-            const osg::Quat rotation = getNodeWorldMatrix(&weaponFrame).getRotate();
-            const osg::Vec3f candidates[] = {
-                osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(-1.f, 0.f, 0.f),
-                osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, -1.f, 0.f),
-                osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(0.f, 0.f, -1.f)
-            };
-
-            float bestDot = -1.f;
-            osg::Vec3f bestAxis(1.f, 0.f, 0.f);
-            for (const osg::Vec3f& axis : candidates)
-            {
-                osg::Vec3f world = rotation * axis;
-                if (world.normalize() <= 0.0001f)
-                    continue;
-                const float dot = world * forward;
-                if (dot > bestDot)
-                {
-                    bestDot = dot;
-                    bestAxis = axis;
-                }
-            }
-            return bestAxis;
-        }
-
-        bool isFalloutWeaponIkLongGun(const ESM4::Weapon& weapon)
-        {
-            if (const char* env = std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN"))
-                return env[0] != '0';
-
-            return isFalloutLongGunWeapon(weapon);
-        }
-
-        float readFalloutWeaponIkClassFloat(
-            bool longGun, const char* side, const char* component, float fallback)
-        {
-            const std::string classPrefix = longGun ? "OPENMW_FNV_WEAPON_IK_LONG_GUN_"
-                                                    : "OPENMW_FNV_WEAPON_IK_SIDEARM_";
-            const std::string sideText(side);
-            const std::string componentText(component);
-            const std::string className = classPrefix + sideText + "_" + componentText;
-            if (std::getenv(className.c_str()) != nullptr)
-                return readFalloutProofFloat(className.c_str(), fallback);
-
-            const std::string genericName = std::string("OPENMW_FNV_WEAPON_IK_") + sideText + "_" + componentText;
-            return readFalloutProofFloat(genericName.c_str(), fallback);
-        }
-
-        bool applyFalloutWeaponGripIk(const Animation::NodeMap& nodeMap, osg::Group* objectRoot,
-            SceneUtil::Skeleton* skeleton, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
-        {
-            static std::map<std::string, unsigned int> sFrameLogs;
-            static std::map<std::string, bool> sProofLogged;
-            const std::string actorKey
-                = traits.mEditorId + "|" + ptr.getCellRef().getRefId().serializeText();
-            unsigned int& frameLogs = sFrameLogs[actorKey];
-
-            const auto logBlocked = [&](std::string_view reason) {
-                if (!worldViewerFONVWeaponIkEnabled() && std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") == nullptr)
-                    return;
-                if (frameLogs >= 4)
-                    return;
-                ++frameLogs;
-                Log(Debug::Warning) << "FNV/ESM4 proof: weapon IK blocked actor=" << traits.mEditorId
-                                    << " ref=" << ptr.getCellRef().getRefId()
-                                    << " reason=" << reason
-                                    << " targetMatch=" << isFonvProofTargetActor(ptr, traits)
-                                    << " disableWeaponIk="
-                                    << (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
-                                    << " runtime=loaded-pending-runtime gate=runtime-fnv-weapon-ik";
-            };
-
-            if (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
-            {
-                logBlocked("disabled-by-env");
-                return false;
-            }
-            if (!worldViewerFONVWeaponIkEnabled())
-                return false;
-            if (!isFonvProofTargetActor(ptr, traits))
-            {
-                logBlocked("not-proof-target");
-                return false;
-            }
-
-            const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
-            if (weapon == nullptr)
-            {
-                logBlocked("no-equipped-weapon");
-                return false;
-            }
-
-            osg::MatrixTransform* weaponFrame = dynamic_cast<osg::MatrixTransform*>(
-                findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand" }));
-            if (weaponFrame == nullptr)
-            {
-                logBlocked("missing-weapon-frame");
-                return false;
-            }
-
-            const auto findMatrix = [&](std::initializer_list<std::string_view> names) {
-                return dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, names));
-            };
-            osg::MatrixTransform* rightClavicle = findMatrix({ "Bip01 R Clavicle", "bip01 r clavicle" });
-            osg::MatrixTransform* rightUpper = findMatrix({ "Bip01 R UpperArm", "bip01 r upperarm" });
-            osg::MatrixTransform* rightForearm = findMatrix({ "Bip01 R Forearm", "bip01 r forearm" });
-            osg::MatrixTransform* rightHand = findMatrix({ "Bip01 R Hand", "bip01 r hand" });
-            osg::MatrixTransform* leftClavicle = findMatrix({ "Bip01 L Clavicle", "bip01 l clavicle" });
-            osg::MatrixTransform* leftUpper = findMatrix({ "Bip01 L UpperArm", "bip01 l upperarm" });
-            osg::MatrixTransform* leftForearm = findMatrix({ "Bip01 L Forearm", "bip01 l forearm" });
-            osg::MatrixTransform* leftHand = findMatrix({ "Bip01 L Hand", "bip01 l hand" });
-            if (rightUpper == nullptr || rightForearm == nullptr || rightHand == nullptr || leftUpper == nullptr
-                || leftForearm == nullptr || leftHand == nullptr)
-            {
-                logBlocked("missing-arm-bone");
-                return false;
-            }
-
-            osg::Group* spine = findBestAttachmentNode(
-                nodeMap, { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
-            const osg::Vec3f chest = getNodeWorldMatrix(spine != nullptr ? spine : objectRoot).getTrans();
-            osg::Group* headNode = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head", "Head", "head" });
-            osg::Vec3f head = chest + osg::Vec3f(0.f, 0.f, 16.f);
-            if (headNode != nullptr)
-                head = getNodeWorldMatrix(headNode).getTrans();
-
-            const ESM::Position& position = ptr.getRefData().getPosition();
-            const float yaw = position.rot[2];
-            osg::Vec3f forward(std::sin(yaw), std::cos(yaw), 0.f);
-            forward = normalizeFalloutIkVector(forward, osg::Vec3f(0.f, 1.f, 0.f));
-            osg::Vec3f right(forward.y(), -forward.x(), 0.f);
-            right = normalizeFalloutIkVector(right, osg::Vec3f(1.f, 0.f, 0.f));
-            const osg::Vec3f up(0.f, 0.f, 1.f);
-
-            const bool longGun = isFalloutWeaponIkLongGun(*weapon);
-            const float shoulderLift = std::clamp((head.z() - chest.z()) * 0.62f, 8.f, 14.f);
-            const osg::Vec3f aimAnchor = chest + up * shoulderLift;
-            const char* targetStyle = longGun ? "head-shoulder-long-gun" : "chest-sidearm";
-            const osg::Vec3f rightTarget = longGun
-                ? aimAnchor + forward * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "FORWARD", 22.f)
-                    + right * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "SIDE", 10.f)
-                    - up * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "DROP", 1.f)
-                : chest + forward * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "FORWARD", 34.f)
-                    + right * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "SIDE", 10.f)
-                    - up * readFalloutWeaponIkClassFloat(longGun, "RIGHT", "DROP", 3.f);
-            const osg::Vec3f leftTarget = longGun
-                ? aimAnchor + forward * readFalloutWeaponIkClassFloat(longGun, "LEFT", "FORWARD", 18.f)
-                    - right * readFalloutWeaponIkClassFloat(longGun, "LEFT", "SIDE", 7.f)
-                    - up * readFalloutWeaponIkClassFloat(longGun, "LEFT", "DROP", 0.5f)
-                : chest + forward * readFalloutWeaponIkClassFloat(longGun, "LEFT", "FORWARD", 28.f)
-                    - right * readFalloutWeaponIkClassFloat(longGun, "LEFT", "SIDE", 8.f)
-                    - up * readFalloutWeaponIkClassFloat(longGun, "LEFT", "DROP", 5.f);
-            const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 1.f), 0.f, 1.f);
-            if (strength <= 0.f)
-            {
-                logBlocked("zero-strength");
-                return false;
-            }
-
-            const osg::Vec3f rightHandBefore = getNodeWorldMatrix(rightHand).getTrans();
-            const osg::Vec3f leftHandBefore = getNodeWorldMatrix(leftHand).getTrans();
-            const osg::Vec3f weaponBefore = getNodeWorldMatrix(weaponFrame).getTrans();
-            const osg::Vec3f weaponAimAxis = chooseFalloutWeaponIkAimAxis(*weaponFrame, forward);
-            const osg::Vec3f weaponForwardBefore
-                = normalizeFalloutIkVector(getNodeWorldMatrix(weaponFrame).getRotate() * weaponAimAxis, forward);
-
-            unsigned int solved = 0;
-            float rightError = -1.f;
-            float leftError = -1.f;
-            bool rightReachable = false;
-            bool leftReachable = false;
-            std::string rightOrders;
-            std::string leftOrders;
-            float rightHandAimError = -1.f;
-            float leftHandAimError = -1.f;
-            float rightHandPalmError = -1.f;
-            float leftHandPalmError = -1.f;
-            std::string rightHandOrientationCandidate = "none";
-            std::string leftHandOrientationCandidate = "none";
-
-            const auto solveArm = [&](osg::MatrixTransform* clavicle, osg::MatrixTransform& upper, osg::MatrixTransform& forearm,
-                                      osg::MatrixTransform& hand, const osg::Vec3f& target,
-                                      const osg::Vec3f& poleHint, const osg::Vec3f& desiredHandForward,
-                                      const osg::Vec3f& desiredHandPalm, std::string_view sideName,
-                                      float& error, bool& reachable, std::string& orders,
-                                      float& handAimError, float& handPalmError,
-                                      std::string& handOrientationCandidate) {
-                unsigned int solvedForArm = 0;
-                WorldViewerWeaponIkSolve solution;
-                for (unsigned int i = 0; i < 6; ++i)
-                {
-                    solution = solveFalloutWeaponIkTwoBone(getNodeWorldMatrix(&upper).getTrans(),
-                        getNodeWorldMatrix(&forearm).getTrans(), getNodeWorldMatrix(&hand).getTrans(), target, poleHint);
-                    error = solution.mError;
-                    reachable = solution.mReachable;
-                    if (!solution.mSolved)
-                        break;
-
-                    const WorldViewerWeaponIkRotationProbe upperProbe
-                        = rotateFalloutWeaponIkSegmentToBest(upper, forearm, solution.mMid, strength);
-                    if (upperProbe.mSolved)
-                    {
-                        ++solvedForArm;
-                        orders += orders.empty() ? std::string("upper=") : std::string(",upper=");
-                        orders += upperProbe.mOrder;
-                    }
-                    const WorldViewerWeaponIkRotationProbe forearmProbe
-                        = rotateFalloutWeaponIkSegmentToBest(forearm, hand, solution.mEnd, strength);
-                    if (forearmProbe.mSolved)
-                    {
-                        ++solvedForArm;
-                        orders += orders.empty() ? std::string("forearm=") : std::string(",forearm=");
-                        orders += forearmProbe.mOrder;
-                    }
-
-                    error = (getNodeWorldMatrix(&hand).getTrans() - target).length();
-                    if (error <= 2.f)
-                        break;
-                }
-
-                if (solution.mSolved && clavicle != nullptr
-                    && std::getenv("OPENMW_FNV_WEAPON_IK_DISABLE_CLAVICLE") == nullptr)
-                {
-                    const float clavicleStrength
-                        = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_CLAVICLE_STRENGTH", 0.15f), 0.f, 1.f);
-                    const osg::Vec3f shoulderAfter = getNodeWorldMatrix(&upper).getTrans();
-                    const osg::Vec3f clavicleHint = getNodeWorldMatrix(clavicle).getTrans()
-                        + normalizeFalloutIkVector(solution.mMid - shoulderAfter, poleHint) * 8.f;
-                    const WorldViewerWeaponIkRotationProbe clavicleProbe
-                        = rotateFalloutWeaponIkSegmentToBest(*clavicle, upper, clavicleHint, strength * clavicleStrength);
-                    if (clavicleProbe.mSolved)
-                    {
-                        ++solvedForArm;
-                        orders += orders.empty() ? std::string("clavicle=") : std::string(",clavicle=");
-                        orders += clavicleProbe.mOrder;
-                    }
-                }
-
-                const bool explicitHandOrientation
-                    = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IK_HAND_ORIENTATION") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION") != nullptr
-                    || (longGun ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_HAND_ORIENTATION") != nullptr
-                                : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_HAND_ORIENTATION") != nullptr)
-                    || (sideName == "right"
-                            ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION") != nullptr
-                            : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION") != nullptr)
-                    || (longGun
-                            ? (sideName == "right"
-                                      ? std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_RIGHT_HAND_ORIENTATION") != nullptr
-                                      : std::getenv("OPENMW_FNV_WEAPON_IK_LONG_GUN_LEFT_HAND_ORIENTATION") != nullptr)
-                            : (sideName == "right"
-                                      ? std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_RIGHT_HAND_ORIENTATION") != nullptr
-                                      : std::getenv("OPENMW_FNV_WEAPON_IK_SIDEARM_LEFT_HAND_ORIENTATION") != nullptr));
-                if (explicitHandOrientation)
-                {
-                    const WorldViewerHandOrientationProbe handProbe = orientFalloutWeaponIkHandGripToBest(
-                        hand, desiredHandForward, desiredHandPalm, strength, sideName, longGun);
-                    if (handProbe.mSolved)
-                    {
-                        handAimError = handProbe.mForwardError;
-                        handPalmError = handProbe.mPalmError;
-                        handOrientationCandidate = handProbe.mCandidate;
-                        orders += orders.empty() ? std::string("hand=") : std::string(",hand=");
-                        orders += handProbe.mCandidate;
-                        ++solvedForArm;
-                    }
-                }
-                else
-                {
-                    handOrientationCandidate = std::string(sideName) + ":preserve-bind-roll";
-                    handAimError = falloutIkDirectionAngleDegrees(
-                        getNodeWorldMatrix(&hand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f),
-                        desiredHandForward);
-                    handPalmError = 0.f;
-                    orders += orders.empty() ? std::string("hand=") : std::string(",hand=");
-                    orders += handOrientationCandidate;
-                }
-                return solvedForArm;
-            };
-
-            solved += solveArm(rightClavicle, *rightUpper, *rightForearm, *rightHand, rightTarget,
-                right * 0.75f - up * 0.85f + forward * 0.15f, forward + up * 0.08f, -right, "right",
-                rightError, rightReachable, rightOrders, rightHandAimError, rightHandPalmError,
-                rightHandOrientationCandidate);
-            solved += solveArm(leftClavicle, *leftUpper, *leftForearm, *leftHand, leftTarget,
-                -right * 0.75f - up * 0.85f + forward * 0.15f, forward + up * 0.08f, right, "left",
-                leftError, leftReachable, leftOrders, leftHandAimError, leftHandPalmError,
-                leftHandOrientationCandidate);
-
-            float weaponAimAngleBefore = falloutIkDirectionAngleDegrees(weaponForwardBefore, forward);
-            WorldViewerWeaponIkRotationProbe weaponAimProbe
-                = rotateFalloutWeaponIkAxisToBest(*weaponFrame, weaponAimAxis, forward, strength);
-            const osg::Vec3f weaponForwardAfter
-                = normalizeFalloutIkVector(getNodeWorldMatrix(weaponFrame).getRotate() * weaponAimAxis, forward);
-            float weaponAimAngleAfter = falloutIkDirectionAngleDegrees(weaponForwardAfter, forward);
-
-            const bool snapHandsToIkTargets = std::getenv("OPENMW_FNV_WEAPON_IK_SNAP_HANDS_TO_TARGETS") != nullptr;
-            if (snapHandsToIkTargets)
-            {
-                osg::Matrix rightWorld = getNodeWorldMatrix(rightHand);
-                rightWorld.setTrans(rightTarget);
-                setFalloutIkTransformWorldMatrix(*rightHand, rightWorld);
-                osg::Matrix leftWorld = getNodeWorldMatrix(leftHand);
-                leftWorld.setTrans(leftTarget);
-                setFalloutIkTransformWorldMatrix(*leftHand, leftWorld);
-            }
-
-            if (skeleton != nullptr)
-            {
-                skeleton->markBoneMatriceDirty();
-                skeleton->updateBoneMatrices(0);
-            }
-
-            unsigned int forcedRigGeometryHolder = 0;
-            unsigned int refreshedRigGeometry = 0;
-            const unsigned int forcedRigGeometry
-                = forceFalloutRigGeometryUpdate(objectRoot, forcedRigGeometryHolder, refreshedRigGeometry);
-
-            const osg::Vec3f rightHandAfter = getNodeWorldMatrix(rightHand).getTrans();
-            const osg::Vec3f leftHandAfter = getNodeWorldMatrix(leftHand).getTrans();
-            const osg::Vec3f weaponAfter = getNodeWorldMatrix(weaponFrame).getTrans();
-            const osg::Vec3f rightHandAxisYAfter = normalizeFalloutIkVector(
-                getNodeWorldMatrix(rightHand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
-            const osg::Vec3f leftHandAxisYAfter = normalizeFalloutIkVector(
-                getNodeWorldMatrix(leftHand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
-            const float rightHandForwardAngleAfter = falloutIkDirectionAngleDegrees(rightHandAxisYAfter, forward);
-            const float leftHandForwardAngleAfter = falloutIkDirectionAngleDegrees(leftHandAxisYAfter, forward);
-            const float rightTargetBefore = (rightHandBefore - rightTarget).length();
-            const float rightTargetAfter = (rightHandAfter - rightTarget).length();
-            const float leftTargetBefore = (leftHandBefore - leftTarget).length();
-            const float leftTargetAfter = (leftHandAfter - leftTarget).length();
-            const float rightWeaponGripDistanceAfter = (rightHandAfter - weaponAfter).length();
-            const float leftWeaponGripDistanceAfter = (leftHandAfter - weaponAfter).length();
-            const float weaponGripSpanAfter = (rightHandAfter - leftHandAfter).length();
-            const float rightHandSideAfter = (rightHandAfter - chest) * right;
-            const float leftHandSideAfter = (leftHandAfter - chest) * right;
-            const bool handsUncrossed = rightHandSideAfter > leftHandSideAfter + 2.f;
-            const bool gripOk = rightWeaponGripDistanceAfter <= 2.5f && leftWeaponGripDistanceAfter >= 8.f
-                && leftWeaponGripDistanceAfter <= 32.f && weaponGripSpanAfter >= 10.f && weaponGripSpanAfter <= 32.f;
-            const bool targetImproved = rightTargetAfter + 0.5f < rightTargetBefore
-                || leftTargetAfter + 0.5f < leftTargetBefore;
-            const bool aimOk = weaponAimAngleAfter >= 0.f
-                && (weaponAimAngleAfter <= 12.f || weaponAimAngleAfter + 0.5f < weaponAimAngleBefore);
-            const bool runtimeSupported = solved >= 4 && rightError >= 0.f && leftError >= 0.f
-                && rightError <= 16.f && leftError <= 16.f && handsUncrossed && gripOk && targetImproved && aimOk;
-
-            if (frameLogs < 12)
-            {
-                ++frameLogs;
-                Log(runtimeSupported ? Debug::Info : Debug::Warning)
-                    << "FNV/ESM4 telemetry: weapon IK frame actor=" << traits.mEditorId
-                    << " ref=" << ptr.getCellRef().getRefId()
-                    << " sample=" << frameLogs
-                    << " weapon=\"" << weapon->mEditorId << "\""
-                    << " weaponModel=\"" << weapon->mModel << "\""
-                    << " solver=fabrik-two-bone-pole"
-                    << " targetStyle=" << targetStyle
-                    << " actorForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
-                    << " actorRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
-                    << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
-                    << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
-                    << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
-                    << " weaponAimAxisName=" << falloutWeaponIkAxisName(weaponAimAxis)
-                    << " weaponAimAngleBefore=" << weaponAimAngleBefore
-                    << " weaponAimAngleAfter=" << weaponAimAngleAfter
-                    << " weaponAimSolved=" << weaponAimProbe.mSolved
-                    << " weaponAimOrder=" << weaponAimProbe.mOrder
-                    << " snapHandsToIkTargets=" << snapHandsToIkTargets
-                    << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
-                    << refreshedRigGeometry << ")"
-                    << " targetDistancesBefore=(" << rightTargetBefore << "," << leftTargetBefore << ")"
-                    << " targetDistancesAfter=(" << rightTargetAfter << "," << leftTargetAfter << ")"
-                    << " weaponGripDistancesAfter=(" << rightWeaponGripDistanceAfter << ","
-                    << leftWeaponGripDistanceAfter << ")"
-                    << " weaponGripSpanAfter=" << weaponGripSpanAfter
-                    << " fabrikErrors=(" << rightError << "," << leftError << ")"
-                    << " reachable=(" << rightReachable << "," << leftReachable << ")"
-                    << " handsSide=(" << rightHandSideAfter << "," << leftHandSideAfter << ")"
-                    << " handsUncrossed=" << handsUncrossed
-                    << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y()
-                    << "," << rightHandAxisYAfter.z() << ")"
-                    << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y()
-                    << "," << leftHandAxisYAfter.z() << ")"
-                    << " handForwardAngles=(" << rightHandForwardAngleAfter << ","
-                    << leftHandForwardAngleAfter << ")"
-                    << " handOrientationCandidates=(" << rightHandOrientationCandidate << ","
-                    << leftHandOrientationCandidate << ")"
-                    << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError
-                    << "," << leftHandAimError << "," << leftHandPalmError << ")"
-                    << " rotationOrders=(" << rightOrders << ";" << leftOrders << ")"
-                    << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
-                    << " gate=runtime-fnv-weapon-ik-telemetry";
-            }
-
-            if (!sProofLogged[actorKey])
-            {
-                sProofLogged[actorKey] = true;
-                Log(runtimeSupported ? Debug::Info : Debug::Warning)
-                    << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
-                    << " ref=" << ptr.getCellRef().getRefId()
-                    << " solver=fabrik-two-bone-pole"
-                    << " reference=FABRIK"
-                    << " solvedBones=" << solved
-                    << " rightFabrikError=" << rightError
-                    << " leftFabrikError=" << leftError
-                    << " rightFabrikReachable=" << rightReachable
-                    << " leftFabrikReachable=" << leftReachable
-                    << " strength=" << strength
-                    << " targetStyle=" << targetStyle
-                    << " rightTargetDistanceBefore=" << rightTargetBefore
-                    << " rightTargetDistanceAfter=" << rightTargetAfter
-                    << " leftTargetDistanceBefore=" << leftTargetBefore
-                    << " leftTargetDistanceAfter=" << leftTargetAfter
-                    << " rightWeaponGripDistanceAfter=" << rightWeaponGripDistanceAfter
-                    << " leftWeaponGripDistanceAfter=" << leftWeaponGripDistanceAfter
-                    << " weaponGripSpanAfter=" << weaponGripSpanAfter
-                    << " handsUncrossed=" << handsUncrossed
-                    << " weaponAimAxis=(" << weaponAimAxis.x() << "," << weaponAimAxis.y() << ","
-                    << weaponAimAxis.z() << ")"
-                    << " weaponAimAngleBefore=" << weaponAimAngleBefore
-                    << " weaponAimAngleAfter=" << weaponAimAngleAfter
-                    << " weaponAimSolved=" << weaponAimProbe.mSolved
-                    << " weaponAimOrder=" << weaponAimProbe.mOrder
-                    << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y()
-                    << "," << rightHandAxisYAfter.z() << ")"
-                    << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y()
-                    << "," << leftHandAxisYAfter.z() << ")"
-                    << " handForwardAngles=(" << rightHandForwardAngleAfter << ","
-                    << leftHandForwardAngleAfter << ")"
-                    << " handOrientationCandidates=(" << rightHandOrientationCandidate << ","
-                    << leftHandOrientationCandidate << ")"
-                    << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError
-                    << "," << leftHandAimError << "," << leftHandPalmError << ")"
-                    << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
-                    << refreshedRigGeometry << ")"
-                    << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
-                    << " gate=runtime-fnv-weapon-ik";
-            }
-
-            return runtimeSupported;
         }
 
         struct WorldViewerWeaponIkSolve
@@ -9299,22 +8809,6 @@ namespace MWRender
                 result.push_back(std::move(path));
         }
 
-        void addChairTransitionSources(std::vector<std::string>& result, const VFS::Manager& vfs)
-        {
-            static constexpr std::array<std::string_view, 8> paths{
-                "meshes/characters/_male/idleanims/chair_forwardenter.kf",
-                "meshes/characters/_male/idleanims/chair_forwardexit.kf",
-                "meshes/characters/_male/idleanims/chair_backenter.kf",
-                "meshes/characters/_male/idleanims/chair_backexit.kf",
-                "meshes/characters/_male/idleanims/chair_leftenter.kf",
-                "meshes/characters/_male/idleanims/chair_leftexit.kf",
-                "meshes/characters/_male/idleanims/chair_rightenter.kf",
-                "meshes/characters/_male/idleanims/chair_rightexit.kf",
-            };
-            for (std::string_view path : paths)
-                addProcedureSourceIfPresent(result, vfs, std::string(path));
-        }
-
         std::vector<std::string> collectFonvPackageProcedureAnimationSources(const MWWorld::Ptr& ptr,
             const MWWorld::ESMStore& store, Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits,
             const std::vector<ESM::FormId>& packageIds)
@@ -9399,12 +8893,11 @@ namespace MWRender
     void ESM4NpcAnimation::initializeFirstPerson(const FirstPersonState& state)
     {
         constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
-        // Retail composes the camera-space pose from the movement idle's
-        // pelvis/camera frame and the active weapon family's aim overlay. H2HAim
-        // is reserved for a truly unarmed actor. Aim overlays intentionally omit
-        // Bip01 Pelvis; playing one alone leaks the skeleton bind pose into the arms.
         constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
         constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
+        mDefaultFirstPersonFieldOfView = state.mFieldOfView;
+        mPipBoyFirstPersonFieldOfView
+            = readFalloutPipBoyFieldOfView(mResourceSystem).value_or(mDefaultFirstPersonFieldOfView);
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || !traits->mIsFONV)
             throw std::runtime_error("native first-person profile requires an FNV NPC");
@@ -9451,17 +8944,8 @@ namespace MWRender
         requireAsset("base-idle-kf", baseIdle, false);
         if (equippedWeapon == nullptr)
             requireAsset("h2h-aim-overlay-kf", aimOverlay, false);
-        else
-        {
-            const bool aimExists = !aimOverlay.empty() && vfs->exists(VFS::Path::toNormalized(aimOverlay));
-            Log(aimExists ? Debug::Info : Debug::Error)
-                << "FNV first-person asset: actor=" << traits->mEditorId
-                << " role=weapon-aim-overlay-kf saveWorn=1 selected=" << aimOverlay
-                << " exists=" << aimExists << " weapon=" << equippedWeapon->mEditorId
-                << " animationType=" << static_cast<unsigned int>(equippedWeapon->mData.animationType);
-            if (!aimExists)
-                aimOverlay.clear();
-        }
+        else if (aimOverlay.empty() || !vfs->exists(VFS::Path::toNormalized(aimOverlay)))
+            aimOverlay.clear();
         for (const std::string& armorModel : state.mSaveWornArmorModels)
             requireAsset("armor-composite", armorModel, true, true);
         if (state.mPipBoy)
@@ -9481,19 +8965,33 @@ namespace MWRender
             constexpr std::string_view meshPrefix = "meshes/";
             if (Misc::StringUtils::ciStartsWith(recordModel, meshPrefix))
                 recordModel.erase(0, meshPrefix.size());
-            osg::ref_ptr<osg::Node> attachedNode = preferredBone.empty()
-                ? insertPart(recordModel, nullptr, {}, {}, actorSpace)
-                : insertAttachedPart(recordModel, preferredBone);
+            osg::ref_ptr<osg::Node> attachedNode;
+            if (role == "pipboy-arm" && !preferredBone.empty())
+                attachedNode = insertAttachedPart(recordModel, preferredBone);
+            else
+                attachedNode = insertPart(recordModel, nullptr, {}, preferredBone, actorSpace);
             const bool attached = attachedNode != nullptr;
             if (attached && role == "armor-composite")
             {
+                // Save330 owns one upper-body outfit. Retain its exact live
+                // Arms rig handle so the Pip-Boy audit can compare the sleeve
+                // skin to each hand skin in the same rendered pose.
+                mFirstPersonArmorArmsPart = attachedNode;
                 FirstPersonArmorArmsOnlyVisitor armsOnly;
                 attachedNode->accept(armsOnly);
-                const bool exactArmPartition = armsOnly.mKept == 1 && armsOnly.mHidden == 5;
+                const std::string loweredPath = Misc::StringUtils::lowerCase(std::string(path));
+                const bool nakedUpperBody = loweredPath.ends_with("characters/_male/upperbody.nif")
+                    || loweredPath.ends_with("characters/_male/femaleupperbody.nif");
+                const std::size_t expectedKept = nakedUpperBody ? 2 : 1;
+                const std::size_t expectedHidden = nakedUpperBody ? 0 : 5;
+                const bool exactArmPartition
+                    = armsOnly.mKept == expectedKept && armsOnly.mHidden == expectedHidden;
                 Log(exactArmPartition ? Debug::Info : Debug::Error)
                     << "FNV first-person armor filter: actor=" << traits->mEditorId
                     << " selected=" << path << " keptArms=" << armsOnly.mKept
-                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=1/5";
+                    << " hiddenNonArms=" << armsOnly.mHidden << " expected="
+                    << expectedKept << '/' << expectedHidden
+                    << " source=" << (nakedUpperBody ? "authored-naked-upperbody" : "equipped-outfit");
                 if (!exactArmPartition)
                     throw std::runtime_error("native FNV first-person armor did not expose the exact Arms partition");
             }
@@ -9515,41 +9013,40 @@ namespace MWRender
             attach("armor-composite", armorModel, true, true);
         if (state.mPipBoy)
         {
-            // Keep the device beneath the same authored left-foretwist chain
-            // as the arm geometry.  Moving only this mesh to Camera1st creates
-            // an impossible open wrist: the Pip-Boy is camera-space while the
-            // sleeve, hand, and retail animation remain actor-space.
             mPipBoyArmPart = attach("pipboy-arm", pipBoy, true, false, "Bip01 L ForeTwist");
-            osg::Group* const wristParent = mPipBoyArmPart != nullptr && mPipBoyArmPart->getNumParents() > 0
-                ? mPipBoyArmPart->getParent(0)
-                : nullptr;
-            if (wristParent != nullptr)
-            {
-                mPipBoyPresentationRoot = new osg::MatrixTransform;
-                mPipBoyPresentationRoot->setName("FNV Pip-Boy Authored Wrist Presentation");
-                mPipBoyPresentationRoot->setNodeMask(0);
-                if (wristParent->replaceChild(mPipBoyArmPart, mPipBoyPresentationRoot))
-                {
-                    mPipBoyPresentationRoot->addChild(mPipBoyArmPart);
-                    Log(Debug::Info) << "FNV Pip-Boy physical: wristAttachment=ready model=" << pipBoy
-                                     << " presentationMount=Bip01-L-ForeTwist"
-                                     << " interactionHand=player-skeleton";
-                }
-                else
-                {
-                    mPipBoyPresentationRoot = nullptr;
-                    Log(Debug::Error) << "FNV Pip-Boy physical: wristAttachment=reparent-failed model=" << pipBoy;
-                }
-            }
-            else
-                Log(Debug::Error) << "FNV Pip-Boy physical: wristAttachment=missing-parent model="
-                                  << pipBoy << " wristParent=" << (wristParent != nullptr);
+            Log(Debug::Info) << "FNV Pip-Boy physical: wristAttachment=ready model=" << pipBoy
+                             << " presentationMount=direct-Bip01-L-ForeTwist"
+                             << " interactionHand=player-skeleton wrapper=none";
         }
-        attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty(), true);
+        // The retail Save330 xNVSE scene graph owns each first-person hand skin
+        // as a direct Scene Root child. Their RigGeometry still resolves against
+        // this skeleton, but no extra parent is inserted beneath either animated
+        // hand bone. Keep that exact parentage: a synthetic inverse-bind helper
+        // double-applies the hand frame and visibly splits the cuff from the arm.
+        mFirstPersonLeftHandPart = attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty(), true);
         mFirstPersonRightHandPart = attach("right-hand", rightHand, false, true);
 
         mNodeMap.clear();
         mNodeMapCreated = false;
+        // The retained retail Varmint Rifle probe has one live rendered chain:
+        // Bip01 R Hand -> Weapon -> Weapon (0007EA24) -> VarmintRifle:0.
+        // Bind both the authored KF and the equipped mesh to that existing NIF
+        // transform.  A second same-named node beneath Bip01 Translate leaves
+        // the animated hands and rendered weapon in different hierarchies.
+        const NodeMap& firstPersonNodes = getNodeMap();
+        const auto weaponIt = firstPersonNodes.find("Weapon");
+        mFalloutWeaponDrawFrame = weaponIt != firstPersonNodes.end()
+            ? dynamic_cast<NifOsg::MatrixTransform*>(weaponIt->second.get())
+            : nullptr;
+        osg::Group* const weaponParent = mFalloutWeaponDrawFrame != nullptr
+            && mFalloutWeaponDrawFrame->getNumParents() > 0
+            ? mFalloutWeaponDrawFrame->getParent(0)
+            : nullptr;
+        if (mFalloutWeaponDrawFrame == nullptr || weaponParent == nullptr
+            || !Misc::StringUtils::ciEqual(weaponParent->getName(), "Bip01 R Hand"))
+            throw std::runtime_error("native FNV first-person profile is missing retail right-hand Weapon mount");
+        Log(Debug::Info) << "FNV first-person retail weapon mount: node=Weapon parent=Bip01 R Hand"
+                         << " controller=authored-kf source=retail-varmint-frame1";
         const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
             std::string(baseIdle), std::string(skeleton), false, aimOverlay, "idle");
         const std::string pipBoyInteractionKf = female
@@ -9570,6 +9067,26 @@ namespace MWRender
         Log(mPipBoyRetailWaverBound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy retail held-arm waver: source=" << pipBoyWaverKf
             << " bound=" << mPipBoyRetailWaverBound;
+        const std::string pipBoyManipulateKf = "meshes/characters/_male/idleanims/pipboymanipulate.kf";
+        const std::shared_ptr<AnimSource> pipBoyManipulateSource = addSingleAnimSource(
+            pipBoyManipulateKf, std::string(skeleton), false, {}, "pipboymanipulate");
+        mPipBoyRetailManipulateBound = pipBoyManipulateSource != nullptr && hasAnimation("pipboymanipulate")
+            && getAnimationSourceName("pipboymanipulate") == pipBoyManipulateKf;
+        Log(mPipBoyRetailManipulateBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy retail right-arm manipulation: source=" << pipBoyManipulateKf
+            << " bound=" << mPipBoyRetailManipulateBound;
+        // Save330's held stack keeps the authored first-person H2H aim layer
+        // beneath the left-arm waver. Without it, unkeyed parent bones leave
+        // the device above and left of the camera; h2hidle is raise-only and
+        // is deliberately not retained here.
+        const std::string pipBoyBaseAimKf = "meshes/characters/_1stperson/h2haim.kf";
+        const std::shared_ptr<AnimSource> pipBoyBaseAimSource = addSingleAnimSource(
+            pipBoyBaseAimKf, std::string(skeleton), false, {}, "pipboybaseaim");
+        mPipBoyRetailBaseAimBound = pipBoyBaseAimSource != nullptr && hasAnimation("pipboybaseaim")
+            && getAnimationSourceName("pipboybaseaim") == pipBoyBaseAimKf;
+        Log(mPipBoyRetailBaseAimBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy authored held base aim: source=" << pipBoyBaseAimKf
+            << " bound=" << mPipBoyRetailBaseAimBound;
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
@@ -9579,7 +9096,7 @@ namespace MWRender
             << " bound=" << idleBound
             << " semanticSource=" << selectedIdleSource;
         if (!idleBound)
-            throw std::runtime_error("failed to bind native FNV first-person base-plus-H2H pose");
+            throw std::runtime_error("failed to bind native FNV first-person mtidle base pose");
 
         play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f, "start", "stop", 0.f,
             std::numeric_limits<std::uint32_t>::max(), true);
@@ -9595,101 +9112,14 @@ namespace MWRender
                          << " attachedNodeCount=" << mFirstPersonAttachedPartCount << " fov=" << state.mFieldOfView
                          << " weapon="
                          << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
-                         << " weaponAttached=" << weaponAttached
-                         << " weaponFamilyPrepared=" << weaponFamilyPrepared
+                          << " weaponAttached=" << weaponAttached
+                          << " weaponFamilyPrepared=" << weaponFamilyPrepared
                           << " mask=0x" << std::hex << mObjectRoot->getNodeMask() << std::dec
                           << " profile=flat-first-person-mtidle-plus-h2haim";
     }
 
-    void ESM4NpcAnimation::initializePipBoyPhysicalControls()
-    {
-        if (mPipBoyControlsInitialized || mPipBoyControlsInitializationAttempted || mPipBoyArmPart == nullptr)
-            return;
-        mPipBoyControlsInitializationAttempted = true;
-
-        PipBoyControlLocator locator;
-        mPipBoyArmPart->accept(locator);
-        const auto wrap = [](osg::Node* node, const osg::Vec3f& localAxis, const osg::Vec3f& authoredPivot,
-                              std::string_view label) {
-            PipBoyPhysicalControl result;
-            if (node == nullptr || node->getNumParents() == 0)
-                return result;
-
-            osg::Group* const parent = node->getParent(0);
-            osg::MatrixTransform* const transform = dynamic_cast<osg::MatrixTransform*>(node);
-            if (parent == nullptr)
-                return result;
-
-            if (transform != nullptr)
-            {
-                const osg::Vec3d sourcePivot = transform->getMatrix().getTrans();
-                result.mPivot.set(static_cast<float>(sourcePivot.x()), static_cast<float>(sourcePivot.y()),
-                    static_cast<float>(sourcePivot.z()));
-                result.mAxis = transform->getMatrix().getRotate() * localAxis;
-            }
-            else
-            {
-                result.mPivot = authoredPivot;
-                result.mAxis = localAxis;
-            }
-            if (result.mAxis.length2() <= 0.000001f)
-                result.mAxis = localAxis;
-            result.mAxis.normalize();
-
-            result.mRoot = new osg::MatrixTransform;
-            result.mRoot->setName("FNV Pip-Boy control " + std::string(label));
-            result.mRoot->setMatrix(osg::Matrix::identity());
-            if (!parent->replaceChild(node, result.mRoot))
-                return PipBoyPhysicalControl{};
-            result.mRoot->addChild(node);
-            return result;
-        };
-
-        // The two knurled dials spin on their narrow local-X axis. Button
-        // meshes are shallow on local Z, which is their real push direction.
-        mPipBoyTabKnob = wrap(locator.mTabKnob, osg::Vec3f(0.f, 0.f, 1.f),
-            osg::Vec3f(5.91818f, -0.459204f, 3.31565f), "TabKnob");
-        mPipBoyScrollKnob = wrap(locator.mScrollKnob, osg::Vec3f(1.f, 0.f, 0.f),
-            osg::Vec3f(7.68622f, 1.23748f, 3.13685f), "ScrollKnob");
-        const std::array<osg::Vec3f, 3> buttonPivots = {
-            osg::Vec3f(10.35927f, -1.58879f, 4.27524f),
-            osg::Vec3f(11.11687f, -1.63075f, 4.29203f),
-            osg::Vec3f(11.87390f, -1.67269f, 4.30882f),
-        };
-        const std::array<osg::Vec3f, 3> glowPivots = {
-            osg::Vec3f(10.35621f, -1.59248f, 4.32988f),
-            osg::Vec3f(11.11475f, -1.63493f, 4.35281f),
-            osg::Vec3f(11.87233f, -1.67646f, 4.36350f),
-        };
-        for (std::size_t index = 0; index < mPipBoyButtons.size(); ++index)
-        {
-            mPipBoyButtons[index] = wrap(locator.mButtons[index], osg::Vec3f(0.f, 0.f, 1.f), buttonPivots[index],
-                "Button" + std::to_string(index + 1));
-            mPipBoyGlows[index] = wrap(locator.mGlows[index], osg::Vec3f(0.f, 0.f, 1.f), glowPivots[index],
-                "Glow" + std::to_string(index + 1));
-        }
-
-        mPipBoyControlsInitialized = mPipBoyTabKnob.mRoot != nullptr && mPipBoyScrollKnob.mRoot != nullptr;
-        std::ostringstream discovered;
-        for (std::size_t index = 0; index < locator.mRelevantNames.size(); ++index)
-        {
-            if (index != 0)
-                discovered << " | ";
-            discovered << locator.mRelevantNames[index];
-        }
-        Log(mPipBoyControlsInitialized ? Debug::Info : Debug::Error)
-            << "FNV Pip-Boy physical controls: initialized=" << mPipBoyControlsInitialized
-            << " tabKnob=" << (mPipBoyTabKnob.mRoot != nullptr)
-            << " scrollKnob=" << (mPipBoyScrollKnob.mRoot != nullptr)
-            << " buttons=" << (mPipBoyButtons[0].mRoot != nullptr) << ','
-            << (mPipBoyButtons[1].mRoot != nullptr) << ',' << (mPipBoyButtons[2].mRoot != nullptr)
-            << " glows=" << (mPipBoyGlows[0].mRoot != nullptr) << ','
-            << (mPipBoyGlows[1].mRoot != nullptr) << ',' << (mPipBoyGlows[2].mRoot != nullptr)
-            << " discovered=[" << discovered.str() << ']';
-    }
-
     bool ESM4NpcAnimation::setPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
-        bool showMap, float mapZoom, float mapPanX, float mapPanY)
+        bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
     {
         if (mPipBoyArmPart == nullptr || screenTexture == nullptr)
         {
@@ -9700,9 +9130,11 @@ namespace MWRender
 
         if (mPipBoyScreenStateSets.empty())
         {
-            PipBoyScreenTextureVisitor visitor(screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+            PipBoyScreenTextureVisitor visitor(screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
             mPipBoyArmPart->accept(visitor);
             mPipBoyScreenStateSets = visitor.getBoundStateSets();
+            mPipBoyScreenNodes = visitor.getBoundNodes();
+            mPipBoyScreenDrawables = visitor.getBoundDrawables();
         }
         else
         {
@@ -9710,7 +9142,7 @@ namespace MWRender
             {
                 if (stateSet != nullptr)
                     PipBoyScreenTextureVisitor::setLiveTexture(
-                        *stateSet, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+                        *stateSet, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
             }
         }
 
@@ -9724,9 +9156,21 @@ namespace MWRender
         return bound;
     }
 
+    bool ESM4NpcAnimation::bindPipBoyScreenTexture(osg::Node& pipBoyArm, osg::Texture2D* screenTexture,
+        osg::Texture2D* mapTexture, bool showMap, float mapZoom, float mapPanX, float mapPanY,
+        const osg::Vec4f& mapClip)
+    {
+        if (screenTexture == nullptr)
+            return false;
+        PipBoyScreenTextureVisitor visitor(
+            screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
+        pipBoyArm.accept(visitor);
+        return !visitor.getBoundStateSets().empty();
+    }
+
     void ESM4NpcAnimation::setPipBoyPresentationProgress(float progress, bool interactionPoseActive)
     {
-        if (mPipBoyPresentationRoot == nullptr)
+        if (mPipBoyArmPart == nullptr)
             return;
 
         const float previousProgress = mPipBoyPresentationProgress;
@@ -9734,209 +9178,94 @@ namespace MWRender
         mPipBoyWeaponSuppressed = mPipBoyPresentationProgress > 0.001f;
         if (mPipBoyPresentationProgress <= 0.001f)
         {
-            mPipBoyPresentationRoot->setNodeMask(0);
-            if (mPipBoyInteractionHandRoot != nullptr)
-                mPipBoyInteractionHandRoot->setNodeMask(0);
+            // The Pip-Boy is worn equipment, not a menu-only prop. Retail
+            // keeps PipBoyArm.nif on the left wrist after the raise animation
+            // closes; hiding this root made the device disappear throughout
+            // every weapon and locomotion state.
+            mPipBoyArmPart->setNodeMask(~osg::Node::NodeMask(0));
+            for (const osg::ref_ptr<osg::Node>& node : mPipBoyScreenNodes)
+                if (node != nullptr)
+                    node->setNodeMask(0);
+            for (const osg::ref_ptr<osg::Drawable>& drawable : mPipBoyScreenDrawables)
+                if (drawable != nullptr)
+                    drawable->setNodeMask(0);
             if (mFirstPersonRightHandPart != nullptr)
                 mFirstPersonRightHandPart->setNodeMask(~osg::Node::NodeMask(0));
-            if (isPlaying("pipboy"))
+            if (hasAnimation("pipboy"))
                 disable("pipboy");
-            if (isPlaying("pipboywaver"))
+            if (hasAnimation("pipboywaver"))
                 disable("pipboywaver");
+            if (hasAnimation("pipboymanipulate"))
+                disable("pipboymanipulate");
+            if (hasAnimation("pipboybaseaim"))
+                disable("pipboybaseaim");
             mPipBoyRetailInteractionPoseHeld = false;
+            mPipBoyHeldCompositionAuditLogged = false;
+            mPipBoyInteractionProgress = 0.f;
             resetActiveGroups();
+            // Equip may complete while the wrist presentation still suppresses
+            // the weapon. Once the Pip-Boy is fully closed, honor the retained
+            // draw request instead of leaving a valid weapon permanently masked.
+            if (mFalloutWeaponsShown && mFalloutWeaponPart != nullptr)
+                showWeapons(true);
+            setFirstPersonActorRootFieldOfView(*mObjectRoot, mDefaultFirstPersonFieldOfView);
             return;
         }
 
+        setFirstPersonActorRootFieldOfView(*mObjectRoot, mPipBoyFirstPersonFieldOfView);
+
         if (previousProgress <= 0.001f && mPipBoyRetailInteractionBound)
         {
-            play("pipboy", Animation::AnimPriority(10), BlendMask_All, true, 1.f, "start", "stop", 0.f, 0,
+            play("pipboy", Animation::AnimPriority(10), BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
                 false);
             Log(isPlaying("pipboy") ? Debug::Info : Debug::Error)
                 << "FNV Pip-Boy retail raise: played=" << isPlaying("pipboy")
                 << " source=" << getAnimationSourceName("pipboy");
         }
-        if (!isPlaying("pipboy") && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+
+        if (mPipBoyRetailInteractionBound)
         {
-            play("pipboywaver", Animation::AnimPriority(10), BlendMask_All, false, 1.f, "start", "stop", 0.f,
-                std::numeric_limits<std::uint32_t>::max(), true);
-            mPipBoyRetailInteractionPoseHeld = isPlaying("pipboywaver");
-            Log(mPipBoyRetailInteractionPoseHeld ? Debug::Info : Debug::Error)
-                << "FNV Pip-Boy authored hold: played=" << mPipBoyRetailInteractionPoseHeld
-                << " source=" << getAnimationSourceName("pipboywaver");
+            auto raiseState = mStates.find("pipboy");
+            const bool raiseComplete = raiseState != mStates.end() && !raiseState->second.mPlaying;
+            if (raiseComplete)
+            {
+                if (mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+                    play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
+                        "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+                if (mPipBoyRetailManipulateBound && !isPlaying("pipboymanipulate"))
+                    play("pipboymanipulate", Animation::AnimPriority(12), BlendMask_RightArm, false, 1.f,
+                        "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+            }
+            mPipBoyRetailInteractionPoseHeld = raiseComplete
+                && isPlaying("pipboywaver") && isPlaying("pipboymanipulate");
+            resetActiveGroups();
+            if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
+                Log(Debug::Info) << "FNV Pip-Boy recovery hold: raise=" << getAnimationSourceName("pipboy")
+                                 << " left=" << getAnimationSourceName("pipboywaver")
+                                 << " right=" << getAnimationSourceName("pipboymanipulate")
+                                 << " provenance=retained-native-run-19 wrapper=identity";
         }
 
-        mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
-        // The retail skeleton hand is the only interaction hand.  Keeping it
-        // visible preserves the shoulder-to-fingertip chain and eliminates the
-        // socketless device-local duplicate.
+        mPipBoyArmPart->setNodeMask(~osg::Node::NodeMask(0));
+        for (const osg::ref_ptr<osg::Node>& node : mPipBoyScreenNodes)
+            if (node != nullptr)
+                node->setNodeMask(~osg::Node::NodeMask(0));
+        for (const osg::ref_ptr<osg::Drawable>& drawable : mPipBoyScreenDrawables)
+            if (drawable != nullptr)
+                drawable->setNodeMask(~osg::Node::NodeMask(0));
         if (mFirstPersonRightHandPart != nullptr)
             mFirstPersonRightHandPart->setNodeMask(~osg::Node::NodeMask(0));
-        // The presentation root is only a visibility/control wrapper.  The
-        // attached NIF basis and retail KF own placement and orientation.
-        mPipBoyPresentationRoot->setMatrix(osg::Matrix::identity());
     }
 
     void ESM4NpcAnimation::setPipBoyInteractionProgress(float progress)
     {
-        mPipBoyInteractionProgress = std::clamp(progress, 0.f, 1.f);
-        // The loaded first-person sequences own the connected arm and finger
-        // transforms. No runtime IK or guessed device-space contact points.
-        return;
-
         const float previousProgress = mPipBoyInteractionProgress;
+        mPipBoyInteractionProgress = std::clamp(progress, 0.f, 1.f);
         if (mPipBoyPresentationProgress <= 0.001f)
-        {
-            if (mPipBoyInteractionHandRoot != nullptr)
-                mPipBoyInteractionHandRoot->setNodeMask(0);
-            mPipBoyRetailInteractionPoseHeld = false;
-            mPipBoyInteractionPulseActive = false;
             return;
-        }
-
-        if (mPipBoyInteractionProgress <= 0.001f)
-        {
-            if (mPipBoyInteractionHandRoot != nullptr)
-            {
-                const osg::Quat faceControls(
-                    osg::DegreesToRadians(180.f), osg::Vec3f(0.f, 0.f, 1.f));
-                mPipBoyInteractionHandRoot->setMatrix(osg::Matrix::scale(osg::Vec3f(0.28f, 0.28f, 0.28f))
-                    * osg::Matrix::rotate(faceControls)
-                    * osg::Matrix::translate(osg::Vec3f(12.5f, -4.f, 4.5f)));
-                mPipBoyInteractionHandRoot->setNodeMask(~osg::Node::NodeMask(0));
-            }
-            mPipBoyInteractionPulseActive = false;
-            return;
-        }
-
-        const float phase = 1.f - mPipBoyInteractionProgress;
-        const float contact = std::sin(std::clamp(phase, 0.f, 1.f) * osg::PI);
-        if (contact <= 0.001f || mPipBoyPresentationRoot == nullptr)
-            return;
-
-        static const std::array<osg::Vec3f, 8> handContactTargets = {
-            osg::Vec3f(10.36f, -1.59f, 4.28f), osg::Vec3f(11.12f, -1.63f, 4.29f),
-            osg::Vec3f(11.87f, -1.67f, 4.31f), osg::Vec3f(5.92f, -0.46f, 3.32f),
-            osg::Vec3f(7.69f, 1.24f, 3.14f), osg::Vec3f(10.36f, -1.59f, 4.28f),
-            osg::Vec3f(11.12f, -1.63f, 4.29f), osg::Vec3f(11.87f, -1.67f, 4.31f),
-        };
-        if (mPipBoyInteractionHandRoot != nullptr)
-        {
-            const int handVariant = std::clamp(mPipBoyArmTargetVariant, 0, 7);
-            const osg::Vec3f contactTarget = handContactTargets[handVariant];
-            const osg::Vec3f approachOffset(-0.5f, -0.9f - 2.f * (1.f - contact), 0.5f);
-            const osg::Quat faceControls(osg::DegreesToRadians(180.f), osg::Vec3f(0.f, 0.f, 1.f));
-            mPipBoyInteractionHandRoot->setMatrix(osg::Matrix::scale(osg::Vec3f(0.28f, 0.28f, 0.28f))
-                * osg::Matrix::rotate(faceControls)
-                * osg::Matrix::translate(contactTarget + approachOffset));
-            mPipBoyInteractionHandRoot->setNodeMask(~osg::Node::NodeMask(0));
-        }
-
-        const Animation::NodeMap& nodeMap = getNodeMap();
-        const auto findMatrix = [&](std::initializer_list<std::string_view> names) {
-            return dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, names));
-        };
-        osg::MatrixTransform* const rightUpper = findMatrix({ "Bip01 R UpperArm", "bip01 r upperarm" });
-        osg::MatrixTransform* const rightForearm = findMatrix({ "Bip01 R Forearm", "bip01 r forearm" });
-        osg::MatrixTransform* const rightHand = findMatrix({ "Bip01 R Hand", "bip01 r hand" });
-        osg::MatrixTransform* const rightFinger = findMatrix({ "Bip01 R Finger1", "bip01 r finger1" });
-        osg::MatrixTransform* const rightFinger11 = findMatrix({ "Bip01 R Finger11", "bip01 r finger11" });
-        osg::MatrixTransform* const rightFinger12 = findMatrix({ "Bip01 R Finger12", "bip01 r finger12" });
-        if (rightUpper == nullptr || rightForearm == nullptr || rightHand == nullptr)
-            return;
-
-        // The retail raise/hold sequences already own the connected shoulder,
-        // elbow, wrist, and hand pose.  Moving those bones procedurally on top
-        // of the authored pose pulls the arm through the CRT.  Limit live menu
-        // feedback to a crisp index-finger press when the retail hold exists;
-        // the real control transform below supplies the matching dial/button
-        // travel.
-        if (mPipBoyRetailWaverBound && rightFinger != nullptr)
-        {
-            const auto flex = [contact](osg::MatrixTransform* finger, float degrees) {
-                if (finger == nullptr)
-                    return;
-                osg::Matrix matrix = finger->getMatrix();
-                matrix.setRotate(matrix.getRotate()
-                    * osg::Quat(osg::DegreesToRadians(degrees) * contact, osg::Vec3f(0.f, 0.f, 1.f)));
-                finger->setMatrix(matrix);
-            };
-            flex(rightFinger, -8.f);
-            flex(rightFinger11, -16.f);
-            flex(rightFinger12, -12.f);
-            if (mSkeleton != nullptr)
-            {
-                mSkeleton->markBoneMatriceDirty();
-                mSkeleton->updateBoneMatrices(0);
-            }
-            unsigned int handGeometryHolders = 0;
-            unsigned int refreshedHandGeometry = 0;
-            const unsigned int handGeometry = forceFalloutRigGeometryUpdate(
-                mFirstPersonRightHandPart.get(), handGeometryHolders, refreshedHandGeometry);
-            if (previousProgress > 0.55f && mPipBoyInteractionProgress <= 0.55f)
-                Log(Debug::Info) << "FNV Pip-Boy retail held-hand action: fingerFlex=" << contact
-                                 << " handGeometry=" << handGeometry
-                                 << " refreshed=" << refreshedHandGeometry;
-            return;
-        }
-
-        static const std::array<osg::Vec3f, 8> wristTargets = {
-            osg::Vec3f(16.4f, -6.f, 5.3f), osg::Vec3f(17.1f, -6.f, 5.3f),
-            osg::Vec3f(17.9f, -6.f, 5.3f), osg::Vec3f(17.f, -6.f, 5.3f),
-            osg::Vec3f(16.4f, -7.5f, 5.3f), osg::Vec3f(17.1f, -7.5f, 5.3f),
-            osg::Vec3f(17.9f, -7.5f, 5.3f), osg::Vec3f(17.f, -7.5f, 5.3f),
-        };
-        const int targetVariant = std::clamp(mPipBoyArmTargetVariant, 0, 7);
-        const osg::Vec3f targetLocal = wristTargets[targetVariant];
-        static const std::array<osg::Vec3f, 8> fingerContactTargets = {
-            osg::Vec3f(10.36f, -1.59f, 4.28f), osg::Vec3f(11.12f, -1.63f, 4.29f),
-            osg::Vec3f(11.87f, -1.67f, 4.31f), osg::Vec3f(11.12f, -1.63f, 4.29f),
-            osg::Vec3f(10.36f, -1.59f, 4.28f), osg::Vec3f(11.12f, -1.63f, 4.29f),
-            osg::Vec3f(11.87f, -1.67f, 4.31f), osg::Vec3f(11.12f, -1.63f, 4.29f),
-        };
-        const osg::Vec3f fingerDirectionLocal = fingerContactTargets[targetVariant] - targetLocal;
-        const osg::Matrix deviceWorld = getNodeWorldMatrix(mPipBoyPresentationRoot.get());
-        const osg::Quat deviceRotation = deviceWorld.getRotate();
-        const osg::Vec3f wristTarget = transformPoint(targetLocal, deviceWorld);
-        const osg::Vec3f poleHint = wristTarget + deviceRotation * osg::Vec3f(15.f, -10.f, -16.f);
-        WorldViewerWeaponIkSolve solution;
-        for (unsigned int iteration = 0; iteration < 5; ++iteration)
-        {
-            solution = solveFalloutWeaponIkTwoBone(getNodeWorldMatrix(rightUpper).getTrans(),
-                getNodeWorldMatrix(rightForearm).getTrans(), getNodeWorldMatrix(rightHand).getTrans(),
-                wristTarget, poleHint);
-            if (!solution.mSolved)
-                break;
-            rotateFalloutWeaponIkSegmentToBest(*rightUpper, *rightForearm, solution.mMid, contact);
-            rotateFalloutWeaponIkSegmentToBest(*rightForearm, *rightHand, solution.mEnd, contact);
-            if ((getNodeWorldMatrix(rightHand).getTrans() - wristTarget).length() <= 1.5f)
-                break;
-        }
-        if (rightFinger != nullptr)
-        {
-            const osg::Vec3f desiredFinger = wristTarget + deviceRotation * fingerDirectionLocal;
-            rotateFalloutWeaponIkSegmentToBest(*rightHand, *rightFinger, desiredFinger, contact);
-        }
-        if (mSkeleton != nullptr)
-        {
-            mSkeleton->markBoneMatriceDirty();
-            mSkeleton->updateBoneMatrices(0);
-        }
-        unsigned int handGeometryHolders = 0;
-        unsigned int refreshedHandGeometry = 0;
-        const unsigned int handGeometry = forceFalloutRigGeometryUpdate(
-            mFirstPersonRightHandPart.get(), handGeometryHolders, refreshedHandGeometry);
         if (previousProgress > 0.55f && mPipBoyInteractionProgress <= 0.55f)
-        {
-            Log(Debug::Info) << "FNV Pip-Boy physical right-arm IK: source=player-skeleton"
-                             << " variant=" << targetVariant << " targetLocal=" << targetLocal.x() << ','
-                             << targetLocal.y() << ',' << targetLocal.z()
-                             << " fingerDirLocal=" << fingerDirectionLocal.x() << ',' << fingerDirectionLocal.y()
-                             << ',' << fingerDirectionLocal.z()
-                             << " solved=" << solution.mSolved << " error="
-                             << (getNodeWorldMatrix(rightHand).getTrans() - wristTarget).length()
-                             << " handGeometry=" << handGeometry << " refreshed=" << refreshedHandGeometry;
-        }
+            Log(Debug::Info) << "FNV Pip-Boy replay stack physical input: pulse=" << mPipBoyInteractionProgress
+                             << " firstPersonArmSource=retail-resting-hand controls=authored-nif";
     }
 
     void ESM4NpcAnimation::setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
@@ -9951,54 +9280,6 @@ namespace MWRender
         (void)mapPanY;
         (void)interactionPulse;
         // Physical NIF/KF controller data owns knob, button, and glow state.
-        return;
-
-        mPipBoyArmTargetVariant = std::abs(pane * 7 + submenu * 2 + listOffset) % 8;
-        if (!mPipBoyControlsInitialized)
-            initializePipBoyPhysicalControls();
-        if (mPipBoyTabKnob.mRoot == nullptr || mPipBoyScrollKnob.mRoot == nullptr)
-            return;
-
-        pane = std::clamp(pane, 0, 3);
-        submenu = std::max(0, submenu);
-        listOffset = std::max(0, listOffset);
-        const int physicalTab = pane == 3 ? 0 : (pane == 1 ? 1 : 2); // STATS / ITEMS / DATA (incl. MAP)
-        constexpr std::array<float, 3> tabAngles = { -0.5f, 0.5f, 1.5f };
-        const auto rotateAroundPivot = [](const PipBoyPhysicalControl& control, float angle) {
-            const osg::Vec3f negativePivot(-control.mPivot.x(), -control.mPivot.y(), -control.mPivot.z());
-            return osg::Matrix::translate(negativePivot) * osg::Matrix::rotate(angle, control.mAxis)
-                * osg::Matrix::translate(control.mPivot);
-        };
-        mPipBoyTabKnob.mRoot->setMatrix(rotateAroundPivot(mPipBoyTabKnob, tabAngles[physicalTab]));
-
-        // Retail initializes this wheel at pi/2. Map pan/zoom, a sub-tab
-        // change, and an item-row move all advance the same real scroll knob;
-        // it is no longer a screen-only state change.
-        float scrollSteps = static_cast<float>(submenu) * 0.80f + static_cast<float>(listOffset) * 0.40f;
-        if (pane == 0)
-        {
-            scrollSteps = (worldMap ? 0.80f : 0.f) + (std::clamp(mapZoom, 1.f, 3.f) - 1.f) * 0.75f
-                + std::clamp(mapPanX, -0.45f, 0.45f) * 1.5f + std::clamp(mapPanY, -0.45f, 0.45f) * 1.5f;
-        }
-        const float scrollAngle = 1.57079632679f + scrollSteps;
-        mPipBoyScrollKnob.mRoot->setMatrix(rotateAroundPivot(mPipBoyScrollKnob, scrollAngle));
-
-        // The interaction pulse is an action envelope. Show one deliberate
-        // press on the selected retail button rather than flapping an arm or
-        // making all controls animate at once.
-        const float press = std::clamp((interactionPulse - 0.55f) / 0.45f, 0.f, 1.f);
-        for (std::size_t index = 0; index < mPipBoyButtons.size(); ++index)
-        {
-            PipBoyPhysicalControl& button = mPipBoyButtons[index];
-            if (button.mRoot != nullptr)
-            {
-                const float depth = static_cast<int>(index) == physicalTab ? -0.065f * press : 0.f;
-                button.mRoot->setMatrix(osg::Matrix::translate(button.mAxis * depth));
-            }
-            if (mPipBoyGlows[index].mRoot != nullptr)
-                mPipBoyGlows[index].mRoot->setNodeMask(
-                    static_cast<int>(index) == physicalTab ? ~osg::Node::NodeMask(0) : 0);
-        }
     }
 
     ESM4NpcAnimation::ESM4NpcAnimation(
@@ -10355,9 +9636,7 @@ namespace MWRender
                 }
             }
             else
-                // Empty KFFZ is valid for records that use the shared FNV
-                // locomotion families resolved below.
-                Log(Debug::Verbose) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
+                Log(Debug::Warning) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
                                     << " animationRecord=" << animationRecord->mEditorId;
 
             const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
@@ -10640,6 +9919,13 @@ namespace MWRender
                 return;
             }
 
+            if (mFalloutWeaponPart->getNumParents() == 1
+                && mFalloutWeaponPart->getParent(0) == mFalloutWeaponHolsterFrame)
+            {
+                mFalloutWeaponPart->setNodeMask(~0u);
+                return;
+            }
+
             while (mFalloutWeaponPart->getNumParents() > 0)
             {
                 osg::Group* parent = mFalloutWeaponPart->getParent(0);
@@ -10661,14 +9947,14 @@ namespace MWRender
         std::string_view targetName;
         if (showWeapon)
         {
-            // The retail world mesh is also the first-person varmint mesh.
-            // Once the Pip-Boy pose is released, the live 2HR right-hand bone
-            // owns its placement and motion.
-            if (mFirstPersonView && mFalloutActionWeapon != nullptr
-                && isFalloutLongGunWeapon(*mFalloutActionWeapon) && mFalloutWeaponUsesWorldModelFallback)
+            // Retail keeps the rendered first-person weapon beneath the
+            // skeleton's NIF-compatible `Weapon` child of Bip01 R Hand. The
+            // active weapon-family KF owns that mount's transform for pistols
+            // and long guns alike, including world-mesh fallbacks without MOD4.
+            if (mFirstPersonView && mFalloutWeaponDrawFrame != nullptr)
             {
-                targetName = "Bip01 R Hand";
-                target = findBestAttachmentNode(getNodeMap(), { "Bip01 R Hand", "bip01 r hand" });
+                targetName = "Weapon";
+                target = mFalloutWeaponDrawFrame.get();
             }
             else
             {
@@ -10688,6 +9974,16 @@ namespace MWRender
             Log(Debug::Warning) << "FNV/ESM4 actor completeness: cannot move equipped weapon for "
                                 << mPtr.getCellRef().getRefId() << " target=\"" << targetName
                                 << "\" gate=weapon-draw-state-attachment";
+            return;
+        }
+
+        // Draw-state synchronization runs every update. Reparenting an
+        // already-correct weapon needlessly dirties the live rig and can
+        // invalidate an authored equip/reload state between mechanics and
+        // render updates. An unchanged attachment is a strict no-op.
+        if (mFalloutWeaponPart->getNumParents() == 1 && mFalloutWeaponPart->getParent(0) == target)
+        {
+            mFalloutWeaponPart->setNodeMask(~0u);
             return;
         }
 
@@ -10724,7 +10020,11 @@ namespace MWRender
             const osg::Vec3f desiredCenter
                 = transformPoint(desiredWorld, osg::Matrix::inverse(cameraWorld));
             const osg::Vec3f sourceCenter = localBound.valid() ? localBound.center() : osg::Vec3f();
-            mFalloutWeaponCameraFrame->setMatrix(osg::Matrix::translate(desiredCenter - sourceCenter));
+            const osg::Quat worldLongAxisToFirstPersonForward(
+                osg::DegreesToRadians(90.f), osg::Vec3f(0.f, 0.f, 1.f));
+            mFalloutWeaponCameraFrame->setMatrix(osg::Matrix::translate(-sourceCenter)
+                * osg::Matrix::rotate(worldLongAxisToFirstPersonForward)
+                * osg::Matrix::translate(desiredCenter));
             target->addChild(mFalloutWeaponCameraFrame.get());
             mFalloutWeaponCameraFrame->addChild(mFalloutWeaponPart.get());
         }
@@ -10749,6 +10049,128 @@ namespace MWRender
         Log(Debug::Info) << "FNV/ESM4 actor completeness: moved equipped weapon for "
                          << mPtr.getCellRef().getRefId() << " drawn=" << showWeapon
                          << " target=\"" << targetName << "\" gate=weapon-draw-state-attachment";
+    }
+
+    void ESM4NpcAnimation::emitFalloutFirstPersonWeaponPostKfAudit()
+    {
+        // This is deliberately observational.  D02 needs the final production
+        // scene state after the authored KF update and the Pip-Boy close, so it
+        // can compare the actual Weapon chain to the retail xNVSE graph without
+        // introducing a corrective frame or a substitute animation.
+        if (!mFirstPersonView || !mFalloutWeaponsShown || mPipBoyWeaponSuppressed
+            || (!worldViewerEnvEnabled("OPENMW_FNV_HAND_POSE_AUDIT")
+                && !worldViewerEnvEnabled("OPENMW_FNV_WEAPON_POST_KF_AUDIT"))
+            || mFalloutWeaponPostKfAuditLogged
+            || mFalloutWeaponPart == nullptr)
+            return;
+
+        // A newly attached weapon can be visited once before its family aim
+        // source has replaced the previous weapon's controller. Do not consume
+        // the one-shot audit on that stale frame. The retained retail oracle
+        // compares the settled family source and rendered mount, not the
+        // transient attachment state.
+        const std::string expectedPose = mFalloutActionWeapon != nullptr
+            ? getFonvFirstPersonWeaponAnimationKf(
+                getFonvWeaponAnimationKf(mFalloutActionWeapon->mData.animationType, "aim"))
+            : std::string();
+        if (expectedPose.empty() || getAnimationSourceName("weaponpose") != expectedPose
+            || !isPlaying("weaponpose"))
+            return;
+
+        osg::Group* weaponNode = mFirstPersonView && mFalloutWeaponDrawFrame != nullptr
+            ? mFalloutWeaponDrawFrame.get()
+            : nullptr;
+        if (weaponNode == nullptr && !mFalloutWeaponDrawBone.empty())
+            weaponNode = findBestAttachmentNode(getNodeMap(), { mFalloutWeaponDrawBone });
+        if (weaponNode == nullptr)
+            weaponNode = findBestAttachmentNode(getNodeMap(), { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand" });
+        if (weaponNode == nullptr)
+        {
+            mFalloutWeaponPostKfAuditLogged = true;
+            Log(Debug::Error) << "FNV first-person weapon post-KF audit: actor=" << mPtr.getCellRef().getRefId()
+                              << " status=missing-weapon-node source=live-post-kf";
+            return;
+        }
+
+        const auto worldUnderObject = [this](const osg::Node* node) {
+            osg::Matrix result;
+            osg::Node* const mutableNode = const_cast<osg::Node*>(node);
+            if (!getNodeWorldMatrixUnderAncestor(mutableNode, mObjectRoot.get(), result))
+                result = getNodeWorldMatrix(mutableNode);
+            return result;
+        };
+        const auto matrixFields = [](const osg::Matrix& matrix) {
+            std::ostringstream stream;
+            stream << std::fixed << std::setprecision(6) << "r=("
+                   << matrix(0, 0) << ',' << matrix(0, 1) << ',' << matrix(0, 2) << ';'
+                   << matrix(1, 0) << ',' << matrix(1, 1) << ',' << matrix(1, 2) << ';'
+                   << matrix(2, 0) << ',' << matrix(2, 1) << ',' << matrix(2, 2) << ") t=("
+                   << matrix.getTrans().x() << ',' << matrix.getTrans().y() << ',' << matrix.getTrans().z()
+                   << ") s=(" << matrix.getScale().x() << ',' << matrix.getScale().y() << ','
+                   << matrix.getScale().z() << ')';
+            return stream.str();
+        };
+
+        osg::Group* const weaponParent = weaponNode->getNumParents() > 0 ? weaponNode->getParent(0) : nullptr;
+        osg::Group* const weaponPartParent
+            = mFalloutWeaponPart->getNumParents() > 0 ? mFalloutWeaponPart->getParent(0) : nullptr;
+        const osg::Matrix weaponWorld = worldUnderObject(weaponNode);
+        const osg::Matrix weaponParentWorld
+            = weaponParent != nullptr ? worldUnderObject(weaponParent) : osg::Matrix::identity();
+        const osg::Matrix weaponInParent
+            = weaponParent != nullptr ? weaponWorld * osg::Matrix::inverse(weaponParentWorld) : weaponWorld;
+        const osg::Matrix weaponPartWorld = worldUnderObject(mFalloutWeaponPart.get());
+        const osg::Matrix weaponPartInWeapon = weaponPartWorld * osg::Matrix::inverse(weaponWorld);
+        const osg::Node* const authoredCamera = getNode("Camera1st");
+        const osg::Node* const leftClavicle = getNode("Bip01 L Clavicle");
+        const osg::Node* const leftUpperArm = getNode("Bip01 L UpperArm");
+        const osg::Node* const leftForearm = getNode("Bip01 L Forearm");
+        const osg::Node* const leftHand = getNode("Bip01 L Hand");
+        const osg::Node* const rightHand = getNode("Bip01 R Hand");
+        const osg::Matrix authoredCameraWorld
+            = authoredCamera != nullptr ? worldUnderObject(authoredCamera) : osg::Matrix::identity();
+        const osg::Matrix rightHandWorld
+            = rightHand != nullptr ? worldUnderObject(rightHand) : osg::Matrix::identity();
+        const auto nodeInCamera = [&](const osg::Node* node) {
+            return node != nullptr
+                ? worldUnderObject(node) * osg::Matrix::inverse(authoredCameraWorld)
+                : osg::Matrix::identity();
+        };
+        const osg::Matrix rightHandInCamera = rightHandWorld * osg::Matrix::inverse(authoredCameraWorld);
+        const osg::Matrix weaponInCamera = weaponWorld * osg::Matrix::inverse(authoredCameraWorld);
+        const osg::MatrixTransform* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+        const osg::MatrixTransform* const weaponPartTransform
+            = dynamic_cast<const osg::MatrixTransform*>(mFalloutWeaponPart.get());
+
+        mFalloutWeaponPostKfAuditLogged = true;
+        Log(Debug::Info) << "FNV first-person weapon post-KF audit: actor=" << mPtr.getCellRef().getRefId()
+                         << " model=\""
+                         << (mFalloutActionWeapon != nullptr ? mFalloutActionWeapon->mModel : std::string())
+                         << "\" weaponNode=\"" << printableNodeName(weaponNode->getName())
+                         << "\" weaponNodeParent=\""
+                         << (weaponParent != nullptr ? printableNodeName(weaponParent->getName()) : std::string())
+                         << "\" weaponNodeParentCount=" << weaponNode->getNumParents()
+                         << " weaponNodeRaw="
+                         << matrixFields(weaponTransform != nullptr ? weaponTransform->getMatrix() : osg::Matrix::identity())
+                         << " weaponNodePostKf=" << matrixFields(weaponInParent)
+                         << " weaponNodeWorld=" << matrixFields(weaponWorld)
+                         << " authoredCamera=" << matrixFields(authoredCameraWorld)
+                         << " leftClavicleInCamera=" << matrixFields(nodeInCamera(leftClavicle))
+                         << " leftUpperArmInCamera=" << matrixFields(nodeInCamera(leftUpperArm))
+                         << " leftForearmInCamera=" << matrixFields(nodeInCamera(leftForearm))
+                         << " leftHandInCamera=" << matrixFields(nodeInCamera(leftHand))
+                         << " rightHandInCamera=" << matrixFields(rightHandInCamera)
+                         << " weaponInCamera=" << matrixFields(weaponInCamera)
+                         << " weaponPart=\"" << printableNodeName(mFalloutWeaponPart->getName())
+                         << "\" weaponPartParent=\""
+                         << (weaponPartParent != nullptr ? printableNodeName(weaponPartParent->getName()) : std::string())
+                         << "\" weaponPartParentCount=" << mFalloutWeaponPart->getNumParents()
+                         << " weaponPartRaw="
+                         << matrixFields(weaponPartTransform != nullptr ? weaponPartTransform->getMatrix() : osg::Matrix::identity())
+                         << " weaponPartInWeapon=" << matrixFields(weaponPartInWeapon)
+                         << " weaponPartMask=0x" << std::hex << mFalloutWeaponPart->getNodeMask() << std::dec
+                         << " weaponPartRenderable=" << actorPartHasRenderableGeometry(mFalloutWeaponPart.get())
+                         << " source=live-post-kf";
     }
 
     bool ESM4NpcAnimation::setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup)
@@ -10879,6 +10301,7 @@ namespace MWRender
         mFalloutWeaponCameraFrame = nullptr;
         mFalloutWeaponUsesWorldModelFallback = false;
         mFalloutWeaponShownTelemetryLogged = false;
+        mFalloutWeaponPostKfAuditLogged = false;
         mFalloutWeaponHolsterFrame = nullptr;
         mFalloutWeaponDrawBone = "Weapon";
         mFalloutWeaponHolsterBone.clear();
@@ -10919,6 +10342,12 @@ namespace MWRender
         if (!authoredParent.empty())
             mFalloutWeaponDrawBone = authoredParent;
 
+        // Test the loaded part while it is still visible. Equip transitions
+        // intentionally hide the first-person root until the authored draw
+        // action reaches its show key; auditing after that hide mistakes a
+        // valid model for missing geometry and rejects the action that would
+        // make it visible again.
+        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
         mFalloutWeaponsShown
             = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
         if (mFalloutWeaponPart != nullptr)
@@ -10931,7 +10360,6 @@ namespace MWRender
                 mFalloutWeaponPart->setNodeMask(0);
         }
 
-        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
         Log(renderable ? Debug::Info : Debug::Error)
             << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
             << " weapon=" << mFalloutActionWeapon->mEditorId
@@ -11002,6 +10430,12 @@ namespace MWRender
 
             if (getAnimationSourceName(source.mSemanticGroup) != resolution.mPath)
             {
+                // A semantic action can still own controller time from the
+                // previously equipped weapon (most commonly weaponpose).
+                // Stop that state before replacing its AnimSource so the
+                // next render traversal cannot retain controller pointers
+                // into the retired weapon family.
+                disable(source.mSemanticGroup);
                 const std::shared_ptr<AnimSource> bound = addSingleAnimSource(
                     resolution.mPath, baseModel, false, {}, source.mSemanticGroup);
                 if (bound == nullptr)
@@ -11304,7 +10738,132 @@ namespace MWRender
         unsigned int forcedRigGeometryHolder = 0;
         unsigned int refreshedRigGeometry = 0;
         const unsigned int forcedRigGeometry
-            = forceFalloutRigGeometryUpdate(mObjectRoot.get(), forcedRigGeometryHolder, refreshedRigGeometry);
+            = forceFalloutRigGeometryUpdate(mObjectRoot.get(), forcedRigGeometryHolder, refreshedRigGeometry,
+                worldViewerEnvEnabled("OPENMW_FNV_HAND_POSE_AUDIT"));
+
+        if (mFirstPersonView && mPipBoyRetailInteractionPoseHeld && !mPipBoyHeldCompositionAuditLogged
+            && mFirstPersonArmorArmsPart != nullptr && mFirstPersonLeftHandPart != nullptr
+            && mFirstPersonRightHandPart != nullptr)
+        {
+            const osg::Node* const authoredCamera = getNode("Camera1st");
+            const osg::Node* const leftWrist = getNode("Bip01 L ForeTwist");
+            const osg::Node* const rightWrist = getNode("Bip01 R ForeTwist");
+            if (authoredCamera != nullptr && leftWrist != nullptr && rightWrist != nullptr)
+            {
+                const osg::Matrix worldToCamera
+                    = osg::Matrix::inverse(getNodeWorldMatrix(const_cast<osg::Node*>(authoredCamera)));
+                const osg::Vec3f leftWristCamera
+                    = osg::Vec3f(getNodeWorldMatrix(const_cast<osg::Node*>(leftWrist)).getTrans() * worldToCamera);
+                const osg::Vec3f rightWristCamera
+                    = osg::Vec3f(getNodeWorldMatrix(const_cast<osg::Node*>(rightWrist)).getTrans() * worldToCamera);
+                if (!mPipBoyScreenNodes.empty() && mPipBoyScreenNodes.front() != nullptr)
+                {
+                    osg::Matrix cameraUnderObject;
+                    osg::Matrix screenUnderObject;
+                    const bool cameraResolved = getNodeWorldMatrixUnderAncestor(
+                        const_cast<osg::Node*>(authoredCamera), mObjectRoot.get(), cameraUnderObject);
+                    const bool screenResolved = getNodeWorldMatrixUnderAncestor(
+                        mPipBoyScreenNodes.front().get(), mObjectRoot.get(), screenUnderObject);
+                    if (cameraResolved && screenResolved)
+                    {
+                        const osg::Vec3f screenCamera = osg::Vec3f(
+                            (screenUnderObject * osg::Matrix::inverse(cameraUnderObject)).getTrans());
+                        const osg::Vec3f retailScreenCamera(-6.254269f, 11.873332f, -3.225682f);
+                        const osg::Vec3f delta = retailScreenCamera - screenCamera;
+                        Log(Debug::Info) << "FNV Pip-Boy screen Camera1st audit: current=("
+                                         << screenCamera.x() << ',' << screenCamera.y() << ',' << screenCamera.z()
+                                         << ") retail=(-6.254269,11.873332,-3.225682) delta=("
+                                         << delta.x() << ',' << delta.y() << ',' << delta.z()
+                                         << ") source=common-first-person-root/xnvse-frame-980";
+                    }
+                    else
+                        Log(Debug::Error) << "FNV Pip-Boy screen Camera1st audit: status=unresolved-common-root"
+                                          << " camera=" << cameraResolved << " screen=" << screenResolved;
+                }
+                if (mPipBoyArmPart != nullptr)
+                {
+                    FalloutPipBoyScreenSurfaceCollector screenSurface(worldToCamera, mPipBoyArmPart.get());
+                    mPipBoyArmPart->accept(screenSurface);
+                    if (screenSurface.mBounds.valid())
+                    {
+                        const osg::Vec3f center = screenSurface.mBounds.center();
+                        const osg::Vec3f retailCenter(-1.34543f, 13.34260f, -3.26523f);
+                        const osg::Vec3f delta = retailCenter - center;
+                        Log(Debug::Info) << "FNV Pip-Boy visible screen Camera1st audit: vertices="
+                                         << screenSurface.mVertices << " drawables="
+                                         << screenSurface.mResolvedDrawables << " min=("
+                                         << screenSurface.mBounds.xMin() << ',' << screenSurface.mBounds.yMin() << ','
+                                         << screenSurface.mBounds.zMin() << ") max=("
+                                         << screenSurface.mBounds.xMax() << ',' << screenSurface.mBounds.yMax() << ','
+                                         << screenSurface.mBounds.zMax() << ") center=("
+                                         << center.x() << ',' << center.y() << ',' << center.z()
+                                         << ") retailCenter=(-1.34543,13.34260,-3.26523) delta=("
+                                         << delta.x() << ',' << delta.y() << ',' << delta.z()
+                                         << ") source=live-post-skin/xnvse-frame-980";
+                    }
+                    else
+                        Log(Debug::Error) << "FNV Pip-Boy visible screen Camera1st audit: status=unresolved";
+                }
+                // ForeTwist is the armor cuff reference, while the standalone
+                // hand meshes begin near the child hand joint roughly 18 units
+                // away in the authored skeleton. Include both boundary rings.
+                constexpr float sampleRadius = 30.f;
+                FalloutWristSurfaceCollector leftSleeveCollector(
+                    worldToCamera, mFirstPersonArmorArmsPart.get(), {}, leftWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector rightSleeveCollector(
+                    worldToCamera, mFirstPersonArmorArmsPart.get(), {}, rightWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector leftHandCollector(
+                    worldToCamera, mFirstPersonLeftHandPart.get(), {}, leftWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector rightHandCollector(
+                    worldToCamera, mFirstPersonRightHandPart.get(), {}, rightWristCamera, sampleRadius);
+                mFirstPersonArmorArmsPart->accept(leftSleeveCollector);
+                mFirstPersonArmorArmsPart->accept(rightSleeveCollector);
+                mFirstPersonLeftHandPart->accept(leftHandCollector);
+                mFirstPersonRightHandPart->accept(rightHandCollector);
+                const FalloutWristSurfaceGap leftGap
+                    = minimumFalloutWristSurfaceGap(leftSleeveCollector.mSample, leftHandCollector.mSample);
+                const FalloutWristSurfaceGap rightGap
+                    = minimumFalloutWristSurfaceGap(rightSleeveCollector.mSample, rightHandCollector.mSample);
+                const auto point = [](const osg::Vec3f& value) {
+                    std::ostringstream stream;
+                    stream << '(' << value.x() << ',' << value.y() << ',' << value.z() << ')';
+                    return stream.str();
+                };
+                mPipBoyHeldCompositionAuditLogged = true;
+                constexpr float maximumContinuousGap = 1.f;
+                const bool continuous = leftGap.mDistance <= maximumContinuousGap
+                    && rightGap.mDistance <= maximumContinuousGap;
+                Log(continuous ? Debug::Info : Debug::Error)
+                    << "FNV Pip-Boy held wrist surface audit: status="
+                    << (continuous ? "pass" : "fail") << " source=live-post-skin"
+                                 << " radius=" << sampleRadius
+                                 << " maximumContinuousGap=" << maximumContinuousGap
+                                 << " leftVertices=(" << leftSleeveCollector.mSample.mCameraVertices.size()
+                                 << ',' << leftHandCollector.mSample.mCameraVertices.size() << ')'
+                                 << " leftNearest=(" << leftSleeveCollector.mSample.mNearestWristDistance << ','
+                                 << leftHandCollector.mSample.mNearestWristDistance << ')'
+                                 << " leftNearestPoints=" << point(leftSleeveCollector.mSample.mNearestWristVertex)
+                                 << ',' << point(leftHandCollector.mSample.mNearestWristVertex)
+                                 << " leftGap=" << leftGap.mDistance
+                                 << " leftPair=" << point(leftGap.mFirst) << ',' << point(leftGap.mSecond)
+                                 << " rightVertices=(" << rightSleeveCollector.mSample.mCameraVertices.size()
+                                 << ',' << rightHandCollector.mSample.mCameraVertices.size() << ')'
+                                 << " rightNearest=(" << rightSleeveCollector.mSample.mNearestWristDistance << ','
+                                 << rightHandCollector.mSample.mNearestWristDistance << ')'
+                                 << " rightNearestPoints=" << point(rightSleeveCollector.mSample.mNearestWristVertex)
+                                 << ',' << point(rightHandCollector.mSample.mNearestWristVertex)
+                                 << " rightGap=" << rightGap.mDistance
+                                 << " rightPair=" << point(rightGap.mFirst) << ',' << point(rightGap.mSecond)
+                                 << " rigs=(" << leftSleeveCollector.mSample.mRigGeometry << ','
+                                 << leftHandCollector.mSample.mRigGeometry << ','
+                                 << rightSleeveCollector.mSample.mRigGeometry << ','
+                                 << rightHandCollector.mSample.mRigGeometry << ')'
+                                 << " paths=(" << leftSleeveCollector.mSample.mResolvedWorldPaths << ','
+                                 << leftHandCollector.mSample.mResolvedWorldPaths << ','
+                                 << rightSleeveCollector.mSample.mResolvedWorldPaths << ','
+                                 << rightHandCollector.mSample.mResolvedWorldPaths << ')';
+            }
+        }
 
         if (const ESM4::Weapon* weapon = equippedWeapon)
         {
@@ -11634,6 +11193,7 @@ namespace MWRender
                     << " nodeMap=" << nodeMap.size();
             logWorldViewerActorLedger(mPtr, "head-attach-direct", details.str());
         }
+        const bool firstPersonHandSurfacePart = mFirstPersonView && bareHandSurfacePart && !forceActorSpace;
         if (bareHandSurfacePart && !forceActorSpace)
         {
             osg::Group* bip01 = nullptr;
@@ -11644,7 +11204,7 @@ namespace MWRender
                                                      : std::initializer_list<std::string_view>{ "Bip01 R Hand", "bip01 r hand" });
             if (bip01 != nullptr && hand != nullptr)
             {
-                if (std::getenv("OPENMW_FNV_HAND_BIND_FRAME_ATTACH") != nullptr)
+                if (firstPersonHandSurfacePart || std::getenv("OPENMW_FNV_HAND_BIND_FRAME_ATTACH") != nullptr)
                 {
                     attachNode = makeFalloutAnimatedBoneBindFrameHelper(*bip01, *hand,
                         isFalloutLeftHandSurfaceModel(model) ? std::string_view("FNV Animated L Hand Bind Frame")
@@ -11781,6 +11341,10 @@ namespace MWRender
             || (headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
                 && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HEAD_PARTS") != nullptr
                 && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr);
+        // A first-person hand must stay a live skin so the retail-authored
+        // skeleton and held Pip-Boy timeline can drive it. Retain the legacy
+        // staticization switch for a deliberate diagnostic only; never use it
+        // implicitly for the normal first-person path.
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
             && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
@@ -11872,7 +11436,7 @@ namespace MWRender
         else if (staticizedHeadPartRig || staticizedBareHandPartRig)
         {
             attached = attachStaticizedFalloutPart(
-                attachTemplateNode, attachNode, mResourceSystem->getSceneManager(), true);
+                attachTemplateNode, attachNode, mResourceSystem->getSceneManager(), !firstPersonHandSurfacePart);
             Log(Debug::Verbose) << "FNV/ESM4 diag: offset-attached staticized rig part "
                              << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
                              << " attachNode=" << attachNode->getName()

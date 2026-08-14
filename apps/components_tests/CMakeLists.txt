@@ -5,7 +5,9 @@ file(GLOB UNITTEST_SRC_FILES
     main.cpp
 
     ../openmw/fnvsidecaripc.cpp
+    ../openmw/mwworld/fnvfasttravel.cpp
     openmw/testfnvsidecaripc.cpp
+    openmw/testfnvfasttravel.cpp
 
     esm/testfixedstring.cpp
     esm/testrefid.cpp

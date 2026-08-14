@@ -188,8 +188,12 @@ namespace SDLUtil
             return false;
 
         const char* backgroundSession = std::getenv("OPENMW_PLAYABLE_SESSION_BACKGROUND");
-        const bool keepHidden = backgroundSession != nullptr && *backgroundSession != '\0'
+        const char* captureKeepWindowVisible = std::getenv("OPENMW_PROOF_CAPTURE_KEEP_WINDOW_VISIBLE");
+        const bool backgroundSessionEnabled = backgroundSession != nullptr && *backgroundSession != '\0'
             && std::string_view(backgroundSession) != "0";
+        const bool visibleCaptureRequested = captureKeepWindowVisible != nullptr && *captureKeepWindowVisible != '\0'
+            && std::string_view(captureKeepWindowVisible) != "0";
+        const bool keepHidden = backgroundSessionEnabled && !visibleCaptureRequested;
         if (!keepHidden)
             SDL_ShowWindow(mWindow);
 

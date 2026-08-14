@@ -13,7 +13,6 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testesm4perkstore.cpp
     mwworld/testesm4recipestore.cpp
     mwworld/testesm4notestore.cpp
-    mwworld/testesm4specialinventorystore.cpp
     mwworld/testfnvcraftingruntime.cpp
     mwworld/testfnvlockpickruntime.cpp
     mwworld/testactionfnvcrafting.cpp
@@ -22,11 +21,11 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testfnvplayerstate.cpp
     mwworld/testfnvplayerruntimestate.cpp
     mwworld/testfnvweather.cpp
+    mwworld/testfnvsavepreflight.cpp
     mwworld/testfnvfasttravel.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
-    mwworld/testcellref.cpp
     mwworld/testcellvisitors.cpp
     mwworld/testactorfacing.cpp
     mwworld/testfnvtriggervolume.cpp
@@ -38,42 +37,34 @@ file(GLOB UNITTEST_SRC_FILES
     mwdialogue/testesm4resultscript.cpp
 
     mwgui/tooltips.cpp
-    mwgui/weightedsearch.cpp
-
-    mwinput/testcontrolswitch.cpp
+    mwgui/testfalloutquestlistpolicy.cpp
+    mwgui/testinventorylistpolicy.cpp
+    mwgui/testinventoryitemtype.cpp
+    mwgui/testfnvmenuxml.cpp
 
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp
+    mwclass/testlight4.cpp
+    mwclass/testfnvaipackage.cpp
     mwclass/testfnvfurniturelifecycle.cpp
     mwclass/testfnvsandbox.cpp
 
     mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfalloutlodselection.cpp
+    mwrender/testfonvpackageanimation.cpp
     mwrender/testobjectpaging.cpp
     mwrender/testplayervisualpolicy.cpp
 
     mwmechanics/testfalloutcombat.cpp
+    mwmechanics/testfalloutweaponsound.cpp
     mwmechanics/testdialoguefacing.cpp
     mwmechanics/testownership.cpp
 
     mwsound/testsaysequence.cpp
-    mwsound/testsoundbuffer.cpp
-
-    mwrender/testplayervisualpolicy.cpp
+    mwsound/testfalloutsoundpath.cpp
 
     mwscript/testscripts.cpp
 )
-
-if (MSVC)
-    # these TUs take a lot of memory for codegen
-    # in CI, they often go over the 8GB memory limit if another cl.exe is running at the same time
-    # this option (make sure you're not looking at the docs for the identically-named linker option) stops four codegen threads being spun off
-    # it hurts build time ~33% to enable this unnecessarily, though, so target it to the hungriest boys
-    set_source_files_properties(
-        mwworld/teststore.cpp
-        PROPERTIES
-        COMPILE_OPTIONS /cgthreads1
-    )
-endif()
 
 source_group(apps\\openmw-tests FILES ${UNITTEST_SRC_FILES})
 
@@ -88,10 +79,6 @@ target_link_libraries(openmw-tests
 # Fix for not visible pthreads functions for linker with glibc 2.15
 if (UNIX AND NOT APPLE)
     target_link_libraries(openmw-tests ${CMAKE_THREAD_LIBS_INIT})
-endif()
-
-if (WIN32)
-    target_sources(openmw-tests PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
 if (BUILD_WITH_CODE_COVERAGE)

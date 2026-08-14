@@ -95,6 +95,11 @@ namespace MWBase
 
         virtual void executeAction(int action) = 0;
 
+        // Engine-owned unattended captures may hold the ordinary Fallout Use
+        // binding across frames. This enters through ActionManager's normal
+        // input path; it does not call weapon mechanics directly.
+        virtual void setFalloutUnattendedUseDown(bool down) = 0;
+
         virtual bool controlsDisabled() = 0;
 
         virtual void saveBindings() = 0;

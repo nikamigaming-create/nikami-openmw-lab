@@ -120,6 +120,7 @@ void ESM4::Potion::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::ALCH::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+
 }
 
 // void ESM4::Potion::save(ESM4::Writer& writer) const

@@ -8,6 +8,8 @@
 #include <components/vr/space.hpp>
 
 #include <osg/MatrixTransform>
+#include <osg/Texture2D>
+#include <osg/Vec4f>
 
 #include <string>
 #include <vector>
@@ -80,6 +82,9 @@ namespace MWVR
         };
 
         void setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces);
+        bool hasFalloutVrPipBoySurface() const { return !mFalloutVrPipBoySurfaceNodes.empty(); }
+        bool setFalloutVrPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
+            bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip);
 
     protected:
 
@@ -132,6 +137,7 @@ namespace MWVR
         bool mFalloutVrHandSurfacesAttached = false;
         std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrHandSurfaceNodes;
+        std::vector<osg::ref_ptr<osg::Node>> mFalloutVrPipBoySurfaceNodes;
         float mCharHeight = 120.f;
         Stereo::Pose mHeadPoseInLocalSpace;
         Stereo::Pose mCharLocalSpacePose;

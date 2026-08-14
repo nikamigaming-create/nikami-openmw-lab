@@ -378,6 +378,13 @@ namespace MWRender
         return completion < 1.f ? FonvWeaponActionProgress::Running : FonvWeaponActionProgress::Completed;
     }
 
+    inline bool isFonvWeaponActionStateValid(bool stateExists, bool isPlaying, float completion)
+    {
+        // Animation::isPlaying becomes false when an authored group reaches
+        // its end. That is a completed action, not a lost/interrupted state.
+        return stateExists && (isPlaying || completion >= 1.f);
+    }
+
     inline bool canAdvanceFonvWeaponState(bool knockedOut, bool knockedDown, bool recovering)
     {
         return !knockedOut && !knockedDown && !recovering;
