@@ -24,6 +24,9 @@ namespace MWRender
 
         void updateParts();
         void updatePartsTES4(const ESM4::Npc& traits);
+        // Fallout 3 and New Vegas use the legacy race-part layout plus
+        // BIPL-selected ARMA records.  They cannot use the TES5-only path.
+        void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
     };
 }

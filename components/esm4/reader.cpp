@@ -25,6 +25,7 @@
 #undef DEBUG_GROUPSTACK
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -57,16 +58,16 @@ namespace ESM4
             return header + ": code " + std::to_string(errorCode) + ", " + std::string(msg != nullptr ? msg : "(null)");
         }
 
-        std::string_view getStringsSuffix(LocalizedStringType type)
+        std::u8string_view getStringsSuffix(LocalizedStringType type)
         {
             switch (type)
             {
                 case LocalizedStringType::Strings:
-                    return ".STRINGS";
+                    return u8".STRINGS";
                 case LocalizedStringType::ILStrings:
-                    return ".ILSTRINGS";
+                    return u8".ILSTRINGS";
                 case LocalizedStringType::DLStrings:
-                    return ".DLSTRINGS";
+                    return u8".DLSTRINGS";
             }
 
             throw std::logic_error("Unsupported LocalizedStringType: " + std::to_string(static_cast<int>(type)));
@@ -156,6 +157,14 @@ namespace ESM4
               << std::resetiosflags(std::ios_base::hex) << " compressed size = " << compressed.size()
               << " uncompressed size = " << uncompressedSize << ": " << *blockError;
             throw std::runtime_error(s.str());
+        }
+
+        int starfieldUnknownSkipLogLimit()
+        {
+            const char* value = std::getenv("OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT");
+            if (value == nullptr || *value == '\0')
+                return 200;
+            return std::atoi(value);
         }
     }
 
@@ -304,35 +313,29 @@ namespace ESM4
         if ((mHeader.mFlags & Rec_ESM) == 0 || (mHeader.mFlags & Rec_Localized) == 0)
             return;
 
-        const std::string prefix = Files::pathToUnicodeString(mCtx.filename.stem().filename());
+        const std::u8string prefix = mCtx.filename.stem().filename().u8string();
 
         buildLStringIndex(LocalizedStringType::Strings, prefix);
         buildLStringIndex(LocalizedStringType::ILStrings, prefix);
         buildLStringIndex(LocalizedStringType::DLStrings, prefix);
     }
 
-    void Reader::buildLStringIndex(LocalizedStringType stringType, std::string_view prefix)
+    void Reader::buildLStringIndex(LocalizedStringType stringType, const std::u8string& prefix)
     {
-        const std::string_view suffix = getStringsSuffix(stringType);
-        constexpr std::string_view language("_En");
-        constexpr std::string_view altLanguage("_English");
+        static const std::filesystem::path strings("Strings");
+        const std::u8string language(u8"_En");
+        const std::u8string altLanguage(u8"_English");
+        const std::u8string suffix(getStringsSuffix(stringType));
+        std::filesystem::path path = strings / (prefix + language + suffix);
         if (mVFS != nullptr)
         {
-            constexpr VFS::Path::NormalizedView strings("strings");
-            std::string fileName(prefix);
-            fileName += language;
-            fileName += suffix;
-            VFS::Path::Normalized vfsPath(strings);
-            vfsPath /= fileName;
+            VFS::Path::Normalized vfsPath(Files::pathToUnicodeString(path));
             Files::IStreamPtr stream = mVFS->find(vfsPath);
 
             if (stream == nullptr)
             {
-                fileName = prefix;
-                fileName += altLanguage;
-                fileName += suffix;
-                vfsPath = strings;
-                vfsPath /= fileName;
+                path = strings / (prefix + altLanguage + suffix);
+                vfsPath = VFS::Path::Normalized(Files::pathToUnicodeString(path));
                 stream = mVFS->find(vfsPath);
             }
 
@@ -343,33 +346,28 @@ namespace ESM4
             }
 
             if (mIgnoreMissingLocalizedStrings)
+            {
                 Log(Debug::Warning) << "Ignore missing VFS strings file: " << vfsPath;
-        }
-        else
-        {
-            static const std::filesystem::path strings("Strings");
-            std::string fileName(prefix);
-            fileName += language;
-            fileName += suffix;
-            std::filesystem::path fsPath = mCtx.filename.parent_path() / strings / fileName;
-            if (!std::filesystem::exists(fsPath))
-            {
-                fileName = prefix;
-                fileName += altLanguage;
-                fileName += suffix;
-                fsPath = mCtx.filename.parent_path() / strings / fileName;
-            }
-
-            if (std::filesystem::exists(fsPath))
-            {
-                const Files::IStreamPtr stream = Files::openConstrainedFileStream(fsPath);
-                buildLStringIndex(stringType, *stream);
                 return;
             }
-
-            if (mIgnoreMissingLocalizedStrings)
-                Log(Debug::Warning) << "Ignore missing strings file: " << fsPath;
         }
+
+        std::filesystem::path fsPath = mCtx.filename.parent_path() / path;
+        if (!std::filesystem::exists(fsPath))
+        {
+            path = strings / (prefix + altLanguage + suffix);
+            fsPath = mCtx.filename.parent_path() / path;
+        }
+
+        if (std::filesystem::exists(fsPath))
+        {
+            const Files::IStreamPtr stream = Files::openConstrainedFileStream(fsPath);
+            buildLStringIndex(stringType, *stream);
+            return;
+        }
+
+        if (mIgnoreMissingLocalizedStrings)
+            Log(Debug::Warning) << "Ignore missing strings file: " << fsPath;
     }
 
     void Reader::buildLStringIndex(LocalizedStringType stringType, std::istream& stream)
@@ -484,6 +482,20 @@ namespace ESM4
         {
             if (mIgnoreMissingLocalizedStrings)
                 return;
+            if (esmVersionF() >= 0.959f && esmVersionF() <= 0.961f)
+            {
+                static int missingLocalizedStrings = 0;
+                const int logLimit = starfieldUnknownSkipLogLimit();
+                const std::string debugString = ESM::RefId(stringId).toDebugString();
+                if (logLimit < 0 || missingLocalizedStrings < logLimit)
+                    Log(Debug::Warning) << "ESM4 Starfield missing localized string: " << debugString;
+                else if (missingLocalizedStrings == logLimit)
+                    Log(Debug::Warning) << "ESM4 Starfield missing localized string: further logs suppressed; set "
+                                           "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
+                ++missingLocalizedStrings;
+                str = "<missing localized string " + debugString + ">";
+                return;
+            }
             throw std::runtime_error("ESM4::Reader::getLocalizedString localized string not found for "
                 + ESM::RefId(stringId).toDebugString());
         }
@@ -619,6 +631,31 @@ namespace ESM4
     void Reader::skipSubRecordData()
     {
         mStream->ignore(mCtx.subRecordHeader.dataSize);
+    }
+
+    bool Reader::skipUnknownStarfieldSubRecordData(std::string_view owner)
+    {
+        if (esmVersionF() < 0.959f || esmVersionF() > 0.961f)
+            return false;
+
+        static int skipped = 0;
+        const int logLimit = starfieldUnknownSkipLogLimit();
+        if (logLimit < 0 || skipped < logLimit)
+        {
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: owner=" << owner
+                                << " record=" << ESM::printName(mCtx.recordHeader.record.typeId)
+                                << " id=" << mCtx.recordHeader.record.getFormId().toString()
+                                << " subrecord=" << ESM::printName(mCtx.subRecordHeader.typeId)
+                                << " size=" << mCtx.subRecordHeader.dataSize;
+        }
+        else if (skipped == logLimit)
+        {
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: further unknown subrecord logs suppressed; set "
+                                   "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
+        }
+        ++skipped;
+        skipSubRecordData();
+        return true;
     }
 
     void Reader::skipSubRecordData(std::uint32_t size)
@@ -784,6 +821,11 @@ namespace ESM4
     //        (see https://www.uesp.net/wiki/Tes4Mod:Formid#ModIndex_Zero)
     void Reader::adjustFormId(FormId& id) const
     {
+        // A raw 0 is the ESM4 null FormID, not form 0 in the current plugin.
+        // Preserve it so optional references (for example CLMT/RDWT globals)
+        // remain distinguishable from authored references after load-order adjustment.
+        if (id.isZeroOrUnset())
+            return;
         if (id.hasContentFile() && id.mContentFile < static_cast<int>(mCtx.parentFileIndices.size()))
             id.mContentFile = mCtx.parentFileIndices[id.mContentFile];
         else
@@ -933,7 +975,7 @@ namespace ESM4
     std::string printLabel(const GroupLabel& label, const std::uint32_t type)
     {
         std::ostringstream ss;
-        ss << sGroupType[std::min<std::size_t>(type, std::size(sGroupType) - 1)]; // avoid out of range
+        ss << sGroupType[std::min<std::size_t>(type, std::size(sGroupType))]; // avoid out of range
 
         switch (type)
         {

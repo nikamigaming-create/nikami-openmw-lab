@@ -49,6 +49,7 @@ namespace MyGUIPlatform
         std::map<std::string, OSGTexture> mTextures;
 
         bool mIsInitialise;
+        bool mUseMissingTextureFallback;
 
         osg::ref_ptr<osg::Camera> mGuiRoot;
 
@@ -65,6 +66,11 @@ namespace MyGUIPlatform
         void shutdown();
 
         void enableShaders(Shader::ShaderManager& shaderManager);
+
+        // Fallout/TTW profiles lack Morrowind's menu and cursor sheets. Keep
+        // the fallback decision at the UI boundary, never in the VFS itself.
+        void setUseMissingTextureFallback(bool enabled) { mUseMissingTextureFallback = enabled; }
+        bool useMissingTextureFallback() const { return mUseMissingTextureFallback; }
 
         static RenderManager& getInstance() { return *getInstancePtr(); }
         static RenderManager* getInstancePtr()

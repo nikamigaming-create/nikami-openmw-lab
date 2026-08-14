@@ -46,6 +46,24 @@ namespace ESM4
         std::uint16_t unknown;
     };
 
+    struct AIDataFO3 // FO3/FNV NPC_, CREA
+    {
+        std::uint8_t aggression;
+        std::uint8_t confidence;
+        std::uint8_t energyLevel;
+        std::uint8_t responsibility;
+        std::uint8_t mood;
+        std::uint8_t unused[3];
+        std::uint32_t services;
+        std::int8_t trainSkill;
+        std::uint8_t trainLevel;
+        std::int8_t assistance;
+        std::uint8_t aggroRadiusBehavior;
+        std::int32_t aggroRadius;
+    };
+
+    static_assert(sizeof(AIDataFO3) == 20);
+
     struct AttributeValues
     {
         std::uint8_t strength;

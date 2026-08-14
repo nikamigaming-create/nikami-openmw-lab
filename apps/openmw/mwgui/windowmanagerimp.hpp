@@ -166,6 +166,8 @@ namespace MWGui
         bool isPostProcessorHudVisible() const override;
         bool isSettingsWindowVisible() const override;
         bool isInteractiveMessageBoxActive() const override;
+        void showAuthoredRaceMenu() override;
+        void showAuthoredNameMenu() override;
 
         void toggleVisible(GuiWindow wnd) override;
 
@@ -488,6 +490,13 @@ namespace MWGui
         bool mHudEnabled;
         bool mCursorVisible;
         bool mCursorActive;
+        float mAuthoredDefaultChoiceDelay = -1.f;
+        // Capture proof must retain the actual scene reached after a Bink handoff,
+        // not just the video texture.  These values are enabled only by the
+        // explicit capture environment and remain inert in normal play.
+        float mPostVideoNativeCaptureRemaining = 0.f;
+        float mPostVideoNativeCaptureUntilNextFrame = -1.f;
+        float mPostVideoNativeCaptureInterval = 0.f;
 
         int mPlayerBounty;
 

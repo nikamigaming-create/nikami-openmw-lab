@@ -352,6 +352,7 @@ namespace MyGUIPlatform
         , mImageManager(imageManager)
         , mUpdate(false)
         , mIsInitialise(false)
+        , mUseMissingTextureFallback(false)
         , mInvScalingFactor(1.f)
         , mInjectState(nullptr)
     {
@@ -514,7 +515,8 @@ namespace MyGUIPlatform
 
     MyGUI::ITexture* RenderManager::createTexture(const std::string& name)
     {
-        const auto it = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager)).first;
+        const auto it
+            = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager, mUseMissingTextureFallback)).first;
         return &it->second;
     }
 

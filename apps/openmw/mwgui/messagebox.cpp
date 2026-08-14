@@ -449,6 +449,18 @@ namespace MWGui
         return mButtonPressed;
     }
 
+    void InteractiveMessageBox::closeButton(std::size_t buttonIndex)
+    {
+        if (buttonIndex < mButtons.size())
+            mousePressed(mButtons[buttonIndex]);
+    }
+
+    void InteractiveMessageBox::closeDefault()
+    {
+        const std::size_t buttonIndex = mDefaultFocus < mButtons.size() ? mDefaultFocus : 0;
+        closeButton(buttonIndex);
+    }
+
     bool InteractiveMessageBox::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
     {
         if (arg.button == SDL_CONTROLLER_BUTTON_A)

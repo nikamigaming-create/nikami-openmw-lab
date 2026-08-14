@@ -26,12 +26,69 @@
 */
 #include "loadnpc.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string> // getline
 
+#include <components/debug/debuglog.hpp>
+
 #include "reader.hpp"
 //#include "writer.hpp"
+
+namespace
+{
+    std::string lowerFilename(std::filesystem::path path)
+    {
+        std::string value = path.filename().string();
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    bool isTtwCapitalWastelandMaster(const ESM4::Reader& reader)
+    {
+        const std::string fileName = lowerFilename(reader.getFileName());
+        return fileName == "fallout3.esm" || fileName == "anchorage.esm" || fileName == "thepitt.esm"
+            || fileName == "brokensteel.esm" || fileName == "pointlookout.esm" || fileName == "zeta.esm";
+    }
+
+    bool shouldLogFonvNpcFaceData(const ESM4::Npc& npc)
+    {
+        return npc.mIsFONV && (npc.mEditorId.rfind("GS", 0) == 0 || npc.mEditorId == "GSEasyPete");
+    }
+
+    void readAndLogFonvNpcFaceDataSubrecord(
+        ESM4::Reader& reader, const ESM4::Npc& npc, const ESM4::SubRecordHeader& subHdr)
+    {
+        if (!shouldLogFonvNpcFaceData(npc))
+        {
+            reader.skipSubRecordData();
+            return;
+        }
+
+        std::vector<unsigned char> bytes(subHdr.dataSize);
+        if (!bytes.empty())
+            reader.get(bytes.data(), bytes.size());
+
+        std::ostringstream hex;
+        const std::size_t count = std::min<std::size_t>(bytes.size(), 32);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (i != 0)
+                hex << ' ';
+            hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(bytes[i]);
+        }
+
+        Log(Debug::Verbose) << "FNV/ESM4 diag: raw NPC face/tint candidate " << npc.mEditorId << " "
+                         << ESM::printName(subHdr.typeId) << " size=" << subHdr.dataSize
+                         << " firstBytes=" << hex.str();
+    }
+}
 
 void ESM4::Npc::load(ESM4::Reader& reader)
 {
@@ -40,8 +97,14 @@ void ESM4::Npc::load(ESM4::Reader& reader)
 
     std::uint32_t esmVer = reader.esmVersion();
     mIsTES4 = (esmVer == ESM::VER_080 || esmVer == ESM::VER_100) && !reader.hasFormVersion();
-    mIsFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    // TTW preserves Capital Wasteland record layouts while updating the file
+    // header version.  Identify its masters by name rather than relying on
+    // the original Fallout 3 header version.
+    mIsFO3 = isTtwCapitalWastelandMaster(reader);
+    mIsFONV = mIsFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    mIsStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     // mIsTES5 = esmVer == ESM::VER_094 || esmVer == ESM::VER_170; // WARN: FO3 is also VER_094
+    bool hasExactFalloutBaseConfig = false;
 
     while (reader.getSubRecordHeader())
     {
@@ -73,12 +136,15 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("SNAM"):
             {
+                ActorFaction faction{};
                 // FO4, FO76
                 if (subHdr.dataSize == 5)
-                    reader.get(&mFaction, 5);
+                    reader.get(&faction, 5);
                 else
-                    reader.get(mFaction);
-                reader.adjustFormId(mFaction.faction);
+                    reader.get(faction);
+                reader.adjustFormId(faction.faction);
+                mFaction = faction;
+                mFactions.push_back(faction);
                 break;
             }
             case ESM::fourCC("RNAM"):
@@ -103,6 +169,17 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("AIDT"):
             {
+                // Fallout 3 and New Vegas both use the 20-byte AI payload.
+                // Keep the data on the common Fallout path so the original
+                // Fallout 3 master does not silently fall through to the
+                // older 12-byte TES4 layout.
+                if (mIsFONV && subHdr.dataSize == sizeof(mFNVAIData))
+                {
+                    reader.get(mFNVAIData);
+                    mHasFNVAIData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize != 12)
                 {
                     reader.skipSubRecordData(); // FIXME: process the subrecord rather than skip
@@ -121,8 +198,12 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                         [[fallthrough]];
                     case 16: // TES4
                     case 24: // FO3/FNV, TES5
-                        reader.get(&mBaseConfig, subHdr.dataSize);
+                    {
+                        const std::uint32_t dataSize = subHdr.dataSize;
+                        reader.get(&mBaseConfig, dataSize);
+                        hasExactFalloutBaseConfig = dataSize == sizeof(ESM4::ACBS_FO3);
                         break;
+                    }
                     default:
                         reader.skipSubRecordData();
                         break;
@@ -131,13 +212,39 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DATA"):
             {
+                // The native Fallout 3 Player NPC record carries the same
+                // compact 11-byte base-health/SPECIAL payload as the New
+                // Vegas representation.  Parse it before considering the
+                // legacy 33-byte TES4 payload; this keeps the source data
+                // authoritative for both Fallout opening routes.
+                if (mIsFONV && subHdr.dataSize == sizeof(mFNVData))
+                {
+                    reader.get(mFNVData);
+                    mHasFNVData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize == 0)
                     break;
 
-                if (subHdr.dataSize == 33)
-                    reader.get(&mData, 33); // FIXME: check packing
-                else // FIXME FO3
+                if (subHdr.dataSize == sizeof(mData))
+                    reader.get(mData);
+                else
                     reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("DNAM"):
+            {
+                // FO3 stores fourteen skill values and fourteen offsets in
+                // the same 28-byte layout used by the Fallout runtime state.
+                if (mIsFONV && subHdr.dataSize == sizeof(mFNVSkills))
+                {
+                    reader.get(mFNVSkills);
+                    mHasFNVSkills = true;
+                    break;
+                }
+
+                reader.skipSubRecordData();
                 break;
             }
             case ESM::fourCC("ZNAM"):
@@ -191,6 +298,15 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("FGGS"):
             {
+                // Fallout: New Vegas uses zero-sized facegen geometry fields
+                // on a small number of template NPCs.  Do not read the
+                // nominal 50 floats in that case: doing so consumes following
+                // subrecords and leaves the reader misaligned.
+                if (subHdr.dataSize != 50 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mSymShapeModeCoefficients.resize(50);
                 for (std::size_t i = 0; i < 50; ++i)
                     reader.get(mSymShapeModeCoefficients.at(i));
@@ -199,6 +315,11 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("FGGA"):
             {
+                if (subHdr.dataSize != 30 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mAsymShapeModeCoefficients.resize(30);
                 for (std::size_t i = 0; i < 30; ++i)
                     reader.get(mAsymShapeModeCoefficients.at(i));
@@ -207,6 +328,11 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("FGTS"):
             {
+                if (subHdr.dataSize != 50 * sizeof(float))
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 mSymTextureModeCoefficients.resize(50);
                 for (std::size_t i = 0; i < 50; ++i)
                     reader.get(mSymTextureModeCoefficients.at(i));
@@ -250,6 +376,64 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("DPLT"):
                 reader.getFormId(mDefaultPkg);
                 break; // AI package list
+            case ESM::fourCC("TINI"):
+            {
+                TintLayer& tint = mTintLayers.emplace_back();
+                tint.hasIndex = true;
+                if (subHdr.dataSize == sizeof(std::uint16_t))
+                {
+                    std::uint16_t value = 0;
+                    reader.get(value);
+                    tint.index = value;
+                }
+                else if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.get(tint.index);
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("TINV"):
+            {
+                if (mTintLayers.empty())
+                    mTintLayers.emplace_back();
+                TintLayer& tint = mTintLayers.back();
+                tint.hasValue = true;
+                if (subHdr.dataSize == sizeof(float))
+                    reader.get(tint.value);
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("TINC"):
+            {
+                if (mTintLayers.empty())
+                    mTintLayers.emplace_back();
+                TintLayer& tint = mTintLayers.back();
+                tint.hasColor = true;
+                if (subHdr.dataSize >= 3)
+                {
+                    reader.get(tint.color.red);
+                    reader.get(tint.color.green);
+                    reader.get(tint.color.blue);
+                    if (subHdr.dataSize >= 4)
+                        reader.get(tint.color.custom);
+                    else
+                        tint.color.custom = 255;
+                    if (subHdr.dataSize > 4)
+                        reader.skipSubRecordData(subHdr.dataSize - 4);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("NAM9"):
+            case ESM::fourCC("NAMA"):
+            case ESM::fourCC("QNAM"):
+            case ESM::fourCC("TIAS"):
+            {
+                readAndLogFonvNpcFaceDataSubrecord(reader, *this, subHdr);
+                break;
+            }
             case ESM::fourCC("DAMC"): // Destructible
             case ESM::fourCC("DEST"):
             case ESM::fourCC("DMDC"):
@@ -264,7 +448,6 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("ATKR"):
             case ESM::fourCC("CRIF"):
             case ESM::fourCC("CSDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("ECOR"):
             case ESM::fourCC("ANAM"):
             case ESM::fourCC("ATKD"):
@@ -274,19 +457,11 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("KWDA"):
             case ESM::fourCC("NAM5"):
             case ESM::fourCC("NAM8"):
-            case ESM::fourCC("NAM9"):
-            case ESM::fourCC("NAMA"):
             case ESM::fourCC("OBND"):
             case ESM::fourCC("PRKR"):
             case ESM::fourCC("PRKZ"):
-            case ESM::fourCC("QNAM"):
             case ESM::fourCC("SPCT"):
-            case ESM::fourCC("TIAS"):
-            case ESM::fourCC("TINC"):
-            case ESM::fourCC("TINI"):
-            case ESM::fourCC("TINV"):
             case ESM::fourCC("VMAD"):
-            case ESM::fourCC("VTCK"):
             case ESM::fourCC("GNAM"):
             case ESM::fourCC("SHRT"):
             case ESM::fourCC("SPOR"):
@@ -331,10 +506,16 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("FMIN"): // FO4 morph subrecords end
                 reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("VTCK"):
+                reader.getFormId(mVoiceType);
+                break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadnpc"))
+                    break;
                 throw std::runtime_error("ESM4::NPC_::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+    mHasFNVBaseConfig = mIsFONV && hasExactFalloutBaseConfig;
 }
 
 // void ESM4::Npc::save(ESM4::Writer& writer) const

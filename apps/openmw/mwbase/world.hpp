@@ -3,6 +3,7 @@
 
 #include "rotationflags.hpp"
 
+#include <array>
 #include <deque>
 #include <set>
 #include <span>
@@ -91,6 +92,8 @@ namespace MWWorld
     class LocalScripts;
     class TimeStamp;
     class ESMStore;
+    class ESM4QuestRuntime;
+    class FalloutPlayerRuntimeState;
     class RefData;
     class Cell;
     class DateTimeManager;
@@ -151,6 +154,12 @@ namespace MWBase
 
         virtual MWWorld::ESMStore& getStore() = 0;
         virtual const MWWorld::ESMStore& getStore() const = 0;
+
+        virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
+        virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
+
+        virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
+        virtual bool setFalloutPlayerSpecial(const std::array<float, 7>& values) = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 
