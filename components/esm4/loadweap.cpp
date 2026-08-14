@@ -26,10 +26,55 @@
 */
 #include "loadweap.hpp"
 
+#include <array>
+#include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #include "reader.hpp"
 //#include "writer.hpp"
+
+bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data)
+{
+    if (dnam.size() < 16)
+        return false;
+
+    data.animationType = dnam[0];
+    data.handGrip = dnam[13];
+    data.ammoUse = dnam[14];
+    data.reloadAnim = dnam[15];
+
+    if (dnam.size() < 68)
+        return true;
+
+    const auto readFloat = [&](std::size_t offset) {
+        float value = 0.f;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+    const auto readUint32 = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+
+    data.minSpread = readFloat(16);
+    data.spread = readFloat(20);
+    data.sightFov = readFloat(28);
+    data.projectile = ESM::FormId::fromUint32(readUint32(36));
+    data.baseVatsChance = dnam[40];
+    data.attackAnim = dnam[41];
+    data.numProjectiles = dnam[42];
+    data.embedWeaponActorValue = dnam[43];
+    data.minRange = readFloat(44);
+    data.maxRange = readFloat(48);
+    data.onHit = readUint32(52);
+    data.flags2 = readUint32(56);
+    data.animAttackMult = readFloat(60);
+    data.fireRate = readFloat(64);
+    data.hasBallistics = true;
+    return true;
+}
 
 void ESM4::Weapon::load(ESM4::Reader& reader)
 {
@@ -37,6 +82,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
     mFlags = reader.hdr().record.flags;
     std::uint32_t esmVer = reader.esmVersion();
     bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    bool isFalloutWeapon = isFONV;
 
     while (reader.getSubRecordHeader())
     {
@@ -60,6 +106,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                 }
                 else if (isFONV || subHdr.dataSize == 15)
                 {
+                    isFalloutWeapon = true;
                     reader.get(mData.value);
                     reader.get(mData.health);
                     reader.get(mData.weight);
@@ -109,34 +156,66 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mDropSound);
                 break;
+            case ESM::fourCC("NAM0"):
+                reader.getFormId(mAmmo);
+                break;
+            case ESM::fourCC("REPL"):
+                reader.getFormId(mRepairList);
+                break;
+            case ESM::fourCC("ETYP"):
+                reader.getFormId(mEquipType);
+                break;
+            case ESM::fourCC("INAM"):
+                reader.getFormId(mImpactDataSet);
+                break;
+            case ESM::fourCC("DNAM"):
+                if (isFalloutWeapon && subHdr.dataSize >= 16)
+                {
+                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP fields documented by xNVSE. Preserve the
+                    // whole serialized record so the firing path receives range/projectile/cadence bytes too.
+                    std::vector<std::uint8_t> dnam(subHdr.dataSize);
+                    reader.get(dnam.data(), dnam.size());
+                    loadFalloutWeaponDnam(dnam, mData);
+                    if (mData.hasBallistics)
+                        reader.adjustFormId(mData.projectile);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("WNAM"):
+                reader.getFormId(mWorldModel);
+                break;
+            case ESM::fourCC("SNAM"):
+            case ESM::fourCC("XNAM"):
+            case ESM::fourCC("TNAM"):
+            case ESM::fourCC("NAM8"):
+            case ESM::fourCC("NAM9"):
+            case ESM::fourCC("WMS1"):
+            case ESM::fourCC("WMS2"):
+            {
+                SoundRef sound;
+                sound.mType = subHdr.typeId;
+                reader.getFormId(sound.mSound);
+                mSoundRefs.push_back(sound);
+                break;
+            }
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
             case ESM::fourCC("MODS"):
             case ESM::fourCC("MODF"): // Model data end
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
-            case ESM::fourCC("INAM"):
             case ESM::fourCC("CNAM"):
             case ESM::fourCC("CRDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
-            case ESM::fourCC("ETYP"):
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
-            case ESM::fourCC("NAM8"):
-            case ESM::fourCC("NAM9"):
             case ESM::fourCC("OBND"):
-            case ESM::fourCC("SNAM"):
-            case ESM::fourCC("TNAM"):
             case ESM::fourCC("UNAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("VNAM"):
-            case ESM::fourCC("WNAM"):
-            case ESM::fourCC("XNAM"): // Dawnguard only?
             case ESM::fourCC("NNAM"):
-            case ESM::fourCC("NAM0"): // FO3
-            case ESM::fourCC("REPL"): // FO3
             case ESM::fourCC("MOD2"): // FO3
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
@@ -164,25 +243,25 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("DSTF"): // Destructible end
             case ESM::fourCC("VATS"): // FONV
             case ESM::fourCC("VANM"): // FONV
-            case ESM::fourCC("MWD1"): // FONV
-            case ESM::fourCC("MWD2"): // FONV
-            case ESM::fourCC("MWD3"): // FONV
-            case ESM::fourCC("MWD4"): // FONV
-            case ESM::fourCC("MWD5"): // FONV
-            case ESM::fourCC("MWD6"): // FONV
-            case ESM::fourCC("MWD7"): // FONV
-            case ESM::fourCC("WMI1"): // FONV
-            case ESM::fourCC("WMI2"): // FONV
-            case ESM::fourCC("WMI3"): // FONV
-            case ESM::fourCC("WMS1"): // FONV
-            case ESM::fourCC("WMS2"): // FONV
-            case ESM::fourCC("WNM1"): // FONV
-            case ESM::fourCC("WNM2"): // FONV
-            case ESM::fourCC("WNM3"): // FONV
-            case ESM::fourCC("WNM4"): // FONV
-            case ESM::fourCC("WNM5"): // FONV
-            case ESM::fourCC("WNM6"): // FONV
-            case ESM::fourCC("WNM7"): // FONV
+                reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("MWD1"): reader.getZString(mModModel[0]); break;
+            case ESM::fourCC("MWD2"): reader.getZString(mModModel[1]); break;
+            case ESM::fourCC("MWD3"): reader.getZString(mModModel[2]); break;
+            case ESM::fourCC("MWD4"): reader.getZString(mModModel[3]); break;
+            case ESM::fourCC("MWD5"): reader.getZString(mModModel[4]); break;
+            case ESM::fourCC("MWD6"): reader.getZString(mModModel[5]); break;
+            case ESM::fourCC("MWD7"): reader.getZString(mModModel[6]); break;
+            case ESM::fourCC("WMI1"): reader.getFormId(mModItem[0]); break;
+            case ESM::fourCC("WMI2"): reader.getFormId(mModItem[1]); break;
+            case ESM::fourCC("WMI3"): reader.getFormId(mModItem[2]); break;
+            case ESM::fourCC("WNM1"): reader.getFormId(mModdedWeapon[0]); break;
+            case ESM::fourCC("WNM2"): reader.getFormId(mModdedWeapon[1]); break;
+            case ESM::fourCC("WNM3"): reader.getFormId(mModdedWeapon[2]); break;
+            case ESM::fourCC("WNM4"): reader.getFormId(mModdedWeapon[3]); break;
+            case ESM::fourCC("WNM5"): reader.getFormId(mModdedWeapon[4]); break;
+            case ESM::fourCC("WNM6"): reader.getFormId(mModdedWeapon[5]); break;
+            case ESM::fourCC("WNM7"): reader.getFormId(mModdedWeapon[6]); break;
             case ESM::fourCC("EFSD"): // FONV DeadMoney
             case ESM::fourCC("APPR"): // FO4
             case ESM::fourCC("DAMA"): // FO4
@@ -202,6 +281,8 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadweap"))
+                    break;
                 throw std::runtime_error("ESM4::WEAP::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

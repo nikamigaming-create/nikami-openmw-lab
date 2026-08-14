@@ -109,7 +109,18 @@ local function updatePOV(dt)
 end
 
 local idleTimer = 0
-local vanityDelay = core.getGMST('fVanityDelay')
+-- Fallout/ESM4 data has no Morrowind fVanityDelay GMST.  The stock camera
+-- script still owns first/third-person mode there, so use the stock default
+-- rather than letting a missing optional record abort camera processing.
+local vanityDelay = core.getGMST('fVanityDelay') or 30
+
+-- The common OpenMW camera script checks the Morrowind Paralyze magic effect
+-- every frame.  Fallout/TTW has no MGEF record for it, and asking
+-- activeEffects for a missing record throws before the camera can update.
+-- Resolve the capability once; absent Fallout effects simply mean the player
+-- is not paralyzed for this Morrowind-specific camera safeguard.
+local paralyzeEffect = core.magic.EFFECT_TYPE.Paralyze
+local hasParalyzeEffect = core.magic.effects.record(paralyzeEffect) ~= nil
 
 local function updateVanity(dt)
     local vanityAllowed = Player.getControlSwitch(self, Player.CONTROL_SWITCH.VanityMode)
@@ -212,8 +223,11 @@ local function onFrame(dt)
         primaryMode = mode
     end
     if mode ~= MODE.Static then
-        local paralysis = Actor.activeEffects(self):getEffect(core.magic.EFFECT_TYPE.Paralyze)
-        local paralyzed = not debug.isGodMode() and paralysis.magnitude > 0
+        local paralyzed = false
+        if hasParalyzeEffect then
+            local paralysis = Actor.activeEffects(self):getEffect(paralyzeEffect)
+            paralyzed = not debug.isGodMode() and paralysis.magnitude > 0
+        end
         if not next(noModeControl) and not paralyzed then
             updatePOV(dt)
             updateVanity(dt)

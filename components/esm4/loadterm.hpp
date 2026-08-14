@@ -27,11 +27,16 @@
 #ifndef ESM4_TERM_H
 #define ESM4_TERM_H
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
+
+#include "script.hpp"
 
 namespace ESM4
 {
@@ -40,19 +45,46 @@ namespace ESM4
 
     struct Terminal
     {
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        struct Data
+        {
+            std::array<std::uint8_t, 4> mBytes{};
+            std::uint8_t mSerializedSize = 0;
+        };
+
+        struct MenuItem
+        {
+            std::string mText;
+            std::string mResultText;
+            std::uint8_t mFlags = 0;
+            std::optional<ESM::FormId> mDisplayNote;
+            std::optional<ESM::FormId> mSubmenu;
+            ScriptDefinition mScript;
+            std::vector<TargetCondition> mConditions;
+        };
+
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mFullName;
         std::string mText;
 
+        std::array<std::uint8_t, 12> mObjectBounds{};
         std::string mModel;
+        std::vector<std::uint8_t> mModelData;
+        std::vector<std::uint8_t> mModelTextureSwaps;
+
+        // Retained for source compatibility with the old loader. Fallout:
+        // New Vegas authors one RNAM per menu item; mMenuItems preserves every
+        // occurrence while this member mirrors the final item.
         std::string mResultText;
 
-        ESM::FormId mScriptId;
-        ESM::FormId mPasswordNote;
-        ESM::FormId mSound;
+        ESM::FormId mScriptId{};
+        ESM::FormId mPasswordNote{};
+        ESM::FormId mSound{};
+
+        Data mData;
+        std::vector<MenuItem> mMenuItems;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

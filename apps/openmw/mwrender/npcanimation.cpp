@@ -515,15 +515,29 @@ namespace MWRender
             smodel = Misc::ResourceHelpers::correctActorModelPath(model, mResourceSystem->getVFS());
         }
 
+        // Fallout 3/New Vegas start from an ESM3 player compatibility shell so that the
+        // existing player/save pipeline remains usable.  Its model is Fallout's native
+        // characters/_male/skeleton.nif, not Morrowind's meshes/base_anim.nif.  Do not
+        // attach the Morrowind animation sources to that shell: those assets are not in
+        // the Fallout data set and attempting to resolve them aborts new-game startup.
+        const MWWorld::ESM4Game esm4Game = store.getESM4Game();
+        const bool isFalloutPlayerCompatibilityShell = mNpc->mId == ESM::RefId::stringRefId("Player")
+            && (esm4Game == MWWorld::ESM4Game::Fallout3 || esm4Game == MWWorld::ESM4Game::FalloutNewVegas);
+
         setObjectRoot(smodel, true, true, false);
 
         updateParts();
 
-        if (!base.empty())
-            addAnimSource(base, smodel);
+        if (!isFalloutPlayerCompatibilityShell)
+        {
+            if (!base.empty())
+                addAnimSource(base, smodel);
 
-        if (defaultSkeleton != base)
-            addAnimSource(defaultSkeleton, smodel);
+            if (defaultSkeleton != base)
+                addAnimSource(defaultSkeleton, smodel);
+        }
+        else
+            Log(Debug::Info) << "Fallout/ESM4: omitted Morrowind base animation sources for native player shell";
 
         if (isCustomModel)
             addAnimSource(smodel, smodel);

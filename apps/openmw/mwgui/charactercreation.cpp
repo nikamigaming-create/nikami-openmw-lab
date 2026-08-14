@@ -1,5 +1,9 @@
 #include "charactercreation.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+
 #include <MyGUI_ITexture.h>
 
 #include <components/debug/debuglog.hpp>
@@ -149,6 +153,54 @@ namespace MWGui
     {
         if (mReviewDialog)
             mReviewDialog->onFrame(duration);
+
+        if (mAuthoredNameMenu && mNameDialog && mAuthoredNameMenuDefaultDelay >= 0.f)
+        {
+            mAuthoredNameMenuDefaultDelay -= std::max(0.f, duration);
+            if (mAuthoredNameMenuDefaultDelay <= 0.f)
+            {
+                mAuthoredNameMenuDefaultDelay = -1.f;
+                onNameDialogDone(mNameDialog.get());
+                Log(Debug::Info) << "OpenNV authored automation: accepted default player name";
+            }
+        }
+
+        if (mAuthoredRaceMenu && mAuthoredAppearanceDialog && mAuthoredRaceMenuDefaultDelay >= 0.f)
+        {
+            mAuthoredRaceMenuDefaultDelay -= std::max(0.f, duration);
+            if (mAuthoredRaceMenuDefaultDelay <= 0.f)
+            {
+                mAuthoredRaceMenuDefaultDelay = -1.f;
+                onAuthoredAppearanceSelected(mAuthoredAppearanceDefaultMale ? 0 : 1);
+                Log(Debug::Info) << "OpenNV authored automation: accepted default character appearance";
+            }
+        }
+    }
+
+    void CharacterCreation::beginAuthoredRaceMenu()
+    {
+        mAuthoredRaceMenu = true;
+        mAuthoredRaceMenuDefaultDelay = -1.f;
+        if (const char* const value = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value && end != nullptr && *end == '\0' && parsed >= 0.f && std::isfinite(parsed))
+                mAuthoredRaceMenuDefaultDelay = parsed;
+        }
+    }
+
+    void CharacterCreation::beginAuthoredNameMenu()
+    {
+        mAuthoredNameMenu = true;
+        mAuthoredNameMenuDefaultDelay = -1.f;
+        if (const char* const value = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value && end != nullptr && *end == '\0' && parsed >= 0.f && std::isfinite(parsed))
+                mAuthoredNameMenuDefaultDelay = parsed;
+        }
     }
 
     void CharacterCreation::spawnDialog(const GuiMode id)
@@ -161,16 +213,40 @@ namespace MWGui
                 {
                     MWBase::Environment::get().getWindowManager()->removeDialog(std::move(mNameDialog));
                     mNameDialog = std::make_unique<TextInputDialog>();
-                    mNameDialog->setTextLabel(
-                        MWBase::Environment::get().getWindowManager()->getGameSettingString("sName", "Name"));
+                    mNameDialog->setTextLabel(mAuthoredNameMenu ? "What is your name?"
+                                                               : MWBase::Environment::get().getWindowManager()->getGameSettingString("sName", "Name"));
+                    if (mAuthoredNameMenu && mPlayerName.empty())
+                    {
+                        const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                        const ESM::NPC* const npc = player.get<ESM::NPC>()->mBase;
+                        mPlayerName = npc != nullptr && !npc->mName.empty() ? npc->mName : "Player";
+                    }
                     mNameDialog->setTextInput(mPlayerName);
-                    mNameDialog->setNextButtonShow(mCreationStage >= CSE_NameChosen);
+                    mNameDialog->setNextButtonShow(!mAuthoredNameMenu && mCreationStage >= CSE_NameChosen);
                     mNameDialog->eventDone += MyGUI::newDelegate(this, &CharacterCreation::onNameDialogDone);
                     mNameDialog->setVisible(true);
                     break;
                 }
                 case GM_Race:
                 {
+                    if (mAuthoredRaceMenu)
+                    {
+                        MWBase::Environment::get().getWindowManager()->removeDialog(
+                            std::move(mAuthoredAppearanceDialog));
+                        mAuthoredAppearanceDialog = std::make_unique<InfoBoxDialog>();
+                        const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                        const ESM::NPC* const npc = player.get<ESM::NPC>()->mBase;
+                        mAuthoredAppearanceDefaultMale = npc == nullptr || npc->isMale();
+                        mAuthoredAppearanceDialog->setText(
+                            "Choose your character.\n\nSelect a starting appearance. You can refine your face and hair later.");
+                        InfoBoxDialog::ButtonList choices{ "Male", "Female" };
+                        mAuthoredAppearanceDialog->setButtons(choices);
+                        mAuthoredAppearanceDialog->eventButtonSelected
+                            += MyGUI::newDelegate(this, &CharacterCreation::onAuthoredAppearanceSelected);
+                        mAuthoredAppearanceDialog->setVisible(true);
+                        break;
+                    }
+
                     MWBase::Environment::get().getWindowManager()->removeDialog(std::move(mRaceDialog));
                     mRaceDialog = std::make_unique<RaceDialog>(mParent, mResourceSystem);
                     mRaceDialog->setNextButtonShow(mCreationStage >= CSE_RaceChosen);
@@ -404,7 +480,39 @@ namespace MWGui
             MWBase::Environment::get().getWindowManager()->removeDialog(std::move(mNameDialog));
         }
 
+        if (mAuthoredNameMenu)
+        {
+            mAuthoredNameMenu = false;
+            mAuthoredNameMenuDefaultDelay = -1.f;
+            MWBase::Environment::get().getWindowManager()->popGuiMode();
+            Log(Debug::Info) << "FNV/ESM4 behavior: authored player name confirmed";
+            return;
+        }
+
         handleDialogDone(CSE_NameChosen, GM_Race);
+    }
+
+    void CharacterCreation::onAuthoredAppearanceSelected(int index)
+    {
+        if (!mAuthoredRaceMenu || !mAuthoredAppearanceDialog)
+            return;
+
+        const bool male = index == 0;
+        MWBase::World* const world = MWBase::Environment::get().getWorld();
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        const ESM::NPC* const npc = player.get<ESM::NPC>()->mBase;
+        if (npc != nullptr)
+        {
+            MWBase::Environment::get().getMechanicsManager()->setPlayerRace(
+                npc->mRace, male, npc->mHead, npc->mHair);
+        }
+
+        MWBase::Environment::get().getWindowManager()->removeDialog(std::move(mAuthoredAppearanceDialog));
+        mAuthoredRaceMenu = false;
+        mAuthoredRaceMenuDefaultDelay = -1.f;
+        MWBase::Environment::get().getWindowManager()->popGuiMode();
+        Log(Debug::Info) << "FNV/ESM4 behavior: authored character appearance selected "
+                         << (male ? "male" : "female");
     }
 
     void CharacterCreation::selectRace()

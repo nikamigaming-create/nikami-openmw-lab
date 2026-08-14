@@ -3,6 +3,7 @@
 #include <components/esm4/loadarma.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadhair.hpp>
 #include <components/esm4/loadhdpt.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -36,9 +37,7 @@ namespace MWRender
         if (traits->mIsTES4)
             updatePartsTES4(*traits);
         else if (traits->mIsFONV)
-        {
-            // Not implemented yet
-        }
+            updatePartsFONV(*traits);
         else
         {
             // There is no easy way to distinguish TES5 and FO3.
@@ -91,6 +90,105 @@ namespace MWRender
             insertPart(chooseTes4EquipmentModel(armor, isFemale));
         for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(mPtr))
             insertPart(chooseTes4EquipmentModel(clothing, isFemale));
+    }
+
+    void ESM4NpcAnimation::updatePartsFONV(const ESM4::Npc& traits)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::Race* race = MWClass::ESM4Npc::getRace(mPtr);
+        if (race == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4: cannot assemble actor without race " << traits.mEditorId;
+            return;
+        }
+
+        const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+        unsigned int raceBodyCount = 0;
+        unsigned int raceHeadCount = 0;
+        unsigned int equipmentCount = 0;
+        auto attach = [this](std::string_view model) {
+            if (model.empty())
+                return false;
+            insertPart(model);
+            return true;
+        };
+
+        // FO3/FNV RACE records contain the exposed body and face meshes.  The
+        // upstream TES5 path intentionally ignores these legacy vectors, which
+        // left every native Fallout NPC as a skeleton with no visible parts.
+        const auto& bodyParts = isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale;
+        for (const ESM4::Race::BodyPart& bodyPart : bodyParts)
+            if (attach(bodyPart.mesh))
+                ++raceBodyCount;
+
+        const auto& headParts = isFemale ? race->mHeadPartsFemale : race->mHeadParts;
+        for (const ESM4::Race::BodyPart& headPart : headParts)
+            if (attach(headPart.mesh))
+                ++raceHeadCount;
+
+        std::set<uint32_t> usedHeadPartTypes;
+        insertHeadParts(traits.mHeadParts, usedHeadPartTypes);
+        if (!traits.mHair.isZeroOrUnset() && usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) == 0)
+        {
+            if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
+                attach(hair->mModel);
+            else
+                Log(Debug::Warning) << "FNV/ESM4: hair not found " << ESM::RefId(traits.mHair)
+                                    << " for " << traits.mEditorId;
+        }
+
+        // Fallout armor points at a BIPL FormList of ARMA records.  Preserve
+        // direct models too: some records use them as their complete biped
+        // representation while others split the outfit into ARMA pieces.
+        std::set<ESM::FormId> seenAddons;
+        std::set<std::string> seenModels;
+        const auto attachEquipment = [&](std::string_view model) {
+            if (model.empty() || !seenModels.emplace(model).second)
+                return;
+            if (attach(model))
+                ++equipmentCount;
+        };
+        for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
+        {
+            const std::string_view directModel
+                = isFemale && !armor->mModelFemale.empty() ? armor->mModelFemale : armor->mModelMale;
+            attachEquipment(directModel);
+
+            std::vector<ESM::FormId> addonIds = armor->mAddOns;
+            if (!armor->mBipedModelList.isZeroOrUnset())
+            {
+                if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(armor->mBipedModelList))
+                    addonIds.insert(addonIds.end(), list->mObjects.begin(), list->mObjects.end());
+                else
+                    Log(Debug::Warning) << "FNV/ESM4: BIPL list not found "
+                                        << ESM::RefId(armor->mBipedModelList) << " for " << armor->mEditorId;
+            }
+
+            for (ESM::FormId addonId : addonIds)
+            {
+                if (addonId.isZeroOrUnset() || !seenAddons.emplace(addonId).second)
+                    continue;
+                const ESM4::ArmorAddon* addon = store->get<ESM4::ArmorAddon>().search(addonId);
+                if (addon == nullptr)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4: armor add-on not found " << ESM::RefId(addonId)
+                                        << " for " << armor->mEditorId;
+                    continue;
+                }
+                const bool compatible = (addon->mRacePrimary.isZeroOrUnset() && addon->mRaces.empty())
+                    || addon->mRacePrimary == race->mId
+                    || std::find(addon->mRaces.begin(), addon->mRaces.end(), race->mId) != addon->mRaces.end();
+                if (!compatible)
+                    continue;
+                const std::string_view model
+                    = isFemale && !addon->mModelFemale.empty() ? addon->mModelFemale : addon->mModelMale;
+                attachEquipment(model);
+            }
+        }
+
+        Log(Debug::Info) << "FNV/ESM4: assembled actor=" << traits.mEditorId
+                         << " raceBody=" << raceBodyCount << " raceHead=" << raceHeadCount
+                         << " equipment=" << equipmentCount;
     }
 
     void ESM4NpcAnimation::insertHeadParts(

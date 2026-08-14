@@ -33,6 +33,7 @@
 
 #include "cellstore.hpp"
 #include "class.hpp"
+#include "esm4questruntime.hpp"
 #include "ptr.hpp"
 
 namespace MWWorld
@@ -204,6 +205,10 @@ namespace MWWorld
         if (!toActivate.getClass().hasToolTip(toActivate))
             return;
 
+        // ESM4 references keep authored OnActivate source on their base
+        // records. Notify the Fallout runtime at the same engine boundary as
+        // ordinary activation; the usual Lua/default action still follows.
+        (void)MWBase::Environment::get().getWorld()->getESM4QuestRuntime().onReferenceActivated(toActivate, player);
         MWBase::Environment::get().getLuaManager()->objectActivated(toActivate, player);
     }
 

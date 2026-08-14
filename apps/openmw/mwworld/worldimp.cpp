@@ -1,6 +1,7 @@
 #include "worldimp.hpp"
 
 #include <charconv>
+#include <string_view>
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -110,6 +111,175 @@ namespace MWWorld
 {
     namespace
     {
+        // Fallout 3/New Vegas retain their GMST records in the ESM4 store. The
+        // shared OpenMW systems below still require a small ESM3-compatible
+        // settings view for movement, UI timing, sound, and cell startup.
+        // These values are only inserted when an equivalent ESM3 setting is
+        // absent, so a regular Morrowind game keeps its authored values.
+        std::vector<std::pair<std::string_view, ESM::Variant>> generateCompatibilityGameSettings()
+        {
+            std::vector<std::pair<std::string_view, ESM::Variant>> result = {
+                { "sDifficulty", ESM::Variant("Difficulty") },
+                { "fDifficultyMult", ESM::Variant(5.f) },
+                { "fNPCHealthBarTime", ESM::Variant(5.f) },
+                { "fNPCHealthBarFade", ESM::Variant(1.f) },
+                { "fAIFleeFleeMult", ESM::Variant(0.2f) },
+                { "fAIFleeHealthMult", ESM::Variant(7.f) },
+                { "fAIMagicSpellMult", ESM::Variant(3.f) },
+                { "fAIMeleeArmorMult", ESM::Variant(1.f) },
+                { "fAIMeleeWeaponMult", ESM::Variant(1.f) },
+                { "fAIRangeMagicSpellMult", ESM::Variant(5.f) },
+                { "fAIRangeMeleeWeaponMult", ESM::Variant(5.f) },
+                { "fAlarmRadius", ESM::Variant(4000.f) },
+                { "fAudioDefaultMaxDistance", ESM::Variant(40.f) },
+                { "fAudioDefaultMinDistance", ESM::Variant(5.f) },
+                { "fAudioMaxDistanceMult", ESM::Variant(50.f) },
+                { "fAudioMinDistanceMult", ESM::Variant(20.f) },
+                { "fAudioVoiceDefaultMaxDistance", ESM::Variant(60.f) },
+                { "fAudioVoiceDefaultMinDistance", ESM::Variant(10.f) },
+                { "fAthleticsRunBonus", ESM::Variant(0.02f) },
+                { "fBaseRunMultiplier", ESM::Variant(1.f) },
+                { "fCombatDelayCreature", ESM::Variant(0.1f) },
+                { "fCombatDelayNPC", ESM::Variant(0.1f) },
+                { "fCombatDistance", ESM::Variant(256.f) },
+                { "fCorpseClearDelay", ESM::Variant(72.f) },
+                { "fCorpseRespawnDelay", ESM::Variant(72.f) },
+                { "fCrimeGoldDiscountMult", ESM::Variant(0.5f) },
+                { "fCrimeGoldTurnInMult", ESM::Variant(0.9f) },
+                { "fDifficultyMult", ESM::Variant(5.f) },
+                { "fEncumberedMoveEffect", ESM::Variant(0.3f) },
+                { "fEncumbranceStrMult", ESM::Variant(5.f) },
+                { "fFatigueBase", ESM::Variant(1.25f) },
+                { "fFatigueSpellBase", ESM::Variant(1.f) },
+                { "fFatigueSpellMult", ESM::Variant(1.f) },
+                { "fFightDistanceMultiplier", ESM::Variant(1.f) },
+                { "fFightStealing", ESM::Variant(0.5f) },
+                { "fHoldBreathTime", ESM::Variant(20.f) },
+                { "fIdleChanceMultiplier", ESM::Variant(1.f) },
+                { "fLightMaxMod", ESM::Variant(0.15f) },
+                { "fMagicStartIconBlink", ESM::Variant(0.5f) },
+                { "fMagicSunBlockedMult", ESM::Variant(0.5f) },
+                { "fMaxWalkSpeed", ESM::Variant(300.f) },
+                { "fMaxWalkSpeedCreature", ESM::Variant(300.f) },
+                { "fMessageTimePerChar", ESM::Variant(0.1f) },
+                { "fMinWalkSpeed", ESM::Variant(100.f) },
+                { "fMinWalkSpeedCreature", ESM::Variant(100.f) },
+                { "fNPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fProjectileMaxSpeed", ESM::Variant(3000.f) },
+                { "fProjectileMinSpeed", ESM::Variant(400.f) },
+                { "fSleepRandMod", ESM::Variant(1.f) },
+                { "fSleepRestMod", ESM::Variant(1.f) },
+                { "fSoulgemMult", ESM::Variant(3.f) },
+                { "fStromWalkMult", ESM::Variant(0.5f) },
+                { "fStromWindSpeed", ESM::Variant(7.f) },
+                { "fSuffocationDamage", ESM::Variant(3.f) },
+                { "fSwimHeightScale", ESM::Variant(0.9f) },
+                { "fSwimRunAthleticsMult", ESM::Variant(0.02f) },
+                { "fSwimRunBase", ESM::Variant(100.f) },
+                { "fTargetSpellMaxSpeed", ESM::Variant(1000.f) },
+                { "fTravelMult", ESM::Variant(1.f) },
+                { "fTravelTimeMult", ESM::Variant(16000.f) },
+                { "fUnarmoredBase1", ESM::Variant(0.1f) },
+                { "fUnarmoredBase2", ESM::Variant(0.1f) },
+                { "fVoiceIdleOdds", ESM::Variant(1.f) },
+                { "fWeaponDamageMult", ESM::Variant(1.f) },
+                { "i1stPersonSneakDelta", ESM::Variant(10) },
+                { "iAlchemyMod", ESM::Variant(2) },
+                { "iAutoPCSpellMax", ESM::Variant(100) },
+                { "iCrimeAttack", ESM::Variant(40) },
+                { "iCrimeKilling", ESM::Variant(1000) },
+                { "iCrimeThreshold", ESM::Variant(1000) },
+                { "iCrimeThresholdMultiplier", ESM::Variant(1) },
+                { "iDaysinPrisonMod", ESM::Variant(100) },
+                { "iFightAttack", ESM::Variant(100) },
+                { "iFightAttacking", ESM::Variant(50) },
+                { "iFightDistanceBase", ESM::Variant(1000) },
+                { "iFightKilling", ESM::Variant(100) },
+                { "iFightPickpocket", ESM::Variant(100) },
+                { "iFightTrespass", ESM::Variant(50) },
+                { "iLevelUpTotal", ESM::Variant(10) },
+                { "iMaxActivateDist", ESM::Variant(192) },
+                { "iMaxInfoDist", ESM::Variant(192) },
+                { "iMonthsToRespawn", ESM::Variant(4) },
+                { "iNumberCreatures", ESM::Variant(2) },
+                { "iTrainingMod", ESM::Variant(10) },
+                { "iVoiceAttackOdds", ESM::Variant(30) },
+                { "iVoiceHitOdds", ESM::Variant(30) },
+                { "sAnd", ESM::Variant("and") },
+                { "sDefaultCellname", ESM::Variant("Wasteland") },
+                { "sGoodbye", ESM::Variant("Goodbye") },
+                { "sNotifyMessage49", ESM::Variant("") },
+                { "sNotifyMessage50", ESM::Variant("") },
+                { "sNotifyMessage51", ESM::Variant("") },
+                { "sServiceTrainingTitle", ESM::Variant("Training") },
+                { "sSpells", ESM::Variant("Spells") },
+                { "sTravel", ESM::Variant("Travel") },
+            };
+
+            // Keep every direct shared-runtime GameSetting lookup defined for
+            // Fallout data. Values in the table above retain their meaningful
+            // OpenMW defaults; the remaining legacy-only knobs are neutral
+            // compatibility defaults and are not Fallout gameplay tuning.
+            for (std::string_view id : {
+                     "fAutoPCSpellChance", "fAutoSpellChance", "fBargainOfferBase", "fBargainOfferMulti",
+                     "fBarterGoldResetDelay", "fBlockStillBonus", "fBribe1000Mod", "fBribe100Mod", "fBribe10Mod",
+                     "fCombatAngleXY", "fCombatAngleZ", "fCombatArmorMinMult", "fCombatBlockLeftAngle",
+                     "fCombatBlockRightAngle", "fCombatCriticalStrikeMult", "fCombatDistanceWerewolfMod",
+                     "fCombatInvisoMult", "fCombatKODamageMult", "fCrimeStealing", "fDamageStrengthBase",
+                     "fDamageStrengthMult", "fDiseaseXferChance", "fDispAttacking", "fDispCrimeMod",
+                     "fDispDiseaseMod", "fDispFactionMod", "fDispFactionRankBase", "fDispFactionRankMult",
+                     "fDispositionMod", "fDispPersonalityBase", "fDispPersonalityMult", "fDispPickPocketMod",
+                     "fDispRaceMod", "fDispStealing", "fDispWeaponDrawn", "fEffectCostMult",
+                     "fElementalShieldMult", "fEnchantmentChanceMult", "fEnchantmentConstantChanceMult",
+                     "fEnchantmentConstantDurationMult", "fEnchantmentMult", "fEnchantmentValueMult",
+                     "fEndFatigueMult", "fFallAcroBase", "fFallAcroMult", "fFallDamageDistanceMin",
+                     "fFallDistanceBase", "fFallDistanceMult", "fFatigueAttackBase", "fFatigueAttackMult",
+                     "fFatigueBlockBase", "fFatigueBlockMult", "fFatigueJumpBase", "fFatigueJumpMult",
+                     "fFatigueMult", "fFatigueReturnBase", "fFatigueReturnMult", "fFatigueRunBase",
+                     "fFatigueRunMult", "fFatigueSneakBase", "fFatigueSneakMult", "fFatigueSwimRunBase",
+                     "fFatigueSwimRunMult", "fFatigueSwimWalkBase", "fFatigueSwimWalkMult", "fFightDispMult",
+                     "fFleeDistance", "fGreetDistanceReset", "fHandtoHandHealthPer", "fHandToHandReach",
+                     "fInteriorHeadTrackMult", "fJumpAcrobaticsBase", "fJumpAcroMultiplier", "fJumpEncumbranceBase",
+                     "fJumpEncumbranceMultiplier", "fJumpMoveBase", "fJumpMoveMult", "fJumpRunMultiplier",
+                     "fKnockDownMult", "fLevelMod", "fLevelUpHealthEndMult", "fLuckMod", "fMagesGuildTravel",
+                     "fMagicItemRechargePerSecond", "fMajorSkillBonus", "fMaxFlySpeed", "fMaxHandToHandMult",
+                     "fMaxHeadTrackDistance", "fMedMaxMod", "fMinFlySpeed", "fMinHandToHandMult",
+                     "fMinorSkillBonus", "fMiscSkillBonus", "fPerDieRollMult", "fPersonalityMod", "fPerTempMult",
+                     "fPickLockMult", "fPickPocketMod", "fPotionStrengthMult", "fPotionT1DurMult",
+                     "fPotionT1MagMult", "fProjectileThrownStoreChance", "fRepairAmountMult", "fRepairMult",
+                     "fReputationMod", "fRestMagicMult", "fSneakBootMult", "fSneakDistanceBase",
+                     "fSneakDistanceMultiplier", "fSneakNoViewMult", "fSneakSkillMult", "fSneakSpeedMultiplier",
+                     "fSneakUseDelay", "fSneakUseDist", "fSneakViewMult", "fSpecialSkillBonus",
+                     "fSpellMakingValueMult", "fSpellValueMult", "fSwingBlockBase", "fSwingBlockMult",
+                     "fThrownWeaponMaxSpeed", "fThrownWeaponMinSpeed", "fTrapCostMult", "fWeaponFatigueBlockMult",
+                     "fWeaponFatigueMult", "fWereWolfHealth", "fWereWolfRunMult", "fWereWolfSilverWeaponDamageMult",
+                     "fWortChanceValue",
+                 })
+                result.emplace_back(id, ESM::Variant(1.f));
+
+            for (std::string_view id : {
+                     "iAutoRepFacMod", "iAutoRepLevMod", "iAutoSpellAttSkillMin", "iAutoSpellTimesCanCast",
+                     "iBarterFailDisposition", "iBarterSuccessDisposition", "iBaseArmorSkill", "iBlockMaxChance",
+                     "iBlockMinChance", "iCrimePickPocket", "iCrimeTresspass", "iDispAttackMod", "iDispKilling",
+                     "iDispTresspass", "iGreetDistanceMultiplier", "iGreetDuration", "iKnockDownOddsBase",
+                     "iKnockDownOddsMult", "iMagicItemChargeConst", "iMagicItemChargeOnce", "iMagicItemChargeStrike",
+                     "iMagicItemChargeUse", "iPerMinChance", "iPerMinChange", "iPickMaxChance", "iPickMinChance",
+                     "iSoulAmountForConstantEffect", "iWereWolfBounty", "iWerewolfFightMod", "iWereWolfFleeMod",
+                     "iWereWolfLevelToAttack",
+                 })
+                result.emplace_back(id, ESM::Variant(1));
+
+            for (std::string_view id : {
+                     "sBarter", "sCompanionShare", "sEnchanting", "sgp", "sMagicBoundLeftGauntletID",
+                     "sMagicBoundRightGauntletID", "sMagicContractDisease", "sPersuasion", "sRepair",
+                     "sServiceRefusal", "sSpellMakingMenuTitle", "sWerewolfPopup",
+                 })
+                result.emplace_back(id, ESM::Variant(""));
+
+            return result;
+        }
+
         std::vector<std::pair<GlobalVariableName, ESM::Variant>> generateDefaultGlobals()
         {
             return {
@@ -121,9 +291,12 @@ namespace MWWorld
                 { Globals::sGameHour, ESM::Variant(0) },
                 { Globals::sTimeScale, ESM::Variant(30.f) },
                 { Globals::sDay, ESM::Variant(1) },
+                { Globals::sMonth, ESM::Variant(0) },
                 { Globals::sYear, ESM::Variant(1) },
+                { Globals::sCharGenState, ESM::Variant(-1) },
                 { Globals::sPCRace, ESM::Variant(0) },
                 { Globals::sPCHasCrimeGold, ESM::Variant(0) },
+                { Globals::sPCHasGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldTurnIn, ESM::Variant(0) },
                 { Globals::sPCHasTurnIn, ESM::Variant(0) },
@@ -218,15 +391,31 @@ namespace MWWorld
 
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
+        Log(Debug::Info) << "OpenNV load: content records ready";
         MWBase::Environment::get().getLuaManager()->contentFilesLoaded();
+        Log(Debug::Info) << "OpenNV load: Lua content hooks ready";
 
+        // Fallout-family masters do not define the legacy calendar globals
+        // expected by the common World startup path. Add the missing defaults
+        // before filling Globals/DateTimeManager, just as we do for sparse
+        // legacy masters.
+        ensureNeededRecords();
         fillGlobalVariables();
+        Log(Debug::Info) << "OpenNV load: global variables ready";
 
         mStore.setUp();
+        Log(Debug::Info) << "OpenNV load: store setup ready";
         mStore.validateRecords(mReaders);
+        Log(Debug::Info) << "OpenNV load: record validation ready";
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        Log(Debug::Info) << "OpenNV load: ESM4 quest runtime ready";
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
+        Log(Debug::Info) << "OpenNV load: Fallout player state ready";
         mStore.movePlayerRecord();
+        Log(Debug::Info) << "OpenNV load: player record ready";
 
         mSwimHeightScale = mStore.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat();
+        Log(Debug::Info) << "OpenNV load: swim-height setting ready";
     }
 
     void World::init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
@@ -265,6 +454,8 @@ namespace MWWorld
     void World::startNewGame(bool bypass)
     {
         mGoToJail = false;
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -292,6 +483,7 @@ namespace MWWorld
             mGlobalVariables[Globals::sCharGenState].setInteger(-1);
 
         MWBase::Environment::get().getLuaManager()->newGameStarted();
+        bool usedAuthoredStartPlacement = false;
 
         if (bypass && !mStartCell.empty())
         {
@@ -312,6 +504,38 @@ namespace MWWorld
         {
             for (int i = 0; i < 5; ++i)
                 MWBase::Environment::get().getScriptManager()->getGlobalScripts().run();
+
+            // A Fallout-family opening may use authored stage-zero data rather
+            // than an ESM3 startup script. Only accept the runtime's unique,
+            // data-derived candidate; ambiguous data remains on the normal
+            // fallback path.
+            if (!bypass && !getPlayerPtr().isInCell())
+            {
+                if (const std::optional<ESM4AuthoredStartPlacement> authoredStart
+                    = mESM4QuestRuntime.findAuthoredStartPlacement())
+                {
+                    try
+                    {
+                        changeToCell(authoredStart->mCell, authoredStart->mPosition, true);
+                        if (getPlayerPtr().isInCell())
+                        {
+                            usedAuthoredStartPlacement = true;
+                            if (!mESM4QuestRuntime.setStage(authoredStart->mQuest, authoredStart->mSourceStage))
+                            {
+                                Log(Debug::Warning) << "ESM4 opening placement reached its authored cell, but the "
+                                                       "source stage did not execute for quest "
+                                                    << authoredStart->mQuestEditorId;
+                            }
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Log(Debug::Warning) << "ESM4 authored opening placement failed for quest "
+                                            << authoredStart->mQuestEditorId << ": " << e.what();
+                    }
+                }
+            }
+
             if (!getPlayerPtr().isInCell())
             {
                 ESM::Position pos;
@@ -329,7 +553,10 @@ namespace MWWorld
             }
         }
 
-        if (!bypass)
+        // Fallout's authored placement owns its cinematic.  The generic OpenMW
+        // Movies_New_Game value is a Morrowind WebM and is absent from a Fallout
+        // install, where it otherwise renders as the magenta missing-video panel.
+        if (!bypass && !usedAuthoredStartPlacement)
         {
             std::string_view video = Fallback::Map::getString("Movies_New_Game");
             if (!video.empty())
@@ -379,12 +606,15 @@ namespace MWWorld
         mIdsRebuilt = false;
 
         fillGlobalVariables();
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
     }
 
     size_t World::countSavedGameRecords() const
     {
         return mWorldModel.countSavedGameRecords() + mStore.countSavedGameRecords()
             + mGlobalVariables.countSavedGameRecords() + mProjectileManager->countSavedGameRecords()
+            + mESM4QuestRuntime.countSavedGameRecords() + mFalloutPlayerRuntimeState.countSavedGameRecords()
             + 1 // player record
             + 1 // weather record
             + 1 // levitation/teleport enabled state
@@ -414,6 +644,8 @@ namespace MWWorld
         mWorldModel.write(writer, progress); // the player's cell needs to be loaded before the player
         mPlayer->write(writer, progress);
         mGlobalVariables.write(writer, progress);
+        mESM4QuestRuntime.write(writer);
+        mFalloutPlayerRuntimeState.write(writer);
         mWeatherManager->write(writer, progress);
         mProjectileManager->write(writer, progress);
 
@@ -444,6 +676,12 @@ namespace MWWorld
                 Misc::Rng::deserialize(data, mPrng);
             }
             break;
+            case ESM::REC_FQST:
+                mESM4QuestRuntime.readRecord(reader);
+                break;
+            case ESM::REC_FPLR:
+                mFalloutPlayerRuntimeState.readRecord(reader);
+                break;
             case ESM::REC_PLAY:
                 if (reader.getFormatVersion() <= ESM::MaxPlayerBeforeCellDataFormatVersion && !mIdsRebuilt)
                 {
@@ -476,8 +714,22 @@ namespace MWWorld
 
     void World::ensureNeededRecords()
     {
+        for (const auto& [id, value] : generateCompatibilityGameSettings())
+        {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (mStore.get<ESM::GameSetting>().search(refId) != nullptr)
+                continue;
+
+            ESM::GameSetting record;
+            record.mId = refId;
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            mStore.insertStatic(record);
+        }
+
         for (const auto& [name, value] : generateDefaultGlobals())
         {
+            Log(Debug::Info) << "OpenNV load: ensuring global " << name.getValue();
             if (mStore.get<ESM::Global>().search(ESM::RefId::stringRefId(name.getValue())) == nullptr)
             {
                 ESM::Global record;
@@ -861,6 +1113,7 @@ namespace MWWorld
     {
         const MWWorld::Cell* destinationCell = getWorldModel().getCell(cellId).getCell();
         bool exteriorCell = destinationCell->isExterior();
+        const bool playerWasInCell = getPlayerPtr().isInCell();
 
         mPhysics->clearQueuedMovement();
         mDiscardMovements = true;
@@ -878,6 +1131,23 @@ namespace MWWorld
         else
             mWorldScene->changeToInteriorCell(destinationCell->getNameId(), position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+
+        // setupPlayer/renderPlayer runs before a fresh authored start has a
+        // cell. Rebuild the player visual and rebind the camera once that
+        // unloaded-to-cell transition completes, so the camera tracks the
+        // Fallout player proxy instead of its pre-cell fallback origin.
+        if (!playerWasInCell && getPlayerPtr().isInCell())
+        {
+            renderPlayer();
+            if (MWRender::Camera* camera = mRendering->getCamera())
+            {
+                camera->attachTo(getPlayerPtr());
+                camera->processViewChange();
+                camera->update(0.f, false);
+                camera->instantTransition();
+            }
+            Log(Debug::Info) << "FNV/ESM4 behavior: rehydrated player visual and camera after unloaded cell entry";
+        }
     }
 
     float World::getMaxActivationDistance() const
@@ -1569,6 +1839,11 @@ namespace MWWorld
         updateNavigator();
 
         mPlayer->update();
+
+        // Fallout-family quest scripts own their opening progression and
+        // trigger volumes. This remains data-driven inside the quest runtime
+        // and is evaluated alongside the normal world update.
+        mESM4QuestRuntime.update(duration, paused);
 
         mPhysics->debugDraw();
 

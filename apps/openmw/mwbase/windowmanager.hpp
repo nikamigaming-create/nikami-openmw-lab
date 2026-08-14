@@ -141,6 +141,12 @@ namespace MWBase
         virtual bool isSettingsWindowVisible() const = 0;
         virtual bool isInteractiveMessageBoxActive() const = 0;
 
+        // Fallout-family source scripts use these as isolated handoffs. They
+        // must return to their requesting script instead of entering the
+        // complete Morrowind character-generation wizard.
+        virtual void showAuthoredRaceMenu() = 0;
+        virtual void showAuthoredNameMenu() = 0;
+
         virtual void toggleVisible(MWGui::GuiWindow wnd) = 0;
 
         virtual void forceHide(MWGui::GuiWindow wnd) = 0;

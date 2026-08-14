@@ -45,6 +45,12 @@ namespace MWGui
         // Show a dialog
         void spawnDialog(const GuiMode id);
 
+        // Fallout-family character commands reuse the engine's widgets, but
+        // deliberately finish back in the authored scene rather than opening
+        // the whole Morrowind chargen flow.
+        void beginAuthoredRaceMenu();
+        void beginAuthoredNameMenu();
+
         void setAttribute(ESM::RefId id, const MWMechanics::AttributeValue& value) override;
         void setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value) override;
         void setValue(ESM::RefId id, const MWMechanics::SkillValue& value) override;
@@ -63,6 +69,7 @@ namespace MWGui
         // Dialogs
         std::unique_ptr<TextInputDialog> mNameDialog;
         std::unique_ptr<RaceDialog> mRaceDialog;
+        std::unique_ptr<InfoBoxDialog> mAuthoredAppearanceDialog;
         std::unique_ptr<ClassChoiceDialog> mClassChoiceDialog;
         std::unique_ptr<InfoBoxDialog> mGenerateClassQuestionDialog;
         std::unique_ptr<GenerateClassResultDialog> mGenerateClassResultDialog;
@@ -76,6 +83,14 @@ namespace MWGui
         ESM::RefId mPlayerRaceId;
         ESM::RefId mPlayerBirthSignId;
         ESM::Class mPlayerClass;
+
+        bool mAuthoredRaceMenu = false;
+        bool mAuthoredNameMenu = false;
+        bool mAuthoredAppearanceDefaultMale = true;
+        // These timers are enabled only by the capture environment.  Normal
+        // character creation remains fully interactive.
+        float mAuthoredRaceMenuDefaultDelay = -1.f;
+        float mAuthoredNameMenuDefaultDelay = -1.f;
 
         // Class generation vars
         unsigned mGenerateClassStep; // Keeps track of current step in Generate Class dialog
@@ -92,6 +107,7 @@ namespace MWGui
         void onRaceDialogDone(WindowBase* parWindow);
         void onRaceDialogBack();
         void selectRace();
+        void onAuthoredAppearanceSelected(int index);
 
         // Class dialogs
         void onClassChoice(int index);

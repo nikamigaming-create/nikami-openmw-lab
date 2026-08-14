@@ -116,6 +116,10 @@ namespace MWRender
     private:
         MWWorld::Ptr mTrackingPtr;
         osg::ref_ptr<const osg::Node> mTrackingNode;
+        // Fallout player shells can omit the Morrowind Camera/Head nodes. In
+        // that case first-person view tracks the player root and adds the
+        // normal eye-height offset.
+        bool mFirstPersonUsesTrackingRoot = false;
         osg::Vec3d mTrackedPosition;
         float mHeightScale;
         int mCollisionType;

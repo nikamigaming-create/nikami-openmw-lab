@@ -138,6 +138,12 @@ namespace MWBase
             assert(sThis != nullptr);
             return *sThis;
         }
+
+        /// Optional accessors let data-driven runtime services run in headless tests
+        /// without inventing GUI or world state.
+        static World* tryGetWorld() noexcept { return sThis != nullptr ? sThis->mWorld : nullptr; }
+
+        static WindowManager* tryGetWindowManager() noexcept { return sThis != nullptr ? sThis->mWindowManager : nullptr; }
     };
 }
 
