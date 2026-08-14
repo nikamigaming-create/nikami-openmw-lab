@@ -27,6 +27,11 @@ namespace ESM
 namespace MWMechanics
 {
     enum class GreetingState;
+<<<<<<< HEAD
+=======
+    struct FalloutProjectileImpactContract;
+    struct FalloutVatsQueuedAction;
+>>>>>>> origin/main
 }
 
 namespace MWWorld
@@ -114,6 +119,7 @@ namespace MWBase
         /// Removes an actor and its allies from combat with the actor's targets.
         virtual void stopCombat(const MWWorld::Ptr& ptr) = 0;
 
+<<<<<<< HEAD
         enum OffenseType
         {
             OT_Theft, // Taking items owned by an NPC or a faction you are not a member of
@@ -239,13 +245,168 @@ namespace MWBase
 
         virtual std::vector<MWWorld::Ptr> getEnemiesNearby(const MWWorld::Ptr& actor) = 0;
 
+=======
+        virtual bool playFalloutDialogueAnimation(
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) = 0;
+
+        enum OffenseType
+        {
+            OT_Theft, // Taking items owned by an NPC or a faction you are not a member of
+            OT_Assault, // Attacking a peaceful NPC
+            OT_Murder, // Murdering a peaceful NPC
+            OT_Trespassing, // Picking the lock of an owned door/chest
+            OT_SleepingInOwnedBed, // Sleeping in a bed owned by an NPC or a faction you are not a member of
+            OT_Pickpocket // Entering pickpocket mode, leaving it, and being detected. Any items stolen are a separate
+                          // crime (Theft)
+        };
+        /**
+         * @note victim may be empty
+         * @param arg Depends on \a type, e.g. for Theft, the value of the item that was stolen.
+         * @param victimAware Is the victim already aware of the crime?
+         *                    If this parameter is false, it will be determined by a line-of-sight and awareness check.
+         * @return was the crime seen?
+         */
+        virtual bool commitCrime(const MWWorld::Ptr& ptr, const MWWorld::Ptr& victim, OffenseType type,
+            const ESM::RefId& factionId = ESM::RefId(), int arg = 0, bool victimAware = false)
+            = 0;
+        /// @return false if the attack was considered a "friendly hit" and forgiven
+        virtual bool actorAttacked(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker) = 0;
+
+        /// Notify that actor was killed, add a murder bounty if applicable
+        /// @note No-op for non-player attackers
+        virtual void actorKilled(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker) = 0;
+
+        /// Utility to check if taking this item is illegal and calling commitCrime if so
+        /// @param container The container the item is in; may be empty for an item in the world
+        virtual void itemTaken(const MWWorld::Ptr& ptr, const MWWorld::Ptr& item, const MWWorld::Ptr& container,
+            int count, bool alarm = true)
+            = 0;
+        /// Utility to check if unlocking this object is illegal and calling commitCrime if so
+        virtual void unlockAttempted(const MWWorld::Ptr& ptr, const MWWorld::Ptr& item) = 0;
+        /// Attempt sleeping in a bed. If this is illegal, call commitCrime.
+        /// @return was it illegal, and someone saw you doing it?
+        virtual bool sleepInBed(const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) = 0;
+
+        enum PersuasionType
+        {
+            PT_Admire,
+            PT_Intimidate,
+            PT_Taunt,
+            PT_Bribe10,
+            PT_Bribe100,
+            PT_Bribe1000
+        };
+        virtual void getPersuasionDispositionChange(
+            const MWWorld::Ptr& npc, PersuasionType type, bool& success, int& tempChange, int& permChange)
+            = 0;
+        ///< Perform a persuasion action on NPC
+
+        virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
+
+        virtual bool reloadFalloutWeapon(const MWWorld::Ptr&) { return false; }
+
+        virtual bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr&) { return false; }
+        virtual bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr&) { return false; }
+
+        virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
+        {
+            return false;
+        }
+        virtual bool executeFalloutProjectileImpact(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, const osg::Vec3f&, const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
+        virtual bool executeFalloutExplosion(const MWWorld::Ptr&, const osg::Vec3f&,
+            const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
+        ///< Forces an object to refresh its animation state.
+
+        virtual bool playAnimationGroup(
+            const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number = 1, bool scripted = false)
+            = 0;
+        ///< Run animation for a MW-reference. Calls to this function for references that are currently not
+        /// in the scene should be ignored.
+        ///
+        /// \param mode 0 normal, 1 immediate start, 2 immediate loop
+        /// \param number How many times the animation should be run
+        /// \param scripted Whether the animation should be treated as a scripted animation.
+        /// \return Success or error
+        virtual bool playAnimationGroupLua(const MWWorld::Ptr& ptr, std::string_view groupName, uint32_t loops,
+            float speed, std::string_view startKey, std::string_view stopKey, bool forceLoop)
+            = 0;
+        ///< Lua variant of playAnimationGroup. The mode parameter is omitted
+        /// and forced to 0. modes 1 and 2 can be emulated by doing clearAnimationQueue() and
+        /// setting the startKey.
+        ///
+        /// \param number How many times the animation should be run
+        /// \param speed How fast to play the animation, where 1.f = normal speed
+        /// \param startKey Which textkey to start the animation from
+        /// \param stopKey Which textkey to stop the animation on
+        /// \param forceLoop Force the animation to be looping, even if it's normally not looping.
+        /// \param blendMask See MWRender::Animation::BlendMask
+        /// \param scripted Whether the animation should be treated as as scripted animation
+        /// \return Success or error
+        ///
+
+        virtual void enableLuaAnimations(const MWWorld::Ptr& ptr, bool enable) = 0;
+
+        virtual void skipAnimation(const MWWorld::Ptr& ptr) = 0;
+        ///< Skip the animation for the given MW-reference for one frame. Calls to this function for
+        /// references that are currently not in the scene should be ignored.
+
+        virtual bool checkAnimationPlaying(const MWWorld::Ptr& ptr, std::string_view groupName) = 0;
+
+        virtual bool checkScriptedAnimationPlaying(const MWWorld::Ptr& ptr) const = 0;
+
+        /// Save the current animation state of managed references to their RefData.
+        virtual void persistAnimationStates() = 0;
+
+        /// Clear out the animation queue, and cancel any animation currently playing from the queue
+        virtual void clearAnimationQueue(const MWWorld::Ptr& ptr, bool clearScripted) = 0;
+
+        /// Update magic effects for an actor. Usually done automatically once per frame, but if we're currently
+        /// paused we may want to do it manually (after equipping permanent enchantment)
+        virtual void updateMagicEffects(const MWWorld::Ptr& ptr) = 0;
+
+        virtual bool toggleAI() = 0;
+        virtual bool isAIActive() = 0;
+
+        virtual void getObjectsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects)
+            = 0;
+        virtual void getActorsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects) = 0;
+
+        /// Check if there are actors in selected range
+        virtual bool isAnyActorInRange(const osg::Vec3f& position, float radius) = 0;
+
+        /// Returns the list of actors which are siding with the given actor in fights
+        /**ie AiFollow or AiEscort is active and the target is the actor **/
+        virtual std::vector<MWWorld::Ptr> getActorsSidingWith(const MWWorld::Ptr& actor) = 0;
+        virtual std::vector<MWWorld::Ptr> getActorsFollowing(const MWWorld::Ptr& actor) = 0;
+        virtual std::vector<int> getActorsFollowingIndices(const MWWorld::Ptr& actor) = 0;
+        virtual std::map<int, MWWorld::Ptr> getActorsFollowingByIndex(const MWWorld::Ptr& actor) = 0;
+
+        /// Returns a list of actors who are fighting the given actor within the fAlarmDistance
+        /** ie AiCombat is active and the target is the actor **/
+        virtual std::vector<MWWorld::Ptr> getActorsFighting(const MWWorld::Ptr& actor) = 0;
+
+        virtual std::vector<MWWorld::Ptr> getEnemiesNearby(const MWWorld::Ptr& actor) = 0;
+
+>>>>>>> origin/main
         /// Recursive versions of above methods
         virtual void getActorsFollowing(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) = 0;
         virtual void getActorsSidingWith(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) = 0;
 
         virtual void playerLoaded() = 0;
 
+<<<<<<< HEAD
         virtual size_t countSavedGameRecords() const = 0;
+=======
+        virtual int countSavedGameRecords() const = 0;
+>>>>>>> origin/main
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& listener) const = 0;
 
@@ -294,7 +455,11 @@ namespace MWBase
         /// It only applies to the current form the NPC is in.
         virtual void applyWerewolfAcrobatics(const MWWorld::Ptr& actor) = 0;
 
+<<<<<<< HEAD
         virtual void cleanupSummonedCreature(ESM::RefNum creature) = 0;
+=======
+        virtual void cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId) = 0;
+>>>>>>> origin/main
 
         virtual void confiscateStolenItemToOwner(
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count)
@@ -308,7 +473,15 @@ namespace MWBase
         virtual int getGreetingTimer(const MWWorld::Ptr& ptr) const = 0;
         virtual float getAngleToPlayer(const MWWorld::Ptr& ptr) const = 0;
         virtual MWMechanics::GreetingState getGreetingState(const MWWorld::Ptr& ptr) const = 0;
+<<<<<<< HEAD
         virtual void fastForwardAi() const = 0;
+=======
+        virtual bool isTurningToPlayer(const MWWorld::Ptr& ptr) const = 0;
+
+        /// Make the explicit victim, or the nearest active member of faction, respond as if assaulted by the player.
+        /// Kept at the end so existing interface slots remain stable.
+        virtual bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) = 0;
+>>>>>>> origin/main
     };
 }
 

@@ -137,10 +137,19 @@ namespace SceneUtil
         {
             if (osg::isGLExtensionSupported(contextID, "GL_ARB_depth_buffer_float"))
             {
+<<<<<<< HEAD
+=======
+                Log(Debug::Info) << "Requesting depth format GL_DEPTH32F_STENCIL8(" << GL_DEPTH32F_STENCIL8 << ")";
+>>>>>>> origin/main
                 requestedFormats.push_back(GL_DEPTH32F_STENCIL8);
             }
             else if (osg::isGLExtensionSupported(contextID, "GL_NV_depth_buffer_float"))
             {
+<<<<<<< HEAD
+=======
+                Log(Debug::Info) << "Requesting depth format GL_DEPTH32F_STENCIL8_NV(" << GL_DEPTH32F_STENCIL8_NV
+                                 << ")";
+>>>>>>> origin/main
                 requestedFormats.push_back(GL_DEPTH32F_STENCIL8_NV);
             }
             else
@@ -150,27 +159,60 @@ namespace SceneUtil
             }
         }
 
+<<<<<<< HEAD
         requestedFormats.push_back(GL_DEPTH24_STENCIL8);
         if (mSupportedFormats.empty())
         {
+=======
+        Log(Debug::Info) << "Requesting depth format GL_DEPTH24_STENCIL8 (" << GL_DEPTH24_STENCIL8 << ")";
+        requestedFormats.push_back(GL_DEPTH24_STENCIL8);
+        if (mSupportedFormats.empty())
+        {
+            Log(Debug::Info) << "Selecting depth format (" << requestedFormats.front() << ")";
+>>>>>>> origin/main
             SceneUtil::AutoDepth::setDepthFormat(requestedFormats.front());
         }
         else
         {
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+            bool foundRequestedFormat = false;
+>>>>>>> origin/main
             for (auto requestedFormat : requestedFormats)
             {
                 if (std::find(mSupportedFormats.cbegin(), mSupportedFormats.cend(), requestedFormat)
                     != mSupportedFormats.cend())
                 {
+<<<<<<< HEAD
                     SceneUtil::AutoDepth::setDepthFormat(requestedFormat);
                     break;
                 }
             }
+=======
+                    Log(Debug::Info) << "Selecting depth format (" << requestedFormat << ")";
+                    SceneUtil::AutoDepth::setDepthFormat(requestedFormat);
+                    foundRequestedFormat = true;
+                    break;
+                }
+            }
+
+            if (!foundRequestedFormat)
+            {
+                Log(Debug::Info) << "Selecting depth format (" << mSupportedFormats.front() << ")";
+                SceneUtil::AutoDepth::setDepthFormat(mSupportedFormats.front());
+            }
+            //## VR_PATCH END
+>>>>>>> origin/main
         }
     }
 
     void AutoDepth::setDepthFormat(GLenum format)
     {
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "Setting depth format (" << format << ")";
+>>>>>>> origin/main
         sDepthInternalFormat = format;
         getDepthFormatSourceFormatAndType(sDepthInternalFormat, sDepthSourceFormat, sDepthSourceType);
     }

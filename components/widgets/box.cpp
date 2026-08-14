@@ -1,4 +1,9 @@
 #include "box.hpp"
+//## VR_PATCH BEGIN
+#include "virtualkeyboardmanager.hpp"
+//## VR_PATCH END
+
+#include <MyGUI_EditText.h>
 
 #include <MyGUI_EditText.h>
 
@@ -176,8 +181,13 @@ namespace Gui
 
     void HBox::align()
     {
+<<<<<<< HEAD
         const size_t count = getChildCount();
         int hStretchedCount = 0;
+=======
+        unsigned int count = getChildCount();
+        size_t hStretchedCount = 0;
+>>>>>>> origin/main
         int totalWidth = 0;
         int totalHeight = 0;
         std::vector<std::pair<MyGUI::IntSize, bool>> sizes;
@@ -328,8 +338,13 @@ namespace Gui
 
     void VBox::align()
     {
+<<<<<<< HEAD
         const size_t count = getChildCount();
         int vStretchedCount = 0;
+=======
+        unsigned int count = getChildCount();
+        size_t vStretchedCount = 0;
+>>>>>>> origin/main
         int totalHeight = 0;
         int totalWidth = 0;
         std::vector<std::pair<MyGUI::IntSize, bool>> sizes;
@@ -487,4 +502,36 @@ namespace Gui
         setUserString("VStretch", "true");
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    EditBox::EditBox()
+        : mVirtualKeyboardRegistered(false)
+    {
+        registerVirtualKeyboard();
+    }
+    EditBox::~EditBox()
+    {
+        unregisterVirtualKeyboard();
+    }
+    void EditBox::registerVirtualKeyboard()
+    {
+        auto* vkm = Gui::VirtualKeyboardManager::instance();
+        if (vkm)
+        {
+            vkm->registerEditBox(this);
+            mVirtualKeyboardRegistered = true;
+        }
+    }
+    void EditBox::unregisterVirtualKeyboard()
+    {
+        if (mVirtualKeyboardRegistered)
+        {
+            // No need to check here
+            Gui::VirtualKeyboardManager::instance()->unregisterEditBox(this);
+            mVirtualKeyboardRegistered = false;
+        }
+    }
+//## VR_PATCH END
+>>>>>>> origin/main
 }

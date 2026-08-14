@@ -9,11 +9,16 @@
 #include <components/esm/refid.hpp>
 #include <components/esm/vector3.hpp>
 
+<<<<<<< HEAD
 #include "refnum.hpp"
 
 namespace ESM
 {
     class ActorIdConverter;
+=======
+namespace ESM
+{
+>>>>>>> origin/main
     class ESMReader;
     class ESMWriter;
 
@@ -36,7 +41,11 @@ namespace ESM
 
         struct AiPackage
         {
+<<<<<<< HEAD
             virtual ~AiPackage() = default;
+=======
+            virtual ~AiPackage() {}
+>>>>>>> origin/main
         };
 
         struct AiWanderData
@@ -51,6 +60,11 @@ namespace ESM
         struct AiWanderDuration
         {
             float mRemainingDuration;
+<<<<<<< HEAD
+=======
+            // Reuses the reserved word in STAR. Zero keeps legacy wander arrival behaviour.
+            std::uint32_t mDestinationTolerance = 0;
+>>>>>>> origin/main
         };
 
         struct AiTravelData
@@ -72,6 +86,13 @@ namespace ESM
             bool mStoredInitialActorPosition;
             Vector3 mInitialActorPosition;
 
+<<<<<<< HEAD
+=======
+            // An engine-private save placeholder for a record-driven FNV sandbox package. The mechanics loader
+            // omits this WAND and lets the owning FNV actor rebuild its PACK/IDLM/IDLE/ANIO pipeline.
+            bool mReevaluateFnvSandbox = false;
+
+>>>>>>> origin/main
             /// \todo add more AiWander state
 
             void load(ESMReader& esm);
@@ -92,7 +113,11 @@ namespace ESM
         {
             AiEscortData mData;
 
+<<<<<<< HEAD
             ESM::RefNum mTargetActor;
+=======
+            int32_t mTargetActorId;
+>>>>>>> origin/main
             ESM::RefId mTargetId;
             std::string mCellId;
             float mRemainingDuration;
@@ -106,7 +131,11 @@ namespace ESM
         {
             AiEscortData mData;
 
+<<<<<<< HEAD
             ESM::RefNum mTargetActor;
+=======
+            int32_t mTargetActorId;
+>>>>>>> origin/main
             ESM::RefId mTargetId;
             std::string mCellId;
             float mRemainingDuration;
@@ -132,7 +161,11 @@ namespace ESM
 
         struct AiCombat : AiPackage
         {
+<<<<<<< HEAD
             ESM::RefNum mTargetActor;
+=======
+            int32_t mTargetActorId;
+>>>>>>> origin/main
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
@@ -140,7 +173,11 @@ namespace ESM
 
         struct AiPursue : AiPackage
         {
+<<<<<<< HEAD
             ESM::RefNum mTargetActor;
+=======
+            int32_t mTargetActorId;
+>>>>>>> origin/main
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
@@ -155,6 +192,7 @@ namespace ESM
 
         struct AiSequence
         {
+<<<<<<< HEAD
             std::vector<AiPackageContainer> mPackages;
             ActorIdConverter* mActorIdConverter = nullptr;
             int32_t mLastAiPackage = -1;
@@ -165,6 +203,19 @@ namespace ESM
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;
+=======
+            AiSequence() { mLastAiPackage = -1; }
+
+            std::vector<AiPackageContainer> mPackages;
+            int32_t mLastAiPackage;
+
+            void load(ESMReader& esm);
+            void save(ESMWriter& esm) const;
+
+        private:
+            AiSequence(const AiSequence&);
+            AiSequence& operator=(const AiSequence&);
+>>>>>>> origin/main
         };
 
     }

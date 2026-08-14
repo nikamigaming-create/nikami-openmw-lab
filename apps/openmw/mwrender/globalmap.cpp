@@ -3,6 +3,10 @@
 #include <osg/Geometry>
 #include <osg/Group>
 #include <osg/Image>
+<<<<<<< HEAD
+=======
+#include <osg/TexEnvCombine>
+>>>>>>> origin/main
 #include <osg/Texture2D>
 
 #include <osgDB/WriteFile>
@@ -12,15 +16,21 @@
 
 #include <components/debug/debuglog.hpp>
 
+<<<<<<< HEAD
 #include <components/resource/imagemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 
+=======
+>>>>>>> origin/main
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/nodecallback.hpp>
 #include <components/sceneutil/workqueue.hpp>
 
+<<<<<<< HEAD
 #include <components/vfs/pathutil.hpp>
 
+=======
+>>>>>>> origin/main
 #include <components/esm3/globalmap.hpp>
 #include <components/esm3/loadland.hpp>
 
@@ -126,7 +136,11 @@ namespace MWRender
     {
     public:
         CreateMapWorkItem(int width, int height, int minX, int minY, int maxX, int maxY, int cellSize,
+<<<<<<< HEAD
             const MWWorld::Store<ESM::Land>& landStore, osg::ref_ptr<osg::Image> colorLut)
+=======
+            const MWWorld::Store<ESM::Land>& landStore)
+>>>>>>> origin/main
             : mWidth(width)
             , mHeight(height)
             , mMinX(minX)
@@ -135,7 +149,10 @@ namespace MWRender
             , mMaxY(maxY)
             , mCellSize(cellSize)
             , mLandStore(landStore)
+<<<<<<< HEAD
             , mColorLut(colorLut)
+=======
+>>>>>>> origin/main
         {
         }
 
@@ -143,9 +160,17 @@ namespace MWRender
         {
             osg::ref_ptr<osg::Image> image = new osg::Image;
             image->allocateImage(mWidth, mHeight, 1, GL_RGB, GL_UNSIGNED_BYTE);
+<<<<<<< HEAD
 
             osg::ref_ptr<osg::Image> alphaImage = new osg::Image;
             alphaImage->allocateImage(mWidth, mHeight, 1, GL_ALPHA, GL_UNSIGNED_BYTE);
+=======
+            unsigned char* data = image->data();
+
+            osg::ref_ptr<osg::Image> alphaImage = new osg::Image;
+            alphaImage->allocateImage(mWidth, mHeight, 1, GL_ALPHA, GL_UNSIGNED_BYTE);
+            unsigned char* alphaData = alphaImage->data();
+>>>>>>> origin/main
 
             for (int x = mMinX; x <= mMaxX; ++x)
             {
@@ -157,12 +182,18 @@ namespace MWRender
                     {
                         for (int cellX = 0; cellX < mCellSize; ++cellX)
                         {
+<<<<<<< HEAD
                             int vertexX = (cellX * 9) / mCellSize; // 0..8
                             int vertexY = (cellY * 9) / mCellSize; // 0..8
+=======
+                            int vertexX = static_cast<int>(float(cellX) / float(mCellSize) * 9);
+                            int vertexY = static_cast<int>(float(cellY) / float(mCellSize) * 9);
+>>>>>>> origin/main
 
                             int texelX = (x - mMinX) * mCellSize + cellX;
                             int texelY = (y - mMinY) * mCellSize + cellY;
 
+<<<<<<< HEAD
                             int lutIndex = 0;
                             // Converting [-128; 127] WNAM range to [0; 255] index
                             if (land != nullptr && (land->mDataTypes & ESM::Land::DATA_WNAM))
@@ -177,6 +208,49 @@ namespace MWRender
                             // Set alpha based on lutIndex threshold
                             osg::Vec4 alpha(0.0f, 0.0f, 0.0f, lutIndex < 128 ? 0.0f : 1.0f);
                             alphaImage->setColor(alpha, texelX, texelY);
+=======
+                            unsigned char r, g, b;
+
+                            float y2 = 0;
+                            if (land && (land->mDataTypes & ESM::Land::DATA_WNAM))
+                                y2 = land->mWnam[vertexY * 9 + vertexX] / 128.f;
+                            else
+                                y2 = SCHAR_MIN / 128.f;
+                            if (y2 < 0)
+                            {
+                                r = static_cast<unsigned char>(14 * y2 + 38);
+                                g = static_cast<unsigned char>(20 * y2 + 56);
+                                b = static_cast<unsigned char>(18 * y2 + 51);
+                            }
+                            else if (y2 < 0.3f)
+                            {
+                                if (y2 < 0.1f)
+                                    y2 *= 8.f;
+                                else
+                                {
+                                    y2 -= 0.1f;
+                                    y2 += 0.8f;
+                                }
+                                r = static_cast<unsigned char>(66 - 32 * y2);
+                                g = static_cast<unsigned char>(48 - 23 * y2);
+                                b = static_cast<unsigned char>(33 - 16 * y2);
+                            }
+                            else
+                            {
+                                y2 -= 0.3f;
+                                y2 *= 1.428f;
+                                r = static_cast<unsigned char>(34 - 29 * y2);
+                                g = static_cast<unsigned char>(25 - 20 * y2);
+                                b = static_cast<unsigned char>(17 - 12 * y2);
+                            }
+
+                            data[texelY * mWidth * 3 + texelX * 3] = r;
+                            data[texelY * mWidth * 3 + texelX * 3 + 1] = g;
+                            data[texelY * mWidth * 3 + texelX * 3 + 2] = b;
+
+                            alphaData[texelY * mWidth + texelX]
+                                = (y2 < 0) ? static_cast<unsigned char>(0) : static_cast<unsigned char>(255);
+>>>>>>> origin/main
                         }
                     }
                 }
@@ -218,7 +292,10 @@ namespace MWRender
         int mMinX, mMinY, mMaxX, mMaxY;
         int mCellSize;
         const MWWorld::Store<ESM::Land>& mLandStore;
+<<<<<<< HEAD
         osg::ref_ptr<osg::Image> mColorLut;
+=======
+>>>>>>> origin/main
 
         osg::ref_ptr<osg::Texture2D> mBaseTexture;
         osg::ref_ptr<osg::Texture2D> mAlphaTexture;
@@ -286,6 +363,7 @@ namespace MWRender
         mWidth = cellSize * (mMaxX - mMinX + 1);
         mHeight = cellSize * (mMaxY - mMinY + 1);
 
+<<<<<<< HEAD
         // Load color LUT texture
         constexpr VFS::Path::NormalizedView colorLutPath("textures/omw_map_color_palette.dds");
         auto resourceSystem = MWBase::Environment::get().getResourceSystem();
@@ -300,6 +378,10 @@ namespace MWRender
 
         mWorkItem = new CreateMapWorkItem(
             mWidth, mHeight, mMinX, mMinY, mMaxX, mMaxY, cellSize, esmStore.get<ESM::Land>(), colorLut);
+=======
+        mWorkItem
+            = new CreateMapWorkItem(mWidth, mHeight, mMinX, mMinY, mMaxX, mMaxY, cellSize, esmStore.get<ESM::Land>());
+>>>>>>> origin/main
         mWorkQueue->addWorkItem(mWorkItem);
     }
 
@@ -310,9 +392,18 @@ namespace MWRender
         imageY = (1.f - float(z / float(Constants::CellSizeInUnits) - mMinY) / (mMaxY - mMinY + 1)) * getHeight();
     }
 
+<<<<<<< HEAD
     void GlobalMap::requestOverlayTextureUpdate(int x, int y, int width, int height,
         osg::ref_ptr<osg::Texture2D> texture, bool clear, bool cpuCopy, float srcLeft, float srcTop, float srcRight,
         float srcBottom)
+=======
+//## VR_PATCH BEGIN
+// Needs to use osg::Texture for multiview compatibility
+// VR-TODO: Really? Stereo was merged upstream!
+    void GlobalMap::requestOverlayTextureUpdate(int x, int y, int width, int height, osg::ref_ptr<osg::Texture> texture,
+        bool clear, bool cpuCopy, float srcLeft, float srcTop, float srcRight, float srcBottom)
+//## VR_PATCH END
+>>>>>>> origin/main
     {
         osg::ref_ptr<osg::Camera> camera(new osg::Camera);
         camera->setNodeMask(Mask_RenderToTexture);
@@ -364,6 +455,10 @@ namespace MWRender
             osg::StateSet* stateset = geom->getOrCreateStateSet();
             stateset->setAttribute(depth);
             stateset->setTextureAttributeAndModes(0, texture, osg::StateAttribute::ON);
+<<<<<<< HEAD
+=======
+            stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+>>>>>>> origin/main
             stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
 
             if (mAlphaTexture)
@@ -381,6 +476,13 @@ namespace MWRender
                 geom->setTexCoordArray(1, texcoords, osg::Array::BIND_PER_VERTEX);
 
                 stateset->setTextureAttributeAndModes(1, mAlphaTexture, osg::StateAttribute::ON);
+<<<<<<< HEAD
+=======
+                osg::ref_ptr<osg::TexEnvCombine> texEnvCombine = new osg::TexEnvCombine;
+                texEnvCombine->setCombine_RGB(osg::TexEnvCombine::REPLACE);
+                texEnvCombine->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
+                stateset->setTextureAttributeAndModes(1, texEnvCombine);
+>>>>>>> origin/main
             }
 
             camera->addChild(geom);
@@ -391,7 +493,15 @@ namespace MWRender
         mActiveCameras.push_back(camera);
     }
 
+<<<<<<< HEAD
     void GlobalMap::exploreCell(int cellX, int cellY, osg::ref_ptr<osg::Texture2D> localMapTexture)
+=======
+//## VR_PATCH BEGIN
+// Needs to use osg::Texture for multiview compatibility
+// VR-TODO: Really? Stereo was merged upstream!
+    void GlobalMap::exploreCell(int cellX, int cellY, osg::ref_ptr<osg::Texture> localMapTexture)
+//## VR_PATCH END
+>>>>>>> origin/main
     {
         ensureLoaded();
 

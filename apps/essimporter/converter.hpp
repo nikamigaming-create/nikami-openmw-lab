@@ -54,7 +54,11 @@ namespace ESSImport
     {
     public:
         /// @return the order for writing this converter's records to the output file, in relation to other converters
+<<<<<<< HEAD
         virtual int getStage() const { return 1; }
+=======
+        virtual int getStage() { return 1; }
+>>>>>>> origin/main
 
         virtual ~Converter() = default;
 
@@ -66,7 +70,11 @@ namespace ESSImport
 
         /// Called after the input file has been read in completely, which may be necessary
         /// if the conversion process relies on information in other records
+<<<<<<< HEAD
         virtual void write(ESM::ESMWriter& esm) const {}
+=======
+        virtual void write(ESM::ESMWriter& esm) {}
+>>>>>>> origin/main
 
     protected:
         Context* mContext;
@@ -77,7 +85,11 @@ namespace ESSImport
     class DefaultConverter : public Converter
     {
     public:
+<<<<<<< HEAD
         int getStage() const override { return 0; }
+=======
+        int getStage() override { return 0; }
+>>>>>>> origin/main
 
         void read(ESM::ESMReader& esm) override
         {
@@ -88,7 +100,11 @@ namespace ESSImport
             mRecords[record.mId] = record;
         }
 
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             for (auto it = mRecords.begin(); it != mRecords.end(); ++it)
             {
@@ -257,7 +273,11 @@ namespace ESSImport
                 }
             }
         }
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             esm.startRecord(ESM::REC_ASPL);
             esm.writeHNRefId("ID__", mSelectedSpell);
@@ -286,7 +306,11 @@ namespace ESSImport
             convertPCDT(pcdt, mContext->mPlayer, mContext->mDialogueState.mKnownTopics, mFirstPersonCam,
                 mTeleportingEnabled, mLevitationEnabled, mContext->mControlsState);
         }
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             esm.startRecord(ESM::REC_ENAB);
             esm.writeHNT("TELE", mTeleportingEnabled);
@@ -331,7 +355,11 @@ namespace ESSImport
     {
     public:
         void read(ESM::ESMReader& esm) override;
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override;
+=======
+        void write(ESM::ESMWriter& esm) override;
+>>>>>>> origin/main
 
     private:
         osg::ref_ptr<osg::Image> mGlobalMapImage;
@@ -341,7 +369,11 @@ namespace ESSImport
     {
     public:
         void read(ESM::ESMReader& esm) override;
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override;
+=======
+        void write(ESM::ESMWriter& esm) override;
+>>>>>>> origin/main
 
     private:
         struct Cell
@@ -356,7 +388,11 @@ namespace ESSImport
 
         std::vector<ESM::CustomMarker> mMarkers;
 
+<<<<<<< HEAD
         void writeCell(const Cell& cell, ESM::ESMWriter& esm) const;
+=======
+        void writeCell(const Cell& cell, ESM::ESMWriter& esm);
+>>>>>>> origin/main
     };
 
     class ConvertKLST : public Converter
@@ -371,7 +407,11 @@ namespace ESSImport
             mContext->mPlayer.mObject.mNpcStats.mWerewolfKills = klst.mWerewolfKills;
         }
 
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             esm.startRecord(ESM::REC_DCOU);
             for (const auto& [id, count] : mKillCounter)
@@ -428,7 +468,11 @@ namespace ESSImport
                 }
             }
         }
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             ESM::StolenItems items;
             for (auto it = mStolenItems.begin(); it != mStolenItems.end(); ++it)
@@ -486,7 +530,11 @@ namespace ESSImport
             if (dial.mIndex > 0)
                 mDials[id] = dial;
         }
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             for (auto it = mDials.begin(); it != mDials.end(); ++it)
             {
@@ -539,7 +587,11 @@ namespace ESSImport
             mHasGame = true;
         }
 
+<<<<<<< HEAD
         int validateWeatherID(int weatherID) const
+=======
+        int validateWeatherID(int weatherID)
+>>>>>>> origin/main
         {
             if (weatherID >= -1 && weatherID < 10)
             {
@@ -551,7 +603,11 @@ namespace ESSImport
             }
         }
 
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             if (!mHasGame)
                 return;
@@ -586,7 +642,11 @@ namespace ESSImport
             convertSCPT(script, out);
             mScripts.push_back(std::move(out));
         }
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override
+=======
+        void write(ESM::ESMWriter& esm) override
+>>>>>>> origin/main
         {
             for (const auto& script : mScripts)
             {
@@ -604,12 +664,21 @@ namespace ESSImport
     class ConvertPROJ : public Converter
     {
     public:
+<<<<<<< HEAD
         int getStage() const override { return 2; }
         void read(ESM::ESMReader& esm) override;
         void write(ESM::ESMWriter& esm) const override;
 
     private:
         void convertBaseState(ESM::BaseProjectileState& base, const PROJ::PNAM& pnam) const;
+=======
+        int getStage() override { return 2; }
+        void read(ESM::ESMReader& esm) override;
+        void write(ESM::ESMWriter& esm) override;
+
+    private:
+        void convertBaseState(ESM::BaseProjectileState& base, const PROJ::PNAM& pnam);
+>>>>>>> origin/main
         PROJ mProj;
     };
 
@@ -617,7 +686,11 @@ namespace ESSImport
     {
     public:
         void read(ESM::ESMReader& esm) override;
+<<<<<<< HEAD
         void write(ESM::ESMWriter& esm) const override;
+=======
+        void write(ESM::ESMWriter& esm) override;
+>>>>>>> origin/main
 
     private:
         SPLM mSPLM;

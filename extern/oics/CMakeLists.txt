@@ -5,6 +5,7 @@ add_library(oics STATIC
     ICSInputControlSystem_keyboard.cpp
     ICSInputControlSystem_mouse.cpp
     ICSInputControlSystem_joystick.cpp
+<<<<<<< HEAD
     include/oics/ICSChannel.h
     include/oics/ICSChannelListener.h
     include/oics/ICSControl.h
@@ -15,17 +16,29 @@ add_library(oics STATIC
 
 target_include_directories(oics SYSTEM PUBLIC include)
 target_include_directories(oics PRIVATE include/oics)
+=======
+    ICSPrerequisites.h
+)
+>>>>>>> origin/main
 
 if(USE_SYSTEM_TINYXML)
     target_link_libraries(oics ${TinyXML_LIBRARIES})
 else()
     add_library(local_tinyxml STATIC
+<<<<<<< HEAD
         tinyxml/tinyxml.cpp
         tinyxml/tinyxmlparser.cpp
         tinyxml/tinyxmlerror.cpp
         tinyxml/tinystr.cpp
     )
     target_include_directories(local_tinyxml SYSTEM PUBLIC tinyxml)
+=======
+        tinyxml.cpp
+        tinyxmlparser.cpp
+        tinyxmlerror.cpp
+        tinystr.cpp
+    )
+>>>>>>> origin/main
     target_link_libraries(oics local_tinyxml)
 endif()
 

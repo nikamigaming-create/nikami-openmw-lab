@@ -12,7 +12,11 @@ PhysicsProfiler: "Physics Profiler"
 
 # Messages
 
+<<<<<<< HEAD
 AskLoadLastSave: "The most recent save is ''{save}''. Do you want to load it?"
+=======
+AskLoadLastSave: "The most recent save is '%s'. Do you want to load it?"
+>>>>>>> origin/main
 BuildingNavigationMesh: "Building Navigation Mesh"
 InitializingData: "Initializing Data..."
 LoadingExterior: "Loading Area"
@@ -30,7 +34,11 @@ QuitGameConfirmation: "Quit the game?"
 SaveGameDenied: "The game cannot be saved right now."
 SavingInProgress: "Saving..."
 ScreenshotFailed: "Failed to save screenshot"
+<<<<<<< HEAD
 ScreenshotMade: "{file} has been saved"
+=======
+ScreenshotMade: "%s has been saved"
+>>>>>>> origin/main
 
 
 # Save game menu
@@ -65,9 +73,13 @@ TimePlayed: "Time Played"
 # Settings menu
 
 ActorsProcessingRange: "Actors Processing Range"
+<<<<<<< HEAD
 ActorsProcessingRangeValue: "Actors Processing Range ({value, number, :: group-off})"
 Anisotropy: "Anisotropy"
 AnisotropyValue: "Anisotropy ({value})"
+=======
+Anisotropy: "Anisotropy"
+>>>>>>> origin/main
 Audio: "Audio"
 AudioEffects: "Effects"
 AudioFootsteps: "Footsteps"
@@ -80,10 +92,13 @@ CameraSensitivity: "Camera Sensitivity"
 CameraZoomIn: "Zoom Camera In"
 CameraZoomOut: "Zoom Camera Out"
 ChangeRequiresRestart: "This change requires a restart to take effect."
+<<<<<<< HEAD
 ClampLighting: "Clamp Lighting"
 ClampLightingTooltip: |-
     Cap lighting brightness at (1, 1, 1) to replicate Morrowind's rendering.
     Prevents overly bright or shifted colors but can dull lighting.
+=======
+>>>>>>> origin/main
 ClassicFalloff: "Classic Falloff"
 ClassicFalloffTooltip: |-
     Default: off
@@ -104,26 +119,41 @@ DelayLow: "Fast"
 DelayHigh: "Slow"
 DetailLevel: "Detail Level"
 Difficulty: "Difficulty"
+<<<<<<< HEAD
 DifficultyValue: "Difficulty ({value})"
+=======
+>>>>>>> origin/main
 DifficultyEasy: "Easy"
 DifficultyHard: "Hard"
 DistanceHigh: "Far"
 DistanceLow: "Near"
 EnableController: "Enable Controller"
 FieldOfView: "Field of View"
+<<<<<<< HEAD
 FieldOfViewValue: "Field of View ({value, number, ::.00})"
+=======
+>>>>>>> origin/main
 FieldOfViewHigh: "High"
 FieldOfViewLow: "Low"
 ForcePerPixelLighting: "Per-Pixel Lighting"
 ForcePerPixelLightingTooltip: |-
     Force the use of per-pixel lighting. By default, only bump- and normal-mapped objects use per-pixel lighting.
 
+<<<<<<< HEAD
     Enabling per-pixel lighting results in visual differences to the original engine as certain lights in Morrowind rely on vertex lighting to look as intended.
+=======
+    Only affects objects drawn with shaders.
+
+    Enabling per-pixel lighting results in visual differences to the original MW engine as certain lights in Morrowind rely on vertex lighting to look as intended.
+>>>>>>> origin/main
 
     Note that groundcover shaders and particle effects ignore this setting.
 FrameRateHint: "Hint: press F3 to show\nthe current frame rate."
 GammaCorrection: "Gamma Correction"
+<<<<<<< HEAD
 GammaCorrectionValue: "Gamma Correction ({value, number, ::.00})"
+=======
+>>>>>>> origin/main
 GammaDark: "Dark"
 GammaLight: "Light"
 GmstOverridesL10n: "Strings From ESM Files Have Priority"
@@ -132,11 +162,16 @@ InvertYAxis: "Invert Y Axis"
 Language: "Language"
 LanguageNote: "Note: these settings do not affect strings from ESM files."
 LightingMethod: "Lighting Method"
+<<<<<<< HEAD
+=======
+LightingMethodLegacy: "Legacy"
+>>>>>>> origin/main
 LightingMethodShaders: "Shaders"
 LightingMethodShadersCompatibility: "Shaders (compatibility)"
 LightingResetToDefaults: "Resets to default values, would you like to continue? Changes to lighting method will require a restart."
 Lights: "Lights"
 LightsBoundingSphereMultiplier: "Bounding Sphere Multiplier"
+<<<<<<< HEAD
 LightsBoundingSphereMultiplierValue: "Bounding Sphere Multiplier ({value, number, ::.00})"
 LightsBoundingSphereMultiplierTooltip: "Default: 1.65\nMultiplier for bounding sphere of lights.\nHigher numbers allows for smooth falloff but require an increase in number of max lights.\n\nDoes not effect the illumination or strength of lights."
 LightsFadeStartMultiplier: "Fade Start Multiplier"
@@ -150,6 +185,18 @@ LightsMaximumDistanceValue: "Maximum Light Distance ({value, number, :: group-of
 LightsMaximumDistanceTooltip: "Default: 8192\nMaximum distance at which lights will appear (measured in units).\n\nSet this to 0 to use an unlimited distance."
 LightsMinimumInteriorBrightness: "Minimum Interior Brightness"
 LightsMinimumInteriorBrightnessValue: "Minimum Interior Brightness ({value, number, ::.00})"
+=======
+LightsBoundingSphereMultiplierTooltip: "Default: 1.65\nMultiplier for bounding sphere of lights.\nHigher numbers allows for smooth falloff but require an increase in number of max lights.\n\nDoes not effect the illumination or strength of lights."
+LightsFadeStartMultiplier: "Fade Start Multiplier"
+LightsFadeStartMultiplierTooltip: "Default: 0.85\nFraction of maximum distance at which lights will start to fade.\n\nSet this to a low value for slower transitions or a high value for quicker transitions."
+LightsLightingMethodTooltip: "Set the internal handling of light sources.\n\n
+    \"Legacy\" always uses 8 lights per object. It provides results most similar to Morrowind's lighting.\n\n
+    \"Shaders (compatibility)\" removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.\n\n
+    \"Shaders\" carries all of the benefits that \"Shaders (compatibility)\" does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware."
+LightsMaximumDistance: "Maximum Light Distance"
+LightsMaximumDistanceTooltip: "Default: 8192\nMaximum distance at which lights will appear (measured in units).\n\nSet this to 0 to use an unlimited distance."
+LightsMinimumInteriorBrightness: "Minimum Interior Brightness"
+>>>>>>> origin/main
 LightsMinimumInteriorBrightnessTooltip: "Default: 0.08\nMinimum ambient interior brightness.\n\nIncrease this if you feel interiors are too dark.\n\nThis has no effect if classic falloff is used."
 MatchSunlightToSun: "Match Sunlight to Sun"
 MatchSunlightToSunTooltip: |-
@@ -158,8 +205,12 @@ MatchSunlightToSunTooltip: |-
 
     This option makes the sun light source's position match the sun's position.
 MaxLights: "Max Lights"
+<<<<<<< HEAD
 MaxLightsValue: "Max Lights ({value, number, :: group-off})"
 MaxLightsTooltip: "Default: 8\nMaximum number of lights per object.\n\nA low number near default will cause light popping similar to what you would see in Morrowind."
+=======
+MaxLightsTooltip: "Default: 8\nMaximum number of lights per object.\n\nA low number near default will cause light popping similar to what you would see with legacy lighting."
+>>>>>>> origin/main
 MenuHelpDelay: "Menu Help Delay"
 MenuTransparency: "Menu Transparency"
 MouseAndKeyboard: "Mouse/Keyboard"
@@ -210,8 +261,11 @@ TransparencyFull: "Full"
 TransparencyNone: "None"
 Video: "Video"
 ViewDistance: "View Distance"
+<<<<<<< HEAD
 ViewDistanceValue: "View Distance ({value, number, ::.00})"
 ViewDistanceValueCells: "View Distance (×{cells, number, ::.00})"
+=======
+>>>>>>> origin/main
 VSync: "VSync"
 VSyncAdaptive: "Adaptive"
 Water: "Water"

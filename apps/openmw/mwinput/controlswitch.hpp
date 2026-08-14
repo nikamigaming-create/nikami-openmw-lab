@@ -31,7 +31,11 @@ namespace MWInput
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress);
         void readRecord(ESM::ESMReader& reader, uint32_t type);
+<<<<<<< HEAD
         size_t countSavedGameRecords() const;
+=======
+        int countSavedGameRecords() const;
+>>>>>>> origin/main
 
     private:
         std::map<std::string, bool, std::less<>> mSwitches;

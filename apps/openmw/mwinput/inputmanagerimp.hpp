@@ -45,7 +45,14 @@ namespace MWInput
     /**
      * @brief Class that provides a high-level API for game input
      */
+<<<<<<< HEAD
     class InputManager final : public MWBase::InputManager
+=======
+//## VR_PATCH BEGIN
+// the vr input manager needs to derive this.
+    class InputManager : public MWBase::InputManager
+//## VR_PATCH END
+>>>>>>> origin/main
     {
     public:
         InputManager(SDL_Window* window, osg::ref_ptr<osgViewer::Viewer> viewer,
@@ -53,7 +60,13 @@ namespace MWInput
             bool userFileExists, const std::filesystem::path& userControllerBindingsFile,
             const std::filesystem::path& controllerBindingsFile, bool grab);
 
+<<<<<<< HEAD
         ~InputManager() final;
+=======
+//## VR_PATCH BEGIN
+        virtual ~InputManager();
+//## VR_PATCH END
+>>>>>>> origin/main
 
         /// Clear all savegame-specific data
         void clear() override;
@@ -95,7 +108,11 @@ namespace MWInput
         std::string getControllerButtonIcon(int button) override;
         std::string getControllerAxisIcon(int axis) override;
 
+<<<<<<< HEAD
         size_t countSavedGameRecords() const override;
+=======
+        int countSavedGameRecords() const override;
+>>>>>>> origin/main
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) override;
         void readRecord(ESM::ESMReader& reader, uint32_t type) override;
 
@@ -105,8 +122,19 @@ namespace MWInput
         void executeAction(int action) override;
 
         bool controlsDisabled() override { return mControlsDisabled; }
+<<<<<<< HEAD
 
     private:
+=======
+//## VR_PATCH BEGIN
+        void applyHapticsLeftHand(float intensity) override{}
+        void applyHapticsRightHand(float intensity) override{}
+
+        void injectEscapeKey() override;
+
+    protected:
+//## VR_PATCH END
+>>>>>>> origin/main
         bool mControlsDisabled;
 
         void saveBindings() override;

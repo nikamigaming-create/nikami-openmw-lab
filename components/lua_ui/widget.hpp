@@ -3,7 +3,10 @@
 
 #include <functional>
 #include <map>
+<<<<<<< HEAD
 #include <vector>
+=======
+>>>>>>> origin/main
 
 #include <MyGUI_Widget.h>
 #include <sol/sol.hpp>
@@ -22,7 +25,10 @@ namespace LuaUi
     class WidgetExtension
     {
     public:
+<<<<<<< HEAD
         using Warnings = std::vector<std::string>;
+=======
+>>>>>>> origin/main
         WidgetExtension();
 
         virtual ~WidgetExtension() = default;
@@ -79,16 +85,27 @@ namespace LuaUi
         MyGUI::IntCoord calculateCoord() const;
 
         virtual bool isTextInput() { return false; }
+<<<<<<< HEAD
         bool collectWarnings(Warnings& warnings, int depth, bool generateWarningStrings) const;
         std::string diagnosticName() const;
+=======
+
+        virtual bool isVisible() const { return mVisible; }
+>>>>>>> origin/main
 
     protected:
         virtual void initialize();
         void registerEvents(MyGUI::Widget* w);
         void clearEvents(MyGUI::Widget* w);
 
+<<<<<<< HEAD
         sol::object keyEvent(LuaUtil::LuaView& view, MyGUI::KeyCode) const;
         sol::object mouseEvent(LuaUtil::LuaView& view, int left, int top, MyGUI::MouseButton button) const;
+=======
+        sol::table makeTable() const;
+        sol::object keyEvent(MyGUI::KeyCode) const;
+        sol::object mouseEvent(int left, int top, MyGUI::MouseButton button) const;
+>>>>>>> origin/main
 
         MyGUI::IntSize parentSize() const;
         virtual MyGUI::IntSize childScalingSize() const;
@@ -107,11 +124,15 @@ namespace LuaUi
         virtual void updateProperties();
         virtual void updateChildren() {}
 
+<<<<<<< HEAD
         template <class Lambda>
         void protectedCall(Lambda&& f) const
         {
             LuaUtil::protectedCall(mLua, std::forward<Lambda>(f));
         }
+=======
+        lua_State* lua() const { return mLua; }
+>>>>>>> origin/main
 
         void triggerEvent(std::string_view name, sol::object argument) const;
         template <class ArgFactory>
@@ -124,6 +145,7 @@ namespace LuaUi
                 auto it = w->mCallbacks.find(name);
                 if (it != w->mCallbacks.end())
                 {
+<<<<<<< HEAD
                     try
                     {
                         sol::object res = it->second.call(argumentFactory(w), w->mLayout);
@@ -134,6 +156,10 @@ namespace LuaUi
                         Log(Debug::Warning) << name << " event propagation has failed: " << e.what();
                         shouldPropagate = false;
                     }
+=======
+                    sol::object res = it->second.call(argumentFactory(w), w->mLayout);
+                    shouldPropagate = res.is<bool>() && res.as<bool>();
+>>>>>>> origin/main
                 }
                 if (w->mParent && w->mPropagateEvents && shouldPropagate)
                     w = w->mParent;
@@ -142,10 +168,13 @@ namespace LuaUi
             }
         }
 
+<<<<<<< HEAD
         bool collectUnusedWarnings(std::vector<std::string>& warnings, bool generateWarningStrings) const;
 
         virtual const std::vector<std::string_view>& allUsedProperties() const;
 
+=======
+>>>>>>> origin/main
         bool mForcePosition;
         bool mForceSize;
         // offsets the position and size, used only in C++ widget code
@@ -177,6 +206,25 @@ namespace LuaUi
         bool mTemplateChild;
         bool mElementRoot;
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        MyGUI::EventHandle_WidgetKeyCodeChar::IDelegate* mEventKeyButtonPressed = nullptr;
+        MyGUI::EventHandle_WidgetKeyCode::IDelegate* mEventKeyButtonReleased = nullptr;
+        MyGUI::EventHandle_WidgetVoid::IDelegate* mEventMouseButtonClick = nullptr;
+        MyGUI::EventHandle_WidgetVoid::IDelegate* mEventMouseButtonDoubleClick = nullptr;
+        MyGUI::EventHandle_WidgetIntIntButton::IDelegate* mEventMouseButtonPressed = nullptr;
+        MyGUI::EventHandle_WidgetIntIntButton::IDelegate* mEventMouseButtonReleased = nullptr;
+        MyGUI::EventHandle_WidgetIntInt::IDelegate* mEventMouseMove = nullptr;
+        MyGUI::EventHandle_WidgetIntIntButton::IDelegate* mEventMouseDrag = nullptr;
+        MyGUI::EventHandle_WidgetWidget::IDelegate* mEventMouseSetFocus = nullptr;
+        MyGUI::EventHandle_WidgetWidget::IDelegate* mEventMouseLostFocus = nullptr;
+        MyGUI::EventHandle_WidgetWidget::IDelegate* mEventKeySetFocusDelegate = nullptr;
+        MyGUI::EventHandle_WidgetWidget::IDelegate* mEventKeyLostFocusDelegate = nullptr;
+        bool mEventsInitialized = false;
+
+//## VR_PATCH END
+>>>>>>> origin/main
         void attach(WidgetExtension* ext);
         void attachTemplate(WidgetExtension* ext);
 

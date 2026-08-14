@@ -576,6 +576,7 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>Text file (*.txt)</source>
         <translation>Текстовый файл (*.txt)</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Open Directory</source>
         <translation>Открыть директорию</translation>
@@ -620,6 +621,8 @@ Logs and settings changed through the launcher and in-game will be saved here.</
         <source>User config directory used because %1 contains the line config=%2.</source>
         <translation>Эта пользовательская директория конфигурации используется, потому что в %1 содержится строка config=%2.</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>MainWindow</name>
@@ -927,9 +930,17 @@ Logs and settings changed through the launcher and in-game will be saved here.</
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Normally environment map reflections aren&apos;t affected by lighting, which makes environment-mapped (and thus bump-mapped objects) glow in the dark.
                   Morrowind Code Patch includes an option to remedy that by doing environment-mapping before applying lighting, this is the equivalent of that option.
+<<<<<<< HEAD
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Обычно освещение не должно влиять на карты окружения, из-за чего объекты с картами окружения (в том числе объекты с рельефными текстурами) светятся в темноте.
                   Morrowind Code Patch предоставляет способ обойти эту проблему, применяя карты окружения перед применением освещения, аналогично этой опции.
+=======
+                  Affected objects will use shaders.
+                  &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Обычно освещение не должно влиять на карты окружения, из-за чего объекты с картами окружения (в том числе объекты с рельефными текстурами) светятся в темноте.
+                  Morrowind Code Patch предоставляет способ обойти эту проблему, применяя карты окружения перед применением освещения, аналогично этой опции.
+                  Объекты с картами окружения будут использовать шейдеры.
+>>>>>>> origin/main
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
@@ -1484,6 +1495,7 @@ Logs and settings changed through the launcher and in-game will be saved here.</
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the internal handling of light sources.&lt;/p&gt;
+<<<<<<< HEAD
 &lt;p&gt;&quot;Shaders (compatibility)&quot; It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
 &lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Задает способ обработки источников света.&lt;/p&gt;
@@ -1491,6 +1503,21 @@ Logs and settings changed through the launcher and in-game will be saved here.</
 &lt;p&gt; &quot;Шейдеры&quot; работает аналогично режиму &quot;Шейдеры (режим совместимости)&quot; но использует более современный подход, позволяющий использовать большее количество источников света с минимальным влиянием на производительность на современном аппаратном обеспечении.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
+=======
+&lt;p&gt; &quot;Legacy&quot; always uses 8 lights per object. It provides results most similar to Morrowind&apos;s lighting.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (compatibility)&quot; removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+&lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Задает способ обработки источников света.&lt;/p&gt;
+&lt;p&gt; &quot;Устаревший&quot; всегда использует 8 источников света на объект и выдает освещение, наиболее близкое к таковому в оригинальной игре.&lt;/p&gt;
+&lt;p&gt;&quot;Шейдеры (режим совместимости)&quot; убирает ограничение в 8 источников света. Этот режим также позволяет освещению влиять на анимированную траву. Рекомендуется использовать этот режим на устаревшем аппаратном обеспечении и с количеством источников света на объект около 8.&lt;/p&gt;
+&lt;p&gt; &quot;Шейдеры&quot; работает аналогично режиму &quot;Шейдеры (режим совместимости)&quot; но использует более современный подход, позволяющий использовать большее количество источников света с минимальным влиянием на производительность на современном аппаратном обеспечении.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Legacy</source>
+        <translation>Устаревший</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Shaders (compatibility)</source>
         <translation>Шейдеры (режим совместимости)</translation>
     </message>
@@ -1526,9 +1553,12 @@ Logs and settings changed through the launcher and in-game will be saved here.</
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Controls the strength of the Doppler effect. Zero means it is completely disabled.&lt;/p&gt;&lt;p&gt;The Doppler effect increases or decreases the pitch of sounds relative to the velocity of the sound source and the listener.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Определяет силу эффекта Доплера. Нулевое значение означает, что эффект отключен полностью.&lt;/p&gt;&lt;p&gt;Эффект Доплера увеличивает или уменьшает высоту звуков в зависимости от скорости источника звука и слушателя.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Active Config Directories</source>
         <translation>Активные директории конфигурации</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 </TS>

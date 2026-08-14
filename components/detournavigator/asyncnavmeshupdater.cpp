@@ -332,7 +332,10 @@ namespace DetourNavigator
                                   << " changeType=" << it->mChangeType;
 
                 mWaiting.push(it);
+<<<<<<< HEAD
                 ++mPostedCount;
+=======
+>>>>>>> origin/main
             }
         }
 
@@ -444,7 +447,10 @@ namespace DetourNavigator
             result.mDb = mDbWorker->getStats();
         result.mCache = mNavMeshTilesCache.getStats();
         result.mDbGetTileHits = mDbGetTileHits.load(std::memory_order_relaxed);
+<<<<<<< HEAD
         result.mPosted = mPostedCount.load(std::memory_order_relaxed);
+=======
+>>>>>>> origin/main
         return result;
     }
 
@@ -1041,7 +1047,11 @@ namespace DetourNavigator
         if (const auto& cachedTileData = job->mCachedTileData)
         {
             Log(Debug::Debug) << "Update db tile by job " << job->mId;
+<<<<<<< HEAD
             job->mGeneratedNavMeshData->mUserId = static_cast<unsigned>(cachedTileData->mTileId);
+=======
+            job->mGeneratedNavMeshData->mUserId = cachedTileData->mTileId;
+>>>>>>> origin/main
             mDb->updateTile(cachedTileData->mTileId, mVersion, serialize(*job->mGeneratedNavMeshData));
             return;
         }
@@ -1053,7 +1063,11 @@ namespace DetourNavigator
             return;
         }
 
+<<<<<<< HEAD
         job->mGeneratedNavMeshData->mUserId = static_cast<unsigned>(mNextTileId);
+=======
+        job->mGeneratedNavMeshData->mUserId = mNextTileId;
+>>>>>>> origin/main
         Log(Debug::Debug) << "Insert db tile by job " << job->mId;
         mDb->insertTile(mNextTileId, job->mWorldspace, job->mChangedTile, mVersion, job->mInput,
             serialize(*job->mGeneratedNavMeshData));

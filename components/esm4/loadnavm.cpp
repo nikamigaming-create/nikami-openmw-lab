@@ -240,6 +240,11 @@ void ESM4::NavMesh::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadnavm"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::NAVM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

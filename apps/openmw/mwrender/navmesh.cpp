@@ -39,6 +39,10 @@ namespace MWRender
 
             osg::ref_ptr<osg::StateSet> stateSet = new osg::StateSet;
             stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+<<<<<<< HEAD
+=======
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+>>>>>>> origin/main
             stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
             stateSet->setAttributeAndModes(lineWidth);
             stateSet->setAttributeAndModes(blendFunc);

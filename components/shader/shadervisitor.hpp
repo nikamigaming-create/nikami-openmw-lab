@@ -23,6 +23,13 @@ namespace Shader
 
         void setProgramTemplate(const osg::Program* programTemplate) { mProgramTemplate = programTemplate; }
 
+<<<<<<< HEAD
+=======
+        /// By default, only bump mapped objects will have a shader added to them.
+        /// Setting force = true will cause all objects to render using shaders, regardless of having a bump map.
+        void setForceShaders(bool force);
+
+>>>>>>> origin/main
         /// Set if we are allowed to modify StateSets encountered in the graph (default true).
         /// @par If set to false, then instead of modifying, the StateSet will be cloned and this new StateSet will be
         /// assigned to the node.
@@ -40,6 +47,11 @@ namespace Shader
 
         void setSpecularMapPattern(const std::string& pattern);
 
+<<<<<<< HEAD
+=======
+        void setApplyLightingToEnvMaps(bool apply);
+
+>>>>>>> origin/main
         void setConvertAlphaTestToAlphaToCoverage(bool convert);
         void setAdjustCoverageForAlphaTest(bool adjustCoverage);
 
@@ -58,6 +70,10 @@ namespace Shader
         void popRequirements();
 
     private:
+<<<<<<< HEAD
+=======
+        bool mForceShaders;
+>>>>>>> origin/main
         bool mAllowedToModifyStateSets;
 
         bool mAutoUseNormalMaps;
@@ -67,6 +83,11 @@ namespace Shader
         bool mAutoUseSpecularMaps;
         std::string mSpecularMapPattern;
 
+<<<<<<< HEAD
+=======
+        bool mApplyLightingToEnvMaps;
+
+>>>>>>> origin/main
         bool mConvertAlphaTestToAlphaToCoverage;
         bool mAdjustCoverageForAlphaTest;
 
@@ -84,6 +105,11 @@ namespace Shader
             // <texture stage, texture name>
             std::map<int, std::string> mTextures;
 
+<<<<<<< HEAD
+=======
+            bool mShaderRequired;
+
+>>>>>>> origin/main
             int mColorMode;
 
             bool mMaterialOverridden;
@@ -106,6 +132,14 @@ namespace Shader
 
             bool mSoftParticles;
 
+<<<<<<< HEAD
+=======
+            // Shader properties live on an ancestor transform while the final Program is also installed on
+            // descendant drawables. Carry the selected family through the requirement stack so a child program
+            // cannot silently fall back to the generic "objects" shader and override its authored parent.
+            std::string mShaderPrefix;
+
+>>>>>>> origin/main
             // the Node that requested these requirements
             osg::Node* mNode;
         };
@@ -114,6 +148,10 @@ namespace Shader
         std::string mDefaultShaderPrefix;
 
         void createProgram(const ShaderRequirements& reqs);
+<<<<<<< HEAD
+=======
+        void ensureFFP(osg::Node& node);
+>>>>>>> origin/main
         bool adjustGeometry(osg::Geometry& sourceGeometry, const ShaderRequirements& reqs);
 
         osg::ref_ptr<const osg::Program> mProgramTemplate;

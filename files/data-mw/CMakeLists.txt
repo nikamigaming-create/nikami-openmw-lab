@@ -15,14 +15,18 @@ set(BUILTIN_DATA_MW_FILES
     # Generic UI messages that can be reused by mods
     l10n/Interface/gmst.yaml
 
+<<<<<<< HEAD
     # L10n for game-specific mechanics
     l10n/Mechanics/gmst.yaml
 
+=======
+>>>>>>> origin/main
     # L10n for OpenMW menus and non-game-specific messages
     l10n/OMWEngine/gmst.yaml
 
     # Game-specific settings for calendar.lua
     openmw_aux/calendarconfig.lua
+<<<<<<< HEAD
 
     scripts/omw/cellhandlers.lua
     scripts/omw/esmfallbacks.lua
@@ -34,11 +38,14 @@ set(BUILTIN_DATA_MW_FILES
     scripts/omw/music/music.lua
     scripts/omw/music/settings.lua
     scripts/omw/playerskillhandlers.lua
+=======
+>>>>>>> origin/main
 )
 
 foreach (f ${BUILTIN_DATA_MW_FILES})
     copy_resource_file("${CMAKE_CURRENT_SOURCE_DIR}/${f}" "${OPENMW_RESOURCES_ROOT}" "resources/vfs-mw/${f}")
 endforeach (f)
+<<<<<<< HEAD
 
 # Concat data/builtin.omwscripts and data-mw/builtin.omwscripts.in to create vfs-mw/builtin.omwscripts
 set(builtinBase "${CMAKE_CURRENT_SOURCE_DIR}/../data/builtin.omwscripts")
@@ -50,3 +57,5 @@ endif()
 
 file(READ "${builtinBase}" BUILTIN_SCRIPTS)
 configure_resource_file("${CMAKE_CURRENT_SOURCE_DIR}/builtin.omwscripts.in" "${OPENMW_RESOURCES_ROOT}" "resources/vfs-mw/builtin.omwscripts")
+=======
+>>>>>>> origin/main

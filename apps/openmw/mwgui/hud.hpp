@@ -2,6 +2,12 @@
 #define OPENMW_GAME_MWGUI_HUD_H
 
 #include <memory>
+<<<<<<< HEAD
+=======
+#include <span>
+#include <string_view>
+#include <vector>
+>>>>>>> origin/main
 
 #include "mapwindow.hpp"
 #include "spellicons.hpp"
@@ -18,6 +24,18 @@ namespace MWGui
     class ItemWidget;
     class SpellWidget;
 
+<<<<<<< HEAD
+=======
+    struct FalloutVatsBodyPartDisplay
+    {
+        std::string_view mName;
+        unsigned int mHitChance = 0;
+        float mViewportX = 0.5f;
+        float mViewportY = 0.5f;
+        bool mSelected = false;
+    };
+
+>>>>>>> origin/main
     class HUD : public WindowBase, public LocalMapBase, public StatsListener
     {
     public:
@@ -52,6 +70,7 @@ namespace MWGui
         void onFrame(float dt) override;
 
         void setCellName(const std::string& cellName);
+        void setPlayerDir(float x, float y);
 
         bool getWorldMouseOver() { return mWorldMouseOver; }
 
@@ -59,11 +78,20 @@ namespace MWGui
 
         void setEnemy(const MWWorld::Ptr& enemy);
 
+<<<<<<< HEAD
+=======
+        void setFalloutVatsVisible(bool visible, std::string_view targetName = {},
+            std::span<const FalloutVatsBodyPartDisplay> bodyParts = {},
+            float actionPointsBefore = 0.f, float actionPointsAfter = 0.f,
+            std::size_t queuedAttacks = 0, std::size_t availableShots = 0, bool executing = false);
+
+>>>>>>> origin/main
         void clear() override;
 
         void dropDraggedItem(float mouseX, float mouseY);
 
     private:
+<<<<<<< HEAD
         MyGUI::ProgressBar *mHealth = nullptr, *mMagicka = nullptr, *mStamina = nullptr, *mEnemyHealth = nullptr,
                            *mDrowning = nullptr;
         MyGUI::Widget* mHealthFrame = nullptr;
@@ -84,11 +112,41 @@ namespace MWGui
         std::string mSpellName;
         std::unique_ptr<SpellIcons> mSpellIcons;
         ESM::RefNum mEnemyActor;
+=======
+        MyGUI::ProgressBar *mHealth, *mMagicka, *mStamina, *mEnemyHealth, *mDrowning;
+        MyGUI::Widget* mHealthFrame;
+        MyGUI::Widget *mWeapBox, *mSpellBox, *mSneakBox;
+        ItemWidget* mWeapImage;
+        SpellWidget* mSpellImage;
+        MyGUI::ProgressBar *mWeapStatus, *mSpellStatus;
+        MyGUI::Widget *mEffectBox, *mMinimapBox;
+        MyGUI::Button* mMinimapButton;
+        MyGUI::ScrollView* mMinimap;
+        MyGUI::ImageBox* mCrosshair;
+        MyGUI::TextBox* mCellNameBox;
+        MyGUI::TextBox* mWeaponSpellBox;
+        MyGUI::TextBox* mCompassHeading;
+        MyGUI::Widget* mFalloutVatsOverlay = nullptr;
+        MyGUI::TextBox* mFalloutVatsTarget = nullptr;
+        MyGUI::TextBox* mFalloutVatsActionPoints = nullptr;
+        MyGUI::TextBox* mFalloutVatsInstructions = nullptr;
+        struct FalloutVatsBodyPartWidgets
+        {
+            MyGUI::Widget* mFrame = nullptr;
+            MyGUI::TextBox* mText = nullptr;
+        };
+        std::vector<FalloutVatsBodyPartWidgets> mFalloutVatsBodyPartWidgets;
+        MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
+>>>>>>> origin/main
 
         // bottom left elements
         int mHealthManaStaminaBaseLeft, mWeapBoxBaseLeft, mSpellBoxBaseLeft, mSneakBoxBaseLeft;
         // bottom right elements
         int mMinimapBoxBaseRight, mEffectBoxBaseRight;
+//## VR_PATCH BEGIN
+// Set aside initial size to use for sizing the hud in VR
+        MyGUI::IntSize mMainWidgetBaseSize;
+//## VR_PATCH END
 
         float mCellNameTimer = 0.f;
         float mWeaponSpellTimer = 0.f;
@@ -109,6 +167,31 @@ namespace MWGui
         void onMagicClicked(MyGUI::Widget* sender);
         void onMapClicked(MyGUI::Widget* sender);
 
+<<<<<<< HEAD
+=======
+        bool mMapVisible;
+        bool mWeaponVisible;
+        bool mSpellVisible;
+
+        bool mWorldMouseOver;
+
+        std::unique_ptr<SpellIcons> mSpellIcons;
+
+        int mEnemyActorId;
+        float mEnemyHealthTimer;
+
+        bool mIsDrowning;
+        float mDrowningFlashTheta;
+
+        void onWorldClicked(MyGUI::Widget* sender);
+        void onWorldMouseOver(MyGUI::Widget* sender, int x, int y);
+        void onWorldMouseLostFocus(MyGUI::Widget* sender, MyGUI::Widget* newWidget);
+        void onHMSClicked(MyGUI::Widget* sender);
+        void onWeaponClicked(MyGUI::Widget* sender);
+        void onMagicClicked(MyGUI::Widget* sender);
+        void onMapClicked(MyGUI::Widget* sender);
+
+>>>>>>> origin/main
         // LocalMapBase
         void customMarkerCreated(MyGUI::Widget* marker) override;
         void doorMarkerCreated(MyGUI::Widget* marker) override;

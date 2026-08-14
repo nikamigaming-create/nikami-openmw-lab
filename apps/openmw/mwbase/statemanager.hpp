@@ -45,7 +45,11 @@ namespace MWBase
         virtual void askLoadRecent() = 0;
 
         virtual void requestNewGame() = 0;
+<<<<<<< HEAD
         virtual void requestLoad(const MWState::Character* character, const std::filesystem::path& filepath) = 0;
+=======
+        virtual void requestLoad(const std::filesystem::path& filepath) = 0;
+>>>>>>> origin/main
 
         virtual State getState() const = 0;
 

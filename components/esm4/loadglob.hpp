@@ -40,6 +40,7 @@ namespace ESM4
 
     struct GlobalVariable
     {
+<<<<<<< HEAD
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
         std::uint64_t mExtraFlags2;
@@ -48,6 +49,16 @@ namespace ESM4
 
         std::uint8_t mType;
         float mValue;
+=======
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+        std::uint64_t mExtraFlags2 = 0;
+
+        std::string mEditorId;
+
+        std::uint8_t mType = 0;
+        float mValue = 0.f;
+>>>>>>> origin/main
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

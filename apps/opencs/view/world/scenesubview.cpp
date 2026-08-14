@@ -45,7 +45,11 @@ CSVWorld::SceneSubView::SceneSubView(const CSMWorld::UniversalId& id, CSMDoc::Do
     mLayout->setContentsMargins(QMargins(0, 0, 0, 0));
 
     CSVRender::WorldspaceWidget* worldspaceWidget = nullptr;
+<<<<<<< HEAD
     WidgetType whatWidget;
+=======
+    widgetType whatWidget;
+>>>>>>> origin/main
 
     if (Misc::StringUtils::ciEqual(id.getId(), ESM::Cell::sDefaultWorldspaceId.getValue()))
     {
@@ -108,7 +112,11 @@ void CSVWorld::SceneSubView::makeConnections(CSVRender::PagedWorldspaceWidget* w
     connect(widget, &CSVRender::PagedWorldspaceWidget::requestFocus, this, &SceneSubView::requestFocus);
 }
 
+<<<<<<< HEAD
 CSVWidget::SceneToolbar* CSVWorld::SceneSubView::makeToolbar(CSVRender::WorldspaceWidget* widget, WidgetType type)
+=======
+CSVWidget::SceneToolbar* CSVWorld::SceneSubView::makeToolbar(CSVRender::WorldspaceWidget* widget, widgetType type)
+>>>>>>> origin/main
 {
     CSVWidget::SceneToolbar* toolbar = new CSVWidget::SceneToolbar(48 + 6, this);
 

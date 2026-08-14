@@ -30,13 +30,22 @@
 #include <stdexcept>
 
 #include "reader.hpp"
+<<<<<<< HEAD
 //#include "writer.hpp"
+=======
+// #include "writer.hpp"
+>>>>>>> origin/main
 
 void ESM4::Dialogue::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
 
+<<<<<<< HEAD
+=======
+    ESM::FormId currentQuest{};
+
+>>>>>>> origin/main
     while (reader.getSubRecordHeader())
     {
         const ESM4::SubRecordHeader& subHdr = reader.subRecordHeader();
@@ -49,7 +58,12 @@ void ESM4::Dialogue::load(ESM4::Reader& reader)
                 reader.getLocalizedString(mTopicName);
                 break;
             case ESM::fourCC("QSTI"):
+<<<<<<< HEAD
                 reader.getFormId(mQuests.emplace_back());
+=======
+                reader.getFormId(currentQuest);
+                mQuests.push_back(currentQuest);
+>>>>>>> origin/main
                 break;
             case ESM::fourCC("QSTR"): // Seems never used in TES4
                 reader.getFormId(mQuestsRemoved.emplace_back());
@@ -81,8 +95,36 @@ void ESM4::Dialogue::load(ESM4::Reader& reader)
                 reader.getZString(mTextDumb);
                 break; // FONV
             case ESM::fourCC("SCRI"):
+<<<<<<< HEAD
             case ESM::fourCC("INFC"): // FONV info connection
             case ESM::fourCC("INFX"): // FONV info index
+=======
+                reader.getFormId(mScript);
+                break;
+            case ESM::fourCC("INFC"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                {
+                    DialogueSharedInfo& sharedInfo = mSharedInfos.emplace_back();
+                    sharedInfo.mQuest = currentQuest;
+                    reader.getFormId(sharedInfo.mInfo);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("INFX"):
+                if (subHdr.dataSize == sizeof(std::int32_t))
+                {
+                    if (mSharedInfos.empty() || mSharedInfos.back().mIndex != -1)
+                    {
+                        DialogueSharedInfo& sharedInfo = mSharedInfos.emplace_back();
+                        sharedInfo.mQuest = currentQuest;
+                    }
+                    reader.get(mSharedInfos.back().mIndex);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+>>>>>>> origin/main
             case ESM::fourCC("QNAM"): // TES5
             case ESM::fourCC("BNAM"): // TES5
             case ESM::fourCC("SNAM"): // TES5
@@ -91,6 +133,11 @@ void ESM4::Dialogue::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loaddial"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::DIAL::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

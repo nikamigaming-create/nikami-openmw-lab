@@ -2,7 +2,12 @@
 #define INTERPRETER_MISCOPCODES_H_INCLUDED
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <format>
+=======
+#include <sstream>
+#include <stdexcept>
+>>>>>>> origin/main
 #include <string>
 #include <vector>
 
@@ -22,6 +27,7 @@ namespace Interpreter
 
     protected:
         void visitedPlaceholder(
+<<<<<<< HEAD
             Placeholder placeholder, int flags, int width, int precision, Notation notation) override
         {
             std::string formatString;
@@ -99,7 +105,80 @@ namespace Interpreter
                     Type_Integer value = mRuntime[0].mInteger;
                     mRuntime.pop();
                     appendMessage(value);
+=======
+            Placeholder placeholder, char padding, int width, int precision, Notation notation) override
+        {
+            std::ostringstream out;
+            out.fill(padding);
+            if (width != -1)
+                out.width(width);
+            if (precision != -1)
+                out.precision(precision);
+
+            switch (placeholder)
+            {
+                case StringPlaceholder:
+                {
+                    int index = mRuntime[0].mInteger;
+                    mRuntime.pop();
+
+                    out << mRuntime.getStringLiteral(index);
+                    mFormattedMessage += out.str();
                 }
+                break;
+                case IntegerPlaceholder:
+                {
+                    Type_Integer value = mRuntime[0].mInteger;
+                    mRuntime.pop();
+
+                    out << value;
+                    mFormattedMessage += out.str();
+                }
+                break;
+                case FloatPlaceholder:
+                {
+                    float value = mRuntime[0].mFloat;
+                    mRuntime.pop();
+
+                    if (notation == Notation::Fixed)
+                    {
+                        out << std::fixed << value;
+                        mFormattedMessage += out.str();
+                    }
+                    else if (notation == Notation::Shortest)
+                    {
+                        out << value;
+                        std::string standard = out.str();
+
+                        out.str(std::string());
+                        out.clear();
+
+                        out << std::scientific << value;
+                        std::string scientific = out.str();
+
+                        mFormattedMessage += standard.length() < scientific.length() ? standard : scientific;
+                    }
+                    // TODO switch to std::format so the precision argument applies to these two
+                    else if (notation == Notation::HexLower)
+                    {
+                        out << std::hexfloat << value;
+                        mFormattedMessage += out.str();
+                    }
+                    else if (notation == Notation::HexUpper)
+                    {
+                        out << std::uppercase << std::hexfloat << value;
+                        mFormattedMessage += out.str();
+                    }
+                    else
+                    {
+                        out << std::scientific << value;
+                        mFormattedMessage += out.str();
+                    }
+>>>>>>> origin/main
+                }
+                break;
+                default:
+                    break;
             }
         }
 

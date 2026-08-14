@@ -32,7 +32,11 @@ namespace
             const osg::Vec3f e1 = v2 - v0;
             osg::Vec3f normal = e0 ^ e1;
             normal.normalize();
+<<<<<<< HEAD
             for (int j = 0; j < 3; ++j)
+=======
+            for (std::size_t j = 0; j < 3; ++j)
+>>>>>>> origin/main
                 result[i + j] = normal[j];
         }
         return result;

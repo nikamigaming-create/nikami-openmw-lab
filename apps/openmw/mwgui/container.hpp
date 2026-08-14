@@ -6,6 +6,11 @@
 #include "windowbase.hpp"
 
 #include <components/misc/notnullptr.hpp>
+<<<<<<< HEAD
+=======
+
+#include "../mwworld/containerstore.hpp"
+>>>>>>> origin/main
 
 namespace MyGUI
 {
@@ -19,6 +24,7 @@ namespace MWGui
     class ItemView;
     class SortFilterItemModel;
     class ItemTransfer;
+<<<<<<< HEAD
 
     class ContainerWindow : public WindowBase, public ReferenceInterface
     {
@@ -37,11 +43,36 @@ namespace MWGui
 
         void resetReference() override;
 
+=======
+
+    class ContainerWindow : public WindowBase, public ReferenceInterface, public MWWorld::ContainerStoreListener
+    {
+    public:
+        explicit ContainerWindow(DragAndDrop& dragAndDrop, ItemTransfer& itemTransfer);
+
+        void setPtr(const MWWorld::Ptr& container) override;
+
+        void onOpen() override;
+
+        void onClose() override;
+
+        void clear() override { resetReference(); }
+
+        void onFrame(float dt) override;
+
+        void resetReference() override;
+
+>>>>>>> origin/main
         void onDeleteCustomData(const MWWorld::Ptr& ptr) override;
 
         void treatNextOpenAsLoot() { mTreatNextOpenAsLoot = true; }
 
+<<<<<<< HEAD
         void onInventoryUpdate(const MWWorld::Ptr& ptr) override;
+=======
+        void itemAdded(const MWWorld::ConstPtr& item, int count) override;
+        void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
+>>>>>>> origin/main
 
         std::string_view getWindowIdForLua() const override { return "Container"; }
 

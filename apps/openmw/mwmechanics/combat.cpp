@@ -1,11 +1,17 @@
 
 #include "combat.hpp"
 
+<<<<<<< HEAD
 #include <array>
 
 #include <components/misc/rng.hpp>
 #include <components/settings/values.hpp>
 
+=======
+#include <components/misc/rng.hpp>
+#include <components/settings/values.hpp>
+
+>>>>>>> origin/main
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include <components/esm3/loadench.hpp>
@@ -133,7 +139,11 @@ namespace MWMechanics
 
         static const int iBlockMaxChance = gmst.find("iBlockMaxChance")->mValue.getInteger();
         static const int iBlockMinChance = gmst.find("iBlockMinChance")->mValue.getInteger();
+<<<<<<< HEAD
         int x = std::clamp(static_cast<int>(blockerTerm - attackerTerm), iBlockMinChance, iBlockMaxChance);
+=======
+        int x = std::clamp<int>(blockerTerm - attackerTerm, iBlockMinChance, iBlockMaxChance);
+>>>>>>> origin/main
 
         auto& prng = MWBase::Environment::get().getWorld()->getPrng();
         if (Misc::Rng::roll0to99(prng) < x)
@@ -239,7 +249,11 @@ namespace MWMechanics
             if (attacker == getPlayer())
                 MWBase::Environment::get().getWindowManager()->setEnemy(victim);
 
+<<<<<<< HEAD
             int skillValue = static_cast<int>(attacker.getClass().getSkill(attacker, weaponSkill));
+=======
+            int skillValue = attacker.getClass().getSkill(attacker, weaponSkill);
+>>>>>>> origin/main
 
             if (Misc::Rng::roll0to99(world->getPrng()) >= getHitChance(attacker, victim, skillValue))
             {
@@ -350,14 +364,22 @@ namespace MWMechanics
         if (godmode)
             return;
         auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+<<<<<<< HEAD
         static const std::array<ESM::RefId, 3> elementalShieldEffects{ ESM::MagicEffect::FireShield,
             ESM::MagicEffect::LightningShield, ESM::MagicEffect::FrostShield };
         for (const auto elementalShieldEffect : elementalShieldEffects)
+=======
+        for (int i = 0; i < 3; ++i)
+>>>>>>> origin/main
         {
             float magnitude = victim.getClass()
                                   .getCreatureStats(victim)
                                   .getMagicEffects()
+<<<<<<< HEAD
                                   .getOrDefault(elementalShieldEffect)
+=======
+                                  .getOrDefault(ESM::MagicEffect::FireShield + i)
+>>>>>>> origin/main
                                   .getMagnitude();
 
             if (!magnitude)
@@ -508,14 +530,21 @@ namespace MWMechanics
         }
 
         MWBase::SoundManager* sndMgr = MWBase::Environment::get().getSoundManager();
+<<<<<<< HEAD
         auto& prng = MWBase::Environment::get().getWorld()->getPrng();
         if (isWerewolf)
         {
+=======
+        if (isWerewolf)
+        {
+            auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+>>>>>>> origin/main
             const ESM::Sound* sound = store.get<ESM::Sound>().searchRandom("WolfHit", prng);
             if (sound)
                 sndMgr->playSound3D(victim, sound->mId, 1.0f, 1.0f);
         }
         else if (!healthdmg)
+<<<<<<< HEAD
         {
             static const std::array<ESM::RefId, 2> sounds
                 = { ESM::RefId::stringRefId("Hand To Hand Hit"), ESM::RefId::stringRefId("Hand To Hand Hit 2") };
@@ -547,6 +576,35 @@ namespace MWMechanics
         }
     }
 
+=======
+            sndMgr->playSound3D(victim, ESM::RefId::stringRefId("Hand To Hand Hit"), 1.0f, 1.0f);
+    }
+
+    void applyFatigueLoss(const MWWorld::Ptr& attacker, const MWWorld::Ptr& weapon, float attackStrength)
+    {
+        // somewhat of a guess, but using the weapon weight makes sense
+        const MWWorld::Store<ESM::GameSetting>& store
+            = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
+        static const float fFatigueAttackBase = store.find("fFatigueAttackBase")->mValue.getFloat();
+        static const float fFatigueAttackMult = store.find("fFatigueAttackMult")->mValue.getFloat();
+        static const float fWeaponFatigueMult = store.find("fWeaponFatigueMult")->mValue.getFloat();
+        CreatureStats& stats = attacker.getClass().getCreatureStats(attacker);
+        MWMechanics::DynamicStat<float> fatigue = stats.getFatigue();
+        const float normalizedEncumbrance = attacker.getClass().getNormalizedEncumbrance(attacker);
+
+        bool godmode = attacker == MWMechanics::getPlayer() && MWBase::Environment::get().getWorld()->getGodModeState();
+
+        if (!godmode)
+        {
+            float fatigueLoss = fFatigueAttackBase + normalizedEncumbrance * fFatigueAttackMult;
+            if (!weapon.isEmpty())
+                fatigueLoss += weapon.getClass().getWeight(weapon) * attackStrength * fWeaponFatigueMult;
+            fatigue.setCurrent(fatigue.getCurrent() - fatigueLoss);
+            stats.setFatigue(fatigue);
+        }
+    }
+
+>>>>>>> origin/main
     float getFightDistanceBias(const MWWorld::Ptr& actor1, const MWWorld::Ptr& actor2)
     {
         osg::Vec3f pos1(actor1.getRefData().getPosition().asVec3());
@@ -635,7 +693,11 @@ namespace MWMechanics
             actor.getClass().getCreatureStats(actor).getAiSequence().getCombatTargets(targets);
         else
             MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+<<<<<<< HEAD
                 actorPos, static_cast<float>(Settings::game().mActorsProcessingRange), targets);
+=======
+                actorPos, Settings::game().mActorsProcessingRange, targets);
+>>>>>>> origin/main
 
         for (MWWorld::Ptr& target : targets)
         {

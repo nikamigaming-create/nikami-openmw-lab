@@ -7,6 +7,7 @@ file(GLOB UNITTEST_SRC_FILES
     options.cpp
 
     mwworld/teststore.cpp
+<<<<<<< HEAD
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
@@ -16,10 +17,67 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwgui/tooltips.cpp
     mwgui/weightedsearch.cpp
+=======
+    mwworld/testesm4questruntime.cpp
+    mwworld/testesm4actorvaluestore.cpp
+    mwworld/testesm4factionstore.cpp
+    mwworld/testesm4perkstore.cpp
+    mwworld/testesm4recipestore.cpp
+    mwworld/testesm4notestore.cpp
+    mwworld/testfnvcraftingruntime.cpp
+    mwworld/testfnvlockpickruntime.cpp
+    mwworld/testactionfnvcrafting.cpp
+    mwworld/testfnvradioprogram.cpp
+    mwworld/testfnvterminalruntime.cpp
+    mwworld/testfnvplayerstate.cpp
+    mwworld/testfnvplayerruntimestate.cpp
+    mwworld/testfnvweather.cpp
+    mwworld/testfnvsavepreflight.cpp
+    mwworld/testfnvfasttravel.cpp
+    mwworld/testduration.cpp
+    mwworld/testtimestamp.cpp
+    mwworld/testptr.cpp
+    mwworld/testcellvisitors.cpp
+    mwworld/testactorfacing.cpp
+    mwworld/testfnvtriggervolume.cpp
+    mwworld/testcontainerstoreesm4.cpp
+    mwworld/testweather.cpp
+
+    mwdialogue/testkeywordsearch.cpp
+    mwdialogue/testesm4dialogueutils.cpp
+    mwdialogue/testesm4resultscript.cpp
+
+    mwgui/tooltips.cpp
+    mwgui/testfalloutquestlistpolicy.cpp
+    mwgui/testinventorylistpolicy.cpp
+    mwgui/testinventoryitemtype.cpp
+
+    mwclass/testesm4container.cpp
+    mwclass/testesm4talkingactivator.cpp
+    mwclass/testlight4.cpp
+    mwclass/testfnvaipackage.cpp
+    mwclass/testfnvfurniturelifecycle.cpp
+    mwclass/testfnvsandbox.cpp
+
+    mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfalloutlodselection.cpp
+    mwrender/testfonvpackageanimation.cpp
+    mwrender/testobjectpaging.cpp
+    mwrender/testplayervisualpolicy.cpp
+
+    mwmechanics/testfalloutcombat.cpp
+    mwmechanics/testfalloutweaponsound.cpp
+    mwmechanics/testdialoguefacing.cpp
+    mwmechanics/testownership.cpp
+
+    mwsound/testsaysequence.cpp
+    mwsound/testfalloutsoundpath.cpp
+>>>>>>> origin/main
 
     mwscript/testscripts.cpp
 )
 
+<<<<<<< HEAD
 if (MSVC)
     # these TUs take a lot of memory for codegen
     # in CI, they often go over the 8GB memory limit if another cl.exe is running at the same time
@@ -32,6 +90,8 @@ if (MSVC)
     )
 endif()
 
+=======
+>>>>>>> origin/main
 source_group(apps\\openmw-tests FILES ${UNITTEST_SRC_FILES})
 
 openmw_add_executable(openmw-tests ${UNITTEST_SRC_FILES})
@@ -47,10 +107,13 @@ if (UNIX AND NOT APPLE)
     target_link_libraries(openmw-tests ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
+<<<<<<< HEAD
 if (WIN32)
     target_sources(openmw-tests PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
+=======
+>>>>>>> origin/main
 if (BUILD_WITH_CODE_COVERAGE)
     target_compile_options(openmw-tests PRIVATE --coverage)
     target_link_libraries(openmw-tests gcov)

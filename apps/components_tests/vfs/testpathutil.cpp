@@ -10,6 +10,7 @@ namespace VFS::Path
     {
         using namespace testing;
 
+<<<<<<< HEAD
         template <class T0, class T1>
         struct TypePair
         {
@@ -135,53 +136,84 @@ namespace VFS::Path
             Typed, VFSPathExtensionViewOperatorsTest, VFSPathExtensionViewOperatorsTypePairs);
 
         TEST(VFSPathNormalizedTest, shouldSupportDefaultConstructor)
+=======
+        TEST(NormalizedTest, shouldSupportDefaultConstructor)
+>>>>>>> origin/main
         {
             const Normalized value;
             EXPECT_EQ(value.value(), "");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportConstructorFromString)
+=======
+        TEST(NormalizedTest, shouldSupportConstructorFromString)
+>>>>>>> origin/main
         {
             const std::string string("Foo\\Bar/baz");
             const Normalized value(string);
             EXPECT_EQ(value.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportConstructorFromConstCharPtr)
+=======
+        TEST(NormalizedTest, shouldSupportConstructorFromConstCharPtr)
+>>>>>>> origin/main
         {
             const char* const ptr = "Foo\\Bar/baz";
             const Normalized value(ptr);
             EXPECT_EQ(value.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportConstructorFromStringView)
+=======
+        TEST(NormalizedTest, shouldSupportConstructorFromStringView)
+>>>>>>> origin/main
         {
             const std::string_view view = "Foo\\Bar/baz";
             const Normalized value(view);
             EXPECT_EQ(value.view(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportConstructorFromNormalizedView)
+=======
+        TEST(NormalizedTest, shouldSupportConstructorFromNormalizedView)
+>>>>>>> origin/main
         {
             const NormalizedView view("foo/bar/baz");
             const Normalized value(view);
             EXPECT_EQ(value.view(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, supportMovingValueOut)
+=======
+        TEST(NormalizedTest, supportMovingValueOut)
+>>>>>>> origin/main
         {
             Normalized value("Foo\\Bar/baz");
             EXPECT_EQ(std::move(value).value(), "foo/bar/baz");
             EXPECT_EQ(value.value(), "");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, isNotEqualToNotNormalized)
+=======
+        TEST(NormalizedTest, isNotEqualToNotNormalized)
+>>>>>>> origin/main
         {
             const Normalized value("Foo\\Bar/baz");
             EXPECT_NE(value.value(), "Foo\\Bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportOperatorLeftShiftToOStream)
+=======
+        TEST(NormalizedTest, shouldSupportOperatorLeftShiftToOStream)
+>>>>>>> origin/main
         {
             const Normalized value("Foo\\Bar/baz");
             std::stringstream stream;
@@ -189,20 +221,29 @@ namespace VFS::Path
             EXPECT_EQ(stream.str(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportOperatorDivEqual)
+=======
+        TEST(NormalizedTest, shouldSupportOperatorDivEqual)
+>>>>>>> origin/main
         {
             Normalized value("foo/bar");
             value /= NormalizedView("baz");
             EXPECT_EQ(value.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, shouldSupportOperatorDivEqualWithStringView)
+=======
+        TEST(NormalizedTest, shouldSupportOperatorDivEqualWithStringView)
+>>>>>>> origin/main
         {
             Normalized value("foo/bar");
             value /= std::string_view("BAZ");
             EXPECT_EQ(value.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedTest, operatorDivShouldNormalizeSuffix)
         {
             Normalized value("foo/bar");
@@ -290,6 +331,56 @@ namespace VFS::Path
         TYPED_TEST_SUITE_P(VFSPathNormalizedOperatorsTest);
 
         TYPED_TEST_P(VFSPathNormalizedOperatorsTest, supportsEqual)
+=======
+        TEST(NormalizedTest, changeExtensionShouldReplaceAfterLastDot)
+        {
+            Normalized value("foo/bar.a");
+            ASSERT_TRUE(value.changeExtension("so"));
+            EXPECT_EQ(value.value(), "foo/bar.so");
+        }
+
+        TEST(NormalizedTest, changeExtensionShouldNormalizeExtension)
+        {
+            Normalized value("foo/bar.a");
+            ASSERT_TRUE(value.changeExtension("SO"));
+            EXPECT_EQ(value.value(), "foo/bar.so");
+        }
+
+        TEST(NormalizedTest, changeExtensionShouldIgnorePathWithoutADot)
+        {
+            Normalized value("foo/bar");
+            ASSERT_FALSE(value.changeExtension("so"));
+            EXPECT_EQ(value.value(), "foo/bar");
+        }
+
+        TEST(NormalizedTest, changeExtensionShouldIgnorePathWithDotBeforeSeparator)
+        {
+            Normalized value("foo.bar/baz");
+            ASSERT_FALSE(value.changeExtension("so"));
+            EXPECT_EQ(value.value(), "foo.bar/baz");
+        }
+
+        TEST(NormalizedTest, changeExtensionShouldThrowExceptionOnExtensionWithDot)
+        {
+            Normalized value("foo.a");
+            EXPECT_THROW(value.changeExtension(".so"), std::invalid_argument);
+        }
+
+        TEST(NormalizedTest, changeExtensionShouldThrowExceptionOnExtensionWithSeparator)
+        {
+            Normalized value("foo.a");
+            EXPECT_THROW(value.changeExtension("/so"), std::invalid_argument);
+        }
+
+        template <class T>
+        struct NormalizedOperatorsTest : Test
+        {
+        };
+
+        TYPED_TEST_SUITE_P(NormalizedOperatorsTest);
+
+        TYPED_TEST_P(NormalizedOperatorsTest, supportsEqual)
+>>>>>>> origin/main
         {
             using Type0 = typename TypeParam::Type0;
             using Type1 = typename TypeParam::Type1;
@@ -302,7 +393,11 @@ namespace VFS::Path
             EXPECT_NE(otherNotEqual, normalized);
         }
 
+<<<<<<< HEAD
         TYPED_TEST_P(VFSPathNormalizedOperatorsTest, supportsLess)
+=======
+        TYPED_TEST_P(NormalizedOperatorsTest, supportsLess)
+>>>>>>> origin/main
         {
             using Type0 = typename TypeParam::Type0;
             using Type1 = typename TypeParam::Type1;
@@ -318,6 +413,7 @@ namespace VFS::Path
             EXPECT_FALSE(otherGreater < normalized);
         }
 
+<<<<<<< HEAD
         REGISTER_TYPED_TEST_SUITE_P(VFSPathNormalizedOperatorsTest, supportsEqual, supportsLess);
 
         using VFSPathNormalizedOperatorsTypePairs
@@ -330,30 +426,63 @@ namespace VFS::Path
         INSTANTIATE_TYPED_TEST_SUITE_P(Typed, VFSPathNormalizedOperatorsTest, VFSPathNormalizedOperatorsTypePairs);
 
         TEST(VFSPathNormalizedViewTest, shouldSupportConstructorFromNormalized)
+=======
+        REGISTER_TYPED_TEST_SUITE_P(NormalizedOperatorsTest, supportsEqual, supportsLess);
+
+        template <class T0, class T1>
+        struct TypePair
+        {
+            using Type0 = T0;
+            using Type1 = T1;
+        };
+
+        using TypePairs = Types<TypePair<Normalized, Normalized>, TypePair<Normalized, const char*>,
+            TypePair<Normalized, std::string>, TypePair<Normalized, std::string_view>,
+            TypePair<Normalized, NormalizedView>, TypePair<NormalizedView, Normalized>,
+            TypePair<NormalizedView, const char*>, TypePair<NormalizedView, std::string>,
+            TypePair<NormalizedView, std::string_view>, TypePair<NormalizedView, NormalizedView>>;
+
+        INSTANTIATE_TYPED_TEST_SUITE_P(Typed, NormalizedOperatorsTest, TypePairs);
+
+        TEST(NormalizedViewTest, shouldSupportConstructorFromNormalized)
+>>>>>>> origin/main
         {
             const Normalized value("Foo\\Bar/baz");
             const NormalizedView view(value);
             EXPECT_EQ(view.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedViewTest, shouldSupportConstexprConstructorFromNormalizedStringLiteral)
+=======
+        TEST(NormalizedViewTest, shouldSupportConstexprConstructorFromNormalizedStringLiteral)
+>>>>>>> origin/main
         {
             constexpr NormalizedView view("foo/bar/baz");
             EXPECT_EQ(view.value(), "foo/bar/baz");
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedViewTest, constructorShouldThrowExceptionOnNotNormalized)
+=======
+        TEST(NormalizedViewTest, constructorShouldThrowExceptionOnNotNormalized)
+>>>>>>> origin/main
         {
             EXPECT_THROW([] { NormalizedView("Foo\\Bar/baz"); }(), std::invalid_argument);
         }
 
+<<<<<<< HEAD
         TEST(VFSPathNormalizedViewTest, shouldSupportOperatorDiv)
+=======
+        TEST(NormalizedView, shouldSupportOperatorDiv)
+>>>>>>> origin/main
         {
             const NormalizedView a("foo/bar");
             const NormalizedView b("baz");
             const Normalized result = a / b;
             EXPECT_EQ(result.value(), "foo/bar/baz");
         }
+<<<<<<< HEAD
 
         TEST(VFSPathNormalizedViewTest, filenameShouldReturnLastComponentOfThePath)
         {
@@ -466,5 +595,7 @@ namespace VFS::Path
             constexpr ExtensionView f("f");
             EXPECT_EQ(joinedCapacity("a", b, c, d, e, f), 11);
         }
+=======
+>>>>>>> origin/main
     }
 }

@@ -24,7 +24,10 @@
 #include <components/resource/imagemanager.hpp>
 #include <components/resource/niffilemanager.hpp>
 #include <components/resource/scenemanager.hpp>
+<<<<<<< HEAD
 #include <components/sceneutil/workqueue.hpp>
+=======
+>>>>>>> origin/main
 #include <components/settings/values.hpp>
 #include <components/toutf8/toutf8.hpp>
 #include <components/version/version.hpp>
@@ -40,9 +43,15 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+<<<<<<< HEAD
 #include <regex>
 #include <string>
 #include <thread>
+=======
+#include <string>
+#include <thread>
+#include <type_traits>
+>>>>>>> origin/main
 #include <utility>
 #include <vector>
 
@@ -120,6 +129,7 @@ namespace NavMeshTool
             addOption("write-binary-log", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "write progress in binary messages to be consumed by the launcher");
 
+<<<<<<< HEAD
             addOption("collect-stats", bpo::value<bool>()->implicit_value(true)->default_value(false),
                 "collect statistics for generated navmesh tiles including existing ones stored in database");
 
@@ -127,6 +137,8 @@ namespace NavMeshTool
                 "Regular expression to filter in specified worldspaces in modified ECMAScript grammar (see "
                 "https://en.cppreference.com/w/cpp/regex/ecmascript.html)");
 
+=======
+>>>>>>> origin/main
             Files::ConfigurationManager::addCommonOptions(result);
 
             return result;
@@ -187,9 +199,12 @@ namespace NavMeshTool
             const bool processInteriorCells = variables["process-interior-cells"].as<bool>();
             const bool removeUnusedTiles = variables["remove-unused-tiles"].as<bool>();
             const bool writeBinaryLog = variables["write-binary-log"].as<bool>();
+<<<<<<< HEAD
             const bool collectStats = variables["collect-stats"].as<bool>();
 
             const std::regex worldspaceFilter(variables["worldspace-filter"].as<std::string>());
+=======
+>>>>>>> origin/main
 
 #ifdef WIN32
             if (writeBinaryLog)
@@ -240,6 +255,7 @@ namespace NavMeshTool
             navigatorSettings.mRecast.mSwimHeightScale
                 = EsmLoader::getGameSetting(esmData.mGameSettings, "fSwimHeightScale").getFloat();
 
+<<<<<<< HEAD
             const std::unordered_map<ESM::RefId, std::vector<std::size_t>> worldspaceCells
                 = collectWorldspaceCells(esmData, processInteriorCells, worldspaceFilter);
 
@@ -306,6 +322,13 @@ namespace NavMeshTool
                 Log(Debug::Info) << "Vacuuming the database...";
                 db.vacuum();
             }
+=======
+            WorldspaceData cellsData = gatherWorldspaceData(
+                navigatorSettings, readers, vfs, bulletShapeManager, esmData, processInteriorCells, writeBinaryLog);
+
+            const Status status = generateAllNavMeshTiles(agentBounds, navigatorSettings, threadsNumber,
+                removeUnusedTiles, writeBinaryLog, cellsData, std::move(db));
+>>>>>>> origin/main
 
             switch (status)
             {

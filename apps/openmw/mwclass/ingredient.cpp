@@ -71,7 +71,11 @@ namespace MWClass
 
     std::unique_ptr<MWWorld::Action> Ingredient::use(const MWWorld::Ptr& ptr, bool force) const
     {
+<<<<<<< HEAD
         if (ptr.get<ESM::Ingredient>()->mBase->mData.mEffectID[0].empty())
+=======
+        if (ptr.get<ESM::Ingredient>()->mBase->mData.mEffectID[0] < 0)
+>>>>>>> origin/main
             return std::make_unique<MWWorld::NullAction>();
         std::unique_ptr<MWWorld::Action> action = std::make_unique<MWWorld::ActionEat>(ptr);
 
@@ -135,8 +139,13 @@ namespace MWClass
                 continue;
             MWGui::Widgets::SpellEffectParams params;
             params.mEffectID = ref->mBase->mData.mEffectID[i];
+<<<<<<< HEAD
             params.mAttribute = ref->mBase->mData.mAttributes[i];
             params.mSkill = ref->mBase->mData.mSkills[i];
+=======
+            params.mAttribute = ESM::Attribute::indexToRefId(ref->mBase->mData.mAttributes[i]);
+            params.mSkill = ESM::Skill::indexToRefId(ref->mBase->mData.mSkills[i]);
+>>>>>>> origin/main
             params.mKnown = alchemySkill >= fWortChanceValue * (i + 1);
 
             list.push_back(params);

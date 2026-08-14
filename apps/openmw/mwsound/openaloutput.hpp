@@ -101,7 +101,11 @@ namespace MWSound
         bool streamSound3D(DecoderPtr decoder, Stream* sound, bool getLoudnessData) override;
         void finishStream(Stream* sound) override;
         double getStreamDelay(Stream* sound) override;
+<<<<<<< HEAD
         float getStreamOffset(Stream* sound) override;
+=======
+        double getStreamOffset(Stream* sound) override;
+>>>>>>> origin/main
         float getStreamLoudness(Stream* sound) override;
         bool isStreamPlaying(Stream* sound) override;
         void updateStream(Stream* sound) override;

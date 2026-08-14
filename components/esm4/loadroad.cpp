@@ -95,6 +95,11 @@ void ESM4::Road::load(ESM4::Reader& reader)
                 break;
             }
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadroad"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::ROAD::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

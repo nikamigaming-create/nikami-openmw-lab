@@ -1,9 +1,20 @@
 #include "actor.hpp"
+<<<<<<< HEAD
+=======
+#include "fnvactorstate.hpp"
+
+#include <map>
+#include <string>
+>>>>>>> origin/main
 
 #include <components/esm3/loadmgef.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/mechanicsmanager.hpp"
+>>>>>>> origin/main
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/world.hpp"
 
@@ -67,10 +78,30 @@ namespace MWClass
         return true;
     }
 
+<<<<<<< HEAD
     float Actor::getCurrentSpeed(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::Movement& movementSettings = ptr.getClass().getMovementSettings(ptr);
         float moveSpeed = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor;
+=======
+    void Actor::readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const
+    {
+        if (ptr.getType() == ESM::REC_NPC_4)
+            readFnvNpcState(ptr, state);
+    }
+
+    void Actor::writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const
+    {
+        if (ptr.getType() == ESM::REC_NPC_4)
+            writeFnvNpcState(ptr, state);
+    }
+
+    float Actor::getCurrentSpeed(const MWWorld::Ptr& ptr) const
+    {
+        const MWMechanics::Movement& movementSettings = ptr.getClass().getMovementSettings(ptr);
+        float moveSpeed
+            = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor * movementSettings.mSpeedMultiplier;
+>>>>>>> origin/main
         if (movementSettings.mIsStrafing)
             moveSpeed *= 0.75f;
         return moveSpeed;
@@ -90,4 +121,61 @@ namespace MWClass
         }
         return false;
     }
+<<<<<<< HEAD
+=======
+
+    void Actor::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+        const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const
+    {
+        (void)sourceType;
+        MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        const bool wasDead = stats.isDead();
+
+        if (!attacker.isEmpty() && attacker.getClass().isActor() && !stats.getAiSequence().isInCombat(attacker))
+        {
+            stats.setAttacked(true);
+            MWBase::Environment::get().getMechanicsManager()->actorAttacked(ptr, attacker);
+        }
+
+        if (!object.empty())
+            stats.setLastHitAttemptObject(object);
+        if (!successful)
+            return;
+        if (!object.empty())
+            stats.setLastHitObject(object);
+        if (ptr == MWMechanics::getPlayer() && MWBase::Environment::get().getWorld()->getGodModeState())
+            return;
+
+        bool damaged = false;
+        for (const auto& [stat, damage] : damages)
+        {
+            if (damage < 0.001f)
+                continue;
+            damaged = true;
+            if (stat == "health")
+            {
+                MWMechanics::DynamicStat<float> value(stats.getHealth());
+                value.setCurrent(value.getCurrent() - damage);
+                stats.setHealth(value);
+            }
+            else if (stat == "fatigue")
+            {
+                MWMechanics::DynamicStat<float> value(stats.getFatigue());
+                value.setCurrent(value.getCurrent() - damage, true);
+                stats.setFatigue(value);
+            }
+            else if (stat == "magicka")
+            {
+                MWMechanics::DynamicStat<float> value(stats.getMagicka());
+                value.setCurrent(value.getCurrent() - damage);
+                stats.setMagicka(value);
+            }
+        }
+
+        if (damaged && !stats.isDead())
+            stats.setHitRecovery(true);
+        if (!wasDead && stats.isDead())
+            MWBase::Environment::get().getMechanicsManager()->actorKilled(ptr, attacker);
+    }
+>>>>>>> origin/main
 }

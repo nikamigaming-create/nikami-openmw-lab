@@ -57,6 +57,10 @@ namespace MWGui
         int mRows = 1;
         int mControllerFocus = 0;
         bool mControllerActiveWindow;
+<<<<<<< HEAD
+=======
+        bool mFalloutListLayout = false;
+>>>>>>> origin/main
         void updateControllerFocus(int prevFocus, int newFocus);
     };
 

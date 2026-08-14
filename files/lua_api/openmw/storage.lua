@@ -1,6 +1,10 @@
 ---
 -- Contains functions to work with permanent Lua storage.
+<<<<<<< HEAD
 -- @context global|menu|local|player|load
+=======
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module storage
 -- @usage
 -- local storage = require('openmw.storage')
@@ -57,14 +61,22 @@
 -- @type StorageSection
 
 ---
+<<<<<<< HEAD
 -- Get a value by a string key; if the value is a table it is readonly.
+=======
+-- Get value by a string key; if value is a table makes it readonly.
+>>>>>>> origin/main
 -- @function [parent=#StorageSection] get
 -- @param self
 -- @param #string key
 -- @return #any
 
 ---
+<<<<<<< HEAD
 -- Get a value by a string key; if the value is a table it returns a copy.
+=======
+-- Get value by a string key; if value is a table returns a copy.
+>>>>>>> origin/main
 -- @function [parent=#StorageSection] getCopy
 -- @param self
 -- @param #string key
@@ -105,8 +117,13 @@
 -- myModData:removeOnExit()
 
 ---
+<<<<<<< HEAD
 -- Set the lifetime of given storage section.
 -- New sections initially have a Persistent lifetime.
+=======
+-- Set the life time of given storage section.
+-- New sections initially have a Persistent life time.
+>>>>>>> origin/main
 -- This function can be used for a global storage section from a global script or for a player storage section from a player or menu script.
 -- @function [parent=#StorageSection] setLifeTime
 -- @param self
@@ -117,7 +134,11 @@
 -- myModData:setLifeTime(storage.LIFE_TIME.Temporary)
 
 ---
+<<<<<<< HEAD
 -- Set a value by a string key; can not be used for global storage from a local script.
+=======
+-- Set value by a string key; can not be used for global storage from a local script.
+>>>>>>> origin/main
 -- @function [parent=#StorageSection] set
 -- @param self
 -- @param #string key

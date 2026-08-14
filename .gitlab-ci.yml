@@ -15,10 +15,13 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
+<<<<<<< HEAD
     - if: $CI_COMMIT_BRANCH && $CI_COMMIT_REF_PROTECTED == 'true'
       # continue running master and release branch pipelines when we do back-to-back merges in case one introduces a regression
       auto_cancel:
         on_new_commit: none
+=======
+>>>>>>> origin/main
     - if: $CI_COMMIT_BRANCH
 
 # https://blog.nimbleways.com/let-s-make-faster-gitlab-ci-cd-pipelines/
@@ -37,10 +40,18 @@ variables:
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
 
+<<<<<<< HEAD
 Ubuntu_GCC_preprocess:
   extends: .Ubuntu_Image
   cache:
     key: Ubuntu_GCC_preprocess.ubuntu_24.04.v2
+=======
+# Disable this until I can understand what it is and how to make it not fail to link the openxr_loader
+.Ubuntu_GCC_preprocess:
+  extends: .Ubuntu_Image
+  cache:
+    key: Ubuntu_GCC_preprocess.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
       - apt-cache/
       - .cache/pip/
@@ -99,7 +110,10 @@ Ubuntu_GCC_preprocess:
   artifacts:
     paths:
       - build/install/
+<<<<<<< HEAD
       - "**/CMakeCache.txt"
+=======
+>>>>>>> origin/main
 
 Coverity:
   tags:
@@ -110,7 +124,11 @@ Coverity:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
   cache:
+<<<<<<< HEAD
     key: Coverity.ubuntu_24.04.v2
+=======
+    key: Coverity.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
     - apt-cache/
     - ccache/
@@ -166,21 +184,32 @@ Coverity_Upload:
 Ubuntu_GCC:
   extends: .Ubuntu
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC.ubuntu_24.04.v1
+>>>>>>> origin/main
   before_script:
     - CI/install_debian_deps.sh gcc openmw-deps openmw-deps-dynamic
   variables:
     CC: gcc
     CXX: g++
     CCACHE_SIZE: 3G
+<<<<<<< HEAD
     ARTIFACT_COMPRESSION_LEVEL: default
+=======
+>>>>>>> origin/main
   # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
   timeout: 2h
 
 Ubuntu_GCC_asan:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_asan.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_asan.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CMAKE_BUILD_TYPE: Debug
     CMAKE_CXX_FLAGS_DEBUG: -g -O1 -fno-omit-frame-pointer -fsanitize=address -fsanitize=pointer-subtract -fsanitize=leak
@@ -189,11 +218,19 @@ Ubuntu_GCC_asan:
     # Disable -Werror due to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105562
     OPENMW_CXX_FLAGS: ""
 
+<<<<<<< HEAD
 Clang_Format:
   extends: .Ubuntu_Image
   stage: checks
   cache:
     key: Ubuntu_Clang_Format.ubuntu_24.04.v2
+=======
+.Clang_Format:
+  extends: .Ubuntu_Image
+  stage: checks
+  cache:
+    key: Ubuntu_Clang_Format.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
       - apt-cache/
   variables:
@@ -205,11 +242,19 @@ Clang_Format:
     - CI/check_file_names.sh
     - CI/check_clang_format.sh
 
+<<<<<<< HEAD
 Lupdate:
   extends: .Ubuntu_Image
   stage: checks
   cache:
     key: Ubuntu_lupdate.ubuntu_24.04.v2
+=======
+.Lupdate:
+  extends: .Ubuntu_Image
+  stage: checks
+  cache:
+    key: Ubuntu_lupdate.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
       - apt-cache/
   variables:
@@ -235,7 +280,11 @@ Teal:
 Ubuntu_GCC_Debug:
   extends: .Ubuntu
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_Debug.ubuntu_24.04.v3
+=======
+    key: Ubuntu_GCC_Debug.ubuntu_24.04.v2
+>>>>>>> origin/main
   before_script:
     - CI/install_debian_deps.sh gcc openmw-deps openmw-deps-dynamic
   variables:
@@ -251,7 +300,11 @@ Ubuntu_GCC_Debug:
 Ubuntu_GCC_tests:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_tests.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_tests.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -265,7 +318,11 @@ Ubuntu_GCC_tests:
 .Ubuntu_GCC_tests_Debug:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_tests_Debug.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_tests_Debug.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -281,7 +338,11 @@ Ubuntu_GCC_tests:
 Ubuntu_GCC_tests_asan:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_tests_asan.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_tests_asan.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -304,7 +365,11 @@ Ubuntu_GCC_tests_asan:
 Ubuntu_GCC_tests_ubsan:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_tests_ubsan.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_tests_ubsan.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -324,7 +389,11 @@ Ubuntu_GCC_tests_ubsan:
 .Ubuntu_GCC_tests_tsan:
   extends: Ubuntu_GCC
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_tests_tsan.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_tests_tsan.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -339,10 +408,17 @@ Ubuntu_GCC_tests_ubsan:
     reports:
       junit: build/*-tests.xml
 
+<<<<<<< HEAD
 Ubuntu_GCC_tests_coverage:
   extends: .Ubuntu_GCC_tests_Debug
   cache:
     key: Ubuntu_GCC_tests_coverage.ubuntu_24.04.v2
+=======
+.Ubuntu_GCC_tests_coverage:
+  extends: .Ubuntu_GCC_tests_Debug
+  cache:
+    key: Ubuntu_GCC_tests_coverage.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
       - .cache/pip
   variables:
@@ -350,7 +426,11 @@ Ubuntu_GCC_tests_coverage:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
     - CI/install_debian_deps.sh gcc openmw-deps openmw-deps-dynamic openmw-coverage
+<<<<<<< HEAD
     - pipx install gcovr==8.3
+=======
+    - pipx install gcovr
+>>>>>>> origin/main
   coverage: /^\s*lines:\s*\d+.\d+\%/
   artifacts:
     paths: []
@@ -375,7 +455,11 @@ Ubuntu_GCC_tests_coverage:
         - "CI/**/*"
         - ".gitlab-ci.yml"
   cache:
+<<<<<<< HEAD
     key: Ubuntu_Static_Deps.ubuntu_24.04.v2
+=======
+    key: Ubuntu_Static_Deps.ubuntu_24.04.v1
+>>>>>>> origin/main
     paths:
       - apt-cache/
       - ccache/
@@ -392,7 +476,11 @@ Ubuntu_GCC_tests_coverage:
 .Ubuntu_Static_Deps_tests:
   extends: .Ubuntu_Static_Deps
   cache:
+<<<<<<< HEAD
     key: Ubuntu_Static_Deps_tests.ubuntu_24.04.v2
+=======
+    key: Ubuntu_Static_Deps_tests.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -411,7 +499,11 @@ Ubuntu_Clang:
   before_script:
     - CI/install_debian_deps.sh clang openmw-deps openmw-deps-dynamic
   cache:
+<<<<<<< HEAD
     key: Ubuntu_Clang.ubuntu_24.04.v3
+=======
+    key: Ubuntu_Clang.ubuntu_24.04.v2
+>>>>>>> origin/main
   variables:
     CC: clang
     CXX: clang++
@@ -424,7 +516,11 @@ Ubuntu_Clang:
   before_script:
     - CI/install_debian_deps.sh clang clang-tidy openmw-deps openmw-deps-dynamic
   cache:
+<<<<<<< HEAD
     key: Ubuntu_Clang_Tidy.ubuntu_24.04.v2
+=======
+    key: Ubuntu_Clang_Tidy.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CMAKE_BUILD_TYPE: Debug
     CMAKE_CXX_FLAGS_DEBUG: -O0
@@ -435,11 +531,15 @@ Ubuntu_Clang:
     - mkdir -pv "${CCACHE_DIR}"
     - ccache -z -M "${CCACHE_SIZE}"
     - CI/before_script.linux.sh
+<<<<<<< HEAD
     - mkdir -p build/extern build/apps/launcher build/apps/opencs build/apps/wizard
     - cp extern/.clang-tidy build/extern/
     - cp extern/.clang-tidy build/apps/launcher/
     - cp extern/.clang-tidy build/apps/opencs/
     - cp extern/.clang-tidy build/apps/wizard/
+=======
+    - cp extern/.clang-tidy build/.clang-tidy
+>>>>>>> origin/main
     - cd build
     - find . -name *.o -exec touch {} \;
     - cmake --build . -- -j $(nproc) ${BUILD_TARGETS}
@@ -453,13 +553,21 @@ Ubuntu_Clang:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ID != "7107382"
 
+<<<<<<< HEAD
 Ubuntu_Clang_Tidy_components:
+=======
+.Ubuntu_Clang_Tidy_components:
+>>>>>>> origin/main
   extends: .Ubuntu_Clang_Tidy_Base
   variables:
     BUILD_TARGETS: components components_qt oics osg-ffmpeg-videoplayer osgQt
   timeout: 3h
 
+<<<<<<< HEAD
 Ubuntu_Clang_Tidy_openmw:
+=======
+.Ubuntu_Clang_Tidy_openmw:
+>>>>>>> origin/main
   extends: .Ubuntu_Clang_Tidy_Base
   needs:
     - Ubuntu_Clang_Tidy_components
@@ -467,7 +575,11 @@ Ubuntu_Clang_Tidy_openmw:
     BUILD_TARGETS: openmw openmw-tests
   timeout: 3h
 
+<<<<<<< HEAD
 Ubuntu_Clang_Tidy_openmw-cs:
+=======
+.Ubuntu_Clang_Tidy_openmw-cs:
+>>>>>>> origin/main
   extends: .Ubuntu_Clang_Tidy_Base
   needs:
     - Ubuntu_Clang_Tidy_components
@@ -475,7 +587,11 @@ Ubuntu_Clang_Tidy_openmw-cs:
     BUILD_TARGETS: openmw-cs openmw-cs-tests
   timeout: 3h
 
+<<<<<<< HEAD
 Ubuntu_Clang_Tidy_other:
+=======
+.Ubuntu_Clang_Tidy_other:
+>>>>>>> origin/main
   extends: .Ubuntu_Clang_Tidy_Base
   needs:
     - Ubuntu_Clang_Tidy_components
@@ -483,10 +599,31 @@ Ubuntu_Clang_Tidy_other:
     BUILD_TARGETS: components-tests bsatool esmtool openmw-launcher openmw-iniimporter openmw-essimporter openmw-wizard niftest openmw-navmeshtool openmw-bulletobjecttool
   timeout: 3h
 
+<<<<<<< HEAD
 Ubuntu_Clang_tests_Debug:
   extends: Ubuntu_Clang
   cache:
     key: Ubuntu_Clang_tests_Debug.ubuntu_24.04.v2
+=======
+.Ubuntu_Clang_tests:
+  extends: Ubuntu_Clang
+  cache:
+    key: Ubuntu_Clang_tests.ubuntu_24.04.v1
+  variables:
+    CCACHE_SIZE: 1G
+    BUILD_TESTS_ONLY: 1
+  artifacts:
+    paths: []
+    name: ${CI_JOB_NAME}-${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHA}
+    when: always
+    reports:
+      junit: build/*-tests.xml
+
+Ubuntu_Clang_tests_Debug:
+  extends: Ubuntu_Clang
+  cache:
+    key: Ubuntu_Clang_tests_Debug.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     CCACHE_SIZE: 1G
     BUILD_TESTS_ONLY: 1
@@ -503,7 +640,11 @@ Ubuntu_Clang_tests_Debug:
   stage: test
   variables:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+<<<<<<< HEAD
     EXAMPLE_SUITE_REVISION: a1ba6fc9d7315c2158ef4c60349fc4e71b7ca343
+=======
+    EXAMPLE_SUITE_REVISION: 3e01d10e073474a886a9efe3658088db14869627
+>>>>>>> origin/main
   cache:
     paths:
       - .cache/pip
@@ -516,21 +657,37 @@ Ubuntu_Clang_tests_Debug:
   after_script:
     - if [[ -f /tmp/openmw-crash.log ]]; then cat /tmp/openmw-crash.log; fi
 
+<<<<<<< HEAD
 Ubuntu_Clang_integration_tests:
+=======
+.Ubuntu_Clang_integration_tests:
+>>>>>>> origin/main
   extends: .Ubuntu_integration_tests_base
   needs:
     - Ubuntu_Clang
   cache:
+<<<<<<< HEAD
     key: Ubuntu_Clang_integration_tests.ubuntu_24.04.v3
   variables:
     OPENMW_DEPS: openmw-integration-tests
 
 Ubuntu_GCC_integration_tests_asan:
+=======
+    key: Ubuntu_Clang_integration_tests.ubuntu_24.04.v2
+  variables:
+    OPENMW_DEPS: openmw-integration-tests
+
+.Ubuntu_GCC_integration_tests_asan:
+>>>>>>> origin/main
   extends: .Ubuntu_integration_tests_base
   needs:
     - Ubuntu_GCC_asan
   cache:
+<<<<<<< HEAD
     key: Ubuntu_GCC_integration_tests_asan.ubuntu_24.04.v2
+=======
+    key: Ubuntu_GCC_integration_tests_asan.ubuntu_24.04.v1
+>>>>>>> origin/main
   variables:
     OPENMW_DEPS: openmw-integration-tests libasan
     ASAN_OPTIONS: halt_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:detect_leaks=0
@@ -540,12 +697,23 @@ Ubuntu_GCC_integration_tests_asan:
   rules:
     - if: $CI_PROJECT_ID != "7107382"
       when: never
+<<<<<<< HEAD
     # Merge request event rule is architecture-specific
     # Unlike ARM64, AMD64 job is manual non-blocking as it's seldom useful
+=======
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+>>>>>>> origin/main
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "schedule"
   image: macos-15-xcode-16
   tags:
     - saas-macos-medium-m1
+<<<<<<< HEAD
+=======
+  cache:
+    paths:
+    - ccache/
+>>>>>>> origin/main
   script:
     - CI/before_install.macos.sh
     - brew install ccache
@@ -556,7 +724,11 @@ Ubuntu_GCC_integration_tests_asan:
     - CI/before_script.macos.sh -C
     - CI/macos/build.sh
     - cd build
+<<<<<<< HEAD
     - for dmg in *.dmg; do mv "$dmg" "${dmg%.dmg}_${CI_COMMIT_REF_NAME##*/}.dmg"; done
+=======
+    - for dmg in *.dmg; do mv "$dmg" "${dmg%.dmg}_${DMG_IDENTIFIER}_${CI_COMMIT_REF_NAME##*/}.dmg"; done
+>>>>>>> origin/main
     - brew install s3cmd
     - |
       if [[ -n "${AWS_ACCESS_KEY_ID}" ]]; then
@@ -576,6 +748,7 @@ Ubuntu_GCC_integration_tests_asan:
   artifacts:
     paths:
       - build/OpenMW-*.dmg
+<<<<<<< HEAD
       - "**/CMakeCache.txt"
 
 macOS15_Xcode16_amd64:
@@ -594,11 +767,22 @@ macOS15_Xcode16_amd64:
       - ccache/
   variables:
     CCACHE_SIZE: 3G
+=======
+
+.macOS15_Xcode16_amd64:
+  extends: .MacOS
+  cache:
+    key: macOS15_Xcode16_amd64.v1
+  variables:
+    CCACHE_SIZE: 3G
+    DMG_IDENTIFIER: amd64
+>>>>>>> origin/main
     MACOS_AMD64: true
     HOMEBREW_NO_AUTO_UPDATE: 1
     HOMEBREW_NO_EMOJI: true
     HOMEBREW_NO_INSTALL_CLEANUP: true
 
+<<<<<<< HEAD
 macOS15_Xcode16_arm64:
   extends: .MacOS
   rules:
@@ -612,11 +796,23 @@ macOS15_Xcode16_arm64:
     paths:
       - ccache/
   variables:
+=======
+.macOS15_Xcode16_arm64:
+  extends: .MacOS
+  cache:
+    key: macOS15_Xcode16_arm64.v1
+  variables:
+    DMG_IDENTIFIER: arm64
+>>>>>>> origin/main
     CCACHE_SIZE: 3G
     HOMEBREW_NO_AUTO_UPDATE: 1
     HOMEBREW_NO_EMOJI: true
     HOMEBREW_NO_INSTALL_CLEANUP: true
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
 .Compress_And_Upload_Symbols_Base:
   extends: .Ubuntu_Image
   stage: build
@@ -631,7 +827,11 @@ macOS15_Xcode16_arm64:
     - ./aws/install
     - popd
     - aws --version
+<<<<<<< HEAD
     - unzip -n -d sym_store '*sym_store.zip'
+=======
+    - unzip -d sym_store *sym_store.zip
+>>>>>>> origin/main
     - shopt -s globstar
     - |
       for file in sym_store/**/*.exe; do
@@ -656,6 +856,7 @@ macOS15_Xcode16_arm64:
           aws --endpoint-url https://rgw.ctrl-c.liu.se s3 cp --recursive --exclude '*' --include '*.ex_' --include '*.dl_' --include '*.pd_' sym_store s3://openmw-sym
       fi
 
+<<<<<<< HEAD
 .Merge_Artifacts_Base:
   extends: .Ubuntu_Image
   stage: build
@@ -710,6 +911,8 @@ macOS15_Xcode16_arm64:
   targets: "bsatool components-tests esmtool niftest openmw-cs openmw-cs-tests openmw_detournavigator_navmeshtilescache_benchmark openmw_esm_refid_benchmark openmw_settings_access_benchmark openmw-bulletobjecttool openmw-essimporter openmw-iniimporter openmw-launcher openmw-navmeshtool openmw-wizard"
   group_name: "group-two"
 
+=======
+>>>>>>> origin/main
 .Windows_Ninja_Base:
   tags:
     - saas-windows-medium-amd64
@@ -717,10 +920,13 @@ macOS15_Xcode16_arm64:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
   - Get-Volume
+<<<<<<< HEAD
   # - docker system prune --all --volumes --force
   - Stop-Service docker
   - cmd /c rd /s /q "C:\ProgramData\Application Data\docker"
   - Get-Volume
+=======
+>>>>>>> origin/main
   - Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
   - choco source add -n=openmw-proxy -s="https://repo.openmw.org/repository/Chocolatey/" --priority=1
   - choco source disable -n=chocolatey
@@ -750,6 +956,7 @@ macOS15_Xcode16_arm64:
     - $time = (Get-Date -Format "HH:mm:ss")
     - echo ${time}
     - echo "started by ${GITLAB_USER_NAME}"
+<<<<<<< HEAD
     - $env:CCACHE_DIR = "$(Get-Location)\ccache"
     - $env:CCACHE_DEPEND = "true"
     - $env:CCACHE_INODECACHE = "true"
@@ -768,19 +975,47 @@ macOS15_Xcode16_arm64:
     - cd $config
     - Copy-Item ..\..\LICENSE license.txt
     - echo "CI_COMMIT_REF_NAME ${CI_COMMIT_REF_NAME}`r`nCI_JOB_ID ${CI_JOB_ID}`r`nCI_COMMIT_SHA ${CI_COMMIT_SHA}" | Out-File -Encoding UTF8 CI-ID.txt
+=======
+    - $env:CCACHE_BASEDIR = Get-Location
+    - $env:CCACHE_DIR = "$(Get-Location)\ccache"
+    - New-Item -Type Directory -Force -Path $env:CCACHE_DIR
+    - New-Item -Type File -Force -Path MSVC2022_64_Ninja\.cmake\api\v1\query\codemodel-v2
+    - sh CI/before_script.msvc.sh -c $config -p Win64 -v 2022 -k -V -N -b -t -C $multiview -E
+    - Get-Volume
+    - cd MSVC2022_64_Ninja
+    - .\ActivateMSVC.ps1
+    - cmake --build . --config $config --target $targets
+    - ccache --show-stats -v
+    - cd $config
+    - echo "CI_COMMIT_REF_NAME ${CI_COMMIT_REF_NAME}`nCI_JOB_ID ${CI_JOB_ID}`nCI_COMMIT_SHA ${CI_COMMIT_SHA}" | Out-File -Encoding UTF8 CI-ID.txt
+>>>>>>> origin/main
     - $artifactDirectory = "$(Make-SafeFileName("${CI_PROJECT_NAMESPACE}"))/$(Make-SafeFileName("${CI_COMMIT_REF_NAME}"))/$(Make-SafeFileName("${CI_COMMIT_SHORT_SHA}-${CI_JOB_ID}"))/"
     - Get-ChildItem -Recurse *.ilk | Remove-Item
     - aws --version
     - |
       if (Get-ChildItem -Recurse *.pdb) {
+<<<<<<< HEAD
         Push-Location ..
         ..\CI\Store-Symbols.ps1 -SkipCompress
         if(!$?) { Exit $LASTEXITCODE }
         7z a -tzip "..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_sym_store.zip"))" '.\SymStore\*' $config\CI-ID.txt
+=======
+        7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_symbols.zip"))" '*.pdb' CI-ID.txt
+        if(!$?) { Exit $LASTEXITCODE }
+        if (Test-Path env:AWS_ACCESS_KEY_ID) {
+          aws --endpoint-url https://rgw.ctrl-c.liu.se s3 cp "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_symbols.zip"))" s3://openmw-artifacts/${artifactDirectory}
+          if(!$?) { Exit $LASTEXITCODE }
+        }
+        Push-Location ..
+        ..\CI\Store-Symbols.ps1 -SkipCompress
+        if(!$?) { Exit $LASTEXITCODE }
+        7z a -tzip "..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_sym_store.zip"))" '.\SymStore\*' $config\CI-ID.txt
+>>>>>>> origin/main
         if(!$?) { Exit $LASTEXITCODE }
         Pop-Location
         Get-ChildItem -Recurse *.pdb | Remove-Item
       }
+<<<<<<< HEAD
     - Rename-Item CI-ID.txt CI-ID_${group_name}.txt
     - 7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}.zip"))" '*'
     - |
@@ -789,6 +1024,14 @@ macOS15_Xcode16_arm64:
         if(!$?) { Exit $LASTEXITCODE }
       }
     - echo "$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}.zip")):$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}"))" | Out-File -Encoding UTF8 "..\..\${group_name}_to-be-merged.txt"
+=======
+    - 7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}.zip"))" '*'
+    - |
+      if (Test-Path env:AWS_ACCESS_KEY_ID) {
+        aws --endpoint-url https://rgw.ctrl-c.liu.se s3 cp "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}.zip"))" s3://openmw-artifacts/${artifactDirectory}
+        if(!$?) { Exit $LASTEXITCODE }
+      }
+>>>>>>> origin/main
     - |
       if ($executables) {
         foreach ($exe in $executables.Split(',')) {
@@ -800,11 +1043,17 @@ macOS15_Xcode16_arm64:
     - Get-Volume
     - Copy-Item C:\ProgramData\chocolatey\logs\chocolatey.log
   cache:
+<<<<<<< HEAD
     key:
       prefix: ninja-2022
       files:
         - CI/deps_versions.msvc.sh
     paths:
+=======
+    key: ninja-2022-v13
+    paths:
+    - ccache
+>>>>>>> origin/main
     - deps
     - MSVC2022_64_Ninja/deps/Qt
   artifacts:
@@ -814,6 +1063,7 @@ macOS15_Xcode16_arm64:
     - "*.log"
     - MSVC2022_64_Ninja/*.log
     - MSVC2022_64_Ninja/**/*.log
+<<<<<<< HEAD
     - MSVC2022_64_Ninja/*.ninja_log
     - MSVC2022_64_Ninja/**/*.ninja_log
     - "*_to-be-merged.txt"
@@ -824,6 +1074,12 @@ macOS15_Xcode16_arm64:
   variables:
     CCACHE_SIZE: 2.5G
     targets: all
+=======
+  variables:
+    targets: all
+  # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
+  timeout: 2h
+>>>>>>> origin/main
 
 .Windows_Ninja_Release:
   extends:
@@ -872,6 +1128,7 @@ macOS15_Xcode16_arm64:
     config: "RelWithDebInfo"
     # Gitlab can't successfully execute following binaries due to unknown reason
     # executables: "components-tests.exe,openmw-tests.exe,openmw-cs-tests.exe,openmw_detournavigator_navmeshtilescache_benchmark.exe"
+<<<<<<< HEAD
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -933,11 +1190,14 @@ Windows_Ninja_RelWithDebInfo_GroupTwo:
           - CI/deps_versions.msvc.sh
       paths:
       - ccache
+=======
+>>>>>>> origin/main
 
 .Windows_Compress_And_Upload_Symbols_Ninja_RelWithDebInfo:
   extends:
     - .Compress_And_Upload_Symbols_Base
   needs:
+<<<<<<< HEAD
     - job: "Windows_Ninja_RelWithDebInfo_GroupOne"
       artifacts: true
     - job: "Windows_Ninja_RelWithDebInfo_GroupTwo"
@@ -954,10 +1214,18 @@ Windows_Ninja_RelWithDebInfo_GroupTwo:
 
 Windows_Ninja_CacheInit_RelWithDebInfo:
   # build components only, so this can be shared with both groups
+=======
+    - job: "Windows_Ninja_RelWithDebInfo"
+      artifacts: true
+
+.Windows_Ninja_CacheInit:
+  # currently, Windows jobs for all configs share the same cache key as we only cache the dependencies
+>>>>>>> origin/main
   extends:
     - .Windows_Ninja_Base
   variables:
     config: "RelWithDebInfo"
+<<<<<<< HEAD
     targets: "components"
     group_name: "cache-init"
   cache:
@@ -983,6 +1251,9 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
       paths:
       - ccache
       policy: push
+=======
+    targets: "get-version"
+>>>>>>> origin/main
   when: manual
 
 .Windows_MSBuild_Base:
@@ -992,16 +1263,22 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
   - Get-Volume
+<<<<<<< HEAD
   # - docker system prune --all --volumes --force
   - Stop-Service docker
   - cmd /c rd /s /q "C:\ProgramData\Application Data\docker"
   - Get-Volume
+=======
+>>>>>>> origin/main
   - Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
   - choco source add -n=openmw-proxy -s="https://repo.openmw.org/repository/Chocolatey/" --priority=1
   - choco source disable -n=chocolatey
   - choco install git --force --params "/GitAndUnixToolsOnPath" -y
   - choco install 7zip -y
+<<<<<<< HEAD
   - choco install ccache -y
+=======
+>>>>>>> origin/main
   - choco install vswhere -y
   - choco install python -y
   - choco install awscli -y --version=2.22.35
@@ -1024,6 +1301,7 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     - $time = (Get-Date -Format "HH:mm:ss")
     - echo ${time}
     - echo "started by ${GITLAB_USER_NAME}"
+<<<<<<< HEAD
     - $env:CCACHE_DIR = "$(Get-Location)\ccache"
     - $env:CCACHE_DEPEND = "true"
     - $env:CCACHE_INODECACHE = "true"
@@ -1033,29 +1311,51 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     - Move-Item $env:CCACHE_DIR $env:TEMP
     - $env:CCACHE_DIR = "$env:TEMP\ccache"
     - ccache -z -M "${CCACHE_SIZE}"
+=======
+>>>>>>> origin/main
     - New-Item -Type File -Force -Path MSVC2022_64\.cmake\api\v1\query\codemodel-v2
     - sh CI/before_script.msvc.sh -c $config -p Win64 -v 2022 -k -V -b -t -C $multiview -E
     - cd MSVC2022_64
     - Get-Volume
+<<<<<<< HEAD
     - $env:CCACHE_IGNOREHEADERS = "$(Get-Location)\deps"
     - cmake --build . --config $config --target ($targets.Split(' ')) -- /bl:`{`}.binlog
     - ccache --show-stats -vv
     - cd $config
     - Copy-Item ..\..\LICENSE license.txt
     - echo "CI_COMMIT_REF_NAME ${CI_COMMIT_REF_NAME}`r`nCI_JOB_ID ${CI_JOB_ID}`r`nCI_COMMIT_SHA ${CI_COMMIT_SHA}" | Out-File -Encoding UTF8 CI-ID.txt
+=======
+    - cmake --build . --config $config --target $targets
+    - cd $config
+    - echo "CI_COMMIT_REF_NAME ${CI_COMMIT_REF_NAME}`nCI_JOB_ID ${CI_JOB_ID}`nCI_COMMIT_SHA ${CI_COMMIT_SHA}" | Out-File -Encoding UTF8 CI-ID.txt
+>>>>>>> origin/main
     - $artifactDirectory = "$(Make-SafeFileName("${CI_PROJECT_NAMESPACE}"))/$(Make-SafeFileName("${CI_COMMIT_REF_NAME}"))/$(Make-SafeFileName("${CI_COMMIT_SHORT_SHA}-${CI_JOB_ID}"))/"
     - Get-ChildItem -Recurse *.ilk | Remove-Item
     - aws --version
     - |
       if (Get-ChildItem -Recurse *.pdb) {
+<<<<<<< HEAD
         Push-Location ..
         ..\CI\Store-Symbols.ps1 -SkipCompress
         if(!$?) { Exit $LASTEXITCODE }
         7z a -tzip "..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_sym_store.zip"))" '.\SymStore\*' $config\CI-ID.txt
+=======
+        7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_symbols.zip"))" '*.pdb' CI-ID.txt
+        if(!$?) { Exit $LASTEXITCODE }
+        if (Test-Path env:AWS_ACCESS_KEY_ID) {
+          aws --endpoint-url https://rgw.ctrl-c.liu.se s3 cp "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_symbols.zip"))" s3://openmw-artifacts/${artifactDirectory}
+          if(!$?) { Exit $LASTEXITCODE }
+        }
+        Push-Location ..
+        ..\CI\Store-Symbols.ps1 -SkipCompress
+        if(!$?) { Exit $LASTEXITCODE }
+        7z a -tzip "..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}_${CI_JOB_ID}_sym_store.zip"))" '.\SymStore\*' $config\CI-ID.txt
+>>>>>>> origin/main
         if(!$?) { Exit $LASTEXITCODE }
         Pop-Location
         Get-ChildItem -Recurse *.pdb | Remove-Item
       }
+<<<<<<< HEAD
     - Rename-Item CI-ID.txt CI-ID_${group_name}.txt
     - 7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}.zip"))" '*'
     - |
@@ -1064,6 +1364,14 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
         if(!$?) { Exit $LASTEXITCODE }
       }
     - echo "$(Make-SafeFileName("OpenMW_MSVC2022_64_${group_name}_${config}_${CI_COMMIT_REF_NAME}.zip")):$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}"))" | Out-File -Encoding UTF8 "..\..\${group_name}_to-be-merged.txt"
+=======
+    - 7z a -tzip "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}.zip"))" '*'
+    - |
+      if (Test-Path env:AWS_ACCESS_KEY_ID) {
+        aws --endpoint-url https://rgw.ctrl-c.liu.se s3 cp "..\..\$(Make-SafeFileName("OpenMW_MSVC2022_64_${config}_${CI_COMMIT_REF_NAME}.zip"))" s3://openmw-artifacts/${artifactDirectory}
+        if(!$?) { Exit $LASTEXITCODE }
+      }
+>>>>>>> origin/main
     - |
       if ($executables) {
         foreach ($exe in $executables.Split(',')) {
@@ -1074,12 +1382,17 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
   after_script:
     - Get-Volume
     - Copy-Item C:\ProgramData\chocolatey\logs\chocolatey.log
+<<<<<<< HEAD
     - Move-Item "$env:TEMP\ccache" .
   cache:
     key:
         prefix: msbuild-2022
         files:
           - CI/deps_versions.msvc.sh
+=======
+  cache:
+    key: msbuild-2022-v13
+>>>>>>> origin/main
     paths:
     - deps
     - MSVC2022_64/deps/Qt
@@ -1090,6 +1403,7 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     - "*.log"
     - MSVC2022_64/*.log
     - MSVC2022_64/**/*.log
+<<<<<<< HEAD
     - MSVC2022_64/*.binlog
     - "*_to-be-merged.txt"
     - "**/CMakeCache.txt"
@@ -1098,6 +1412,11 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     targets: ALL_BUILD
   # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
   # This is capped at 2h by GitLab for Windows Shared Runners
+=======
+  variables:
+    targets: ALL_BUILD
+  # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
+>>>>>>> origin/main
   timeout: 2h
 
 .Windows_MSBuild_Release:
@@ -1126,10 +1445,19 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     - job: "Windows_MSBuild_Debug"
       artifacts: true
 
+<<<<<<< HEAD
 .Windows_MSBuild_RelWithDebInfo:
   extends:
     - .Windows_MSBuild_Base
   variables:
+=======
+Windows_MSBuild_RelWithDebInfo:
+  extends:
+    - .Windows_MSBuild_Base
+  variables:
+    multiview: "-M"
+    targets: "openmw_vr;openmw-launcher"
+>>>>>>> origin/main
     config: "RelWithDebInfo"
     # Gitlab can't successfully execute following binaries due to unknown reason
     # executables: "components-tests.exe,openmw-tests.exe,openmw-cs-tests.exe,openmw_detournavigator_navmeshtilescache_benchmark.exe"
@@ -1138,6 +1466,7 @@ Windows_Ninja_CacheInit_RelWithDebInfo:
     # run this for both pushes and schedules so 'latest successful pipeline for branch' always includes it
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "schedule"
 
+<<<<<<< HEAD
 Windows_MSBuild_RelWithDebInfo_GroupOne:
   extends:
     - .Windows_MSBuild_RelWithDebInfo
@@ -1182,19 +1511,26 @@ Windows_MSBuild_RelWithDebInfo_GroupTwo:
       paths:
       - ccache
 
+=======
+>>>>>>> origin/main
 Windows_Compress_And_Upload_Symbols_MSBuild_RelWithDebInfo:
   extends:
     - .Compress_And_Upload_Symbols_Base
   needs:
+<<<<<<< HEAD
     - job: "Windows_MSBuild_RelWithDebInfo_GroupOne"
       artifacts: true
     - job: "Windows_MSBuild_RelWithDebInfo_GroupTwo"
+=======
+    - job: "Windows_MSBuild_RelWithDebInfo"
+>>>>>>> origin/main
       artifacts: true
   # temporarily enabled while we're linking the above on the downloads page
   rules:
     # run this for both pushes and schedules so 'latest successful pipeline for branch' always includes it
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "schedule"
 
+<<<<<<< HEAD
 Windows_Merge_Artifacts_MSBuild_RelWithDebInfo:
   extends:
     - .Merge_Artifacts_Base
@@ -1210,10 +1546,15 @@ Windows_Merge_Artifacts_MSBuild_RelWithDebInfo:
 
 Windows_MSBuild_CacheInit_RelWithDebInfo:
   # build components only, so this can be shared with both groups
+=======
+Windows_MSBuild_CacheInit:
+  # currently, Windows jobs for all configs share the same cache key as we only cache the dependencies
+>>>>>>> origin/main
   extends:
     - .Windows_MSBuild_Base
   variables:
     config: "RelWithDebInfo"
+<<<<<<< HEAD
     targets: "components"
     group_name: "cache-init"
   cache:
@@ -1239,6 +1580,9 @@ Windows_MSBuild_CacheInit_RelWithDebInfo:
       paths:
       - ccache
       policy: push
+=======
+    targets: "get-version"
+>>>>>>> origin/main
   when: manual
 
 .Ubuntu_AndroidNDK_arm64-v8a:
@@ -1281,7 +1625,10 @@ Windows_MSBuild_CacheInit_RelWithDebInfo:
   artifacts:
     paths:
       - build/install/
+<<<<<<< HEAD
       - "**/CMakeCache.txt"
+=======
+>>>>>>> origin/main
   # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
   timeout: 1h30m
 
@@ -1317,7 +1664,10 @@ Windows_MSBuild_CacheInit_RelWithDebInfo:
       untracked: false
       paths:
         - "openmw.flatpak"
+<<<<<<< HEAD
         - "**/CMakeCache.txt"
+=======
+>>>>>>> origin/main
     # When CCache doesn't exist (e.g. first build on a fork), build takes more than 1h, which is the default for forks.
     # Flatpak Builds compile all dependencies aswell so need more time. Build results of libraries are cached
     timeout: 4h

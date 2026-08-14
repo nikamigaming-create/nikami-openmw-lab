@@ -24,6 +24,7 @@
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
     AiEscort::AiEscort(ESM::RefNum actor, std::string_view cellId, int duration, float x, float y, float z, bool repeat)
         : TypedAiPackage<AiEscort>(repeat)
         , mCellId(cellId)
@@ -34,6 +35,17 @@ namespace MWMechanics
         , mRemainingDuration(static_cast<float>(duration))
     {
         mTargetActor = actor;
+=======
+    AiEscort::AiEscort(const ESM::RefId& actorId, int duration, float x, float y, float z, bool repeat)
+        : TypedAiPackage<AiEscort>(repeat)
+        , mX(x)
+        , mY(y)
+        , mZ(z)
+        , mDuration(duration)
+        , mRemainingDuration(static_cast<float>(duration))
+    {
+        mTargetActorRefId = actorId;
+>>>>>>> origin/main
     }
 
     AiEscort::AiEscort(
@@ -43,7 +55,11 @@ namespace MWMechanics
         , mX(x)
         , mY(y)
         , mZ(z)
+<<<<<<< HEAD
         , mDuration(static_cast<float>(duration))
+=======
+        , mDuration(duration)
+>>>>>>> origin/main
         , mRemainingDuration(static_cast<float>(duration))
     {
         mTargetActorRefId = actorId;
@@ -59,7 +75,11 @@ namespace MWMechanics
         , mRemainingDuration(escort->mRemainingDuration)
     {
         mTargetActorRefId = escort->mTargetId;
+<<<<<<< HEAD
         mTargetActor = escort->mTargetActor;
+=======
+        mTargetActorId = escort->mTargetActorId;
+>>>>>>> origin/main
     }
 
     bool AiEscort::execute(
@@ -84,7 +104,11 @@ namespace MWMechanics
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Nothing);
         actor.getClass().getCreatureStats(actor).setMovementFlag(CreatureStats::Flag_Run, false);
 
+<<<<<<< HEAD
         const MWWorld::Ptr follower = getTarget();
+=======
+        const MWWorld::Ptr follower = MWBase::Environment::get().getWorld()->getPtr(mTargetActorRefId, false);
+>>>>>>> origin/main
         const osg::Vec3f leaderPos = actor.getRefData().getPosition().asVec3();
         const osg::Vec3f followerPos = follower.getRefData().getPosition().asVec3();
         const osg::Vec3f halfExtents = MWBase::Environment::get().getWorld()->getHalfExtents(actor);
@@ -130,9 +154,15 @@ namespace MWMechanics
         escort->mData.mX = mX;
         escort->mData.mY = mY;
         escort->mData.mZ = mZ;
+<<<<<<< HEAD
         escort->mData.mDuration = static_cast<int16_t>(mDuration);
         escort->mTargetId = mTargetActorRefId;
         escort->mTargetActor = mTargetActor;
+=======
+        escort->mData.mDuration = mDuration;
+        escort->mTargetId = mTargetActorRefId;
+        escort->mTargetActorId = mTargetActorId;
+>>>>>>> origin/main
         escort->mRemainingDuration = mRemainingDuration;
         escort->mCellId = mCellId;
         escort->mRepeat = getRepeat();

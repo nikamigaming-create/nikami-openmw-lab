@@ -74,7 +74,11 @@ namespace Resource
                 "",
                 "Lua UsedMemory",
                 "",
+<<<<<<< HEAD
                 "StringRefId Count",
+=======
+                "",
+>>>>>>> origin/main
                 "",
             };
 
@@ -111,7 +115,10 @@ namespace Resource
                 "NavMesh Delayed",
                 "NavMesh Pushed",
                 "NavMesh Processing",
+<<<<<<< HEAD
                 "NavMesh Posted",
+=======
+>>>>>>> origin/main
                 "NavMesh DbJobs Write",
                 "NavMesh DbJobs Read",
                 "NavMesh DbCache Get",
@@ -320,6 +327,10 @@ namespace Resource
         , mStatNames(generateAllStatNames())
     {
         osg::ref_ptr<osg::StateSet> stateset = mSwitch->getOrCreateStateSet();
+<<<<<<< HEAD
+=======
+        stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+>>>>>>> origin/main
         stateset->setMode(GL_BLEND, osg::StateAttribute::ON);
         stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
 #ifdef OSG_GL1_AVAILABLE
@@ -520,14 +531,24 @@ namespace Resource
 
     void StatsHandler::setUpScene(osgViewer::ViewerBase& viewer)
     {
+<<<<<<< HEAD
         const osg::Vec4 backgroundColor(0.0f, 0.0f, 0.0f, 0.3f);
         const osg::Vec4 staticTextColor(1.0f, 1.0f, 0.0f, 1.0f);
         const osg::Vec4 dynamicTextColor(1.0f, 1.0f, 1.0f, 1.0f);
+=======
+        const osg::Vec4 backgroundColor(0.0, 0.0, 0.0f, 0.3);
+        const osg::Vec4 staticTextColor(1.0, 1.0, 0.0f, 1.0);
+        const osg::Vec4 dynamicTextColor(1.0, 1.0, 1.0f, 1.0);
+>>>>>>> origin/main
 
         const auto longest = std::max_element(mStatNames.begin(), mStatNames.end(),
             [](const std::string& lhs, const std::string& rhs) { return lhs.size() < rhs.size(); });
         const std::size_t longestSize = longest->size();
+<<<<<<< HEAD
         const float statNamesWidth = longestSize * characterSize * 0.6f + 2 * backgroundMargin;
+=======
+        const float statNamesWidth = longestSize * characterSize * 0.6 + 2 * backgroundMargin;
+>>>>>>> origin/main
         const float statTextWidth = 7 * characterSize + 2 * backgroundMargin;
         const float statHeight = pageSize * characterSize + 2 * backgroundMargin;
         const float width = statNamesWidth + backgroundSpacing + statTextWidth;

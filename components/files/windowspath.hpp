@@ -4,7 +4,10 @@
 #if defined(_WIN32) || defined(__WINDOWS__)
 
 #include <filesystem>
+<<<<<<< HEAD
 #include <vector>
+=======
+>>>>>>> origin/main
 
 /**
  * \namespace Files
@@ -64,11 +67,19 @@ namespace Files
         std::filesystem::path getGlobalDataPath() const;
 
         /**
+<<<<<<< HEAD
          * \brief Gets the paths of any installed Morrowind versions we can find.
          *
          * \return std::vector<std::filesystem::path>
          */
         std::vector<std::filesystem::path> getInstallPaths() const;
+=======
+         * \brief Gets the path of the installed Morrowind version if there is one.
+         *
+         * \return std::filesystem::path
+         */
+        std::filesystem::path getInstallPath() const;
+>>>>>>> origin/main
 
         std::string mName;
     };

@@ -62,8 +62,11 @@ namespace MWMechanics
 
         float mCheckIdlePositionTimer;
         int mStuckCount;
+<<<<<<< HEAD
 
         bool mGreeting{ false };
+=======
+>>>>>>> origin/main
 
         AiWanderStorage();
 
@@ -78,13 +81,36 @@ namespace MWMechanics
     class AiWander final : public TypedAiPackage<AiWander>
     {
     public:
+<<<<<<< HEAD
+=======
+        static constexpr unsigned sDefaultDestinationTolerance = 64;
+
+        static constexpr unsigned sanitizeDestinationTolerance(unsigned distance, unsigned tolerance) noexcept
+        {
+            if (tolerance == 0)
+                return sDefaultDestinationTolerance;
+
+            unsigned result = tolerance > sDefaultDestinationTolerance ? sDefaultDestinationTolerance : tolerance;
+            if (distance > 1 && result >= distance)
+                result = distance - 1;
+            return result;
+        }
+
+>>>>>>> origin/main
         /// Constructor
         /** \param distance Max distance the ACtor will wander
             \param duration Time, in hours, that this package will be preformed
             \param timeOfDay Currently unimplemented. Not functional in the original engine.
             \param idle Chances of each idle to play (9 in total)
+<<<<<<< HEAD
             \param repeat Repeat wander or not **/
         AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat);
+=======
+            \param repeat Repeat wander or not
+            \param destinationTolerance Arrival distance, or zero for the legacy 64-unit distance **/
+        AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat,
+            unsigned destinationTolerance = 0);
+>>>>>>> origin/main
 
         explicit AiWander(const ESM::AiSequence::AiWander* wander);
 
@@ -118,6 +144,11 @@ namespace MWMechanics
 
         std::optional<int> getDistance() const override { return mDistance; }
 
+<<<<<<< HEAD
+=======
+        unsigned getDestinationTolerance() const { return mDestinationTolerance; }
+
+>>>>>>> origin/main
         std::optional<float> getDuration() const override { return static_cast<float>(mDuration); }
 
         const std::vector<unsigned char>& getIdle() const { return mIdle; }
@@ -133,7 +164,11 @@ namespace MWMechanics
         /// @return Success or error
         bool playIdle(const MWWorld::Ptr& actor, unsigned short idleSelect);
         bool checkIdle(const MWWorld::Ptr& actor, unsigned short idleSelect);
+<<<<<<< HEAD
         unsigned short getRandomIdle() const;
+=======
+        int getRandomIdle() const;
+>>>>>>> origin/main
         void setPathToAnAllowedPosition(
             const MWWorld::Ptr& actor, AiWanderStorage& storage, const ESM::Position& actorPos);
         void evadeObstacles(const MWWorld::Ptr& actor, AiWanderStorage& storage);
@@ -152,6 +187,10 @@ namespace MWMechanics
 
         // how far the actor can wander from the spawn point
         const unsigned mDistance;
+<<<<<<< HEAD
+=======
+        const unsigned mDestinationTolerance;
+>>>>>>> origin/main
         const unsigned mDuration;
         float mRemainingDuration;
         const int mTimeOfDay;

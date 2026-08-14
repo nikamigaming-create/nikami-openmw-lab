@@ -114,4 +114,8 @@ Camera Settings
    through OpenGL extensions. The exception is macOS, which has since dropped
    development of OpenGL drivers. If unsupported, this setting has no effect.
 
+<<<<<<< HEAD
+=======
+   Note, this will force OpenMW to use shaders as if :ref:`force shaders` was enabled.
+>>>>>>> origin/main
    The performance impact of this feature should be negligible.

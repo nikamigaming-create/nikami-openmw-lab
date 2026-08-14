@@ -23,6 +23,14 @@ namespace osg
     class Node;
 }
 
+<<<<<<< HEAD
+=======
+namespace osgFX
+{
+    class Scribe;
+}
+
+>>>>>>> origin/main
 namespace Resource
 {
     class ResourceSystem;
@@ -84,15 +92,26 @@ namespace CSVRender
         ESM::RefId mReferenceableId;
         osg::ref_ptr<osg::PositionAttitudeTransform> mRootNode;
         osg::ref_ptr<osg::PositionAttitudeTransform> mBaseNode;
+<<<<<<< HEAD
         osg::ref_ptr<osg::Group> mOutline;
         bool mSelected{ false };
         bool mSnapTarget{ false };
+=======
+        osg::ref_ptr<osgFX::Scribe> mOutline;
+        bool mSelected;
+        bool mSnapTarget;
+>>>>>>> origin/main
         osg::Group* mParentNode;
         Resource::ResourceSystem* mResourceSystem;
         bool mForceBaseToZero;
         ESM::Position mPositionOverride;
+<<<<<<< HEAD
         float mScaleOverride{ 1.f };
         int mOverrideFlags{ 0 };
+=======
+        float mScaleOverride;
+        int mOverrideFlags;
+>>>>>>> origin/main
         std::unique_ptr<Actor> mActor;
 
         /// Not implemented

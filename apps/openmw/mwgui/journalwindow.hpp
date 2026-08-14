@@ -36,6 +36,13 @@ namespace MWGui
         size_t mIndexRowCount = 1;
         size_t mSelectedQuest = 0;
         size_t mSelectedIndex = 0;
+<<<<<<< HEAD
+=======
+        void moveSelectedIndex(int offset);
+        void setIndexControllerFocus(bool focused);
+        void setControllerFocusedQuest(size_t index);
+        bool optionsModeButtonHandler(const SDL_ControllerButtonEvent& arg);
+>>>>>>> origin/main
     };
 }
 

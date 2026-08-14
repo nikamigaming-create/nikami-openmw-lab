@@ -6,6 +6,7 @@ Events
 Actor events
 ------------
 
+<<<<<<< HEAD
 **DialogueResponse**
 
 This event is sent to the player's local script when an actor triggers a greeting, topic response, service refusal, or plays a voice line.
@@ -29,6 +30,8 @@ It returns a lua table with the following fields:
         end
     }
 
+=======
+>>>>>>> origin/main
 **Died**
 
 This event is sent to an actor's local script when that actor dies.
@@ -71,7 +74,11 @@ Modify the corresponding stat.
 .. code-block:: Lua
 
     -- Consume 10 magicka
+<<<<<<< HEAD
     actor:sendEvent('ModifyStat', {stat = 'magicka', amount = -10})
+=======
+    actor:sendEvent('ModifyStat', {name = 'magicka', amount = -10})
+>>>>>>> origin/main
 
 **AddVfx**
 
@@ -156,7 +163,11 @@ Example:
     if item then
         -- Reduce condition by 1
         -- Note that actor should be included, if applicable, to allow forcibly unequipping items whose condition is reduced to 0
+<<<<<<< HEAD
         core.sendGlobalEvent('ModifyItemCondition', {actor = self, item = item, amount = -1})
+=======
+        core:sendGlobalEvent('ModifyItemCondition', {actor = self, item = item, amount: -1})
+>>>>>>> origin/main
     end
 
 UI events
@@ -241,7 +252,11 @@ Lock a container or door
 
 .. code-block:: Lua
 
+<<<<<<< HEAD
     core.sendGlobalEvent('Lock', {target = selected, magnitude = 50})
+=======
+    core.sendGlobalEvent('Lock', {taret = selected, magnitude = 50})
+>>>>>>> origin/main
 
 **Unlock**
 
@@ -249,4 +264,8 @@ Unlock a container or door
 
 .. code-block:: Lua
 
+<<<<<<< HEAD
     core.sendGlobalEvent('Unlock', {target = selected})
+=======
+    core.sendGlobalEvent('Unlock', {taret = selected})
+>>>>>>> origin/main

@@ -156,7 +156,11 @@ namespace MWWorld
             {
                 ESM::RefId operator()(const ESM::CellRef& ref) { return ref.mSoul; }
                 ESM::RefId operator()(const ESM4::Reference& /*ref*/) { return ESM::RefId(); }
+<<<<<<< HEAD
                 ESM::RefId operator()(const ESM4::ActorCharacter&) { throw std::logic_error("Not applicable"); }
+=======
+                ESM::RefId operator()(const ESM4::ActorCharacter&) { return {}; }
+>>>>>>> origin/main
             };
             return std::visit(Visitor(), mCellRef.mVariant);
         }
@@ -257,6 +261,35 @@ namespace MWWorld
         }
 
         void setCount(int value);
+<<<<<<< HEAD
+=======
+
+        std::uint32_t getEsm4RecordFlags() const
+        {
+            struct Visitor
+            {
+                std::uint32_t operator()(const ESM::CellRef&) { return 0; }
+                std::uint32_t operator()(const ESM4::Reference& ref) { return ref.mFlags; }
+                std::uint32_t operator()(const ESM4::ActorCharacter& ref) { return ref.mFlags; }
+            };
+            return std::visit(Visitor(), mCellRef.mVariant);
+        }
+
+        const ESM4::RadioStationData* getEsm4RadioStationData() const
+        {
+            const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);
+            return reference != nullptr ? &reference->mRadio : nullptr;
+        }
+
+        const ESM4::Primitive* getEsm4Primitive() const
+        {
+            const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);
+            return reference != nullptr && reference->mHasPrimitive ? &reference->mPrimitive : nullptr;
+        }
+
+        // Load mutable state without changing the underlying reference format.
+        void loadState(const ESM::CellRef& state);
+>>>>>>> origin/main
 
         // Write the content of this CellRef into the given ObjectState
         void writeState(ESM::ObjectState& state) const;

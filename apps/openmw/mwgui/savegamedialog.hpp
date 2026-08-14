@@ -11,6 +11,13 @@ namespace MWState
     struct Slot;
 }
 
+//## VR_PATCH BEGIN
+namespace MWVR
+{
+    class VrListBox;
+}
+
+//## VR_PATCH END
 namespace MWGui
 {
 
@@ -72,6 +79,15 @@ namespace MWGui
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
         bool mOkButtonFocus = true;
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        // MERGETODO: Upstream added onControllerButtonEvent() and mOkButtonFocus. Test this.
+        void onCharacterSelectionButtonClicked(MyGUI::Widget* sender);
+        MWVR::VrListBox* mCharacterSelectionListBox;
+        MyGUI::Button* mCharacterSelectionButton;
+//## VR_PATCH END
+>>>>>>> origin/main
     };
 
 }

@@ -82,6 +82,7 @@ GUI Settings
    If false, the controller works as a GUI mouse.
 
 .. omw-setting::
+<<<<<<< HEAD
    :title: controller trigger press
    :type: int
    :range: 1, 32767
@@ -104,6 +105,8 @@ GUI Settings
    The default value is 13/16ths depressed.
 
 .. omw-setting::
+=======
+>>>>>>> origin/main
    :title: controller tooltips
    :type: boolean
    :range: true, false

@@ -62,7 +62,11 @@ namespace Terrain
         border->setColorArray(colors.get());
         border->setColorBinding(osg::Geometry::BIND_PER_VERTEX);
 
+<<<<<<< HEAD
         border->addPrimitiveSet(new osg::DrawArrays(GL_LINE_STRIP, 0, static_cast<GLsizei>(vertices->size())));
+=======
+        border->addPrimitiveSet(new osg::DrawArrays(GL_LINE_STRIP, 0, vertices->size()));
+>>>>>>> origin/main
 
         osg::ref_ptr<osg::Group> borderGroup = new osg::Group;
         borderGroup->addChild(border.get());
@@ -84,8 +88,13 @@ namespace Terrain
 
     void CellBorder::createCellBorderGeometry(int x, int y)
     {
+<<<<<<< HEAD
         auto borderGroup = createBorderGeometry(static_cast<float>(x), static_cast<float>(y), 1.f, mWorld->getStorage(),
             mSceneManager, mBorderMask, mWorld->getWorldspace());
+=======
+        auto borderGroup = createBorderGeometry(
+            x, y, 1.f, mWorld->getStorage(), mSceneManager, mBorderMask, mWorld->getWorldspace());
+>>>>>>> origin/main
         mRoot->addChild(borderGroup);
 
         mCellBorderNodes[std::make_pair(x, y)] = borderGroup;

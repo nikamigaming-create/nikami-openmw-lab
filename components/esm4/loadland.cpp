@@ -211,6 +211,11 @@ void ESM4::Land::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadland"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::LAND - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

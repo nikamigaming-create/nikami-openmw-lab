@@ -1,12 +1,23 @@
 #ifndef GAME_MWBASE_SOUNDMANAGER_H
 #define GAME_MWBASE_SOUNDMANAGER_H
 
+<<<<<<< HEAD
 #include <memory>
 #include <set>
+=======
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <span>
+>>>>>>> origin/main
 #include <string>
 #include <string_view>
 
 #include <components/vfs/pathutil.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm/refid.hpp>
+>>>>>>> origin/main
 
 #include "../mwsound/type.hpp"
 #include "../mwworld/ptr.hpp"
@@ -87,6 +98,18 @@ namespace MWBase
 {
     using Sound = MWSound::Sound;
     using SoundStream = MWSound::Stream;
+<<<<<<< HEAD
+=======
+
+    struct FalloutDialogueVoiceMetadata
+    {
+        std::uint32_t mEmotionType = 0;
+        std::int32_t mEmotionValue = 0;
+        std::uint8_t mFlags = 0;
+        ESM::RefId mSpeakerAnimation;
+        ESM::RefId mListenerAnimation;
+    };
+>>>>>>> origin/main
 
     /// \brief Interface for sound manager (implemented in MWSound)
     class SoundManager
@@ -130,6 +153,7 @@ namespace MWBase
         ///< Make an actor say some text.
         /// \param filename name of a sound file in the VFS
 
+<<<<<<< HEAD
         virtual void say(VFS::Path::NormalizedView filename) = 0;
         ///< Say some text, without an actor ref
         /// \param filename name of a sound file in the VFS
@@ -227,6 +251,117 @@ namespace MWBase
         virtual void resumeSounds(MWSound::BlockerType blocker) = 0;
         ///< Resumes all previously paused sounds.
 
+=======
+        virtual void saySequence(
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames,
+            std::span<const FalloutDialogueVoiceMetadata> metadata = {})
+            = 0;
+        ///< Replace the actor's speech with an authored sequence of voice files.
+        /// Each file begins only after the previous file finishes.
+
+        virtual void say(VFS::Path::NormalizedView filename) = 0;
+        ///< Say some text, without an actor ref
+        /// \param filename name of a sound file in the VFS
+
+        virtual bool sayActive(const MWWorld::ConstPtr& reference = MWWorld::ConstPtr()) const = 0;
+        ///< Is actor not speaking?
+
+        virtual bool sayDone(const MWWorld::ConstPtr& reference = MWWorld::ConstPtr()) const = 0;
+        ///< For scripting backward compatibility
+
+        virtual void stopSay(const MWWorld::ConstPtr& reference = MWWorld::ConstPtr()) = 0;
+        ///< Stop an actor speaking
+
+        virtual float getSaySoundLoudness(const MWWorld::ConstPtr& reference) const = 0;
+        ///< Check the currently playing say sound for this actor
+        /// and get an average loudness value (scale [0,1]) at the current time position.
+        /// If the actor is not saying anything, returns 0.
+
+        virtual float getSaySoundFacialTrackValue(
+            const MWWorld::ConstPtr& reference, std::string_view trackName) const = 0;
+        ///< Evaluate a Fallout 3/New Vegas LIP facial target at the voice playback position.
+        /// If the actor has no authored LIP timeline or is not speaking, returns 0.
+
+        virtual SoundStream* playTrack(const MWSound::DecoderPtr& decoder, Type type) = 0;
+        ///< Play a 2D audio track, using a custom decoder. The caller is expected to call
+        /// stopTrack with the returned handle when done.
+
+        virtual void stopTrack(SoundStream* stream) = 0;
+        ///< Stop the given audio track from playing
+
+        virtual double getTrackTimeDelay(SoundStream* stream) = 0;
+        ///< Retives the time delay, in seconds, of the audio track (must be a sound
+        /// returned by \ref playTrack). Only intended to be called by the track
+        /// decoder's read method.
+
+        virtual Sound* playSound(const ESM::RefId& soundId, float volume, float pitch, Type type = Type::Sfx,
+            PlayMode mode = PlayMode::Normal, float offset = 0)
+            = 0;
+        ///< Play a sound, independently of 3D-position
+        ///< @param offset Number of seconds into the sound to start playback.
+
+        virtual Sound* playSound(std::string_view fileName, float volume, float pitch, Type type = Type::Sfx,
+            PlayMode mode = PlayMode::Normal, float offset = 0)
+            = 0;
+        ///< Play a sound, independently of 3D-position
+        ///< @param offset Number of seconds into the sound to start playback.
+
+        virtual Sound* playSound3D(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId, float volume,
+            float pitch, Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0)
+            = 0;
+        ///< Play a 3D sound attached to an MWWorld::Ptr. Will be updated automatically with the Ptr's position, unless
+        ///< Play_NoTrack is specified.
+        ///< @param offset Number of seconds into the sound to start playback.
+
+        virtual Sound* playSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName, float volume,
+            float pitch, Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0)
+            = 0;
+        ///< Play a 3D sound attached to an MWWorld::Ptr. Will be updated automatically with the Ptr's position, unless
+        ///< Play_NoTrack is specified.
+        ///< @param offset Number of seconds into the sound to start playback.
+
+        virtual Sound* playSound3D(const osg::Vec3f& initialPos, const ESM::RefId& soundId, float volume, float pitch,
+            Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0)
+            = 0;
+        ///< Play a 3D sound at \a initialPos. If the sound should be moving, it must be updated using
+        ///< Sound::setPosition.
+
+        virtual void stopSound(Sound* sound) = 0;
+        ///< Stop the given sound from playing
+
+        virtual void stopSound3D(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) = 0;
+        ///< Stop the given object from playing the given sound.
+
+        virtual void stopSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName) = 0;
+        ///< Stop the given object from playing the given sound.
+
+        virtual void stopSound3D(const MWWorld::ConstPtr& reference) = 0;
+        ///< Stop the given object from playing all sounds.
+
+        virtual void stopSound(const MWWorld::CellStore* cell) = 0;
+        ///< Stop all sounds for the given cell.
+
+        virtual void fadeOutSound3D(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId, float duration) = 0;
+        ///< Fade out given sound (that is already playing) of given object
+        ///< @param reference Reference to object, whose sound is faded out
+        ///< @param soundId ID of the sound to fade out.
+        ///< @param duration Time until volume reaches 0.
+
+        virtual bool getSoundPlaying(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) const = 0;
+        ///< Is the given sound currently playing on the given object?
+        ///  If you want to check if sound played with playSound is playing, use empty Ptr
+
+        virtual bool getSoundPlaying(const MWWorld::ConstPtr& reference, std::string_view fileName) const = 0;
+        ///< Is the given sound currently playing on the given object?
+        ///  If you want to check if sound played with playSound is playing, use empty Ptr
+
+        virtual void pauseSounds(MWSound::BlockerType blocker, int types = int(Type::Mask)) = 0;
+        ///< Pauses all currently playing sounds, including music.
+
+        virtual void resumeSounds(MWSound::BlockerType blocker) = 0;
+        ///< Resumes all previously paused sounds.
+
+>>>>>>> origin/main
         virtual void pausePlayback() = 0;
         virtual void resumePlayback() = 0;
 

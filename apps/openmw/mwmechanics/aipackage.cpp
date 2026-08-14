@@ -16,7 +16,10 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
+<<<<<<< HEAD
 #include "../mwworld/worldmodel.hpp"
+=======
+>>>>>>> origin/main
 
 #include "../mwphysics/raycasting.hpp"
 
@@ -38,7 +41,11 @@ namespace
 
     float getPointTolerance(float speed, float duration, const osg::Vec3f& halfExtents)
     {
+<<<<<<< HEAD
         const float actorTolerance = 2 * speed * duration + 1.2f * std::max(halfExtents.x(), halfExtents.y());
+=======
+        const float actorTolerance = 2 * speed * duration + 1.2 * std::max(halfExtents.x(), halfExtents.y());
+>>>>>>> origin/main
         return std::max(MWMechanics::MIN_TOLERANCE, actorTolerance);
     }
 
@@ -52,11 +59,21 @@ MWMechanics::AiPackage::AiPackage(AiPackageTypeId typeId, const Options& options
     : mTypeId(typeId)
     , mOptions(options)
     , mReaction(MWBase::Environment::get().getWorld()->getPrng())
+<<<<<<< HEAD
+=======
+    , mTargetActorId(-1)
+    , mCachedTarget()
+    , mRotateOnTheRunChecks(0)
+    , mIsShortcutting(false)
+    , mShortcutProhibited(false)
+    , mShortcutFailPos()
+>>>>>>> origin/main
 {
 }
 
 MWWorld::Ptr MWMechanics::AiPackage::getTarget() const
 {
+<<<<<<< HEAD
     if (mTargetActor.isSet())
         return MWBase::Environment::get().getWorldModel()->getPtr(mTargetActor);
     if (mTargetActorRefId.empty() || mTargetNotFound)
@@ -139,6 +156,120 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
 
         if (!mIsShortcutting)
         {
+=======
+    if (!mCachedTarget.isEmpty())
+    {
+        if (mCachedTarget.mRef->isDeleted() || !mCachedTarget.getRefData().isEnabled())
+            mCachedTarget = MWWorld::Ptr();
+        else
+            return mCachedTarget;
+    }
+
+    if (mTargetActorId == -2)
+        return MWWorld::Ptr();
+
+    if (mTargetActorId == -1)
+    {
+        if (mTargetActorRefId.empty())
+        {
+            mTargetActorId = -2;
+            return MWWorld::Ptr();
+        }
+        mCachedTarget = MWBase::Environment::get().getWorld()->searchPtr(mTargetActorRefId, false);
+        if (mCachedTarget.isEmpty())
+        {
+            mTargetActorId = -2;
+            return mCachedTarget;
+        }
+        else
+            mTargetActorId = mCachedTarget.getClass().getCreatureStats(mCachedTarget).getActorId();
+    }
+
+    if (mTargetActorId != -1)
+        mCachedTarget = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+    else
+        return MWWorld::Ptr();
+
+    return mCachedTarget;
+}
+
+bool MWMechanics::AiPackage::targetIs(const MWWorld::Ptr& ptr) const
+{
+    if (mTargetActorId == -2)
+        return ptr.isEmpty();
+    else if (mTargetActorId == -1)
+    {
+        if (mTargetActorRefId.empty())
+        {
+            mTargetActorId = -2;
+            return ptr.isEmpty();
+        }
+        if (!ptr.isEmpty() && ptr.getCellRef().getRefId() == mTargetActorRefId)
+            return getTarget() == ptr;
+        return false;
+    }
+    if (ptr.isEmpty() || !ptr.getClass().isActor())
+        return false;
+    return ptr.getClass().getCreatureStats(ptr).getActorId() == mTargetActorId;
+}
+
+void MWMechanics::AiPackage::reset()
+{
+    // reset all members
+    mReaction.reset();
+    mIsShortcutting = false;
+    mShortcutProhibited = false;
+    mShortcutFailPos = osg::Vec3f();
+    mCachedTarget = MWWorld::Ptr();
+
+    mPathFinder.clearPath();
+    mObstacleCheck.clear();
+}
+
+bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f& dest, float duration,
+    MWWorld::MovementDirectionFlags supportedMovementDirections, float destTolerance, float endTolerance,
+    PathType pathType)
+{
+    const Misc::TimerStatus timerStatus = mReaction.update(duration);
+
+    const osg::Vec3f position = actor.getRefData().getPosition().asVec3(); // position of the actor
+    MWBase::World* world = MWBase::Environment::get().getWorld();
+    const DetourNavigator::AgentBounds agentBounds = world->getPathfindingAgentBounds(actor);
+
+    /// Stops the actor when it gets too close to a unloaded cell or when the actor is playing a scripted animation
+    //... At current time, the first test is unnecessary. AI shuts down when actor is more than
+    //... "actors processing range" setting value units from player, and exterior cells are 8192 units long and wide.
+    //... But AI processing distance may increase in the future.
+    if (isNearInactiveCell(position)
+        || MWBase::Environment::get().getMechanicsManager()->checkScriptedAnimationPlaying(actor))
+    {
+        actor.getClass().getMovementSettings(actor).mPosition[0] = 0;
+        actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
+        world->updateActorPath(actor, mPathFinder.getPath(), agentBounds, position, dest);
+        return false;
+    }
+
+    mLastDestinationTolerance = destTolerance;
+
+    const float distToTarget = distance(position, dest);
+    const bool isDestReached = (distToTarget <= destTolerance);
+    const bool actorCanMoveByZ = canActorMoveByZAxis(actor);
+
+    if (!isDestReached && timerStatus == Misc::TimerStatus::Elapsed)
+    {
+        if (canOpenDoors(actor))
+            openDoors(actor);
+
+        const bool wasShortcutting = mIsShortcutting;
+        bool destInLOS = false;
+
+        // Prohibit shortcuts for AiWander, if the actor can not move in 3 dimensions.
+        mIsShortcutting = actorCanMoveByZ
+            && shortcutPath(position, dest, actor, &destInLOS, actorCanMoveByZ); // try to shortcut first
+
+        if (!mIsShortcutting)
+        {
+>>>>>>> origin/main
             if (wasShortcutting || doesPathNeedRecalc(dest, actor)) // if need to rebuild path
             {
                 const ESM::Pathgrid* pathgrid

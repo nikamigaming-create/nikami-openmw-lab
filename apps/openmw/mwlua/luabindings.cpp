@@ -1,5 +1,9 @@
 #include "luabindings.hpp"
 
+<<<<<<< HEAD
+=======
+#include <components/debug/debuglog.hpp>
+>>>>>>> origin/main
 #include <components/lua/asyncpackage.hpp>
 #include <components/lua/utilpackage.hpp>
 
@@ -10,7 +14,10 @@
 #include "animationbindings.hpp"
 #include "camerabindings.hpp"
 #include "cellbindings.hpp"
+<<<<<<< HEAD
 #include "contentbindings.hpp"
+=======
+>>>>>>> origin/main
 #include "corebindings.hpp"
 #include "debugbindings.hpp"
 #include "inputbindings.hpp"
@@ -26,6 +33,13 @@
 #include "vfsbindings.hpp"
 #include "worldbindings.hpp"
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+#include "vrbindings.hpp"
+//## VR_PATCH END
+
+>>>>>>> origin/main
 namespace MWLua
 {
     std::map<std::string, sol::object> initCommonPackages(const Context& context)
@@ -44,6 +58,7 @@ namespace MWLua
 
     std::map<std::string, sol::object> initGlobalPackages(const Context& context)
     {
+<<<<<<< HEAD
         initObjectBindingsForGlobalScripts(context);
         initCellBindingsForGlobalScripts(context);
         return {
@@ -51,6 +66,23 @@ namespace MWLua
             { "openmw.types", initTypesPackage(context) },
             { "openmw.world", initWorldPackage(context) },
         };
+=======
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: object bindings begin";
+        initObjectBindingsForGlobalScripts(context);
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: object bindings complete";
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: cell bindings begin";
+        initCellBindingsForGlobalScripts(context);
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: cell bindings complete";
+        std::map<std::string, sol::object> packages;
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: core begin";
+        packages.emplace("openmw.core", initCorePackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: types begin";
+        packages.emplace("openmw.types", initTypesPackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: world begin";
+        packages.emplace("openmw.world", initWorldPackage(context));
+        Log(Debug::Info) << "FNV/ESM4 Lua global packages: complete";
+        return packages;
+>>>>>>> origin/main
     }
 
     std::map<std::string, sol::object> initLocalPackages(const Context& context)
@@ -75,6 +107,12 @@ namespace MWLua
             { "openmw.input", initInputPackage(context) },
             { "openmw.postprocessing", initPostprocessingPackage(context) },
             { "openmw.ui", initUserInterfacePackage(context) },
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+            { "openmw.vr", initVRPackage(context) },
+//## VR_PATCH END
+>>>>>>> origin/main
         };
     }
 
@@ -86,6 +124,7 @@ namespace MWLua
             { "openmw.ui", initUserInterfacePackage(context) },
             { "openmw.menu", initMenuPackage(context) },
             { "openmw.input", initInputPackage(context) },
+<<<<<<< HEAD
         };
     }
 
@@ -94,6 +133,11 @@ namespace MWLua
         return {
             { "openmw.core", initCorePackage(context) },
             { "openmw.content", initContentPackage(context) },
+=======
+            // ## VR_PATCH BEGIN
+            { "openmw.vr", initVRPackage(context) },
+            // ## VR_PATCH END
+>>>>>>> origin/main
         };
     }
 }

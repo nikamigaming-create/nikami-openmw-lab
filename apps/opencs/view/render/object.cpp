@@ -8,10 +8,13 @@
 #include <string>
 #include <utility>
 
+<<<<<<< HEAD
 #include <osg/PolygonMode>
 #include <osg/PolygonOffset>
 #include <osg/ShapeDrawable>
 
+=======
+>>>>>>> origin/main
 #include <apps/opencs/model/prefs/category.hpp>
 #include <apps/opencs/model/prefs/setting.hpp>
 #include <apps/opencs/model/world/columns.hpp>
@@ -22,7 +25,15 @@
 #include <apps/opencs/model/world/universalid.hpp>
 #include <apps/opencs/view/render/tagbase.hpp>
 
+<<<<<<< HEAD
 #include "../../model/prefs/state.hpp"
+=======
+#include <osg/Quat>
+#include <osg/ShapeDrawable>
+
+#include <osgFX/Scribe>
+
+>>>>>>> origin/main
 #include "../../model/world/cellcoordinates.hpp"
 #include "../../model/world/commandmacro.hpp"
 #include "../../model/world/commands.hpp"
@@ -35,7 +46,10 @@
 #include <components/sceneutil/lightcommon.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/lightutil.hpp>
+<<<<<<< HEAD
 #include <components/shader/shadermanager.hpp>
+=======
+>>>>>>> origin/main
 
 #include "actor.hpp"
 #include "mask.hpp"
@@ -183,15 +197,26 @@ const CSMWorld::CellRef& CSVRender::Object::getReference() const
 CSVRender::Object::Object(
     CSMWorld::Data& data, osg::Group* parentNode, const std::string& id, bool referenceable, bool forceBaseToZero)
     : mData(data)
+<<<<<<< HEAD
     , mParentNode(parentNode)
     , mResourceSystem(data.getResourceSystem().get())
     , mForceBaseToZero(forceBaseToZero)
+=======
+    , mBaseNode(nullptr)
+    , mSelected(false)
+    , mParentNode(parentNode)
+    , mResourceSystem(data.getResourceSystem().get())
+    , mForceBaseToZero(forceBaseToZero)
+    , mScaleOverride(1)
+    , mOverrideFlags(0)
+>>>>>>> origin/main
 {
     mRootNode = new osg::PositionAttitudeTransform;
 
     mBaseNode = new osg::PositionAttitudeTransform;
     mBaseNode->addCullCallback(new SceneUtil::LightListCallback);
 
+<<<<<<< HEAD
     mOutline = new osg::Group;
     mOutline->setNodeMask(0);
     osg::ref_ptr<osg::PolygonOffset> offset = new osg::PolygonOffset(1, 1);
@@ -204,11 +229,17 @@ CSVRender::Object::Object(
         mResourceSystem->getSceneManager()->getShaderManager().getProgram("outline"),
         osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
     mOutline->addChild(mBaseNode);
+=======
+    mOutline = new osgFX::Scribe;
+>>>>>>> origin/main
 
     mBaseNode->setUserData(new ObjectTag(this));
 
     mRootNode->addChild(mBaseNode);
+<<<<<<< HEAD
     mRootNode->addChild(mOutline);
+=======
+>>>>>>> origin/main
 
     parentNode->addChild(mRootNode);
 
@@ -244,10 +275,24 @@ void CSVRender::Object::setSelected(bool selected, const osg::Vec4f& color)
         setSnapTarget(false);
     }
 
+<<<<<<< HEAD
     mOutline->setNodeMask(selected ? ~0u : 0);
 
     if (selected)
         mOutline->getStateSet()->getUniform("color")->set(color);
+=======
+    mOutline->removeChild(mBaseNode);
+    mRootNode->removeChild(mOutline);
+    mRootNode->removeChild(mBaseNode);
+    if (selected)
+    {
+        mOutline->setWireframeColor(color);
+        mOutline->addChild(mBaseNode);
+        mRootNode->addChild(mOutline);
+    }
+    else
+        mRootNode->addChild(mBaseNode);
+>>>>>>> origin/main
 }
 
 bool CSVRender::Object::getSelected() const
@@ -264,10 +309,24 @@ void CSVRender::Object::setSnapTarget(bool isSnapTarget)
         setSelected(false);
     }
 
+<<<<<<< HEAD
     mOutline->setNodeMask(isSnapTarget ? ~0u : 0);
 
     if (isSnapTarget)
         mOutline->getStateSet()->getUniform("color")->set(osg::Vec4f(1, 1, 0, 1));
+=======
+    mOutline->removeChild(mBaseNode);
+    mRootNode->removeChild(mOutline);
+    mRootNode->removeChild(mBaseNode);
+    if (isSnapTarget)
+    {
+        mOutline->setWireframeColor(osg::Vec4f(1, 1, 0, 1));
+        mOutline->addChild(mBaseNode);
+        mRootNode->addChild(mOutline);
+    }
+    else
+        mRootNode->addChild(mBaseNode);
+>>>>>>> origin/main
 }
 
 bool CSVRender::Object::getSnapTarget() const

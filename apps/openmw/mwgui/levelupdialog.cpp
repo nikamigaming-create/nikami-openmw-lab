@@ -111,7 +111,11 @@ namespace MWGui
 
         for (const ESM::Attribute& attribute : MWBase::Environment::get().getESMStore()->get<ESM::Attribute>())
         {
+<<<<<<< HEAD
             int val = static_cast<int>(creatureStats.getAttribute(attribute.mId).getBase());
+=======
+            int val = creatureStats.getAttribute(attribute.mId).getBase();
+>>>>>>> origin/main
             if (std::find(mSpentAttributes.begin(), mSpentAttributes.end(), attribute.mId) != mSpentAttributes.end())
             {
                 val += pcStats.getLevelupAttributeMultiplier(attribute.mId);
@@ -202,8 +206,13 @@ namespace MWGui
                 widgets.mValue->setEnabled(true);
                 availableAttributes++;
 
+<<<<<<< HEAD
                 int mult = pcStats.getLevelupAttributeMultiplier(attribute.mId);
                 mult = std::min(mult, static_cast<int>(100 - pcStats.getAttribute(attribute.mId).getBase()));
+=======
+                float mult = pcStats.getLevelupAttributeMultiplier(attribute.mId);
+                mult = std::min(mult, 100 - pcStats.getAttribute(attribute.mId).getBase());
+>>>>>>> origin/main
                 if (mult <= 1)
                     widgets.mMultiplier->setCaption({});
                 else
@@ -231,7 +240,11 @@ namespace MWGui
         {
             mControllerFocus = 0;
             for (size_t i = 0; i < mAttributeButtons.size(); i++)
+<<<<<<< HEAD
                 mAttributeButtons[i]->setStateSelected(i == 0);
+=======
+                setControllerFocus(mAttributeButtons, i, i == 0);
+>>>>>>> origin/main
         }
 
         // Play LevelUp Music

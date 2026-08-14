@@ -61,6 +61,11 @@ void ESM4::Grass::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadgras"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::GRAS::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

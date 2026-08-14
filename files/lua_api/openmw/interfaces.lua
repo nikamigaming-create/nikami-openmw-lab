@@ -16,7 +16,11 @@
 -- @field [parent=#interfaces] scripts.omw.camera.camera#scripts.omw.camera.camera Camera
 
 ---
+<<<<<<< HEAD
 -- @field [parent=#interfaces] scripts.omw.combat.interface#scripts.omw.combat.interface Combat
+=======
+-- @field [parent=#interfaces] scripts.omw.combat.local#scripts.omw.combat.local Combat
+>>>>>>> origin/main
 
 ---
 -- @field [parent=#interfaces] scripts.omw.mwui.init#scripts.omw.mwui.init MWUI

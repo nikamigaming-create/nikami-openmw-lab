@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
+<<<<<<< HEAD
 
 #include <array>
+=======
+>>>>>>> origin/main
 #include <sstream>
 
 #include "testutils.hpp"
@@ -130,6 +133,7 @@ PositionCell "Rabenfels, Taverne" 4480.000 3968.000 15820.000 0
 
 End)mwscript";
 
+<<<<<<< HEAD
     const std::string sScript5 = R"mwscript(Begin messagebox_format_script
 
 float fVal
@@ -158,6 +162,8 @@ MessageBox "%.1b" fVal
 
 End)mwscript";
 
+=======
+>>>>>>> origin/main
     const std::string sIssue587 = R"mwscript(Begin stalresetScript
 
 End stalreset Script)mwscript";
@@ -509,6 +515,7 @@ GetDisabled == 1
 
 End)mwscript";
 
+<<<<<<< HEAD
     const std::string sIssue8129 = R"mwscript(Begin issue8129
 
 MessageBox "must include all buttons" "A" "B" "C"
@@ -530,6 +537,8 @@ player->setacrobatics 5000
 
 End)mwscript";
 
+=======
+>>>>>>> origin/main
     TEST_F(MWScriptTest, mwscript_test_invalid)
     {
         EXPECT_THROW(compile("this is not a valid script", true), Compiler::SourceException);
@@ -630,6 +639,7 @@ End)mwscript";
         EXPECT_FALSE(!compile(sScript4));
     }
 
+<<<<<<< HEAD
     TEST_F(MWScriptTest, mwscript_test_messagebox_format)
     {
         if (const auto script = compile(sScript5))
@@ -671,6 +681,8 @@ End)mwscript";
         }
     }
 
+=======
+>>>>>>> origin/main
     TEST_F(MWScriptTest, mwscript_test_587)
     {
         EXPECT_FALSE(!compile(sIssue587));
@@ -1027,6 +1039,7 @@ End)mwscript";
         registerExtensions();
         EXPECT_FALSE(!compile(sIssue6807));
     }
+<<<<<<< HEAD
 
     TEST_F(MWScriptTest, mwscript_test_8129)
     {
@@ -1053,4 +1066,6 @@ End)mwscript";
         registerExtensions();
         EXPECT_FALSE(!compile(sIssue8990));
     }
+=======
+>>>>>>> origin/main
 }

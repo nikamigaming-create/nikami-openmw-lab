@@ -574,6 +574,7 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>Text file (*.txt)</source>
         <translation type="unfinished"></translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Open Directory</source>
         <translation type="unfinished"></translation>
@@ -614,6 +615,8 @@ Logs and settings changed through the launcher and in-game will be saved here.</
         <source>User config directory used because %1 contains the line config=%2.</source>
         <translation type="unfinished"></translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>MainWindow</name>
@@ -815,6 +818,10 @@ Logs and settings changed through the launcher and in-game will be saved here.</
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Normally environment map reflections aren&apos;t affected by lighting, which makes environment-mapped (and thus bump-mapped objects) glow in the dark.
                   Morrowind Code Patch includes an option to remedy that by doing environment-mapping before applying lighting, this is the equivalent of that option.
+<<<<<<< HEAD
+=======
+                  Affected objects will use shaders.
+>>>>>>> origin/main
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1121,11 +1128,23 @@ Logs and settings changed through the launcher and in-game will be saved here.</
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the internal handling of light sources.&lt;/p&gt;
+<<<<<<< HEAD
 &lt;p&gt;&quot;Shaders (compatibility)&quot; It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+=======
+&lt;p&gt; &quot;Legacy&quot; always uses 8 lights per object. It provides results most similar to Morrowind&apos;s lighting.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (compatibility)&quot; removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+>>>>>>> origin/main
 &lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Legacy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Shaders (compatibility)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1509,9 +1528,12 @@ Logs and settings changed through the launcher and in-game will be saved here.</
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Controls the strength of the Doppler effect. Zero means it is completely disabled.&lt;/p&gt;&lt;p&gt;The Doppler effect increases or decreases the pitch of sounds relative to the velocity of the sound source and the listener.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="unfinished"></translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Active Config Directories</source>
         <translation type="unfinished"></translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 </TS>

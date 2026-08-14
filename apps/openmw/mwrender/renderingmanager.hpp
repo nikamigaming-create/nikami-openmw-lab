@@ -4,11 +4,23 @@
 #include "objects.hpp"
 #include "renderinginterface.hpp"
 #include "rendermode.hpp"
+<<<<<<< HEAD
 
 #include <components/settings/settings.hpp>
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Light>
+=======
+#include "vismask.hpp"
+
+#include <components/settings/settings.hpp>
+#include <components/esm/formid.hpp>
+#include <components/vfs/pathutil.hpp>
+
+#include <osg/Light>
+#include <osg/Matrixf>
+#include <osg/Quat>
+>>>>>>> origin/main
 #include <osg/ref_ptr>
 
 #include <osgUtil/IncrementalCompileOperation>
@@ -16,11 +28,21 @@
 #include <deque>
 #include <memory>
 #include <span>
+<<<<<<< HEAD
 #include <unordered_map>
+=======
+#include <string>
+#include <unordered_map>
+#include <vector>
+>>>>>>> origin/main
 
 namespace osg
 {
     class Group;
+<<<<<<< HEAD
+=======
+    class MatrixTransform;
+>>>>>>> origin/main
     class PositionAttitudeTransform;
 }
 
@@ -45,6 +67,15 @@ namespace ESM
     struct Cell;
     struct FormId;
     using RefNum = FormId;
+<<<<<<< HEAD
+=======
+}
+
+namespace ESM4
+{
+    struct Light;
+    struct Npc;
+>>>>>>> origin/main
 }
 
 namespace Terrain
@@ -63,9 +94,12 @@ namespace SceneUtil
     class WorkQueue;
     class LightManager;
     class UnrefQueue;
+<<<<<<< HEAD
     class PerViewUniformStateUpdater;
     class SharedUniformStateUpdater;
     class StateUpdater;
+=======
+>>>>>>> origin/main
 }
 
 namespace DetourNavigator
@@ -79,6 +113,11 @@ namespace MWWorld
 {
     class GroundcoverStore;
     class Cell;
+<<<<<<< HEAD
+=======
+    template <typename X>
+    struct LiveCellRef;
+>>>>>>> origin/main
 }
 
 namespace Debug
@@ -88,12 +127,23 @@ namespace Debug
 
 namespace MWRender
 {
+<<<<<<< HEAD
+=======
+    class StateUpdater;
+    class SharedUniformStateUpdater;
+    class PerViewUniformStateUpdater;
+>>>>>>> origin/main
     class IntersectionVisitorWithIgnoreList;
 
     class EffectManager;
     class ScreenshotManager;
     class FogManager;
     class SkyManager;
+<<<<<<< HEAD
+=======
+    class Animation;
+    class ESM4NpcAnimation;
+>>>>>>> origin/main
     class NpcAnimation;
     class Pathgrid;
     class Camera;
@@ -107,6 +157,7 @@ namespace MWRender
     class Groundcover;
     class PostProcessor;
 
+<<<<<<< HEAD
     class RenderingManager : public MWRender::RenderingInterface
     {
     public:
@@ -185,6 +236,103 @@ namespace MWRender
         /// coordinates, where (0,0) is the top left corner.
         RayResult castCameraToViewportRay(
             const float nX, const float nY, float maxDistance, bool ignorePlayer, bool ignoreActors = false);
+=======
+//## VR_PATCH BEGIN
+// Needs to be declared outside the RenderingManager class to be forward declarable
+// Add mHitNode
+    // Result data of ray cast methods.
+    struct RayResult
+    {
+        bool mHit;
+        osg::Vec3f mHitNormalWorld;
+        osg::Vec3f mHitPointWorld;
+        osg::Vec3f mHitPointLocal;
+        MWWorld::Ptr mHitObject;
+        osg::Node* mHitNode;
+        std::vector<std::string> mHitNodePath;
+        /// Cast a ray between two points
+        ESM::RefNum mHitRefnum;
+        float mRatio;
+    };
+//## VR_PATCH END
+
+    class RenderingManager : public MWRender::RenderingInterface
+    {
+    public:
+        RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
+            Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
+            DetourNavigator::Navigator& navigator, const MWWorld::GroundcoverStore& groundcoverStore,
+//## VR_PATCH BEGIN
+// Add the Camera as a parameter instead, as VR needs it before RenderingManager is created.
+            SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<Camera> camera);
+//## VR_PATCH END
+        ~RenderingManager();
+
+        osgUtil::IncrementalCompileOperation* getIncrementalCompileOperation();
+
+        MWRender::Objects& getObjects() override;
+
+        Resource::ResourceSystem* getResourceSystem();
+
+        SceneUtil::WorkQueue* getWorkQueue();
+        Terrain::World* getTerrain();
+
+        void preloadCommonAssets();
+
+        double getReferenceTime() const;
+
+        SceneUtil::LightManager* getLightRoot();
+
+        void setNightEyeFactor(float factor);
+
+        void setAmbientColour(const osg::Vec4f& colour);
+
+        int skyGetMasserPhase() const;
+        int skyGetSecundaPhase() const;
+        void skySetMoonColour(bool red);
+
+        const osg::Vec4f& getSunLightPosition() const { return mSunLight->getPosition(); }
+        void setSunDirection(const osg::Vec3f& direction);
+        void setSunPosition(const osg::Vec3f& position);
+        void setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition);
+        void setSunColour(const osg::Vec4f& diffuse, const osg::Vec4f& specular, float sunVis);
+        void setNight(bool isNight) { mNight = isNight; }
+
+        void configureAmbient(const MWWorld::Cell& cell);
+        void configureFog(const MWWorld::Cell& cell);
+        void configureFog(
+            float fogDepth, float underwaterFog, float dlFactor, float dlOffset, const osg::Vec4f& colour);
+        void configureFog(float fogNear, float fogFar, float underwaterFog, const osg::Vec4f& colour);
+
+        void addCell(const MWWorld::CellStore* store);
+        void removeCell(const MWWorld::CellStore* store);
+
+        void enableTerrain(bool enable, ESM::RefId worldspace);
+
+        void updatePtr(const MWWorld::Ptr& old, const MWWorld::Ptr& updated);
+
+        void rotateObject(const MWWorld::Ptr& ptr, const osg::Quat& rot);
+        void moveObject(const MWWorld::Ptr& ptr, const osg::Vec3f& pos);
+        void scaleObject(const MWWorld::Ptr& ptr, const osg::Vec3f& scale);
+
+        void removeObject(const MWWorld::Ptr& ptr);
+
+        void setWaterEnabled(bool enabled);
+        void setWaterHeight(float level);
+
+        /// Take a screenshot of w*h onto the given image, not including the GUI.
+        void screenshot(osg::Image* image, int w, int h);
+
+//## VR_PATCH BEGIN
+        RayResult castRay(const osg::Vec3f& origin, const osg::Vec3f& dest, bool ignorePlayer,
+            bool ignoreActors = false, uint32_t ignoreMask = MWRender::Mask_3DGUI, std::span<const MWWorld::Ptr> ignoreList = {});
+
+        /// Return the object under the mouse cursor / crosshair position, given by nX and nY normalized screen
+        /// coordinates, where (0,0) is the top left corner.
+        RayResult castCameraToViewportRay(const float nX, const float nY, float maxDistance, bool ignorePlayer,
+            bool ignoreActors = false, uint32_t ignoreMask = MWRender::Mask_3DGUI);
+        //## VR_PATCH END
+>>>>>>> origin/main
 
         /// Get normalized screen coordinates of the bounding box's summit, where (0,0) is the top left corner
         osg::Vec2f getScreenCoords(const osg::BoundingBox& bb);
@@ -196,6 +344,7 @@ namespace MWRender
         SkyManager* getSkyManager();
 
         void spawnEffect(VFS::Path::NormalizedView model, std::string_view texture, const osg::Vec3f& worldPosition,
+<<<<<<< HEAD
             float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true, std::string_view effectId = {},
             bool loop = false);
 
@@ -203,6 +352,19 @@ namespace MWRender
 
         /// Clear all savegame-specific data
         void clear();
+=======
+            float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM4::Light* light = nullptr, bool isExterior = false,
+            const osg::Quat& orientation = osg::Quat(), float authoredDuration = 0.f);
+        void spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime);
+
+        /// Clear all savegame-specific data
+        void clear();
+
+        void clearLiveObjectsForShutdown();
+>>>>>>> origin/main
 
         /// Clear all worldspace-specific data
         void notifyWorldSpaceChanged();
@@ -211,6 +373,10 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+<<<<<<< HEAD
+=======
+        Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
+>>>>>>> origin/main
 
         PostProcessor* getPostProcessor();
 
@@ -240,8 +406,27 @@ namespace MWRender
 
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);
+<<<<<<< HEAD
         void setFieldOfView(float val);
         float getFieldOfView() const;
+=======
+        /// Temporarily override the complete projection contract. This is used when a source engine's
+        /// clip-space matrix is the oracle and recomputing it through another API would change float words.
+        void overrideProjectionMatrix(
+            const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip);
+        void resetProjectionMatrixOverride();
+        void setFieldOfView(float val);
+        /// Set the field of view used when the next first-person player animation is constructed.
+        void setFirstPersonFieldOfView(float val) { mFirstPersonFieldOfView = val; }
+        /// Carry only preflighted native-save ExtraWorn identities into the visual player proxy.
+        void setFalloutSaveWornVisualItems(std::vector<ESM::FormId> items)
+        {
+            mFalloutSaveWornVisualItems = std::move(items);
+        }
+        float getFieldOfView() const;
+        bool isFieldOfViewOverridden() const { return mFieldOfViewOverridden; }
+        bool isProjectionMatrixOverridden() const { return mProjectionMatrixOverridden; }
+>>>>>>> origin/main
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
 
@@ -261,11 +446,19 @@ namespace MWRender
 
         void updateActorPath(const MWWorld::ConstPtr& actor, const std::deque<osg::Vec3f>& path,
             const DetourNavigator::AgentBounds& agentBounds, const osg::Vec3f& start, const osg::Vec3f& end) const;
+<<<<<<< HEAD
 
         void removeActorPath(const MWWorld::ConstPtr& actor) const;
 
         void setNavMeshNumber(const std::size_t value);
 
+=======
+
+        void removeActorPath(const MWWorld::ConstPtr& actor) const;
+
+        void setNavMeshNumber(const std::size_t value);
+
+>>>>>>> origin/main
         void setActiveGrid(const osg::Vec4i& grid);
 
         bool pagingEnableObject(int type, const MWWorld::ConstPtr& ptr, bool enabled);
@@ -278,6 +471,7 @@ namespace MWRender
         void setScreenRes(int width, int height);
 
         void setNavMeshMode(Settings::NavMeshRenderMode value);
+<<<<<<< HEAD
 
         void setProjectionOffset(const osg::Vec2f& offset)
         {
@@ -285,6 +479,17 @@ namespace MWRender
             mUpdateProjectionMatrix = true;
         }
         osg::Vec2f getProjectionOffset() const { return mProjectionOffset; }
+=======
+//## VR_PATCH BEGIN
+        /// Cast a ray from a node in the scene graph
+        RayResult castRay(const osg::Transform* source, float maxDistance, bool ignorePlayer, bool ignoreActors = false,
+            uint32_t ignoreMask = MWRender::Mask_3DGUI);
+        void enableVRPointer(bool left, bool right);
+        osg::Uniform* mUniformStereoViewOffsets;
+        osg::Uniform* mUniformStereoProjections;
+
+//## VR_PATCH END
+>>>>>>> origin/main
 
     private:
         void updateTextureFiltering();
@@ -309,7 +514,14 @@ namespace MWRender
         const bool mSkyBlending;
 
         osg::ref_ptr<osgUtil::IntersectionVisitor> getIntersectionVisitor(osgUtil::Intersector* intersector,
+<<<<<<< HEAD
             bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList = {});
+=======
+//## VR_PATCH BEGIN
+            bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask,
+            std::span<const MWWorld::Ptr> ignoreList = {});
+        //## VR_PATCH END
+>>>>>>> origin/main
 
         osg::ref_ptr<IntersectionVisitorWithIgnoreList> mIntersectionVisitor;
 
@@ -341,14 +553,37 @@ namespace MWRender
         std::unique_ptr<EffectManager> mEffectManager;
         std::unique_ptr<SceneUtil::ShadowManager> mShadowManager;
         osg::ref_ptr<PostProcessor> mPostProcessor;
+<<<<<<< HEAD
+=======
+        std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
+        osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
+        osg::ref_ptr<ESM4NpcAnimation> mFalloutPlayerFirstPersonAnimation;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
+        std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
+        std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
+        bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
+        std::string mFalloutPlayerVisualGroup;
+        float mFalloutPlayerVisualGroupElapsed = 0.f;
+        bool mFalloutPlayerVisualCycleLogged = false;
+        bool mFalloutPlayerFirstPersonAlignmentLogged = false;
+        osg::Vec3f mFalloutPlayerVisualPreviousPosition;
+        bool mFalloutPlayerVisualPreviousPositionValid = false;
+>>>>>>> origin/main
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;
         osg::ref_ptr<Debug::DebugDrawer> mDebugDraw;
 
+<<<<<<< HEAD
         osg::ref_ptr<SceneUtil::StateUpdater> mStateUpdater;
         osg::ref_ptr<SceneUtil::SharedUniformStateUpdater> mSharedUniformStateUpdater;
         osg::ref_ptr<SceneUtil::PerViewUniformStateUpdater> mPerViewUniformStateUpdater;
+=======
+        osg::ref_ptr<StateUpdater> mStateUpdater;
+        osg::ref_ptr<SharedUniformStateUpdater> mSharedUniformStateUpdater;
+        osg::ref_ptr<PerViewUniformStateUpdater> mPerViewUniformStateUpdater;
+>>>>>>> origin/main
 
         osg::Vec4f mAmbientColor;
         float mNightEyeFactor;
@@ -357,11 +592,19 @@ namespace MWRender
         float mViewDistance;
         bool mFieldOfViewOverridden;
         float mFieldOfViewOverride;
+<<<<<<< HEAD
+=======
+        bool mProjectionMatrixOverridden;
+        osg::Matrixf mProjectionMatrixOverride;
+>>>>>>> origin/main
         float mFieldOfView;
         float mFirstPersonFieldOfView;
         bool mUpdateProjectionMatrix = false;
         bool mNight = false;
+<<<<<<< HEAD
         osg::Vec2f mProjectionOffset;
+=======
+>>>>>>> origin/main
         const MWWorld::GroundcoverStore& mGroundCoverStore;
 
         void operator=(const RenderingManager&);

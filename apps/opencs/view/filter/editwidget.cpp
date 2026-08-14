@@ -115,7 +115,11 @@ void CSVFilter::EditWidget::createFilterRequest(const std::vector<FilterData>& s
         newFilter.emplace_back(newFilterData);
     }
 
+<<<<<<< HEAD
     const size_t count = newFilter.size();
+=======
+    const unsigned count = newFilter.size();
+>>>>>>> origin/main
     bool multipleElements = false;
 
     switch (count) // setting multipleElements;
@@ -221,13 +225,21 @@ void CSVFilter::EditWidget::createFilterRequest(const std::vector<FilterData>& s
 
 std::string CSVFilter::EditWidget::generateFilter(const FilterData& filterData, FilterType filterType) const
 {
+<<<<<<< HEAD
     const size_t columns = filterData.columns.size();
+=======
+    const unsigned columns = filterData.columns.size();
+>>>>>>> origin/main
 
     bool multipleColumns = false;
     switch (columns)
     {
         case 0: // empty
+<<<<<<< HEAD
             return {}; // no column to filter
+=======
+            return ""; // no column to filter
+>>>>>>> origin/main
 
         case 1: // one column to look for
             multipleColumns = false;
@@ -244,7 +256,11 @@ std::string CSVFilter::EditWidget::generateFilter(const FilterData& filterData, 
     else
     {
         Log(Debug::Warning) << "Generating record filter failed.";
+<<<<<<< HEAD
         return {};
+=======
+        return "";
+>>>>>>> origin/main
     }
     if (filterType == FilterType::String)
         quotesResolved = '"' + quotesResolved + '"';
@@ -254,7 +270,11 @@ std::string CSVFilter::EditWidget::generateFilter(const FilterData& filterData, 
     if (multipleColumns)
     {
         ss << "or(";
+<<<<<<< HEAD
         for (size_t i = 0; i < columns; ++i)
+=======
+        for (unsigned i = 0; i < columns; ++i)
+>>>>>>> origin/main
         {
             ss << filterTypeName(filterType) << "(" << '"' << filterData.columns[i] << '"' << ',' << quotesResolved
                << ')';

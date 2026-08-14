@@ -13,7 +13,10 @@ set(LUA_API_FILES
     openmw/animation.lua
     openmw/async.lua
     openmw/camera.lua
+<<<<<<< HEAD
     openmw/content.lua
+=======
+>>>>>>> origin/main
     openmw/core.lua
     openmw/debug.lua
     openmw/input.lua
@@ -28,6 +31,10 @@ set(LUA_API_FILES
     openmw/ui.lua
     openmw/util.lua
     openmw/vfs.lua
+<<<<<<< HEAD
+=======
+    openmw/vr.lua
+>>>>>>> origin/main
     openmw/world.lua
 )
 

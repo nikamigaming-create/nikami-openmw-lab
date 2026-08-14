@@ -3,8 +3,11 @@
 
 #include <QCompleter>
 #include <QStringListModel>
+<<<<<<< HEAD
 
 #include <components/files/configurationmanager.hpp>
+=======
+>>>>>>> origin/main
 
 #include "ui_settingspage.h"
 
@@ -20,8 +23,12 @@ namespace Launcher
         Q_OBJECT
 
     public:
+<<<<<<< HEAD
         explicit SettingsPage(const Files::ConfigurationManager& configurationManager,
             Config::GameSettings& gameSettings, QWidget* parent = nullptr);
+=======
+        explicit SettingsPage(Config::GameSettings& gameSettings, QWidget* parent = nullptr);
+>>>>>>> origin/main
 
         bool loadSettings();
         void saveSettings();
@@ -38,6 +45,7 @@ namespace Launcher
         void slotShadowDistLimitToggled(bool checked);
         void slotDistantLandToggled(bool checked);
         void slotControllerMenusToggled(bool checked);
+<<<<<<< HEAD
         void slotOpenFile(QTreeWidgetItem* item);
 
     private:
@@ -49,6 +57,14 @@ namespace Launcher
         QCompleter mCellNameCompleter;
         QStringListModel mCellNameCompleterModel;
 
+=======
+
+    private:
+        Config::GameSettings& mGameSettings;
+        QCompleter mCellNameCompleter;
+        QStringListModel mCellNameCompleterModel;
+
+>>>>>>> origin/main
         /**
          * Load the cells associated with the given content files for use in autocomplete
          * @param filePaths the file paths of the content files to be examined

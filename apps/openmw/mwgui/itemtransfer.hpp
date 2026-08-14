@@ -55,7 +55,11 @@ namespace MWGui
             WorldItemModel worldItemModel(0.5f, 0.5f);
             ItemModel* const targetModel = targetView == nullptr ? &worldItemModel : targetView->getModel();
 
+<<<<<<< HEAD
             if (!targetModel->onDropItem(item.mBase, static_cast<int>(count)))
+=======
+            if (!targetModel->onDropItem(item.mBase, count))
+>>>>>>> origin/main
                 return;
 
             sourceView.getModel()->moveItem(item, count, targetModel);

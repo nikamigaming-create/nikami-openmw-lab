@@ -145,7 +145,11 @@ namespace Launcher
 
         int getMaxNavMeshDbFileSizeMiB()
         {
+<<<<<<< HEAD
             return static_cast<int>(Settings::navigator().mMaxNavmeshdbFileSize / (1024 * 1024));
+=======
+            return Settings::navigator().mMaxNavmeshdbFileSize / (1024 * 1024);
+>>>>>>> origin/main
         }
     }
 }

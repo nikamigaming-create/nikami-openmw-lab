@@ -388,6 +388,7 @@ namespace ESSImport
         profile.save(writer);
         writer.endRecord(ESM::REC_SAVE);
 
+<<<<<<< HEAD
         writer.startRecord(ESM::REC_DIAS);
         context.mDialogueState.save(writer);
         writer.endRecord(ESM::REC_DIAS);
@@ -404,6 +405,15 @@ namespace ESSImport
             if (converter->getStage() != 0)
                 continue;
             converter->write(writer);
+=======
+        // Writing order should be Dynamic Store -> Cells -> Player,
+        // so that references to dynamic records can be recognized when loading
+        for (auto it = converters.begin(); it != converters.end(); ++it)
+        {
+            if (it->second->getStage() != 0)
+                continue;
+            it->second->write(writer);
+>>>>>>> origin/main
         }
 
         writer.startRecord(ESM::REC_NPC_);
@@ -411,11 +421,19 @@ namespace ESSImport
         context.mPlayerBase.save(writer);
         writer.endRecord(ESM::REC_NPC_);
 
+<<<<<<< HEAD
         for (const auto& [_, converter] : converters)
         {
             if (converter->getStage() != 1)
                 continue;
             converter->write(writer);
+=======
+        for (auto it = converters.begin(); it != converters.end(); ++it)
+        {
+            if (it->second->getStage() != 1)
+                continue;
+            it->second->write(writer);
+>>>>>>> origin/main
         }
 
         writer.startRecord(ESM::REC_PLAY);
@@ -427,6 +445,7 @@ namespace ESSImport
         context.mPlayer.save(writer);
         writer.endRecord(ESM::REC_PLAY);
 
+<<<<<<< HEAD
         // Stage 2 requires cell references to be written / actors IDs assigned
         for (const auto& [_, converter] : converters)
         {
@@ -435,6 +454,24 @@ namespace ESSImport
             converter->write(writer);
         }
 
+=======
+        writer.startRecord(ESM::REC_ACTC);
+        writer.writeHNT("COUN", context.mNextActorId);
+        writer.endRecord(ESM::REC_ACTC);
+
+        // Stage 2 requires cell references to be written / actors IDs assigned
+        for (auto it = converters.begin(); it != converters.end(); ++it)
+        {
+            if (it->second->getStage() != 2)
+                continue;
+            it->second->write(writer);
+        }
+
+        writer.startRecord(ESM::REC_DIAS);
+        context.mDialogueState.save(writer);
+        writer.endRecord(ESM::REC_DIAS);
+
+>>>>>>> origin/main
         writer.startRecord(ESM::REC_INPU);
         context.mControlsState.save(writer);
         writer.endRecord(ESM::REC_INPU);

@@ -15,6 +15,7 @@ namespace Misc
             FloatPlaceholder
         };
 
+<<<<<<< HEAD
         enum Flags
         {
             None = 0,
@@ -37,6 +38,19 @@ namespace Misc
         };
 
         virtual void visitedPlaceholder(Placeholder placeholder, int flags, int width, int precision, Notation notation)
+=======
+        enum class Notation
+        {
+            Fixed,
+            Scientific,
+            Shortest,
+            HexUpper,
+            HexLower
+        };
+
+        virtual void visitedPlaceholder(
+            Placeholder placeholder, char padding, int width, int precision, Notation notation)
+>>>>>>> origin/main
             = 0;
         virtual void visitedCharacter(char c) = 0;
 

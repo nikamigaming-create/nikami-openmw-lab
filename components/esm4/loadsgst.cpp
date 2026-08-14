@@ -95,6 +95,11 @@ void ESM4::SigilStone::load(ESM4::Reader& reader)
                 break;
             }
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadsgst"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::SGST::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

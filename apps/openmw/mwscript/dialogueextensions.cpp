@@ -16,6 +16,10 @@
 
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwworld/class.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwworld/esm4questruntime.hpp"
+>>>>>>> origin/main
 #include "../mwworld/esmstore.hpp"
 
 #include "ref.hpp"
@@ -315,8 +319,88 @@ namespace MWScript
             }
         };
 
+<<<<<<< HEAD
         void installOpcodes(Interpreter::Interpreter& interpreter)
         {
+=======
+        class OpSetStage : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                const std::string_view quest = runtime.getStringLiteral(runtime[0].mInteger);
+                runtime.pop();
+                const int stage = runtime[0].mInteger;
+                runtime.pop();
+                if (stage < 0 || stage > 255
+                    || !MWBase::Environment::get().getWorld()->getESM4QuestRuntime().setStage(
+                        quest, static_cast<std::uint8_t>(stage)))
+                    runtime.getContext().report("SetStage failed for Fallout quest '" + std::string(quest) + "'");
+            }
+        };
+
+        class OpGetStage : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                const std::string_view quest = runtime.getStringLiteral(runtime[0].mInteger);
+                runtime.pop();
+                const MWWorld::ESM4QuestState* state
+                    = MWBase::Environment::get().getWorld()->getESM4QuestRuntime().search(quest);
+                runtime.push(state != nullptr ? state->mCurrentStage : 0);
+            }
+        };
+
+        class OpStartQuest : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                const std::string_view quest = runtime.getStringLiteral(runtime[0].mInteger);
+                runtime.pop();
+                if (!MWBase::Environment::get().getWorld()->getESM4QuestRuntime().startQuest(quest))
+                    runtime.getContext().report("StartQuest failed for Fallout quest '" + std::string(quest) + "'");
+            }
+        };
+
+        template <bool Completed>
+        class OpSetObjective : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                const std::string_view quest = runtime.getStringLiteral(runtime[0].mInteger);
+                runtime.pop();
+                const int objective = runtime[0].mInteger;
+                runtime.pop();
+                const bool enabled = runtime[0].mInteger != 0;
+                runtime.pop();
+                MWWorld::ESM4QuestRuntime& quests = MWBase::Environment::get().getWorld()->getESM4QuestRuntime();
+                const bool result = Completed ? quests.setObjectiveCompleted(quest, objective, enabled)
+                                              : quests.setObjectiveDisplayed(quest, objective, enabled);
+                if (!result)
+                    runtime.getContext().report("Fallout objective command failed for quest '" + std::string(quest)
+                        + "' objective " + std::to_string(objective));
+            }
+        };
+
+        class OpForceActiveQuest : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                const std::string_view quest = runtime.getStringLiteral(runtime[0].mInteger);
+                runtime.pop();
+                if (!MWBase::Environment::get().getWorld()->getESM4QuestRuntime().forceActiveQuest(quest))
+                    runtime.getContext().report(
+                        "ForceActiveQuest failed for Fallout quest '" + std::string(quest) + "'");
+            }
+        };
+
+        void installOpcodes(Interpreter::Interpreter& interpreter)
+        {
+>>>>>>> origin/main
             interpreter.installSegment5<OpJournal<ImplicitRef>>(Compiler::Dialogue::opcodeJournal);
             interpreter.installSegment5<OpJournal<ExplicitRef>>(Compiler::Dialogue::opcodeJournalExplicit);
             interpreter.installSegment5<OpSetJournalIndex>(Compiler::Dialogue::opcodeSetJournalIndex);
@@ -341,6 +425,15 @@ namespace MWScript
             interpreter.installSegment5<OpClearInfoActor<ImplicitRef>>(Compiler::Dialogue::opcodeClearInfoActor);
             interpreter.installSegment5<OpClearInfoActor<ExplicitRef>>(
                 Compiler::Dialogue::opcodeClearInfoActorExplicit);
+<<<<<<< HEAD
+=======
+            interpreter.installSegment5<OpSetStage>(Compiler::Dialogue::opcodeSetStage);
+            interpreter.installSegment5<OpGetStage>(Compiler::Dialogue::opcodeGetStage);
+            interpreter.installSegment5<OpStartQuest>(Compiler::Dialogue::opcodeStartQuest);
+            interpreter.installSegment5<OpSetObjective<false>>(Compiler::Dialogue::opcodeSetObjectiveDisplayed);
+            interpreter.installSegment5<OpSetObjective<true>>(Compiler::Dialogue::opcodeSetObjectiveCompleted);
+            interpreter.installSegment5<OpForceActiveQuest>(Compiler::Dialogue::opcodeForceActiveQuest);
+>>>>>>> origin/main
         }
     }
 

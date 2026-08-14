@@ -323,7 +323,11 @@ CSVRender::WorldspaceWidget::DropType CSVRender::WorldspaceWidget::getDropType(
     return output;
 }
 
+<<<<<<< HEAD
 CSVRender::WorldspaceWidget::DropRequirements CSVRender::WorldspaceWidget::getDropRequirements(DropType type) const
+=======
+CSVRender::WorldspaceWidget::dropRequirments CSVRender::WorldspaceWidget::getDropRequirements(DropType type) const
+>>>>>>> origin/main
 {
     if (type == Type_DebugProfile)
         return canHandle;
@@ -387,6 +391,7 @@ CSMDoc::Document& CSVRender::WorldspaceWidget::getDocument()
     return mDocument;
 }
 
+<<<<<<< HEAD
 const CSMDoc::Document& CSVRender::WorldspaceWidget::getDocument() const
 {
     return mDocument;
@@ -436,6 +441,57 @@ std::tuple<osg::Vec3d, osg::Vec3d, osg::Vec3d> CSVRender::WorldspaceWidget::getS
 CSVRender::WorldspaceHitResult CSVRender::WorldspaceWidget::mousePick(
     const QPoint& localPos, unsigned int interactionMask) const
 {
+=======
+template <typename Tag>
+std::optional<CSVRender::WorldspaceHitResult> CSVRender::WorldspaceWidget::checkTag(
+    const osgUtil::LineSegmentIntersector::Intersection& intersection) const
+{
+    for (auto* node : intersection.nodePath)
+    {
+        if (auto* tag = dynamic_cast<Tag*>(node->getUserData()))
+        {
+            WorldspaceHitResult hit = { true, tag, 0, 0, 0, intersection.getWorldIntersectPoint() };
+            if (intersection.indexList.size() >= 3)
+            {
+                hit.index0 = intersection.indexList[0];
+                hit.index1 = intersection.indexList[1];
+                hit.index2 = intersection.indexList[2];
+            }
+            return hit;
+        }
+    }
+    return std::nullopt;
+}
+
+std::tuple<osg::Vec3d, osg::Vec3d, osg::Vec3d> CSVRender::WorldspaceWidget::getStartEndDirection(
+    int pointX, int pointY) const
+{
+    // may be okay to just use devicePixelRatio() directly
+    QScreen* screen = SceneWidget::windowHandle() && SceneWidget::windowHandle()->screen()
+        ? SceneWidget::windowHandle()->screen()
+        : QGuiApplication::primaryScreen();
+
+    // (0,0) is considered the lower left corner of an OpenGL window
+    int x = pointX * screen->devicePixelRatio();
+    int y = height() * screen->devicePixelRatio() - pointY * screen->devicePixelRatio();
+
+    // Convert from screen space to world space
+    osg::Matrixd wpvMat;
+    wpvMat.preMult(mView->getCamera()->getViewport()->computeWindowMatrix());
+    wpvMat.preMult(mView->getCamera()->getProjectionMatrix());
+    wpvMat.preMult(mView->getCamera()->getViewMatrix());
+    wpvMat = osg::Matrixd::inverse(wpvMat);
+
+    osg::Vec3d start = wpvMat.preMult(osg::Vec3d(x, y, 0));
+    osg::Vec3d end = wpvMat.preMult(osg::Vec3d(x, y, 1));
+    osg::Vec3d direction = end - start;
+    return { start, end, direction };
+}
+
+CSVRender::WorldspaceHitResult CSVRender::WorldspaceWidget::mousePick(
+    const QPoint& localPos, unsigned int interactionMask) const
+{
+>>>>>>> origin/main
     auto [start, end, direction] = getStartEndDirection(localPos.x(), localPos.y());
 
     // Get intersection

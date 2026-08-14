@@ -9,7 +9,13 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+<<<<<<< HEAD
 
+=======
+#include <components/esm4/records.hpp>
+
+#include <components/fallback/fallback.hpp>
+>>>>>>> origin/main
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/rng.hpp>
 
@@ -80,7 +86,17 @@ namespace MWWorld
         mStatic.insert_or_assign(idx, std::move(record));
     }
     template <typename T>
+<<<<<<< HEAD
     size_t IndexedStore<T>::getSize() const
+=======
+    T* IndexedStore<T>::insertStatic(const T& item)
+    {
+        auto [it, inserted] = mStatic.insert_or_assign(item.mIndex, item);
+        return &it->second;
+    }
+    template <typename T>
+    int IndexedStore<T>::getSize() const
+>>>>>>> origin/main
     {
         return mStatic.size();
     }
@@ -109,6 +125,12 @@ namespace MWWorld
         return ptr;
     }
 
+<<<<<<< HEAD
+=======
+    // Need to instantiate these before they're used
+    template class IndexedStore<ESM::MagicEffect>;
+
+>>>>>>> origin/main
     template <class T, class Id>
     TypedDynamicStore<T, Id>::TypedDynamicStore()
     {
@@ -251,7 +273,11 @@ namespace MWWorld
     }
 
     template <class T, class Id>
+<<<<<<< HEAD
     size_t TypedDynamicStore<T, Id>::getDynamicSize() const
+=======
+    int TypedDynamicStore<T, Id>::getDynamicSize() const
+>>>>>>> origin/main
     {
         return mDynamic.size();
     }
@@ -593,10 +619,16 @@ namespace MWWorld
         newCell.mAmbi.mFogDensity = 0;
         newCell.updateId();
 
+<<<<<<< HEAD
         ESM::Cell* newCellInserted = &mCells.emplace(newCell.mId, newCell).first->second;
         mExt.emplace(key, newCellInserted);
         mSharedExt.emplace_back(newCellInserted);
         return newCellInserted;
+=======
+        ESM::Cell* newCellInserted = &mCells.insert(std::make_pair(newCell.mId, newCell)).first->second;
+
+        return mExt.insert(std::make_pair(key, newCellInserted)).first->second;
+>>>>>>> origin/main
     }
     const ESM::Cell* Store<ESM::Cell>::find(const ESM::RefId& id) const
     {
@@ -636,9 +668,26 @@ namespace MWWorld
         for (const auto& [_, cell] : mDynamicInt)
             mCells.erase(cell->mId);
         mDynamicInt.clear();
+<<<<<<< HEAD
 
         mSharedInt.erase(mSharedInt.begin() + mInt.size(), mSharedInt.end());
         mSharedExt.erase(mSharedExt.begin() + mExt.size(), mSharedExt.end());
+=======
+        setUp();
+    }
+
+    void Store<ESM::Cell>::setUp()
+    {
+        mSharedInt.clear();
+        mSharedInt.reserve(mInt.size());
+        for (auto& [_, cell] : mInt)
+            mSharedInt.push_back(cell);
+
+        mSharedExt.clear();
+        mSharedExt.reserve(mExt.size());
+        for (auto& [_, cell] : mExt)
+            mSharedExt.push_back(cell);
+>>>>>>> origin/main
     }
     RecordId Store<ESM::Cell>::load(ESM::ESMReader& esm)
     {
@@ -671,10 +720,14 @@ namespace MWWorld
         {
             cell.loadCell(esm, true);
             if (newCell)
+<<<<<<< HEAD
             {
                 mInt[cell.mName] = &cell;
                 mSharedInt.push_back(&cell);
             }
+=======
+                mInt[cell.mName] = &cell;
+>>>>>>> origin/main
         }
         else
         {
@@ -687,10 +740,14 @@ namespace MWWorld
             // push the new references on the list of references to manage
             cell.postLoad(esm);
             if (newCell)
+<<<<<<< HEAD
             {
                 mExt[std::make_pair(cell.mData.mX, cell.mData.mY)] = &cell;
                 mSharedExt.push_back(&cell);
             }
+=======
+                mExt[std::make_pair(cell.mData.mX, cell.mData.mY)] = &cell;
+>>>>>>> origin/main
             else
             {
                 // merge lists of leased references, use newer data in case of conflict
@@ -741,6 +798,41 @@ namespace MWWorld
     {
         return iterator(mSharedExt.end());
     }
+<<<<<<< HEAD
+=======
+    const ESM::Cell* Store<ESM::Cell>::searchExtByName(std::string_view name) const
+    {
+        const ESM::Cell* cell = nullptr;
+        for (const ESM::Cell* sharedCell : mSharedExt)
+        {
+            if (Misc::StringUtils::ciEqual(sharedCell->mName, name))
+            {
+                if (cell == nullptr || (sharedCell->mData.mX > cell->mData.mX)
+                    || (sharedCell->mData.mX == cell->mData.mX && sharedCell->mData.mY > cell->mData.mY))
+                {
+                    cell = sharedCell;
+                }
+            }
+        }
+        return cell;
+    }
+    const ESM::Cell* Store<ESM::Cell>::searchExtByRegion(const ESM::RefId& id) const
+    {
+        const ESM::Cell* cell = nullptr;
+        for (const ESM::Cell* sharedCell : mSharedExt)
+        {
+            if (sharedCell->mRegion == id)
+            {
+                if (cell == nullptr || (sharedCell->mData.mX > cell->mData.mX)
+                    || (sharedCell->mData.mX == cell->mData.mX && sharedCell->mData.mY > cell->mData.mY))
+                {
+                    cell = sharedCell;
+                }
+            }
+        }
+        return cell;
+    }
+>>>>>>> origin/main
     size_t Store<ESM::Cell>::getSize() const
     {
         return mSharedInt.size() + mSharedExt.size();
@@ -873,6 +965,27 @@ namespace MWWorld
     // Skill
     //=========================================================================
 
+<<<<<<< HEAD
+=======
+    void Store<ESM::Skill>::setUpNeutral()
+    {
+        for (int index = 0; index < ESM::Skill::Length; ++index)
+        {
+            ESM::Skill skill;
+            skill.blank();
+            skill.mId = *ESM::Skill::indexToRefId(index).getIf<ESM::SkillId>();
+            skill.mName.clear();
+            skill.mDescription.clear();
+            skill.mIcon.clear();
+            skill.mWerewolfValue = 0.f;
+            skill.mSchool.reset();
+            for (float& value : skill.mData.mUseValue)
+                value = 0.f;
+            insertStatic(skill);
+        }
+    }
+
+>>>>>>> origin/main
     void Store<ESM::Skill>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
         constexpr std::string_view skillValues[ESM::Skill::Length][4] = {
@@ -951,9 +1064,61 @@ namespace MWWorld
         return TypedDynamicStore::search(ESM::RefId::stringRefId(id));
     }
 
+<<<<<<< HEAD
     // Attribute
     //=========================================================================
 
+=======
+    void Store<ESM::GameSetting>::setUp()
+    {
+        auto addSetting = [&](const std::string& key, ESM::Variant value) {
+            auto id = ESM::RefId::stringRefId(key);
+            ESM::GameSetting setting;
+            setting.blank();
+            setting.mId = id;
+            setting.mValue = std::move(value);
+            auto [iter, inserted] = mStatic.insert_or_assign(id, std::move(setting));
+            if (inserted)
+                mShared.push_back(&iter->second);
+        };
+        for (auto& [key, value] : Fallback::Map::getIntFallbackMap())
+            addSetting(key, ESM::Variant(value));
+        for (auto& [key, value] : Fallback::Map::getFloatFallbackMap())
+            addSetting(key, ESM::Variant(value));
+        for (auto& [key, value] : Fallback::Map::getNonNumericFallbackMap())
+            addSetting(key, ESM::Variant(value));
+        TypedDynamicStore<ESM::GameSetting>::setUp();
+    }
+
+    // Magic effect
+    //=========================================================================
+    Store<ESM::MagicEffect>::Store() {}
+
+    void Store<ESM::MagicEffect>::setUpNeutral()
+    {
+        for (int index = 0; index < ESM::MagicEffect::Length; ++index)
+        {
+            ESM::MagicEffect effect;
+            effect.mIndex = index;
+            effect.mId = ESM::MagicEffect::indexToRefId(index);
+            effect.blank();
+            insertStatic(effect);
+        }
+    }
+
+    // Attribute
+    //=========================================================================
+
+    void Store<ESM::Attribute>::setUpNeutral()
+    {
+        const ESM::Attribute::AttributeID attributes[] = { ESM::Attribute::Strength, ESM::Attribute::Intelligence,
+            ESM::Attribute::Willpower, ESM::Attribute::Agility, ESM::Attribute::Speed, ESM::Attribute::Endurance,
+            ESM::Attribute::Personality, ESM::Attribute::Luck };
+        for (const ESM::Attribute::AttributeID& id : attributes)
+            insertStatic({ .mId = id });
+    }
+
+>>>>>>> origin/main
     void Store<ESM::Attribute>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
         insertStatic({ .mId = ESM::Attribute::Strength,
@@ -1002,7 +1167,14 @@ namespace MWWorld
     // Dialogue
     //=========================================================================
 
+<<<<<<< HEAD
     Store<ESM::Dialogue>::Store() {}
+=======
+    Store<ESM::Dialogue>::Store()
+        : mKeywordSearchModFlag(true)
+    {
+    }
+>>>>>>> origin/main
 
     void Store<ESM::Dialogue>::setUp()
     {
@@ -1092,6 +1264,18 @@ namespace MWWorld
         return true;
     }
 
+<<<<<<< HEAD
+=======
+    ESM::Dialogue* Store<ESM::Dialogue>::insertStatic(const ESM::Dialogue& dialogue)
+    {
+        auto [it, inserted] = mStatic.insert_or_assign(dialogue.mId, dialogue);
+        if (inserted)
+            mShared.push_back(&it->second);
+        mKeywordSearchModFlag = true;
+        return &it->second;
+    }
+
+>>>>>>> origin/main
     void Store<ESM::Dialogue>::listIdentifier(std::vector<ESM::RefId>& list) const
     {
         list.reserve(list.size() + getSize());
@@ -1099,9 +1283,31 @@ namespace MWWorld
             list.push_back(dialogue->mId);
     }
 
+<<<<<<< HEAD
     bool Store<ESM::Dialogue>::getKeywordSearchModFlag() const
     {
         return std::exchange(mKeywordSearchModFlag, false);
+=======
+    const MWDialogue::KeywordSearch<int>& Store<ESM::Dialogue>::getDialogIdKeywordSearch() const
+    {
+        if (mKeywordSearchModFlag)
+        {
+            mKeywordSearch.clear();
+
+            std::vector<std::string> keywordList;
+            keywordList.reserve(getSize());
+            for (const auto& it : *this)
+                keywordList.push_back(Misc::StringUtils::lowerCase(it.mStringId));
+            sort(keywordList.begin(), keywordList.end());
+
+            for (const auto& it : keywordList)
+                mKeywordSearch.seed(it, 0 /*unused*/);
+
+            mKeywordSearchModFlag = false;
+        }
+
+        return mKeywordSearch;
+>>>>>>> origin/main
     }
 
     // ESM4 Cell
@@ -1218,7 +1424,11 @@ template class MWWorld::TypedDynamicStore<ESM::ItemLevList>;
 // template class MWWorld::Store<ESM::LandTexture>;
 template class MWWorld::TypedDynamicStore<ESM::Light>;
 template class MWWorld::TypedDynamicStore<ESM::Lockpick>;
+<<<<<<< HEAD
 template class MWWorld::TypedDynamicStore<ESM::MagicEffect>;
+=======
+// template class MWWorld::Store<ESM::MagicEffect>;
+>>>>>>> origin/main
 template class MWWorld::TypedDynamicStore<ESM::Miscellaneous>;
 template class MWWorld::TypedDynamicStore<ESM::NPC>;
 // template class MWWorld::Store<ESM::Pathgrid>;
@@ -1241,10 +1451,17 @@ template class MWWorld::TypedDynamicStore<ESM4::ActorCharacter, ESM::FormId>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorCreature, ESM::FormId>;
 
 template class MWWorld::TypedDynamicStore<ESM4::Activator>;
+<<<<<<< HEAD
+=======
+template class MWWorld::TypedDynamicStore<ESM4::AnimObject>;
+template class MWWorld::TypedDynamicStore<ESM4::AIPackage>;
+template class MWWorld::TypedDynamicStore<ESM4::AmmoEffect>;
+>>>>>>> origin/main
 template class MWWorld::TypedDynamicStore<ESM4::Ammunition>;
 template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;
 template class MWWorld::TypedDynamicStore<ESM4::Book>;
+<<<<<<< HEAD
 template class MWWorld::TypedDynamicStore<ESM4::Cell>;
 template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
@@ -1256,6 +1473,34 @@ template class MWWorld::TypedDynamicStore<ESM4::Hair>;
 template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
 template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
 template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
+=======
+template class MWWorld::TypedDynamicStore<ESM4::BodyPartData>;
+template class MWWorld::TypedDynamicStore<ESM4::Cell>;
+template class MWWorld::TypedDynamicStore<ESM4::Class>;
+template class MWWorld::TypedDynamicStore<ESM4::GameSetting>;
+template class MWWorld::TypedDynamicStore<ESM4::Climate>;
+template class MWWorld::TypedDynamicStore<ESM4::Colour>;
+template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
+template class MWWorld::TypedDynamicStore<ESM4::Container>;
+template class MWWorld::TypedDynamicStore<ESM4::Creature>;
+template class MWWorld::TypedDynamicStore<ESM4::Dialogue>;
+template class MWWorld::TypedDynamicStore<ESM4::DialogInfo>;
+template class MWWorld::TypedDynamicStore<ESM4::Door>;
+template class MWWorld::TypedDynamicStore<ESM4::Eyes>;
+template class MWWorld::TypedDynamicStore<ESM4::Flora>;
+template class MWWorld::TypedDynamicStore<ESM4::FormIdList>;
+template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
+template class MWWorld::TypedDynamicStore<ESM4::GlobalVariable>;
+template class MWWorld::TypedDynamicStore<ESM4::Hair>;
+template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleAnimation>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleMarker>;
+template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
+template class MWWorld::TypedDynamicStore<ESM4::ImpactData>;
+template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
+template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
+template class MWWorld::TypedDynamicStore<ESM4::Key>;
+>>>>>>> origin/main
 template class MWWorld::TypedDynamicStore<ESM4::Land>;
 template class MWWorld::TypedDynamicStore<ESM4::LandTexture>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledCreature>;
@@ -1263,6 +1508,7 @@ template class MWWorld::TypedDynamicStore<ESM4::LevelledItem>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledNpc>;
 template class MWWorld::TypedDynamicStore<ESM4::Light>;
 template class MWWorld::TypedDynamicStore<ESM4::MiscItem>;
+<<<<<<< HEAD
 template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
@@ -1270,10 +1516,43 @@ template class MWWorld::TypedDynamicStore<ESM4::Potion>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
+=======
+template class MWWorld::TypedDynamicStore<ESM4::MagicEffect>;
+template class MWWorld::TypedDynamicStore<ESM4::Message>;
+template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
+template class MWWorld::TypedDynamicStore<ESM4::Npc>;
+template class MWWorld::TypedDynamicStore<ESM4::Note>;
+template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
+template class MWWorld::TypedDynamicStore<ESM4::Potion>;
+template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
+template class MWWorld::TypedDynamicStore<ESM4::Explosion>;
+template class MWWorld::TypedDynamicStore<ESM4::ActorValueInformation>;
+template class MWWorld::TypedDynamicStore<ESM4::Faction>;
+template class MWWorld::TypedDynamicStore<ESM4::Perk>;
+template class MWWorld::TypedDynamicStore<ESM4::RecipeCategory>;
+template class MWWorld::TypedDynamicStore<ESM4::Recipe>;
+template class MWWorld::TypedDynamicStore<ESM4::Quest>;
+template class MWWorld::TypedDynamicStore<ESM4::Race>;
+template class MWWorld::TypedDynamicStore<ESM4::Region>;
+template class MWWorld::TypedDynamicStore<ESM4::Reputation>;
+template class MWWorld::TypedDynamicStore<ESM4::Script>;
+template class MWWorld::TypedDynamicStore<ESM4::Sound>;
+template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
+template class MWWorld::TypedDynamicStore<ESM4::Spell>;
+>>>>>>> origin/main
 template class MWWorld::TypedDynamicStore<ESM4::Static>;
 template class MWWorld::TypedDynamicStore<ESM4::StaticCollection>;
 template class MWWorld::TypedDynamicStore<ESM4::Terminal>;
 template class MWWorld::TypedDynamicStore<ESM4::TextureSet>;
+<<<<<<< HEAD
 template class MWWorld::TypedDynamicStore<ESM4::Tree>;
 template class MWWorld::TypedDynamicStore<ESM4::Weapon>;
+=======
+template class MWWorld::TypedDynamicStore<ESM4::TalkingActivator>;
+template class MWWorld::TypedDynamicStore<ESM4::Tree>;
+template class MWWorld::TypedDynamicStore<ESM4::Weapon>;
+template class MWWorld::TypedDynamicStore<ESM4::Weather>;
+template class MWWorld::TypedDynamicStore<ESM4::ImageSpace>;
+template class MWWorld::TypedDynamicStore<ESM4::ImageSpaceModifier>;
+>>>>>>> origin/main
 template class MWWorld::TypedDynamicStore<ESM4::World>;

@@ -93,7 +93,11 @@ namespace MWGui
 
     void CountDialog::onSliderMoved(MyGUI::ScrollBar* sender, size_t position)
     {
+<<<<<<< HEAD
         mItemEdit->setValue(static_cast<int>(position + 1));
+=======
+        mItemEdit->setValue(position + 1);
+>>>>>>> origin/main
     }
 
     bool CountDialog::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)

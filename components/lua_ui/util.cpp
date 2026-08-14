@@ -1,7 +1,10 @@
 #include "util.hpp"
 
+<<<<<<< HEAD
 #include <ranges>
 
+=======
+>>>>>>> origin/main
 #include <MyGUI_FactoryManager.h>
 
 #include "adapter.hpp"
@@ -14,6 +17,10 @@
 #include "window.hpp"
 
 #include "element.hpp"
+<<<<<<< HEAD
+=======
+#include "registerscriptsettings.hpp"
+>>>>>>> origin/main
 
 namespace LuaUi
 {
@@ -56,6 +63,7 @@ namespace LuaUi
         while (!Element::sMenuElements.empty())
             Element::erase(Element::sMenuElements.begin()->second.get());
     }
+<<<<<<< HEAD
 
     bool warnUnused(std::vector<std::string>& warnings, sol::object object, const std::string& tableName,
         const std::vector<std::string_view>& usedKeys, bool generateWarningStrings)
@@ -79,4 +87,6 @@ namespace LuaUi
         }
         return beginningSize != warnings.size();
     }
+=======
+>>>>>>> origin/main
 }

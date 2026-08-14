@@ -199,6 +199,10 @@ namespace SceneUtil
                 "SceneUtil::UBOManager",
                 "SceneUtil::LightListCallback",
                 "SceneUtil::LightManagerUpdateCallback",
+<<<<<<< HEAD
+=======
+                "SceneUtil::FFPLightStateAttribute",
+>>>>>>> origin/main
                 "SceneUtil::UpdateRigBounds",
                 "SceneUtil::UpdateRigGeometry",
                 "SceneUtil::LightSource",

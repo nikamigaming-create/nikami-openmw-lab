@@ -41,16 +41,50 @@ namespace Misc::Rng
         sGenerator.seed(seed);
     }
 
+<<<<<<< HEAD
+=======
+    float rollProbability()
+    {
+        return std::uniform_real_distribution<float>(0, 1 - std::numeric_limits<float>::epsilon())(getGenerator());
+    }
+
+>>>>>>> origin/main
     float rollProbability(Generator& prng)
     {
         return std::uniform_real_distribution<float>(0, 1 - std::numeric_limits<float>::epsilon())(prng);
     }
 
+<<<<<<< HEAD
+=======
+    float rollClosedProbability()
+    {
+        return std::uniform_real_distribution<float>(0, 1)(getGenerator());
+    }
+
+>>>>>>> origin/main
     float rollClosedProbability(Generator& prng)
     {
         return std::uniform_real_distribution<float>(0, 1)(prng);
     }
 
+<<<<<<< HEAD
+=======
+    int rollDice(int max)
+    {
+        return max > 0 ? std::uniform_int_distribution<int>(0, max - 1)(getGenerator()) : 0;
+    }
+
+    int rollDice(int max, Generator& prng)
+    {
+        return max > 0 ? std::uniform_int_distribution<int>(0, max - 1)(prng) : 0;
+    }
+
+    float deviate(float mean, float deviation)
+    {
+        return std::uniform_real_distribution<float>(mean - deviation, mean + deviation)(getGenerator());
+    }
+
+>>>>>>> origin/main
     float deviate(float mean, float deviation, Generator& prng)
     {
         return std::uniform_real_distribution<float>(mean - deviation, mean + deviation)(prng);

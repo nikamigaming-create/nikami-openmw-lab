@@ -15,10 +15,13 @@
 #include "scriptscontainer.hpp"
 #include "utf8.hpp"
 
+<<<<<<< HEAD
 #if SOL_IS_ON(SOL_PROPAGATE_EXCEPTIONS)
 #error SOL_PROPAGATE_EXCEPTIONS inhibits error checking
 #endif
 
+=======
+>>>>>>> origin/main
 namespace LuaUtil
 {
     static VFS::Path::Normalized packageNameToVfsPath(std::string_view packageName, const VFS::Manager& vfs)

@@ -67,10 +67,17 @@ namespace MWPhysics
         // Copy the hit data over to our trace results struct:
         if (traceCallback.hasHit())
         {
+<<<<<<< HEAD
             mFraction = static_cast<float>(traceCallback.m_closestHitFraction);
             // ensure fraction is correct (covers intended distance traveled instead of actual distance traveled)
             if (doingShortTrace && (end - start).length2() > 0.0)
                 mFraction *= static_cast<float>((btend - btstart).length() / (end - start).length());
+=======
+            mFraction = traceCallback.m_closestHitFraction;
+            // ensure fraction is correct (covers intended distance traveled instead of actual distance traveled)
+            if (doingShortTrace && (end - start).length2() > 0.0)
+                mFraction *= (btend - btstart).length() / (end - start).length();
+>>>>>>> origin/main
             mPlaneNormal = Misc::Convert::toOsg(traceCallback.m_hitNormalWorld);
             mEndPos = (end - start) * mFraction + start;
             mHitPoint = Misc::Convert::toOsg(traceCallback.m_hitPointWorld);
@@ -85,7 +92,11 @@ namespace MWPhysics
 
                 if (newTraceCallback.hasHit())
                 {
+<<<<<<< HEAD
                     mFraction = static_cast<float>(newTraceCallback.m_closestHitFraction);
+=======
+                    mFraction = newTraceCallback.m_closestHitFraction;
+>>>>>>> origin/main
                     mPlaneNormal = Misc::Convert::toOsg(newTraceCallback.m_hitNormalWorld);
                     mEndPos = (end - start) * mFraction + start;
                     mHitPoint = Misc::Convert::toOsg(newTraceCallback.m_hitPointWorld);
@@ -109,7 +120,11 @@ namespace MWPhysics
             actor->getCollisionObject(), Misc::Convert::toBullet(start), Misc::Convert::toBullet(end), world, true);
         if (traceCallback.hasHit())
         {
+<<<<<<< HEAD
             mFraction = static_cast<float>(traceCallback.m_closestHitFraction);
+=======
+            mFraction = traceCallback.m_closestHitFraction;
+>>>>>>> origin/main
             mPlaneNormal = Misc::Convert::toOsg(traceCallback.m_hitNormalWorld);
             mEndPos = (end - start) * mFraction + start;
         }

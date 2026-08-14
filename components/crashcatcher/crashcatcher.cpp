@@ -70,6 +70,15 @@ namespace
 {
     constexpr char crash_switch[] = "--cc-handle-crash";
 
+<<<<<<< HEAD
+=======
+    bool suppressFatalDialogs()
+    {
+        const char* value = getenv("OPENMW_WORLD_VIEWER_SUPPRESS_FATAL_DIALOG");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }
+
+>>>>>>> origin/main
     struct SignalInfo
     {
         int mCode;
@@ -434,7 +443,12 @@ static void crash_catcher(int signum, siginfo_t* siginfo, void* /*context*/)
 
     const std::string message = "OpenMW has encountered a fatal error.\nCrash log saved to '" + std::string(logfile)
         + "'.\n Please report this to https://gitlab.com/OpenMW/openmw/issues !";
+<<<<<<< HEAD
     SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
+=======
+    if (!suppressFatalDialogs())
+        SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
+>>>>>>> origin/main
 
     exit(0);
 }

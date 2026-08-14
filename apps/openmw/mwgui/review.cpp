@@ -381,8 +381,13 @@ namespace MWGui
             }
 
             const MWMechanics::SkillValue& stat = skillValue->second;
+<<<<<<< HEAD
             float base = stat.getBase();
             float modified = stat.getModified();
+=======
+            int base = stat.getBase();
+            int modified = stat.getModified();
+>>>>>>> origin/main
 
             std::string state = "normal";
             if (modified > base)
@@ -577,13 +582,21 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP || arg.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT)
         {
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN || arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
         {
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
 

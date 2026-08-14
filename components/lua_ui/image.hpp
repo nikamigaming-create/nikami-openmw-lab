@@ -1,8 +1,11 @@
 #ifndef OPENMW_LUAUI_IMAGE
 #define OPENMW_LUAUI_IMAGE
 
+<<<<<<< HEAD
 #include <vector>
 
+=======
+>>>>>>> origin/main
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_TileRect.h>
 
@@ -30,7 +33,10 @@ namespace LuaUi
     protected:
         void initialize() override;
         void updateProperties() override;
+<<<<<<< HEAD
         const std::vector<std::string_view>& allUsedProperties() const override;
+=======
+>>>>>>> origin/main
         LuaTileRect* mTileRect;
     };
 }

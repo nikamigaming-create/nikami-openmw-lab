@@ -11,12 +11,22 @@ namespace MWRender
         BlendMask_Torso = 1 << 1,
         BlendMask_LeftArm = 1 << 2,
         BlendMask_RightArm = 1 << 3,
+<<<<<<< HEAD
 
         BlendMask_UpperBody = BlendMask_Torso | BlendMask_LeftArm | BlendMask_RightArm,
+=======
+        BlendMask_Head = 1 << 4,
+
+        BlendMask_UpperBody = BlendMask_Torso | BlendMask_LeftArm | BlendMask_RightArm | BlendMask_Head,
+>>>>>>> origin/main
 
         BlendMask_All = BlendMask_LowerBody | BlendMask_UpperBody
     };
     /* This is the number of *discrete* blend masks. */
+<<<<<<< HEAD
     static constexpr size_t sNumBlendMasks = 4;
+=======
+    static constexpr size_t sNumBlendMasks = 5;
+>>>>>>> origin/main
 }
 #endif

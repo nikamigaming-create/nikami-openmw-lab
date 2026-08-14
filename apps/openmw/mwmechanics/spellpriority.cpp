@@ -23,6 +23,7 @@
 
 namespace
 {
+<<<<<<< HEAD
     enum Stats
     {
         Health = 0,
@@ -31,6 +32,9 @@ namespace
     };
 
     int numEffectsToDispel(const MWWorld::Ptr& actor, ESM::RefId effectFilter = ESM::RefId(), bool negative = true)
+=======
+    int numEffectsToDispel(const MWWorld::Ptr& actor, int effectFilter = -1, bool negative = true)
+>>>>>>> origin/main
     {
         int toCure = 0;
         const MWMechanics::ActiveSpells& activeSpells = actor.getClass().getCreatureStats(actor).getActiveSpells();
@@ -38,7 +42,11 @@ namespace
         {
             // if the effect filter is not specified, take in account only spells effects. Leave potions, enchanted
             // items etc.
+<<<<<<< HEAD
             if (effectFilter.empty())
+=======
+            if (effectFilter == -1)
+>>>>>>> origin/main
             {
                 const ESM::Spell* spell
                     = MWBase::Environment::get().getESMStore()->get<ESM::Spell>().search(it->getSourceSpellId());
@@ -49,8 +57,13 @@ namespace
             const MWMechanics::ActiveSpells::ActiveSpellParams& params = *it;
             for (const auto& effect : params.getEffects())
             {
+<<<<<<< HEAD
                 ESM::RefId effectId = effect.mEffectId;
                 if (!effectFilter.empty() && effectId != effectFilter)
+=======
+                int effectId = effect.mEffectId;
+                if (effectFilter != -1 && effectId != effectFilter)
+>>>>>>> origin/main
                     continue;
                 const ESM::MagicEffect* magicEffect
                     = MWBase::Environment::get().getESMStore()->get<ESM::MagicEffect>().find(effectId);
@@ -89,10 +102,17 @@ namespace
 
     bool isSpellActive(const MWWorld::Ptr& caster, const MWWorld::Ptr& target, const ESM::RefId& id)
     {
+<<<<<<< HEAD
         ESM::RefNum actor = caster.getCellRef().getRefNum();
         const auto& active = target.getClass().getCreatureStats(target).getActiveSpells();
         return std::find_if(active.begin(), active.end(), [&](const auto& spell) {
             return spell.getCaster() == actor && spell.getSourceSpellId() == id;
+=======
+        int actorId = caster.getClass().getCreatureStats(caster).getActorId();
+        const auto& active = target.getClass().getCreatureStats(target).getActiveSpells();
+        return std::find_if(active.begin(), active.end(), [&](const auto& spell) {
+            return spell.getCasterActorId() == actorId && spell.getSourceSpellId() == id;
+>>>>>>> origin/main
         }) != active.end();
     }
 
@@ -189,8 +209,15 @@ namespace MWMechanics
         }
         else if (enchantment->mData.mType == ESM::Enchantment::WhenUsed)
         {
+<<<<<<< HEAD
             // Creatures can not wear armor/clothing, so allow creatures to use non-equipped items,
             if (actor.getClass().isNpc() && !actor.getClass().getInventoryStore(actor).isEquipped(ptr))
+=======
+            MWWorld::InventoryStore& store = actor.getClass().getInventoryStore(actor);
+
+            // Creatures can not wear armor/clothing, so allow creatures to use non-equipped items,
+            if (actor.getClass().isNpc() && !store.isEquipped(ptr))
+>>>>>>> origin/main
                 return 0.f;
 
             int castCost = getEffectiveEnchantmentCastCost(*enchantment, actor);
@@ -212,6 +239,7 @@ namespace MWMechanics
         // NOTE: enemy may be empty
 
         float rating = 1;
+<<<<<<< HEAD
         if (effect.mEffectID == ESM::MagicEffect::Soultrap || effect.mEffectID == ESM::MagicEffect::AlmsiviIntervention
             || effect.mEffectID == ESM::MagicEffect::DivineIntervention
             || effect.mEffectID == ESM::MagicEffect::CalmHumanoid || effect.mEffectID == ESM::MagicEffect::CalmCreature
@@ -453,10 +481,63 @@ namespace MWMechanics
                 diff = numNegative - numPositive;
             }
             else
+=======
+        switch (effect.mEffectID)
+        {
+            case ESM::MagicEffect::Soultrap:
+            case ESM::MagicEffect::AlmsiviIntervention:
+            case ESM::MagicEffect::DivineIntervention:
+            case ESM::MagicEffect::CalmHumanoid:
+            case ESM::MagicEffect::CalmCreature:
+            case ESM::MagicEffect::FrenzyHumanoid:
+            case ESM::MagicEffect::FrenzyCreature:
+            case ESM::MagicEffect::DemoralizeHumanoid:
+            case ESM::MagicEffect::DemoralizeCreature:
+            case ESM::MagicEffect::RallyHumanoid:
+            case ESM::MagicEffect::RallyCreature:
+            case ESM::MagicEffect::Charm:
+            case ESM::MagicEffect::DetectAnimal:
+            case ESM::MagicEffect::DetectEnchantment:
+            case ESM::MagicEffect::DetectKey:
+            case ESM::MagicEffect::Telekinesis:
+            case ESM::MagicEffect::Mark:
+            case ESM::MagicEffect::Recall:
+            case ESM::MagicEffect::Jump:
+            case ESM::MagicEffect::WaterBreathing:
+            case ESM::MagicEffect::SwiftSwim:
+            case ESM::MagicEffect::WaterWalking:
+            case ESM::MagicEffect::SlowFall:
+            case ESM::MagicEffect::Light:
+            case ESM::MagicEffect::Lock:
+            case ESM::MagicEffect::Open:
+            case ESM::MagicEffect::TurnUndead:
+            case ESM::MagicEffect::WeaknessToCommonDisease:
+            case ESM::MagicEffect::WeaknessToBlightDisease:
+            case ESM::MagicEffect::WeaknessToCorprusDisease:
+            case ESM::MagicEffect::CureCommonDisease:
+            case ESM::MagicEffect::CureBlightDisease:
+            case ESM::MagicEffect::CureCorprusDisease:
+            case ESM::MagicEffect::ResistBlightDisease:
+            case ESM::MagicEffect::ResistCommonDisease:
+            case ESM::MagicEffect::ResistCorprusDisease:
+            case ESM::MagicEffect::Invisibility:
+            case ESM::MagicEffect::Chameleon:
+            case ESM::MagicEffect::NightEye:
+            case ESM::MagicEffect::Vampirism:
+            case ESM::MagicEffect::StuntedMagicka:
+            case ESM::MagicEffect::ExtraSpell:
+            case ESM::MagicEffect::RemoveCurse:
+            case ESM::MagicEffect::CommandCreature:
+            case ESM::MagicEffect::CommandHumanoid:
+                return 0.f;
+
+            case ESM::MagicEffect::Blind:
+>>>>>>> origin/main
             {
                 if (enemy.isEmpty())
                     return 0.f;
 
+<<<<<<< HEAD
                 numPositive = numEffectsToDispel(enemy, ESM::RefId(), false);
                 numNegative = numEffectsToDispel(enemy);
 
@@ -566,6 +647,352 @@ namespace MWMechanics
                 return 0.f;
             if (enemy.getClass().getSkill(enemy, effect.mSkill) <= 0)
                 return 0.f;
+=======
+                const CreatureStats& stats = enemy.getClass().getCreatureStats(enemy);
+
+                // Enemy can't attack
+                if (stats.isParalyzed() || stats.getKnockedDown())
+                    return 0.f;
+
+                // Enemy doesn't attack
+                if (stats.getDrawState() != MWMechanics::DrawState::Weapon)
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::Sound:
+            {
+                if (enemy.isEmpty())
+                    return 0.f;
+
+                const CreatureStats& stats = enemy.getClass().getCreatureStats(enemy);
+
+                // Enemy can't cast spells
+                if (stats.getMagicEffects().getOrDefault(ESM::MagicEffect::Silence).getMagnitude() > 0)
+                    return 0.f;
+
+                if (stats.isParalyzed() || stats.getKnockedDown())
+                    return 0.f;
+
+                // Enemy doesn't cast spells
+                if (stats.getDrawState() != MWMechanics::DrawState::Spell)
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::Silence:
+            {
+                if (enemy.isEmpty())
+                    return 0.f;
+
+                const CreatureStats& stats = enemy.getClass().getCreatureStats(enemy);
+
+                // Enemy can't cast spells
+                if (stats.isParalyzed() || stats.getKnockedDown())
+                    return 0.f;
+
+                // Enemy doesn't cast spells
+                if (stats.getDrawState() != MWMechanics::DrawState::Spell)
+                    return 0.f;
+                break;
+            }
+
+            case ESM::MagicEffect::RestoreAttribute:
+                return 0.f; // TODO: implement based on attribute damage
+            case ESM::MagicEffect::RestoreSkill:
+                return 0.f; // TODO: implement based on skill damage
+
+            case ESM::MagicEffect::ResistFire:
+            case ESM::MagicEffect::ResistFrost:
+            case ESM::MagicEffect::ResistMagicka:
+            case ESM::MagicEffect::ResistNormalWeapons:
+            case ESM::MagicEffect::ResistParalysis:
+            case ESM::MagicEffect::ResistPoison:
+            case ESM::MagicEffect::ResistShock:
+            case ESM::MagicEffect::SpellAbsorption:
+            case ESM::MagicEffect::Reflect:
+                return 0.f; // probably useless since we don't know in advance what the enemy will cast
+
+            // don't cast these for now as they would make the NPC cast the same effect over and over again, especially
+            // when they have potions
+            case ESM::MagicEffect::FortifyAttribute:
+            case ESM::MagicEffect::FortifyHealth:
+            case ESM::MagicEffect::FortifyMagicka:
+            case ESM::MagicEffect::FortifyFatigue:
+            case ESM::MagicEffect::FortifySkill:
+            case ESM::MagicEffect::FortifyMaximumMagicka:
+            case ESM::MagicEffect::FortifyAttack:
+                return 0.f;
+
+            case ESM::MagicEffect::Burden:
+            {
+                if (enemy.isEmpty())
+                    return 0.f;
+
+                // Ignore enemy without inventory
+                if (!enemy.getClass().hasInventoryStore(enemy))
+                    return 0.f;
+
+                // burden makes sense only to overburden an enemy
+                float burden = enemy.getClass().getEncumbrance(enemy) - enemy.getClass().getCapacity(enemy);
+                if (burden > 0)
+                    return 0.f;
+
+                if ((effect.mMagnMin + effect.mMagnMax) / 2.f > -burden)
+                    rating *= 3;
+                else
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::Feather:
+            {
+                // Ignore actors without inventory
+                if (!actor.getClass().hasInventoryStore(actor))
+                    return 0.f;
+
+                // feather makes sense only for overburden actors
+                float burden = actor.getClass().getEncumbrance(actor) - actor.getClass().getCapacity(actor);
+                if (burden <= 0)
+                    return 0.f;
+
+                if ((effect.mMagnMin + effect.mMagnMax) / 2.f >= burden)
+                    rating *= 3;
+                else
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::Levitate:
+                return 0.f; // AI isn't designed to take advantage of this, and could be perceived as unfair anyway
+            case ESM::MagicEffect::BoundBoots:
+            case ESM::MagicEffect::BoundHelm:
+                if (actor.getClass().isNpc())
+                {
+                    // Beast races can't wear helmets or boots
+                    const ESM::RefId& raceid = actor.get<ESM::NPC>()->mBase->mRace;
+                    const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(raceid);
+                    if (race->mData.mFlags & ESM::Race::Beast)
+                        return 0.f;
+                }
+                else
+                    return 0.f;
+
+                break;
+            case ESM::MagicEffect::BoundShield:
+                if (!actor.getClass().hasInventoryStore(actor))
+                    return 0.f;
+                else if (!actor.getClass().isNpc())
+                {
+                    // If the actor is an NPC they can benefit from the armor rating, otherwise check if we've got a
+                    // one-handed weapon to use with the shield
+                    const auto& store = actor.getClass().getInventoryStore(actor);
+                    auto oneHanded = std::find_if(store.cbegin(MWWorld::ContainerStore::Type_Weapon), store.cend(),
+                        [](const MWWorld::ConstPtr& weapon) {
+                            if (weapon.getClass().getItemHealth(weapon) <= 0.f)
+                                return false;
+                            short type = weapon.get<ESM::Weapon>()->mBase->mData.mType;
+                            return !(MWMechanics::getWeaponType(type)->mFlags & ESM::WeaponType::TwoHanded);
+                        });
+                    if (oneHanded == store.cend())
+                        return 0.f;
+                }
+                break;
+            // Creatures can not wear armor
+            case ESM::MagicEffect::BoundCuirass:
+            case ESM::MagicEffect::BoundGloves:
+                if (!actor.getClass().isNpc())
+                    return 0.f;
+                break;
+
+            case ESM::MagicEffect::AbsorbMagicka:
+                if (!enemy.isEmpty() && enemy.getClass().getCreatureStats(enemy).getMagicka().getCurrent() <= 0.f)
+                {
+                    rating = 0.5f;
+                    rating *= getRestoreMagickaPriority(actor);
+                }
+                break;
+            case ESM::MagicEffect::RestoreHealth:
+            case ESM::MagicEffect::RestoreMagicka:
+            case ESM::MagicEffect::RestoreFatigue:
+                if (effect.mRange == ESM::RT_Self)
+                {
+                    const MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+                    const DynamicStat<float>& current
+                        = stats.getDynamic(effect.mEffectID - ESM::MagicEffect::RestoreHealth);
+                    // NB: this currently assumes the hardcoded magic effect flags are used
+                    const float magnitude = (effect.mMagnMin + effect.mMagnMax) / 2.f;
+                    const float toHeal = magnitude * std::max(1, effect.mDuration);
+                    const float damage = std::max(current.getModified() - current.getCurrent(), 0.f);
+                    float priority = 0.f;
+                    if (effect.mEffectID == ESM::MagicEffect::RestoreHealth)
+                        priority = 4.f;
+                    else if (effect.mEffectID == ESM::MagicEffect::RestoreMagicka)
+                        priority = getRestoreMagickaPriority(actor);
+                    else if (effect.mEffectID == ESM::MagicEffect::RestoreFatigue)
+                        priority = 2.f;
+                    float overheal = 0.f;
+                    float heal = toHeal;
+                    if (damage < toHeal && current.getCurrent() > current.getModified() * 0.5)
+                    {
+                        overheal = toHeal - damage;
+                        heal = damage;
+                    }
+
+                    priority = (priority - 1.f) / 2.f * std::pow((damage / current.getModified() + 0.6f), priority * 2)
+                        + priority * (heal - 2.f * overheal) / current.getModified() - 0.5f;
+                    rating = priority;
+                }
+                break;
+
+            case ESM::MagicEffect::Dispel:
+            {
+                int numPositive = 0;
+                int numNegative = 0;
+                int diff = 0;
+
+                if (effect.mRange == ESM::RT_Self)
+                {
+                    numPositive = numEffectsToDispel(actor, -1, false);
+                    numNegative = numEffectsToDispel(actor);
+
+                    diff = numNegative - numPositive;
+                }
+                else
+                {
+                    if (enemy.isEmpty())
+                        return 0.f;
+
+                    numPositive = numEffectsToDispel(enemy, -1, false);
+                    numNegative = numEffectsToDispel(enemy);
+
+                    diff = numPositive - numNegative;
+
+                    // if rating < 0 here, the spell will be considered as negative later
+                    rating *= -1;
+                }
+
+                if (diff <= 0)
+                    return 0.f;
+
+                rating *= (diff) / 5.f;
+
+                break;
+            }
+
+            // Prefer Cure effects over Dispel, because Dispel also removes positive effects
+            case ESM::MagicEffect::CureParalyzation:
+                return 1001.f * numEffectsToDispel(actor, ESM::MagicEffect::Paralyze);
+
+            case ESM::MagicEffect::CurePoison:
+                return 1001.f * numEffectsToDispel(actor, ESM::MagicEffect::Poison);
+            case ESM::MagicEffect::DisintegrateArmor:
+            {
+                if (enemy.isEmpty())
+                    return 0.f;
+
+                // Ignore enemy without inventory
+                if (!enemy.getClass().hasInventoryStore(enemy))
+                    return 0.f;
+
+                MWWorld::InventoryStore& inv = enemy.getClass().getInventoryStore(enemy);
+
+                // According to UESP
+                static const int armorSlots[] = {
+                    MWWorld::InventoryStore::Slot_CarriedLeft,
+                    MWWorld::InventoryStore::Slot_Cuirass,
+                    MWWorld::InventoryStore::Slot_LeftPauldron,
+                    MWWorld::InventoryStore::Slot_RightPauldron,
+                    MWWorld::InventoryStore::Slot_LeftGauntlet,
+                    MWWorld::InventoryStore::Slot_RightGauntlet,
+                    MWWorld::InventoryStore::Slot_Helmet,
+                    MWWorld::InventoryStore::Slot_Greaves,
+                    MWWorld::InventoryStore::Slot_Boots,
+                };
+
+                bool enemyHasArmor = false;
+
+                // Ignore enemy without armor
+                for (unsigned int i = 0; i < sizeof(armorSlots) / sizeof(int); ++i)
+                {
+                    MWWorld::ContainerStoreIterator item = inv.getSlot(armorSlots[i]);
+
+                    if (item != inv.end() && (item.getType() == MWWorld::ContainerStore::Type_Armor))
+                    {
+                        enemyHasArmor = true;
+                        break;
+                    }
+                }
+
+                if (!enemyHasArmor)
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::DisintegrateWeapon:
+            {
+                if (enemy.isEmpty())
+                    return 0.f;
+
+                // Ignore enemy without inventory
+                if (!enemy.getClass().hasInventoryStore(enemy))
+                    return 0.f;
+
+                MWWorld::InventoryStore& inv = enemy.getClass().getInventoryStore(enemy);
+                MWWorld::ContainerStoreIterator item = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+
+                // Ignore enemy without weapons
+                if (item == inv.end() || (item.getType() != MWWorld::ContainerStore::Type_Weapon))
+                    return 0.f;
+
+                break;
+            }
+
+            case ESM::MagicEffect::AbsorbAttribute:
+            case ESM::MagicEffect::DamageAttribute:
+            case ESM::MagicEffect::DrainAttribute:
+                if (!enemy.isEmpty()
+                    && enemy.getClass()
+                            .getCreatureStats(enemy)
+                            .getAttribute(ESM::Attribute::indexToRefId(effect.mAttribute))
+                            .getModified()
+                        <= 0)
+                    return 0.f;
+                {
+                    if (effect.mAttribute >= 0 && effect.mAttribute < ESM::Attribute::Length)
+                    {
+                        const float attributePriorities[ESM::Attribute::Length] = {
+                            1.0f, // Strength
+                            0.5f, // Intelligence
+                            0.6f, // Willpower
+                            0.7f, // Agility
+                            0.5f, // Speed
+                            0.8f, // Endurance
+                            0.7f, // Personality
+                            0.3f // Luck
+                        };
+                        rating *= attributePriorities[effect.mAttribute];
+                    }
+                }
+                break;
+
+            case ESM::MagicEffect::AbsorbSkill:
+            case ESM::MagicEffect::DamageSkill:
+            case ESM::MagicEffect::DrainSkill:
+                if (enemy.isEmpty() || !enemy.getClass().isNpc())
+                    return 0.f;
+                if (enemy.getClass().getSkill(enemy, ESM::Skill::indexToRefId(effect.mSkill)) <= 0)
+                    return 0.f;
+                break;
+
+            default:
+                break;
+>>>>>>> origin/main
         }
 
         // Allow only one summoned creature at time
@@ -578,6 +1005,7 @@ namespace MWMechanics
             // But rate summons higher than other effects
             rating = 3.f;
         }
+<<<<<<< HEAD
 
         static const std::array<ESM::RefId, 6> boundWeapons{
             ESM::MagicEffect::BoundDagger,
@@ -599,6 +1027,9 @@ namespace MWMechanics
 
         if (std::ranges::find(boundWeapons, effect.mEffectID) != boundWeapons.end()
             || std::ranges::find(boundArmor, effect.mEffectID) != boundArmor.end())
+=======
+        if (effect.mEffectID >= ESM::MagicEffect::BoundDagger && effect.mEffectID <= ESM::MagicEffect::BoundGloves)
+>>>>>>> origin/main
         {
             // Prefer casting bound items over other spells
             rating = 2.f;
@@ -608,9 +1039,15 @@ namespace MWMechanics
             // summon another of a different kind unless what we have is a bow and the actor is out of ammo.
             // FIXME: This code assumes the summoned item is of the usual type (i.e. a mod hasn't changed Bound Bow to
             // summon an Axe instead)
+<<<<<<< HEAD
             if (std::ranges::find(boundWeapons, effect.mEffectID) != boundWeapons.end())
             {
                 for (const auto e : boundWeapons)
+=======
+            if (effect.mEffectID <= ESM::MagicEffect::BoundLongbow)
+            {
+                for (int e = ESM::MagicEffect::BoundDagger; e <= ESM::MagicEffect::BoundLongbow; ++e)
+>>>>>>> origin/main
                     if (actor.getClass().getCreatureStats(actor).getMagicEffects().getOrDefault(e).getMagnitude() > 0.f
                         && (e != ESM::MagicEffect::BoundLongbow || effect.mEffectID == e
                             || rateAmmo(actor, enemy, getWeaponType(ESM::Weapon::MarksmanBow)->mAmmoType) <= 0.f))

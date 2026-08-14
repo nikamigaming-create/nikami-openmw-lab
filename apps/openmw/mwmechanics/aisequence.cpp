@@ -4,7 +4,10 @@
 #include <limits>
 
 #include <components/debug/debuglog.hpp>
+<<<<<<< HEAD
 #include <components/esm3/actoridconverter.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/aisequence.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -25,8 +28,18 @@
 namespace MWMechanics
 {
 
+<<<<<<< HEAD
     void AiSequence::copy(const AiSequence& sequence)
     {
+=======
+    bool shouldRestoreSavedAiWander(const ESM::AiSequence::AiWander& wander)
+    {
+        return !wander.mReevaluateFnvSandbox;
+    }
+
+    void AiSequence::copy(const AiSequence& sequence)
+    {
+>>>>>>> origin/main
         for (const auto& package : sequence.mPackages)
             mPackages.push_back(package->clone());
 
@@ -370,6 +383,7 @@ namespace MWMechanics
         mPackages.clear();
         mNumCombatPackages = 0;
         mNumPursuitPackages = 0;
+<<<<<<< HEAD
     }
 
     void AiSequence::stack(const AiPackage& package, const MWWorld::Ptr& actor, bool cancelOther)
@@ -612,6 +626,254 @@ namespace MWMechanics
     {
         if (!mPackages.empty())
         {
+=======
+    }
+
+    void AiSequence::reset()
+    {
+        clear();
+        mDone = false;
+        mResetFriendlyHits = false;
+        mLastAiPackage = AiPackageTypeId::None;
+        mAiState.reset();
+    }
+
+    void AiSequence::stack(const AiPackage& package, const MWWorld::Ptr& actor, bool cancelOther)
+    {
+        if (actor == getPlayer())
+            throw std::runtime_error("Can't add AI packages to player");
+
+        // Stop combat when a non-combat AI package is added
+        if (isActualAiPackage(package.getTypeId()))
+        {
+            if (package.getTypeId() == MWMechanics::AiPackageTypeId::Follow
+                || package.getTypeId() == MWMechanics::AiPackageTypeId::Escort)
+            {
+                const auto& mechanicsManager = MWBase::Environment::get().getMechanicsManager();
+                std::vector<MWWorld::Ptr> newAllies = mechanicsManager->getActorsSidingWith(package.getTarget());
+                std::vector<MWWorld::Ptr> allies = mechanicsManager->getActorsSidingWith(actor);
+                for (const auto& ally : allies)
+                    ally.getClass().getCreatureStats(ally).getAiSequence().stopCombat(newAllies);
+                for (const auto& ally : newAllies)
+                    ally.getClass().getCreatureStats(ally).getAiSequence().stopCombat(allies);
+            }
+            stopCombat();
+        }
+
+        // We should return a wandering actor back after combat, casting or pursuit.
+        // The same thing for actors without AI packages.
+        // Also there is no point to stack return packages.
+        const auto currentTypeId = getTypeId();
+        const auto newTypeId = package.getTypeId();
+        if (currentTypeId <= MWMechanics::AiPackageTypeId::Wander
+            && !hasPackage(MWMechanics::AiPackageTypeId::InternalTravel)
+            && (newTypeId == MWMechanics::AiPackageTypeId::Combat || newTypeId == MWMechanics::AiPackageTypeId::Pursue
+                || newTypeId == MWMechanics::AiPackageTypeId::Cast))
+        {
+            osg::Vec3f dest;
+            if (currentTypeId == MWMechanics::AiPackageTypeId::Wander)
+            {
+                dest = getActivePackage().getDestination(actor);
+            }
+            else
+            {
+                dest = actor.getRefData().getPosition().asVec3();
+            }
+
+            MWMechanics::AiInternalTravel travelPackage(dest.x(), dest.y(), dest.z());
+            stack(travelPackage, actor, false);
+        }
+
+        // remove previous packages if required
+        if (cancelOther && package.shouldCancelPreviousAi())
+        {
+            for (auto it = mPackages.begin(); it != mPackages.end();)
+            {
+                if ((*it)->canCancel())
+                {
+                    it = erase(it);
+                }
+                else
+                    ++it;
+            }
+        }
+
+        // insert new package in correct place depending on priority
+        for (auto it = mPackages.begin(); it != mPackages.end(); ++it)
+        {
+            // We should override current AiCast package, if we try to add a new one.
+            if ((*it)->getTypeId() == MWMechanics::AiPackageTypeId::Cast
+                && package.getTypeId() == MWMechanics::AiPackageTypeId::Cast)
+            {
+                *it = package.clone();
+                return;
+            }
+
+            if ((*it)->getPriority() <= package.getPriority())
+            {
+                if (cancelOther && isActualAiPackage((*it)->getTypeId()))
+                    mAiState.reset();
+                onPackageAdded(package);
+                it = mPackages.insert(it, package.clone());
+                if (newTypeId == MWMechanics::AiPackageTypeId::Follow)
+                {
+                    for (++it; it != mPackages.end(); ++it)
+                        (*it)->resetInitialPosition();
+                }
+                return;
+            }
+        }
+
+        onPackageAdded(package);
+        mPackages.push_back(package.clone());
+
+        // Make sure that temporary storage is empty
+        if (cancelOther)
+            mAiState.reset();
+    }
+
+    bool MWMechanics::AiSequence::isEmpty() const
+    {
+        return mPackages.empty();
+    }
+
+    const AiPackage& MWMechanics::AiSequence::getActivePackage() const
+    {
+        if (mPackages.empty())
+            throw std::runtime_error(std::string("No AI Package!"));
+        return *mPackages.front();
+    }
+
+    void AiSequence::fill(const ESM::AIPackageList& list)
+    {
+        for (const auto& esmPackage : list.mList)
+        {
+            std::unique_ptr<MWMechanics::AiPackage> package;
+            if (esmPackage.mType == ESM::AI_Wander)
+            {
+                ESM::AIWander data = esmPackage.mWander;
+                std::vector<unsigned char> idles;
+                idles.reserve(8);
+                for (int i = 0; i < 8; ++i)
+                    idles.push_back(data.mIdle[i]);
+                package = std::make_unique<MWMechanics::AiWander>(
+                    data.mDistance, data.mDuration, data.mTimeOfDay, idles, data.mShouldRepeat != 0);
+            }
+            else if (esmPackage.mType == ESM::AI_Escort)
+            {
+                ESM::AITarget data = esmPackage.mTarget;
+                package = std::make_unique<MWMechanics::AiEscort>(ESM::RefId::stringRefId(data.mId.toStringView()),
+                    esmPackage.mCellName, data.mDuration, data.mX, data.mY, data.mZ, data.mShouldRepeat != 0);
+            }
+            else if (esmPackage.mType == ESM::AI_Travel)
+            {
+                ESM::AITravel data = esmPackage.mTravel;
+                package = std::make_unique<MWMechanics::AiTravel>(data.mX, data.mY, data.mZ, data.mShouldRepeat != 0);
+            }
+            else if (esmPackage.mType == ESM::AI_Activate)
+            {
+                ESM::AIActivate data = esmPackage.mActivate;
+                package = std::make_unique<MWMechanics::AiActivate>(
+                    ESM::RefId::stringRefId(data.mName.toStringView()), data.mShouldRepeat != 0);
+            }
+            else // if (esmPackage.mType == ESM::AI_Follow)
+            {
+                ESM::AITarget data = esmPackage.mTarget;
+                package = std::make_unique<MWMechanics::AiFollow>(ESM::RefId::stringRefId(data.mId.toStringView()),
+                    esmPackage.mCellName, data.mDuration, data.mX, data.mY, data.mZ, data.mShouldRepeat != 0);
+            }
+
+            onPackageAdded(*package);
+            mPackages.push_back(std::move(package));
+        }
+    }
+
+    void AiSequence::writeState(ESM::AiSequence::AiSequence& sequence) const
+    {
+        for (const auto& package : mPackages)
+            package->writeState(sequence);
+
+        sequence.mLastAiPackage = static_cast<int>(mLastAiPackage);
+    }
+
+    void AiSequence::readState(const ESM::AiSequence::AiSequence& sequence)
+    {
+        if (!sequence.mPackages.empty())
+            clear();
+
+        // Load packages
+        for (auto& container : sequence.mPackages)
+        {
+            std::unique_ptr<MWMechanics::AiPackage> package;
+            switch (container.mType)
+            {
+                case ESM::AiSequence::Ai_Wander:
+                {
+                    const ESM::AiSequence::AiWander& source
+                        = static_cast<const ESM::AiSequence::AiWander&>(*container.mPackage);
+                    if (shouldRestoreSavedAiWander(source))
+                        package = std::make_unique<AiWander>(&source);
+                    break;
+                }
+                case ESM::AiSequence::Ai_Travel:
+                {
+                    const ESM::AiSequence::AiTravel& source
+                        = static_cast<const ESM::AiSequence::AiTravel&>(*container.mPackage);
+                    if (source.mHidden)
+                        package = std::make_unique<AiInternalTravel>(&source);
+                    else
+                        package = std::make_unique<AiTravel>(&source);
+                    break;
+                }
+                case ESM::AiSequence::Ai_Escort:
+                {
+                    package = std::make_unique<AiEscort>(
+                        &static_cast<const ESM::AiSequence::AiEscort&>(*container.mPackage));
+                    break;
+                }
+                case ESM::AiSequence::Ai_Follow:
+                {
+                    package = std::make_unique<AiFollow>(
+                        &static_cast<const ESM::AiSequence::AiFollow&>(*container.mPackage));
+                    break;
+                }
+                case ESM::AiSequence::Ai_Activate:
+                {
+                    package = std::make_unique<AiActivate>(
+                        &static_cast<const ESM::AiSequence::AiActivate&>(*container.mPackage));
+                    break;
+                }
+                case ESM::AiSequence::Ai_Combat:
+                {
+                    package = std::make_unique<AiCombat>(
+                        &static_cast<const ESM::AiSequence::AiCombat&>(*container.mPackage));
+                    break;
+                }
+                case ESM::AiSequence::Ai_Pursue:
+                {
+                    package = std::make_unique<AiPursue>(
+                        &static_cast<const ESM::AiSequence::AiPursue&>(*container.mPackage));
+                    break;
+                }
+                default:
+                    break;
+            }
+
+            if (!package.get())
+                continue;
+
+            onPackageAdded(*package);
+            mPackages.push_back(std::move(package));
+        }
+
+        mLastAiPackage = static_cast<AiPackageTypeId>(sequence.mLastAiPackage);
+    }
+
+    void AiSequence::fastForward(const MWWorld::Ptr& actor)
+    {
+        if (!mPackages.empty())
+        {
+>>>>>>> origin/main
             mPackages.front()->fastForward(actor, mAiState);
         }
     }

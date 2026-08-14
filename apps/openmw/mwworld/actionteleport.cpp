@@ -1,5 +1,12 @@
 #include "actionteleport.hpp"
 
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+
+#include <components/debug/debuglog.hpp>
+
+>>>>>>> origin/main
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadmgef.hpp>
 
@@ -29,6 +36,15 @@ namespace MWWorld
 
     void ActionTeleport::executeImp(const Ptr& actor)
     {
+<<<<<<< HEAD
+=======
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+            Log(Debug::Info) << "FNV interaction audit: ActionTeleport begin actor=" << actor.toString()
+                             << " actorIsPlayer="
+                             << (actor == MWBase::Environment::get().getWorld()->getPlayerPtr() ? 1 : 0)
+                             << " destination=" << mCellId.toDebugString()
+                             << " followers=" << (mTeleportFollowers ? 1 : 0);
+>>>>>>> origin/main
         if (mTeleportFollowers)
         {
             // Find any NPCs that are following the actor and teleport them with him
@@ -42,6 +58,15 @@ namespace MWWorld
         }
 
         teleport(actor);
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+        {
+            const Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+            Log(Debug::Info) << "FNV interaction audit: ActionTeleport end player=" << player.toString()
+                             << " cell="
+                             << (player.getCell() != nullptr && player.getCell()->getCell() != nullptr
+                                     ? player.getCell()->getCell()->getId().toDebugString()
+                                     : std::string("<none>"));
+        }
     }
 
     void ActionTeleport::teleport(const Ptr& actor)
@@ -55,6 +80,13 @@ namespace MWWorld
         Ptr teleported;
         if (actor == world->getPlayerPtr())
         {
+            if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+                Log(Debug::Info) << "FNV interaction audit: ActionTeleport changing player from="
+                                 << (actor.getCell() != nullptr && actor.getCell()->getCell() != nullptr
+                                         ? actor.getCell()->getCell()->getId().toDebugString()
+                                         : std::string("<none>"))
+                                 << " to=" << mCellId.toDebugString() << " pos=(" << mPosition.pos[0] << ","
+                                 << mPosition.pos[1] << "," << mPosition.pos[2] << ")";
             world->getPlayer().setTeleported(true);
             world->changeToCell(mCellId, mPosition, true);
             teleported = world->getPlayerPtr();

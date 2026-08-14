@@ -68,7 +68,11 @@ namespace MWRender
                 new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE),
                 osg::StateAttribute::ON);
             stateSet->setAttributeAndModes(new osg::PolygonOffset(
+<<<<<<< HEAD
                 SceneUtil::AutoDepth::isReversed() ? 1.f : -1.f, SceneUtil::AutoDepth::isReversed() ? 1.f : -1.f));
+=======
+                SceneUtil::AutoDepth::isReversed() ? 1.0 : -1.0, SceneUtil::AutoDepth::isReversed() ? 1.0 : -1.0));
+>>>>>>> origin/main
             osg::ref_ptr<osg::Material> material = new osg::Material;
             material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
             stateSet->setAttribute(material);
@@ -118,8 +122,13 @@ namespace MWRender
             mShapesRoot->removeChildren(0, mShapesRoot->getNumChildren());
             mWorld->debugDrawWorld();
             showCollisions();
+<<<<<<< HEAD
             mLinesDrawArrays->setCount(static_cast<GLsizei>(mLinesVertices->size()));
             mTrisDrawArrays->setCount(static_cast<GLsizei>(mTrisVertices->size()));
+=======
+            mLinesDrawArrays->setCount(mLinesVertices->size());
+            mTrisDrawArrays->setCount(mTrisVertices->size());
+>>>>>>> origin/main
             mLinesVertices->dirty();
             mTrisVertices->dirty();
             mLinesColors->dirty();
@@ -194,8 +203,12 @@ namespace MWRender
 
     void DebugDrawer::drawSphere(btScalar radius, const btTransform& transform, const btVector3& color)
     {
+<<<<<<< HEAD
         auto* geom = new osg::ShapeDrawable(
             new osg::Sphere(Misc::Convert::toOsg(transform.getOrigin()), static_cast<float>(radius)));
+=======
+        auto* geom = new osg::ShapeDrawable(new osg::Sphere(Misc::Convert::toOsg(transform.getOrigin()), radius));
+>>>>>>> origin/main
         geom->setColor(osg::Vec4(1, 1, 1, 1));
         mShapesRoot->addChild(geom);
     }

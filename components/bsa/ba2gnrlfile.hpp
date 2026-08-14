@@ -47,6 +47,10 @@ namespace Bsa
         /// Read header information from the input source
         void readHeader(std::istream& input) override;
 
+<<<<<<< HEAD
+=======
+        Files::IStreamPtr getFile(const char* filePath);
+>>>>>>> origin/main
         Files::IStreamPtr getFile(const FileStruct* fileStruct);
         void addFile(const std::string& filename, std::istream& file);
     };

@@ -22,6 +22,7 @@ namespace MWLua
             Menu,
             Global,
             Local,
+<<<<<<< HEAD
             Load,
         };
         Type mType;
@@ -30,6 +31,15 @@ namespace MWLua
         LuaUtil::UserdataSerializer* mSerializer = nullptr;
         ObjectLists* mObjectLists = nullptr;
         LuaEvents* mLuaEvents = nullptr;
+=======
+        };
+        Type mType;
+        LuaManager* mLuaManager;
+        LuaUtil::LuaState* mLua;
+        LuaUtil::UserdataSerializer* mSerializer;
+        ObjectLists* mObjectLists;
+        LuaEvents* mLuaEvents;
+>>>>>>> origin/main
 
         std::string_view typeName() const
         {
@@ -41,8 +51,11 @@ namespace MWLua
                     return "global";
                 case Local:
                     return "local";
+<<<<<<< HEAD
                 case Load:
                     return "load";
+=======
+>>>>>>> origin/main
                 default:
                     throw std::domain_error("Unhandled context type");
             }

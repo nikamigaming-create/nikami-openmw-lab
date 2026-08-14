@@ -48,8 +48,13 @@ namespace ESSImport
         for (int i = 0; i < ESM::Skill::Length; ++i)
         {
             npcStats.mSkills[i].mMod = 0.f;
+<<<<<<< HEAD
             npcStats.mSkills[i].mCurrent = static_cast<float>(actorData.mSkills[i][1]);
             npcStats.mSkills[i].mBase = static_cast<float>(actorData.mSkills[i][0]);
+=======
+            npcStats.mSkills[i].mCurrent = actorData.mSkills[i][1];
+            npcStats.mSkills[i].mBase = actorData.mSkills[i][0];
+>>>>>>> origin/main
         }
 
         npcStats.mTimeToStartDrowning = actorData.mACDT.mBreathMeter;

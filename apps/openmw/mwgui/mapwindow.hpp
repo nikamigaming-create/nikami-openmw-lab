@@ -25,6 +25,14 @@ namespace ESM
     class ESMWriter;
 }
 
+<<<<<<< HEAD
+=======
+namespace ESM4
+{
+    struct Reference;
+}
+
+>>>>>>> origin/main
 namespace MWWorld
 {
     class Cell;
@@ -43,7 +51,10 @@ namespace SceneUtil
 
 namespace MWGui
 {
+<<<<<<< HEAD
     class MarkerWidget;
+=======
+>>>>>>> origin/main
 
     class CustomMarkerCollection
     {
@@ -120,6 +131,10 @@ namespace MWGui
         MyGUI::ScrollView* mLocalMap = nullptr;
         MyGUI::ImageBox* mCompass = nullptr;
         float mLocalMapZoom = 1.f;
+<<<<<<< HEAD
+=======
+        bool mHasALastActiveCell = false;
+>>>>>>> origin/main
         bool mFogOfWarToggled = true;
         bool mFogOfWarEnabled;
         bool mNeedDoorMarkersUpdate = false;
@@ -147,6 +162,7 @@ namespace MWGui
         std::vector<MapEntry> mMaps;
 
         // Keep track of created marker widgets, just to easily remove them later.
+<<<<<<< HEAD
         std::vector<MarkerWidget*> mExteriorDoorMarkerWidgets;
         std::map<std::pair<int, int>, std::vector<MarkerWidget*>> mExteriorDoorsByCell;
         std::vector<MarkerWidget*> mInteriorDoorMarkerWidgets;
@@ -155,6 +171,16 @@ namespace MWGui
         std::vector<MarkerWidget*> mDoorMarkersToRecycle;
 
         std::vector<MarkerWidget*>& currentDoorMarkersWidgets();
+=======
+        std::vector<MyGUI::Widget*> mExteriorDoorMarkerWidgets;
+        std::map<std::pair<int, int>, std::vector<MyGUI::Widget*>> mExteriorDoorsByCell;
+        std::vector<MyGUI::Widget*> mInteriorDoorMarkerWidgets;
+        std::vector<MyGUI::Widget*> mMagicMarkerWidgets;
+        std::vector<MyGUI::Widget*> mCustomMarkerWidgets;
+        std::vector<MyGUI::Widget*> mDoorMarkersToRecycle;
+
+        std::vector<MyGUI::Widget*>& currentDoorMarkersWidgets();
+>>>>>>> origin/main
 
         virtual void updateCustomMarkers();
 
@@ -163,12 +189,22 @@ namespace MWGui
         MyGUI::IntPoint getPosition(int cellX, int cellY, float nx, float ny) const;
         MyGUI::IntPoint getMarkerPosition(float worldX, float worldY, MarkerUserData& markerPos) const;
         MyGUI::IntCoord getMarkerCoordinates(
+<<<<<<< HEAD
             float worldX, float worldY, MarkerUserData& markerPos, unsigned short markerSize) const;
         MarkerWidget* createDoorMarker(const std::string& name, float x, float y) const;
         void updateMarkerCoordinates(MyGUI::Widget* widget, unsigned short markerSize) const;
 
         virtual void notifyPlayerUpdate() {}
         virtual void centerView();
+=======
+            float worldX, float worldY, MarkerUserData& markerPos, size_t markerSize) const;
+        MyGUI::Widget* createDoorMarker(const std::string& name, float x, float y) const;
+        MyGUI::IntCoord getMarkerCoordinates(MyGUI::Widget* widget, size_t markerSize) const;
+
+        virtual void notifyPlayerUpdate() {}
+        virtual void centerView();
+        virtual void notifyMapChanged() {}
+>>>>>>> origin/main
 
         virtual void customMarkerCreated(MyGUI::Widget* marker) {}
         virtual void doorMarkerCreated(MyGUI::Widget* marker) {}
@@ -184,6 +220,10 @@ namespace MWGui
         MWGui::LocalMapBase::MapEntry& addMapEntry();
 
         MyGUI::IntRect mGrid{ -1, -1, 1, 1 };
+<<<<<<< HEAD
+=======
+        int mExtCellDistance = 0;
+>>>>>>> origin/main
         float mMarkerUpdateTimer = 0.f;
 
         float mLastDirectionX = 0.f;
@@ -223,7 +263,11 @@ namespace MWGui
         MyGUI::Button* mDeleteButton;
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
+<<<<<<< HEAD
         size_t mControllerFocus = 0;
+=======
+        int mControllerFocus = 0;
+>>>>>>> origin/main
     };
 
     class MapWindow : public MWGui::WindowPinnableBase, public LocalMapBase, public NoDrop
@@ -234,6 +278,8 @@ namespace MWGui
         virtual ~MapWindow();
 
         void setCellName(const std::string& cellName);
+        void fitFalloutWorldMapOnce();
+        bool focusFalloutMapMarker(ESM::FormId marker, float zoom);
 
         void setAlpha(float alpha) override;
         void setVisible(bool visible) override;
@@ -243,6 +289,9 @@ namespace MWGui
         /// adds the marker to the global map
         /// @param name The ESM::Cell::mName
         void addVisitedLocation(const std::string& name, int x, int y);
+        void refreshFalloutMapMarkers();
+        bool requestFalloutFastTravel(ESM::FormId marker);
+        void confirmFalloutFastTravel();
 
         // reveals this cell's map on the global map
         void cellExplored(int x, int y);
@@ -281,6 +330,8 @@ namespace MWGui
         void zoomOnCursor(float speedDiff);
         void updateGlobalMap();
         void onCustomMarkerDoubleClicked(MyGUI::Widget* sender);
+        void onFalloutMapMarkerClicked(MyGUI::Widget* sender);
+        void onFalloutFastTravelConfirmed();
         void onNoteEditOk();
         void onNoteEditDelete();
         void onNoteEditDeleteConfirm();
@@ -294,6 +345,10 @@ namespace MWGui
         void worldPosToGlobalMapImageSpace(float x, float z, float& imageX, float& imageY) const;
         MyGUI::IntCoord createMarkerCoords(float x, float y, float agregatedWeight) const;
         MyGUI::Widget* createMarker(const std::string& name, float x, float y, float agregatedWeight);
+<<<<<<< HEAD
+=======
+        MyGUI::Widget* createFalloutMapMarker(const ESM4::Reference& marker);
+>>>>>>> origin/main
 
         MyGUI::ScrollView* mGlobalMap;
         std::unique_ptr<MyGUI::ITexture> mGlobalMapTexture;
@@ -315,6 +370,10 @@ namespace MWGui
         MyGUI::Button* mEventBoxLocal;
 
         float mGlobalMapZoom = 1.0f;
+<<<<<<< HEAD
+=======
+        bool mFalloutInitialMapFitApplied = false;
+>>>>>>> origin/main
         std::unique_ptr<MWRender::GlobalMap> mGlobalMapRender;
 
         struct MapMarkerType
@@ -327,6 +386,11 @@ namespace MWGui
 
         std::map<std::string, MapMarkerType> mGlobalMapMarkersByName;
         std::map<MapMarkerType, std::vector<MapMarkerType>> mGlobalMapMarkers;
+<<<<<<< HEAD
+=======
+        std::map<ESM::FormId, MyGUI::Widget*> mFalloutMapMarkers;
+        ESM::FormId mPendingFalloutFastTravelMarker;
+>>>>>>> origin/main
 
         EditNoteDialog mEditNoteDialog;
         ESM::CustomMarker mEditingMarker;

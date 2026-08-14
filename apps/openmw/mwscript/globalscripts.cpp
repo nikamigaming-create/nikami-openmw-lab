@@ -26,13 +26,22 @@ namespace
             script.mRunning = false;
             if (!ptr.isEmpty())
             {
+<<<<<<< HEAD
                 if (MWBase::Environment::get().getWorld()->getPlayerPtr() == ptr)
                     script.mTargetId = ptr.getCellRef().getRefId();
                 else if (ptr.getCellRef().getRefNum().isSet())
+=======
+                if (ptr.getCellRef().hasContentFile())
+>>>>>>> origin/main
                 {
                     script.mTargetId = ptr.getCellRef().getRefId();
                     script.mTargetRef = ptr.getCellRef().getRefNum();
                 }
+<<<<<<< HEAD
+=======
+                else if (MWBase::Environment::get().getWorld()->getPlayerPtr() == ptr)
+                    script.mTargetId = ptr.getCellRef().getRefId();
+>>>>>>> origin/main
             }
             return script;
         }
@@ -60,10 +69,17 @@ namespace
 
         MWWorld::Ptr operator()(const std::pair<ESM::RefNum, ESM::RefId>& pair) const
         {
+<<<<<<< HEAD
             if (pair.first.isSet())
                 return MWBase::Environment::get().getWorldModel()->getPtr(pair.first);
             else if (pair.second.empty())
                 return MWWorld::Ptr();
+=======
+            if (pair.second.empty())
+                return MWWorld::Ptr();
+            else if (pair.first.hasContentFile())
+                return MWBase::Environment::get().getWorldModel()->getPtr(pair.first);
+>>>>>>> origin/main
             return MWBase::Environment::get().getWorld()->searchPtr(pair.second, false);
         }
     };
@@ -256,7 +272,11 @@ namespace MWScript
                     try
                     {
                         auto desc = std::make_shared<GlobalScriptDesc>();
+<<<<<<< HEAD
                         if (!script.mTargetId.empty() || script.mTargetRef.isSet())
+=======
+                        if (!script.mTargetId.empty())
+>>>>>>> origin/main
                         {
                             desc->mTarget = std::make_pair(script.mTargetRef, script.mTargetId);
                         }

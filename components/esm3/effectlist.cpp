@@ -3,15 +3,19 @@
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
 
+<<<<<<< HEAD
 #include <format>
 
 #include <components/esm/attr.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadskil.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/concepts.hpp>
 
 namespace ESM
 {
+<<<<<<< HEAD
     namespace
     {
         // ENAM format defined by Morrowind.esm
@@ -67,17 +71,23 @@ namespace ESM
     }
 
     template <Misc::SameAsWithoutCvref<EsmENAMstruct> T>
+=======
+    template <Misc::SameAsWithoutCvref<ENAMstruct> T>
+>>>>>>> origin/main
     void decompose(T&& v, const auto& f)
     {
         f(v.mEffectID, v.mSkill, v.mAttribute, v.mRange, v.mArea, v.mDuration, v.mMagnMin, v.mMagnMax);
     }
 
+<<<<<<< HEAD
     template <Misc::SameAsWithoutCvref<EffectParams> T>
     void decompose(T&& v, const auto& f)
     {
         f(v.mRange, v.mArea, v.mDuration, v.mMagnMin, v.mMagnMax);
     }
 
+=======
+>>>>>>> origin/main
     void EffectList::load(ESMReader& esm)
     {
         mList.clear();
@@ -103,6 +113,7 @@ namespace ESM
     void EffectList::add(ESMReader& esm)
     {
         ENAMstruct s;
+<<<<<<< HEAD
         if (esm.getFormatVersion() <= MaxSerializeEffectRefIdFormatVersion)
         {
             EsmENAMstruct bin;
@@ -118,6 +129,9 @@ namespace ESM
             s.mSkill = esm.getHNORefId("ENSK");
             s.mAttribute = esm.getHNORefId("ENAT");
         }
+=======
+        esm.getSubComposite(s);
+>>>>>>> origin/main
         mList.push_back({ s, static_cast<uint32_t>(mList.size()) });
     }
 
@@ -125,6 +139,7 @@ namespace ESM
     {
         for (const IndexedENAMstruct& enam : mList)
         {
+<<<<<<< HEAD
             if (esm.getFormatVersion() <= MaxSerializeEffectRefIdFormatVersion)
             {
                 EsmENAMstruct bin;
@@ -142,6 +157,9 @@ namespace ESM
                 esm.writeHNORefId("ENSK", enam.mData.mSkill);
                 esm.writeHNORefId("ENAT", enam.mData.mAttribute);
             }
+=======
+            esm.writeNamedComposite("ENAM", enam.mData);
+>>>>>>> origin/main
         }
     }
 

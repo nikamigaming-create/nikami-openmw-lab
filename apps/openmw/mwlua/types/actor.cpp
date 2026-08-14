@@ -30,10 +30,16 @@ namespace MWLua
     static constexpr int sAnySlot = -1;
 
     static std::pair<MWWorld::ContainerStoreIterator, bool> findInInventory(
+<<<<<<< HEAD
         MWWorld::ContainerStore& store, const EquipmentItem& item, int slot, bool isInventoryStore)
     {
         auto oldIt = slot != sAnySlot && isInventoryStore ? static_cast<MWWorld::InventoryStore&>(store).getSlot(slot)
                                                           : store.end();
+=======
+        MWWorld::InventoryStore& store, const EquipmentItem& item, int slot = sAnySlot)
+    {
+        auto oldIt = slot != sAnySlot ? store.getSlot(slot) : store.end();
+>>>>>>> origin/main
         MWWorld::Ptr itemPtr;
 
         if (std::holds_alternative<ObjectId>(item))
@@ -41,7 +47,12 @@ namespace MWLua
             itemPtr = MWBase::Environment::get().getWorldModel()->getPtr(std::get<ObjectId>(item));
             if (oldIt != store.end() && *oldIt == itemPtr)
                 return { oldIt, true }; // already equipped
+<<<<<<< HEAD
             if (itemPtr.isEmpty() || itemPtr.getCellRef().getCount() == 0 || itemPtr.getContainerStore() != &store)
+=======
+            if (itemPtr.isEmpty() || itemPtr.getCellRef().getCount() == 0
+                || itemPtr.getContainerStore() != static_cast<const MWWorld::ContainerStore*>(&store))
+>>>>>>> origin/main
             {
                 Log(Debug::Warning) << "Object" << std::get<ObjectId>(item).toString() << " is not in inventory";
                 return { store.end(), false };
@@ -77,7 +88,11 @@ namespace MWLua
         std::fill(usedSlots.begin(), usedSlots.end(), false);
 
         auto tryEquipToSlot = [&store, &usedSlots, isPlayer](int slot, const EquipmentItem& item) -> bool {
+<<<<<<< HEAD
             auto [it, alreadyEquipped] = findInInventory(store, item, slot, true);
+=======
+            auto [it, alreadyEquipped] = findInInventory(store, item, slot);
+>>>>>>> origin/main
             if (alreadyEquipped)
                 return true;
             if (it == store.end())
@@ -138,6 +153,7 @@ namespace MWLua
 
     static void setSelectedEnchantedItem(const MWWorld::Ptr& actor, const EquipmentItem& item)
     {
+<<<<<<< HEAD
         MWWorld::ContainerStore& contStore = actor.getClass().getContainerStore(actor);
         // We're not passing in a specific slot, so ignore the already equipped return value
         auto [it, _] = findInInventory(contStore, item, sAnySlot, actor.getClass().hasInventoryStore(actor));
@@ -150,6 +166,14 @@ namespace MWLua
         }
 
         MWWorld::InventoryStore& store = actor.getClass().getInventoryStore(actor);
+=======
+        MWWorld::InventoryStore& store = actor.getClass().getInventoryStore(actor);
+        // We're not passing in a specific slot, so ignore the already equipped return value
+        auto [it, _] = findInInventory(store, item, sAnySlot);
+        if (it == store.end())
+            return;
+
+>>>>>>> origin/main
         MWWorld::Ptr itemPtr = *it;
 
         // Equip the item if applicable
@@ -171,6 +195,10 @@ namespace MWLua
                     return;
             }
         }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
         store.setSelectedEnchantItem(it);
         // to reset WindowManager::mSelectedSpell immediately
         MWBase::Environment::get().getWindowManager()->setSelectedEnchantItem(*it);
@@ -236,7 +264,13 @@ namespace MWLua
                     hasSelectedSpell = !stats.getSpells().getSelectedSpell().empty();
                 if (!hasSelectedSpell)
                 {
+<<<<<<< HEAD
                     const MWWorld::ContainerStore& store = cls.getContainerStore(self.ptr());
+=======
+                    if (!cls.hasInventoryStore(self.ptr()))
+                        return; // No selected spell and no items; can't use magic stance.
+                    MWWorld::InventoryStore& store = cls.getInventoryStore(self.ptr());
+>>>>>>> origin/main
                     if (store.getSelectedEnchantItem() == store.end())
                         return; // No selected spell and no selected enchanted item; can't use magic stance.
                 }
@@ -254,21 +288,35 @@ namespace MWLua
 
         actor["getSelectedEnchantedItem"] = [](sol::this_state thisState, const Object& o) -> sol::object {
             const MWWorld::Ptr& ptr = o.ptr();
+<<<<<<< HEAD
             if (!ptr.getClass().isActor())
                 return sol::nil;
             MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+=======
+            if (!ptr.getClass().hasInventoryStore(ptr))
+                return sol::nil;
+            MWWorld::InventoryStore& store = ptr.getClass().getInventoryStore(ptr);
+>>>>>>> origin/main
             auto it = store.getSelectedEnchantItem();
             if (it == store.end())
                 return sol::nil;
             MWBase::Environment::get().getWorldModel()->registerPtr(*it);
+<<<<<<< HEAD
             if (o.isGObject())
+=======
+            if (dynamic_cast<const GObject*>(&o))
+>>>>>>> origin/main
                 return sol::make_object(thisState, GObject(*it));
             else
                 return sol::make_object(thisState, LObject(*it));
         };
         actor["setSelectedEnchantedItem"] = [context](const SelfObject& obj, const sol::object& item) {
             const MWWorld::Ptr& ptr = obj.ptr();
+<<<<<<< HEAD
             if (!ptr.getClass().isActor())
+=======
+            if (!ptr.getClass().hasInventoryStore(ptr))
+>>>>>>> origin/main
                 return;
 
             EquipmentItem ei;
@@ -327,7 +375,11 @@ namespace MWLua
                 if (it == store.end())
                     continue;
                 MWBase::Environment::get().getWorldModel()->registerPtr(*it);
+<<<<<<< HEAD
                 if (o.isGObject())
+=======
+                if (dynamic_cast<const GObject*>(&o))
+>>>>>>> origin/main
                     equipment[slot] = sol::make_object(thisState, GObject(*it));
                 else
                     equipment[slot] = sol::make_object(thisState, LObject(*it));
@@ -343,7 +395,11 @@ namespace MWLua
             if (it == store.end())
                 return sol::nil;
             MWBase::Environment::get().getWorldModel()->registerPtr(*it);
+<<<<<<< HEAD
             if (o.isGObject())
+=======
+            if (dynamic_cast<const GObject*>(&o))
+>>>>>>> origin/main
                 return sol::make_object(thisState, GObject(*it));
             else
                 return sol::make_object(thisState, LObject(*it));
@@ -400,8 +456,13 @@ namespace MWLua
             const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
             const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
 
+<<<<<<< HEAD
             const float dist = (playerPos - target.getRefData().getPosition().asVec3()).length2();
             return dist <= (actorsProcessingRange * actorsProcessingRange);
+=======
+            const float dist = (playerPos - target.getRefData().getPosition().asVec3()).length();
+            return dist <= actorsProcessingRange;
+>>>>>>> origin/main
         };
 
         actor["isDead"] = [](const Object& o) {
@@ -424,6 +485,7 @@ namespace MWLua
             return ptr.getClass().getCapacity(ptr);
         };
 
+<<<<<<< HEAD
         actor["getBarterGold"] = [](const Object& object) -> int {
             const MWWorld::Ptr ptr = object.ptr();
             return ptr.getClass().getCreatureStats(ptr).getGoldPool();
@@ -442,6 +504,8 @@ namespace MWLua
                 "SetBarterGoldAction");
         };
 
+=======
+>>>>>>> origin/main
         actor["_onHit"] = [context](const SelfObject& self, const sol::table& options) {
             sol::optional<sol::table> damageLua = options.get<sol::optional<sol::table>>("damage");
             std::map<std::string, float> damageCpp;
@@ -488,4 +552,8 @@ namespace MWLua
         addActorStatsBindings(actor, context);
         addActorMagicBindings(actor, context);
     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
 }

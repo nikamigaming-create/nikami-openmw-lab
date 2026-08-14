@@ -2,7 +2,10 @@
 
 #include <MyGUI_Gui.h>
 
+<<<<<<< HEAD
 #include "components/settings/values.hpp"
+=======
+>>>>>>> origin/main
 #include "content.hpp"
 #include "util.hpp"
 #include "widget.hpp"
@@ -21,10 +24,13 @@ namespace LuaUi
             constexpr std::string_view events = "events";
             constexpr std::string_view content = "content";
             constexpr std::string_view external = "external";
+<<<<<<< HEAD
             constexpr std::string_view userData = "userData";
 
             const std::vector<std::string_view> allKeys
                 = { type, name, layer, templateLayout, props, events, content, external, userData };
+=======
+>>>>>>> origin/main
         }
 
         const std::string defaultWidgetType = "LuaWidget";
@@ -54,6 +60,17 @@ namespace LuaUi
             MyGUI::Gui::getInstancePtr()->destroyWidget(ext->widget());
         }
 
+<<<<<<< HEAD
+=======
+        void destroyChild(WidgetExtension* ext)
+        {
+            if (!ext->isRoot())
+                destroyWidget(ext);
+            else
+                ext->detachFromParent();
+        }
+
+>>>>>>> origin/main
         void detachElements(WidgetExtension* ext)
         {
             auto predicate = [](WidgetExtension* child) {
@@ -66,6 +83,7 @@ namespace LuaUi
             ext->detachTemplateChildrenIf(predicate);
         }
 
+<<<<<<< HEAD
         void destroyChild(WidgetExtension* ext)
         {
             if (!ext->isRoot())
@@ -77,6 +95,8 @@ namespace LuaUi
                 ext->detachFromParent();
         }
 
+=======
+>>>>>>> origin/main
         void destroyRoot(WidgetExtension* ext)
         {
             detachElements(ext);
@@ -246,12 +266,17 @@ namespace LuaUi
     std::map<Element*, std::shared_ptr<Element>> Element::sMenuElements;
     std::map<Element*, std::shared_ptr<Element>> Element::sGameElements;
 
+<<<<<<< HEAD
     Element::Element(sol::table layout, sol::optional<sol::table> options)
+=======
+    Element::Element(sol::table layout)
+>>>>>>> origin/main
         : mRoot(nullptr)
         , mLayout(std::move(layout))
         , mLayer()
         , mState(Element::New)
     {
+<<<<<<< HEAD
         if (options.has_value())
         {
             mNoWarnUnused = options->get_or("noWarnUnused", false);
@@ -261,6 +286,13 @@ namespace LuaUi
     std::shared_ptr<Element> Element::make(sol::table layout, bool menu, sol::optional<sol::table> options)
     {
         std::shared_ptr<Element> ptr(new Element(std::move(layout), std::move(options)));
+=======
+    }
+
+    std::shared_ptr<Element> Element::make(sol::table layout, bool menu)
+    {
+        std::shared_ptr<Element> ptr(new Element(std::move(layout)));
+>>>>>>> origin/main
         auto& container = menu ? sMenuElements : sGameElements;
         container[ptr.get()] = ptr;
         return ptr;
@@ -273,11 +305,14 @@ namespace LuaUi
         sGameElements.erase(element);
     }
 
+<<<<<<< HEAD
     const std::vector<std::string_view>& Element::allLayoutProperties()
     {
         return LayoutKeys::allKeys;
     }
 
+=======
+>>>>>>> origin/main
     void Element::create(uint64_t depth)
     {
         if (mState == New)
@@ -287,7 +322,10 @@ namespace LuaUi
             mLayer = setLayer(mRoot, layout());
             updateRootCoord(mRoot);
             mState = Created;
+<<<<<<< HEAD
             checkWarnings();
+=======
+>>>>>>> origin/main
         }
     }
 
@@ -327,7 +365,10 @@ namespace LuaUi
             mLayer = setLayer(mRoot, layout());
             updateRootCoord(mRoot);
             mState = Created;
+<<<<<<< HEAD
             checkWarnings();
+=======
+>>>>>>> origin/main
         }
     }
 
@@ -348,6 +389,7 @@ namespace LuaUi
         }
         mState = Destroyed;
     }
+<<<<<<< HEAD
 
     void Element::checkWarnings()
     {
@@ -374,4 +416,6 @@ namespace LuaUi
             }
         }
     }
+=======
+>>>>>>> origin/main
 }

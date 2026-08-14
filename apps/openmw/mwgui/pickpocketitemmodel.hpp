@@ -17,6 +17,10 @@ namespace MWGui
         ItemStack getItem(ModelIndex index) override;
         size_t getItemCount() override;
         void update() override;
+<<<<<<< HEAD
+=======
+        void removeItem(const ItemStack& item, size_t count) override;
+>>>>>>> origin/main
         void onClose() override;
         bool onDropItem(const MWWorld::Ptr& item, int count) override;
         bool onTakeItem(const MWWorld::Ptr& item, int count) override;

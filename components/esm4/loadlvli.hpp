@@ -28,6 +28,10 @@
 #define ESM4_LVLI_H
 
 #include <cstdint>
+<<<<<<< HEAD
+=======
+#include <optional>
+>>>>>>> origin/main
 #include <string>
 #include <vector>
 
@@ -41,6 +45,19 @@ namespace ESM4
     class Reader;
     class Writer;
 
+<<<<<<< HEAD
+=======
+#pragma pack(push, 1)
+    struct LevelledItemExtraData
+    {
+        ESM::FormId32 mOwner;
+        std::uint32_t mGlobalOrRequiredRank;
+        float mItemCondition;
+    };
+#pragma pack(pop)
+    static_assert(sizeof(LevelledItemExtraData) == 12);
+
+>>>>>>> origin/main
     struct LevelledItem
     {
         ESM::FormId mId; // from the header
@@ -48,7 +65,13 @@ namespace ESM4
 
         std::string mEditorId;
 
+<<<<<<< HEAD
         std::int8_t mChanceNone;
+=======
+        bool mHasChanceNone;
+        std::int8_t mChanceNone;
+        ESM::FormId mChanceGlobal;
+>>>>>>> origin/main
 
         bool mHasLvlItemFlags;
         std::uint8_t mLvlItemFlags;
@@ -56,6 +79,10 @@ namespace ESM4
         std::uint8_t mData;
 
         std::vector<LVLO> mLvlObject;
+<<<<<<< HEAD
+=======
+        std::vector<std::optional<LevelledItemExtraData>> mLvlObjectExtra;
+>>>>>>> origin/main
 
         bool calcAllLvlLessThanPlayer() const;
         bool calcEachItemInCount() const;

@@ -4,10 +4,24 @@
 
 uniform int pass;
 uniform sampler2D diffuseMap;
+<<<<<<< HEAD
 uniform sampler2D maskMap;      // PASS_MOON
 uniform float opacity;          // PASS_CLOUDS, PASS_ATMOSPHERE_NIGHT
 uniform vec4 moonBlend;         // PASS_MOON
 uniform vec4 atmosphereFade;    // PASS_MOON
+=======
+uniform sampler2D falloutCloudBlendMap; // PASS_CLOUDS
+uniform sampler2D maskMap;      // PASS_MOON
+uniform float opacity;          // PASS_CLOUDS, PASS_ATMOSPHERE_NIGHT
+uniform bool useFalloutCloudShader; // PASS_CLOUDS
+uniform float falloutCloudBlendFactor; // PASS_CLOUDS
+uniform vec4 moonBlend;         // PASS_MOON
+uniform vec4 atmosphereFade;    // PASS_MOON
+uniform int useFalloutAtmosphereGradientColors; // PASS_ATMOSPHERE
+uniform vec4 falloutAtmosphereSkyUpperColor;    // PASS_ATMOSPHERE
+uniform vec4 falloutAtmosphereSkyLowerColor;    // PASS_ATMOSPHERE
+uniform vec4 falloutAtmosphereSkyHorizonColor;  // PASS_ATMOSPHERE
+>>>>>>> origin/main
 
 varying vec2 diffuseMapUV;
 varying vec4 passColor;
@@ -15,7 +29,20 @@ varying vec4 passColor;
 void paintAtmosphere(inout vec4 color)
 {
     color = gl_FrontMaterial.emission;
+<<<<<<< HEAD
     color.a *= passColor.a;
+=======
+    if (useFalloutAtmosphereGradientColors != 0)
+    {
+        float gradient = clamp(passColor.a, 0.0, 1.0);
+        vec3 lowerBand = mix(
+            falloutAtmosphereSkyHorizonColor.rgb, falloutAtmosphereSkyLowerColor.rgb, smoothstep(0.0, 0.22, gradient));
+        color.rgb = mix(lowerBand, falloutAtmosphereSkyUpperColor.rgb, smoothstep(0.22, 0.58, gradient));
+        color.a *= passColor.a;
+    }
+    else
+        color.a *= passColor.a;
+>>>>>>> origin/main
 }
 
 void paintAtmosphereNight(inout vec4 color)
@@ -26,12 +53,42 @@ void paintAtmosphereNight(inout vec4 color)
 
 void paintClouds(inout vec4 color)
 {
+<<<<<<< HEAD
     color = texture2D(diffuseMap, diffuseMapUV);
     color.a *= passColor.a * opacity;
     color.xyz = clamp(color.xyz * gl_FrontMaterial.emission.xyz, 0.0, 1.0);
 
     // ease transition between clear color and atmosphere/clouds
     color = mix(vec4(gl_Fog.color.xyz, color.a), color, passColor.a);
+=======
+    if (useFalloutCloudShader)
+    {
+        // Exact SKYTEX.pso (FNV shaderpackage013) channel contract. The shader treats an all-black texture sample
+        // as an absent cloud during WTHR transitions, blends alpha separately, then applies the interpolated
+        // SKYCLOUDS vertex color. Params.y modulates RGB only; it does not crush authored texture/vertex alpha.
+        vec4 currentSample = texture2D(diffuseMap, diffuseMapUV);
+        vec4 blendSample = texture2D(falloutCloudBlendMap, diffuseMapUV);
+        float blend = clamp(falloutCloudBlendFactor, 0.0, 1.0);
+
+        vec4 currentOnly = vec4(currentSample.rgb, currentSample.a * (1.0 - blend));
+        vec4 crossFaded = mix(currentSample, blendSample, blend);
+        bool blendHasColor = dot(blendSample.rgb, vec3(1.0)) != 0.0;
+        vec4 selected = blendHasColor ? crossFaded : currentOnly;
+
+        blendSample.a *= blend;
+        bool currentHasColor = dot(currentSample.rgb, vec3(1.0)) != 0.0;
+        color = currentHasColor ? selected : blendSample;
+        color *= passColor;
+        color.rgb *= opacity;
+    }
+    else
+    {
+        color = texture2D(diffuseMap, diffuseMapUV);
+        color.a *= passColor.a * opacity;
+        color.xyz = clamp(color.xyz * gl_FrontMaterial.emission.xyz, 0.0, 1.0);
+        color = mix(vec4(gl_Fog.color.xyz, color.a), color, passColor.a);
+    }
+>>>>>>> origin/main
 }
 
 void paintMoon(inout vec4 color)
@@ -63,6 +120,10 @@ void paintMoon(inout vec4 color)
 void paintSun(inout vec4 color)
 {
     color = texture2D(diffuseMap, diffuseMapUV);
+<<<<<<< HEAD
+=======
+    color.rgb = clamp(color.rgb * gl_FrontMaterial.emission.rgb, 0.0, 1.0);
+>>>>>>> origin/main
     color.a *= gl_FrontMaterial.diffuse.a;
 }
 

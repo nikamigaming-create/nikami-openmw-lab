@@ -215,6 +215,25 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
 <context>
     <name>QObject</name>
     <message>
+<<<<<<< HEAD
+=======
+        <source>&lt;br&gt;&lt;b&gt;Could not find Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;The Wizard needs to update settings in this file.&lt;br&gt;&lt;br&gt;Press &quot;Browse...&quot; to specify the location manually.&lt;br&gt;</source>
+        <translation>&lt;br&gt;&lt;b&gt;Kunde inte hitta Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;Guiden behöver uppdatera inställningarna i denna fil.&lt;br&gt;&lt;br&gt;Tryck på &quot;Bläddra...&quot; för att specificera filens plats manuellt.&lt;br&gt;</translation>
+    </message>
+    <message>
+        <source>B&amp;rowse...</source>
+        <translation>B&amp;läddra...</translation>
+    </message>
+    <message>
+        <source>Select configuration file</source>
+        <translation>Välj konfigurationsfil</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Morrowind.bsa&lt;/b&gt; is missing!&lt;br&gt;Make sure your Morrowind installation is complete.</source>
+        <translation>&lt;b&gt;Morrowind.bsa&lt;/b&gt; saknas!&lt;br&gt;Se till att din Morrowindinstallation är komplett.</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>&lt;br&gt;&lt;b&gt;There may be a more recent version of Morrowind available.&lt;/b&gt;&lt;br&gt;&lt;br&gt;Do you wish to continue anyway?&lt;br&gt;</source>
         <translation>&lt;br&gt;&lt;b&gt;Det kan finnas nyare version av Morrowind tillgänglig.&lt;/b&gt;&lt;br&gt;&lt;br&gt;Vill du fortsätta ändå?&lt;br&gt;</translation>
     </message>
@@ -226,6 +245,13 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <source>Select a valid %1 installation media.&lt;br&gt;&lt;b&gt;Hint&lt;/b&gt;: make sure that it contains at least one &lt;b&gt;.cab&lt;/b&gt; file.</source>
         <translation>Välj ett giltigt %1 installationsmedium.&lt;br&gt;&lt;b&gt;Tips&lt;/b&gt;: säkerställ att det finns åtminstone en &lt;b&gt;.cab&lt;/b&gt;-fil.</translation>
     </message>
+<<<<<<< HEAD
+=======
+    <message>
+        <source>There may be a more recent version of Morrowind available.&lt;br&gt;&lt;br&gt;Do you wish to continue anyway?</source>
+        <translation>Det kan finnas en mer uppdaterad version av Morrowind tillgänglig.&lt;br&gt;&lt;br&gt;Vill du fortsätta ändå?</translation>
+    </message>
+>>>>>>> origin/main
 </context>
 <context>
     <name>Wizard::ComponentSelectionPage</name>
@@ -315,6 +341,7 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <source>Error detecting Morrowind files</source>
         <translation>Kunde inte hitta Morrowindfiler</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>&lt;br&gt;&lt;b&gt;Could not find Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;The Wizard needs to update settings in this file.&lt;br&gt;&lt;br&gt;Press &quot;Browse...&quot; to specify the location manually.&lt;br&gt;</source>
         <translation>&lt;br&gt;&lt;b&gt;Kunde inte hitta Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;Guiden behöver uppdatera inställningarna i denna fil.&lt;br&gt;&lt;br&gt;Tryck på &quot;Bläddra...&quot; för att specificera filens plats manuellt.&lt;br&gt;</translation>
@@ -331,6 +358,8 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <source>&lt;b&gt;Morrowind.bsa&lt;/b&gt; is missing!&lt;br&gt;Make sure your Morrowind installation is complete.</source>
         <translation>&lt;b&gt;Morrowind.bsa&lt;/b&gt; saknas!&lt;br&gt;Se till att din Morrowindinstallation är komplett.</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>Wizard::InstallationPage</name>
@@ -339,6 +368,13 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <translation>&lt;p&gt;Försöker installera komponent %1.&lt;/p&gt;</translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Attempting to install component %1.</source>
+        <translation>Försöker installera komponent %1.</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>%1 Installation</source>
         <translation>%1 Installation</translation>
     </message>
@@ -355,6 +391,13 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <translation>&lt;p&gt;Hittade gammal version av Morrowind.&lt;/p&gt;</translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Detected old version of component Morrowind.</source>
+        <translation>Hittade gammal version av komponenten Morrowind.</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Morrowind Installation</source>
         <translation>Installation av Morrowind</translation>
     </message>
@@ -456,6 +499,13 @@ de ordinarie fonterna i Morrowind. Bocka i denna ruta om du ändå föredrar ord
         <translation>OpenMW installationsguide</translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Error opening Wizard log file</source>
+        <translation>Kunde inte öppna guidens loggfil</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;b&gt;Could not open %1 for writing&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Please make sure you have the right permissions and try again.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;b&gt;Kunde inte öppna %1 för att skriva&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Se till att du har rätt behörigheter och försök igen.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>

@@ -7,11 +7,14 @@
 #include <string>
 
 #include <components/misc/utf8stream.hpp>
+<<<<<<< HEAD
 
 namespace MWDialogue
 {
     class Topic;
 }
+=======
+>>>>>>> origin/main
 
 namespace MWGui
 {
@@ -23,6 +26,16 @@ namespace MWGui
     /// game data store.
     struct JournalViewModel
     {
+<<<<<<< HEAD
+=======
+        typedef std::shared_ptr<JournalViewModel> Ptr;
+
+        typedef intptr_t QuestId;
+        typedef intptr_t TopicId;
+        typedef uint8_t const* Utf8Point;
+        typedef std::pair<Utf8Point, Utf8Point> Utf8Span;
+
+>>>>>>> origin/main
         /// The base interface for both journal entries and topics.
         struct Entry
         {
@@ -31,12 +44,20 @@ namespace MWGui
             /// This function returns a borrowed reference to the body of the
             /// journal entry. The returned reference becomes invalid when the
             /// entry is destroyed.
+<<<<<<< HEAD
             virtual std::string_view body() const = 0;
+=======
+            virtual Utf8Span body() const = 0;
+>>>>>>> origin/main
 
             /// Visits each subset of text in the body, delivering the beginning
             /// and end of the span relative to the body, and a valid topic ID if
             /// the span represents a keyword, or zero if not.
+<<<<<<< HEAD
             virtual void visitSpans(std::function<void(const MWDialogue::Topic*, size_t, size_t)> visitor) const = 0;
+=======
+            virtual void visitSpans(std::function<void(TopicId, size_t, size_t)> visitor) const = 0;
+>>>>>>> origin/main
 
             virtual ~Entry() = default;
         };
@@ -46,7 +67,11 @@ namespace MWGui
         {
             /// Returns a pre-formatted span of UTF8 encoded text representing
             /// the name of the NPC this portion of dialog was heard from.
+<<<<<<< HEAD
             virtual std::string_view source() const = 0;
+=======
+            virtual Utf8Span source() const = 0;
+>>>>>>> origin/main
 
             virtual ~TopicEntry() = default;
         };
@@ -56,7 +81,11 @@ namespace MWGui
         {
             /// Returns a pre-formatted span of UTF8 encoded text representing
             /// the in-game date this entry was added to the journal.
+<<<<<<< HEAD
             virtual std::string_view timestamp() const = 0;
+=======
+            virtual Utf8Span timestamp() const = 0;
+>>>>>>> origin/main
 
             virtual ~JournalEntry() = default;
         };
@@ -79,19 +108,30 @@ namespace MWGui
             std::string_view questName, std::function<void(JournalEntry const&)> visitor) const = 0;
 
         /// provides the name of the topic specified by its id
+<<<<<<< HEAD
         virtual void visitTopicName(
             const MWDialogue::Topic& topic, std::function<void(std::string_view)> visitor) const = 0;
+=======
+        virtual void visitTopicName(TopicId topicId, std::function<void(Utf8Span)> visitor) const = 0;
+>>>>>>> origin/main
 
         /// walks over the topics whose names start with the character
         virtual void visitTopicNamesStartingWith(
             Utf8Stream::UnicodeChar character, std::function<void(std::string_view)> visitor) const = 0;
 
         /// walks over the topic entries for the topic specified by its identifier
+<<<<<<< HEAD
         virtual void visitTopicEntries(
             const MWDialogue::Topic& topic, std::function<void(TopicEntry const&)> visitor) const = 0;
 
         // create an instance of the default journal view model implementation
         static std::shared_ptr<JournalViewModel> create();
+=======
+        virtual void visitTopicEntries(TopicId topicId, std::function<void(TopicEntry const&)> visitor) const = 0;
+
+        // create an instance of the default journal view model implementation
+        static Ptr create();
+>>>>>>> origin/main
 
         virtual ~JournalViewModel() = default;
     };

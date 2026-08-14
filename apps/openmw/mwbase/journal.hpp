@@ -74,7 +74,11 @@ namespace MWBase
 
         virtual const TQuestContainer& getQuests() const = 0;
 
+<<<<<<< HEAD
         virtual size_t countSavedGameRecords() const = 0;
+=======
+        virtual int countSavedGameRecords() const = 0;
+>>>>>>> origin/main
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& progress) const = 0;
 

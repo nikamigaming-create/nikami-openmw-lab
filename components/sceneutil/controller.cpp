@@ -51,7 +51,11 @@ namespace SceneUtil
 
     float FrameTimeSource::getValue(osg::NodeVisitor* nv)
     {
+<<<<<<< HEAD
         return static_cast<float>(nv->getFrameStamp()->getSimulationTime());
+=======
+        return nv->getFrameStamp()->getSimulationTime();
+>>>>>>> origin/main
     }
 
     ControllerVisitor::ControllerVisitor()
@@ -83,7 +87,11 @@ namespace SceneUtil
                 visit(node, *ctrl);
             if (CompositeStateSetUpdater* composite = dynamic_cast<CompositeStateSetUpdater*>(callback))
             {
+<<<<<<< HEAD
                 for (size_t i = 0; i < composite->getNumControllers(); ++i)
+=======
+                for (unsigned int i = 0; i < composite->getNumControllers(); ++i)
+>>>>>>> origin/main
                 {
                     StateSetUpdater* statesetcontroller = composite->getController(i);
                     if (Controller* ctrl = dynamic_cast<Controller*>(statesetcontroller))

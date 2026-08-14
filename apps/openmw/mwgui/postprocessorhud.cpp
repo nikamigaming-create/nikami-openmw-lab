@@ -172,16 +172,27 @@ namespace MWGui
         if (selected == MyGUI::ITEM_NONE)
             return;
 
+<<<<<<< HEAD
         size_t index = direction == Direction::Up ? selected - 1 : selected + 1;
         index = std::clamp<size_t>(index, 0, mActiveList->getItemCount() - 1);
 
         if (index != selected)
+=======
+        int index = direction == Direction::Up ? static_cast<int>(selected) - 1 : selected + 1;
+        index = std::clamp<int>(index, 0, mActiveList->getItemCount() - 1);
+
+        if (static_cast<size_t>(index) != selected)
+>>>>>>> origin/main
         {
             auto technique = getTechnique(*mActiveList, selected);
             if (technique->getDynamic() || technique->getInternal())
                 return;
 
+<<<<<<< HEAD
             if (processor->enableTechnique(std::move(technique), static_cast<int>(index) - mOffset)
+=======
+            if (processor->enableTechnique(std::move(technique), index - mOffset)
+>>>>>>> origin/main
                 != MWRender::PostProcessor::Status_Error)
                 processor->saveChain();
         }
@@ -279,7 +290,11 @@ namespace MWGui
 
     void PostProcessorHud::notifyMouseWheel(MyGUI::Widget* /*sender*/, int rel)
     {
+<<<<<<< HEAD
         double offset = mConfigLayout->getViewOffset().top + rel * 0.3;
+=======
+        int offset = mConfigLayout->getViewOffset().top + rel * 0.3;
+>>>>>>> origin/main
         if (offset > 0)
             mConfigLayout->setViewOffset(MyGUI::IntPoint(0, 0));
         else

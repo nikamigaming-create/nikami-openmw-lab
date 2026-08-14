@@ -1,17 +1,24 @@
 #include "messagebundles.hpp"
 
+<<<<<<< HEAD
 #include <charconv>
 #include <cstring>
 #include <mutex>
 #include <optional>
 #include <span>
 
+=======
+#include <cstring>
+>>>>>>> origin/main
 #include <unicode/calendar.h>
 #include <unicode/errorcode.h>
 #include <yaml-cpp/yaml.h>
 
 #include <components/debug/debuglog.hpp>
+<<<<<<< HEAD
 #include <components/misc/messageformatparser.hpp>
+=======
+>>>>>>> origin/main
 
 namespace L10n
 {
@@ -45,6 +52,7 @@ namespace L10n
             return status.isSuccess();
         }
 
+<<<<<<< HEAD
         std::optional<icu::MessageFormat> parseMessageFormat(
             const icu::Locale& lang, std::string_view key, std::string_view value, std::string_view locale)
         {
@@ -225,6 +233,19 @@ namespace L10n
                     return &(message->second);
             }
             return nullptr;
+=======
+        std::string loadGmst(
+            const std::function<std::string(std::string_view)>& gmstLoader, const icu::MessageFormat* message)
+        {
+            icu::UnicodeString gmstNameUnicode;
+            std::string gmstName;
+            icu::ErrorCode success;
+            message->format(nullptr, nullptr, 0, gmstNameUnicode, success);
+            gmstNameUnicode.toUTF8String(gmstName);
+            if (gmstLoader)
+                return gmstLoader(gmstName);
+            return "GMST:" + gmstName;
+>>>>>>> origin/main
         }
     }
 
@@ -262,6 +283,7 @@ namespace L10n
     {
         YAML::Node data = YAML::Load(input);
         std::string localeName = lang.getName();
+<<<<<<< HEAD
         if (localeName == "gmst")
         {
             loadGmstYaml(data, mGmsts);
@@ -269,10 +291,28 @@ namespace L10n
         }
         else
             loadLocaleYaml(data, lang, mBundles[localeName]);
+=======
+        const icu::Locale& langOrEn = localeName == "gmst" ? icu::Locale::getEnglish() : lang;
+        for (const auto& it : data)
+        {
+            const auto key = it.first.as<std::string>();
+            const auto value = it.second.as<std::string>();
+            icu::UnicodeString pattern
+                = icu::UnicodeString::fromUTF8(icu::StringPiece(value.data(), static_cast<std::int32_t>(value.size())));
+            icu::ErrorCode status;
+            UParseError parseError;
+            icu::MessageFormat message(pattern, langOrEn, parseError, status);
+            if (checkSuccess(status, parseError, "Failed to create message ", key, " for locale ", lang.getName()))
+            {
+                mBundles[localeName].emplace(key, message);
+            }
+        }
+>>>>>>> origin/main
     }
 
     const icu::MessageFormat* MessageBundles::findMessage(std::string_view key, std::string_view localeName) const
     {
+<<<<<<< HEAD
         std::shared_lock sharedLock(mMutex);
         {
             auto message = getMessage(mBundles, key, localeName);
@@ -298,6 +338,15 @@ namespace L10n
                 if (iter == mBundles.end())
                     iter = mBundles.emplace(localeName, StringMap<icu::MessageFormat>()).first;
                 return &iter->second.emplace(key, *message).first->second;
+=======
+        auto iter = mBundles.find(localeName);
+        if (iter != mBundles.end())
+        {
+            auto message = iter->second.find(key);
+            if (message != iter->second.end())
+            {
+                return &(message->second);
+>>>>>>> origin/main
             }
         }
         return nullptr;
@@ -310,7 +359,12 @@ namespace L10n
         std::vector<icu::Formattable> argValues;
         for (auto& [k, v] : args)
         {
+<<<<<<< HEAD
             argNames.push_back(toUnicode(k));
+=======
+            argNames.push_back(
+                icu::UnicodeString::fromUTF8(icu::StringPiece(k.data(), static_cast<std::int32_t>(k.size()))));
+>>>>>>> origin/main
             argValues.push_back(v);
         }
         return formatMessage(key, argNames, argValues);
@@ -319,6 +373,7 @@ namespace L10n
     std::string MessageBundles::formatMessage(std::string_view key, const std::vector<icu::UnicodeString>& argNames,
         const std::vector<icu::Formattable>& args) const
     {
+<<<<<<< HEAD
         for (auto& loc : mPreferredLocaleStrings)
         {
             if (const icu::MessageFormat* message = findMessage(key, loc))
@@ -328,11 +383,43 @@ namespace L10n
         if (const icu::MessageFormat* message = findMessage(key, mFallbackLocale.getName()))
             return formatArgs(*message, key, argNames, args);
 
+=======
+        icu::UnicodeString result;
+        std::string resultString;
+        icu::ErrorCode success;
+
+        const icu::MessageFormat* message = nullptr;
+        for (auto& loc : mPreferredLocaleStrings)
+        {
+            message = findMessage(key, loc);
+            if (message)
+            {
+                if (loc == "gmst")
+                    return loadGmst(mGmstLoader, message);
+                break;
+            }
+        }
+        // If no requested locales included the message, try the fallback locale
+        if (!message)
+            message = findMessage(key, mFallbackLocale.getName());
+
+        if (message)
+        {
+            if (!args.empty() && !argNames.empty())
+                message->format(argNames.data(), args.data(), static_cast<std::int32_t>(args.size()), result, success);
+            else
+                message->format(nullptr, nullptr, static_cast<std::int32_t>(args.size()), result, success);
+            checkSuccess(success, {}, "Failed to format message ", key);
+            result.toUTF8String(resultString);
+            return resultString;
+        }
+>>>>>>> origin/main
         icu::Locale defaultLocale(nullptr);
         if (!mPreferredLocales.empty())
         {
             defaultLocale = mPreferredLocales[0];
         }
+<<<<<<< HEAD
         std::optional<icu::MessageFormat> defaultMessage = parseMessageFormat(defaultLocale, key, key, "default");
         if (!defaultMessage)
             // If we can't parse the key as a pattern, just return the key
@@ -344,5 +431,23 @@ namespace L10n
     {
         icu::StringPiece piece(value.data(), static_cast<std::int32_t>(value.size()));
         return icu::UnicodeString::fromUTF8(piece);
+=======
+        UParseError parseError;
+        icu::MessageFormat defaultMessage(
+            icu::UnicodeString::fromUTF8(icu::StringPiece(key.data(), static_cast<std::int32_t>(key.size()))),
+            defaultLocale, parseError, success);
+        if (!checkSuccess(success, parseError, "Failed to create message ", key))
+            // If we can't parse the key as a pattern, just return the key
+            return std::string(key);
+
+        if (!args.empty() && !argNames.empty())
+            defaultMessage.format(
+                argNames.data(), args.data(), static_cast<std::int32_t>(args.size()), result, success);
+        else
+            defaultMessage.format(nullptr, nullptr, static_cast<std::int32_t>(args.size()), result, success);
+        checkSuccess(success, {}, "Failed to format message ", key);
+        result.toUTF8String(resultString);
+        return resultString;
+>>>>>>> origin/main
     }
 }

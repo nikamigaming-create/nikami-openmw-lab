@@ -17,7 +17,10 @@
 #include <components/esm3/loadglob.hpp>
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadland.hpp>
+<<<<<<< HEAD
 #include <components/esm3/loadmgef.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/loadpgrd.hpp>
 #include <components/esm3/loadskil.hpp>
 #include <components/esm4/loadachr.hpp>
@@ -27,6 +30,7 @@
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
+<<<<<<< HEAD
 namespace ESM
 {
     struct LandTexture;
@@ -35,6 +39,19 @@ namespace ESM
     class ESMWriter;
 }
 
+=======
+#include "../mwdialogue/keywordsearch.hpp"
+
+namespace ESM
+{
+    struct LandTexture;
+    struct MagicEffect;
+    struct WeaponType;
+    class ESMReader;
+    class ESMWriter;
+}
+
+>>>>>>> origin/main
 namespace Loading
 {
     class Listener;
@@ -59,7 +76,11 @@ namespace MWWorld
     class DynamicStoreBase : public StoreBase
     {
     public:
+<<<<<<< HEAD
         virtual ~DynamicStoreBase() = default;
+=======
+        virtual ~DynamicStoreBase() {}
+>>>>>>> origin/main
 
         virtual void setUp() {}
 
@@ -68,7 +89,11 @@ namespace MWWorld
         virtual void listIdentifier(std::vector<Id>& list) const {}
 
         virtual size_t getSize() const = 0;
+<<<<<<< HEAD
         virtual size_t getDynamicSize() const { return 0; }
+=======
+        virtual int getDynamicSize() const { return 0; }
+>>>>>>> origin/main
         virtual RecordId load(ESM::ESMReader& esm) = 0;
 
         virtual bool eraseStatic(const Id& id) { return false; }
@@ -99,8 +124,14 @@ namespace MWWorld
         iterator findIter(int index) const { return mStatic.find(index); }
 
         void load(ESM::ESMReader& esm);
+<<<<<<< HEAD
 
         size_t getSize() const;
+=======
+        T* insertStatic(const T& item);
+
+        int getSize() const;
+>>>>>>> origin/main
         void setUp();
 
         const T* search(int index) const;
@@ -228,7 +259,11 @@ namespace MWWorld
         const T* at(size_t index) const { return mShared.at(index); }
 
         size_t getSize() const override;
+<<<<<<< HEAD
         size_t getDynamicSize() const override;
+=======
+        int getDynamicSize() const override;
+>>>>>>> origin/main
 
         /// @note The record identifiers are listed in the order that the records were defined by the content files.
         void listIdentifier(std::vector<Id>& list) const override;
@@ -278,6 +313,11 @@ namespace MWWorld
 
         const ESM::GameSetting* find(const std::string_view id) const;
         const ESM::GameSetting* search(const std::string_view id) const;
+<<<<<<< HEAD
+=======
+
+        void setUp() override;
+>>>>>>> origin/main
     };
 
     template <>
@@ -356,16 +396,45 @@ namespace MWWorld
     template <>
     class Store<ESM::Cell> : public DynamicStore
     {
+<<<<<<< HEAD
+        typedef std::unordered_map<std::string, ESM::Cell*, Misc::StringUtils::CiHash, Misc::StringUtils::CiEqual>
+            DynamicInt;
+=======
+        struct DynamicExtCmp
+        {
+            bool operator()(const std::pair<int, int>& left, const std::pair<int, int>& right) const
+            {
+                if (left.first == right.first && left.second == right.second)
+                    return false;
+>>>>>>> origin/main
+
+        typedef std::map<std::pair<int, int>, ESM::Cell*> DynamicExt;
+
+<<<<<<< HEAD
+        std::unordered_map<ESM::RefId, ESM::Cell> mCells;
+
+        DynamicInt mInt;
+        DynamicExt mExt;
+
+=======
+                // Exterior cells are listed in descending, row-major order,
+                // this is a workaround for an ambiguous chargen_plank reference in the vanilla game.
+                // there is one at -22,16 and one at -2,-9, the latter should be used.
+                return left.first > right.first;
+            }
+        };
+
         typedef std::unordered_map<std::string, ESM::Cell*, Misc::StringUtils::CiHash, Misc::StringUtils::CiEqual>
             DynamicInt;
 
-        typedef std::map<std::pair<int, int>, ESM::Cell*> DynamicExt;
+        typedef std::map<std::pair<int, int>, ESM::Cell*, DynamicExtCmp> DynamicExt;
 
         std::unordered_map<ESM::RefId, ESM::Cell> mCells;
 
         DynamicInt mInt;
         DynamicExt mExt;
 
+>>>>>>> origin/main
         std::vector<ESM::Cell*> mSharedInt;
         std::vector<ESM::Cell*> mSharedExt;
 
@@ -389,6 +458,10 @@ namespace MWWorld
         const ESM::Cell* find(int x, int y) const;
 
         void clearDynamic() override;
+<<<<<<< HEAD
+=======
+        void setUp() override;
+>>>>>>> origin/main
 
         RecordId load(ESM::ESMReader& esm) override;
 
@@ -397,6 +470,15 @@ namespace MWWorld
         iterator extBegin() const;
         iterator extEnd() const;
 
+<<<<<<< HEAD
+=======
+        // Return the northernmost cell in the easternmost column.
+        const ESM::Cell* searchExtByName(std::string_view id) const;
+
+        // Return the northernmost cell in the easternmost column.
+        const ESM::Cell* searchExtByRegion(const ESM::RefId& id) const;
+
+>>>>>>> origin/main
         size_t getSize() const override;
         size_t getExtSize() const;
         size_t getIntSize() const;
@@ -445,10 +527,15 @@ namespace MWWorld
     public:
         Store() = default;
 
+<<<<<<< HEAD
+=======
+        void setUpNeutral();
+>>>>>>> origin/main
         void setUp(const MWWorld::Store<ESM::GameSetting>& settings);
     };
 
     template <>
+<<<<<<< HEAD
     class Store<ESM::Attribute> : public TypedDynamicStore<ESM::Attribute>
     {
         using TypedDynamicStore<ESM::Attribute>::setUp;
@@ -535,6 +622,97 @@ namespace MWWorld
     class ESM4RefsStore : public TypedDynamicStore<T, ESM::FormId>
     {
     public:
+=======
+    class Store<ESM::MagicEffect> : public IndexedStore<ESM::MagicEffect>
+    {
+    public:
+        Store();
+
+        void setUpNeutral();
+    };
+
+    template <>
+    class Store<ESM::Attribute> : public TypedDynamicStore<ESM::Attribute>
+    {
+        using TypedDynamicStore<ESM::Attribute>::setUp;
+
+    public:
+        Store() = default;
+
+        void setUp(const MWWorld::Store<ESM::GameSetting>& settings);
+        void setUpNeutral();
+    };
+
+    template <>
+    class Store<ESM::WeaponType> : public DynamicStore
+    {
+        std::map<int, ESM::WeaponType> mStatic;
+
+    public:
+        typedef std::map<int, ESM::WeaponType>::const_iterator iterator;
+
+        Store();
+
+        const ESM::WeaponType* search(const int id) const;
+
+        // calls `search` and throws an exception if not found
+        const ESM::WeaponType* find(const int id) const;
+
+        RecordId load(ESM::ESMReader& esm) override { return RecordId({}, false); }
+
+        ESM::WeaponType* insert(const ESM::WeaponType& weaponType);
+
+        void setUp() override;
+
+        size_t getSize() const override;
+        iterator begin() const;
+        iterator end() const;
+    };
+
+    template <>
+    class Store<ESM::Dialogue> : public DynamicStore
+    {
+        typedef std::unordered_map<ESM::RefId, ESM::Dialogue> Static;
+        Static mStatic;
+        /// @par mShared usually preserves the record order as it came from the content files (this
+        /// is relevant for the spell autocalc code and selection order
+        /// for heads/hairs in the character creation)
+        /// @warning ESM::Dialogue Store currently implements a sorted order for unknown reasons.
+        std::vector<ESM::Dialogue*> mShared;
+
+        mutable bool mKeywordSearchModFlag;
+        mutable MWDialogue::KeywordSearch<int /*unused*/> mKeywordSearch;
+
+    public:
+        Store();
+
+        typedef SharedIterator<ESM::Dialogue> iterator;
+
+        void setUp() override;
+
+        const ESM::Dialogue* search(const ESM::RefId& id) const;
+        const ESM::Dialogue* find(const ESM::RefId& id) const;
+
+        iterator begin() const;
+        iterator end() const;
+
+        size_t getSize() const override;
+
+        bool eraseStatic(const ESM::RefId& id) override;
+        ESM::Dialogue* insertStatic(const ESM::Dialogue& dialogue);
+
+        RecordId load(ESM::ESMReader& esm) override;
+
+        void listIdentifier(std::vector<ESM::RefId>& list) const override;
+
+        const MWDialogue::KeywordSearch<int>& getDialogIdKeywordSearch() const;
+    };
+
+    template <typename T>
+    class ESM4RefsStore : public TypedDynamicStore<T, ESM::FormId>
+    {
+    public:
+>>>>>>> origin/main
         void preprocessReferences(const Store<ESM4::Cell>& cells)
         {
             for (auto& [_, ref] : this->mStatic)

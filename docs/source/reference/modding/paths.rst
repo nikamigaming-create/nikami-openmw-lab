@@ -70,6 +70,7 @@ Screenshots
 .. note::
     Flatpak sets ``$XDG_DATA_HOME`` to ``$HOME/.var/app/$FLATPAK_ID/data``, so screenshots will be at ``$HOME/.var/app/org.openmw.OpenMW/data/openmw/screenshots`` if you use the Flatpak.
 
+<<<<<<< HEAD
 Override directory (data-local)
 -------------------------------
 
@@ -95,6 +96,8 @@ You may define your own, custom ``data-local`` directory by using it as a key in
 .. note::
     Flatpak sets ``$XDG_DATA_HOME`` to ``$HOME/.var/app/$FLATPAK_ID/data``, so data-local will be set to ``$HOME/.var/app/org.openmw.OpenMW/data/openmw/data`` if you use the Flatpak.
 
+=======
+>>>>>>> origin/main
 Custom configuration directories
 ================================
 

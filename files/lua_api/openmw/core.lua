@@ -1,12 +1,18 @@
 ---
+<<<<<<< HEAD
 -- Defines functions and types that are available in local, global, menu, and load scripts.
 -- @context global|menu|local|player|load
+=======
+-- Defines functions and types that are available in local, global and menu scripts.
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module core
 -- @usage local core = require('openmw.core')
 
 
 
 ---
+<<<<<<< HEAD
 -- The revision of OpenMW's Lua API. It is an integer that is incremented every time the API is changed. See the actual value at the top of the page.
 -- @field [parent=#core] #number API_REVISION
 
@@ -16,47 +22,87 @@
 
 ---
 -- Send an event to global scripts. Note: in menu scripts, errors if the game is not running (check @{openmw.menu#menu.getState}.) Not available in load scripts.
+=======
+-- The revision of OpenMW Lua API. It is an integer that is incremented every time the API is changed. See the actual value at the top of the page.
+-- @field [parent=#core] #number API_REVISION
+
+---
+-- Terminates the game and quits to the OS. Should be used only for testing purposes.
+-- @function [parent=#core] quit
+
+---
+-- Send an event to global scripts. Note: in menu scripts, errors if the game is not running (check @{openmw.menu#menu.getState})
+>>>>>>> origin/main
 -- @function [parent=#core] sendGlobalEvent
 -- @param #string eventName
 -- @param eventData
 
 ---
 -- Simulation time in seconds.
+<<<<<<< HEAD
 -- The number of simulation seconds passed in the game world since starting a new game. Not available in load scripts.
+=======
+-- The number of simulation seconds passed in the game world since starting a new game.
+>>>>>>> origin/main
 -- @function [parent=#core] getSimulationTime
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- The scale of simulation time relative to real time. Not available in load scripts.
+=======
+-- The scale of simulation time relative to real time.
+>>>>>>> origin/main
 -- @function [parent=#core] getSimulationTimeScale
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Game time in seconds. Not available in load scripts.
+=======
+-- Game time in seconds.
+>>>>>>> origin/main
 -- @function [parent=#core] getGameTime
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- The scale of game time relative to simulation time. Not available in load scripts.
+=======
+-- The scale of game time relative to simulation time.
+>>>>>>> origin/main
 -- @function [parent=#core] getGameTimeScale
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Whether the world is paused. Not available in load scripts.
+=======
+-- Whether the world is paused.
+>>>>>>> origin/main
 -- @function [parent=#core] isWorldPaused
 -- @return #boolean
 
 ---
+<<<<<<< HEAD
 -- Real time in seconds; starting point is not fixed (can be time since last reboot), use only for measuring intervals. For Unix time use `os.time()`. Not available in load scripts.
+=======
+-- Real time in seconds; starting point is not fixed (can be time since last reboot), use only for measuring intervals. For Unix time use `os.time()`.
+>>>>>>> origin/main
 -- @function [parent=#core] getRealTime
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Frame duration in seconds. Not available in global or load scripts.
+=======
+-- Frame duration in seconds. Not available in global scripts.
+>>>>>>> origin/main
 -- @function [parent=#core] getRealFrameDuration
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Get a game setting with given name (from GMST ESM records or from openmw.cfg). Not available in load scripts.
 -- @function [parent=#core] getGMST
 -- @param #string setting Setting name
@@ -64,6 +110,12 @@
 -- @usage local skillBonus = core.getGMST('fMinorSkillBonus') -- get a numeric GMST from ESM data
 -- @usage local jailFormatString = core.getGMST('sNotifyMessage42') -- get a string GMST from ESM data
 -- @usage local bloodTextureName = core.getGMST('Blood_Texture_1') -- get a "fallback" parameter value from openmw.cfg (always a string)
+=======
+-- Get a GMST setting from content files.
+-- @function [parent=#core] getGMST
+-- @param #string setting Setting name
+-- @return #any
+>>>>>>> origin/main
 
 ---
 -- The game's difficulty setting.
@@ -160,13 +212,21 @@
 -- Player, actors, items, and statics are game objects.
 -- @type GameObject
 -- @extends #userdata
+<<<<<<< HEAD
 -- @field #string id The unique id of this object (not record id), can be used as a key in a table.
 -- @field #string contentFile Lowercase file name of the content file that defines this object; nil for dynamically created objects.
+=======
+-- @field #string id A unique id of this object (not record id), can be used as a key in a table.
+-- @field #string contentFile Lower cased file name of the content file that defines this object; nil for dynamically created objects.
+>>>>>>> origin/main
 -- @field #boolean enabled Whether the object is enabled or disabled. Global scripts can set the value. Items in containers or inventories can't be disabled.
 -- @field openmw.util#Vector3 position Object position.
 -- @field #number scale Object scale.
 -- @field openmw.util#Transform rotation Object rotation.
+<<<<<<< HEAD
 -- @field #Cell startingCell The object's original cell. Returns nil if `cell` of the object is nil.
+=======
+>>>>>>> origin/main
 -- @field openmw.util#Vector3 startingPosition The object original position
 -- @field openmw.util#Transform startingRotation The object original rotation
 -- @field #ObjectOwner owner Ownership information
@@ -175,7 +235,11 @@
 -- @field #any type Type of the object (one of the tables from the package @{openmw.types#types}).
 -- @field #number count Count (>1 means a stack of objects).
 -- @field #string recordId Returns record ID of the object in lowercase.
+<<<<<<< HEAD
 -- @field #string globalVariable Global Variable associated with this object (read only).
+=======
+-- @field #string globalVariable Global Variable associated with this object(read only).
+>>>>>>> origin/main
 
 
 ---
@@ -194,7 +258,11 @@
 -- @return #boolean
 
 ---
+<<<<<<< HEAD
 -- Send a local event to the object.
+=======
+-- Send local event to the object.
+>>>>>>> origin/main
 -- @function [parent=#GameObject] sendEvent
 -- @param self
 -- @param #string eventName
@@ -209,7 +277,11 @@
 -- object:activateBy(self)
 
 ---
+<<<<<<< HEAD
 -- Add a new local script to the object.
+=======
+-- Add new local script to the object.
+>>>>>>> origin/main
 -- Can be called only from a global script. Script should be specified in a content
 -- file (omwgame/omwaddon/omwscripts) with a CUSTOM flag. Scripts can not be attached to Statics.
 -- @function [parent=#GameObject] addScript
@@ -240,7 +312,11 @@
 -- @param #number scale Scale desired in game.
 
 ---
+<<<<<<< HEAD
 -- Moves the object to given cell and position.
+=======
+-- Moves object to given cell and position.
+>>>>>>> origin/main
 -- Can be called only from a global script.
 -- The effect is not immediate: the position will be updated only in the next
 -- frame. Can be called only from a global script. Enables object if it was disabled.
@@ -253,13 +329,21 @@
 -- @param #TeleportOptions options (optional) Either table @{#TeleportOptions} or @{openmw.util#Transform} rotation.
 
 ---
+<<<<<<< HEAD
 -- Either a table with options or a @{openmw.util#Vector3} rotation.
+=======
+-- Either table with options or @{openmw.util#Vector3} rotation.
+>>>>>>> origin/main
 -- @type TeleportOptions
 -- @field openmw.util#Transform rotation New rotation; if missing, then the current rotation is used.
 -- @field #boolean onGround If true, adjust destination position to the ground.
 
 ---
+<<<<<<< HEAD
 -- Moves an object into a container or an inventory. Enables if was disabled.
+=======
+-- Moves object into a container or an inventory. Enables if was disabled.
+>>>>>>> origin/main
 -- Can be called only from a global script.
 -- @function [parent=#GameObject] moveInto
 -- @param self
@@ -301,14 +385,23 @@
 -- A cell of the game world.
 -- @type Cell
 -- @field #string name Name of the cell (can be empty string).
+<<<<<<< HEAD
 -- @field #string displayName Human-readable cell name (takes into account *.cel file localizations). Can be an empty string.
 -- @field #string id Unique record ID of the cell, based on cell name for interiors and the worldspace for exteriors, or the formID of the cell for ESM4 cells.
 -- @field #string region Region of the cell (can be nil).
+=======
+-- @field #string id Unique record ID of the cell, based on cell name for interiors and the worldspace for exteriors, or the formID of the cell for ESM4 cells.
+-- @field #string region Region of the cell.
+>>>>>>> origin/main
 -- @field #boolean isExterior Whether the cell is an exterior cell. "Exterior" means grid of cells where the player can seamless walk from one cell to another without teleports. QuasiExterior (interior with sky) is not an exterior.
 -- @field #boolean isQuasiExterior (DEPRECATED, use `hasTag("QuasiExterior")`) Whether the cell is a quasi exterior (like interior but with the sky and the weather).
 -- @field #number gridX Index of the cell by X (only for exteriors).
 -- @field #number gridY Index of the cell by Y (only for exteriors).
+<<<<<<< HEAD
 -- @field #string worldSpaceId Id of the world space (can be nil).
+=======
+-- @field #string worldSpaceId Id of the world space.
+>>>>>>> origin/main
 -- @field #boolean hasWater True if the cell contains water.
 -- @field #number waterLevel The water level of the cell. (nil if cell has no water).
 -- @field #boolean hasSky True if in this cell sky should be rendered.
@@ -372,7 +465,11 @@
 -- @field #boolean temporary If set, this spell effect is temporary and should end on its own. Either after a single application or after its duration has run out.
 -- @field #boolean affectsBaseValues If set, this spell affects the base values of affected stats, rather than modifying current values.
 -- @field #boolean stackable If set, this spell can be applied multiple times. If not set, the same spell can only be applied once from the same source (where source is determined by caster + item). In vanilla rules, consumables are stackable while spells and enchantments are not.
+<<<<<<< HEAD
 -- @field #string activeSpellId Uniquely identifies this active spell within the affected actor's list of active spells.
+=======
+-- @field #number activeSpellId A number uniquely identifying this active spell within the affected actor's list of active spells.
+>>>>>>> origin/main
 -- @field #list<#ActiveSpellEffect> effects The active effects (@{#ActiveSpellEffect}) of this spell.
 
 ---
@@ -404,8 +501,12 @@
 -- @type Enchantment
 -- @field #string id Enchantment id
 -- @field #number type @{#EnchantmentType}
+<<<<<<< HEAD
 -- @field #boolean autocalcFlag (DEPRECATED, use isAutocalc) If set, the casting cost should be computed based on the effect list rather than read from the cost field
 -- @field #boolean isAutocalc If set, the casting cost should be computed based on the effect list rather than read from the cost field
+=======
+-- @field #boolean autocalcFlag If set, the casting cost should be computed based on the effect list rather than read from the cost field
+>>>>>>> origin/main
 -- @field #number cost
 -- @field #number charge Charge capacity. Should not be confused with current charge.
 -- @field #list<#MagicEffectWithParams> effects The effects (@{#MagicEffectWithParams}) of the enchantment
@@ -430,14 +531,22 @@
 -- @type Inventory
 
 ---
+<<<<<<< HEAD
 -- The number of items with the given recordId.
+=======
+-- The number of items with given recordId.
+>>>>>>> origin/main
 -- @function [parent=#Inventory] countOf
 -- @param self
 -- @param #string recordId
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Get all items of the given type from the inventory.
+=======
+-- Get all items of given type from the inventory.
+>>>>>>> origin/main
 -- @function [parent=#Inventory] getAll
 -- @param self
 -- @param type (optional) items type (see @{openmw.types#types})
@@ -450,7 +559,11 @@
 -- local weapons = playerInventory:getAll(types.Weapon)
 
 ---
+<<<<<<< HEAD
 -- Get first item with the given recordId from the inventory. Returns nil if not found.
+=======
+-- Get first item with given recordId from the inventory. Returns nil if not found.
+>>>>>>> origin/main
 -- @function [parent=#Inventory] find
 -- @param self
 -- @param #string recordId
@@ -471,7 +584,11 @@
 -- @usage inventory:isResolved()
 
 ---
+<<<<<<< HEAD
 -- Get all items with the given recordId from the inventory.
+=======
+-- Get all items with given recordId from the inventory.
+>>>>>>> origin/main
 -- @function [parent=#Inventory] findAll
 -- @param self
 -- @param #string recordId
@@ -479,7 +596,11 @@
 -- @usage for _, item in ipairs(inventory:findAll('common_shirt_01')) do ... end
 
 
+<<<<<<< HEAD
 --- @{#Land}: Functions for interacting with land data. Not available in load scripts.
+=======
+--- @{#Land}: Functions for interacting with land data
+>>>>>>> origin/main
 -- @field [parent=#core] #Land land
 
 ---
@@ -501,7 +622,11 @@
 -- @return #nil, #string Plugin name or nil if failed to retrieve the texture
 
 
+<<<<<<< HEAD
 --- @{#Magic}: spells and spell effects. Not available in load scripts.
+=======
+--- @{#Magic}: spells and spell effects
+>>>>>>> origin/main
 -- @field [parent=#core] #Magic magic
 
 
@@ -679,6 +804,7 @@
 --- @{#Spells}: Spells
 -- @field [parent=#Magic] #Spells spells
 
+<<<<<<< HEAD
 ---
 -- Creates a @{#Spell} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
@@ -686,6 +812,8 @@
 -- @param #Spell spell A Lua table with the fields of a Spell, with an optional field `template` that accepts a @{#Spell} as a base.
 -- @return #Spell A strongly typed Spell record.
 
+=======
+>>>>>>> origin/main
 --- List of all @{#Spell}s.
 -- @field [parent=#Spells] #list<#Spell> records A read-only list of all @{#Spell} records in the world database, may be indexed by recordId.
 -- Implements [iterables#List](iterables.html#List) of #Spell.
@@ -716,6 +844,7 @@
 --- @{#Enchantments}: Enchantments
 -- @field [parent=#Magic] #Enchantments enchantments
 
+<<<<<<< HEAD
 ---
 -- Creates an @{#Enchantment} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
@@ -723,6 +852,8 @@
 -- @param #Enchantment enchantment A Lua table with the fields of an Enchantment, with an optional field `template` that accepts an @{#Enchantment} as a base.
 -- @return #Enchantment A strongly typed Enchantment record.
 
+=======
+>>>>>>> origin/main
 --- A read-only list of all @{#Enchantment} records in the world database, may be indexed by recordId.
 -- Implements [iterables#List](iterables.html#List) and [iterables#Map](iterables.html#map-iterable) of #Enchantment.
 -- @field [parent=#Enchantments] #list<#Enchantment> records
@@ -745,15 +876,22 @@
 -- @field #list<#MagicEffectWithParams> effects The effects (@{#MagicEffectWithParams}) of the spell
 -- @field #boolean alwaysSucceedFlag If set, the spell should ignore skill checks and always succeed.
 -- @field #boolean starterSpellFlag If set, the spell can be selected as a player's starting spell.
+<<<<<<< HEAD
 -- @field #boolean autocalcFlag (DEPRECATED, use isAutocalc) If set, the casting cost should be computed based on the effect list rather than read from the cost field
 -- @field #boolean isAutocalc If set, the casting cost should be computed based on the effect list rather than read from the cost field
+=======
+-- @field #boolean autocalcFlag If set, the casting cost should be computed based on the effect list rather than read from the cost field
+>>>>>>> origin/main
 
 ---
 -- @type MagicEffect
 -- @field #string id Effect ID
 -- @field #string icon Effect Icon Path
 -- @field #string name Localized name of the effect
+<<<<<<< HEAD
 -- @field #string description Localized description of the effect
+=======
+>>>>>>> origin/main
 -- @field #string school Skill ID that is this effect's school
 -- @field #number baseCost
 -- @field openmw.util#Color color
@@ -773,6 +911,7 @@
 -- @field #string hitSound Identifier of the sound used on hit
 -- @field #string areaSound Identifier of the sound used for AOE spells
 -- @field #string boltSound Identifier of the projectile sound used for ranged spells
+<<<<<<< HEAD
 -- @field #boolean hasAttribute True if the effect requires an attribute parameter
 -- @field #boolean hasSkill True if the effect requires a skill parameter
 -- @field #boolean onSelf True if the effect can be cast on self
@@ -783,6 +922,8 @@
 -- @field #boolean allowsEnchanting True if the effect is available for enchanting
 -- @field #boolean negativeLight True if the effect casts negative light
 -- @field #number speed Projectile speed
+=======
+>>>>>>> origin/main
 
 
 ---
@@ -805,11 +946,19 @@
 -- @field #string affectedAttribute Optional attribute ID
 -- @field #string id Effect id string
 -- @field #string name Localized name of the effect
+<<<<<<< HEAD
 -- @field #number magnitude Current magnitude of the effect. Will be set to 0 when the effect is removed or expires.
 -- @field #number magnitudeBase
 -- @field #number magnitudeModifier
 
 --- @{#Sound}: Sounds and Speech. Not available in load scripts.
+=======
+-- @field #number magnitude current magnitude of the effect. Will be set to 0 when effect is removed or expires.
+-- @field #number magnitudeBase
+-- @field #number magnitudeModifier
+
+--- @{#Sound}: Sounds and Speech
+>>>>>>> origin/main
 -- @field [parent=#core] #Sound sound
 
 ---
@@ -880,7 +1029,11 @@
 -- @usage core.sound.stopSoundFile("Sound\\test.mp3", object);
 
 ---
+<<<<<<< HEAD
 -- Check if a sound is playing on the given object
+=======
+-- Check if sound is playing on given object
+>>>>>>> origin/main
 -- @function [parent=#Sound] isSoundPlaying
 -- @param #string soundId ID of Sound record to check
 -- @param #GameObject object Object on which we want to check sound
@@ -888,7 +1041,11 @@
 -- @usage local isPlaying = core.sound.isSoundPlaying("shock bolt", object);
 
 ---
+<<<<<<< HEAD
 -- Check if a sound file is playing on the given object
+=======
+-- Check if sound file is playing on given object
+>>>>>>> origin/main
 -- @function [parent=#Sound] isSoundFilePlaying
 -- @param #string fileName Path to sound file in VFS
 -- @param #GameObject object Object on which we want to check sound
@@ -941,7 +1098,11 @@
 --     print(sound.fileName)
 -- end
 
+<<<<<<< HEAD
 --- @{#Stats}: stats. Not available in load scripts.
+=======
+--- @{#Stats}: stats
+>>>>>>> origin/main
 -- @field [parent=#core] #Stats stats
 
 
@@ -1004,7 +1165,11 @@
 -- @field #string failureSound VFS path to the failure sound
 -- @field #string hitSound VFS path to the hit sound
 
+<<<<<<< HEAD
 --- @{#Dialogue}: Dialogue. Not available in load scripts.
+=======
+--- @{#Dialogue}: Dialogue
+>>>>>>> origin/main
 -- @field [parent=#core] #Dialogue dialogue
 
 ---
@@ -1107,7 +1272,11 @@
 -- local bb = core.dialogue.voice.records['flee'].infos[149].sound
 
 ---
+<<<<<<< HEAD
 -- Quest stage (same as in @{openmw_types#PLAYERQuest.stage}) this info entry is associated with.
+=======
+-- Quest stage (same as in @{openmw_types#PlayerQuest.stage}) this info entry is associated with.
+>>>>>>> origin/main
 -- Non-nil only for journal records.
 -- @field [parent=#DialogueRecordInfo] #number questStage
 
@@ -1191,6 +1360,7 @@
 -- Always nil for journal records or if there is no value set.
 -- @field [parent=#DialogueRecordInfo] #string resultScript
 
+<<<<<<< HEAD
 ---
 -- A read-only list of @{#DialogueInfoCondition}s.
 -- Always nil for journal records.
@@ -1309,6 +1479,9 @@
 -- @field #number NotLocal A comparison to the speaker's @{#DialogueInfoCondition.variableName} local variable
 
 --- @{#Regions}: Regions. Not available in load scripts.
+=======
+--- @{#Regions}: Regions
+>>>>>>> origin/main
 -- @field [parent=#core] #Regions regions
 
 ---
@@ -1316,7 +1489,10 @@
 -- @field [parent=#Regions] #list<#RegionRecord> records
 -- @usage local record = core.regions.records['bitter coast region']
 -- @usage local record = core.regions.records[1]
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
 ---
 -- Region data record
 -- @type RegionRecord
@@ -1337,7 +1513,11 @@
 -- @field #string soundId Sound record ID
 -- @field #number chance Multiplicative percentage used to determine whether to play the sound
 
+<<<<<<< HEAD
 --- @{#Factions}: Factions. Not available in load scripts.
+=======
+--- @{#Factions}: Factions
+>>>>>>> origin/main
 -- @field [parent=#core] #Factions factions
 
 ---
@@ -1364,10 +1544,16 @@
 -- @field #list<#number> attributeValues Attributes values required to get this rank.
 -- @field #number primarySkillValue Primary skill value required to get this rank.
 -- @field #number favouredSkillValue Secondary skill value required to get this rank.
+<<<<<<< HEAD
 -- @field #number factionReputation Required amount of faction reputation to reach this rank.
 -- @field #number factionReaction (DEPRECATED) Returns the same as factionReputation.
 
 --- @{#MWScripts}: MWScripts. Not available in load scripts.
+=======
+-- @field #number factionReaction Reaction of faction members if player is in this faction.
+
+--- @{#MWScripts}: MWScripts
+>>>>>>> origin/main
 -- @field [parent=#core] #MWScript mwscripts
 
 ---
@@ -1383,7 +1569,11 @@
 -- @field #string text MWScript content
 
 
+<<<<<<< HEAD
 --- @{#Weather}: Weather. Not available in load scripts.
+=======
+--- @{#Weather}: Weather
+>>>>>>> origin/main
 -- @field [parent=#core] #Weather weather
 
 --- List of all @{#WeatherRecord}s.

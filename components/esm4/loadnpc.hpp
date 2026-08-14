@@ -44,7 +44,11 @@ namespace ESM4
 
     struct Npc
     {
+<<<<<<< HEAD
         enum ActorBaseFlagsTes4
+=======
+        enum ACBS_TES4
+>>>>>>> origin/main
         {
             TES4_Female = 0x000001,
             TES4_Essential = 0x000002,
@@ -58,7 +62,11 @@ namespace ESM4
             TES4_CanCorpseCheck = 0x100000 // opposite of crea
         };
 
+<<<<<<< HEAD
         enum ActorBaseFlagsFo3
+=======
+        enum ACBS_FO3
+>>>>>>> origin/main
         {
             FO3_Female = 0x00000001,
             FO3_Essential = 0x00000002,
@@ -79,7 +87,11 @@ namespace ESM4
         };
 
         // In FO4 flags seem to be the same.
+<<<<<<< HEAD
         enum ActorBaseFlagsTes5
+=======
+        enum ACBS_TES5
+>>>>>>> origin/main
         {
             TES5_Female = 0x00000001,
             TES5_Essential = 0x00000002,
@@ -103,7 +115,11 @@ namespace ESM4
         };
 
         // All FO3+ games.
+<<<<<<< HEAD
         enum TemplateFlags
+=======
+        enum Template_Flags
+>>>>>>> origin/main
         {
             Template_UseTraits = 0x0001, // Destructible Object; Traits tab, including race, gender, height, weight,
                                          // voice type, death item; Sounds tab; Animation tab; Character Gen tabs
@@ -164,6 +180,19 @@ namespace ESM4
             std::uint8_t custom; // alpha?
         };
 
+<<<<<<< HEAD
+=======
+        struct TintLayer
+        {
+            std::uint32_t index = 0;
+            float value = 0.f;
+            HairColour color{ 255, 255, 255, 255 };
+            bool hasIndex = false;
+            bool hasValue = false;
+            bool hasColor = false;
+        };
+
+>>>>>>> origin/main
         struct Data
         {
             SkillValues skills;
@@ -171,6 +200,7 @@ namespace ESM4
             AttributeValues attribs;
         };
 
+<<<<<<< HEAD
 #pragma pack(pop)
 
         ESM::FormId mId; // from the header
@@ -179,6 +209,58 @@ namespace ESM4
         bool mIsTES4;
         bool mIsFONV;
         bool mIsFO4 = false;
+=======
+        struct FNVData
+        {
+            std::int32_t health;
+            std::uint8_t strength;
+            std::uint8_t perception;
+            std::uint8_t endurance;
+            std::uint8_t charisma;
+            std::uint8_t intelligence;
+            std::uint8_t agility;
+            std::uint8_t luck;
+        };
+
+        struct FNVSkillValues
+        {
+            std::uint8_t barter;
+            std::uint8_t bigGuns;
+            std::uint8_t energyWeapons;
+            std::uint8_t explosives;
+            std::uint8_t lockpick;
+            std::uint8_t medicine;
+            std::uint8_t meleeWeapons;
+            std::uint8_t repair;
+            std::uint8_t science;
+            std::uint8_t smallGuns;
+            std::uint8_t sneak;
+            std::uint8_t speech;
+            std::uint8_t survivalOrThrowing;
+            std::uint8_t unarmed;
+        };
+
+        struct FNVSkills
+        {
+            FNVSkillValues values;
+            FNVSkillValues offsets;
+        };
+
+#pragma pack(pop)
+
+        static_assert(sizeof(FNVData) == 11);
+        static_assert(sizeof(FNVSkillValues) == 14);
+        static_assert(sizeof(FNVSkills) == 28);
+
+        ESM::FormId mId; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+
+        bool mIsTES4 = false;
+        bool mIsFO3 = false;
+        bool mIsFONV = false;
+        bool mIsFO4 = false;
+        bool mIsStarfield = false;
+>>>>>>> origin/main
 
         std::string mEditorId;
         std::string mFullName;
@@ -188,11 +270,20 @@ namespace ESM4
         ESM::FormId mClass;
         ESM::FormId mHair; // not for TES5, see mHeadParts
         ESM::FormId mEyes;
+<<<<<<< HEAD
 
         std::vector<ESM::FormId> mHeadParts; // FO3/FONV/TES5
 
         float mHairLength;
         HairColour mHairColour; // TES4/FO3/FONV
+=======
+        ESM::FormId mVoiceType;
+
+        std::vector<ESM::FormId> mHeadParts; // FO3/FONV/TES5
+
+        float mHairLength = 0.f;
+        HairColour mHairColour{ 255, 255, 255, 255 }; // TES4/FO3/FONV
+>>>>>>> origin/main
         ESM::FormId mHairColourId; // TES5
         ESM::FormId mBeardColourId; // FO4
 
@@ -200,6 +291,7 @@ namespace ESM4
         std::vector<ESM::FormId> mSpell;
         ESM::FormId mScriptId;
 
+<<<<<<< HEAD
         AIData mAIData;
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
         ActorBaseConfig mBaseConfig; // union
@@ -212,6 +304,28 @@ namespace ESM4
         float mFootWeight;
 
         float mBoundRadius;
+=======
+        AIData mAIData{};
+        AIDataFO3 mFNVAIData{};
+        bool mHasFNVBaseConfig = false;
+        bool mHasFNVAIData = false;
+        std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
+        ActorBaseConfig mBaseConfig{}; // union
+        ActorFaction mFaction{};
+        std::vector<ActorFaction> mFactions;
+        Data mData{};
+        FNVData mFNVData{};
+        FNVSkills mFNVSkills{};
+        bool mHasFNVData = false;
+        bool mHasFNVSkills = false;
+        ESM::FormId mCombatStyle;
+        ESM::FormId mSoundBase;
+        ESM::FormId mSound;
+        std::uint8_t mSoundChance = 0;
+        float mFootWeight = 0.f;
+
+        float mBoundRadius = 0.f;
+>>>>>>> origin/main
         std::vector<std::string> mKf; // filenames only, get directory path from mModel
 
         std::vector<InventoryItem> mInventory;
@@ -226,7 +340,12 @@ namespace ESM4
         std::vector<float> mSymShapeModeCoefficients; // size 0 or 50
         std::vector<float> mAsymShapeModeCoefficients; // size 0 or 30
         std::vector<float> mSymTextureModeCoefficients; // size 0 or 50
+<<<<<<< HEAD
         std::int16_t mFgRace;
+=======
+        std::vector<TintLayer> mTintLayers;
+        std::int16_t mFgRace = 0;
+>>>>>>> origin/main
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

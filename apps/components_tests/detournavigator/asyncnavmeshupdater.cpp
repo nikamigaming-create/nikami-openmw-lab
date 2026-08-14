@@ -82,7 +82,10 @@ namespace
         updater.post(mAgentBounds, navMeshCacheItem, mPlayerTile, mWorldspace, changedTiles);
         updater.wait(WaitConditionType::allJobsDone, &mListener);
         EXPECT_NE(navMeshCacheItem->lockConst()->getImpl().getTileRefAt(0, 0, 0), 0u);
+<<<<<<< HEAD
         EXPECT_EQ(updater.getStats().mPosted, 1);
+=======
+>>>>>>> origin/main
     }
 
     TEST_F(DetourNavigatorAsyncNavMeshUpdaterTest, repeated_post_should_lead_to_cache_hit)
@@ -380,7 +383,11 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
+>>>>>>> origin/main
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -397,7 +404,11 @@ namespace
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
         mSettings.mEnableRecastMeshFileNameRevision = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
+>>>>>>> origin/main
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -413,7 +424,11 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath() / "absent";
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDir() / "absent";
+>>>>>>> origin/main
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -430,7 +445,11 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
+>>>>>>> origin/main
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -447,7 +466,11 @@ namespace
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
         mSettings.mEnableNavMeshFileNameRevision = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
+>>>>>>> origin/main
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -463,7 +486,11 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
+<<<<<<< HEAD
         const std::filesystem::path dir = TestingOpenMW::currentTestDirPath() / "absent";
+=======
+        const std::filesystem::path dir = TestingOpenMW::outputDir() / "absent";
+>>>>>>> origin/main
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);

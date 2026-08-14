@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cassert>
+<<<<<<< HEAD
+=======
+#include <filesystem>
+>>>>>>> origin/main
 #include <format>
 #include <fstream>
 
@@ -9,8 +13,14 @@
 
 #include <components/esm/fourcc.hpp>
 #include <components/files/constrainedfilestream.hpp>
+<<<<<<< HEAD
 #include <components/files/utils.hpp>
 #include <components/vfs/pathutil.hpp>
+=======
+#include <components/files/conversion.hpp>
+#include <components/files/utils.hpp>
+#include <components/misc/strings/lower.hpp>
+>>>>>>> origin/main
 
 #include "ba2file.hpp"
 #include "memorystream.hpp"
@@ -137,10 +147,27 @@ namespace Bsa
             }
         }
 
+<<<<<<< HEAD
         const VFS::Path::Normalized path(str);
 
         const std::string_view fileName = path.stem();
         const std::string_view folder = path.parent().value();
+=======
+#ifdef _WIN32
+        const auto& path = str;
+#else
+        // Force-convert the path into something UNIX can handle first
+        // to make sure std::filesystem::path doesn't think the entire path is the filename on Linux
+        // and subsequently purge it to determine the file folder.
+        std::string path(str);
+        std::replace(path.begin(), path.end(), '\\', '/');
+#endif
+
+        const auto p = std::filesystem::path{ path }; // Purposefully damage Unicode strings.
+        const auto fileName = Misc::StringUtils::lowerCase(p.stem().string());
+        const auto ext = Misc::StringUtils::lowerCase(p.extension().string()); // Purposefully damage Unicode strings.
+        const auto folder = Misc::StringUtils::lowerCase(p.parent_path().string());
+>>>>>>> origin/main
 
         uint32_t folderHash = generateHash(folder);
         auto it = mFolders.find(folderHash);
@@ -148,7 +175,11 @@ namespace Bsa
             return FileRecord(); // folder not found, return default which has offset of sInvalidOffset
 
         uint32_t fileHash = generateHash(fileName);
+<<<<<<< HEAD
         uint32_t extHash = generateExtensionHash(path.extension().value());
+=======
+        uint32_t extHash = generateExtensionHash(ext);
+>>>>>>> origin/main
         auto iter = it->second.find({ fileHash, extHash });
         if (iter == it->second.end())
             return FileRecord(); // file not found, return default which has offset of sInvalidOffset
@@ -171,6 +202,19 @@ namespace Bsa
         fail("Add file is not implemented for compressed BSA: " + filename);
     }
 
+<<<<<<< HEAD
+=======
+    Files::IStreamPtr BA2GNRLFile::getFile(const char* file)
+    {
+        FileRecord fileRec = getFileRecord(file);
+        if (!fileRec.isValid())
+        {
+            fail("File not found: " + std::string(file));
+        }
+        return getFile(fileRec);
+    }
+
+>>>>>>> origin/main
     Files::IStreamPtr BA2GNRLFile::getFile(const FileRecord& fileRecord)
     {
         const uint32_t inputSize = fileRecord.packedSize ? fileRecord.packedSize : fileRecord.size;

@@ -49,12 +49,15 @@ namespace Fx
                 mData.get<SunPos>().z() *= -1.f;
         }
 
+<<<<<<< HEAD
         void setSunVec(const osg::Vec4f& vec)
         {
             mData.get<SunVec>() = vec;
             mData.get<SunVec>().normalize();
         }
 
+=======
+>>>>>>> origin/main
         void setResolution(const osg::Vec2f& size)
         {
             mData.get<Resolution>() = size;
@@ -116,176 +119,312 @@ namespace Fx
         void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;
 
     private:
+<<<<<<< HEAD
         struct ProjectionMatrix : Std140::Mat4
+=======
+        struct ProjectionMatrix : std140::Mat4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "projectionMatrix";
         };
 
+<<<<<<< HEAD
         struct InvProjectionMatrix : Std140::Mat4
+=======
+        struct InvProjectionMatrix : std140::Mat4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "invProjectionMatrix";
         };
 
+<<<<<<< HEAD
         struct ViewMatrix : Std140::Mat4
+=======
+        struct ViewMatrix : std140::Mat4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "viewMatrix";
         };
 
+<<<<<<< HEAD
         struct PrevViewMatrix : Std140::Mat4
+=======
+        struct PrevViewMatrix : std140::Mat4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "prevViewMatrix";
         };
 
+<<<<<<< HEAD
         struct InvViewMatrix : Std140::Mat4
+=======
+        struct InvViewMatrix : std140::Mat4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "invViewMatrix";
         };
 
+<<<<<<< HEAD
         struct EyePos : Std140::Vec4
+=======
+        struct EyePos : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "eyePos";
         };
 
+<<<<<<< HEAD
         struct EyeVec : Std140::Vec4
+=======
+        struct EyeVec : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "eyeVec";
         };
 
+<<<<<<< HEAD
         struct AmbientColor : Std140::Vec4
+=======
+        struct AmbientColor : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "ambientColor";
         };
 
+<<<<<<< HEAD
         struct SkyColor : Std140::Vec4
+=======
+        struct SkyColor : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "skyColor";
         };
 
+<<<<<<< HEAD
         struct FogColor : Std140::Vec4
+=======
+        struct FogColor : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "fogColor";
         };
 
+<<<<<<< HEAD
         struct SunColor : Std140::Vec4
+=======
+        struct SunColor : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "sunColor";
         };
 
+<<<<<<< HEAD
         struct SunPos : Std140::Vec4
+=======
+        struct SunPos : std140::Vec4
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "sunPos";
         };
 
+<<<<<<< HEAD
         struct SunVec : Std140::Vec4
         {
             static constexpr std::string_view sName = "sunVec";
         };
 
         struct Resolution : Std140::Vec2
+=======
+        struct Resolution : std140::Vec2
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "resolution";
         };
 
+<<<<<<< HEAD
         struct RcpResolution : Std140::Vec2
+=======
+        struct RcpResolution : std140::Vec2
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "rcpResolution";
         };
 
+<<<<<<< HEAD
         struct FogNear : Std140::Float
+=======
+        struct FogNear : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "fogNear";
         };
 
+<<<<<<< HEAD
         struct FogFar : Std140::Float
+=======
+        struct FogFar : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "fogFar";
         };
 
+<<<<<<< HEAD
         struct Near : Std140::Float
+=======
+        struct Near : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "near";
         };
 
+<<<<<<< HEAD
         struct Far : Std140::Float
+=======
+        struct Far : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "far";
         };
 
+<<<<<<< HEAD
         struct Fov : Std140::Float
+=======
+        struct Fov : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "fov";
         };
 
+<<<<<<< HEAD
         struct GameHour : Std140::Float
+=======
+        struct GameHour : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "gameHour";
         };
 
+<<<<<<< HEAD
         struct SunVis : Std140::Float
+=======
+        struct SunVis : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "sunVis";
         };
 
+<<<<<<< HEAD
         struct WaterHeight : Std140::Float
+=======
+        struct WaterHeight : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "waterHeight";
         };
 
+<<<<<<< HEAD
         struct IsWaterEnabled : Std140::Bool
+=======
+        struct IsWaterEnabled : std140::Bool
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "isWaterEnabled";
         };
 
+<<<<<<< HEAD
         struct SimulationTime : Std140::Float
+=======
+        struct SimulationTime : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "simulationTime";
         };
 
+<<<<<<< HEAD
         struct DeltaSimulationTime : Std140::Float
+=======
+        struct DeltaSimulationTime : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "deltaSimulationTime";
         };
 
+<<<<<<< HEAD
         struct FrameNumber : Std140::Int
+=======
+        struct FrameNumber : std140::Int
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "frameNumber";
         };
 
+<<<<<<< HEAD
         struct WindSpeed : Std140::Float
+=======
+        struct WindSpeed : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "windSpeed";
         };
 
+<<<<<<< HEAD
         struct WeatherTransition : Std140::Float
+=======
+        struct WeatherTransition : std140::Float
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "weatherTransition";
         };
 
+<<<<<<< HEAD
         struct WeatherID : Std140::Int
+=======
+        struct WeatherID : std140::Int
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "weatherID";
         };
 
+<<<<<<< HEAD
         struct NextWeatherID : Std140::Int
+=======
+        struct NextWeatherID : std140::Int
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "nextWeatherID";
         };
 
+<<<<<<< HEAD
         struct IsUnderwater : Std140::Bool
+=======
+        struct IsUnderwater : std140::Bool
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "isUnderwater";
         };
 
+<<<<<<< HEAD
         struct IsInterior : Std140::Bool
+=======
+        struct IsInterior : std140::Bool
+>>>>>>> origin/main
         {
             static constexpr std::string_view sName = "isInterior";
         };
 
+<<<<<<< HEAD
         using UniformData = Std140::UBO<ProjectionMatrix, InvProjectionMatrix, ViewMatrix, PrevViewMatrix,
             InvViewMatrix, EyePos, EyeVec, FogColor, AmbientColor, SkyColor, SunColor, SunPos, SunVec, Resolution,
             RcpResolution, FogNear, FogFar, Near, Far, Fov, GameHour, SunVis, WaterHeight, IsWaterEnabled,
             SimulationTime, DeltaSimulationTime, FrameNumber, WindSpeed, WeatherTransition, WeatherID, NextWeatherID,
             IsUnderwater, IsInterior>;
+=======
+        using UniformData
+            = std140::UBO<ProjectionMatrix, InvProjectionMatrix, ViewMatrix, PrevViewMatrix, InvViewMatrix, EyePos,
+                EyeVec, FogColor, AmbientColor, SkyColor, SunColor, SunPos, Resolution, RcpResolution, FogNear, FogFar,
+                Near, Far, Fov, GameHour, SunVis, WaterHeight, IsWaterEnabled, SimulationTime, DeltaSimulationTime,
+                FrameNumber, WindSpeed, WeatherTransition, WeatherID, NextWeatherID, IsUnderwater, IsInterior>;
+>>>>>>> origin/main
 
         UniformData mData;
         bool mUseUBO;

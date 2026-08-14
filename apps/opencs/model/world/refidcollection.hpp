@@ -32,9 +32,12 @@ namespace CSMWorld
     struct NestedTableWrapperBase;
     class NestedRefIdAdapterBase;
 
+<<<<<<< HEAD
     template <typename ESXRecordT>
     class IdCollection;
 
+=======
+>>>>>>> origin/main
     class RefIdColumn : public NestableColumn
     {
         bool mEditable;
@@ -65,7 +68,11 @@ namespace CSMWorld
         const NestedRefIdAdapterBase& getNestedAdapter(const ColumnBase& column, UniversalId::Type type) const;
 
     public:
+<<<<<<< HEAD
         RefIdCollection(const IdCollection<ESM::MagicEffect>& magicEffects);
+=======
+        RefIdCollection();
+>>>>>>> origin/main
 
         ~RefIdCollection() override;
 

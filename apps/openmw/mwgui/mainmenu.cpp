@@ -329,9 +329,23 @@ namespace MWGui
                 Gui::ImageButton* button = mButtonBox->createWidget<Gui::ImageButton>(
                     "ImageBox", MyGUI::IntCoord(0, curH, 0, 0), MyGUI::Align::Default);
                 const std::string& buttonId = mButtons.emplace(id, button).first->first;
+<<<<<<< HEAD
                 button->setProperty("ImageHighlighted", "textures\\menu_" + buttonId + "_over.dds");
                 button->setProperty("ImageNormal", "textures\\menu_" + buttonId + ".dds");
                 button->setProperty("ImagePushed", "textures\\menu_" + buttonId + "_pressed.dds");
+=======
+                const std::string normal = "textures\\menu_" + buttonId + ".dds";
+                const auto stateTextureOrNormal = [&](std::string texture) -> std::string {
+                    if (mVFS->exists(VFS::Path::Normalized(texture)))
+                        return texture;
+                    return normal;
+                };
+                button->setProperty(
+                    "ImageHighlighted", stateTextureOrNormal("textures\\menu_" + buttonId + "_over.dds"));
+                button->setProperty("ImageNormal", normal);
+                button->setProperty(
+                    "ImagePushed", stateTextureOrNormal("textures\\menu_" + buttonId + "_pressed.dds"));
+>>>>>>> origin/main
                 button->eventMouseButtonClick += MyGUI::newDelegate(this, &MainMenu::onButtonClicked);
                 button->setUserData(buttonId);
             }
@@ -364,10 +378,17 @@ namespace MWGui
             // Trim off some of the excessive padding
             // TODO: perhaps do this within ImageButton?
             int height = requested.height;
+<<<<<<< HEAD
             button->setImageTile(MyGUI::IntSize(requested.width, static_cast<int>(requested.height - 16 * scale)));
             button->setCoord(static_cast<int>((maxwidth - requested.width / scale) / 2), curH,
                 static_cast<int>(requested.width / scale), static_cast<int>(height / scale - 16));
             curH += static_cast<int>(height / scale - 16);
+=======
+            button->setImageTile(MyGUI::IntSize(requested.width, requested.height - 16 * scale));
+            button->setCoord(
+                (maxwidth - requested.width / scale) / 2, curH, requested.width / scale, height / scale - 16);
+            curH += height / scale - 16;
+>>>>>>> origin/main
         }
 
         if (state == MWBase::StateManager::State_NoGame)

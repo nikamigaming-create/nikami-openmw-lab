@@ -330,16 +330,27 @@ namespace MWGui::Formatting
                     if (auto heightIt = attr.find("height"); heightIt != attr.end())
                         height = MyGUI::utility::parseInt(heightIt->second);
 
+<<<<<<< HEAD
                     const std::string_view src = srcIt->second;
                     auto vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
 
                     VFS::Path::Normalized correctedSrc;
+=======
+                    const std::string& src = srcIt->second;
+                    auto vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+
+                    std::string correctedSrc;
+>>>>>>> origin/main
 
                     constexpr std::string_view imgPrefix = "img://";
                     if (src.starts_with(imgPrefix))
                     {
+<<<<<<< HEAD
                         correctedSrc
                             = VFS::Path::toNormalized(src.substr(imgPrefix.size(), src.size() - imgPrefix.size()));
+=======
+                        correctedSrc = src.substr(imgPrefix.size(), src.size() - imgPrefix.size());
+>>>>>>> origin/main
                         if (width == 0)
                         {
                             width = 50;
@@ -352,8 +363,12 @@ namespace MWGui::Formatting
                     {
                         if (width == 0 || height == 0)
                             continue;
+<<<<<<< HEAD
                         correctedSrc = Misc::ResourceHelpers::correctBookartPath(
                             VFS::Path::toNormalized(src), width, height, *vfs);
+=======
+                        correctedSrc = Misc::ResourceHelpers::correctBookartPath(src, width, height, vfs);
+>>>>>>> origin/main
                     }
 
                     if (!vfs->exists(correctedSrc))

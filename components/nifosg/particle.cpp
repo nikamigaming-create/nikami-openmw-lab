@@ -1,11 +1,22 @@
 #include "particle.hpp"
 
+<<<<<<< HEAD
+=======
+#include <algorithm>
+#include <cmath>
+>>>>>>> origin/main
 #include <limits>
 #include <optional>
 
 #include <osg/Geometry>
 #include <osg/MatrixTransform>
+<<<<<<< HEAD
 #include <osg/ValueObject>
+=======
+#include <osg/TriangleFunctor>
+#include <osg/ValueObject>
+#include <osgParticle/ConstantRateCounter>
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
@@ -106,16 +117,28 @@ namespace NifOsg
     {
         mNormalArray = new osg::Vec3Array(1);
         mNormalArray->setBinding(osg::Array::BIND_OVERALL);
+<<<<<<< HEAD
         (*mNormalArray.get())[0] = osg::Vec3(0.3f, 0.3f, 0.3f);
+=======
+        (*mNormalArray.get())[0] = osg::Vec3(0.3, 0.3, 0.3);
+>>>>>>> origin/main
     }
 
     ParticleSystem::ParticleSystem(const ParticleSystem& copy, const osg::CopyOp& copyop)
         : osgParticle::ParticleSystem(copy, copyop)
         , mQuota(copy.mQuota)
+<<<<<<< HEAD
     {
         mNormalArray = new osg::Vec3Array(1);
         mNormalArray->setBinding(osg::Array::BIND_OVERALL);
         (*mNormalArray.get())[0] = osg::Vec3(0.3f, 0.3f, 0.3f);
+=======
+        , mGlobalAlpha(copy.mGlobalAlpha)
+    {
+        mNormalArray = new osg::Vec3Array(1);
+        mNormalArray->setBinding(osg::Array::BIND_OVERALL);
+        (*mNormalArray.get())[0] = osg::Vec3(0.3, 0.3, 0.3);
+>>>>>>> origin/main
 
         // For some reason the osgParticle constructor doesn't copy the particles
         for (int i = 0; i < copy.numParticles() - copy.numDeadParticles(); ++i)
@@ -202,8 +225,13 @@ namespace NifOsg
 
     void ParticleShooter::shoot(osgParticle::Particle* particle) const
     {
+<<<<<<< HEAD
         float hdir = mHorizontalDir + mHorizontalAngle * (2.f * Misc::Rng::rollClosedProbability() - 1.f);
         float vdir = mVerticalDir + mVerticalAngle * (2.f * Misc::Rng::rollClosedProbability() - 1.f);
+=======
+        float hdir = mHorizontalDir + mHorizontalAngle * (Misc::Rng::rollClosedProbability() - 0.5f);
+        float vdir = mVerticalDir + mVerticalAngle * (Misc::Rng::rollClosedProbability() - 0.5f);
+>>>>>>> origin/main
 
         osg::Vec3f dir
             = (osg::Quat(vdir, osg::Vec3f(0, 1, 0)) * osg::Quat(hdir, osg::Vec3f(0, 0, 1))) * osg::Vec3f(0, 0, 1);
@@ -213,7 +241,11 @@ namespace NifOsg
 
         // Not supposed to set this here, but there doesn't seem to be a better way of doing it
         particle->setLifeTime(std::max(
+<<<<<<< HEAD
             std::numeric_limits<float>::epsilon(), mLifetime + mLifetimeRandom * Misc::Rng::rollClosedProbability()));
+=======
+            std::numeric_limits<float>::epsilon(), mLifetime + mLifetimeRandom * (Misc::Rng::rollClosedProbability() - 0.5f)));
+>>>>>>> origin/main
     }
 
     GrowFadeAffector::GrowFadeAffector(float growTime, float fadeTime)
@@ -247,9 +279,15 @@ namespace NifOsg
     {
         float size = mCachedDefaultSize;
         if (particle->getAge() < mGrowTime && mGrowTime != 0.f)
+<<<<<<< HEAD
             size *= static_cast<float>(particle->getAge() / mGrowTime);
         if (particle->getLifeTime() - particle->getAge() < mFadeTime && mFadeTime != 0.f)
             size *= static_cast<float>(particle->getLifeTime() - particle->getAge()) / mFadeTime;
+=======
+            size *= particle->getAge() / mGrowTime;
+        if (particle->getLifeTime() - particle->getAge() < mFadeTime && mFadeTime != 0.f)
+            size *= (particle->getLifeTime() - particle->getAge()) / mFadeTime;
+>>>>>>> origin/main
         particle->setSizeRange(osgParticle::rangef(size, size));
     }
 
@@ -278,6 +316,86 @@ namespace NifOsg
         particle->setAlphaRange(osgParticle::rangef(alpha, alpha));
     }
 
+<<<<<<< HEAD
+=======
+    BethesdaParticleColorAffector::BethesdaParticleColorAffector(const Nif::BSPSysSimpleColorModifier* modifier)
+        : mFadeInPercent(modifier->mFadeInPercent)
+        , mFadeOutPercent(modifier->mFadeOutPercent)
+        , mColor1EndPercent(modifier->mColor1EndPercent)
+        , mColor1StartPercent(modifier->mColor1StartPercent)
+        , mColor2EndPercent(modifier->mColor2EndPercent)
+        , mColor2StartPercent(modifier->mColor2StartPercent)
+    {
+        for (std::size_t i = 0; i < std::min(mColors.size(), modifier->mColors.size()); ++i)
+            mColors[i] = modifier->mColors[i];
+    }
+
+    BethesdaParticleColorAffector::BethesdaParticleColorAffector(
+        const BethesdaParticleColorAffector& copy, const osg::CopyOp& copyop)
+        : osgParticle::Operator(copy, copyop)
+        , mFadeInPercent(copy.mFadeInPercent)
+        , mFadeOutPercent(copy.mFadeOutPercent)
+        , mColor1EndPercent(copy.mColor1EndPercent)
+        , mColor1StartPercent(copy.mColor1StartPercent)
+        , mColor2EndPercent(copy.mColor2EndPercent)
+        , mColor2StartPercent(copy.mColor2StartPercent)
+        , mColors(copy.mColors)
+        , mGlobalAlpha(copy.mGlobalAlpha)
+    {
+    }
+
+    void BethesdaParticleColorAffector::beginOperate(osgParticle::Program* program)
+    {
+        const auto* particleSystem = dynamic_cast<const ParticleSystem*>(program->getParticleSystem());
+        mGlobalAlpha = particleSystem ? particleSystem->getGlobalAlpha() : 1.f;
+    }
+
+    osg::Vec4f BethesdaParticleColorAffector::evaluate(float normalizedAge) const
+    {
+        const float time = std::clamp(normalizedAge, 0.f, 1.f);
+        const bool constantMiddleColor = mColor1EndPercent == 0.f && mColor1StartPercent == 0.f
+            && mColor2EndPercent == 0.f && mColor2StartPercent == 0.f;
+
+        osg::Vec4f color;
+        if (constantMiddleColor)
+            color = mColors[1];
+        else if (time <= mColor1EndPercent)
+            color = mColors[0];
+        else if (time < mColor1StartPercent && mColor1StartPercent > mColor1EndPercent)
+        {
+            const float amount = (time - mColor1EndPercent) / (mColor1StartPercent - mColor1EndPercent);
+            color = mColors[0] * (1.f - amount) + mColors[1] * amount;
+        }
+        else if (time <= mColor2EndPercent)
+            color = mColors[1];
+        else if (time < mColor2StartPercent && mColor2StartPercent > mColor2EndPercent)
+        {
+            const float amount = (time - mColor2EndPercent) / (mColor2StartPercent - mColor2EndPercent);
+            color = mColors[1] * (1.f - amount) + mColors[2] * amount;
+        }
+        else
+            color = mColors[2];
+
+        float fade = 1.f;
+        if (mFadeInPercent > 0.f && time < mFadeInPercent)
+            fade *= time / mFadeInPercent;
+        if (mFadeOutPercent < 1.f && time > mFadeOutPercent)
+            fade *= (1.f - time) / (1.f - mFadeOutPercent);
+        color.a() *= std::clamp(fade, 0.f, 1.f);
+        return color;
+    }
+
+    void BethesdaParticleColorAffector::operate(osgParticle::Particle* particle, double /* dt */)
+    {
+        assert(particle->getLifeTime() > 0.f);
+        osg::Vec4f color = evaluate(static_cast<float>(particle->getAge() / particle->getLifeTime()));
+        const float alpha = std::clamp(color.a() * mGlobalAlpha, 0.f, 1.f);
+        color.a() = 1.f;
+        particle->setColorRange(osgParticle::rangev4(color, color));
+        particle->setAlphaRange(osgParticle::rangef(alpha, alpha));
+    }
+
+>>>>>>> origin/main
     GravityAffector::GravityAffector(const Nif::NiGravity* gravity)
         : mForce(gravity->mForce)
         , mType(gravity->mType)
@@ -287,6 +405,19 @@ namespace NifOsg
     {
     }
 
+<<<<<<< HEAD
+=======
+    GravityAffector::GravityAffector(float force, Nif::ForceType type, const osg::Vec3f& position,
+        const osg::Vec3f& direction, float decay)
+        : mForce(force)
+        , mType(type)
+        , mPosition(position)
+        , mDirection(direction)
+        , mDecay(decay)
+    {
+    }
+
+>>>>>>> origin/main
     GravityAffector::GravityAffector(const GravityAffector& copy, const osg::CopyOp& copyop)
         : osgParticle::Operator(copy, copyop)
     {
@@ -326,7 +457,11 @@ namespace NifOsg
                     decayFactor = std::exp(-1.f * mDecay * distance);
                 }
 
+<<<<<<< HEAD
                 particle->addVelocity(mCachedWorldDirection * mForce * static_cast<float>(dt) * decayFactor * magic);
+=======
+                particle->addVelocity(mCachedWorldDirection * mForce * dt * decayFactor * magic);
+>>>>>>> origin/main
 
                 break;
             }
@@ -340,7 +475,11 @@ namespace NifOsg
 
                 diff.normalize();
 
+<<<<<<< HEAD
                 particle->addVelocity(diff * mForce * static_cast<float>(dt) * decayFactor * magic);
+=======
+                particle->addVelocity(diff * mForce * dt * decayFactor * magic);
+>>>>>>> origin/main
                 break;
             }
         }
@@ -356,6 +495,20 @@ namespace NifOsg
     {
     }
 
+<<<<<<< HEAD
+=======
+    ParticleBomb::ParticleBomb(float range, float strength, Nif::DecayType decayType,
+        Nif::SymmetryType symmetryType, const osg::Vec3f& position, const osg::Vec3f& direction)
+        : mRange(range)
+        , mStrength(strength)
+        , mDecayType(decayType)
+        , mSymmetryType(symmetryType)
+        , mPosition(position)
+        , mDirection(direction)
+    {
+    }
+
+>>>>>>> origin/main
     ParticleBomb::ParticleBomb(const ParticleBomb& copy, const osg::CopyOp& copyop)
         : osgParticle::Operator(copy, copyop)
     {
@@ -421,7 +574,11 @@ namespace NifOsg
                 break;
         }
 
+<<<<<<< HEAD
         particle->addVelocity(explosionDir * mStrength * decay * static_cast<float>(dt));
+=======
+        particle->addVelocity(explosionDir * mStrength * decay * dt);
+>>>>>>> origin/main
     }
 
     Emitter::Emitter()
@@ -439,11 +596,50 @@ namespace NifOsg
         // need a deep copy because the remainder is stored in the object
         , mCounter(static_cast<osgParticle::Counter*>(copy.mCounter->clone(osg::CopyOp::DEEP_COPY_ALL)))
         , mFlags(copy.mFlags)
+<<<<<<< HEAD
         , mGeometryEmitterTarget(copy.mGeometryEmitterTarget)
         , mCachedGeometryEmitter(copy.mCachedGeometryEmitter)
     {
     }
 
+=======
+        , mParticleRadius(copy.mParticleRadius)
+        , mParticleRadiusVariation(copy.mParticleRadiusVariation)
+        , mVelocityType(copy.mVelocityType)
+        , mEmissionType(copy.mEmissionType)
+        , mEmissionAxis(copy.mEmissionAxis)
+        , mGeometryEmitterTarget(copy.mGeometryEmitterTarget)
+        , mCachedGeometryEmitter(copy.mCachedGeometryEmitter)
+        , mCachedTriangles(copy.mCachedTriangles)
+        , mCachedTriangleArea(copy.mCachedTriangleArea)
+    {
+    }
+
+    void Emitter::setEmissionRate(float rate)
+    {
+        if (auto* counter = dynamic_cast<osgParticle::ConstantRateCounter*>(mCounter.get()))
+            counter->setNumberOfParticlesPerSecondToCreate(std::max(0.f, rate));
+    }
+
+    void Emitter::setParticleRadius(float radius, float variation)
+    {
+        mParticleRadius = std::max(0.f, radius);
+        mParticleRadiusVariation = std::max(0.f, variation);
+    }
+
+    void Emitter::setModernMeshEmission(
+        uint32_t velocityType, uint32_t emissionType, const osg::Vec3f& emissionAxis)
+    {
+        mVelocityType = static_cast<int>(velocityType);
+        mEmissionType = static_cast<int>(emissionType);
+        mEmissionAxis = emissionAxis;
+        if (mEmissionAxis.length2() == 0.f)
+            mEmissionAxis.set(0.f, 0.f, 1.f);
+        else
+            mEmissionAxis.normalize();
+    }
+
+>>>>>>> origin/main
     Emitter::Emitter(const std::vector<int>& targets)
         : mTargets(targets)
         , mFlags(0)
@@ -471,18 +667,27 @@ namespace NifOsg
         osg::Matrix emitterToPs = ltw * worldToPs;
 
         osg::ref_ptr<osg::Vec3Array> geometryVertices = nullptr;
+<<<<<<< HEAD
+=======
+        osg::Geometry* geometry = nullptr;
+>>>>>>> origin/main
 
         const bool useGeometryEmitter = mFlags & Nif::NiParticleSystemController::BSPArrayController_AtVertex;
 
         if (useGeometryEmitter || !mTargets.empty())
         {
+<<<<<<< HEAD
             int recordIndex;
+=======
+            int recIndex;
+>>>>>>> origin/main
 
             if (useGeometryEmitter)
             {
                 if (!mGeometryEmitterTarget.has_value())
                     return;
 
+<<<<<<< HEAD
                 recordIndex = mGeometryEmitterTarget.value();
             }
             else
@@ -493,11 +698,27 @@ namespace NifOsg
 
             // we could use a map here for faster lookup
             FindGroupByRecordIndex visitor(recordIndex);
+=======
+                recIndex = mGeometryEmitterTarget.value();
+            }
+            else
+            {
+                int randomIndex = Misc::Rng::rollClosedProbability() * (mTargets.size() - 1);
+                recIndex = mTargets[randomIndex];
+            }
+
+            // we could use a map here for faster lookup
+            FindGroupByRecIndex visitor(recIndex);
+>>>>>>> origin/main
             getParent(0)->accept(visitor);
 
             if (!visitor.mFound)
             {
+<<<<<<< HEAD
                 Log(Debug::Info) << "Can't find emitter node" << recordIndex;
+=======
+                Log(Debug::Info) << "Can't find emitter node" << recIndex;
+>>>>>>> origin/main
                 return;
             }
 
@@ -510,6 +731,10 @@ namespace NifOsg
 
                     if (geometryVisitor.mGeometry)
                     {
+<<<<<<< HEAD
+=======
+                        geometry = geometryVisitor.mGeometry;
+>>>>>>> origin/main
                         if (auto* vertices = dynamic_cast<osg::Vec3Array*>(geometryVisitor.mGeometry->getVertexArray()))
                         {
                             mCachedGeometryEmitter = osg::observer_ptr<osg::Vec3Array>(vertices);
@@ -517,6 +742,39 @@ namespace NifOsg
                         }
                     }
                 }
+<<<<<<< HEAD
+=======
+                if (mEmissionType >= 1 && mCachedTriangles.empty() && geometry)
+                {
+                    struct TriangleCollector
+                    {
+                        std::vector<Triangle>* mTriangles{ nullptr };
+                        float* mTotalArea{ nullptr };
+
+                        void setTarget(std::vector<Triangle>* triangles, float* totalArea)
+                        {
+                            mTriangles = triangles;
+                            mTotalArea = totalArea;
+                        }
+
+                        void operator()(const osg::Vec3& a, const osg::Vec3& b, const osg::Vec3& c,
+                            bool /*temporary*/ = false)
+                        {
+                            osg::Vec3f normal = (b - a) ^ (c - a);
+                            const float area = normal.length() * 0.5f;
+                            if (area <= std::numeric_limits<float>::epsilon())
+                                return;
+                            normal.normalize();
+                            *mTotalArea += area;
+                            mTriangles->push_back({ a, b, c, normal, *mTotalArea });
+                        }
+                    };
+
+                    osg::TriangleFunctor<TriangleCollector> collector;
+                    collector.setTarget(&mCachedTriangles, &mCachedTriangleArea);
+                    geometry->accept(collector);
+                }
+>>>>>>> origin/main
             }
 
             osg::NodePath path = visitor.mFoundPath;
@@ -553,18 +811,98 @@ namespace NifOsg
             osgParticle::Particle* const particle = getParticleSystem()->createParticle(nullptr);
             if (particle)
             {
+<<<<<<< HEAD
                 if (useGeometryEmitter)
+=======
+                osg::Vec3f emissionNormal;
+                bool hasEmissionNormal = false;
+                if (useGeometryEmitter && mEmissionType >= 1 && !mCachedTriangles.empty())
+                {
+                    std::size_t triangleIndex = 0;
+                    if (mEmissionType == 3 && mCachedTriangleArea > 0.f)
+                    {
+                        const float area = Misc::Rng::rollClosedProbability() * mCachedTriangleArea;
+                        triangleIndex = static_cast<std::size_t>(std::distance(mCachedTriangles.begin(),
+                            std::lower_bound(mCachedTriangles.begin(), mCachedTriangles.end(), area,
+                                [](const Triangle& triangle, float value) {
+                                    return triangle.mCumulativeArea < value;
+                                })));
+                        triangleIndex = std::min(triangleIndex, mCachedTriangles.size() - 1);
+                    }
+                    else
+                        triangleIndex = Misc::Rng::rollDice(static_cast<int>(mCachedTriangles.size()));
+
+                    const Triangle& triangle = mCachedTriangles[triangleIndex];
+                    if (mEmissionType == 1)
+                        particle->setPosition((triangle.mA + triangle.mB + triangle.mC) / 3.f);
+                    else if (mEmissionType == 2 || mEmissionType == 4)
+                    {
+                        const int edge = Misc::Rng::rollDice(3);
+                        const osg::Vec3f& a = edge == 0 ? triangle.mA : edge == 1 ? triangle.mB : triangle.mC;
+                        const osg::Vec3f& b = edge == 0 ? triangle.mB : edge == 1 ? triangle.mC : triangle.mA;
+                        const float amount = mEmissionType == 2 ? 0.5f : Misc::Rng::rollClosedProbability();
+                        particle->setPosition(a * (1.f - amount) + b * amount);
+                    }
+                    else
+                    {
+                        float u = Misc::Rng::rollClosedProbability();
+                        float v = Misc::Rng::rollClosedProbability();
+                        if (u + v > 1.f)
+                        {
+                            u = 1.f - u;
+                            v = 1.f - v;
+                        }
+                        particle->setPosition(triangle.mA + (triangle.mB - triangle.mA) * u
+                            + (triangle.mC - triangle.mA) * v);
+                    }
+                    emissionNormal = triangle.mNormal;
+                    hasEmissionNormal = true;
+                }
+                else if (useGeometryEmitter)
+>>>>>>> origin/main
                     particle->setPosition((*geometryVertices)[Misc::Rng::rollDice(geometryVertices->getNumElements())]);
                 else if (mPlacer)
                     mPlacer->place(particle);
 
                 mShooter->shoot(particle);
 
+<<<<<<< HEAD
+=======
+                if (mVelocityType == 0 && hasEmissionNormal)
+                {
+                    osg::Quat rotation;
+                    rotation.makeRotate(osg::Vec3f(0.f, 0.f, 1.f), emissionNormal);
+                    particle->setVelocity(rotation * particle->getVelocity());
+                }
+                else if (mVelocityType == 1)
+                {
+                    const float z = Misc::Rng::rollClosedProbability() * 2.f - 1.f;
+                    const float angle = Misc::Rng::rollClosedProbability() * osg::PI * 2.f;
+                    const float radial = std::sqrt(std::max(0.f, 1.f - z * z));
+                    const float speed = particle->getVelocity().length();
+                    particle->setVelocity(osg::Vec3f(std::cos(angle) * radial, std::sin(angle) * radial, z) * speed);
+                }
+                else if (mVelocityType == 2)
+                {
+                    osg::Quat rotation;
+                    rotation.makeRotate(osg::Vec3f(0.f, 0.f, 1.f), mEmissionAxis);
+                    particle->setVelocity(rotation * particle->getVelocity());
+                }
+
+                if (mParticleRadius > 0.f)
+                {
+                    const float radius = std::max(std::numeric_limits<float>::epsilon(),
+                        mParticleRadius + mParticleRadiusVariation * (Misc::Rng::rollClosedProbability() - 0.5f));
+                    particle->setSizeRange(osgParticle::rangef(radius, radius));
+                }
+
+>>>>>>> origin/main
                 particle->transformPositionVelocity(emitterToPs);
             }
         }
     }
 
+<<<<<<< HEAD
     FindGroupByRecordIndex::FindGroupByRecordIndex(unsigned int recordIndex)
         : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
         , mFound(nullptr)
@@ -573,24 +911,110 @@ namespace NifOsg
     }
 
     void FindGroupByRecordIndex::apply(osg::Node& node)
+=======
+    ModernParticleController::ModernParticleController(Emitter* emitter, ParticleSystem* particleSystem,
+        const Nif::NiControllerSequence* rateSequence, const Nif::NiFloatInterpolator* rateInterpolator,
+        const Nif::NiControllerSequence* activeSequence, const Nif::NiBoolInterpolator* activeInterpolator,
+        const Nif::NiControllerSequence* alphaSequence, const Nif::NiFloatInterpolator* alphaInterpolator)
+        : mEmitter(emitter)
+        , mParticleSystem(particleSystem)
+        , mHasRate(rateSequence != nullptr && rateInterpolator != nullptr)
+        , mHasActive(activeSequence != nullptr && activeInterpolator != nullptr)
+        , mHasAlpha(alphaSequence != nullptr && alphaInterpolator != nullptr)
+    {
+        if (mHasRate)
+        {
+            mRate = FloatInterpolator(rateInterpolator);
+            mRateFunction = std::make_shared<ControllerFunction>(rateSequence->mFrequency, rateSequence->mPhase,
+                rateSequence->mStartTime, rateSequence->mStopTime, rateSequence->mExtrapolationMode);
+        }
+        if (mHasActive)
+        {
+            mActive = BoolInterpolator(activeInterpolator);
+            mActiveFunction = std::make_shared<ControllerFunction>(activeSequence->mFrequency, activeSequence->mPhase,
+                activeSequence->mStartTime, activeSequence->mStopTime, activeSequence->mExtrapolationMode);
+        }
+        if (mHasAlpha)
+        {
+            mAlpha = FloatInterpolator(alphaInterpolator);
+            mAlphaFunction = std::make_shared<ControllerFunction>(alphaSequence->mFrequency, alphaSequence->mPhase,
+                alphaSequence->mStartTime, alphaSequence->mStopTime, alphaSequence->mExtrapolationMode);
+        }
+    }
+
+    ModernParticleController::ModernParticleController(
+        const ModernParticleController& copy, const osg::CopyOp& copyop)
+        : osg::Object(copy, copyop)
+        , SceneUtil::NodeCallback<ModernParticleController, osg::Node*>(copy, copyop)
+        , mEmitter(copy.mEmitter)
+        , mParticleSystem(copy.mParticleSystem)
+        , mRate(copy.mRate)
+        , mActive(copy.mActive)
+        , mAlpha(copy.mAlpha)
+        , mRateFunction(copy.mRateFunction)
+        , mActiveFunction(copy.mActiveFunction)
+        , mAlphaFunction(copy.mAlphaFunction)
+        , mHasRate(copy.mHasRate)
+        , mHasActive(copy.mHasActive)
+        , mHasAlpha(copy.mHasAlpha)
+    {
+    }
+
+    void ModernParticleController::operator()(osg::Node* node, osg::NodeVisitor* nv)
+    {
+        const float input = nv && nv->getFrameStamp() ? static_cast<float>(nv->getFrameStamp()->getSimulationTime()) : 0.f;
+        bool active = true;
+        if (mHasActive && mActiveFunction)
+            active = mActive.interpKey(mActiveFunction->calculate(input));
+        if (mEmitter.valid() && mHasRate && mRateFunction)
+            mEmitter->setEmissionRate(active ? mRate.interpKey(mRateFunction->calculate(input)) : 0.f);
+        if (mParticleSystem.valid() && mHasAlpha && mAlphaFunction)
+            mParticleSystem->setGlobalAlpha(std::clamp(mAlpha.interpKey(mAlphaFunction->calculate(input)), 0.f, 1.f));
+        traverse(node, nv);
+    }
+
+    FindGroupByRecIndex::FindGroupByRecIndex(unsigned int recIndex)
+        : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        , mFound(nullptr)
+        , mRecIndex(recIndex)
+    {
+    }
+
+    void FindGroupByRecIndex::apply(osg::Node& node)
+>>>>>>> origin/main
     {
         applyNode(node);
     }
 
+<<<<<<< HEAD
     void FindGroupByRecordIndex::apply(osg::MatrixTransform& node)
+=======
+    void FindGroupByRecIndex::apply(osg::MatrixTransform& node)
+>>>>>>> origin/main
     {
         applyNode(node);
     }
 
+<<<<<<< HEAD
     void FindGroupByRecordIndex::apply(osg::Geometry& node)
+=======
+    void FindGroupByRecIndex::apply(osg::Geometry& node)
+>>>>>>> origin/main
     {
         applyNode(node);
     }
 
+<<<<<<< HEAD
     void FindGroupByRecordIndex::applyNode(osg::Node& searchNode)
     {
         unsigned int recordIndex;
         if (searchNode.getUserValue("recordIndex", recordIndex) && mRecordIndex == recordIndex)
+=======
+    void FindGroupByRecIndex::applyNode(osg::Node& searchNode)
+    {
+        unsigned int recIndex;
+        if (searchNode.getUserValue("recIndex", recIndex) && mRecIndex == recIndex)
+>>>>>>> origin/main
         {
             osg::Group* group = searchNode.asGroup();
             if (!group)

@@ -24,7 +24,11 @@ namespace L10n
         void dropCache() { mCache.clear(); }
         void setPreferredLocales(const std::vector<std::string>& locales, bool gmstHasPriority = true);
         const std::vector<icu::Locale>& getPreferredLocales() const { return mPreferredLocales; }
+<<<<<<< HEAD
         void setGmstLoader(GmstLoader fn) { mGmstLoader = std::move(fn); }
+=======
+        void setGmstLoader(std::function<std::string(std::string_view)> fn) { mGmstLoader = std::move(fn); }
+>>>>>>> origin/main
 
         std::shared_ptr<const MessageBundles> getContext(
             std::string_view contextName, const std::string& fallbackLocale = "en");
@@ -41,7 +45,11 @@ namespace L10n
         const VFS::Manager* mVFS;
         std::vector<icu::Locale> mPreferredLocales;
         std::map<std::tuple<std::string, std::string>, std::shared_ptr<MessageBundles>, std::less<>> mCache;
+<<<<<<< HEAD
         GmstLoader mGmstLoader;
+=======
+        std::function<std::string(std::string_view)> mGmstLoader;
+>>>>>>> origin/main
     };
 
 }

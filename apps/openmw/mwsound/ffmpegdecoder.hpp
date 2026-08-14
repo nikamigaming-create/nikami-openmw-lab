@@ -3,8 +3,13 @@
 
 #include <cstdint>
 
+<<<<<<< HEAD
 #include <osg-ffmpeg-videoplayer/libavformatdefines.hpp>
 #include <osg-ffmpeg-videoplayer/libavutildefines.hpp>
+=======
+#include <extern/osg-ffmpeg-videoplayer/libavformatdefines.hpp>
+#include <extern/osg-ffmpeg-videoplayer/libavutildefines.hpp>
+>>>>>>> origin/main
 
 #if defined(_MSC_VER)
 #pragma warning(push)

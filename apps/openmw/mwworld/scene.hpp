@@ -112,6 +112,7 @@ namespace MWWorld
 
         std::vector<osg::ref_ptr<SceneUtil::WorkItem>> mWorkItems;
 
+<<<<<<< HEAD
         std::optional<ChangeCellGridRequest> mChangeCellGridRequest;
 
         void insertCell(CellStore& cell, Loading::Listener* loadingListener,
@@ -176,6 +177,75 @@ namespace MWWorld
         void clear();
         ///< Change into a void
 
+=======
+        std::set<ESM::RefNum> mTeleportDoorPreloadRequestsLogged;
+        std::set<ESM::RefNum> mTeleportDoorPreloadCompletionsLogged;
+
+        std::optional<ChangeCellGridRequest> mChangeCellGridRequest;
+
+        void insertCell(CellStore& cell, Loading::Listener* loadingListener,
+            const DetourNavigator::UpdateGuard* navigatorUpdateGuard);
+
+        osg::Vec2i mCurrentGridCenter;
+
+        // Load and unload cells as necessary to create a cell grid with "X" and "Y" in the center
+        void changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent = true);
+
+        void requestChangeCellGrid(const osg::Vec3f& position, const osg::Vec2i& cell, bool changeEvent = true);
+
+        void preloadCells(float dt);
+        void preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos);
+        void preloadExteriorGrid(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos);
+        void preloadFastTravelDestinations(
+            const osg::Vec3f& playerPos, std::vector<PositionCellGrid>& exteriorPositions);
+        void preloadCellWithSurroundings(MWWorld::CellStore& cell);
+        void preloadCell(MWWorld::CellStore& cell);
+        void preloadTerrain(const osg::Vec3f& pos, ESM::RefId worldspace, bool sync = false);
+
+        osg::Vec4i gridCenterToBounds(const osg::Vec2i& centerCell) const;
+        osg::Vec2i getNewGridCenter(const osg::Vec3f& pos, const osg::Vec2i* currentGridCenter = nullptr) const;
+
+        void unloadCell(CellStore* cell, const DetourNavigator::UpdateGuard* navigatorUpdateGuard);
+        void loadCell(CellStore& cell, Loading::Listener* loadingListener, bool respawn, const osg::Vec3f& position,
+            const DetourNavigator::UpdateGuard* navigatorUpdateGuard);
+
+    public:
+        Scene(MWWorld::World& world, MWRender::RenderingManager& rendering, MWPhysics::PhysicsSystem* physics,
+            DetourNavigator::Navigator& navigator);
+
+        ~Scene();
+
+        void reloadTerrain();
+
+        void playerMoved(const osg::Vec3f& pos);
+
+        void changePlayerCell(CellStore& newCell, const ESM::Position& position, bool adjustPlayerPos);
+
+        CellStore* getCurrentCell();
+
+        const CellStoreCollection& getActiveCells() const;
+
+        bool hasCellChanged() const;
+        ///< Has the set of active cells changed, since the last frame?
+
+        bool hasCellLoaded() const { return mCellLoaded; }
+
+        void resetCellLoaded() { mCellLoaded = false; }
+
+        void changeToInteriorCell(
+            std::string_view cellName, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent = true);
+        ///< Move to interior cell.
+        /// @param changeEvent Set cellChanged flag?
+
+        void changeToExteriorCell(
+            const ESM::RefId& extCellId, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent = true);
+        ///< Move to exterior cell.
+        /// @param changeEvent Set cellChanged flag?
+
+        void clear();
+        ///< Change into a void
+
+>>>>>>> origin/main
         void markCellAsUnchanged();
 
         void update(float duration);
@@ -197,6 +267,11 @@ namespace MWWorld
 
         bool isCellActive(const CellStore& cell);
 
+<<<<<<< HEAD
+=======
+        Ptr searchPtrViaActorId(int actorId);
+
+>>>>>>> origin/main
         void preload(const std::string& mesh, bool useAnim = false);
 
         void testExteriorCells();

@@ -19,12 +19,20 @@ namespace MWMechanics
 
     AiPursue::AiPursue(const MWWorld::Ptr& actor)
     {
+<<<<<<< HEAD
         mTargetActor = actor.getCellRef().getRefNum();
+=======
+        mTargetActorId = actor.getClass().getCreatureStats(actor).getActorId();
+>>>>>>> origin/main
     }
 
     AiPursue::AiPursue(const ESM::AiSequence::AiPursue* pursue)
     {
+<<<<<<< HEAD
         mTargetActor = pursue->mTargetActor;
+=======
+        mTargetActorId = pursue->mTargetActorId;
+>>>>>>> origin/main
     }
 
     bool AiPursue::execute(
@@ -33,11 +41,20 @@ namespace MWMechanics
         if (actor.getClass().getCreatureStats(actor).isDead())
             return true;
 
+<<<<<<< HEAD
         const MWWorld::Ptr target = getTarget(); // The target to follow
 
         // Stop if the target doesn't exist
         if (target.isEmpty() || !target.getCellRef().getCount() || !target.getRefData().isEnabled()
             || !target.getRefData().getBaseNode())
+=======
+        const MWWorld::Ptr target
+            = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId); // The target to follow
+
+        // Stop if the target doesn't exist
+        // Really we should be checking whether the target is currently registered with the MechanicsManager
+        if (target == MWWorld::Ptr() || !target.getCellRef().getCount() || !target.getRefData().isEnabled())
+>>>>>>> origin/main
             return true;
 
         if (isTargetMagicallyHidden(target)
@@ -78,10 +95,30 @@ namespace MWMechanics
         return false;
     }
 
+<<<<<<< HEAD
     void AiPursue::writeState(ESM::AiSequence::AiSequence& sequence) const
     {
         auto pursue = std::make_unique<ESM::AiSequence::AiPursue>();
         pursue->mTargetActor = mTargetActor;
+=======
+    MWWorld::Ptr AiPursue::getTarget() const
+    {
+        if (!mCachedTarget.isEmpty())
+        {
+            if (mCachedTarget.mRef->isDeleted() || !mCachedTarget.getRefData().isEnabled())
+                mCachedTarget = MWWorld::Ptr();
+            else
+                return mCachedTarget;
+        }
+        mCachedTarget = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+        return mCachedTarget;
+    }
+
+    void AiPursue::writeState(ESM::AiSequence::AiSequence& sequence) const
+    {
+        auto pursue = std::make_unique<ESM::AiSequence::AiPursue>();
+        pursue->mTargetActorId = mTargetActorId;
+>>>>>>> origin/main
 
         ESM::AiSequence::AiPackageContainer package;
         package.mType = ESM::AiSequence::Ai_Pursue;

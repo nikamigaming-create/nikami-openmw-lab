@@ -1,6 +1,10 @@
 #include "refdata.hpp"
 
 #include <components/esm3/objectstate.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/common.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -19,7 +23,14 @@ namespace
         Flag_SuppressActivate = 1, // If set, activation will be suppressed and redirected to the OnActivate flag, which
                                    // can then be handled by a script.
         Flag_OnActivate = 2,
+<<<<<<< HEAD
         Flag_ActivationBuffered = 4
+=======
+        Flag_ActivationBuffered = 4,
+        // Fallout reference flag 0x00800000 projected into mutable save state. Destroyed doors and activators are
+        // non-functional until SetDestroyed 0 clears the flag.
+        Flag_Destroyed = 8
+>>>>>>> origin/main
     };
 }
 
@@ -88,7 +99,11 @@ namespace MWWorld
         : mBaseNode(nullptr)
         , mPosition(ref.mPos)
         , mCustomData(nullptr)
+<<<<<<< HEAD
         , mFlags(0)
+=======
+        , mFlags((ref.mFlags & ESM4::Rec_Destroyed) != 0 ? Flag_Destroyed : 0)
+>>>>>>> origin/main
         , mDeletedByContentFile(ref.mFlags & ESM4::Rec_Deleted)
         , mEnabled(!(ref.mFlags & ESM4::Rec_Disabled))
         , mPhysicsPostponed(false)
@@ -100,7 +115,11 @@ namespace MWWorld
         : mBaseNode(nullptr)
         , mPosition(ref.mPos)
         , mCustomData(nullptr)
+<<<<<<< HEAD
         , mFlags(0)
+=======
+        , mFlags((ref.mFlags & ESM4::Rec_Destroyed) != 0 ? Flag_Destroyed : 0)
+>>>>>>> origin/main
         , mDeletedByContentFile(ref.mFlags & ESM4::Rec_Deleted)
         , mEnabled(!(ref.mFlags & ESM4::Rec_Disabled))
         , mPhysicsPostponed(false)
@@ -240,6 +259,26 @@ namespace MWWorld
             mChanged = true;
             mEnabled = false;
         }
+<<<<<<< HEAD
+=======
+    }
+
+    bool RefData::isDestroyed() const
+    {
+        return (mFlags & Flag_Destroyed) != 0;
+    }
+
+    void RefData::setDestroyed(bool destroyed)
+    {
+        const bool current = isDestroyed();
+        if (current == destroyed)
+            return;
+        mChanged = true;
+        if (destroyed)
+            mFlags |= Flag_Destroyed;
+        else
+            mFlags &= ~Flag_Destroyed;
+>>>>>>> origin/main
     }
 
     void RefData::setPosition(const ESM::Position& pos)
@@ -283,6 +322,11 @@ namespace MWWorld
 
     bool RefData::activate()
     {
+<<<<<<< HEAD
+=======
+        if (isDestroyed())
+            return false;
+>>>>>>> origin/main
         if (mFlags & Flag_SuppressActivate)
         {
             mFlags |= Flag_OnActivate | Flag_ActivationBuffered;

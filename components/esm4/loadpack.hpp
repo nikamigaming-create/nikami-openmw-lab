@@ -34,6 +34,11 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+<<<<<<< HEAD
+=======
+#include "script.hpp"
+
+>>>>>>> origin/main
 namespace ESM4
 {
     class Reader;
@@ -72,6 +77,7 @@ namespace ESM4
             std::int32_t distance;
         };
 
+<<<<<<< HEAD
         // NOTE: param1/param2 can be FormId or number, but assume FormId so that adjustFormId
         // can be called
         struct CTDA
@@ -98,6 +104,31 @@ namespace ESM4
         PLDT mLocation;
         PTDT mTarget;
         std::vector<CTDA> mConditions;
+=======
+#pragma pack(pop)
+
+        ESM::FormId mId; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+
+        std::string mEditorId;
+
+        PKDT mData{};
+        PSDT mSchedule{};
+        PLDT mLocation{};
+        PTDT mTarget{};
+        std::vector<PLDT> mExtraLocations;
+        std::vector<PTDT> mExtraTargets;
+        std::vector<float> mExtraTargetUnknowns;
+        std::vector<TargetCondition> mConditions;
+        std::uint32_t mFo3PackageFlags = 0;
+        std::uint16_t mFo3ProcedureFlags = 0;
+        std::uint16_t mFo3TypeSpecificFlags = 0;
+        float mFo3TargetUnknown = 0.f;
+        std::uint8_t mIdleFlags = 0;
+        std::uint32_t mIdleCount = 0;
+        float mIdleTimer = 0.f;
+        std::vector<ESM::FormId> mIdleAnim;
+>>>>>>> origin/main
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

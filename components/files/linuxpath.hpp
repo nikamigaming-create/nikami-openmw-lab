@@ -4,7 +4,10 @@
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
 
 #include <filesystem>
+<<<<<<< HEAD
 #include <vector>
+=======
+>>>>>>> origin/main
 
 /**
  * \namespace Files
@@ -48,9 +51,15 @@ namespace Files
         std::filesystem::path getCachePath() const;
 
         /**
+<<<<<<< HEAD
          * \brief Gets the paths of any installed Morrowind versions we can find.
          */
         std::vector<std::filesystem::path> getInstallPaths() const;
+=======
+         * \brief Gets the path of the installed Morrowind version if there is one.
+         */
+        std::filesystem::path getInstallPath() const;
+>>>>>>> origin/main
 
         std::string mName;
     };

@@ -1,6 +1,10 @@
 #include "debugging.hpp"
 
 #include <chrono>
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+>>>>>>> origin/main
 #include <deque>
 #include <fstream>
 #include <iostream>
@@ -179,12 +183,17 @@ namespace Debug
             }
         };
 
+<<<<<<< HEAD
 #if defined _WIN32 && defined _DEBUG
+=======
+#if 0//defined _WIN32 && defined _DEBUG
+>>>>>>> origin/main
         class DebugOutput : public DebugOutputBase
         {
         public:
             std::streamsize writeImpl(const char* str, std::streamsize size, Level debugLevel)
             {
+<<<<<<< HEAD
                 if (size > std::numeric_limits<int>::max())
                     OutputDebugStringW(L"Next line truncated...");
                 auto wideSize = MultiByteToWideChar(CP_UTF8, 0, str,
@@ -195,6 +204,12 @@ namespace Debug
                     wideSize);
                 // Write string to Visual Studio Debug output
                 OutputDebugStringW(wide.c_str());
+=======
+                // Make a copy for null termination
+                std::string tmp(str, static_cast<unsigned int>(size));
+                // Write string to Visual Studio Debug output
+                OutputDebugString(tmp.c_str());
+>>>>>>> origin/main
                 return size;
             }
 
@@ -355,7 +370,11 @@ namespace Debug
         static std::unique_ptr<std::mutex> rawStderrMutex = nullptr;
         static std::ofstream logfile;
 
+<<<<<<< HEAD
 #if defined(_WIN32) && defined(_DEBUG)
+=======
+#if 0//defined(_WIN32) && defined(_DEBUG)
+>>>>>>> origin/main
         static boost::iostreams::stream_buffer<DebugOutput> sb;
 #else
         static boost::iostreams::stream_buffer<Tee<Identity, Coloured>> standardOut;
@@ -401,7 +420,11 @@ namespace Debug
         Log::sMinDebugLevel = getDebugLevel();
         Log::sWriteLevel = true;
 
+<<<<<<< HEAD
 #if !(defined(_WIN32) && defined(_DEBUG))
+=======
+//#if !(defined(_WIN32) && defined(_DEBUG))
+>>>>>>> origin/main
         const std::string logName = Misc::StringUtils::lowerCase(appName) + ".log";
         logfile.open(logDir / logName, std::ios::out);
 
@@ -417,7 +440,11 @@ namespace Debug
 
         std::cout.rdbuf(&standardOut);
         std::cerr.rdbuf(&standardErr);
+<<<<<<< HEAD
 #endif
+=======
+//#endif
+>>>>>>> origin/main
 
 #ifdef _WIN32
         if (Crash::CrashCatcher::instance())
@@ -432,13 +459,20 @@ namespace Debug
     {
 #if defined _WIN32
         (void)attachParentConsole();
+<<<<<<< HEAD
         SetConsoleOutputCP(CP_UTF8);
+=======
+>>>>>>> origin/main
 #endif
         rawStdout = std::make_unique<std::ostream>(std::cout.rdbuf());
         rawStderr = std::make_unique<std::ostream>(std::cerr.rdbuf());
         rawStderrMutex = std::make_unique<std::mutex>();
 
+<<<<<<< HEAD
 #if defined(_WIN32) && defined(_DEBUG)
+=======
+#if 0//defined(_WIN32) && defined(_DEBUG)
+>>>>>>> origin/main
         // Redirect cout and cerr to VS debug output when running in debug mode
         sb.open(DebugOutput());
         std::cout.rdbuf(&sb);
@@ -485,7 +519,15 @@ namespace Debug
 #if (defined(__APPLE__) || defined(__linux) || defined(__unix) || defined(__posix))
             if (!isatty(fileno(stdin)))
 #endif
+<<<<<<< HEAD
                 SDL_ShowSimpleMessageBox(0, (std::string(appName) + ": Fatal error").c_str(), e.what(), nullptr);
+=======
+            {
+                const char* suppressFatalDialog = std::getenv("OPENMW_WORLD_VIEWER_SUPPRESS_FATAL_DIALOG");
+                if (suppressFatalDialog == nullptr || suppressFatalDialog[0] == '\0' || suppressFatalDialog[0] == '0')
+                    SDL_ShowSimpleMessageBox(0, (std::string(appName) + ": Fatal error").c_str(), e.what(), nullptr);
+            }
+>>>>>>> origin/main
 
             Log(Debug::Error) << "Fatal error: " << e.what();
 

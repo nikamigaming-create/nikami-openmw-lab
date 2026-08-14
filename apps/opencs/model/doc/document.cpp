@@ -128,6 +128,7 @@ void CSMDoc::Document::addOptionalGlobals()
 
 void CSMDoc::Document::addOptionalMagicEffects()
 {
+<<<<<<< HEAD
     static const std::array<ESM::RefId, 6> optionalMagicEffects{
         ESM::MagicEffect::SummonFabricant,
         ESM::MagicEffect::SummonWolf,
@@ -140,6 +141,13 @@ void CSMDoc::Document::addOptionalMagicEffects()
     {
         ESM::MagicEffect effect;
         effect.mId = effectId;
+=======
+    for (int i = ESM::MagicEffect::SummonFabricant; i <= ESM::MagicEffect::SummonCreature05; ++i)
+    {
+        ESM::MagicEffect effect;
+        effect.mIndex = i;
+        effect.mId = ESM::MagicEffect::indexToRefId(i);
+>>>>>>> origin/main
         effect.blank();
 
         addOptionalMagicEffect(effect);
@@ -289,7 +297,14 @@ void CSMDoc::Document::createBase()
     for (int i = 0; i < ESM::MagicEffect::Length; ++i)
     {
         ESM::MagicEffect record;
+<<<<<<< HEAD
         record.mId = ESM::MagicEffect::indexToRefId(i);
+=======
+
+        record.mIndex = i;
+        record.mId = ESM::MagicEffect::indexToRefId(i);
+
+>>>>>>> origin/main
         record.blank();
 
         getData().getMagicEffects().add(record);
@@ -305,8 +320,13 @@ CSMDoc::Document::Document(const Files::ConfigurationManager& configuration, std
     , mData(encoding, dataPaths, archives, resDir)
     , mTools(*this, encoding)
     , mProjectPath((configuration.getUserDataPath() / "projects") / (savePath.filename().u8string() + u8".project"))
+<<<<<<< HEAD
     , mSavingOperation(nullptr)
     , mSaving(nullptr)
+=======
+    , mSavingOperation(*this, mProjectPath, encoding)
+    , mSaving(&mSavingOperation)
+>>>>>>> origin/main
     , mResDir(resDir)
     , mRunner(mProjectPath)
     , mDirty(false)
@@ -352,6 +372,7 @@ CSMDoc::Document::Document(const Files::ConfigurationManager& configuration, std
     connect(&mTools, &CSMTools::Tools::done, this, &Document::operationDone2);
     connect(&mTools, &CSMTools::Tools::mergeDone, this, &Document::mergeDone);
 
+<<<<<<< HEAD
     mSavingOperation = new Saving(*this, mProjectPath, encoding);
     mSaving = new OperationHolder(this, mSavingOperation);
 
@@ -360,6 +381,13 @@ CSMDoc::Document::Document(const Files::ConfigurationManager& configuration, std
 
     connect(mSaving, &OperationHolder::reportMessage, this, &Document::reportMessage);
 
+=======
+    connect(&mSaving, &OperationHolder::progress, this, qOverload<int, int, int>(&Document::progress));
+    connect(&mSaving, &OperationHolder::done, this, &Document::operationDone2);
+
+    connect(&mSaving, &OperationHolder::reportMessage, this, &Document::reportMessage);
+
+>>>>>>> origin/main
     connect(&mRunner, &Runner::runStateChanged, this, &Document::runStateChanged);
 }
 
@@ -414,7 +442,11 @@ bool CSMDoc::Document::isNew() const
 
 void CSMDoc::Document::save()
 {
+<<<<<<< HEAD
     if (mSaving->isRunning())
+=======
+    if (mSaving.isRunning())
+>>>>>>> origin/main
         throw std::logic_error("Failed to initiate save, because a save operation is already running.");
 
     mSaving->start();
@@ -449,7 +481,11 @@ void CSMDoc::Document::runMerge(std::unique_ptr<CSMDoc::Document> target)
 void CSMDoc::Document::abortOperation(int type)
 {
     if (type == State_Saving)
+<<<<<<< HEAD
         mSaving->abort();
+=======
+        mSaving.abort();
+>>>>>>> origin/main
     else
         mTools.abortOperation(type);
 }
@@ -507,7 +543,11 @@ void CSMDoc::Document::startRunning(const std::string& profile, const std::strin
         // need to save first
         mRunner.start(true);
 
+<<<<<<< HEAD
         new SaveWatcher(&mRunner, mSaving); // no, that is not a memory leak. Qt is weird.
+=======
+        new SaveWatcher(&mRunner, &mSaving); // no, that is not a memory leak. Qt is weird.
+>>>>>>> origin/main
 
         if (!(state & State_Saving))
             save();

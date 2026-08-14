@@ -10,6 +10,10 @@ Shadows Settings
 
    Enable or disable shadow rendering using shadow mapping.
    More realistic but may reduce performance.
+<<<<<<< HEAD
+=======
+   Forces shaders usage like :ref:`force shaders`.
+>>>>>>> origin/main
 
 .. omw-setting::
    :title: number of shadow maps

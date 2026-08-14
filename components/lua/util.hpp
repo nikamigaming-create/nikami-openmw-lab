@@ -2,6 +2,10 @@
 #define COMPONENTS_LUA_UTIL_H
 
 #include <cstdint>
+<<<<<<< HEAD
+=======
+#include <string>
+>>>>>>> origin/main
 
 #include <sol/sol.hpp>
 
@@ -19,6 +23,7 @@ namespace LuaUtil
     {
         return i + 1;
     }
+<<<<<<< HEAD
 }
 
 // ADL-based customization point for sol2 to automatically convert ESM::RefId
@@ -28,6 +33,15 @@ inline int sol_lua_push(sol::types<ESM::RefId>, lua_State* state, const ESM::Ref
     if (id.empty())
         return sol::stack::push(state, sol::lua_nil);
     return sol::stack::push(state, id.serializeText());
+=======
+
+    inline sol::optional<std::string> serializeRefId(ESM::RefId id)
+    {
+        if (id.empty())
+            return sol::nullopt;
+        return id.serializeText();
+    }
+>>>>>>> origin/main
 }
 
 #endif

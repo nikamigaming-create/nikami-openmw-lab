@@ -261,7 +261,11 @@ namespace MWClass
         ESM::Weapon newItem = *ref->mBase;
         newItem.mId = ESM::RefId();
         newItem.mName = newName;
+<<<<<<< HEAD
         newItem.mData.mEnchant = static_cast<uint16_t>(enchCharge);
+=======
+        newItem.mData.mEnchant = enchCharge;
+>>>>>>> origin/main
         newItem.mEnchant = enchId;
         newItem.mData.mFlags |= ESM::Weapon::Magical;
         const ESM::Weapon* record = MWBase::Environment::get().getESMStore()->insert(newItem);
@@ -270,6 +274,7 @@ namespace MWClass
 
     std::pair<int, std::string_view> Weapon::canBeEquipped(const MWWorld::ConstPtr& ptr, const MWWorld::Ptr& npc) const
     {
+<<<<<<< HEAD
         int type = ptr.get<ESM::Weapon>()->mBase->mData.mType;
 
         // Do not allow equip weapons from inventory during attack
@@ -303,6 +308,27 @@ namespace MWClass
             return { 2, {} };
         }
 
+=======
+        // Do not allow equip weapons from inventory during attack
+        if (npc.isInCell() && MWBase::Environment::get().getWindowManager()->isGuiMode()
+            && MWBase::Environment::get().getMechanicsManager()->isAttackingOrSpell(npc))
+            return { 0, "#{sCantEquipWeapWarning}" };
+
+        if (hasItemHealth(ptr) && getItemHealth(ptr) == 0)
+            return { 0, "#{sInventoryMessage1}" };
+
+        std::pair<std::vector<int>, bool> slots = getEquipmentSlots(ptr);
+
+        if (slots.first.empty())
+            return { 0, {} };
+
+        int type = ptr.get<ESM::Weapon>()->mBase->mData.mType;
+        if (MWMechanics::getWeaponType(type)->mFlags & ESM::WeaponType::TwoHanded)
+        {
+            return { 2, {} };
+        }
+
+>>>>>>> origin/main
         return { 1, {} };
     }
 

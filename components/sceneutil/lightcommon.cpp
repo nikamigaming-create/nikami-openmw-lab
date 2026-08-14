@@ -14,7 +14,11 @@ namespace SceneUtil
         , mPulseSlow(light.mData.mFlags & ESM::Light::PulseSlow)
         , mOffDefault(light.mData.mFlags & ESM::Light::OffDefault)
         , mColor(SceneUtil::colourFromRGB(light.mData.mColor))
+<<<<<<< HEAD
         , mRadius(static_cast<float>(light.mData.mRadius))
+=======
+        , mRadius(light.mData.mRadius)
+>>>>>>> origin/main
 
     {
     }
@@ -26,8 +30,19 @@ namespace SceneUtil
         , mPulseSlow(light.mData.flags & ESM4::Light::PulseSlow)
         , mOffDefault(light.mData.flags & ESM4::Light::OffDefault)
         , mColor(SceneUtil::colourFromRGB(light.mData.colour))
+<<<<<<< HEAD
         , mRadius(static_cast<float>(light.mData.radius))
 
     {
+=======
+        , mRadius(light.mData.radius)
+
+    {
+        // FO3/FNV LIGH FNAM is the HDR multiplier used by retail for the
+        // light's RGB shader constants. Keep the Vec4 alpha unchanged.
+        mColor.x() *= light.mFade;
+        mColor.y() *= light.mFade;
+        mColor.z() *= light.mFade;
+>>>>>>> origin/main
     }
 }

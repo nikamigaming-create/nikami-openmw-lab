@@ -40,6 +40,10 @@ namespace MWGui
         void onClose() override;
 
         void activateQuickKey(int index);
+<<<<<<< HEAD
+=======
+        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item);
+>>>>>>> origin/main
         void updateActivatedQuickKey();
 
         void write(ESM::ESMWriter& writer);
@@ -48,6 +52,7 @@ namespace MWGui
 
         std::string_view getWindowIdForLua() const override { return "QuickKeys"; }
 
+<<<<<<< HEAD
     private:
         struct keyData
         {
@@ -58,6 +63,23 @@ namespace MWGui
             std::string name;
         };
 
+=======
+//## VR_PATCH BEGIN
+// Public keyData
+// QuickKeysMenu destructor
+        struct keyData
+        {
+            int index = -1;
+            ItemWidget* button = nullptr;
+            ESM::QuickKeys::Type type = ESM::QuickKeys::Type::Unassigned;
+            ESM::RefId id;
+            std::string name;
+        };
+        const keyData* keyAt(int index) const;
+        ~QuickKeysMenu();
+//## VR_PATCH END
+    private:
+>>>>>>> origin/main
         std::vector<keyData> mKey;
         std::vector<MWWorld::ManualRef> mTemp;
         keyData* mSelected;
@@ -96,7 +118,11 @@ namespace MWGui
         QuickKeysMenu* mParent;
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
+<<<<<<< HEAD
         size_t mControllerFocus = 0;
+=======
+        int mControllerFocus = 0;
+>>>>>>> origin/main
     };
 
     class MagicSelectionDialog : public WindowModal
@@ -106,8 +132,11 @@ namespace MWGui
 
         void onOpen() override;
         bool exit() override;
+<<<<<<< HEAD
 
         void setActiveControllerWindow(bool active) override;
+=======
+>>>>>>> origin/main
 
     private:
         MyGUI::Button* mCancelButton;
@@ -119,6 +148,10 @@ namespace MWGui
         void onModelIndexSelected(SpellModel::ModelIndex index);
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
+<<<<<<< HEAD
+=======
+        int mControllerFocus = 0;
+>>>>>>> origin/main
     };
 }
 

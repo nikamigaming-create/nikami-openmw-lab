@@ -76,11 +76,22 @@ namespace MWGui
         const std::string& getMessage() { return mMessage; }
         int getHeight();
         void update(int height);
+<<<<<<< HEAD
         void setVisible(bool value);
 
         float mCurrentTime;
         float mMaxTime;
 
+=======
+//## VR_PATCH BEGIN
+// Rewrote handling of setVisible, now handled by base class.
+        ~MessageBox();
+//        void setVisible(bool value);
+//## VR_PATCH END
+        float mCurrentTime;
+        float mMaxTime;
+
+>>>>>>> origin/main
     protected:
         MessageBoxManager& mMessageBoxManager;
         std::string mMessage;
@@ -101,8 +112,15 @@ namespace MWGui
 
         bool exit() override { return false; }
 
+<<<<<<< HEAD
         bool mMarkedToDelete;
 
+=======
+        void closeDefault();
+
+        bool mMarkedToDelete;
+
+>>>>>>> origin/main
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
 
     private:

@@ -120,7 +120,22 @@ namespace MWRender
             osgUtil::RenderLeaf* rl = *rit;
             const osg::StateSet* ss = rl->_parent->getStateSet();
 
+<<<<<<< HEAD
             if (rl->_drawable->getNodeMask() == Mask_ParticleSystem)
+=======
+            // World-space VR GUI is already composited with its own alpha and must never populate the opaque
+            // post-process depth texture. Doing so lets an otherwise transparent HUD/menu quad erase the world.
+            if (rl->_drawable->getName() == "VRGUILayer")
+                continue;
+
+            if (rl->_drawable->getNodeMask() == Mask_ParticleSystem || rl->_drawable->getNodeMask() == Mask_Effect)
+                continue;
+
+            // The auxiliary depth target represents opaque coverage. Only alpha-tested cutouts have a binary
+            // coverage contract suitable for this replay; ordinary blended glass, decals, and effects must retain
+            // the opaque depth already behind them or they occlude post-processing as solid geometry.
+            if (ss->getAttribute(osg::StateAttribute::ALPHAFUNC) == nullptr)
+>>>>>>> origin/main
                 continue;
 
             if (ss->getAttribute(osg::StateAttribute::MATERIAL))

@@ -25,6 +25,7 @@ namespace ESM
             0x1048, 0x1048, 0x1048, 0x1048 };
     }
 
+<<<<<<< HEAD
     const StringRefId MagicEffect::WaterBreathing("WaterBreathing");
     const StringRefId MagicEffect::SwiftSwim("SwiftSwim");
     const StringRefId MagicEffect::WaterWalking("WaterWalking");
@@ -173,17 +174,25 @@ namespace ESM
     const StringRefId MagicEffect::SummonCreature04("SummonCreature04");
     const StringRefId MagicEffect::SummonCreature05("SummonCreature05");
 
+=======
+>>>>>>> origin/main
     void MagicEffect::load(ESMReader& esm, bool& isDeleted)
     {
         isDeleted = false; // MagicEffect record can't be deleted now (may be changed in the future)
         mRecordFlags = esm.getRecordFlags();
 
+<<<<<<< HEAD
         int32_t index = -1;
         esm.getHNT(index, "INDX");
         if (index < 0 || index >= Length)
             esm.fail("Invalid Index!");
 
         mId = indexToRefId(index);
+=======
+        esm.getHNT(mIndex, "INDX");
+
+        mId = indexToRefId(mIndex);
+>>>>>>> origin/main
 
         esm.getSubNameIs("MEDT");
         esm.getSubHeader();
@@ -203,8 +212,13 @@ namespace ESM
         {
             // don't allow mods to change fixed flags in the legacy format
             mData.mFlags &= (AllowSpellmaking | AllowEnchanting | NegativeLight);
+<<<<<<< HEAD
             if (index >= 0 && index < NumberOfHardcodedFlags)
                 mData.mFlags |= HardcodedFlags[index];
+=======
+            if (mIndex >= 0 && mIndex < NumberOfHardcodedFlags)
+                mData.mFlags |= HardcodedFlags[mIndex];
+>>>>>>> origin/main
         }
 
         // vanilla MW accepts the _SND subrecords before or after DESC... I hope
@@ -254,7 +268,11 @@ namespace ESM
     }
     void MagicEffect::save(ESMWriter& esm, bool /*isDeleted*/) const
     {
+<<<<<<< HEAD
         esm.writeHNT("INDX", refIdToIndex(mId));
+=======
+        esm.writeHNT("INDX", mIndex);
+>>>>>>> origin/main
 
         esm.startSubRecord("MEDT");
         esm.writeT(MagicSchool::skillRefIdToIndex(mData.mSchool));
@@ -285,6 +303,7 @@ namespace ESM
 
     namespace
     {
+<<<<<<< HEAD
         std::unordered_map<RefId, RefId> makeResistancesMap()
         {
             std::unordered_map<RefId, RefId> effects{
@@ -343,15 +362,60 @@ namespace ESM
                 { MagicEffect::Poison, MagicEffect::ResistPoison },
                 { MagicEffect::Paralyze, MagicEffect::ResistParalysis },
             };
+=======
+        std::map<short, short> makeEffectsMap()
+        {
+            std::map<short, short> effects;
+
+            effects[MagicEffect::Effects::DisintegrateArmor] = MagicEffect::Effects::Sanctuary;
+            effects[MagicEffect::Effects::DisintegrateWeapon] = MagicEffect::Effects::Sanctuary;
+
+            for (int i = MagicEffect::Effects::DrainAttribute; i <= MagicEffect::Effects::DamageSkill; ++i)
+                effects[i] = MagicEffect::Effects::ResistMagicka;
+            for (int i = MagicEffect::Effects::AbsorbAttribute; i <= MagicEffect::Effects::AbsorbSkill; ++i)
+                effects[i] = MagicEffect::Effects::ResistMagicka;
+            for (int i = MagicEffect::Effects::WeaknessToFire; i <= MagicEffect::Effects::WeaknessToNormalWeapons; ++i)
+                effects[i] = MagicEffect::Effects::ResistMagicka;
+
+            effects[MagicEffect::Effects::Burden] = MagicEffect::Effects::ResistMagicka;
+            effects[MagicEffect::Effects::Charm] = MagicEffect::Effects::ResistMagicka;
+            effects[MagicEffect::Effects::Silence] = MagicEffect::Effects::ResistMagicka;
+            effects[MagicEffect::Effects::Blind] = MagicEffect::Effects::ResistMagicka;
+            effects[MagicEffect::Effects::Sound] = MagicEffect::Effects::ResistMagicka;
+
+            for (int i = 0; i < 2; ++i)
+            {
+                effects[MagicEffect::Effects::CalmHumanoid + i] = MagicEffect::Effects::ResistMagicka;
+                effects[MagicEffect::Effects::FrenzyHumanoid + i] = MagicEffect::Effects::ResistMagicka;
+                effects[MagicEffect::Effects::DemoralizeHumanoid + i] = MagicEffect::Effects::ResistMagicka;
+                effects[MagicEffect::Effects::RallyHumanoid + i] = MagicEffect::Effects::ResistMagicka;
+            }
+
+            effects[MagicEffect::Effects::TurnUndead] = MagicEffect::Effects::ResistMagicka;
+
+            effects[MagicEffect::Effects::FireDamage] = MagicEffect::Effects::ResistFire;
+            effects[MagicEffect::Effects::FrostDamage] = MagicEffect::Effects::ResistFrost;
+            effects[MagicEffect::Effects::ShockDamage] = MagicEffect::Effects::ResistShock;
+            effects[MagicEffect::Effects::Vampirism] = MagicEffect::Effects::ResistCommonDisease;
+            effects[MagicEffect::Effects::Corprus] = MagicEffect::Effects::ResistCorprusDisease;
+            effects[MagicEffect::Effects::Poison] = MagicEffect::Effects::ResistPoison;
+            effects[MagicEffect::Effects::Paralyze] = MagicEffect::Effects::ResistParalysis;
+
+>>>>>>> origin/main
             return effects;
         }
     }
 
+<<<<<<< HEAD
     RefId MagicEffect::getResistanceEffect(RefId effectId)
+=======
+    short MagicEffect::getResistanceEffect(short effect)
+>>>>>>> origin/main
     {
         // Source https://wiki.openmw.org/index.php?title=Research:Magic#Effect_attribute
 
         // <Effect, Effect providing resistance against first effect>
+<<<<<<< HEAD
         static const std::unordered_map<RefId, RefId> effects = makeResistancesMap();
 
         if (const auto it = effects.find(effectId); it != effects.end())
@@ -432,6 +496,63 @@ namespace ESM
 
     // Map effect index to GMST name
     static constexpr std::array<std::string_view, MagicEffect::Length> sGmstEffectIds = {
+=======
+        static const std::map<short, short> effects = makeEffectsMap();
+
+        if (const auto it = effects.find(effect); it != effects.end())
+            return it->second;
+
+        return -1;
+    }
+
+    short MagicEffect::getWeaknessEffect(short effect)
+    {
+        static std::map<short, short> effects;
+        if (effects.empty())
+        {
+            for (int i = DrainAttribute; i <= DamageSkill; ++i)
+                effects[i] = WeaknessToMagicka;
+            for (int i = AbsorbAttribute; i <= AbsorbSkill; ++i)
+                effects[i] = WeaknessToMagicka;
+            for (int i = WeaknessToFire; i <= WeaknessToNormalWeapons; ++i)
+                effects[i] = WeaknessToMagicka;
+
+            effects[Burden] = WeaknessToMagicka;
+            effects[Charm] = WeaknessToMagicka;
+            effects[Silence] = WeaknessToMagicka;
+            effects[Blind] = WeaknessToMagicka;
+            effects[Sound] = WeaknessToMagicka;
+
+            for (int i = 0; i < 2; ++i)
+            {
+                effects[CalmHumanoid + i] = WeaknessToMagicka;
+                effects[FrenzyHumanoid + i] = WeaknessToMagicka;
+                effects[DemoralizeHumanoid + i] = WeaknessToMagicka;
+                effects[RallyHumanoid + i] = WeaknessToMagicka;
+            }
+
+            effects[TurnUndead] = WeaknessToMagicka;
+
+            effects[FireDamage] = WeaknessToFire;
+            effects[FrostDamage] = WeaknessToFrost;
+            effects[ShockDamage] = WeaknessToShock;
+            effects[Vampirism] = WeaknessToCommonDisease;
+            effects[Corprus] = WeaknessToCorprusDisease;
+            effects[Poison] = WeaknessToPoison;
+
+            effects[Paralyze] = -1;
+        }
+
+        if (effects.find(effect) != effects.end())
+            return effects[effect];
+        else
+            return -1;
+    }
+
+    // Map effect ID to GMST name
+    const std::array<std::string, MagicEffect::Length> MagicEffect::sGmstEffectIds = {
+
+>>>>>>> origin/main
         "sEffectWaterBreathing",
         "sEffectSwiftSwim",
         "sEffectWaterWalking",
@@ -581,6 +702,7 @@ namespace ESM
         "sEffectSummonCreature05",
     };
 
+<<<<<<< HEAD
     static const std::array<RefId, MagicEffect::Length> sMagicEffectIds{
         MagicEffect::WaterBreathing,
         MagicEffect::SwiftSwim,
@@ -759,6 +881,205 @@ namespace ESM
             return MDT_Level;
         if ((index >= 28 && index <= 36) || (index >= 90 && index <= 99) || index == 40 || index == 47 || index == 57
             || index == 68)
+=======
+    // Map effect ID to identifying name
+    const std::array<std::string_view, MagicEffect::Length> MagicEffect::sIndexNames = {
+        "WaterBreathing",
+        "SwiftSwim",
+        "WaterWalking",
+        "Shield",
+        "FireShield",
+        "LightningShield",
+        "FrostShield",
+        "Burden",
+        "Feather",
+        "Jump",
+        "Levitate",
+        "SlowFall",
+        "Lock",
+        "Open",
+        "FireDamage",
+        "ShockDamage",
+        "FrostDamage",
+        "DrainAttribute",
+        "DrainHealth",
+        "DrainMagicka",
+        "DrainFatigue",
+        "DrainSkill",
+        "DamageAttribute",
+        "DamageHealth",
+        "DamageMagicka",
+        "DamageFatigue",
+        "DamageSkill",
+        "Poison",
+        "WeaknessToFire",
+        "WeaknessToFrost",
+        "WeaknessToShock",
+        "WeaknessToMagicka",
+        "WeaknessToCommonDisease",
+        "WeaknessToBlightDisease",
+        "WeaknessToCorprusDisease",
+        "WeaknessToPoison",
+        "WeaknessToNormalWeapons",
+        "DisintegrateWeapon",
+        "DisintegrateArmor",
+        "Invisibility",
+        "Chameleon",
+        "Light",
+        "Sanctuary",
+        "NightEye",
+        "Charm",
+        "Paralyze",
+        "Silence",
+        "Blind",
+        "Sound",
+        "CalmHumanoid",
+        "CalmCreature",
+        "FrenzyHumanoid",
+        "FrenzyCreature",
+        "DemoralizeHumanoid",
+        "DemoralizeCreature",
+        "RallyHumanoid",
+        "RallyCreature",
+        "Dispel",
+        "Soultrap",
+        "Telekinesis",
+        "Mark",
+        "Recall",
+        "DivineIntervention",
+        "AlmsiviIntervention",
+        "DetectAnimal",
+        "DetectEnchantment",
+        "DetectKey",
+        "SpellAbsorption",
+        "Reflect",
+        "CureCommonDisease",
+        "CureBlightDisease",
+        "CureCorprusDisease",
+        "CurePoison",
+        "CureParalyzation",
+        "RestoreAttribute",
+        "RestoreHealth",
+        "RestoreMagicka",
+        "RestoreFatigue",
+        "RestoreSkill",
+        "FortifyAttribute",
+        "FortifyHealth",
+        "FortifyMagicka",
+        "FortifyFatigue",
+        "FortifySkill",
+        "FortifyMaximumMagicka",
+        "AbsorbAttribute",
+        "AbsorbHealth",
+        "AbsorbMagicka",
+        "AbsorbFatigue",
+        "AbsorbSkill",
+        "ResistFire",
+        "ResistFrost",
+        "ResistShock",
+        "ResistMagicka",
+        "ResistCommonDisease",
+        "ResistBlightDisease",
+        "ResistCorprusDisease",
+        "ResistPoison",
+        "ResistNormalWeapons",
+        "ResistParalysis",
+        "RemoveCurse",
+        "TurnUndead",
+        "SummonScamp",
+        "SummonClannfear",
+        "SummonDaedroth",
+        "SummonDremora",
+        "SummonAncestralGhost",
+        "SummonSkeletalMinion",
+        "SummonBonewalker",
+        "SummonGreaterBonewalker",
+        "SummonBonelord",
+        "SummonWingedTwilight",
+        "SummonHunger",
+        "SummonGoldenSaint",
+        "SummonFlameAtronach",
+        "SummonFrostAtronach",
+        "SummonStormAtronach",
+        "FortifyAttack",
+        "CommandCreature",
+        "CommandHumanoid",
+        "BoundDagger",
+        "BoundLongsword",
+        "BoundMace",
+        "BoundBattleAxe",
+        "BoundSpear",
+        "BoundLongbow",
+        "ExtraSpell",
+        "BoundCuirass",
+        "BoundHelm",
+        "BoundBoots",
+        "BoundShield",
+        "BoundGloves",
+        "Corprus",
+        "Vampirism",
+        "SummonCenturionSphere",
+        "SunDamage",
+        "StuntedMagicka",
+
+        // tribunal
+        "SummonFabricant",
+
+        // bloodmoon
+        "SummonWolf",
+        "SummonBear",
+        "SummonBonewolf",
+        "SummonCreature04",
+        "SummonCreature05",
+    };
+
+    template <typename Collection>
+    static std::map<std::string_view, int, Misc::StringUtils::CiComp> initStringToIntMap(const Collection& strings)
+    {
+        std::map<std::string_view, int, Misc::StringUtils::CiComp> map;
+        for (size_t i = 0; i < strings.size(); i++)
+            map[strings[i]] = i;
+
+        return map;
+    }
+
+    const std::map<std::string_view, int, Misc::StringUtils::CiComp> MagicEffect::sGmstEffectIdToIndexMap
+        = initStringToIntMap(MagicEffect::sGmstEffectIds);
+
+    const std::map<std::string_view, int, Misc::StringUtils::CiComp> MagicEffect::sIndexNameToIndexMap
+        = initStringToIntMap(MagicEffect::sIndexNames);
+
+    class FindSecond
+    {
+        std::string_view mName;
+
+    public:
+        FindSecond(std::string_view name)
+            : mName(name)
+        {
+        }
+
+        bool operator()(const std::pair<short, std::string>& item) const
+        {
+            if (Misc::StringUtils::ciEqual(item.second, mName))
+                return true;
+            return false;
+        }
+    };
+
+    MagicEffect::MagnitudeDisplayType MagicEffect::getMagnitudeDisplayType() const
+    {
+        if (mData.mFlags & NoMagnitude)
+            return MDT_None;
+        if (mIndex == 84)
+            return MDT_TimesInt;
+        if (mIndex == 59 || (mIndex >= 64 && mIndex <= 66))
+            return MDT_Feet;
+        if (mIndex == 118 || mIndex == 119)
+            return MDT_Level;
+        if ((mIndex >= 28 && mIndex <= 36) || (mIndex >= 90 && mIndex <= 99) || mIndex == 40 || mIndex == 47
+            || mIndex == 57 || mIndex == 68)
+>>>>>>> origin/main
             return MDT_Percentage;
 
         return MDT_Points;
@@ -774,8 +1095,11 @@ namespace ESM
         mData.mGreen = 0;
         mData.mBlue = 0;
         mData.mSpeed = 1;
+<<<<<<< HEAD
         mData.mUnknown1 = 0;
         mData.mUnknown2 = 0;
+=======
+>>>>>>> origin/main
 
         mIcon.clear();
         mParticle.clear();
@@ -798,6 +1122,7 @@ namespace ESM
         return color;
     }
 
+<<<<<<< HEAD
     std::string_view MagicEffect::refIdToGmstString(RefId effectId)
     {
         int index = refIdToIndex(effectId);
@@ -812,10 +1137,45 @@ namespace ESM
         if (it == sGmstEffectIdToIndexMap.end())
             return {};
         return sMagicEffectIds[it->second];
+=======
+    const std::string& MagicEffect::indexToGmstString(int effectID)
+    {
+        if (effectID < 0 || static_cast<std::size_t>(effectID) >= sGmstEffectIds.size())
+            throw std::runtime_error(std::string("Unimplemented effect ID ") + std::to_string(effectID));
+
+        return sGmstEffectIds[effectID];
+    }
+
+    std::string_view MagicEffect::indexToName(int effectID)
+    {
+        if (effectID < 0 || static_cast<std::size_t>(effectID) >= sIndexNames.size())
+            throw std::runtime_error(std::string("Unimplemented effect ID ") + std::to_string(effectID));
+
+        return sIndexNames[effectID];
+    }
+
+    int MagicEffect::indexNameToIndex(std::string_view effect)
+    {
+        auto name = sIndexNameToIndexMap.find(effect);
+        if (name == sIndexNameToIndexMap.end())
+            return -1;
+
+        return name->second;
+    }
+
+    int MagicEffect::effectGmstIdToIndex(std::string_view gmstId)
+    {
+        auto name = sGmstEffectIdToIndexMap.find(gmstId);
+        if (name == sGmstEffectIdToIndexMap.end())
+            throw std::runtime_error("Unimplemented effect " + std::string(gmstId));
+
+        return name->second;
+>>>>>>> origin/main
     }
 
     RefId MagicEffect::indexToRefId(int index)
     {
+<<<<<<< HEAD
         if (index < 0 || index >= Length)
             return {};
         return sMagicEffectIds[index];
@@ -834,5 +1194,10 @@ namespace ESM
         if (index < 0 || index >= Length)
             return {};
         return sMagicEffectIds[index].getRefIdString();
+=======
+        if (index == -1)
+            return RefId();
+        return RefId::index(sRecordId, static_cast<std::uint32_t>(index));
+>>>>>>> origin/main
     }
 }

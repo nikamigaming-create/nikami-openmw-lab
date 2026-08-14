@@ -7,6 +7,7 @@
 
 namespace Nif
 {
+<<<<<<< HEAD
     namespace
     {
         void readBoneTransformGroup(NIFStream& stream, std::vector<bhkPoseArray::BoneTransform>& value)
@@ -14,6 +15,8 @@ namespace Nif
             stream.readVectorOfRecords<uint32_t>(value);
         }
     }
+=======
+>>>>>>> origin/main
 
     /// Non-record data types
 
@@ -55,7 +58,11 @@ namespace Nif
 
     void bhkEntityCInfo::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         mResponseType = static_cast<HkResponseType>(nif->get<uint8_t>());
+=======
+        mResponseType = static_cast<hkResponseType>(nif->get<uint8_t>());
+>>>>>>> origin/main
         nif->skip(1); // Unused
         nif->read(mProcessContactDelay);
     }
@@ -121,7 +128,11 @@ namespace Nif
             {
                 if (nif->getBethVersion() >= 83)
                     nif->skip(4); // Unused
+<<<<<<< HEAD
                 mResponseType = static_cast<HkResponseType>(nif->get<uint8_t>());
+=======
+                mResponseType = static_cast<hkResponseType>(nif->get<uint8_t>());
+>>>>>>> origin/main
                 nif->skip(1); // Unused
                 nif->read(mProcessContactDelay);
             }
@@ -159,23 +170,40 @@ namespace Nif
             if (nif->getBethVersion() != NIFFile::BethVersion::BETHVER_FO4)
                 nif->read(mPenetrationDepth);
         }
+<<<<<<< HEAD
         mMotionType = static_cast<HkMotionType>(nif->get<uint8_t>());
         if (nif->getBethVersion() < 83)
             mDeactivatorType = static_cast<HkDeactivatorType>(nif->get<uint8_t>());
         else
             nif->read(mEnableDeactivation);
         mSolverDeactivation = static_cast<HkSolverDeactivation>(nif->get<uint8_t>());
+=======
+        mMotionType = static_cast<hkMotionType>(nif->get<uint8_t>());
+        if (nif->getBethVersion() < 83)
+            mDeactivatorType = static_cast<hkDeactivatorType>(nif->get<uint8_t>());
+        else
+            nif->read(mEnableDeactivation);
+        mSolverDeactivation = static_cast<hkSolverDeactivation>(nif->get<uint8_t>());
+>>>>>>> origin/main
         if (nif->getBethVersion() == NIFFile::BethVersion::BETHVER_FO4)
         {
             nif->skip(1);
             nif->read(mPenetrationDepth);
             nif->read(mTimeFactor);
             nif->skip(4);
+<<<<<<< HEAD
             mResponseType = static_cast<HkResponseType>(nif->get<uint8_t>());
             nif->skip(1); // Unused
             nif->read(mProcessContactDelay);
         }
         mQualityType = static_cast<HkQualityType>(nif->get<uint8_t>());
+=======
+            mResponseType = static_cast<hkResponseType>(nif->get<uint8_t>());
+            nif->skip(1); // Unused
+            nif->read(mProcessContactDelay);
+        }
+        mQualityType = static_cast<hkQualityType>(nif->get<uint8_t>());
+>>>>>>> origin/main
         if (nif->getBethVersion() >= 83)
         {
             nif->read(mAutoRemoveLevel);
@@ -236,6 +264,7 @@ namespace Nif
 
     void bhkConstraintMotorCInfo::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         mType = static_cast<HkMotorType>(nif->get<uint8_t>());
         switch (mType)
         {
@@ -249,6 +278,21 @@ namespace Nif
                 mSpringDamperMotor.read(nif);
                 break;
             case HkMotorType::Motor_None:
+=======
+        mType = static_cast<hkMotorType>(nif->get<uint8_t>());
+        switch (mType)
+        {
+            case hkMotorType::Motor_Position:
+                mPositionMotor.read(nif);
+                break;
+            case hkMotorType::Motor_Velocity:
+                mVelocityMotor.read(nif);
+                break;
+            case hkMotorType::Motor_SpringDamper:
+                mSpringDamperMotor.read(nif);
+                break;
+            case hkMotorType::Motor_None:
+>>>>>>> origin/main
             default:
                 break;
         }
@@ -385,6 +429,7 @@ namespace Nif
 
     void bhkMalleableConstraintCInfo::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         mType = static_cast<HkConstraintType>(nif->get<uint32_t>());
         mInfo.read(nif);
         switch (mType)
@@ -405,6 +450,28 @@ namespace Nif
                 mRagdollInfo.read(nif);
                 break;
             case HkConstraintType::StiffSpring:
+=======
+        mType = static_cast<hkConstraintType>(nif->get<uint32_t>());
+        mInfo.read(nif);
+        switch (mType)
+        {
+            case hkConstraintType::BallAndSocket:
+                mBallAndSocketInfo.read(nif);
+                break;
+            case hkConstraintType::Hinge:
+                mHingeInfo.read(nif);
+                break;
+            case hkConstraintType::LimitedHinge:
+                mLimitedHingeInfo.read(nif);
+                break;
+            case hkConstraintType::Prismatic:
+                mPrismaticInfo.read(nif);
+                break;
+            case hkConstraintType::Ragdoll:
+                mRagdollInfo.read(nif);
+                break;
+            case hkConstraintType::StiffSpring:
+>>>>>>> origin/main
                 mStiffSpringInfo.read(nif);
                 break;
             default:
@@ -424,6 +491,7 @@ namespace Nif
 
     void bhkWrappedConstraintData::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         mType = static_cast<HkConstraintType>(nif->get<uint32_t>());
         mInfo.read(nif);
         switch (mType)
@@ -447,6 +515,31 @@ namespace Nif
                 mStiffSpringInfo.read(nif);
                 break;
             case HkConstraintType::Malleable:
+=======
+        mType = static_cast<hkConstraintType>(nif->get<uint32_t>());
+        mInfo.read(nif);
+        switch (mType)
+        {
+            case hkConstraintType::BallAndSocket:
+                mBallAndSocketInfo.read(nif);
+                break;
+            case hkConstraintType::Hinge:
+                mHingeInfo.read(nif);
+                break;
+            case hkConstraintType::LimitedHinge:
+                mLimitedHingeInfo.read(nif);
+                break;
+            case hkConstraintType::Prismatic:
+                mPrismaticInfo.read(nif);
+                break;
+            case hkConstraintType::Ragdoll:
+                mRagdollInfo.read(nif);
+                break;
+            case hkConstraintType::StiffSpring:
+                mStiffSpringInfo.read(nif);
+                break;
+            case hkConstraintType::Malleable:
+>>>>>>> origin/main
                 mMalleableInfo.read(nif);
                 break;
             default:
@@ -562,7 +655,15 @@ namespace Nif
         if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 0))
             nif->read(mScale);
         readRecordList(nif, mData);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mHavokFilters);
+=======
+        uint32_t numFilters;
+        nif->read(numFilters);
+        mHavokFilters.resize(numFilters);
+        for (HavokFilter& filter : mHavokFilters)
+            filter.read(nif);
+>>>>>>> origin/main
     }
 
     void bhkNiTriStripsShape::post(Reader& nif)
@@ -573,7 +674,17 @@ namespace Nif
     void bhkPackedNiTriStripsShape::read(NIFStream* nif)
     {
         if (nif->getVersion() <= NIFFile::NIFVersion::VER_OB)
+<<<<<<< HEAD
             nif->readVectorOfRecords<uint16_t>(mSubshapes);
+=======
+        {
+            uint16_t numSubshapes;
+            nif->read(numSubshapes);
+            mSubshapes.resize(numSubshapes);
+            for (hkSubPartData& subshape : mSubshapes)
+                subshape.read(nif);
+        }
+>>>>>>> origin/main
         nif->read(mUserData);
         nif->skip(4); // Unused
         nif->read(mRadius);
@@ -590,7 +701,16 @@ namespace Nif
 
     void hkPackedNiTriStripsData::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mTriangles);
+=======
+        uint32_t numTriangles;
+        nif->read(numTriangles);
+        mTriangles.resize(numTriangles);
+        for (uint32_t i = 0; i < numTriangles; i++)
+            mTriangles[i].read(nif);
+
+>>>>>>> origin/main
         uint32_t numVertices;
         nif->read(numVertices);
         bool compressed = false;
@@ -601,7 +721,17 @@ namespace Nif
         else
             nif->skip(6 * numVertices); // Half-precision vectors are not currently supported
         if (nif->getVersion() >= NIFFile::NIFVersion::VER_BGS)
+<<<<<<< HEAD
             nif->readVectorOfRecords<uint16_t>(mSubshapes);
+=======
+        {
+            uint16_t numSubshapes;
+            nif->read(numSubshapes);
+            mSubshapes.resize(numSubshapes);
+            for (hkSubPartData& subshape : mSubshapes)
+                subshape.read(nif);
+        }
+>>>>>>> origin/main
     }
 
     void bhkSphereRepShape::read(NIFStream* nif)
@@ -723,7 +853,13 @@ namespace Nif
         nif->read(mRadius);
         nif->skip(8); // Unknown
         nif->read(mScale);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mShapeProperties);
+=======
+        mShapeProperties.resize(nif->get<uint32_t>());
+        for (bhkWorldObjCInfoProperty& property : mShapeProperties)
+            property.read(nif);
+>>>>>>> origin/main
         nif->skip(12); // Unknown
         readRecordList(nif, mDataList);
     }
@@ -747,12 +883,20 @@ namespace Nif
         mHavokMaterial.read(nif);
         mChildShapeProperty.read(nif);
         mChildFilterProperty.read(nif);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mHavokFilters);
     }
 
     void bhkListShape::post(Reader& nif)
     {
         postRecordList(nif, mSubshapes);
+=======
+        uint32_t numFilters;
+        nif->read(numFilters);
+        mHavokFilters.resize(numFilters);
+        for (HavokFilter& filter : mHavokFilters)
+            filter.read(nif);
+>>>>>>> origin/main
     }
 
     void bhkCompressedMeshShape::read(NIFStream* nif)
@@ -787,12 +931,44 @@ namespace Nif
         nif->skip(nif->get<uint32_t>() * 4); // Unused
         nif->skip(nif->get<uint32_t>() * 4); // Unused
         nif->skip(nif->get<uint32_t>() * 4); // Unused
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mMaterials);
         nif->skip(4); // Unused
         nif->readVectorOfRecords<uint32_t>(mChunkTransforms);
         nif->readVector(mBigVerts, nif->get<uint32_t>());
         nif->readVectorOfRecords<uint32_t>(mBigTris);
         nif->readVectorOfRecords<uint32_t>(mChunks);
+=======
+
+        uint32_t numMaterials;
+        nif->read(numMaterials);
+        mMaterials.resize(numMaterials);
+        for (bhkMeshMaterial& material : mMaterials)
+            material.read(nif);
+
+        nif->skip(4); // Unused
+
+        uint32_t numTransforms;
+        nif->read(numTransforms);
+        mChunkTransforms.resize(numTransforms);
+        for (bhkQsTransform& transform : mChunkTransforms)
+            transform.read(nif);
+
+        nif->readVector(mBigVerts, nif->get<uint32_t>());
+
+        uint32_t numBigTriangles;
+        nif->read(numBigTriangles);
+        mBigTris.resize(numBigTriangles);
+        for (bhkCMSBigTri& tri : mBigTris)
+            tri.read(nif);
+
+        uint32_t numChunks;
+        nif->read(numChunks);
+        mChunks.resize(numChunks);
+        for (bhkCMSChunk& chunk : mChunks)
+            chunk.read(nif);
+
+>>>>>>> origin/main
         nif->skip(4); // Unused
     }
 
@@ -871,7 +1047,13 @@ namespace Nif
         if (numPivots % 2 != 0)
             throw Nif::Exception(
                 "Invalid number of constraints in bhkBallSocketConstraintChain", nif->getFile().getFilename());
+<<<<<<< HEAD
         nif->readVectorOfRecords(numPivots / 2, mConstraints);
+=======
+        mConstraints.resize(numPivots / 2);
+        for (bhkBallAndSocketConstraintCInfo& info : mConstraints)
+            info.read(nif);
+>>>>>>> origin/main
         nif->read(mTau);
         nif->read(mDamping);
         nif->read(mConstraintForceMixing);
@@ -968,7 +1150,13 @@ namespace Nif
         nif->read(mFriction);
         nif->read(mRadius);
         mHavokMaterial.read(nif);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mConstraints);
+=======
+        mConstraints.resize(nif->get<uint32_t>());
+        for (bhkWrappedConstraintData& constraint : mConstraints)
+            constraint.read(nif);
+>>>>>>> origin/main
     }
 
     void bhkPoseArray::BoneTransform::read(NIFStream* nif)
@@ -981,7 +1169,17 @@ namespace Nif
     void bhkPoseArray::read(NIFStream* nif)
     {
         nif->readVector(mBones, nif->get<uint32_t>());
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(readBoneTransformGroup, mPoses);
+=======
+        mPoses.resize(nif->get<uint32_t>());
+        for (std::vector<BoneTransform>& pose : mPoses)
+        {
+            pose.resize(nif->get<uint32_t>());
+            for (BoneTransform& transform : pose)
+                transform.read(nif);
+        }
+>>>>>>> origin/main
     }
 
 } // Namespace

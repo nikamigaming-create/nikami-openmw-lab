@@ -5,7 +5,10 @@
 #include <components/esm3/loadarmo.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
+<<<<<<< HEAD
 #include <components/misc/finitevalues.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 
@@ -46,7 +49,11 @@ namespace
         }
 
         if (rec["weight"] != sol::nil)
+<<<<<<< HEAD
             armor.mData.mWeight = rec["weight"].get<Misc::FiniteFloat>();
+=======
+            armor.mData.mWeight = rec["weight"];
+>>>>>>> origin/main
         if (rec["value"] != sol::nil)
             armor.mData.mValue = rec["value"];
         if (rec["type"] != sol::nil)
@@ -62,7 +69,11 @@ namespace
         if (rec["baseArmor"] != sol::nil)
             armor.mData.mArmor = rec["baseArmor"];
         if (rec["enchantCapacity"] != sol::nil)
+<<<<<<< HEAD
             armor.mData.mEnchant = static_cast<int32_t>(std::round(rec["enchantCapacity"].get<float>() * 10));
+=======
+            armor.mData.mEnchant = std::round(rec["enchantCapacity"].get<float>() * 10);
+>>>>>>> origin/main
 
         return armor;
     }
@@ -101,10 +112,19 @@ namespace MWLua
         record["name"] = sol::readonly_property([](const ESM::Armor& rec) -> std::string { return rec.mName; });
         addModelProperty(record);
         record["icon"] = sol::readonly_property([vfs](const ESM::Armor& rec) -> std::string {
+<<<<<<< HEAD
             return Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(rec.mIcon), *vfs);
         });
         record["enchant"] = sol::readonly_property([](const ESM::Armor& rec) -> ESM::RefId { return rec.mEnchant; });
         record["mwscript"] = sol::readonly_property([](const ESM::Armor& rec) -> ESM::RefId { return rec.mScript; });
+=======
+            return Misc::ResourceHelpers::correctIconPath(rec.mIcon, vfs);
+        });
+        record["enchant"] = sol::readonly_property(
+            [](const ESM::Armor& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mEnchant); });
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::Armor& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
+>>>>>>> origin/main
         record["weight"] = sol::readonly_property([](const ESM::Armor& rec) -> float { return rec.mData.mWeight; });
         record["value"] = sol::readonly_property([](const ESM::Armor& rec) -> int { return rec.mData.mValue; });
         record["type"] = sol::readonly_property([](const ESM::Armor& rec) -> int { return rec.mData.mType; });

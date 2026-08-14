@@ -11,6 +11,13 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+<<<<<<< HEAD
+=======
+#include <algorithm>
+#include <array>
+#include <cctype>
+
+>>>>>>> origin/main
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm3/loadbsgn.hpp>
@@ -27,6 +34,10 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwworld/fnvplayerruntimestate.hpp"
+>>>>>>> origin/main
 #include "../mwworld/player.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -34,8 +45,13 @@
 
 #include "tooltips.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+
 namespace MWGui
 {
+<<<<<<< HEAD
     StatsWindow::StatsWindow(DragAndDrop* drag)
         : WindowPinnableBase("openmw_stats_window.layout")
         , NoDrop(drag, mMainWidget)
@@ -66,7 +82,152 @@ namespace MWGui
                 "SandTextRight", { 160, 0, 44, 18 }, MyGUI::Align::Right | MyGUI::Align::Top);
             value->setNeedMouseFocus(false);
             mAttributeWidgets.emplace(attribute.mId, value);
+=======
+    namespace
+    {
+        std::string lowerAscii(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+>>>>>>> origin/main
         }
+
+        bool isFalloutStatsContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            if (MWBase::Environment::get().getWorld() == nullptr)
+                return false;
+
+            for (std::string file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                file = lowerAscii(std::move(file));
+                if (file.find("falloutnv.esm") != std::string::npos)
+                    return true;
+            }
+
+            return false;
+        }
+
+        std::string falloutAttributeLabel(const ESM::Attribute& attribute)
+        {
+            const std::string name = lowerAscii(attribute.mName);
+            if (name.find("strength") != std::string::npos)
+                return "Strength";
+            if (name.find("intelligence") != std::string::npos)
+                return "Intelligence";
+            if (name.find("willpower") != std::string::npos)
+                return "Perception";
+            if (name.find("agility") != std::string::npos)
+                return "Agility";
+            if (name.find("endurance") != std::string::npos)
+                return "Endurance";
+            if (name.find("personality") != std::string::npos)
+                return "Charisma";
+            if (name.find("luck") != std::string::npos)
+                return "Luck";
+            if (name.find("speed") != std::string::npos)
+                return {};
+            return attribute.mName;
+        }
+
+        std::optional<std::size_t> falloutSpecialIndex(ESM::RefId id)
+        {
+            if (id == ESM::Attribute::Strength)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Strength);
+            if (id == ESM::Attribute::Willpower)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Perception);
+            if (id == ESM::Attribute::Endurance)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Endurance);
+            if (id == ESM::Attribute::Personality)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Charisma);
+            if (id == ESM::Attribute::Intelligence)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Intelligence);
+            if (id == ESM::Attribute::Agility)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Agility);
+            if (id == ESM::Attribute::Luck)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Luck);
+            return std::nullopt;
+        }
+
+        std::optional<std::array<float, 21>> readFalloutActorValues()
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return std::nullopt;
+
+            const MWWorld::FalloutPlayerRuntimeState& state = world->getFalloutPlayerRuntimeState();
+            if (!state.isInitialized())
+                return std::nullopt;
+
+            std::array<float, 21> result{};
+            for (std::size_t index = 0; index < MWWorld::FalloutPlayerState::SpecialCount; ++index)
+            {
+                const auto value = state.getCurrentActorValue(
+                    MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin + static_cast<std::uint32_t>(index));
+                if (!value)
+                    return std::nullopt;
+                result[index] = value->mValue;
+            }
+            for (std::size_t index = 0; index < MWWorld::FalloutPlayerState::SkillCount; ++index)
+            {
+                const auto value = state.getCurrentActorValue(
+                    MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin + static_cast<std::uint32_t>(index));
+                if (!value)
+                    return std::nullopt;
+                result[MWWorld::FalloutPlayerState::SpecialCount + index] = value->mValue;
+            }
+            return result;
+        }
+
+        int falloutDisplayValue(float value)
+        {
+            return static_cast<int>(value);
+        }
+    }
+
+    StatsWindow::StatsWindow(DragAndDrop* drag)
+//## VR_PATCH BEGIN
+        : WindowPinnableBase(VR::getVR() ? "openmw_stats_window_vr.layout" : "openmw_stats_window.layout")
+//## VR_PATCH END
+        , NoDrop(drag, mMainWidget)
+        , mSkillView(nullptr)
+        , mReputation(0)
+        , mBounty(0)
+        , mChanged(true)
+        , mMinFullWidth(mMainWidget->getSize().width)
+    {
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats body begin";
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        MyGUI::Widget* attributeView = getWidget("AttributeView");
+        MyGUI::IntCoord coord{ 0, 0, 204, 18 };
+        const MyGUI::Align alignment = MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch;
+        const bool falloutContent = isFalloutStatsContent();
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats attributes begin fallout=" << falloutContent;
+        for (const ESM::Attribute& attribute : store.get<ESM::Attribute>())
+        {
+            const std::string displayName = falloutContent ? falloutAttributeLabel(attribute) : attribute.mName;
+            if (displayName.empty())
+                continue;
+
+            auto* box = attributeView->createWidget<MyGUI::Button>({}, coord, alignment);
+            box->setUserString("ToolTipType", "Layout");
+            box->setUserString("ToolTipLayout", "AttributeToolTip");
+            box->setUserString("Caption_AttributeName", displayName);
+            box->setUserString("Caption_AttributeDescription", attribute.mDescription);
+            box->setUserString("ImageTexture_AttributeImage", attribute.mIcon);
+            coord.top += coord.height;
+            auto* name = box->createWidget<MyGUI::TextBox>("SandText", { 0, 0, 160, 18 }, alignment);
+            name->setNeedMouseFocus(false);
+            name->setCaption(displayName);
+            auto* value = box->createWidget<MyGUI::TextBox>(
+                "SandTextRight", { 160, 0, 44, 18 }, MyGUI::Align::Right | MyGUI::Align::Top);
+            value->setNeedMouseFocus(false);
+            mAttributeWidgets.emplace(attribute.mId, value);
+        }
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats attributes complete";
 
         getWidget(mSkillView, "SkillView");
         getWidget(mLeftPane, "LeftPane");
@@ -77,6 +238,7 @@ namespace MWGui
             mSkillValues.emplace(skill.mId, MWMechanics::SkillValue());
             mSkillWidgetMap.emplace(skill.mId, std::make_pair<MyGUI::TextBox*, MyGUI::TextBox*>(nullptr, nullptr));
         }
+        Log(Debug::Info) << "FNV/ESM4 UI init: stats skills complete";
 
         MyGUI::Window* t = mMainWidget->castType<MyGUI::Window>();
         t->eventWindowChangeCoord += MyGUI::newDelegate(this, &StatsWindow::onWindowResize);
@@ -89,6 +251,16 @@ namespace MWGui
             mControllerButtons.mB = "#{Interface:Back}";
         }
 
+<<<<<<< HEAD
+=======
+        if (falloutContent)
+        {
+            Log(Debug::Info) << "FNV/ESM4 UI init: stats Fallout refresh begin";
+            refreshFalloutActorValues();
+            Log(Debug::Info) << "FNV/ESM4 proof: stats panel labels loaded HP/AP/WG";
+        }
+
+>>>>>>> origin/main
         onWindowResize(t);
     }
 
@@ -167,9 +339,29 @@ namespace MWGui
 
     void StatsWindow::setAttribute(ESM::RefId id, const MWMechanics::AttributeValue& value)
     {
+<<<<<<< HEAD
         auto it = mAttributeWidgets.find(id);
         if (it != mAttributeWidgets.end())
         {
+=======
+        if (isFalloutStatsContent())
+        {
+            refreshFalloutActorValues();
+            const std::optional<std::size_t> index = falloutSpecialIndex(id);
+            const auto widget = mAttributeWidgets.find(id);
+            if (index && mFalloutActorValues && widget != mAttributeWidgets.end())
+            {
+                widget->second->setCaption(std::to_string(falloutDisplayValue((*mFalloutActorValues)[*index])));
+                widget->second->_setWidgetState("normal");
+            }
+            mChanged = true;
+            return;
+        }
+
+        auto it = mAttributeWidgets.find(id);
+        if (it != mAttributeWidgets.end())
+        {
+>>>>>>> origin/main
             MyGUI::TextBox* box = it->second;
             box->setCaption(std::to_string(static_cast<int>(value.getModified())));
             if (value.getModified() > value.getBase())
@@ -181,11 +373,41 @@ namespace MWGui
         }
     }
 
+<<<<<<< HEAD
     void StatsWindow::setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value)
     {
         int current = static_cast<int>(value.getCurrent());
         int modified = static_cast<int>(value.getModified(false));
 
+=======
+    bool StatsWindow::refreshFalloutActorValues()
+    {
+        const std::optional<std::array<float, 21>> values = readFalloutActorValues();
+        if (values == mFalloutActorValues)
+            return false;
+
+        mFalloutActorValues = values;
+        if (mFalloutActorValues)
+        {
+            for (const auto& [id, widget] : mAttributeWidgets)
+            {
+                const std::optional<std::size_t> index = falloutSpecialIndex(id);
+                if (!index)
+                    continue;
+                widget->setCaption(std::to_string(falloutDisplayValue((*mFalloutActorValues)[*index])));
+                widget->_setWidgetState("normal");
+            }
+        }
+        mChanged = true;
+        return true;
+    }
+
+    void StatsWindow::setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value)
+    {
+        int current = static_cast<int>(value.getCurrent());
+        int modified = static_cast<int>(value.getModified(false));
+
+>>>>>>> origin/main
         // Fatigue can be negative
         if (id != "FBar")
             current = std::max(0, current);
@@ -258,8 +480,13 @@ namespace MWGui
         MyGUI::TextBox* nameWidget = widgets.first;
         if (valueWidget && nameWidget)
         {
+<<<<<<< HEAD
             float modified = value.getModified(), base = value.getBase();
             std::string text = MyGUI::utility::toString(static_cast<int>(modified));
+=======
+            int modified = value.getModified(), base = value.getBase();
+            std::string text = MyGUI::utility::toString(modified);
+>>>>>>> origin/main
             std::string state = "normal";
             if (modified > base)
                 state = "increased";
@@ -341,8 +568,13 @@ namespace MWGui
         bool first = true;
         for (const auto& attribute : store->get<ESM::Attribute>())
         {
+<<<<<<< HEAD
             int mult = playerStats.getLevelupAttributeMultiplier(attribute.mId);
             mult = std::min(mult, static_cast<int>(100 - playerStats.getAttribute(attribute.mId).getBase()));
+=======
+            float mult = playerStats.getLevelupAttributeMultiplier(attribute.mId);
+            mult = std::min(mult, 100 - playerStats.getAttribute(attribute.mId).getBase());
+>>>>>>> origin/main
             if (mult > 1)
             {
                 if (!first)
@@ -376,6 +608,12 @@ namespace MWGui
         setBirthSign(signId);
         setReputation(playerStats.getReputation());
         setBounty(playerStats.getBounty());
+<<<<<<< HEAD
+=======
+
+        if (isFalloutStatsContent())
+            refreshFalloutActorValues();
+>>>>>>> origin/main
 
         if (mChanged)
             updateSkillArea();
@@ -552,6 +790,9 @@ namespace MWGui
         MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
         MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
 
+        if (isFalloutStatsContent() && updateFalloutStatsArea())
+            return;
+
         if (!mMajorSkills.empty())
             addSkills(mMajorSkills, "sSkillClassMajor", "Major Skills", coord1, coord2);
 
@@ -675,8 +916,28 @@ namespace MWGui
             if (!mSkillWidgets.empty())
                 addSeparator(coord1, coord2);
 
+<<<<<<< HEAD
             addGroup(MWBase::Environment::get().getWindowManager()->getGameSettingString("sBirthSign", "Sign"), coord1,
                 coord2);
+=======
+            bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+            if (!falloutContent && MWBase::Environment::get().getWorld())
+            {
+                for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+                {
+                    if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                    {
+                        falloutContent = true;
+                        break;
+                    }
+                }
+            }
+
+            std::string signStr = falloutContent ? "TRAITS" : std::string(MWBase::Environment::get().getWindowManager()->getGameSettingString("sBirthSign", "Sign"));
+            addGroup(signStr, coord1, coord2);
+            if (falloutContent)
+                Log(Debug::Info) << "FNV/ESM4 proof: stats birthsign group applied TRAITS";
+>>>>>>> origin/main
             const ESM::BirthSign* sign = store.get<ESM::BirthSign>().find(mBirthSignId);
             MyGUI::Widget* w = addItem(sign->mName, coord1, coord2);
 
@@ -712,6 +973,78 @@ namespace MWGui
         mSkillView->setVisibleVScroll(false);
         mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
         mSkillView->setVisibleVScroll(true);
+    }
+
+    bool StatsWindow::updateFalloutStatsArea()
+    {
+        const int valueSize = 40;
+        MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
+        MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
+
+        refreshFalloutActorValues();
+        if (!mFalloutActorValues)
+            return false;
+
+        addGroup("S.P.E.C.I.A.L.", coord1, coord2);
+        const std::array<std::pair<std::string_view, MWWorld::FalloutSpecial>, 7> special{ {
+            { "Strength", MWWorld::FalloutSpecial::Strength },
+            { "Perception", MWWorld::FalloutSpecial::Perception },
+            { "Endurance", MWWorld::FalloutSpecial::Endurance },
+            { "Charisma", MWWorld::FalloutSpecial::Charisma },
+            { "Intelligence", MWWorld::FalloutSpecial::Intelligence },
+            { "Agility", MWWorld::FalloutSpecial::Agility },
+            { "Luck", MWWorld::FalloutSpecial::Luck },
+        } };
+        for (const auto& [label, value] : special)
+        {
+            const std::size_t index = static_cast<std::size_t>(value);
+            addValueItem(label, MyGUI::utility::toString(falloutDisplayValue((*mFalloutActorValues)[index])),
+                "normal", coord1, coord2);
+        }
+
+        addSeparator(coord1, coord2);
+        addGroup("SKILLS", coord1, coord2);
+        const std::array<std::pair<std::string_view, MWWorld::FalloutSkill>, 13> falloutSkills{ {
+            { "Barter", MWWorld::FalloutSkill::Barter },
+            { "Energy Weapons", MWWorld::FalloutSkill::EnergyWeapons },
+            { "Explosives", MWWorld::FalloutSkill::Explosives },
+            { "Guns", MWWorld::FalloutSkill::SmallGuns },
+            { "Lockpick", MWWorld::FalloutSkill::Lockpick },
+            { "Medicine", MWWorld::FalloutSkill::Medicine },
+            { "Melee Weapons", MWWorld::FalloutSkill::MeleeWeapons },
+            { "Repair", MWWorld::FalloutSkill::Repair },
+            { "Science", MWWorld::FalloutSkill::Science },
+            { "Sneak", MWWorld::FalloutSkill::Sneak },
+            { "Speech", MWWorld::FalloutSkill::Speech },
+            { "Survival", MWWorld::FalloutSkill::SurvivalOrThrowing },
+            { "Unarmed", MWWorld::FalloutSkill::Unarmed },
+        } };
+        for (const auto& [label, value] : falloutSkills)
+        {
+            const std::size_t index
+                = MWWorld::FalloutPlayerState::SpecialCount + static_cast<std::size_t>(value);
+            addValueItem(label, MyGUI::utility::toString(falloutDisplayValue((*mFalloutActorValues)[index])),
+                "normal", coord1, coord2);
+        }
+
+        addSeparator(coord1, coord2);
+        addGroup("REPUTATION", coord1, coord2);
+        addValueItem("Reputation", MyGUI::utility::toString(static_cast<int>(mReputation)), "normal", coord1, coord2);
+        addValueItem("Bounty", MyGUI::utility::toString(static_cast<int>(mBounty)), "normal", coord1, coord2);
+
+        mSkillView->setVisibleVScroll(false);
+        mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
+        mSkillView->setVisibleVScroll(true);
+
+        static bool loggedFalloutStatsArea = false;
+        if (!loggedFalloutStatsArea)
+        {
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: Fallout stats area applied SPECIAL/SKILLS Barter Guns Lockpick Medicine Science";
+            loggedFalloutStatsArea = true;
+        }
+
+        return true;
     }
 
     void StatsWindow::onPinToggled()

@@ -23,6 +23,34 @@ namespace ESM
     class ESMReader;
     class ESMWriter;
 
+<<<<<<< HEAD
+=======
+    enum class FalloutActiveEffectKind : std::uint32_t
+    {
+        HealthDamage = 0,
+        ActorValueModifier = 1,
+        Paralysis = 2,
+    };
+
+    /// Save-game representation of a running native Fallout actor effect. Source records remain authoritative for
+    /// presentation and script execution; this snapshot retains only the time-dependent gameplay state needed to
+    /// resume an effect exactly after loading a save.
+    struct FalloutActiveEffect
+    {
+        RefId mSpell;
+        RefId mBaseEffect;
+        FalloutActiveEffectKind mKind = FalloutActiveEffectKind::HealthDamage;
+        std::uint32_t mFlags = 0;
+        std::int32_t mActorValue = -1;
+        float mMagnitude = 0.f;
+        float mDuration = 0.f;
+        float mTimeLeft = 0.f;
+        std::int32_t mCasterActorId = -1;
+
+        friend bool operator==(const FalloutActiveEffect&, const FalloutActiveEffect&) = default;
+    };
+
+>>>>>>> origin/main
     // format 0, saved games only
     struct CreatureStats
     {
@@ -43,7 +71,11 @@ namespace ESM
         std::array<StatState<int>, 4> mAiSettings;
 
         std::map<SummonKey, int> mSummonedCreatureMap;
+<<<<<<< HEAD
         std::multimap<ESM::RefId, RefNum> mSummonedCreatures;
+=======
+        std::multimap<int, int> mSummonedCreatures;
+>>>>>>> origin/main
         std::vector<int> mSummonGraveyard;
 
         TimeStamp mTradeTime;
@@ -89,6 +121,15 @@ namespace ESM
         int32_t mLevel;
         bool mMissingACDT;
 
+<<<<<<< HEAD
+=======
+        // Accumulated native Fallout limb damage for actor values 25..31. Optional FLMB keeps old saves valid.
+        std::array<float, 7> mFalloutLimbDamage{};
+
+        // Optional repeated FAEF groups keep old saves valid and do not reinterpret ESM3 ActiveSpells.
+        std::vector<FalloutActiveEffect> mFalloutActiveEffects;
+
+>>>>>>> origin/main
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;
         ActiveSpells mActiveSpells;

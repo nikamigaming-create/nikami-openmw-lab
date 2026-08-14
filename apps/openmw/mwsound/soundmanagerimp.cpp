@@ -1,6 +1,7 @@
 #include "soundmanagerimp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <numeric>
 #include <sstream>
@@ -16,6 +17,10 @@
 #include <components/vfs/recursivedirectoryiterator.hpp>
 
 #include "../mwbase/environment.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/mechanicsmanager.hpp"
+>>>>>>> origin/main
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -25,6 +30,11 @@
 
 #include "../mwmechanics/actorutil.hpp"
 
+<<<<<<< HEAD
+=======
+#include "../mwdialogue/esm4dialogueutils.hpp"
+
+>>>>>>> origin/main
 #include "constants.hpp"
 #include "ffmpegdecoder.hpp"
 #include "openaloutput.hpp"
@@ -101,6 +111,42 @@ namespace MWSound
 
             return volume;
         }
+<<<<<<< HEAD
+=======
+
+        bool isLegacyMorrowindMusicRequest(VFS::Path::NormalizedView filename)
+        {
+            constexpr std::string_view explorePrefix = "music/explore/";
+            const std::string_view value = filename.value();
+
+            return value == titleMusic.value() || (value.size() >= explorePrefix.size()
+                && value.substr(0, explorePrefix.size()) == explorePrefix);
+        }
+
+        VFS::Path::NormalizedView getNewVegasFallbackMusic(
+            const VFS::Manager& vfs, VFS::Path::NormalizedView requested)
+        {
+            static constexpr std::array tracks = {
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_2mid.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_3high.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_night_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertexploration/mus_loc_desexpl_day_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertexploration/mus_loc_desexpl_night_1low.mp3"),
+            };
+
+            if (!isLegacyMorrowindMusicRequest(requested))
+                return requested;
+
+            for (VFS::Path::NormalizedView track : tracks)
+            {
+                if (vfs.exists(track))
+                    return track;
+            }
+
+            return requested;
+        }
+>>>>>>> origin/main
     }
 
     // For combining PlayMode and Type flags
@@ -179,6 +225,10 @@ namespace MWSound
         {
             DecoderPtr decoder = getDecoder();
             decoder->open(Misc::ResourceHelpers::correctSoundPath(voicefile, *decoder->mResourceMgr));
+<<<<<<< HEAD
+=======
+            Log(Debug::Info) << "FNV/ESM4 sound: loaded voice \"" << voicefile << "\"";
+>>>>>>> origin/main
             return decoder;
         }
         catch (std::exception& e)
@@ -241,6 +291,10 @@ namespace MWSound
         }
         if (!played)
             return nullptr;
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 sound: started voice stream";
+>>>>>>> origin/main
         return sound;
     }
 
@@ -309,10 +363,22 @@ namespace MWSound
         if (mMusicType == MusicType::MWScript && type != MusicType::MWScript)
             return;
 
+<<<<<<< HEAD
+=======
+        const VFS::Path::NormalizedView remapped = getNewVegasFallbackMusic(*mVFS, filename);
+        if (remapped != filename)
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
+                             << "\"";
+            filename = remapped;
+        }
+
+>>>>>>> origin/main
         mMusicType = type;
         advanceMusic(filename, fade);
     }
 
+<<<<<<< HEAD
     void SoundManager::say(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename)
     {
         if (!mOutput->isInitialized())
@@ -748,10 +814,591 @@ namespace MWSound
                            return snd.second == sfx && mOutput->isSoundPlaying(snd.first.get());
                        })
                 != snditer->second.mList.cend();
+=======
+    bool SoundManager::startSay(
+        const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename, bool replace)
+    {
+        if (!mOutput->isInitialized())
+            return false;
+
+        DecoderPtr decoder = loadVoice(filename);
+        if (!decoder)
+            return false;
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const osg::Vec3f pos = world->getActorHeadTransform(ptr).getTrans();
+
+        if (replace)
+            stopSay(ptr);
+        StreamPtr sound = playVoice(std::move(decoder), pos, (ptr == MWMechanics::getPlayer()));
+        if (!sound)
+            return false;
+
+        std::shared_ptr<const ESM4::LipAnimation> lip;
+        std::string lipName(filename.value());
+        const std::size_t extension = lipName.find_last_of('.');
+        if (extension != std::string::npos)
+            lipName.replace(extension, std::string::npos, ".lip");
+        else
+            lipName += ".lip";
+        const VFS::Path::Normalized lipPath(std::move(lipName));
+        if (mVFS->exists(lipPath))
+        {
+            try
+            {
+                Files::IStreamPtr stream = mVFS->get(lipPath);
+                lip = std::make_shared<ESM4::LipAnimation>(ESM4::LipAnimation::load(*stream));
+                Log(Debug::Info) << "FNV/ESM4 dialogue: loaded authored LIP path=\"" << lipPath
+                                 << "\" startFrame=" << lip->getStartFrame()
+                                 << " frames=" << lip->getFrameCount();
+            }
+            catch (const std::exception& error)
+            {
+                Log(Debug::Warning) << "Failed to load Fallout LIP \"" << lipPath << "\": " << error.what();
+            }
+        }
+
+        mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound), std::move(lip) });
+        return true;
+    }
+
+    void SoundManager::say(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView filename)
+    {
+        startSay(ptr, filename, true);
+    }
+
+    void SoundManager::saySequence(
+        const MWWorld::ConstPtr& ptr, std::span<const VFS::Path::Normalized> filenames,
+        std::span<const MWBase::FalloutDialogueVoiceMetadata> metadata)
+    {
+        stopSay(ptr);
+        if (!mOutput->isInitialized() || filenames.empty())
+            return;
+
+        ActorSaySequence& sequence = mSaySequences[ptr.mRef];
+        sequence.mCell = ptr.mCell;
+        sequence.mVoices.replace(filenames);
+        sequence.mMetadata.clear();
+        for (std::size_t i = 0; i < filenames.size(); ++i)
+            sequence.mMetadata.push_back(i < metadata.size() ? metadata[i] : MWBase::FalloutDialogueVoiceMetadata{});
+        startNextSaySequence(ptr);
+    }
+
+    bool SoundManager::startNextSaySequence(const MWWorld::ConstPtr& ptr)
+    {
+        const auto found = mSaySequences.find(ptr.mRef);
+        if (found == mSaySequences.end())
+            return false;
+
+        while (const VFS::Path::Normalized* voice = found->second.mVoices.beginNext())
+        {
+            MWBase::FalloutDialogueVoiceMetadata metadata;
+            if (!found->second.mMetadata.empty())
+            {
+                metadata = std::move(found->second.mMetadata.front());
+                found->second.mMetadata.pop_front();
+            }
+            if ((metadata.mFlags & 0x01) != 0)
+                MWDialogue::setEsm4DialogueExpression(
+                    ptr.mRef, metadata.mEmotionType, metadata.mEmotionValue);
+            if (!metadata.mSpeakerAnimation.empty())
+                MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                    ptr, metadata.mSpeakerAnimation);
+            if (!metadata.mListenerAnimation.empty())
+                MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
+                    MWBase::Environment::get().getWorld()->getPlayerPtr(), metadata.mListenerAnimation);
+            Log(Debug::Info) << "FNV/ESM4 dialogue: applying authored voice segment emotionType="
+                             << metadata.mEmotionType << " emotionValue=" << metadata.mEmotionValue
+                             << " flags=0x" << std::hex << static_cast<unsigned int>(metadata.mFlags) << std::dec
+                             << " speakerAnimation=" << metadata.mSpeakerAnimation
+                             << " listenerAnimation=" << metadata.mListenerAnimation << " path=\"" << *voice
+                             << "\"";
+            if (startSay(ptr, *voice, false))
+                return true;
+            found->second.mVoices.finishCurrent();
+        }
+
+        mSaySequences.erase(found);
+        return false;
+    }
+
+    float SoundManager::getSaySoundLoudness(const MWWorld::ConstPtr& ptr) const
+    {
+        SaySoundMap::const_iterator snditer = mActiveSaySounds.find(ptr.mRef);
+        if (snditer != mActiveSaySounds.end())
+        {
+            Stream* sound = snditer->second.mStream.get();
+            return mOutput->getStreamLoudness(sound);
+        }
+
+        return 0.0f;
+    }
+
+    float SoundManager::getSaySoundFacialTrackValue(
+        const MWWorld::ConstPtr& ptr, std::string_view trackName) const
+    {
+        const auto evaluate = [&](const SaySoundMap& sounds) {
+            const SaySoundMap::const_iterator found = sounds.find(ptr.mRef);
+            if (found == sounds.end() || found->second.mLip == nullptr
+                || !mOutput->isStreamPlaying(found->second.mStream.get()))
+                return 0.f;
+            const double seconds = mOutput->getStreamOffset(found->second.mStream.get());
+            return found->second.mLip->getValue(trackName, seconds);
+        };
+
+        const float queued = evaluate(mSaySoundsQueue);
+        if (queued != 0.f || mSaySoundsQueue.find(ptr.mRef) != mSaySoundsQueue.end())
+            return queued;
+        return evaluate(mActiveSaySounds);
+    }
+
+    void SoundManager::say(VFS::Path::NormalizedView filename)
+    {
+        if (!mOutput->isInitialized())
+            return;
+
+        DecoderPtr decoder = loadVoice(filename);
+        if (!decoder)
+            return;
+
+        stopSay(MWWorld::ConstPtr());
+        StreamPtr sound = playVoice(std::move(decoder), osg::Vec3f(), true);
+        if (!sound)
+            return;
+
+        mActiveSaySounds.emplace(nullptr, SaySound{ nullptr, std::move(sound), nullptr });
+    }
+
+    bool SoundManager::sayDone(const MWWorld::ConstPtr& ptr) const
+    {
+        if (mSaySequences.find(ptr.mRef) != mSaySequences.end())
+            return false;
+
+        SaySoundMap::const_iterator snditer = mActiveSaySounds.find(ptr.mRef);
+        if (snditer != mActiveSaySounds.end())
+        {
+            if (mOutput->isStreamPlaying(snditer->second.mStream.get()))
+                return false;
+            return true;
+        }
+        return true;
+    }
+
+    bool SoundManager::sayActive(const MWWorld::ConstPtr& ptr) const
+    {
+        SaySoundMap::const_iterator snditer = mSaySoundsQueue.find(ptr.mRef);
+        if (snditer != mSaySoundsQueue.end())
+        {
+            if (mOutput->isStreamPlaying(snditer->second.mStream.get()))
+                return true;
+            return false;
+        }
+
+        snditer = mActiveSaySounds.find(ptr.mRef);
+        if (snditer != mActiveSaySounds.end())
+        {
+            if (mOutput->isStreamPlaying(snditer->second.mStream.get()))
+                return true;
+            return false;
+        }
+
+        return false;
+    }
+
+    void SoundManager::stopSay(const MWWorld::ConstPtr& ptr)
+    {
+        mSaySequences.erase(ptr.mRef);
+
+        SaySoundMap::iterator snditer = mSaySoundsQueue.find(ptr.mRef);
+        if (snditer != mSaySoundsQueue.end())
+        {
+            mOutput->finishStream(snditer->second.mStream.get());
+            mSaySoundsQueue.erase(snditer);
+        }
+
+        snditer = mActiveSaySounds.find(ptr.mRef);
+        if (snditer != mActiveSaySounds.end())
+        {
+            mOutput->finishStream(snditer->second.mStream.get());
+            mActiveSaySounds.erase(snditer);
+        }
+    }
+
+    Stream* SoundManager::playTrack(const DecoderPtr& decoder, Type type)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        StreamPtr track = getStreamRef();
+        track->init([&] {
+            SoundParams params;
+            params.mBaseVolume = volumeFromType(type);
+            params.mFlags = PlayMode::NoEnvNoScaling | type | Play_2D;
+            return params;
+        }());
+        if (!mOutput->streamSound(decoder, track.get()))
+            return nullptr;
+
+        Stream* result = track.get();
+        const auto it = std::lower_bound(mActiveTracks.begin(), mActiveTracks.end(), track);
+        mActiveTracks.insert(it, std::move(track));
+        return result;
+    }
+
+    void SoundManager::stopTrack(Stream* stream)
+    {
+        mOutput->finishStream(stream);
+        TrackList::iterator iter = std::lower_bound(mActiveTracks.begin(), mActiveTracks.end(), stream,
+            [](const StreamPtr& lhs, Stream* rhs) { return lhs.get() < rhs; });
+        if (iter != mActiveTracks.end() && iter->get() == stream)
+            mActiveTracks.erase(iter);
+    }
+
+    double SoundManager::getTrackTimeDelay(Stream* stream)
+    {
+        return mOutput->getStreamDelay(stream);
+    }
+
+    bool SoundManager::remove3DSoundAtDistance(PlayMode mode, const MWWorld::ConstPtr& ptr) const
+    {
+        if (!mOutput->isInitialized())
+            return true;
+
+        const osg::Vec3f objpos(ptr.getRefData().getPosition().asVec3());
+        const float squaredDist = (mListenerPos - objpos).length2();
+        if ((mode & PlayMode::RemoveAtDistance) && squaredDist > sSoundCullDistance * sSoundCullDistance)
+            return true;
+
+        return false;
+    }
+
+    Sound* SoundManager::playSound(SoundBuffer* sfx, float volume, float pitch, Type type, PlayMode mode, float offset)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        // Only one copy of given sound can be played at time, so stop previous copy
+        stopSound(sfx, MWWorld::ConstPtr());
+
+        SoundPtr sound = getSoundRef();
+        sound->init([&] {
+            SoundParams params;
+            params.mVolume = volume * sfx->getVolume();
+            params.mBaseVolume = volumeFromType(type);
+            params.mPitch = pitch;
+            params.mFlags = mode | type | Play_2D;
+            return params;
+        }());
+        if (!mOutput->playSound(sound.get(), sfx->getHandle(), offset))
+            return nullptr;
+
+        Sound* result = sound.get();
+        mActiveSounds[nullptr].mList.emplace_back(std::move(sound), sfx);
+        mSoundBuffers.use(*sfx);
+        return result;
+    }
+
+    Sound* SoundManager::playSound(
+        std::string_view fileName, float volume, float pitch, Type type, PlayMode mode, float offset)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        if (!mVFS->exists(normalizedName))
+            return nullptr;
+
+        SoundBuffer* sfx = mSoundBuffers.load(normalizedName);
+        if (!sfx)
+            return nullptr;
+
+        return playSound(sfx, volume, pitch, type, mode, offset);
+    }
+
+    Sound* SoundManager::playSound(
+        const ESM::RefId& soundId, float volume, float pitch, Type type, PlayMode mode, float offset)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        SoundBuffer* sfx = mSoundBuffers.load(soundId);
+        if (!sfx)
+            return nullptr;
+
+        return playSound(sfx, volume, pitch, type, mode, offset);
+    }
+
+    Sound* SoundManager::playSound3D(const MWWorld::ConstPtr& ptr, SoundBuffer* sfx, float volume, float pitch,
+        Type type, PlayMode mode, float offset)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        // Only one copy of given sound can be played at time on ptr, so stop previous copy
+        stopSound(sfx, ptr);
+
+        const osg::Vec3f objpos(ptr.getRefData().getPosition().asVec3());
+        const float squaredDist = (mListenerPos - objpos).length2();
+
+        bool played;
+        SoundPtr sound = getSoundRef();
+        if (!(mode & PlayMode::NoPlayerLocal) && ptr == MWMechanics::getPlayer())
+        {
+            sound->init([&] {
+                SoundParams params;
+                params.mVolume = volume * sfx->getVolume();
+                params.mBaseVolume = volumeFromType(type);
+                params.mPitch = pitch;
+                params.mFlags = mode | type | Play_2D;
+                return params;
+            }());
+            played = mOutput->playSound(sound.get(), sfx->getHandle(), offset);
+        }
+        else
+        {
+            sound->init([&] {
+                SoundParams params;
+                params.mPos = objpos;
+                params.mVolume = volume * sfx->getVolume();
+                params.mBaseVolume = volumeFromType(type);
+                params.mFadeVolume = initialFadeVolume(squaredDist, sfx, type, mode);
+                params.mPitch = pitch;
+                params.mMinDistance = sfx->getMinDist();
+                params.mMaxDistance = sfx->getMaxDist();
+                params.mFlags = mode | type | Play_3D;
+                return params;
+            }());
+            played = mOutput->playSound3D(sound.get(), sfx->getHandle(), offset);
+        }
+        if (!played)
+            return nullptr;
+
+        Sound* result = sound.get();
+        auto it = mActiveSounds.find(ptr.mRef);
+        if (it == mActiveSounds.end())
+            it = mActiveSounds.emplace(ptr.mRef, ActiveSound{ ptr.mCell, {} }).first;
+        it->second.mList.emplace_back(std::move(sound), sfx);
+        mSoundBuffers.use(*sfx);
+        return result;
+    }
+
+    Sound* SoundManager::playSound3D(const MWWorld::ConstPtr& ptr, const ESM::RefId& soundId, float volume, float pitch,
+        Type type, PlayMode mode, float offset)
+    {
+        if (remove3DSoundAtDistance(mode, ptr))
+            return nullptr;
+
+        // Look up the sound in the ESM data
+        SoundBuffer* sfx = mSoundBuffers.load(soundId);
+        if (!sfx)
+            return nullptr;
+
+        return playSound3D(ptr, sfx, volume, pitch, type, mode, offset);
+    }
+
+    Sound* SoundManager::playSound3D(const MWWorld::ConstPtr& ptr, std::string_view fileName, float volume, float pitch,
+        Type type, PlayMode mode, float offset)
+    {
+        if (remove3DSoundAtDistance(mode, ptr))
+            return nullptr;
+
+        // Look up the sound
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        if (!mVFS->exists(normalizedName))
+            return nullptr;
+
+        SoundBuffer* sfx = mSoundBuffers.load(normalizedName);
+        if (!sfx)
+            return nullptr;
+
+        return playSound3D(ptr, sfx, volume, pitch, type, mode, offset);
+    }
+
+    Sound* SoundManager::playSound3D(const osg::Vec3f& initialPos, const ESM::RefId& soundId, float volume, float pitch,
+        Type type, PlayMode mode, float offset)
+    {
+        if (!mOutput->isInitialized())
+            return nullptr;
+
+        // Look up the sound in the ESM data
+        SoundBuffer* sfx = mSoundBuffers.load(soundId);
+        if (!sfx)
+            return nullptr;
+
+        const float squaredDist = (mListenerPos - initialPos).length2();
+
+        SoundPtr sound = getSoundRef();
+        sound->init([&] {
+            SoundParams params;
+            params.mPos = initialPos;
+            params.mVolume = volume * sfx->getVolume();
+            params.mBaseVolume = volumeFromType(type);
+            params.mFadeVolume = initialFadeVolume(squaredDist, sfx, type, mode);
+            params.mPitch = pitch;
+            params.mMinDistance = sfx->getMinDist();
+            params.mMaxDistance = sfx->getMaxDist();
+            params.mFlags = mode | type | Play_3D;
+            return params;
+        }());
+        if (!mOutput->playSound3D(sound.get(), sfx->getHandle(), offset))
+            return nullptr;
+
+        Sound* result = sound.get();
+        mActiveSounds[nullptr].mList.emplace_back(std::move(sound), sfx);
+        mSoundBuffers.use(*sfx);
+        return result;
+    }
+
+    void SoundManager::stopSound(Sound* sound)
+    {
+        if (sound)
+            mOutput->finishSound(sound);
+    }
+
+    void SoundManager::stopSound(SoundBuffer* sfx, const MWWorld::ConstPtr& ptr)
+    {
+        SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer != mActiveSounds.end())
+        {
+            for (SoundBufferRefPair& snd : snditer->second.mList)
+            {
+                if (snd.second == sfx)
+                    mOutput->finishSound(snd.first.get());
+            }
+        }
+    }
+
+    void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr, const ESM::RefId& soundId)
+    {
+        if (!mOutput->isInitialized())
+            return;
+
+        SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+        if (!sfx)
+            return;
+
+        stopSound(sfx, ptr);
+    }
+
+    void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr, std::string_view fileName)
+    {
+        if (!mOutput->isInitialized())
+            return;
+
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        SoundBuffer* sfx = mSoundBuffers.lookup(normalizedName);
+        if (!sfx)
+            return;
+
+        stopSound(sfx, ptr);
+    }
+
+    void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr)
+    {
+        SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer != mActiveSounds.end())
+        {
+            for (SoundBufferRefPair& snd : snditer->second.mList)
+                mOutput->finishSound(snd.first.get());
+        }
+        SaySoundMap::iterator sayiter = mSaySoundsQueue.find(ptr.mRef);
+        if (sayiter != mSaySoundsQueue.end())
+            mOutput->finishStream(sayiter->second.mStream.get());
+        sayiter = mActiveSaySounds.find(ptr.mRef);
+        if (sayiter != mActiveSaySounds.end())
+            mOutput->finishStream(sayiter->second.mStream.get());
+        mSaySequences.erase(ptr.mRef);
+    }
+
+    void SoundManager::stopSound(const MWWorld::CellStore* cell)
+    {
+        for (auto& [ref, sound] : mActiveSounds)
+        {
+            if (ref != nullptr && ref != MWMechanics::getPlayer().mRef && sound.mCell == cell)
+            {
+                for (SoundBufferRefPair& sndbuf : sound.mList)
+                    mOutput->finishSound(sndbuf.first.get());
+            }
+        }
+
+        for (const auto& [ref, sound] : mSaySoundsQueue)
+        {
+            if (ref != nullptr && ref != MWMechanics::getPlayer().mRef && sound.mCell == cell)
+                mOutput->finishStream(sound.mStream.get());
+        }
+
+        for (const auto& [ref, sound] : mActiveSaySounds)
+        {
+            if (ref != nullptr && ref != MWMechanics::getPlayer().mRef && sound.mCell == cell)
+                mOutput->finishStream(sound.mStream.get());
+        }
+
+        for (auto sequence = mSaySequences.begin(); sequence != mSaySequences.end();)
+        {
+            if (sequence->first != nullptr && sequence->first != MWMechanics::getPlayer().mRef
+                && sequence->second.mCell == cell)
+                sequence = mSaySequences.erase(sequence);
+            else
+                ++sequence;
+        }
+    }
+
+    void SoundManager::fadeOutSound3D(const MWWorld::ConstPtr& ptr, const ESM::RefId& soundId, float duration)
+    {
+        SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer != mActiveSounds.end())
+        {
+            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+            if (sfx == nullptr)
+                return;
+            for (SoundBufferRefPair& sndbuf : snditer->second.mList)
+            {
+                if (sndbuf.second == sfx)
+                    sndbuf.first->setFadeout(duration);
+            }
+>>>>>>> origin/main
         }
         return false;
     }
 
+<<<<<<< HEAD
+    bool SoundManager::getSoundPlaying(const MWWorld::ConstPtr& ptr, const ESM::RefId& soundId) const
+    {
+        SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer != mActiveSounds.end())
+        {
+            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+=======
+    bool SoundManager::getSoundPlaying(const MWWorld::ConstPtr& ptr, std::string_view fileName) const
+    {
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+
+        SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
+        if (snditer != mActiveSounds.end())
+        {
+            SoundBuffer* sfx = mSoundBuffers.lookup(normalizedName);
+>>>>>>> origin/main
+            if (!sfx)
+                return false;
+
+            return std::find_if(snditer->second.mList.cbegin(), snditer->second.mList.cend(),
+                       [this, sfx](const SoundBufferRefPair& snd) -> bool {
+                           return snd.second == sfx && mOutput->isSoundPlaying(snd.first.get());
+                       })
+                != snditer->second.mList.cend();
+        }
+        return false;
+    }
+
+<<<<<<< HEAD
+    void SoundManager::pauseSounds(BlockerType blocker, int types)
+    {
+        if (mOutput->isInitialized())
+        {
+            if (mPausedSoundTypes[blocker] != 0)
+                resumeSounds(blocker);
+
+=======
     bool SoundManager::getSoundPlaying(const MWWorld::ConstPtr& ptr, const ESM::RefId& soundId) const
     {
         SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
@@ -777,6 +1424,7 @@ namespace MWSound
             if (mPausedSoundTypes[blocker] != 0)
                 resumeSounds(blocker);
 
+>>>>>>> origin/main
             types = types & Type::Mask;
             mOutput->pauseSounds(types);
             mPausedSoundTypes[blocker] = types;
@@ -927,6 +1575,7 @@ namespace MWSound
 
     void SoundManager::updateSounds(float duration)
     {
+<<<<<<< HEAD
         // We update active say sounds map for specific actors here
         // because for vanilla compatibility we can't do it immediately.
         SaySoundMap::iterator queuesayiter = mSaySoundsQueue.begin();
@@ -940,6 +1589,23 @@ namespace MWSound
             mSaySoundsQueue.erase(queuesayiter++);
         }
 
+=======
+        std::vector<MWWorld::ConstPtr> completedSaySequences;
+
+        // We update active say sounds map for specific actors here
+        // because for vanilla compatibility we can't do it immediately.
+        SaySoundMap::iterator queuesayiter = mSaySoundsQueue.begin();
+        while (queuesayiter != mSaySoundsQueue.end())
+        {
+            const auto dst = mActiveSaySounds.find(queuesayiter->first);
+            if (dst == mActiveSaySounds.end())
+                mActiveSaySounds.emplace(queuesayiter->first, std::move(queuesayiter->second));
+            else
+                dst->second = std::move(queuesayiter->second);
+            mSaySoundsQueue.erase(queuesayiter++);
+        }
+
+>>>>>>> origin/main
         mTimePassed += duration;
         if (mTimePassed < sMinUpdateInterval)
             return;
@@ -1028,6 +1694,14 @@ namespace MWSound
             if (!sound->updateFade(duration) || !mOutput->isStreamPlaying(sound))
             {
                 mOutput->finishStream(sound);
+<<<<<<< HEAD
+=======
+                if (const auto sequence = mSaySequences.find(sayiter->first); sequence != mSaySequences.end())
+                {
+                    sequence->second.mVoices.finishCurrent();
+                    completedSaySequences.emplace_back(sayiter->first, sequence->second.mCell);
+                }
+>>>>>>> origin/main
                 sayiter = mActiveSaySounds.erase(sayiter);
             }
             else
@@ -1063,6 +1737,12 @@ namespace MWSound
                     = playSound(ESM::RefId::stringRefId("Underwater"), 1.0f, 1.0f, Type::Sfx, PlayMode::LoopNoEnv);
         }
         mOutput->finishUpdate();
+<<<<<<< HEAD
+=======
+
+        for (const MWWorld::ConstPtr& actor : completedSaySequences)
+            startNextSaySequence(actor);
+>>>>>>> origin/main
     }
 
     void SoundManager::updateMusic(float duration)
@@ -1174,6 +1854,12 @@ namespace MWSound
 
         if (const auto it = mActiveSaySounds.find(old.mRef); it != mActiveSaySounds.end())
             it->second.mCell = updated.mCell;
+<<<<<<< HEAD
+=======
+
+        if (const auto it = mSaySequences.find(old.mRef); it != mSaySequences.end())
+            it->second.mCell = updated.mCell;
+>>>>>>> origin/main
     }
 
     // Default readAll implementation, for decoders that can't do anything
@@ -1288,6 +1974,10 @@ namespace MWSound
         for (SaySoundMap::value_type& snd : mActiveSaySounds)
             mOutput->finishStream(snd.second.mStream.get());
         mActiveSaySounds.clear();
+<<<<<<< HEAD
+=======
+        mSaySequences.clear();
+>>>>>>> origin/main
 
         for (StreamPtr& sound : mActiveTracks)
             mOutput->finishStream(sound.get());

@@ -26,6 +26,10 @@
 #ifndef OPENMW_COMPONENTS_BSA_COMPRESSEDBSAFILE_HPP
 #define OPENMW_COMPONENTS_BSA_COMPRESSEDBSAFILE_HPP
 
+<<<<<<< HEAD
+=======
+#include <filesystem>
+>>>>>>> origin/main
 #include <limits>
 #include <map>
 
@@ -111,7 +115,11 @@ namespace Bsa
         FileRecord getFileRecord(std::string_view str) const;
 
         /// \brief Normalizes given filename or folder and generates format-compatible hash.
+<<<<<<< HEAD
         static std::uint64_t generateHash(std::string_view stem, std::string_view extension);
+=======
+        static std::uint64_t generateHash(const std::filesystem::path& stem, std::string extension);
+>>>>>>> origin/main
         Files::IStreamPtr getFile(const FileRecord& fileRecord);
 
     public:
@@ -126,6 +134,10 @@ namespace Bsa
         /// Read header information from the input source
         void readHeader(std::istream& input) override;
 
+<<<<<<< HEAD
+=======
+        Files::IStreamPtr getFile(const char* filePath);
+>>>>>>> origin/main
         Files::IStreamPtr getFile(const FileStruct* fileStruct);
         void addFile(const std::string& filename, std::istream& file);
     };

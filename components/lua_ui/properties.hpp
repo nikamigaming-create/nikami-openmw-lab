@@ -12,6 +12,7 @@
 namespace LuaUi
 {
     template <typename T>
+<<<<<<< HEAD
     constexpr bool isMyGuiIntVector()
     {
         return std::is_same<T, MyGUI::IntPoint>() || std::is_same<T, MyGUI::IntSize>();
@@ -21,6 +22,12 @@ namespace LuaUi
     constexpr bool isMyGuiVector()
     {
         return isMyGuiIntVector<T>() || std::is_same<T, MyGUI::FloatPoint>() || std::is_same<T, MyGUI::FloatSize>();
+=======
+    constexpr bool isMyGuiVector()
+    {
+        return std::is_same<T, MyGUI::IntPoint>() || std::is_same<T, MyGUI::IntSize>()
+            || std::is_same<T, MyGUI::FloatPoint>() || std::is_same<T, MyGUI::FloatSize>();
+>>>>>>> origin/main
     }
 
     template <typename T>
@@ -47,9 +54,13 @@ namespace LuaUi
             return sol::nullopt;
 
         LuaT luaT = opt.as<LuaT>();
+<<<<<<< HEAD
         if constexpr (isMyGuiIntVector<T>())
             return T(static_cast<int>(luaT.x()), static_cast<int>(luaT.y()));
         else if constexpr (isMyGuiVector<T>())
+=======
+        if constexpr (isMyGuiVector<T>())
+>>>>>>> origin/main
             return T(luaT.x(), luaT.y());
         else if constexpr (isMyGuiColor<T>())
             return T(luaT.r(), luaT.g(), luaT.b(), luaT.a());

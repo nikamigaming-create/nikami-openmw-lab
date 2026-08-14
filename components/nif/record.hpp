@@ -97,6 +97,10 @@ namespace Nif
         RC_BSEffectShaderPropertyFloatController,
         RC_BSExtraData,
         RC_BSEyeCenterExtraData,
+<<<<<<< HEAD
+=======
+        RC_BSFaceFX,
+>>>>>>> origin/main
         RC_BSFrustumFOVController,
         RC_BSFurnitureMarker,
         RC_BSInvMarker,
@@ -149,6 +153,11 @@ namespace Nif
         RC_BSWaterShaderProperty,
         RC_BSWindModifier,
         RC_BSXFlags,
+<<<<<<< HEAD
+=======
+        RC_BoneModifierExtra,
+        RC_BoneTranslations,
+>>>>>>> origin/main
         RC_DistantLODShaderProperty,
         RC_HairShaderProperty,
         RC_hkPackedNiTriStripsData,
@@ -220,6 +229,11 @@ namespace Nif
         RC_NiMorphData,
         RC_NiMultiTargetTransformController,
         RC_NiNode,
+<<<<<<< HEAD
+=======
+        RC_BSFaceGenNiNode,
+        RC_CsNiNode,
+>>>>>>> origin/main
         RC_NiPalette,
         RC_NiParticleBomb,
         RC_NiParticleColorModifier,
@@ -313,6 +327,10 @@ namespace Nif
         RC_NiWireframeProperty,
         RC_NiZBufferProperty,
         RC_RootCollisionNode,
+<<<<<<< HEAD
+=======
+        RC_SkinAttach,
+>>>>>>> origin/main
         RC_SkyShaderProperty,
         RC_TallGrassShaderProperty,
         RC_TileShaderProperty,
@@ -323,9 +341,16 @@ namespace Nif
     /// Base class for all records
     struct Record
     {
+<<<<<<< HEAD
         RecordType mRecordType{ RC_MISSING };
         std::string mRecordName;
         unsigned int mRecordIndex{ ~0u };
+=======
+        // Record type and type name
+        RecordType recType{ RC_MISSING };
+        std::string recName;
+        unsigned int recIndex{ ~0u };
+>>>>>>> origin/main
 
         Record() = default;
 

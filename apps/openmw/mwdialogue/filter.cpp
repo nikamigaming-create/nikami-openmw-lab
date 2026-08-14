@@ -400,7 +400,11 @@ int MWDialogue::Filter::getSelectStructInteger(const SelectWrapper& select) cons
         case ESM::DialogueCondition::Function_PcLuck:
         {
             ESM::RefId attribute = ESM::Attribute::indexToRefId(select.getArgument());
+<<<<<<< HEAD
             return static_cast<int>(player.getClass().getCreatureStats(player).getAttribute(attribute).getModified());
+=======
+            return player.getClass().getCreatureStats(player).getAttribute(attribute).getModified();
+>>>>>>> origin/main
         }
         case ESM::DialogueCondition::Function_PcBlock:
         case ESM::DialogueCondition::Function_PcArmorer:
@@ -426,7 +430,11 @@ int MWDialogue::Filter::getSelectStructInteger(const SelectWrapper& select) cons
         case ESM::DialogueCondition::Function_PcLightArmor:
         case ESM::DialogueCondition::Function_PcShortBlade:
         case ESM::DialogueCondition::Function_PcMarksman:
+<<<<<<< HEAD
         case ESM::DialogueCondition::Function_PcMercantile:
+=======
+        case ESM::DialogueCondition::Function_PcMerchantile:
+>>>>>>> origin/main
         case ESM::DialogueCondition::Function_PcSpeechcraft:
         case ESM::DialogueCondition::Function_PcHandToHand:
         {
@@ -708,7 +716,11 @@ bool MWDialogue::Filter::hasFactionRankReputationRequirements(
 
     const ESM::Faction& faction = *MWBase::Environment::get().getESMStore()->get<ESM::Faction>().find(factionId);
 
+<<<<<<< HEAD
     return stats.getFactionReputation(factionId) >= faction.mData.mRankData.at(rank).mFactReputation;
+=======
+    return stats.getFactionReputation(factionId) >= faction.mData.mRankData.at(rank).mFactReaction;
+>>>>>>> origin/main
 }
 
 MWDialogue::Filter::Filter(const MWWorld::Ptr& actor, int choice, bool talkedToPlayer)

@@ -1,10 +1,20 @@
 #ifndef GAME_MWMECHANICS_CREATURESTATS_H
 #define GAME_MWMECHANICS_CREATURESTATS_H
 
+<<<<<<< HEAD
+=======
+#include <array>
+#include <cstddef>
+#include <cstdint>
+>>>>>>> origin/main
 #include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
+<<<<<<< HEAD
+=======
+#include <vector>
+>>>>>>> origin/main
 
 #include "activespells.hpp"
 #include "aisequence.hpp"
@@ -13,18 +23,39 @@
 #include "magiceffects.hpp"
 #include "spells.hpp"
 #include "stat.hpp"
+<<<<<<< HEAD
 
 #include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/magiceffects.hpp>
+=======
+>>>>>>> origin/main
 
-namespace ESM
-{
-    struct CreatureStats;
-}
+#include <components/esm/attr.hpp>
+#include <components/esm/refid.hpp>
+#include <components/esm3/creaturestats.hpp>
+#include <components/esm3/magiceffects.hpp>
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
+=======
+    struct FalloutActiveEffectsAdvance
+    {
+        float mHealthDamage = 0.f;
+        std::size_t mExpired = 0;
+        std::size_t mRejected = 0;
+    };
+
+    bool addFalloutActiveEffect(
+        std::vector<ESM::FalloutActiveEffect>& effects, ESM::FalloutActiveEffect effect);
+    FalloutActiveEffectsAdvance advanceFalloutActiveEffects(
+        std::vector<ESM::FalloutActiveEffect>& effects, float duration);
+    float getFalloutActorValueModifier(
+        const std::vector<ESM::FalloutActiveEffect>& effects, std::int32_t actorValue);
+    bool hasFalloutParalysis(const std::vector<ESM::FalloutActiveEffect>& effects);
+
+>>>>>>> origin/main
     struct CorprusStats
     {
         static constexpr int sWorseningPeriod = 24;
@@ -38,6 +69,10 @@ namespace MWMechanics
     ///
     class CreatureStats
     {
+<<<<<<< HEAD
+=======
+        static int sActorId;
+>>>>>>> origin/main
         std::map<ESM::RefId, AttributeValue> mAttributes;
         DynamicStat<float> mDynamic[3]; // health, magicka, fatigue
         DrawState mDrawState = DrawState::Nothing;
@@ -61,8 +96,19 @@ namespace MWMechanics
         bool mBlock = false;
         unsigned int mMovementFlags = 0;
 
+<<<<<<< HEAD
         float mFallHeight = 0.f;
 
+=======
+        // Native FNV limb actor values 25..31 store accumulated damage independently from health.
+        std::array<float, 7> mFalloutLimbDamage{};
+
+        // Native Fallout timed effects deliberately remain separate from Morrowind ActiveSpells.
+        std::vector<ESM::FalloutActiveEffect> mFalloutActiveEffects;
+
+        float mFallHeight = 0.f;
+
+>>>>>>> origin/main
         ESM::RefId mLastHitObject; // The last object to hit this actor
         ESM::RefId mLastHitAttemptObject; // The last object to attempt to hit this actor
 
@@ -72,6 +118,7 @@ namespace MWMechanics
         // The pool of merchant gold (not in inventory)
         int mGoldPool = 0;
 
+<<<<<<< HEAD
         // Stores an actor that attacked this actor. Only one is stored at a time, and it is not changed if a different
         // actor attacks. It is cleared when combat ends.
         ESM::RefNum mHitAttemptActor;
@@ -92,6 +139,33 @@ namespace MWMechanics
         int mLevel = 0;
         bool mAttackingOrSpell = false;
 
+=======
+        int mActorId = -1;
+        // Stores an actor that attacked this actor. Only one is stored at a time, and it is not changed if a different
+        // actor attacks. It is cleared when combat ends.
+        int mHitAttemptActorId = -1;
+
+        // The difference between view direction and lower body direction.
+        float mSideMovementAngle = 0;
+
+        MWWorld::TimeStamp mTimeOfDeath;
+
+    private:
+        std::multimap<int, int> mSummonedCreatures; // <Effect, ActorId>
+
+        // Contains ActorIds of summoned creatures with an expired lifetime that have not been deleted yet.
+        // This may be necessary when the creature is in an inactive cell.
+        std::vector<int> mSummonGraveyard;
+
+        float mAwarenessTimer = 0.f;
+        int mAwarenessRoll = -1;
+
+    protected:
+        std::string mAttackType;
+        int mLevel = 0;
+        bool mAttackingOrSpell = false;
+
+>>>>>>> origin/main
     private:
         // The index of the death animation that was played, or -1 if none played
         signed char mDeathAnimation = -1;
@@ -123,12 +197,33 @@ namespace MWMechanics
 
         const DynamicStat<float>& getDynamic(int index) const;
 
+<<<<<<< HEAD
         const Spells& getSpells() const;
 
         const ActiveSpells& getActiveSpells() const;
 
         const MagicEffects& getMagicEffects() const;
 
+=======
+        float getFalloutLimbDamage(std::int8_t actorValue) const;
+        bool setFalloutLimbDamage(std::int8_t actorValue, float damage);
+
+        bool addFalloutActiveEffect(ESM::FalloutActiveEffect effect);
+        FalloutActiveEffectsAdvance advanceFalloutActiveEffects(float duration);
+        float getFalloutActorValueModifier(std::int32_t actorValue) const;
+        bool isFalloutParalyzed() const;
+        const std::vector<ESM::FalloutActiveEffect>& getFalloutActiveEffects() const
+        {
+            return mFalloutActiveEffects;
+        }
+
+        const Spells& getSpells() const;
+
+        const ActiveSpells& getActiveSpells() const;
+
+        const MagicEffects& getMagicEffects() const;
+
+>>>>>>> origin/main
         bool getAttackingOrSpell() const { return mAttackingOrSpell; }
         std::string_view getAttackType() const { return mAttackType; }
 
@@ -231,7 +326,12 @@ namespace MWMechanics
         void setBlock(bool value);
         bool getBlock() const;
 
+<<<<<<< HEAD
         std::multimap<ESM::RefId, ESM::RefNum>& getSummonedCreatureMap(); // <Effect, summoned creature>
+=======
+        std::multimap<int, int>& getSummonedCreatureMap(); // <Effect, ActorId of summoned creature>
+        std::vector<int>& getSummonedCreatureGraveyard(); // ActorIds
+>>>>>>> origin/main
 
         enum Flag
         {
@@ -259,12 +359,23 @@ namespace MWMechanics
         void setLastHitAttemptObject(const ESM::RefId& objectid);
         void clearLastHitAttemptObject();
         const ESM::RefId& getLastHitAttemptObject() const;
+<<<<<<< HEAD
         void setHitAttemptActor(ESM::RefNum actorId);
         ESM::RefNum getHitAttemptActor() const;
+=======
+        void setHitAttemptActorId(const int actorId);
+        int getHitAttemptActorId() const;
+>>>>>>> origin/main
 
         void writeState(ESM::CreatureStats& state) const;
 
         void readState(const ESM::CreatureStats& state);
+<<<<<<< HEAD
+=======
+
+        static void writeActorIdCounter(ESM::ESMWriter& esm);
+        static void readActorIdCounter(ESM::ESMReader& esm);
+>>>>>>> origin/main
 
         void setLastRestockTime(MWWorld::TimeStamp tradeTime);
         MWWorld::TimeStamp getLastRestockTime() const;
@@ -274,12 +385,29 @@ namespace MWMechanics
 
         signed char getDeathAnimation() const; // -1 means not decided
         void setDeathAnimation(signed char index);
+<<<<<<< HEAD
+=======
 
         MWWorld::TimeStamp getTimeOfDeath() const;
+>>>>>>> origin/main
+
+        MWWorld::TimeStamp getTimeOfDeath() const;
+
+<<<<<<< HEAD
+        float getSideMovementAngle() const { return mSideMovementAngle; }
+        void setSideMovementAngle(float angle) { mSideMovementAngle = angle; }
+
+=======
+        bool matchesActorId(int id) const;
+        ///< Check if \a id matches the actor ID of *this (if the actor does not have an ID
+        /// assigned this function will return false).
+
+        static void cleanup();
 
         float getSideMovementAngle() const { return mSideMovementAngle; }
         void setSideMovementAngle(float angle) { mSideMovementAngle = angle; }
 
+>>>>>>> origin/main
         bool wasTeleported() const { return mTeleported; }
         void setTeleported(bool v) { mTeleported = v; }
 

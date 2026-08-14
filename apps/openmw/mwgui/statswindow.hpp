@@ -1,6 +1,12 @@
 #ifndef MWGUI_STATS_WINDOW_H
 #define MWGUI_STATS_WINDOW_H
 
+<<<<<<< HEAD
+=======
+#include <array>
+#include <optional>
+
+>>>>>>> origin/main
 #include "statswatcher.hpp"
 #include "windowpinnablebase.hpp"
 #include <components/esm/attr.hpp>
@@ -46,6 +52,10 @@ namespace MWGui
             this->mBounty = bounty;
         }
         void updateSkillArea();
+<<<<<<< HEAD
+=======
+        bool updateFalloutStatsArea();
+>>>>>>> origin/main
 
         void onOpen() override { onWindowResize(mMainWidget->castType<MyGUI::Window>()); }
 
@@ -67,8 +77,14 @@ namespace MWGui
         void setFactions(const FactionList& factions);
         void setExpelled(const std::set<ESM::RefId>& expelled);
         void setBirthSign(const ESM::RefId& signId);
+<<<<<<< HEAD
 
         void onWindowResize(MyGUI::Window* window);
+=======
+        bool refreshFalloutActorValues();
+
+        void onWindowResize(MyGUI::Window* window) override;
+>>>>>>> origin/main
         void onMouseWheel(MyGUI::Widget* sender, int rel);
 
         MyGUI::Widget* mLeftPane;
@@ -86,6 +102,10 @@ namespace MWGui
         int mReputation, mBounty;
         std::vector<MyGUI::Widget*> mSkillWidgets; //< Skills and other information
         std::set<ESM::RefId> mExpelled;
+<<<<<<< HEAD
+=======
+        std::optional<std::array<float, 21>> mFalloutActorValues;
+>>>>>>> origin/main
 
         bool mChanged;
         const int mMinFullWidth;

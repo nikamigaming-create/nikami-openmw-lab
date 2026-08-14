@@ -64,7 +64,11 @@ namespace MWWorld
         void fill(const MWWorld::ESMStore& store);
         ///< Replace variables with variables from \a store with default values.
 
+<<<<<<< HEAD
         size_t countSavedGameRecords() const;
+=======
+        int countSavedGameRecords() const;
+>>>>>>> origin/main
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const;
 

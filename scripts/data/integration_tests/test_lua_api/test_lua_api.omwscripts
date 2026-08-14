@@ -1,4 +1,7 @@
 MENU: menu.lua
 GLOBAL: global.lua
 PLAYER: player.lua
+<<<<<<< HEAD
 LOAD: load.lua
+=======
+>>>>>>> origin/main

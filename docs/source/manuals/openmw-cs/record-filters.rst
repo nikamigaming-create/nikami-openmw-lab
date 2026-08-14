@@ -241,7 +241,11 @@ Logical Expressions
    In this particular case only one argument can evaluate to ``true``, but one
    can write expressions where multiple arguments can be ``true`` at a time.
 
+<<<<<<< HEAD
 ``and(<expr1>, <expr2>, ..., <exprN>)``
+=======
+``or(<expr1>, <expr2>, ..., <exprN>)``
+>>>>>>> origin/main
    Logical conjunction, evaluates to ``true`` if and only if all arguments
    evaluate to ``true`` as well, otherwise the expression evaluates to
    ``false``.

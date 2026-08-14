@@ -1,5 +1,9 @@
 #include "action.hpp"
 
+#include <cstdlib>
+
+#include <components/debug/debuglog.hpp>
+
 #include "../mwbase/environment.hpp"
 
 #include "../mwbase/soundmanager.hpp"
@@ -28,6 +32,14 @@ MWWorld::Action::~Action() {}
 
 void MWWorld::Action::execute(const Ptr& actor, bool noSound)
 {
+<<<<<<< HEAD
+=======
+    const bool interactionAudit = std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr;
+    if (interactionAudit)
+        Log(Debug::Info) << "FNV interaction audit: Action execute begin actor=" << actor.toString()
+                         << " target=" << mTarget.toString() << " sound=" << mSoundId.toDebugString()
+                         << " noSound=" << (noSound ? 1 : 0);
+>>>>>>> origin/main
     if (!mSoundId.empty() && !noSound)
     {
         MWSound::PlayMode envType = MWSound::PlayMode::Normal;
@@ -53,9 +65,19 @@ void MWWorld::Action::execute(const Ptr& actor, bool noSound)
                 MWBase::Environment::get().getSoundManager()->playSound3D(
                     local ? actor : mTarget, mSoundId, 1.0, 1.0, MWSound::Type::Sfx, envType, mSoundOffset);
         }
+        if (interactionAudit)
+            Log(Debug::Info) << "FNV interaction audit: Action sound complete sound=" << mSoundId.toDebugString();
     }
 
+<<<<<<< HEAD
     executeImp(actor);
+=======
+    if (interactionAudit)
+        Log(Debug::Info) << "FNV interaction audit: Action calling executeImp";
+    executeImp(actor);
+    if (interactionAudit)
+        Log(Debug::Info) << "FNV interaction audit: Action execute end";
+>>>>>>> origin/main
 }
 
 void MWWorld::Action::setSound(const ESM::RefId& id)

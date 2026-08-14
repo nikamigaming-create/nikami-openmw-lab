@@ -107,11 +107,14 @@ namespace DetourNavigator
         result.mWriteToNavMeshDb = ::Settings::navigator().mWriteToNavmeshdb;
         result.mMaxDbFileSize = ::Settings::navigator().mMaxNavmeshdbFileSize;
 
+<<<<<<< HEAD
         if (result.mMaxTilesNumber < ::Settings::navigator().mMaxTilesNumber.get())
             Log(Debug::Warning)
                 << "Navigator max tiles number is adjusted due to limitation on number of bits for tile identifier: "
                 << result.mMaxTilesNumber;
 
+=======
+>>>>>>> origin/main
         return result;
     }
 }

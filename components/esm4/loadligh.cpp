@@ -128,6 +128,11 @@ void ESM4::Light::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadligh"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::LIGH::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -11,7 +11,10 @@ Packages
     animation <openmw_animation>
     async <openmw_async>
     camera <openmw_camera>
+<<<<<<< HEAD
     content <openmw_content>
+=======
+>>>>>>> origin/main
     core <openmw_core>
     debug <openmw_debug>
     input <openmw_input>

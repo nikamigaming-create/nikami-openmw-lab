@@ -1,6 +1,10 @@
 #include "imagemanager.hpp"
 
 #include <cassert>
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+>>>>>>> origin/main
 #include <osgDB/Registry>
 
 #include <components/debug/debuglog.hpp>
@@ -33,15 +37,40 @@ namespace
         warningImage->allocateImage(width, height, 1, GL_RGB, GL_UNSIGNED_BYTE);
         assert(warningImage->isDataContiguous());
         unsigned char* data = warningImage->data();
+<<<<<<< HEAD
         for (int i = 0; i < width * height; ++i)
         {
             data[3 * i] = (255);
             data[3 * i + 1] = (0);
             data[3 * i + 2] = (255);
+=======
+        const bool neutralWorldViewerFallback
+            = std::getenv("OPENMW_WORLD_VIEWER_NEUTRAL_MISSING_TEXTURES") != nullptr;
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                const int i = y * width + x;
+                if (neutralWorldViewerFallback)
+                {
+                    const unsigned char shade = ((x / 2 + y / 2) % 2) == 0 ? 150 : 96;
+                    data[3 * i] = shade;
+                    data[3 * i + 1] = shade;
+                    data[3 * i + 2] = shade;
+                }
+                else
+                {
+                    data[3 * i] = (255);
+                    data[3 * i + 1] = (0);
+                    data[3 * i + 2] = (255);
+                }
+            }
+>>>>>>> origin/main
         }
         return warningImage;
     }
 
+<<<<<<< HEAD
     bool isS3TC(osg::Image* image)
     {
         switch (image->getPixelFormat())
@@ -68,6 +97,8 @@ namespace
         return SceneUtil::getGLExtensions().isTextureCompressionS3TCSupported;
     }
 
+=======
+>>>>>>> origin/main
 }
 
 namespace Resource
@@ -76,12 +107,48 @@ namespace Resource
     ImageManager::ImageManager(const VFS::Manager* vfs, double expiryDelay)
         : ResourceManager(vfs, expiryDelay)
         , mWarningImage(createWarningImage())
+<<<<<<< HEAD
         , mOptions(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
+=======
+        , mOptions(new osgDB::Options("dds_flip dds_dxt1_detect_rgba ignoreTga2Fields"))
+        , mOptionsNoFlip(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
+>>>>>>> origin/main
     {
     }
 
     ImageManager::~ImageManager() {}
 
+<<<<<<< HEAD
+=======
+    bool checkSupported(osg::Image* image)
+    {
+        switch (image->getPixelFormat())
+        {
+            case (GL_COMPRESSED_RGB_S3TC_DXT1_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT1_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT3_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT5_EXT):
+            {
+                if (!SceneUtil::glExtensionsReady())
+                    return true; // hashtag yolo (CS might not have context when loading assets)
+                osg::GLExtensions& exts = SceneUtil::getGLExtensions();
+                if (!exts.isTextureCompressionS3TCSupported
+                    // This one works too. Should it be included in isTextureCompressionS3TCSupported()? Submitted as a
+                    // patch to OSG.
+                    && !osg::isGLExtensionSupported(exts.contextID, "GL_S3_s3tc"))
+                {
+                    return false;
+                }
+                break;
+            }
+            // not bothering with checks for other compression formats right now
+            default:
+                return true;
+        }
+        return true;
+    }
+
+>>>>>>> origin/main
     osg::ref_ptr<osg::Image> ImageManager::getImage(VFS::Path::NormalizedView path, bool disableFlip)
     {
         osg::ref_ptr<osg::Object> obj = mCache->getRefFromObjectCache(path);
@@ -133,7 +200,12 @@ namespace Resource
                 stream->seekg(0);
             }
 
+<<<<<<< HEAD
             osgDB::ReaderWriter::ReadResult result = reader->readImage(*stream, mOptions);
+=======
+            osgDB::ReaderWriter::ReadResult result
+                = reader->readImage(*stream, disableFlip ? mOptionsNoFlip : mOptions);
+>>>>>>> origin/main
             if (!result.success())
             {
                 Log(Debug::Error) << "Error loading " << path << ": " << result.message() << " code "
@@ -160,7 +232,10 @@ namespace Resource
                     // requires update to getColor() to be released with OSG 3.6
                     osg::ref_ptr<osg::Image> newImage = new osg::Image;
                     newImage->setFileName(image->getFileName());
+<<<<<<< HEAD
                     newImage->setOrigin(image->getOrigin());
+=======
+>>>>>>> origin/main
                     newImage->allocateImage(image->s(), image->t(), image->r(),
                         image->isImageTranslucent() ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE);
                     for (int s = 0; s < image->s(); ++s)
@@ -174,7 +249,10 @@ namespace Resource
             {
                 osg::ref_ptr<osg::Image> newImage = new osg::Image;
                 newImage->setFileName(image->getFileName());
+<<<<<<< HEAD
                 newImage->setOrigin(image->getOrigin());
+=======
+>>>>>>> origin/main
                 newImage->allocateImage(image->s(), image->t(), image->r(), GL_RGB, GL_UNSIGNED_BYTE);
                 // OSG just won't write the alpha as there's nowhere to put it.
                 for (int s = 0; s < image->s(); ++s)
@@ -184,6 +262,7 @@ namespace Resource
                 image = newImage;
             }
 
+<<<<<<< HEAD
             // OSG might not set the right origin for DDS
             if (ext == "dds")
                 image->setOrigin(osg::Image::TOP_LEFT);
@@ -205,6 +284,8 @@ namespace Resource
                 image->setOrigin(osg::Image::TOP_LEFT);
             }
 
+=======
+>>>>>>> origin/main
             mCache->addEntryToObjectCache(path.value(), image);
             return image;
         }

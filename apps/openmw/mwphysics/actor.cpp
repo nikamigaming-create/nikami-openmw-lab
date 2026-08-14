@@ -50,9 +50,15 @@ namespace MWPhysics
                 btVector3 max;
 
                 shape->mCollisionShape->getAabb(transform, min, max);
+<<<<<<< HEAD
                 mOriginalHalfExtents.x() = static_cast<float>((max[0] - min[0]) / 2.f);
                 mOriginalHalfExtents.y() = static_cast<float>((max[1] - min[1]) / 2.f);
                 mOriginalHalfExtents.z() = static_cast<float>((max[2] - min[2]) / 2.f);
+=======
+                mOriginalHalfExtents.x() = (max[0] - min[0]) / 2.f;
+                mOriginalHalfExtents.y() = (max[1] - min[1]) / 2.f;
+                mOriginalHalfExtents.z() = (max[2] - min[2]) / 2.f;
+>>>>>>> origin/main
 
                 mMeshTranslation = osg::Vec3f(0.f, 0.f, mOriginalHalfExtents.z());
             }
@@ -63,11 +69,16 @@ namespace MWPhysics
         }
 
         const btVector3 halfExtents = Misc::Convert::toBullet(mOriginalHalfExtents);
+<<<<<<< HEAD
         float extRatio = 0.f;
         if (mOriginalHalfExtents.y() != 0.f)
             extRatio = mOriginalHalfExtents.x() / mOriginalHalfExtents.y();
 
         if (mMeshTranslation.x() == 0.0 && mMeshTranslation.y() == 0.0 && extRatio >= 1.f / 1.1f && extRatio <= 1.1f)
+=======
+        if ((mMeshTranslation.x() == 0.0 && mMeshTranslation.y() == 0.0)
+            && std::fabs(mOriginalHalfExtents.x() - mOriginalHalfExtents.y()) < 2.2)
+>>>>>>> origin/main
         {
             switch (collisionShapeType)
             {

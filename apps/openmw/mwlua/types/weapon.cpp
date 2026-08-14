@@ -5,7 +5,10 @@
 #include <components/esm3/loadweap.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
+<<<<<<< HEAD
 #include <components/misc/finitevalues.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 
@@ -65,22 +68,38 @@ namespace
         {
             int weaponType = rec["type"].get<int>();
             if (weaponType >= 0 && weaponType <= ESM::Weapon::Last)
+<<<<<<< HEAD
                 weapon.mData.mType = static_cast<int16_t>(weaponType);
+=======
+                weapon.mData.mType = weaponType;
+>>>>>>> origin/main
             else
                 throw std::runtime_error("Invalid Weapon Type provided: " + std::to_string(weaponType));
         }
         if (rec["weight"] != sol::nil)
+<<<<<<< HEAD
             weapon.mData.mWeight = rec["weight"].get<Misc::FiniteFloat>();
+=======
+            weapon.mData.mWeight = rec["weight"];
+>>>>>>> origin/main
         if (rec["value"] != sol::nil)
             weapon.mData.mValue = rec["value"];
         if (rec["health"] != sol::nil)
             weapon.mData.mHealth = rec["health"];
         if (rec["speed"] != sol::nil)
+<<<<<<< HEAD
             weapon.mData.mSpeed = rec["speed"].get<Misc::FiniteFloat>();
         if (rec["reach"] != sol::nil)
             weapon.mData.mReach = rec["reach"].get<Misc::FiniteFloat>();
         if (rec["enchantCapacity"] != sol::nil)
             weapon.mData.mEnchant = static_cast<uint16_t>(std::round(rec["enchantCapacity"].get<float>() * 10));
+=======
+            weapon.mData.mSpeed = rec["speed"];
+        if (rec["reach"] != sol::nil)
+            weapon.mData.mReach = rec["reach"];
+        if (rec["enchantCapacity"] != sol::nil)
+            weapon.mData.mEnchant = std::round(rec["enchantCapacity"].get<float>() * 10);
+>>>>>>> origin/main
         if (rec["chopMinDamage"] != sol::nil)
             weapon.mData.mChop[0] = rec["chopMinDamage"];
         if (rec["chopMaxDamage"] != sol::nil)
@@ -134,10 +153,19 @@ namespace MWLua
         record["name"] = sol::readonly_property([](const ESM::Weapon& rec) -> std::string { return rec.mName; });
         addModelProperty(record);
         record["icon"] = sol::readonly_property([vfs](const ESM::Weapon& rec) -> std::string {
+<<<<<<< HEAD
             return Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(rec.mIcon), *vfs);
         });
         record["enchant"] = sol::readonly_property([](const ESM::Weapon& rec) -> ESM::RefId { return rec.mEnchant; });
         record["mwscript"] = sol::readonly_property([](const ESM::Weapon& rec) -> ESM::RefId { return rec.mScript; });
+=======
+            return Misc::ResourceHelpers::correctIconPath(rec.mIcon, vfs);
+        });
+        record["enchant"] = sol::readonly_property(
+            [](const ESM::Weapon& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mEnchant); });
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::Weapon& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
+>>>>>>> origin/main
         record["isMagical"] = sol::readonly_property(
             [](const ESM::Weapon& rec) -> bool { return rec.mData.mFlags & ESM::Weapon::Magical; });
         record["isSilver"] = sol::readonly_property(

@@ -75,10 +75,17 @@ namespace MWMechanics
             costMult = iAlchemyMod;
         }
 
+<<<<<<< HEAD
         float x = 0.5f * (minMagn + maxMagn);
         x *= 0.1f * magicEffect->mData.mBaseCost;
         x *= durationOffset + duration;
         x += 0.05f * std::max(minArea, effect.mArea) * magicEffect->mData.mBaseCost;
+=======
+        float x = 0.5 * (minMagn + maxMagn);
+        x *= 0.1 * magicEffect->mData.mBaseCost;
+        x *= durationOffset + duration;
+        x += 0.05 * std::max(minArea, effect.mArea) * magicEffect->mData.mBaseCost;
+>>>>>>> origin/main
 
         return x * costMult;
     }
@@ -90,7 +97,11 @@ namespace MWMechanics
 
         float cost = getTotalCost(spell.mEffects);
 
+<<<<<<< HEAD
         return static_cast<int>(std::round(cost));
+=======
+        return std::round(cost);
+>>>>>>> origin/main
     }
 
     int getEffectiveEnchantmentCastCost(float castCost, const MWWorld::Ptr& actor)
@@ -99,7 +110,11 @@ namespace MWMechanics
          * Each point of enchant skill above/under 10 subtracts/adds
          * one percent of enchantment cost while minimum is 1.
          */
+<<<<<<< HEAD
         float eSkill = actor.getClass().getSkill(actor, ESM::Skill::Enchant);
+=======
+        int eSkill = actor.getClass().getSkill(actor, ESM::Skill::Enchant);
+>>>>>>> origin/main
         const float result = castCost - (castCost / 100) * (eSkill - 10);
 
         return static_cast<int>((result < 1) ? 1 : result);
@@ -154,7 +169,11 @@ namespace MWMechanics
         if (potion.mData.mFlags & ESM::Potion::Autocalc)
         {
             float cost = getTotalCost(potion.mEffects, EffectCostMethod::GamePotion);
+<<<<<<< HEAD
             return static_cast<int>(std::round(cost));
+=======
+            return std::round(cost);
+>>>>>>> origin/main
         }
         return potion.mData.mValue;
     }
@@ -172,7 +191,11 @@ namespace MWMechanics
         effect.mRange = ESM::RT_Self;
         effect.mArea = 0;
 
+<<<<<<< HEAD
         if (effect.mEffectID.empty())
+=======
+        if (effect.mEffectID < 0)
+>>>>>>> origin/main
             return std::nullopt;
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
@@ -275,6 +298,7 @@ namespace MWMechanics
         CreatureStats& stats = actor.getClass().getCreatureStats(actor);
 
         if (spell->mData.mType == ESM::Spell::ST_Power)
+<<<<<<< HEAD
             return stats.getSpells().canUsePower(spell) ? 100.f : 0.f;
 
         if (godmode)
@@ -291,6 +315,24 @@ namespace MWMechanics
 
         if (spell->mData.mFlags & ESM::Spell::F_Always)
             return 100.f;
+=======
+            return stats.getSpells().canUsePower(spell) ? 100 : 0;
+
+        if (godmode)
+            return 100;
+
+        if (stats.getMagicEffects().getOrDefault(ESM::MagicEffect::Silence).getMagnitude())
+            return 0;
+
+        if (spell->mData.mType != ESM::Spell::ST_Spell)
+            return 100;
+
+        if (checkMagicka && calcSpellCost(*spell) > 0 && stats.getMagicka().getCurrent() < calcSpellCost(*spell))
+            return 0;
+
+        if (spell->mData.mFlags & ESM::Spell::F_Always)
+            return 100;
+>>>>>>> origin/main
 
         float castBonus = -stats.getMagicEffects().getOrDefault(ESM::MagicEffect::Sound).getMagnitude();
         float castChance = baseChance + castBonus;

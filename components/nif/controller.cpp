@@ -6,13 +6,43 @@
 #include "particle.hpp"
 #include "texture.hpp"
 
+<<<<<<< HEAD
+=======
+#include <limits>
+
+>>>>>>> origin/main
 namespace Nif
 {
     namespace
     {
+<<<<<<< HEAD
         void readSkinnedShapeGroup(NIFStream& stream, std::vector<NiBoneLODController::SkinInfo>& value)
         {
             stream.readVectorOfRecords<uint32_t>(value);
+=======
+        std::string getStringPaletteValue(const NiStringPalettePtr& palette, uint32_t offset)
+        {
+            if (palette.empty() || offset == std::numeric_limits<uint32_t>::max())
+                return {};
+
+            const std::string& text = palette->mPalette;
+            if (offset >= text.size())
+                return {};
+
+            const std::size_t end = text.find('\0', offset);
+            if (end == std::string::npos)
+                return text.substr(offset);
+
+            return text.substr(offset, end - offset);
+        }
+
+        void fillStringPaletteValue(std::string& value, const NiStringPalettePtr& palette, uint32_t offset)
+        {
+            if (!value.empty())
+                return;
+
+            value = getStringPaletteValue(palette, offset);
+>>>>>>> origin/main
         }
     }
 
@@ -80,7 +110,15 @@ namespace Nif
         mController.post(nif);
         mBlendInterpolator.post(nif);
         mStringPalette.post(nif);
+<<<<<<< HEAD
         // TODO: probably should fill the strings with string palette contents here
+=======
+        fillStringPaletteValue(mNodeName, mStringPalette, mNodeNameOffset);
+        fillStringPaletteValue(mPropertyType, mStringPalette, mPropertyTypeOffset);
+        fillStringPaletteValue(mControllerType, mStringPalette, mControllerTypeOffset);
+        fillStringPaletteValue(mControllerId, mStringPalette, mControllerIdOffset);
+        fillStringPaletteValue(mInterpolatorId, mStringPalette, mInterpolatorIdOffset);
+>>>>>>> origin/main
     }
 
     void NiSequence::read(NIFStream* nif)
@@ -91,10 +129,18 @@ namespace Nif
             nif->read(mAccumRootName);
             mTextKeys.read(nif);
         }
+<<<<<<< HEAD
         const uint32_t size = nif->get<uint32_t>();
         if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 106))
             nif->read(mArrayGrowBy);
         nif->readVectorOfRecords(size, mControlledBlocks);
+=======
+        mControlledBlocks.resize(nif->get<uint32_t>());
+        if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 106))
+            nif->read(mArrayGrowBy);
+        for (ControlledBlock& block : mControlledBlocks)
+            block.read(nif);
+>>>>>>> origin/main
     }
 
     void NiSequence::post(Reader& nif)
@@ -128,8 +174,18 @@ namespace Nif
             mStringPalette.read(nif);
         else if (nif->getVersion() >= NIFFile::NIFVersion::VER_BGS && nif->getBethVersion() >= 24)
         {
+<<<<<<< HEAD
             const uint16_t size = nif->getBethVersion() >= 29 ? nif->get<uint16_t>() : 1;
             nif->readVectorOfRecords(size, mAnimNotesList);
+=======
+            if (nif->getBethVersion() >= 29)
+                mAnimNotesList.resize(nif->get<uint16_t>());
+            else
+                mAnimNotesList.resize(1);
+
+            for (auto& notes : mAnimNotesList)
+                notes.read(nif);
+>>>>>>> origin/main
         }
     }
 
@@ -211,9 +267,16 @@ namespace Nif
             nif->read(mSpawnMultiplier);
             nif->read(mSpawnSpeedChaos);
             nif->read(mSpawnDirChaos);
+<<<<<<< HEAD
             const uint16_t numParticles = nif->get<uint16_t>();
             nif->read(mNumValid);
             nif->readVectorOfRecords(numParticles, mParticles);
+=======
+            mParticles.resize(nif->get<uint16_t>());
+            nif->read(mNumValid);
+            for (NiParticleInfo& particle : mParticles)
+                particle.read(nif);
+>>>>>>> origin/main
             nif->skip(4); // NiEmitterModifier link
         }
         mModifier.read(nif);
@@ -346,7 +409,13 @@ namespace Nif
     {
         NiInterpController::read(nif);
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint16_t>(mExtraTargets);
+=======
+        mExtraTargets.resize(nif->get<uint16_t>());
+        for (NiAVObjectPtr& extraTarget : mExtraTargets)
+            extraTarget.read(nif);
+>>>>>>> origin/main
     }
 
     void NiMultiTargetTransformController::post(Reader& nif)
@@ -410,6 +479,7 @@ namespace Nif
             return;
         }
 
+<<<<<<< HEAD
         const uint32_t numInterpolators = nif->get<uint32_t>();
         mInterpolators.reserve(numInterpolators);
         mWeights.reserve(numInterpolators);
@@ -417,6 +487,14 @@ namespace Nif
         {
             mInterpolators.emplace_back().read(nif);
             nif->read(mWeights.emplace_back());
+=======
+        mInterpolators.resize(nif->get<uint32_t>());
+        mWeights.resize(mInterpolators.size());
+        for (size_t i = 0; i < mInterpolators.size(); i++)
+        {
+            mInterpolators[i].read(nif);
+            nif->read(mWeights[i]);
+>>>>>>> origin/main
         }
     }
 
@@ -481,27 +559,50 @@ namespace Nif
         mData.post(nif);
     }
 
+<<<<<<< HEAD
     void NiBoneLODController::SkinInfo::read(NIFStream* nif)
     {
         mShape.read(nif);
         mSkin.read(nif);
     }
 
+=======
+>>>>>>> origin/main
     void NiBoneLODController::read(NIFStream* nif)
     {
         NiTimeController::read(nif);
 
         nif->read(mLOD);
+<<<<<<< HEAD
         const uint32_t nodeGroupsCount = nif->get<uint32_t>();
         mNodeGroups.reserve(nodeGroupsCount);
         nif->read(mNumNodeGroups);
         for (uint32_t i = 0; i < nodeGroupsCount; ++i)
             readRecordList(nif, mNodeGroups.emplace_back());
+=======
+        mNodeGroups.resize(nif->get<uint32_t>());
+        nif->read(mNumNodeGroups);
+        for (NiAVObjectList& group : mNodeGroups)
+            readRecordList(nif, group);
+>>>>>>> origin/main
 
         if (nif->getBethVersion() != 0 || nif->getVersion() < NIFStream::generateVersion(4, 2, 2, 0))
             return;
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(readSkinnedShapeGroup, mSkinnedShapeGroups);
+=======
+        mSkinnedShapeGroups.resize(nif->get<uint32_t>());
+        for (std::vector<SkinInfo>& group : mSkinnedShapeGroups)
+        {
+            group.resize(nif->get<uint32_t>());
+            for (SkinInfo& info : group)
+            {
+                info.mShape.read(nif);
+                info.mSkin.read(nif);
+            }
+        }
+>>>>>>> origin/main
         readRecordList(nif, mShapeGroups);
     }
 
@@ -532,7 +633,11 @@ namespace Nif
         // Is this possible?
         if (numKeys != 0)
             throw Nif::Exception(
+<<<<<<< HEAD
                 "Unsupported keys in bhkBlendController " + std::to_string(mRecordIndex), nif->getFile().getFilename());
+=======
+                "Unsupported keys in bhkBlendController " + std::to_string(recIndex), nif->getFile().getFilename());
+>>>>>>> origin/main
     }
 
     void BSEffectShaderPropertyFloatController::read(NIFStream* nif)
@@ -731,7 +836,11 @@ namespace Nif
         if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 112))
         {
             nif->read(mFlags);
+<<<<<<< HEAD
             const uint8_t numItems = nif->get<uint8_t>();
+=======
+            mItems.resize(nif->get<uint8_t>());
+>>>>>>> origin/main
             nif->read(mWeightThreshold);
             if (!(mFlags & Flag_ManagerControlled))
             {
@@ -743,14 +852,25 @@ namespace Nif
                 nif->read(mHighWeightsSum);
                 nif->read(mNextHighWeightsSum);
                 nif->read(mHighEaseSpinner);
+<<<<<<< HEAD
                 nif->readVectorOfRecords(numItems, mItems);
+=======
+                for (Item& item : mItems)
+                    item.read(nif);
+>>>>>>> origin/main
             }
             return;
         }
 
         if (nif->getVersion() >= NIFStream::generateVersion(10, 1, 0, 110))
         {
+<<<<<<< HEAD
             nif->readVectorOfRecords<uint8_t>(mItems);
+=======
+            mItems.resize(nif->get<uint8_t>());
+            for (Item& item : mItems)
+                item.read(nif);
+>>>>>>> origin/main
             if (nif->get<bool>())
                 mFlags |= Flag_ManagerControlled;
             nif->read(mWeightThreshold);
@@ -765,9 +885,16 @@ namespace Nif
             return;
         }
 
+<<<<<<< HEAD
         const uint16_t numItems = nif->get<uint16_t>();
         nif->read(mArrayGrowBy);
         nif->readVectorOfRecords(numItems, mItems);
+=======
+        mItems.resize(nif->get<uint16_t>());
+        nif->read(mArrayGrowBy);
+        for (Item& item : mItems)
+            item.read(nif);
+>>>>>>> origin/main
         if (nif->get<bool>())
             mFlags |= Flag_ManagerControlled;
         nif->read(mWeightThreshold);
@@ -885,7 +1012,13 @@ namespace Nif
 
     void BSTreadTransfInterpolator::read(NIFStream* nif)
     {
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mTransforms);
+=======
+        mTransforms.resize(nif->get<uint32_t>());
+        for (BSTreadTransform& transform : mTransforms)
+            transform.read(nif);
+>>>>>>> origin/main
         mData.read(nif);
     }
 

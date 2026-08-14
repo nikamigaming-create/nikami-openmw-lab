@@ -189,6 +189,13 @@ namespace MWPhysics
         void addHeightField(const float* heights, int x, int y, int size, int verts, float minH, float maxH,
             const osg::Object* holdObject);
 
+<<<<<<< HEAD
+=======
+        // Compatibility-only terrain used by automated world-viewer proofs when a newer Bethesda format's
+        // authored collision has not been decoded yet. This is never installed during a normal game session.
+        void addFlatHeightField(int x, int y, int size, float height);
+
+>>>>>>> origin/main
         void removeHeightField(int x, int y);
 
         const HeightField* getHeightField(int x, int y) const;
@@ -209,6 +216,15 @@ namespace MWPhysics
             const MWWorld::ConstPtr& ptr, int collisionGroup, int collisionMask) const;
         osg::Vec3f traceDown(const MWWorld::Ptr& ptr, const osg::Vec3f& position, float maxHeight);
 
+<<<<<<< HEAD
+=======
+        // ## VR_PATCH BEGIN
+        // VR still needs getHitContact for realistic combat
+        std::pair<MWWorld::Ptr, osg::Vec3f> getHitContact(const MWWorld::ConstPtr& actor, const osg::Vec3f& origin,
+            const osg::Quat& orientation, float queryDistance);
+        // ## VR_PATCH END
+
+>>>>>>> origin/main
         /// @param ignore Optional, a list of Ptr to ignore in the list of results. targets are actors to filter for,
         /// ignoring all other actors.
         RayCastingResult castRay(const osg::Vec3f& from, const osg::Vec3f& to,

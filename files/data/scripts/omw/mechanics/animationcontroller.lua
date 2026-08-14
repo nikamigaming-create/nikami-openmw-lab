@@ -1,5 +1,6 @@
 local anim = require('openmw.animation')
 local self = require('openmw.self')
+<<<<<<< HEAD
 local auxUtil = require('openmw_aux.util')
 
 local playBlendedHandlers = {}
@@ -15,6 +16,16 @@ local function onAnimationEnded(groupname, startKey, stopKey, time, completion)
         time = time,
         completion = completion,
     })
+=======
+
+local playBlendedHandlers = {}
+local function onPlayBlendedAnimation(groupname, options)    
+    for i = #playBlendedHandlers, 1, -1 do
+        if playBlendedHandlers[i](groupname, options) == false then
+            return
+        end
+    end
+>>>>>>> origin/main
 end
 
 local function playBlendedAnimation(groupname, options)
@@ -27,7 +38,26 @@ end
 
 local textKeyHandlers = {}
 local function onAnimationTextKey(groupname, key)
+<<<<<<< HEAD
     auxUtil.callMultipleEventHandlers({ textKeyHandlers[groupname], textKeyHandlers[''] }, groupname, key)
+=======
+    local handlers = textKeyHandlers[groupname]
+    if handlers then
+        for i = #handlers, 1, -1 do
+            if handlers[i](groupname, key) == false then
+                return
+            end
+        end
+    end
+    handlers = textKeyHandlers['']
+    if handlers then
+        for i = #handlers, 1, -1 do
+            if handlers[i](groupname, key) == false then
+                return
+            end
+        end
+    end
+>>>>>>> origin/main
 end
 
 local initialized = false
@@ -48,7 +78,10 @@ end
 return {
     engineHandlers = { 
         _onPlayAnimation = playBlendedAnimation,
+<<<<<<< HEAD
         _onAnimationEnded = onAnimationEnded,
+=======
+>>>>>>> origin/main
         _onAnimationTextKey = onAnimationTextKey,
         onUpdate = onUpdate,
     },
@@ -100,7 +133,11 @@ return {
     interface = {
         --- Interface version
         -- @field [parent=#AnimationController] #number version
+<<<<<<< HEAD
         version = 1,
+=======
+        version = 0,
+>>>>>>> origin/main
         
         --- AnimationController Package
         -- @type Package
@@ -111,7 +148,11 @@ return {
         -- @param #table options The table of play options that will be passed to @{openmw.animation#playBlended}
         playBlendedAnimation = playBlendedAnimation,
 
+<<<<<<< HEAD
         --- Add a new playBlendedAnimation handler for this actor
+=======
+        --- Add new playBlendedAnimation handler for this actor
+>>>>>>> origin/main
         -- If `handler(groupname, options)` returns false, other handlers for
         -- the call will be skipped.
         -- @function [parent=#AnimationController] addPlayBlendedAnimationHandler
@@ -120,6 +161,7 @@ return {
             playBlendedHandlers[#playBlendedHandlers + 1] = handler
         end,
 
+<<<<<<< HEAD
         --- Add a new animationEnded handler for this actor
         -- If `handler(groupname, info)` returns false, other handlers for
         -- the call will be skipped. info is a table that contains information related to
@@ -137,12 +179,19 @@ return {
         end,
 
         --- Add a new text key handler for this actor
+=======
+        --- Add new text key handler for this actor
+>>>>>>> origin/main
         -- While playing, some animations emit text key events. Register a handle to listen for all
         -- text key events associated with this actor's animations.
         -- If `handler(groupname, key)` returns false, other handlers for
         -- the call will be skipped.
         -- @function [parent=#AnimationController] addTextKeyHandler
+<<<<<<< HEAD
         -- @param #string groupname Name of the animation group to listen to keys for. If it is an empty string or nil, all keys will be received
+=======
+        -- @param #string groupname Name of the animation group to listen to keys for. If the empty string or nil, all keys will be received
+>>>>>>> origin/main
         -- @param #function handler The handler.
         addTextKeyHandler = function(groupname, handler)
             if not groupname then

@@ -17,26 +17,47 @@ public:
     static UnicodeChar sBadChar() { return UnicodeChar(0xFFFFFFFF); }
 
     Utf8Stream(Point begin, Point end)
+<<<<<<< HEAD
         : mCur(begin)
         , mNxt(begin)
         , mEnd(end)
         , mVal(Utf8Stream::sBadChar())
+=======
+        : cur(begin)
+        , nxt(begin)
+        , end(end)
+        , val(Utf8Stream::sBadChar())
+>>>>>>> origin/main
     {
     }
 
     Utf8Stream(const char* str)
+<<<<<<< HEAD
         : mCur(reinterpret_cast<const unsigned char*>(str))
         , mNxt(reinterpret_cast<const unsigned char*>(str))
         , mEnd(reinterpret_cast<const unsigned char*>(str) + strlen(str))
         , mVal(Utf8Stream::sBadChar())
+=======
+        : cur(reinterpret_cast<const unsigned char*>(str))
+        , nxt(reinterpret_cast<const unsigned char*>(str))
+        , end(reinterpret_cast<const unsigned char*>(str) + strlen(str))
+        , val(Utf8Stream::sBadChar())
+>>>>>>> origin/main
     {
     }
 
     Utf8Stream(std::pair<Point, Point> range)
+<<<<<<< HEAD
         : mCur(range.first)
         , mNxt(range.first)
         , mEnd(range.second)
         , mVal(Utf8Stream::sBadChar())
+=======
+        : cur(range.first)
+        , nxt(range.first)
+        , end(range.second)
+        , val(Utf8Stream::sBadChar())
+>>>>>>> origin/main
     {
     }
 
@@ -45,6 +66,7 @@ public:
     {
     }
 
+<<<<<<< HEAD
     bool eof() const { return mCur == mEnd; }
 
     Point current() const { return mCur; }
@@ -54,14 +76,32 @@ public:
         if (mCur == mNxt)
             next();
         return mVal;
+=======
+    bool eof() const { return cur == end; }
+
+    Point current() const { return cur; }
+
+    UnicodeChar peek()
+    {
+        if (cur == nxt)
+            next();
+        return val;
+>>>>>>> origin/main
     }
 
     UnicodeChar consume()
     {
+<<<<<<< HEAD
         if (mCur == mNxt)
             next();
         mCur = mNxt;
         return mVal;
+=======
+        if (cur == nxt)
+            next();
+        cur = nxt;
+        return val;
+>>>>>>> origin/main
     }
 
     static bool isAscii(unsigned char value) { return (value & 0x80) == 0; }
@@ -189,7 +229,11 @@ public:
     }
 
 private:
+<<<<<<< HEAD
     void next() { std::tie(mVal, mNxt) = decode(mNxt, mEnd); }
+=======
+    void next() { std::tie(val, nxt) = decode(nxt, end); }
+>>>>>>> origin/main
 
     Point mCur;
     Point mNxt;

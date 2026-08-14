@@ -61,6 +61,21 @@ namespace NifBullet
             if (findBoundingBox(*node))
                 break;
 
+<<<<<<< HEAD
+=======
+        // Bethesda actor skeletons commonly carry their collision dimensions in a root BSBound extra instead of
+        // a node named "Bounding Box". Keep the legacy named-node contract as the first choice, then consume the
+        // Bethesda representation before actor physics has to synthesize a much larger fallback capsule. Only
+        // inspect roots: a child-local BSBound would need its transform folded into a root-space AABB first.
+        if (nif.getBethVersion() >= Nif::NIFFile::BethVersion::BETHVER_FO3
+            && mShape->mCollisionBox.mExtents.length2() == 0.f)
+        {
+            for (const Nif::NiAVObject* node : roots)
+                if (findBSBound(*node))
+                    break;
+        }
+
+>>>>>>> origin/main
         HandleNodeArgs args;
 
         // files with the name convention xmodel.nif usually have keyframes stored in a separate file xmodel.kf (see
@@ -106,16 +121,49 @@ namespace NifBullet
         return false;
     }
 
+<<<<<<< HEAD
     void BulletNifLoader::handleRoot(Nif::FileView nif, const Nif::NiAVObject& node, HandleNodeArgs args)
     {
         // Gamebryo/Bethbryo meshes
         if (nif.getVersion() >= Nif::NIFStream::generateVersion(10, 0, 1, 0))
         {
+=======
+    bool BulletNifLoader::findBSBound(const Nif::NiAVObject& node)
+    {
+        for (const auto& extra : node.getExtraList())
+        {
+            if (extra->recType != Nif::RC_BSBound)
+                continue;
+
+            const auto& bound = static_cast<const Nif::BSBound&>(extra.get());
+            if (std::ranges::all_of(bound.mExtents._v, [](float extent) { return extent > 0.f; }))
+            {
+                mShape->mCollisionBox.mExtents = bound.mExtents;
+                mShape->mCollisionBox.mCenter = bound.mCenter;
+            }
+            else
+                warn("Invalid BSBound extents in file " + mShape->mFileName.value());
+            return true;
+        }
+
+        return false;
+    }
+
+    void BulletNifLoader::handleRoot(Nif::FileView nif, const Nif::NiAVObject& node, HandleNodeArgs args)
+    {
+        // Gamebryo/Bethbryo meshes
+        if (nif.getVersion() >= Nif::NIFStream::generateVersion(10, 0, 1, 0))
+        {
+>>>>>>> origin/main
             // Handle BSXFlags
             const Nif::NiIntegerExtraData* bsxFlags = nullptr;
             for (const auto& e : node.getExtraList())
             {
+<<<<<<< HEAD
                 if (!e.empty() && e->mRecordType == Nif::RC_BSXFlags)
+=======
+                if (e->recType == Nif::RC_BSXFlags)
+>>>>>>> origin/main
                 {
                     bsxFlags = static_cast<const Nif::NiIntegerExtraData*>(e.getPtr());
                     break;
@@ -142,7 +190,11 @@ namespace NifBullet
             {
                 for (const auto& child : ninode->mChildren)
                 {
+<<<<<<< HEAD
                     if (!child.empty() && child->mRecordType == Nif::RC_RootCollisionNode)
+=======
+                    if (!child.empty() && child.getPtr()->recType == Nif::RC_RootCollisionNode)
+>>>>>>> origin/main
                     {
                         colNode = static_cast<const Nif::NiNode*>(child.getPtr());
                         break;
@@ -155,7 +207,11 @@ namespace NifBullet
             // Check for extra data
             for (const auto& e : node.getExtraList())
             {
+<<<<<<< HEAD
                 if (!e.empty() && e->mRecordType == Nif::RC_NiStringExtraData)
+=======
+                if (e->recType == Nif::RC_NiStringExtraData)
+>>>>>>> origin/main
                 {
                     // String markers may contain important information
                     // affecting the entire subtree of this node
@@ -192,7 +248,11 @@ namespace NifBullet
     void BulletNifLoader::handleNode(const Nif::NiAVObject& node, const Nif::Parent* parent, HandleNodeArgs args)
     {
         // TODO: allow on-the fly collision switching via toggling this flag
+<<<<<<< HEAD
         if (node.mRecordType == Nif::RC_NiCollisionSwitch && !node.collisionActive())
+=======
+        if (node.recType == Nif::RC_NiCollisionSwitch && !node.collisionActive())
+>>>>>>> origin/main
             return;
 
         for (Nif::NiTimeControllerPtr ctrl = node.mController; !ctrl.empty(); ctrl = ctrl->mNext)
@@ -201,7 +261,11 @@ namespace NifBullet
                 break;
             if (!ctrl->isActive())
                 continue;
+<<<<<<< HEAD
             switch (ctrl->mRecordType)
+=======
+            switch (ctrl->recType)
+>>>>>>> origin/main
             {
                 case Nif::RC_NiKeyframeController:
                 case Nif::RC_NiPathController:
@@ -213,7 +277,11 @@ namespace NifBullet
             }
         }
 
+<<<<<<< HEAD
         if (node.mRecordType == Nif::RC_RootCollisionNode)
+=======
+        if (node.recType == Nif::RC_RootCollisionNode)
+>>>>>>> origin/main
         {
             if (args.mAutogenerated)
             {
@@ -235,7 +303,11 @@ namespace NifBullet
         }
 
         // Don't collide with AvoidNode shapes
+<<<<<<< HEAD
         if (node.mRecordType == Nif::RC_AvoidNode)
+=======
+        if (node.recType == Nif::RC_AvoidNode)
+>>>>>>> origin/main
             args.mAvoid = true;
 
         if (args.mAutogenerated || args.mIsCollisionNode)
@@ -259,7 +331,11 @@ namespace NifBullet
                 // For NiSwitchNodes and NiFltAnimationNodes, only use the first child
                 // TODO: must synchronize with the rendering scene graph somehow
                 // Doing this for NiLODNodes is unsafe (the first level might not be the closest)
+<<<<<<< HEAD
                 if (node.mRecordType == Nif::RC_NiSwitchNode || node.mRecordType == Nif::RC_NiFltAnimationNode)
+=======
+                if (node.recType == Nif::RC_NiSwitchNode || node.recType == Nif::RC_NiFltAnimationNode)
+>>>>>>> origin/main
                     break;
             }
         }
@@ -314,7 +390,11 @@ namespace NifBullet
                 mCompoundShape.reset(new btCompoundShape);
 
             if (args.mAnimated)
+<<<<<<< HEAD
                 mShape->mAnimatedShapes.emplace(niGeometry.mRecordIndex, mCompoundShape->getNumChildShapes());
+=======
+                mShape->mAnimatedShapes.emplace(niGeometry.recIndex, mCompoundShape->getNumChildShapes());
+>>>>>>> origin/main
             mCompoundShape->addChildShape(trans, childShape.get());
         }
         else

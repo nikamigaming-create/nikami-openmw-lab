@@ -5,6 +5,10 @@ namespace SceneUtil
 {
     enum class LightingMethod
     {
+<<<<<<< HEAD
+=======
+        FFP,
+>>>>>>> origin/main
         PerObjectUniform,
         SingleUBO,
     };

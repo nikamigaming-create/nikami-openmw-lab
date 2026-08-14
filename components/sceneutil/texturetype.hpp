@@ -18,7 +18,11 @@ namespace SceneUtil
         {
         }
 
+<<<<<<< HEAD
         static const osg::StateAttribute::Type AttributeType = static_cast<osg::StateAttribute::Type>(69);
+=======
+        static const osg::StateAttribute::Type AttributeType = static_cast<osg::StateAttribute::Type>(69420);
+>>>>>>> origin/main
         META_StateAttribute(SceneUtil, TextureType, AttributeType)
 
         bool isTextureAttribute() const override { return true; }

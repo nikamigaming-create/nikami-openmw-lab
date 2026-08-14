@@ -47,6 +47,7 @@ namespace MWMechanics
         constexpr int countBeforeReset = 10;
         constexpr float idlePositionCheckInterval = 1.5f;
 
+<<<<<<< HEAD
         // to prevent overcrowding
         constexpr unsigned destinationTolerance = 64;
 
@@ -99,6 +100,57 @@ namespace MWMechanics
             movementSettings.mPosition[1] = 0;
         }
 
+=======
+        // distance must be long enough that NPC will need to move to get there.
+        constexpr unsigned minimumWanderDistance = AiWander::sDefaultDestinationTolerance * 2;
+
+        constexpr std::size_t maxIdleSize = 8;
+
+        inline int getCountBeforeReset(const MWWorld::ConstPtr& actor)
+        {
+            if (actor.getClass().isPureWaterCreature(actor) || actor.getClass().isPureFlyingCreature(actor))
+                return 1;
+            return countBeforeReset;
+        }
+
+        osg::Vec3f getRandomPointAround(const osg::Vec3f& position, const float distance)
+        {
+            auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+            const float randomDirection = Misc::Rng::rollClosedProbability(prng) * 2.0f * osg::PI;
+            osg::Matrixf rotation;
+            rotation.makeRotate(randomDirection, osg::Vec3f(0.0, 0.0, 1.0));
+            return position + osg::Vec3f(distance, 0.0, 0.0) * rotation;
+        }
+
+        bool isDestinationHidden(const MWWorld::ConstPtr& actor, const osg::Vec3f& destination)
+        {
+            const auto position = actor.getRefData().getPosition().asVec3();
+            const bool isWaterCreature = actor.getClass().isPureWaterCreature(actor);
+            const bool isFlyingCreature = actor.getClass().isPureFlyingCreature(actor);
+            const osg::Vec3f halfExtents
+                = MWBase::Environment::get().getWorld()->getPathfindingAgentBounds(actor).mHalfExtents;
+            osg::Vec3f direction = destination - position;
+            direction.normalize();
+            const auto visibleDestination
+                = (isWaterCreature || isFlyingCreature ? destination : destination + osg::Vec3f(0, 0, halfExtents.z()))
+                + direction * std::max(halfExtents.x(), std::max(halfExtents.y(), halfExtents.z()));
+            const int mask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                | MWPhysics::CollisionType_Door | MWPhysics::CollisionType_Actor;
+            return MWBase::Environment::get()
+                .getWorld()
+                ->getRayCasting()
+                ->castRay(position, visibleDestination, { actor }, {}, mask)
+                .mHit;
+        }
+
+        void stopMovement(const MWWorld::Ptr& actor)
+        {
+            auto& movementSettings = actor.getClass().getMovementSettings(actor);
+            movementSettings.mPosition[0] = 0;
+            movementSettings.mPosition[1] = 0;
+        }
+
+>>>>>>> origin/main
         std::vector<unsigned char> getInitialIdle(const std::vector<unsigned char>& idle)
         {
             std::vector<unsigned char> result(maxIdleSize, 0);
@@ -154,6 +206,7 @@ namespace MWMechanics
     {
     }
 
+<<<<<<< HEAD
     AiWander::AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat)
         : TypedAiPackage<AiWander>(repeat)
         , mDistance(static_cast<unsigned>(std::max(0, distance)))
@@ -163,6 +216,21 @@ namespace MWMechanics
         , mIdle(getInitialIdle(idle))
         , mStoredInitialActorPosition(false)
         , mHasDestination(false)
+=======
+    AiWander::AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat,
+        unsigned destinationTolerance)
+        : TypedAiPackage<AiWander>(repeat)
+        , mDistance(static_cast<unsigned>(std::max(0, distance)))
+        , mDestinationTolerance(sanitizeDestinationTolerance(mDistance, destinationTolerance))
+        , mDuration(static_cast<unsigned>(std::max(0, duration)))
+        , mRemainingDuration(duration)
+        , mTimeOfDay(timeOfDay)
+        , mIdle(getInitialIdle(idle))
+        , mStoredInitialActorPosition(false)
+        , mInitialActorPosition(osg::Vec3f(0, 0, 0))
+        , mHasDestination(false)
+        , mDestination(osg::Vec3f(0, 0, 0))
+>>>>>>> origin/main
         , mUsePathgrid(false)
     {
     }
@@ -255,17 +323,28 @@ namespace MWMechanics
         if (!cStats.getMovementFlag(CreatureStats::Flag_ForceJump)
             && !cStats.getMovementFlag(CreatureStats::Flag_ForceSneak))
         {
+<<<<<<< HEAD
             // The greeting temporarily interrupts wandering until it and its forced animation are finished
             GreetingState greetingState = MWBase::Environment::get().getMechanicsManager()->getGreetingState(actor);
             if (!storage.mGreeting && greetingState == GreetingState::InProgress)
             {
                 storage.mGreeting = true;
+=======
+            GreetingState greetingState = MWBase::Environment::get().getMechanicsManager()->getGreetingState(actor);
+            if (greetingState == GreetingState::InProgress)
+            {
+>>>>>>> origin/main
                 if (storage.mState == AiWanderStorage::Wander_Walking)
                 {
                     stopMovement(actor);
                     mObstacleCheck.clear();
+<<<<<<< HEAD
                 }
                 storage.setState(AiWanderStorage::Wander_IdleNow);
+=======
+                    storage.setState(AiWanderStorage::Wander_IdleNow);
+                }
+>>>>>>> origin/main
             }
         }
 
@@ -283,7 +362,11 @@ namespace MWMechanics
         {
             stopWalking(actor);
             // Reset package so it can be used again
+<<<<<<< HEAD
             mRemainingDuration = static_cast<float>(mDuration);
+=======
+            mRemainingDuration = mDuration;
+>>>>>>> origin/main
             return true;
         }
 
@@ -510,6 +593,7 @@ namespace MWMechanics
 
     void AiWander::onIdleStatePerFrameActions(const MWWorld::Ptr& actor, float duration, AiWanderStorage& storage)
     {
+<<<<<<< HEAD
         if (storage.mGreeting)
         {
             const MWBase::MechanicsManager& mechMgr = *MWBase::Environment::get().getMechanicsManager();
@@ -519,6 +603,8 @@ namespace MWMechanics
             storage.mGreeting = false;
         }
 
+=======
+>>>>>>> origin/main
         // Check if an idle actor is too far from all allowed positions or too close to a door - if so start walking.
         storage.mCheckIdlePositionTimer += duration;
 
@@ -535,7 +621,12 @@ namespace MWMechanics
         }
 
         // Check if idle animation finished
+<<<<<<< HEAD
         if (!checkIdle(actor, storage.mIdleAnimation))
+=======
+        GreetingState greetingState = MWBase::Environment::get().getMechanicsManager()->getGreetingState(actor);
+        if (!checkIdle(actor, storage.mIdleAnimation) && greetingState != GreetingState::InProgress)
+>>>>>>> origin/main
         {
             if (mPathFinder.isPathConstructed())
                 storage.setState(AiWanderStorage::Wander_Walking, !mUsePathgrid);
@@ -560,7 +651,11 @@ namespace MWMechanics
         // Is there no destination or are we there yet?
         if ((!mPathFinder.isPathConstructed())
             || pathTo(actor, osg::Vec3f(mPathFinder.getPath().back()), duration, supportedMovementDirections,
+<<<<<<< HEAD
                 destinationTolerance))
+=======
+                mDestinationTolerance))
+>>>>>>> origin/main
         {
             stopWalking(actor);
             storage.setState(AiWanderStorage::Wander_ChooseAction);
@@ -636,7 +731,12 @@ namespace MWMechanics
     {
         MWBase::World& world = *MWBase::Environment::get().getWorld();
         Misc::Rng::Generator& prng = world.getPrng();
+<<<<<<< HEAD
         const std::size_t randomAllowedPositionIndex = Misc::Rng::rollDice(storage.mAllowedPositions.size(), prng);
+=======
+        const std::size_t randomAllowedPositionIndex
+            = static_cast<std::size_t>(Misc::Rng::rollDice(storage.mAllowedPositions.size(), prng));
+>>>>>>> origin/main
         const osg::Vec3f randomAllowedPosition = storage.mAllowedPositions[randomAllowedPositionIndex];
 
         const osg::Vec3f start = actorPos.asVec3();
@@ -741,7 +841,11 @@ namespace MWMechanics
         }
     }
 
+<<<<<<< HEAD
     unsigned short AiWander::getRandomIdle() const
+=======
+    int AiWander::getRandomIdle() const
+>>>>>>> origin/main
     {
         MWBase::World* world = MWBase::Environment::get().getWorld();
         static const float fIdleChanceMultiplier
@@ -749,14 +853,22 @@ namespace MWMechanics
         if (Misc::Rng::rollClosedProbability(world->getPrng()) > fIdleChanceMultiplier)
             return 0;
 
+<<<<<<< HEAD
         unsigned short newIdle = 0;
+=======
+        int newIdle = 0;
+>>>>>>> origin/main
         float maxRoll = 0.f;
         for (size_t i = 0; i < mIdle.size(); i++)
         {
             float roll = Misc::Rng::rollClosedProbability(world->getPrng()) * 100.f;
             if (roll <= mIdle[i] && roll > maxRoll)
             {
+<<<<<<< HEAD
                 newIdle = static_cast<unsigned short>(GroupIndex_MinIdle + i);
+=======
+                newIdle = GroupIndex_MinIdle + i;
+>>>>>>> origin/main
                 maxRoll = roll;
             }
         }
@@ -779,7 +891,11 @@ namespace MWMechanics
             return;
 
         auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+<<<<<<< HEAD
         size_t index = Misc::Rng::rollDice(storage.mAllowedPositions.size(), prng);
+=======
+        int index = Misc::Rng::rollDice(storage.mAllowedPositions.size(), prng);
+>>>>>>> origin/main
         const osg::Vec3f worldDest = storage.mAllowedPositions[index];
         const Misc::CoordinateConverter converter = Misc::makeCoordinateConverter(*actor.getCell()->getCell());
         osg::Vec3f dest = converter.toLocalVec3(worldDest);
@@ -801,7 +917,11 @@ namespace MWMechanics
             // AI will try to move the NPC towards every neighboring node until suitable place will be found
             while (!points.empty())
             {
+<<<<<<< HEAD
                 size_t randomIndex = Misc::Rng::rollDice(points.size(), prng);
+=======
+                int randomIndex = Misc::Rng::rollDice(points.size(), prng);
+>>>>>>> origin/main
                 const ESM::Pathgrid::Point& connDest = points[randomIndex];
 
                 // add an offset towards random neighboring node
@@ -947,7 +1067,11 @@ namespace MWMechanics
 
         // must not travel longer than distance between waypoints or NPC goes past waypoint
         distance = std::min(distance, static_cast<unsigned>(length));
+<<<<<<< HEAD
         delta *= static_cast<float>(distance);
+=======
+        delta *= distance;
+>>>>>>> origin/main
         storage.mAllowedPositions.push_back(vectorStart + delta);
     }
 
@@ -975,6 +1099,7 @@ namespace MWMechanics
         if (mRemainingDuration > 0 && mRemainingDuration < 24)
             remainingDuration = mRemainingDuration;
         else
+<<<<<<< HEAD
             remainingDuration = static_cast<float>(mDuration);
 
         auto wander = std::make_unique<ESM::AiSequence::AiWander>();
@@ -982,6 +1107,17 @@ namespace MWMechanics
         wander->mData.mDuration = static_cast<int16_t>(mDuration);
         wander->mData.mTimeOfDay = static_cast<uint8_t>(mTimeOfDay);
         wander->mDurationData.mRemainingDuration = remainingDuration;
+=======
+            remainingDuration = mDuration;
+
+        auto wander = std::make_unique<ESM::AiSequence::AiWander>();
+        wander->mData.mDistance = mDistance;
+        wander->mData.mDuration = mDuration;
+        wander->mData.mTimeOfDay = mTimeOfDay;
+        wander->mDurationData.mRemainingDuration = remainingDuration;
+        wander->mDurationData.mDestinationTolerance
+            = mDestinationTolerance == sDefaultDestinationTolerance ? 0 : mDestinationTolerance;
+>>>>>>> origin/main
         assert(mIdle.size() == 8);
         for (int i = 0; i < 8; ++i)
             wander->mData.mIdle[i] = mIdle[i];
@@ -999,17 +1135,30 @@ namespace MWMechanics
     AiWander::AiWander(const ESM::AiSequence::AiWander* wander)
         : TypedAiPackage<AiWander>(makeDefaultOptions().withRepeat(wander->mData.mShouldRepeat != 0))
         , mDistance(static_cast<unsigned>(std::max(static_cast<short>(0), wander->mData.mDistance)))
+<<<<<<< HEAD
+=======
+        , mDestinationTolerance(
+              sanitizeDestinationTolerance(mDistance, wander->mDurationData.mDestinationTolerance))
+>>>>>>> origin/main
         , mDuration(static_cast<unsigned>(std::max(static_cast<short>(0), wander->mData.mDuration)))
         , mRemainingDuration(wander->mDurationData.mRemainingDuration)
         , mTimeOfDay(wander->mData.mTimeOfDay)
         , mIdle(getInitialIdle(wander->mData.mIdle))
         , mStoredInitialActorPosition(wander->mStoredInitialActorPosition)
         , mHasDestination(false)
+<<<<<<< HEAD
+=======
+        , mDestination(osg::Vec3f(0, 0, 0))
+>>>>>>> origin/main
         , mUsePathgrid(false)
     {
         if (mStoredInitialActorPosition)
             mInitialActorPosition = wander->mInitialActorPosition;
         if (mRemainingDuration <= 0 || mRemainingDuration >= 24)
+<<<<<<< HEAD
             mRemainingDuration = static_cast<float>(mDuration);
+=======
+            mRemainingDuration = mDuration;
+>>>>>>> origin/main
     }
 }

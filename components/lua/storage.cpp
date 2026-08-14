@@ -222,6 +222,7 @@ namespace LuaUtil
         return LuaUtil::makeReadOnly(res);
     }
 
+<<<<<<< HEAD
     sol::table LuaStorage::initLoadPackage(LuaUtil::LuaView& view, LuaStorage* playerStorage)
     {
         sol::table res(view.sol(), sol::create);
@@ -233,6 +234,8 @@ namespace LuaUtil
         return LuaUtil::makeReadOnly(res);
     }
 
+=======
+>>>>>>> origin/main
     void LuaStorage::clearTemporaryAndRemoveCallbacks()
     {
         auto it = mData.begin();

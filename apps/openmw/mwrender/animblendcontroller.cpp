@@ -279,7 +279,11 @@ namespace MWRender
         // such as bip01, bip01 spine1 etc. The child bones of these controllers have their own callback wrapper
         // which will call this instance's applyBoneBlend for each child bone. The order of update is important
         // as the blending calculations expect the bone's skeleton matrix to be at the sample point
+<<<<<<< HEAD
         float time = static_cast<float>(nv->getFrameStamp()->getSimulationTime());
+=======
+        float time = nv->getFrameStamp()->getSimulationTime();
+>>>>>>> origin/main
         assert(node != nullptr);
 
         if (mBlendTrigger)
@@ -308,7 +312,11 @@ namespace MWRender
 
         auto [translation, rotation, scale] = mKeyframeTrack->getCurrentTransformation(nv);
 
+<<<<<<< HEAD
         float time = static_cast<float>(nv->getFrameStamp()->getSimulationTime());
+=======
+        float time = nv->getFrameStamp()->getSimulationTime();
+>>>>>>> origin/main
 
         if (mBlendTrigger)
         {

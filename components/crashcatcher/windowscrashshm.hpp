@@ -40,9 +40,12 @@ namespace Crash
             HANDLE mSignalApp;
             HANDLE mSignalMonitor;
             HANDLE mShmMutex;
+<<<<<<< HEAD
             // the size defines are in UTF-16 code units, and lots of things use more UTF-8 code units, so this may
             // explode with really long non-ASCII paths
             // we can't switch to wchar_t as when we've made this struct bigger in the past, things exploded
+=======
+>>>>>>> origin/main
             char mDumpDirectoryPath[MAX_LONG_PATH];
             char mCrashDumpFileName[MAX_FILENAME];
             char mFreezeDumpFileName[MAX_FILENAME];

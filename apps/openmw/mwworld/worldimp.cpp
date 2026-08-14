@@ -1,6 +1,17 @@
 #include "worldimp.hpp"
 
+<<<<<<< HEAD
 #include <charconv>
+=======
+#include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <string>
+#include <string_view>
+>>>>>>> origin/main
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -25,14 +36,27 @@
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
+<<<<<<< HEAD
 #include <components/esm4/loaddoor.hpp>
+=======
+#include <components/esm4/loadcont.hpp>
+#include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadland.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadrepu.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/mathutil.hpp>
+<<<<<<< HEAD
 #include <components/misc/pathhelpers.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 
@@ -40,6 +64,7 @@
 
 #include <components/resource/bulletshape.hpp>
 #include <components/resource/resourcesystem.hpp>
+<<<<<<< HEAD
 
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -56,7 +81,25 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 
 #include <components/settings/values.hpp>
+=======
+>>>>>>> origin/main
 
+#include <components/sceneutil/lightmanager.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/visitor.hpp>
+#include <components/sceneutil/workqueue.hpp>
+
+#include <components/detournavigator/agentbounds.hpp>
+#include <components/detournavigator/debug.hpp>
+#include <components/detournavigator/navigator.hpp>
+#include <components/detournavigator/settings.hpp>
+#include <components/detournavigator/stats.hpp>
+#include <components/detournavigator/updateguard.hpp>
+
+#include <components/files/conversion.hpp>
+#include <components/loadinglistener/loadinglistener.hpp>
+
+#include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -64,6 +107,7 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include <components/settings/values.hpp>
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/aiavoiddoor.hpp" //Used to tell actors to avoid doors
@@ -85,7 +129,14 @@
 #include "../mwscript/globalscripts.hpp"
 
 #include "../mwclass/door.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 
+#include "../mwphysics/actor.hpp"
+#include "../mwphysics/collisiontype.hpp"
+#include "../mwphysics/object.hpp"
+#include "../mwphysics/physicssystem.hpp"
+
+<<<<<<< HEAD
 #include "../mwphysics/actor.hpp"
 #include "../mwphysics/collisiontype.hpp"
 #include "../mwphysics/object.hpp"
@@ -93,6 +144,8 @@
 
 #include "../mwsound/constants.hpp"
 
+=======
+>>>>>>> origin/main
 #include "actionteleport.hpp"
 #include "cellstore.hpp"
 #include "containerstore.hpp"
@@ -105,11 +158,539 @@
 
 #include "contentloader.hpp"
 #include "esmloader.hpp"
+#include "fnvfasttravel.hpp"
 
+<<<<<<< HEAD
+=======
+// ## VR_PATCH BEGIN
+#include "../mwvr/vrgui.hpp"
+#include "../mwvr/vrinputmanager.hpp"
+#include "../mwvr/vrpointer.hpp"
+#include "../mwvr/vrutil.hpp"
+#include <components/vr/session.hpp>
+#include <components/vr/trackinglistener.hpp>
+#include <components/vr/trackingmanager.hpp>
+#include <components/vr/vr.hpp>
+// ## VR_PATCH END
+
+>>>>>>> origin/main
 namespace MWWorld
 {
     namespace
     {
+<<<<<<< HEAD
+=======
+        bool readViewerProofFloat(const char* name, float& value)
+        {
+            const char* text = std::getenv(name);
+            if (text == nullptr || *text == '\0')
+                return false;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(text, &end);
+            if (end == text)
+                return false;
+
+            value = parsed;
+            return true;
+        }
+
+        float readViewerProofFloatOr(const char* name, float fallback)
+        {
+            float value = fallback;
+            readViewerProofFloat(name, value);
+            return value;
+        }
+
+        bool readViewerProofInt(const char* name, int& value)
+        {
+            const char* text = std::getenv(name);
+            if (text == nullptr || *text == '\0')
+                return false;
+
+            int parsed = 0;
+            const char* end = text + std::char_traits<char>::length(text);
+            const std::from_chars_result result = std::from_chars(text, end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end)
+                return false;
+
+            value = parsed;
+            return true;
+        }
+
+        bool readViewerProofHour(float& hour)
+        {
+            const char* value = std::getenv("OPENMW_PLAYABLE_START_HOUR");
+            if (value == nullptr || *value == '\0')
+                value = std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR");
+            if (value == nullptr || *value == '\0')
+                return false;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value)
+                return false;
+
+            hour = parsed;
+            if (hour < 0.f)
+                hour = 0.f;
+            else if (hour >= 24.f)
+                hour = std::fmod(hour, 24.f);
+            return true;
+        }
+
+        bool readViewerStartAnchor(ESM::Position& position)
+        {
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_X", position.pos[0]))
+                return false;
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_Y", position.pos[1]))
+                return false;
+            if (!readViewerProofFloat("OPENMW_WORLD_VIEWER_START_POS_Z", position.pos[2]))
+                return false;
+
+            position.rot[0] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_X", 0.f);
+            position.rot[1] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_Y", 0.f);
+            position.rot[2] = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_ROT_Z", 0.f);
+            const char* cameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+            const bool firstPersonCamera = cameraMode != nullptr && std::string(cameraMode) == "firstperson";
+            if (firstPersonCamera)
+            {
+                float cameraPitch = 0.f;
+                if (readViewerProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH", cameraPitch))
+                    position.rot[0] = -cameraPitch;
+
+                float cameraYaw = 0.f;
+                if (readViewerProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_YAW", cameraYaw))
+                    position.rot[2] = -cameraYaw;
+            }
+            return true;
+        }
+
+        bool readViewerStartExteriorLocation(ESM::ExteriorCellLocation& location)
+        {
+            const char* worldspaceText = std::getenv("OPENMW_WORLD_VIEWER_START_WORLDSPACE");
+            if (worldspaceText == nullptr || *worldspaceText == '\0')
+                return false;
+
+            int gridX = 0;
+            int gridY = 0;
+            if (!readViewerProofInt("OPENMW_WORLD_VIEWER_START_GRID_X", gridX)
+                || !readViewerProofInt("OPENMW_WORLD_VIEWER_START_GRID_Y", gridY))
+            {
+                Log(Debug::Warning) << "World viewer: explicit exterior start ignored; grid is missing or invalid";
+                return false;
+            }
+
+            try
+            {
+                ESM::RefId worldspace = ESM::RefId::deserializeText(worldspaceText);
+                if (worldspace.empty())
+                {
+                    Log(Debug::Warning) << "World viewer: explicit exterior start ignored; worldspace is empty";
+                    return false;
+                }
+                location = ESM::ExteriorCellLocation(gridX, gridY, worldspace);
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "World viewer: explicit exterior start ignored; worldspace '" << worldspaceText
+                                    << "' is invalid: " << e.what();
+                return false;
+            }
+        }
+
+        bool viewerEnvEnabled(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && std::string(value) != "0";
+        }
+
+        bool viewerTraceEnabled()
+        {
+            return viewerEnvEnabled("OPENMW_WORLD_VIEWER_TRACE") || viewerEnvEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+        }
+
+        void viewerTrace(std::string_view phase)
+        {
+            if (!viewerTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "World viewer trace: phase=\"world." << phase << "\"";
+            std::fflush(stdout);
+            std::fflush(stderr);
+        }
+
+        void settleViewerStartCamera(MWRender::Camera* camera, const Ptr& player, const ESM::Position& position)
+        {
+            if (camera == nullptr || player.isEmpty())
+                return;
+
+            const char* cameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+            const bool staticCamera = cameraMode != nullptr && std::string(cameraMode) == "static";
+            const bool thirdPerson = cameraMode != nullptr && std::string(cameraMode) == "thirdperson";
+            const float cameraDistance
+                = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_DISTANCE", thirdPerson ? 192.f : 0.f);
+            const float cameraPitch
+                = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH", -position.rot[0]);
+            const float cameraYaw = readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_YAW", -position.rot[2]);
+
+            if (staticCamera)
+            {
+                const osg::Vec3d playerTarget(position.pos[0], position.pos[1], position.pos[2] + 128.f);
+                osg::Vec3d target(readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_X", playerTarget.x()),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Y", playerTarget.y()),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Z", playerTarget.z()));
+                osg::Vec3d eye(
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_X", position.pos[0] + 2048.f),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Y", position.pos[1] - 4096.f),
+                    readViewerProofFloatOr("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Z", position.pos[2] + 2048.f));
+
+                camera->setMode(MWRender::Camera::Mode::Static, true);
+                camera->setStaticPosition(eye);
+                const osg::Vec3d delta = target - eye;
+                const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                camera->setRoll(0.f);
+                camera->instantTransition();
+                camera->updateCamera();
+
+                Log(Debug::Info) << "World viewer: settled static survey camera eye=(" << eye.x() << "," << eye.y()
+                                 << "," << eye.z() << ") target=(" << target.x() << "," << target.y() << ","
+                                 << target.z() << ") pitch=" << camera->getPitch() << " yaw=" << camera->getYaw();
+                return;
+            }
+
+            camera->attachTo(player);
+            camera->setMode(
+                thirdPerson ? MWRender::Camera::Mode::ThirdPerson : MWRender::Camera::Mode::FirstPerson, true);
+            camera->setPreferredCameraDistance(cameraDistance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->setPitch(cameraPitch, true);
+            camera->setYaw(cameraYaw, true);
+            camera->setRoll(0.f);
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+        }
+
+        void pinViewerStartAnchor(World& world, const ESM::Position& position)
+        {
+            ESM::Position pinnedPosition = position;
+            float syntheticGroundZ = 0.f;
+            if (readViewerProofFloat("OPENMW_WORLD_VIEWER_SYNTHETIC_GROUND_Z", syntheticGroundZ))
+            {
+                world.addWorldViewerFlatGround(position.pos[0], position.pos[1], syntheticGroundZ);
+                pinnedPosition.pos[2] = syntheticGroundZ + 4.f;
+                Log(Debug::Warning) << "World viewer: installed proof-only flat ground at z=" << syntheticGroundZ
+                                    << " beneath explicit start anchor; authored collision remains unsupported";
+            }
+
+            MWWorld::Ptr player = world.getPlayerPtr();
+            player = world.moveObject(player, pinnedPosition.asVec3(), true, true);
+            if (viewerEnvEnabled("OPENMW_WORLD_VIEWER_START_DRY") && player.getCell() != nullptr)
+                player.getCell()->setWaterLevel(-200000.f);
+            world.rotateObject(player, pinnedPosition.asRotationVec3(), MWBase::RotationFlag_none);
+            settleViewerStartCamera(world.getCamera(), player, pinnedPosition);
+            const ESM::Position& actual = player.getRefData().getPosition();
+            const osg::Vec3d cameraPos = world.getCamera() != nullptr ? world.getCamera()->getPosition() : osg::Vec3d();
+            Log(Debug::Info) << "World viewer: pinned explicit start anchor pos=(" << actual.pos[0] << ", "
+                             << actual.pos[1] << ", " << actual.pos[2] << ") rot=(" << actual.rot[0] << ", "
+                             << actual.rot[1] << ", " << actual.rot[2]
+                             << ") dry=" << viewerEnvEnabled("OPENMW_WORLD_VIEWER_START_DRY") << " cameraPos=("
+                             << cameraPos.x() << ", " << cameraPos.y() << ", " << cameraPos.z() << ")";
+        }
+
+        std::vector<std::pair<std::string_view, ESM::Variant>> generateDefaultGameSettings()
+        {
+            return {
+                // Companion (tribunal)
+                { "sCompanionShare", ESM::Variant("Companion Share") },
+                { "sCompanionWarningMessage", ESM::Variant("Warning message") },
+                { "sCompanionWarningButtonOne", ESM::Variant("Button 1") },
+                { "sCompanionWarningButtonTwo", ESM::Variant("Button 2") },
+                { "sProfitValue", ESM::Variant("Profit Value") },
+                { "sTeleportDisabled", ESM::Variant("Teleport disabled") },
+                { "sLevitateDisabled", ESM::Variant("Levitate disabled") },
+                // Missing in unpatched MW 1.0
+                { "sDifficulty", ESM::Variant("Difficulty") },
+                { "fDifficultyMult", ESM::Variant(5.f) },
+                { "sAuto_Run", ESM::Variant("Auto Run") },
+                { "sServiceRefusal", ESM::Variant("Service Refusal") },
+                { "sNeedOneSkill", ESM::Variant("Need one skill") },
+                { "sNeedTwoSkills", ESM::Variant("Need two skills") },
+                { "sEasy", ESM::Variant("Easy") },
+                { "sHard", ESM::Variant("Hard") },
+                { "sDeleteNote", ESM::Variant("Delete Note") },
+                { "sEditNote", ESM::Variant("Edit Note") },
+                { "sAdmireSuccess", ESM::Variant("Admire Success") },
+                { "sAdmireFail", ESM::Variant("Admire Fail") },
+                { "sIntimidateSuccess", ESM::Variant("Intimidate Success") },
+                { "sIntimidateFail", ESM::Variant("Intimidate Fail") },
+                { "sTauntSuccess", ESM::Variant("Taunt Success") },
+                { "sTauntFail", ESM::Variant("Taunt Fail") },
+                { "sBreath", ESM::Variant("Breath") },
+                { "sBribeSuccess", ESM::Variant("Bribe Success") },
+                { "sBribeFail", ESM::Variant("Bribe Fail") },
+                { "fNPCHealthBarTime", ESM::Variant(5.f) },
+                { "fNPCHealthBarFade", ESM::Variant(1.f) },
+                { "fAIFleeFleeMult", ESM::Variant(0.2f) },
+                { "fAIFleeHealthMult", ESM::Variant(7.f) },
+                { "fAIMagicSpellMult", ESM::Variant(3.f) },
+                { "fAIMeleeArmorMult", ESM::Variant(1.f) },
+                { "fAIMeleeWeaponMult", ESM::Variant(1.f) },
+                { "fAIRangeMagicSpellMult", ESM::Variant(5.f) },
+                { "fAIRangeMeleeWeaponMult", ESM::Variant(5.f) },
+                { "fAlarmRadius", ESM::Variant(4000.f) },
+                { "fAudioDefaultMaxDistance", ESM::Variant(40.f) },
+                { "fAudioDefaultMinDistance", ESM::Variant(5.f) },
+                { "fAudioMaxDistanceMult", ESM::Variant(50.f) },
+                { "fAudioMinDistanceMult", ESM::Variant(20.f) },
+                { "fAudioVoiceDefaultMaxDistance", ESM::Variant(60.f) },
+                { "fAudioVoiceDefaultMinDistance", ESM::Variant(10.f) },
+                { "fAthleticsRunBonus", ESM::Variant(0.02f) },
+                { "fBargainOfferBase", ESM::Variant(50.f) },
+                { "fBargainOfferMulti", ESM::Variant(-4.f) },
+                { "fBarterGoldResetDelay", ESM::Variant(24.f) },
+                { "fBaseRunMultiplier", ESM::Variant(1.f) },
+                { "fBlockStillBonus", ESM::Variant(0.5f) },
+                { "fBribe10Mod", ESM::Variant(35.f) },
+                { "fBribe100Mod", ESM::Variant(75.f) },
+                { "fBribe1000Mod", ESM::Variant(150.f) },
+                { "fCombatAngleXY", ESM::Variant(60.f) },
+                { "fCombatAngleZ", ESM::Variant(30.f) },
+                { "fCombatArmorMinMult", ESM::Variant(0.25f) },
+                { "fCombatBlockLeftAngle", ESM::Variant(45.f) },
+                { "fCombatBlockRightAngle", ESM::Variant(45.f) },
+                { "fCombatCriticalStrikeMult", ESM::Variant(4.f) },
+                { "fCombatDelayCreature", ESM::Variant(0.1f) },
+                { "fCombatDelayNPC", ESM::Variant(0.1f) },
+                { "fCombatInvisoMult", ESM::Variant(0.2f) },
+                { "fCombatKODamageMult", ESM::Variant(0.5f) },
+                { "fCorpseRespawnDelay", ESM::Variant(72.f) },
+                // Fallout 3/New Vegas engine default. The setting is built into the executable rather than authored
+                // as a GMST record in FalloutNV.esm; xNVSE exposes the same setting as iHoursToRespawnCell.
+                { "iHoursToRespawnCell", ESM::Variant(72) },
+                { "fCrimeStealing", ESM::Variant(1.f) },
+                { "fDamageStrengthBase", ESM::Variant(0.5f) },
+                { "fDamageStrengthMult", ESM::Variant(0.1f) },
+                { "fDispAttacking", ESM::Variant(-50.f) },
+                { "fDispCrimeMod", ESM::Variant(1.f) },
+                { "fDispDiseaseMod", ESM::Variant(-10.f) },
+                { "fDispFactionMod", ESM::Variant(1.f) },
+                { "fDispFactionRankBase", ESM::Variant(5.f) },
+                { "fDispFactionRankMult", ESM::Variant(5.f) },
+                { "fDispositionMod", ESM::Variant(1.f) },
+                { "fDispPersonalityBase", ESM::Variant(50.f) },
+                { "fDispPersonalityMult", ESM::Variant(0.5f) },
+                { "fDispPickPocketMod", ESM::Variant(-25.f) },
+                { "fDispRaceMod", ESM::Variant(5.f) },
+                { "fDispStealing", ESM::Variant(-0.5f) },
+                { "fDispWeaponDrawn", ESM::Variant(-5.f) },
+                { "fEncumberedMoveEffect", ESM::Variant(0.3f) },
+                { "fEncumbranceStrMult", ESM::Variant(5.f) },
+                { "fEndFatigueMult", ESM::Variant(2.f) },
+                { "fFallAcroBase", ESM::Variant(5.f) },
+                { "fFallAcroMult", ESM::Variant(0.25f) },
+                { "fFallDamageDistanceMin", ESM::Variant(400.f) },
+                { "fFallDistanceBase", ESM::Variant(500.f) },
+                { "fFallDistanceMult", ESM::Variant(0.1f) },
+                { "fFatigueAttackBase", ESM::Variant(2.f) },
+                { "fFatigueAttackMult", ESM::Variant(0.5f) },
+                { "fFatigueBase", ESM::Variant(1.25f) },
+                { "fFatigueBlockBase", ESM::Variant(1.f) },
+                { "fFatigueBlockMult", ESM::Variant(1.f) },
+                { "fFatigueJumpBase", ESM::Variant(5.f) },
+                { "fFatigueJumpMult", ESM::Variant(0.5f) },
+                { "fFatigueMult", ESM::Variant(1.f) },
+                { "fFatigueReturnBase", ESM::Variant(2.f) },
+                { "fFatigueReturnMult", ESM::Variant(0.02f) },
+                { "fFatigueRunBase", ESM::Variant(1.f) },
+                { "fFatigueRunMult", ESM::Variant(0.1f) },
+                { "fFatigueSneakBase", ESM::Variant(1.f) },
+                { "fFatigueSneakMult", ESM::Variant(0.5f) },
+                { "fFatigueSwimRunBase", ESM::Variant(2.f) },
+                { "fFatigueSwimRunMult", ESM::Variant(0.5f) },
+                { "fFatigueSwimWalkBase", ESM::Variant(1.f) },
+                { "fFatigueSwimWalkMult", ESM::Variant(0.5f) },
+                { "fFightDispMult", ESM::Variant(0.2f) },
+                { "fFightDistanceMultiplier", ESM::Variant(1.f) },
+                { "fFightStealing", ESM::Variant(0.5f) },
+                { "fFleeDistance", ESM::Variant(3000.f) },
+                { "fHandtoHandHealthPer", ESM::Variant(0.1f) },
+                { "fHandToHandReach", ESM::Variant(1.f) },
+                { "fHoldBreathTime", ESM::Variant(20.f) },
+                { "fIdleChanceMultiplier", ESM::Variant(1.f) },
+                { "fInteriorHeadTrackMult", ESM::Variant(0.5f) },
+                { "fJumpAcrobaticsBase", ESM::Variant(0.f) },
+                { "fJumpAcroMultiplier", ESM::Variant(1.f) },
+                { "fJumpEncumbranceBase", ESM::Variant(1.f) },
+                { "fJumpEncumbranceMultiplier", ESM::Variant(1.f) },
+                { "fJumpMoveBase", ESM::Variant(1.f) },
+                { "fJumpMoveMult", ESM::Variant(1.f) },
+                { "fJumpRunMultiplier", ESM::Variant(1.f) },
+                { "fKnockDownMult", ESM::Variant(0.5f) },
+                { "fLevelMod", ESM::Variant(1.f) },
+                { "fLightMaxMod", ESM::Variant(0.15f) },
+                { "fLuckMod", ESM::Variant(10.f) },
+                { "fMagicItemRechargePerSecond", ESM::Variant(0.05f) },
+                { "fMagicStartIconBlink", ESM::Variant(0.5f) },
+                { "fMagicSunBlockedMult", ESM::Variant(0.5f) },
+                { "fMajorSkillBonus", ESM::Variant(25.f) },
+                { "fMaxFlySpeed", ESM::Variant(300.f) },
+                { "fMaxHandToHandMult", ESM::Variant(0.5f) },
+                { "fMaxHeadTrackDistance", ESM::Variant(512.f) },
+                { "fMaxWalkSpeed", ESM::Variant(300.f) },
+                { "fMaxWalkSpeedCreature", ESM::Variant(300.f) },
+                { "fMedMaxMod", ESM::Variant(0.4f) },
+                { "fMessageTimePerChar", ESM::Variant(0.1f) },
+                { "fMinFlySpeed", ESM::Variant(50.f) },
+                { "fMinHandToHandMult", ESM::Variant(0.1f) },
+                { "fMinorSkillBonus", ESM::Variant(10.f) },
+                { "fMinWalkSpeed", ESM::Variant(100.f) },
+                { "fMinWalkSpeedCreature", ESM::Variant(100.f) },
+                { "fMiscSkillBonus", ESM::Variant(5.f) },
+                { "fNPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fPerDieRollMult", ESM::Variant(1.f) },
+                { "fPersonalityMod", ESM::Variant(10.f) },
+                { "fPerTempMult", ESM::Variant(1.f) },
+                { "fPickLockMult", ESM::Variant(1.f) },
+                { "fPickPocketMod", ESM::Variant(1.f) },
+                { "fProjectileMaxSpeed", ESM::Variant(3000.f) },
+                { "fProjectileMinSpeed", ESM::Variant(400.f) },
+                { "fProjectileThrownStoreChance", ESM::Variant(25.f) },
+                { "fRepairAmountMult", ESM::Variant(1.f) },
+                { "fRepairMult", ESM::Variant(1.f) },
+                { "fReputationMod", ESM::Variant(1.f) },
+                { "fRestMagicMult", ESM::Variant(0.15f) },
+                { "fSleepRandMod", ESM::Variant(1.f) },
+                { "fSleepRestMod", ESM::Variant(1.f) },
+                { "fSneakBootMult", ESM::Variant(1.f) },
+                { "fSneakDistanceBase", ESM::Variant(500.f) },
+                { "fSneakDistanceMultiplier", ESM::Variant(1.f) },
+                { "fSneakNoViewMult", ESM::Variant(0.5f) },
+                { "fSneakSkillMult", ESM::Variant(1.f) },
+                { "fSneakSpeedMultiplier", ESM::Variant(0.75f) },
+                { "fSneakUseDelay", ESM::Variant(1.f) },
+                { "fSneakUseDist", ESM::Variant(200.f) },
+                { "fSneakViewMult", ESM::Variant(1.f) },
+                { "fSoulgemMult", ESM::Variant(3.f) },
+                { "fSpecialSkillBonus", ESM::Variant(15.f) },
+                { "fStromWalkMult", ESM::Variant(0.5f) },
+                { "fSuffocationDamage", ESM::Variant(3.f) },
+                { "fSwimHeightScale", ESM::Variant(0.9f) },
+                { "fSwimRunAthleticsMult", ESM::Variant(0.02f) },
+                { "fSwimRunBase", ESM::Variant(100.f) },
+                { "fSwingBlockBase", ESM::Variant(1.f) },
+                { "fSwingBlockMult", ESM::Variant(1.f) },
+                { "iMaxActivateDist", ESM::Variant(192) },
+                { "fTargetSpellMaxSpeed", ESM::Variant(1000.f) },
+                { "fThrownWeaponMaxSpeed", ESM::Variant(3000.f) },
+                { "fThrownWeaponMinSpeed", ESM::Variant(400.f) },
+                { "fTravelMult", ESM::Variant(1.f) },
+                { "fTravelTimeMult", ESM::Variant(16000.f) },
+                { "fUnarmoredBase1", ESM::Variant(0.1f) },
+                { "fUnarmoredBase2", ESM::Variant(0.1f) },
+                { "fVanityDelay", ESM::Variant(30.f) },
+                { "fVoiceIdleOdds", ESM::Variant(1.f) },
+                { "fWeaponDamageMult", ESM::Variant(1.f) },
+                { "fWeaponFatigueBlockMult", ESM::Variant(1.f) },
+                { "fWeaponFatigueMult", ESM::Variant(1.f) },
+                { "fCombatDistance", ESM::Variant(256.f) },
+                { "fStromWindSpeed", ESM::Variant(7.f) },
+                { "fFatigueSpellBase", ESM::Variant(1.f) },
+                { "fFatigueSpellMult", ESM::Variant(1.f) },
+                { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fLevelUpHealthEndMult", ESM::Variant(0.1f) },
+                { "iLevelupMajorMult", ESM::Variant(1) },
+                { "iLevelupMinorMult", ESM::Variant(1) },
+                { "iLevelupMiscMultAttriubte", ESM::Variant(1) },
+                { "iLevelupSpecialization", ESM::Variant(5) },
+                { "fCrimeGoldDiscountMult", ESM::Variant(0.5f) },
+                { "fCrimeGoldTurnInMult", ESM::Variant(0.9f) },
+                { "iAlchemyMod", ESM::Variant(2) },
+                { "iAutoPCSpellMax", ESM::Variant(100) },
+                { "iAutoRepFacMod", ESM::Variant(10) },
+                { "iAutoRepLevMod", ESM::Variant(10) },
+                { "iAutoSpellAttSkillMin", ESM::Variant(5) },
+                { "iAutoSpellTimesCanCast", ESM::Variant(3) },
+                { "iBarterFailDisposition", ESM::Variant(-1) },
+                { "iBarterSuccessDisposition", ESM::Variant(1) },
+                { "iBaseArmorSkill", ESM::Variant(30) },
+                { "iBlockMaxChance", ESM::Variant(50) },
+                { "iBlockMinChance", ESM::Variant(10) },
+                { "iBootsWeight", ESM::Variant(20) },
+                { "iCrimeAttack", ESM::Variant(40) },
+                { "iCrimeKilling", ESM::Variant(1000) },
+                { "iCrimePickPocket", ESM::Variant(25) },
+                { "iCrimeThreshold", ESM::Variant(1000) },
+                { "iCrimeThresholdMultiplier", ESM::Variant(1) },
+                { "iCrimeTresspass", ESM::Variant(5) },
+                { "iCuirassWeight", ESM::Variant(30) },
+                { "iDaysinPrisonMod", ESM::Variant(100) },
+                { "iDispAttackMod", ESM::Variant(-50) },
+                { "iDispKilling", ESM::Variant(-50) },
+                { "iDispTresspass", ESM::Variant(-5) },
+                { "iFightAttack", ESM::Variant(100) },
+                { "iFightAttacking", ESM::Variant(50) },
+                { "iFightDistanceBase", ESM::Variant(1000) },
+                { "iFightKilling", ESM::Variant(100) },
+                { "iFightPickpocket", ESM::Variant(100) },
+                { "iFightTrespass", ESM::Variant(50) },
+                { "iGauntletWeight", ESM::Variant(10) },
+                { "iGreavesWeight", ESM::Variant(30) },
+                { "iGreetDistanceMultiplier", ESM::Variant(5) },
+                { "iHelmWeight", ESM::Variant(10) },
+                { "iKnockDownOddsBase", ESM::Variant(0) },
+                { "iKnockDownOddsMult", ESM::Variant(1) },
+                { "iLevelUpTotal", ESM::Variant(10) },
+                { "iMagicItemChargeConst", ESM::Variant(1) },
+                { "iMagicItemChargeOnce", ESM::Variant(1) },
+                { "iMagicItemChargeStrike", ESM::Variant(1) },
+                { "iMagicItemChargeUse", ESM::Variant(1) },
+                { "iNumberCreatures", ESM::Variant(2) },
+                { "iPauldronWeight", ESM::Variant(10) },
+                { "iPerMinChance", ESM::Variant(10) },
+                { "iPerMinChange", ESM::Variant(10) },
+                { "iPickMaxChance", ESM::Variant(75) },
+                { "iPickMinChance", ESM::Variant(5) },
+                { "iShieldWeight", ESM::Variant(30) },
+                { "iSoulAmountForConstantEffect", ESM::Variant(400) },
+                { "iTrainingMod", ESM::Variant(10) },
+                { "iVoiceAttackOdds", ESM::Variant(30) },
+                { "iVoiceHitOdds", ESM::Variant(30) },
+                { "fCorpseClearDelay", ESM::Variant(72.f) },
+                { "iMonthsToRespawn", ESM::Variant(4) },
+                { "i1stPersonSneakDelta", ESM::Variant(10) },
+                { "sBarter", ESM::Variant("Barter") },
+                { "sDefaultCellname", ESM::Variant("Wasteland") },
+                { "sGoodbye", ESM::Variant("Goodbye") },
+                { "sMagicBoundRightGauntletID", ESM::Variant("") },
+                { "sNotifyMessage49", ESM::Variant("") },
+                { "sNotifyMessage50", ESM::Variant("") },
+                { "sNotifyMessage51", ESM::Variant("") },
+                { "sPersuasion", ESM::Variant("Persuasion") },
+                { "sRepair", ESM::Variant("Repair") },
+                { "sServiceTrainingTitle", ESM::Variant("Training") },
+                { "sSpells", ESM::Variant("Spells") },
+                { "sTravel", ESM::Variant("Travel") },
+                { "sMaxSale", ESM::Variant("Max Sale") },
+                { "sAnd", ESM::Variant("and") },
+                // Werewolf (BM)
+                { "fWereWolfRunMult", ESM::Variant(1.3f) },
+                { "fWereWolfSilverWeaponDamageMult", ESM::Variant(2.f) },
+                { "iWerewolfFightMod", ESM::Variant(100) },
+                { "iWereWolfFleeMod", ESM::Variant(100) },
+                { "iWereWolfLevelToAttack", ESM::Variant(20) },
+                { "iWereWolfBounty", ESM::Variant(1000) },
+                { "fCombatDistanceWerewolfMod", ESM::Variant(0.3f) },
+            };
+        }
+
+>>>>>>> origin/main
         std::vector<std::pair<GlobalVariableName, ESM::Variant>> generateDefaultGlobals()
         {
             return {
@@ -121,14 +702,43 @@ namespace MWWorld
                 { Globals::sGameHour, ESM::Variant(0) },
                 { Globals::sTimeScale, ESM::Variant(30.f) },
                 { Globals::sDay, ESM::Variant(1) },
+<<<<<<< HEAD
                 { Globals::sYear, ESM::Variant(1) },
                 { Globals::sPCRace, ESM::Variant(0) },
                 { Globals::sPCHasCrimeGold, ESM::Variant(0) },
+=======
+                { Globals::sMonth, ESM::Variant(0) },
+                { Globals::sYear, ESM::Variant(1) },
+                { Globals::sCharGenState, ESM::Variant(-1) },
+                { Globals::sPCRace, ESM::Variant(0) },
+                { Globals::sPCHasCrimeGold, ESM::Variant(0) },
+                { Globals::sPCHasGoldDiscount, ESM::Variant(0) },
+>>>>>>> origin/main
                 { Globals::sCrimeGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldTurnIn, ESM::Variant(0) },
                 { Globals::sPCHasTurnIn, ESM::Variant(0) },
             };
         }
+<<<<<<< HEAD
+=======
+
+        std::vector<std::pair<std::string_view, std::string_view>> generateDefaultStatics()
+        {
+            return {
+                // Total conversions from SureAI lack marker records
+                { "divinemarker", "marker_divine.nif" },
+                { "doormarker", "marker_arrow.nif" },
+                { "northmarker", "marker_north.nif" },
+                { "templemarker", "marker_temple.nif" },
+                { "travelmarker", "marker_travel.nif" },
+            };
+        }
+
+        std::vector<std::pair<std::string_view, std::string_view>> generateDefaultDoors()
+        {
+            return { { "prisonmarker", "marker_prison.nif" } };
+        }
+>>>>>>> origin/main
     }
 
     struct GameContentLoader : public ContentLoader
@@ -185,6 +795,7 @@ namespace MWWorld
             mRendering->setSkyEnabled(false);
     }
 
+<<<<<<< HEAD
     World::World(Resource::ResourceSystem* resourceSystem, int activationDistanceOverride, const std::string& startCell,
         const std::filesystem::path& userDataPath)
         : mResourceSystem(resourceSystem)
@@ -224,12 +835,294 @@ namespace MWWorld
 
         mStore.setUp();
         mStore.validateRecords(mReaders);
+=======
+    void World::addWorldViewerFlatGround(float x, float y, float height)
+    {
+        constexpr int cellSize = 4096;
+        const int cellX = static_cast<int>(std::floor(x / static_cast<float>(cellSize)));
+        const int cellY = static_cast<int>(std::floor(y / static_cast<float>(cellSize)));
+        mPhysics->addFlatHeightField(cellX, cellY, cellSize, height);
+    }
+
+    World::World(Resource::ResourceSystem* resourceSystem, int activationDistanceOverride, const std::string& startCell,
+        const std::filesystem::path& userDataPath)
+        : mResourceSystem(resourceSystem)
+        , mLocalScripts(mStore)
+        , mWorldModel(mStore, mReaders)
+        , mTimeManager(std::make_unique<DateTimeManager>())
+        , mSky(true)
+        , mGodMode(false)
+        , mScriptsEnabled(true)
+        , mDiscardMovements(true)
+        , mUserDataPath(userDataPath)
+        , mActivationDistanceOverride(activationDistanceOverride)
+        , mStartCell(startCell)
+        , mSwimHeightScale(0.f)
+        , mDistanceToFacedObject(-1.f)
+        , mTeleportEnabled(true)
+        , mLevitationEnabled(true)
+        , mGoToJail(false)
+        , mDaysInPrison(0)
+        , mPlayerTraveling(false)
+        , mPlayerInJail(false)
+        , mSpellPreloadTimer(0.f)
+    {
+        mESM4QuestRuntime.setReferenceCommandHandler(
+            [this](ESM4QuestReferenceCommand command, ESM::FormId referenceId) {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty())
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 quest: stage reference is not available id="
+                                        << ESM::RefId(referenceId).serializeText();
+                    return false;
+                }
+
+                switch (command)
+                {
+                    case ESM4QuestReferenceCommand::Enable:
+                        enable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::Disable:
+                        disable(target);
+                        break;
+                    case ESM4QuestReferenceCommand::Unlock:
+                        if (target.getCellRef().isLocked())
+                            target.getCellRef().unlock();
+                        break;
+                    case ESM4QuestReferenceCommand::Kill:
+                    {
+                        if (!target.getClass().isActor())
+                            return false;
+                        MWMechanics::CreatureStats& stats = target.getClass().getCreatureStats(target);
+                        if (!stats.isDead())
+                        {
+                            auto health = stats.getHealth();
+                            health.setCurrent(0.f);
+                            stats.setHealth(health);
+                        }
+                        if (!stats.isDead())
+                            return false;
+                        break;
+                    }
+                    case ESM4QuestReferenceCommand::ResetAi:
+                        if (!MWClass::resetFnvAiState(target))
+                            return false;
+                        break;
+                    case ESM4QuestReferenceCommand::EvaluatePackage:
+                        if (!MWClass::requestFnvAiPackageEvaluation(target))
+                            return false;
+                        break;
+                }
+                Log(Debug::Info) << "FNV/ESM4 quest: executed stage reference command="
+                                 << static_cast<unsigned int>(command)
+                                 << " id=" << target.getCellRef().getRefId();
+                return true;
+            });
+        mESM4QuestRuntime.setSetDestroyedHandler([this](ESM::FormId referenceId, bool destroyed) {
+            const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+            if (target.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 quest: SetDestroyed reference is not available id="
+                                    << ESM::RefId(referenceId).serializeText();
+                return false;
+            }
+            target.getRefData().setDestroyed(destroyed);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetDestroyed id=" << target.getCellRef().getRefId()
+                             << " destroyed=" << destroyed;
+            return target.getRefData().isDestroyed() == destroyed;
+        });
+        mESM4QuestRuntime.setShowMapHandler(
+            [this](ESM::FormId markerId, bool canTravel) {
+                return showFalloutMapMarker(markerId, canTravel);
+            });
+        mESM4QuestRuntime.setEnableFastTravelHandler(
+            [this](bool canFastTravel, bool canWait, bool keepOnCellChange) {
+                const bool applied = mFalloutPlayerRuntimeState.setScriptedFastTravel(
+                    canFastTravel, canWait, keepOnCellChange);
+                if (applied)
+                    Log(Debug::Info) << "FNV/ESM4 quest: EnableFastTravel canFastTravel=" << canFastTravel
+                                     << " canWait=" << canWait
+                                     << " keepOnCellChange=" << keepOnCellChange;
+                return applied;
+            });
+        mESM4QuestRuntime.setActorDeadHandler([this](ESM::FormId referenceId) -> std::optional<bool> {
+            try
+            {
+                const Ptr target = searchPtr(ESM::RefId(referenceId), false, false);
+                if (target.isEmpty() || !target.getClass().isActor())
+                    return std::nullopt;
+                return target.getClass().getCreatureStats(target).isDead();
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
+        mESM4QuestRuntime.setRewardXpHandler([this](int amount) {
+            if (amount <= 0)
+                return false;
+            return mFalloutPlayerRuntimeState.modCurrentActorValue(
+                       FalloutPlayerRuntimeState::ExperienceActorValue, static_cast<float>(amount))
+                == FalloutActorValueMutationResult::Applied;
+        });
+        mESM4QuestRuntime.setAddReputationHandler(
+            [this](ESM::FormId reputationId, bool fame, int bump) {
+                const ESM4::Reputation* reputation
+                    = mStore.get<ESM4::Reputation>().search(ESM::RefId(reputationId));
+                if (reputation == nullptr
+                    || !mFalloutPlayerRuntimeState.addReputationBump(
+                        reputationId, fame, reputation->mMaximum, bump))
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: AddReputation reputation="
+                                 << ESM::RefId(reputationId).serializeText()
+                                 << " fame=" << fame << " bump=" << bump;
+                return true;
+            });
+        mESM4QuestRuntime.setMessageHandler([this](ESM::FormId messageId) {
+            const ESM4::Message* message = mStore.get<ESM4::Message>().search(messageId);
+            MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager();
+            if (message == nullptr || message->mDescription.empty() || windowManager == nullptr)
+                return false;
+            windowManager->scheduleMessageBox(message->mDescription, MWGui::ShowInDialogueMode_Never);
+            Log(Debug::Info) << "FNV/ESM4 quest: queued authored message editor=" << message->mEditorId
+                             << " id=" << ESM::RefId(messageId).serializeText();
+            return true;
+        });
+        mESM4QuestRuntime.setSayToHandler([this](ESM::FormId speakerId, ESM::FormId listenerId, ESM::FormId topicId) {
+            const Ptr speaker = searchPtr(ESM::RefId(speakerId), false, false);
+            const Ptr listener = listenerId.mIndex == 0x7 || listenerId.mIndex == 0x14
+                ? getPlayerPtr()
+                : searchPtr(ESM::RefId(listenerId), false, false);
+            MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
+            if (speaker.isEmpty() || listener.isEmpty() || dialogueManager == nullptr)
+                return false;
+            return dialogueManager->say(speaker, listener, topicId);
+        });
+        mESM4QuestRuntime.setSetAllyHandler([this](ESM::FormId firstId, ESM::FormId secondId) {
+            const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+            const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+            if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                return false;
+
+            ESM4::Faction first = *firstSource;
+            ESM4::Faction second = *secondSource;
+            if (!MWMechanics::setFalloutFactionsAllied(first, second))
+                return false;
+            mStore.overrideRecord(first);
+            mStore.overrideRecord(second);
+            Log(Debug::Info) << "FNV/ESM4 quest: SetAlly factions=" << ESM::RefId(firstId).serializeText() << ","
+                             << ESM::RefId(secondId).serializeText();
+            return true;
+        });
+        mESM4QuestRuntime.setSetEnemyHandler(
+            [this](ESM::FormId firstId, ESM::FormId secondId, bool firstNeutral, bool secondNeutral) {
+                const ESM4::Faction* firstSource = mStore.get<ESM4::Faction>().search(ESM::RefId(firstId));
+                const ESM4::Faction* secondSource = mStore.get<ESM4::Faction>().search(ESM::RefId(secondId));
+                if (firstSource == nullptr || secondSource == nullptr || firstId == secondId)
+                    return false;
+
+                ESM4::Faction first = *firstSource;
+                ESM4::Faction second = *secondSource;
+                if (!MWMechanics::setFalloutFactionsEnemy(first, second, firstNeutral, secondNeutral))
+                    return false;
+                mStore.overrideRecord(first);
+                mStore.overrideRecord(second);
+                Log(Debug::Info) << "FNV/ESM4 quest: SetEnemy factions="
+                                 << ESM::RefId(firstId).serializeText() << ","
+                                 << ESM::RefId(secondId).serializeText()
+                                 << " firstNeutral=" << firstNeutral << " secondNeutral=" << secondNeutral;
+                return true;
+            });
+        mESM4QuestRuntime.setItemCountHandler([this](ESM::FormId ownerId, ESM::FormId itemId) -> std::optional<int> {
+            if ((ownerId.mIndex != 0x7 && ownerId.mIndex != 0x14) || itemId.isZeroOrUnset())
+                return std::nullopt;
+            try
+            {
+                const Ptr player = getPlayerPtr();
+                if (player.isEmpty())
+                    return std::nullopt;
+                return player.getClass().getContainerStore(player).count(ESM::RefId(itemId));
+            }
+            catch (const std::exception&)
+            {
+                return std::nullopt;
+            }
+        });
+        mESM4QuestRuntime.setAddItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
+            if (itemId.isZeroOrUnset() || count <= 0)
+                return false;
+            try
+            {
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
+                    return false;
+                owner.getClass().getContainerStore(owner).add(ESM::RefId(itemId), count, false);
+                Log(Debug::Info) << "FNV/ESM4 quest: AddItem owner=" << ESM::RefId(ownerId).serializeText()
+                                 << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        });
+        mESM4QuestRuntime.setRemoveItemHandler([this](ESM::FormId ownerId, ESM::FormId itemId, int count) {
+            if (itemId.isZeroOrUnset() || count <= 0)
+                return false;
+            try
+            {
+                const Ptr owner = ownerId.mIndex == 0x7 || ownerId.mIndex == 0x14
+                    ? getPlayerPtr()
+                    : searchPtr(ESM::RefId(ownerId), false, false);
+                if (owner.isEmpty())
+                    return false;
+                ContainerStore& store = owner.getClass().getContainerStore(owner);
+                const ESM::RefId item(itemId);
+                if (store.count(item) < count || store.remove(item, count, false, false) != count)
+                    return false;
+                Log(Debug::Info) << "FNV/ESM4 quest: RemoveItem owner=" << ESM::RefId(ownerId).serializeText()
+                                 << " item=" << ESM::RefId(itemId).serializeText() << " count=" << count;
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        });
+    }
+
+    void World::loadData(const Files::Collections& fileCollections, const std::vector<std::string>& contentFiles,
+        const std::vector<std::string>& groundcoverFiles, ToUTF8::Utf8Encoder* encoder, Loading::Listener* listener)
+    {
+        mContentFiles = contentFiles;
+        mESMVersions.resize(mContentFiles.size(), -1);
+
+        loadContentFiles(fileCollections, contentFiles, encoder, listener);
+        loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
+
+        // Native FNV GMSTs must win before legacy defaults are inserted. The helper also installs only the narrow
+        // compatibility carriers still absent from the authored data and is a no-op for non-FNV content.
+        mStore.prepareFalloutNewVegasCompatibilityRecords();
+        ensureNeededRecords();
+        fillGlobalVariables();
+
+        mStore.setUp();
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        mStore.validateRecords(mReaders);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
+>>>>>>> origin/main
         mStore.movePlayerRecord();
 
         mSwimHeightScale = mStore.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat();
     }
 
     void World::init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
+<<<<<<< HEAD
         SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue)
     {
         mPhysics = std::make_unique<MWPhysics::PhysicsSystem>(mResourceSystem, rootNode);
@@ -263,8 +1156,69 @@ namespace MWWorld
     }
 
     void World::startNewGame(bool bypass)
+=======
+        SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<MWRender::Camera> camera)
+>>>>>>> origin/main
     {
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init begin";
+        mPhysics = std::make_unique<MWPhysics::PhysicsSystem>(mResourceSystem, rootNode);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init physics ready";
+
+        if (Settings::navigator().mEnable)
+        {
+            auto navigatorSettings = DetourNavigator::makeSettingsFromSettingsManager(maxRecastLogLevel);
+            navigatorSettings.mRecast.mSwimHeightScale = mSwimHeightScale;
+            mNavigator = DetourNavigator::makeNavigator(navigatorSettings, mUserDataPath);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator ready";
+        }
+        else
+        {
+            mNavigator = DetourNavigator::makeNavigatorStub();
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator stub ready";
+        }
+
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering begin";
+        mRendering = std::make_unique<MWRender::RenderingManager>(
+            // ## VR_PATCH BEGIN
+            viewer, rootNode, mResourceSystem, workQueue, *mNavigator, mGroundcoverStore, unrefQueue,
+            std::move(camera));
+
+        // ## VR_PATCH END
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager begin";
+        mProjectileManager = std::make_unique<ProjectileManager>(
+            mRendering->getLightRoot()->asGroup(), mResourceSystem, mRendering.get(), mPhysics.get());
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets begin";
+        mRendering->preloadCommonAssets();
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets queued";
+
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager begin";
+        mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering, mStore);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager ready";
+
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene begin";
+        mWorldScene = std::make_unique<Scene>(*this, *mRendering.get(), mPhysics.get(), *mNavigator);
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene ready";
+    }
+
+    void World::fillGlobalVariables()
+    {
+        mGlobalVariables.fill(mStore);
+        mTimeManager->setup(mGlobalVariables);
+    }
+
+    void World::startNewGame(bool bypass)
+    {
+        viewerTrace("start-new-game.begin");
+        Log(Debug::Verbose) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
+
         mGoToJail = false;
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -273,15 +1227,40 @@ namespace MWWorld
         mSky = true;
 
         // Rebuild player
+        viewerTrace("setup-player.begin");
         setupPlayer();
+        viewerTrace("setup-player.end");
 
+        float proofHour = 0.f;
+        if (readViewerProofHour(proofHour))
+        {
+            setGlobalFloat(Globals::sGameHour, proofHour);
+            advanceTime(0.0, false);
+            Log(Debug::Info) << "OpenMW playable start hour=" << proofHour;
+        }
+
+        viewerTrace("render-player.begin");
         renderPlayer();
+<<<<<<< HEAD
         mRendering->getCamera()->reset();
 
         // we don't want old weather to persist on a new game
         // Note that if reset later, the initial ChangeWeather that the chargen script calls will be lost.
         mWeatherManager.reset();
         mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering.get(), mStore);
+=======
+        viewerTrace("render-player.end");
+        viewerTrace("camera-reset.begin");
+        mRendering->getCamera()->reset();
+        viewerTrace("camera-reset.end");
+
+        // we don't want old weather to persist on a new game
+        // Note that if reset later, the initial ChangeWeather that the chargen script calls will be lost.
+        viewerTrace("weather-reset.begin");
+        mWeatherManager.reset();
+        mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering.get(), mStore);
+        viewerTrace("weather-reset.end");
+>>>>>>> origin/main
 
         if (!bypass)
         {
@@ -291,6 +1270,7 @@ namespace MWWorld
         else
             mGlobalVariables[Globals::sCharGenState].setInteger(-1);
 
+<<<<<<< HEAD
         MWBase::Environment::get().getLuaManager()->newGameStarted();
 
         if (bypass && !mStartCell.empty())
@@ -306,6 +1286,153 @@ namespace MWWorld
             {
                 findInteriorPosition(mStartCell, pos);
                 changeToInteriorCell(mStartCell, pos, true);
+=======
+        viewerTrace("lua-new-game-started.begin");
+        MWBase::Environment::get().getLuaManager()->newGameStarted();
+        viewerTrace("lua-new-game-started.end");
+
+        if (bypass && !mStartCell.empty())
+        {
+            ESM::Position anchor;
+            const bool hasExplicitAnchor = readViewerStartAnchor(anchor);
+
+            ESM::Position pos;
+            ESM::RefId cellId = findExteriorPosition(mStartCell, pos);
+            ESM::RefId explicitInteriorId;
+            if (cellId.empty())
+            {
+                try
+                {
+                    const ESM::RefId requestedId = ESM::RefId::deserializeText(mStartCell);
+                    if (const ESM4::Cell* requestedCell = mStore.get<ESM4::Cell>().search(requestedId);
+                        requestedCell != nullptr)
+                    {
+                        if (requestedCell->isExterior())
+                        {
+                            const ESM::ExteriorCellLocation location = requestedCell->getExteriorCellLocation();
+                            const osg::Vec2f center = indexToPosition(location, true);
+                            cellId = requestedCell->mId;
+                            pos.pos[0] = center.x();
+                            pos.pos[1] = center.y();
+                            pos.pos[2] = 0.f;
+                            pos.rot[0] = pos.rot[1] = pos.rot[2] = 0.f;
+                            Log(Debug::Info) << "World viewer: resolved ESM4 exterior start cell id=" << requestedId
+                                             << " location=" << location;
+                        }
+                        else
+                        {
+                            explicitInteriorId = requestedCell->mId;
+                            Log(Debug::Info) << "World viewer: resolved ESM4 interior start cell id=" << requestedId
+                                             << " editor=\"" << requestedCell->mEditorId << "\"";
+                        }
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    // A non-RefId start value may still be a valid authored cell name.
+                }
+            }
+            auto changeToResolvedExterior = [&](ESM::RefId resolvedCellId, ESM::Position resolvedPos,
+                                                std::string_view source) {
+                if (hasExplicitAnchor)
+                    resolvedPos = anchor;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
+                                 << resolvedCellId << " explicitAnchor=" << hasExplicitAnchor << " source=" << source;
+                Log(Debug::Info) << "World viewer: start cell exterior change begin cell=" << resolvedCellId << " pos=("
+                                 << resolvedPos.pos[0] << ", " << resolvedPos.pos[1] << ", " << resolvedPos.pos[2]
+                                 << ")";
+                viewerTrace("change-to-exterior.begin");
+                changeToCell(resolvedCellId, resolvedPos, !hasExplicitAnchor);
+                viewerTrace("change-to-exterior.end");
+                Log(Debug::Info) << "World viewer: start cell exterior change complete cell=" << resolvedCellId;
+                if (hasExplicitAnchor)
+                {
+                    viewerTrace("pin-start-anchor.begin");
+                    pinViewerStartAnchor(*this, resolvedPos);
+                    viewerTrace("pin-start-anchor.end");
+                }
+                else
+                {
+                    viewerTrace("adjust-position.begin");
+                    adjustPosition(getPlayerPtr(), false);
+                    viewerTrace("adjust-position.end");
+                }
+                Log(Debug::Info) << "World viewer: start cell exterior placement complete cell=" << resolvedCellId;
+            };
+
+            if (!cellId.empty())
+            {
+                changeToResolvedExterior(cellId, pos, "named-cell");
+            }
+            else
+            {
+                bool usedExplicitExterior = false;
+                ESM::ExteriorCellLocation explicitExterior;
+                if (readViewerStartExteriorLocation(explicitExterior))
+                {
+                    try
+                    {
+                        MWWorld::CellStore& exteriorStore = mWorldModel.getExterior(explicitExterior);
+                        cellId = exteriorStore.getCell()->getId();
+                        const osg::Vec2f posFromIndex = indexToPosition(explicitExterior, true);
+                        pos.pos[0] = posFromIndex.x();
+                        pos.pos[1] = posFromIndex.y();
+                        pos.pos[2] = 0;
+                        pos.rot[0] = pos.rot[1] = pos.rot[2] = 0;
+                        Log(Debug::Info) << "World viewer: explicit exterior start location=" << explicitExterior
+                                         << " cell=" << cellId;
+                        changeToResolvedExterior(cellId, pos, "explicit-exterior-location");
+                        usedExplicitExterior = true;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Log(Debug::Warning) << "World viewer: explicit exterior start failed for " << explicitExterior
+                                            << ": " << e.what();
+                    }
+                }
+
+                if (!usedExplicitExterior)
+                {
+                    if (!explicitInteriorId.empty())
+                    {
+                        if (hasExplicitAnchor)
+                            pos = anchor;
+                        Log(Debug::Info) << "World viewer: start cell interior change begin cell="
+                                         << explicitInteriorId << " pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", "
+                                         << pos.pos[2] << ")";
+                        viewerTrace("change-to-interior.begin");
+                        changeToCell(explicitInteriorId, pos, !hasExplicitAnchor);
+                        viewerTrace("change-to-interior.end");
+                        Log(Debug::Info) << "World viewer: start cell interior change complete cell="
+                                         << explicitInteriorId;
+                    }
+                    else
+                    {
+                        cellId = findInteriorPosition(mStartCell, pos);
+                        if (hasExplicitAnchor)
+                            pos = anchor;
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell
+                                            << "' resolved as interior " << cellId
+                                            << " explicitAnchor=" << hasExplicitAnchor;
+                        Log(Debug::Info) << "World viewer: start cell interior change begin cell=\"" << mStartCell
+                                         << "\" pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", " << pos.pos[2]
+                                         << ")";
+                        viewerTrace("change-to-interior.begin");
+                        changeToInteriorCell(mStartCell, pos, !hasExplicitAnchor);
+                        viewerTrace("change-to-interior.end");
+                        Log(Debug::Info) << "World viewer: start cell interior change complete cell=\"" << mStartCell
+                                         << "\"";
+                    }
+                    if (hasExplicitAnchor)
+                    {
+                        viewerTrace("pin-start-anchor.begin");
+                        pinViewerStartAnchor(*this, pos);
+                        viewerTrace("pin-start-anchor.end");
+                    }
+                    Log(Debug::Info) << "World viewer: start cell interior placement complete cell=\"" << mStartCell
+                                     << "\"";
+                }
+>>>>>>> origin/main
             }
         }
         else
@@ -315,6 +1442,7 @@ namespace MWWorld
             if (!getPlayerPtr().isInCell())
             {
                 ESM::Position pos;
+<<<<<<< HEAD
                 const int cellSize = Constants::CellSizeInUnits;
                 pos.pos[0] = cellSize / 2;
                 pos.pos[1] = cellSize / 2;
@@ -326,6 +1454,74 @@ namespace MWWorld
                 ESM::ExteriorCellLocation exteriorCellPos = ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1]);
                 ESM::RefId cellId = ESM::RefId::esm3ExteriorCell(exteriorCellPos.mX, exteriorCellPos.mY);
                 mWorldScene->changeToExteriorCell(cellId, pos, true);
+=======
+                bool usedEsm4Fallback = false;
+                const auto& esm4Lands = mStore.get<ESM4::Land>().getLands();
+                if (!esm4Lands.empty())
+                {
+                    ESM::ExteriorCellLocation fallbackLocation;
+                    int bestScore = std::numeric_limits<int>::max();
+                    bool haveFallbackLocation = false;
+                    for (const auto& [candidateLocation, land] : esm4Lands)
+                    {
+                        const ESM4::World* world = mStore.get<ESM4::World>().search(candidateLocation.mWorldspace);
+                        if (world == nullptr || !world->mParent.isZeroOrUnset()
+                            || (world->mWorldFlags & ESM4::World::WLD_NoLandscpe))
+                        {
+                            continue;
+                        }
+
+                        const int score = std::abs(candidateLocation.mX) + std::abs(candidateLocation.mY);
+                        if (!haveFallbackLocation || score < bestScore
+                            || (score == bestScore && candidateLocation.mX == 0 && candidateLocation.mY == 0))
+                        {
+                            fallbackLocation = candidateLocation;
+                            bestScore = score;
+                            haveFallbackLocation = true;
+                            if (score == 0)
+                                break;
+                        }
+                    }
+
+                    if (haveFallbackLocation)
+                    {
+                        const osg::Vec2f posFromIndex = indexToPosition(fallbackLocation, true);
+                        pos.pos[0] = posFromIndex.x();
+                        pos.pos[1] = posFromIndex.y();
+                        pos.pos[2] = 0;
+                        pos.rot[0] = 0;
+                        pos.rot[1] = 0;
+                        pos.rot[2] = 0;
+
+                        MWWorld::CellStore& exteriorStore = mWorldModel.getExterior(fallbackLocation);
+                        const ESM::RefId cellId = exteriorStore.getCell()->getId();
+                        Log(Debug::Info) << "World viewer: ESM4 fallback change to real exterior location="
+                                         << fallbackLocation << " cell=" << cellId;
+                        viewerTrace("fallback-change-to-esm4-exterior.begin");
+                        mWorldScene->changeToExteriorCell(cellId, pos, true);
+                        viewerTrace("fallback-change-to-esm4-exterior.end");
+                        usedEsm4Fallback = true;
+                    }
+                }
+
+                if (!usedEsm4Fallback)
+                {
+                    const int cellSize = Constants::CellSizeInUnits;
+                    pos.pos[0] = cellSize / 2;
+                    pos.pos[1] = cellSize / 2;
+                    pos.pos[2] = 0;
+                    pos.rot[0] = 0;
+                    pos.rot[1] = 0;
+                    pos.rot[2] = 0;
+
+                    ESM::ExteriorCellLocation exteriorCellPos
+                        = ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1]);
+                    ESM::RefId cellId = ESM::RefId::esm3ExteriorCell(exteriorCellPos.mX, exteriorCellPos.mY);
+                    viewerTrace("fallback-change-to-exterior.begin");
+                    mWorldScene->changeToExteriorCell(cellId, pos, true);
+                    viewerTrace("fallback-change-to-exterior.end");
+                }
+>>>>>>> origin/main
             }
         }
 
@@ -341,14 +1537,41 @@ namespace MWWorld
         }
 
         // enable collision
+        if (viewerEnvEnabled("OPENMW_PROOF_DISABLE_SKY"))
+        {
+            viewerTrace("proof-disable-sky.begin");
+            bool skyEnabled = toggleSky();
+            if (skyEnabled)
+                skyEnabled = toggleSky();
+            Log(Debug::Info) << "World viewer proof: disabled sky before first frame finalEnabled=" << skyEnabled;
+            viewerTrace("proof-disable-sky.end");
+        }
+
+        viewerTrace("collision-enable.begin");
         if (!mPhysics->toggleCollisionMode())
             mPhysics->toggleCollisionMode();
+        viewerTrace("collision-enable.end");
 
+<<<<<<< HEAD
         MWBase::Environment::get().getWindowManager()->updatePlayer();
         mTimeManager->setup(mGlobalVariables);
 
         // Initial seed.
         mPrng.seed(mRandomSeed);
+=======
+        viewerTrace("window-update-player.begin");
+        MWBase::Environment::get().getWindowManager()->updatePlayer();
+        viewerTrace("window-update-player.end");
+        viewerTrace("time-manager-setup.begin");
+        mTimeManager->setup(mGlobalVariables);
+        viewerTrace("time-manager-setup.end");
+
+        // Initial seed.
+        mPrng.seed(mRandomSeed);
+        Log(Debug::Info) << "World viewer: startNewGame complete bypass=" << bypass << " startCell='" << mStartCell
+                         << "' playerInCell=" << getPlayerPtr().isInCell();
+        viewerTrace("start-new-game.end");
+>>>>>>> origin/main
     }
 
     void World::clear()
@@ -379,22 +1602,230 @@ namespace MWWorld
         mIdsRebuilt = false;
 
         fillGlobalVariables();
+<<<<<<< HEAD
+=======
+        mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
+>>>>>>> origin/main
     }
 
     size_t World::countSavedGameRecords() const
     {
         return mWorldModel.countSavedGameRecords() + mStore.countSavedGameRecords()
             + mGlobalVariables.countSavedGameRecords() + mProjectileManager->countSavedGameRecords()
+<<<<<<< HEAD
             + 1 // player record
             + 1 // weather record
+=======
+            + mESM4QuestRuntime.countSavedGameRecords() + mFalloutPlayerRuntimeState.countSavedGameRecords()
+            + 1 // player record
+            + 1 // weather record
+            + 1 // actorId counter
+>>>>>>> origin/main
             + 1 // levitation/teleport enabled state
             + 1 // camera
             + 1; // random state.
     }
 
+<<<<<<< HEAD
     size_t World::countSavedGameCells() const
+=======
+    int World::countSavedGameCells() const
+>>>>>>> origin/main
     {
         return mWorldModel.countSavedGameRecords();
+    }
+
+<<<<<<< HEAD
+    void World::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
+    {
+        writer.startRecord(ESM::REC_RAND);
+        writer.writeHNOString("RAND", Misc::Rng::serialize(mPrng));
+        writer.endRecord(ESM::REC_RAND);
+
+        // Active cells could have a dirty fog of war, sync it to the CellStore first
+        for (CellStore* cellstore : mWorldScene->getActiveCells())
+        {
+            MWBase::Environment::get().getWindowManager()->writeFog(cellstore);
+        }
+
+=======
+    std::uint8_t World::getFalloutMapMarkerState(ESM::FormId marker) const
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker)
+            return 0;
+        if (const std::optional<std::uint8_t> state = mFalloutPlayerRuntimeState.getMapMarkerState(marker))
+            return *state;
+        if ((reference->mMapMarkerFlags & ESM4::MapMarker_CanTravel) != 0)
+            return 2;
+        return (reference->mMapMarkerFlags & ESM4::MapMarker_Visible) != 0 ? 1 : 0;
+    }
+
+    bool World::showFalloutMapMarker(ESM::FormId marker, bool canTravel, bool refreshUi)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        if (reference == nullptr || !reference->mIsMapMarker || reference->mFullName.empty())
+            return false;
+        const std::uint8_t requested = canTravel ? 2 : std::max<std::uint8_t>(1, getFalloutMapMarkerState(marker));
+        if (!mFalloutPlayerRuntimeState.setMapMarkerState(marker, requested))
+            return false;
+        if (refreshUi)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+        }
+        Log(Debug::Info) << "FNV/ESM4 map: ShowMap id=" << ESM::RefId(marker).serializeText()
+                         << " name=\"" << reference->mFullName << "\" state="
+                         << static_cast<unsigned int>(requested);
+        return getFalloutMapMarkerState(marker) == requested;
+    }
+
+    bool World::fastTravelToFalloutMapMarker(ESM::FormId marker, std::string& error)
+    {
+        const ESM4::Reference* reference = mStore.get<ESM4::Reference>().search(marker);
+        const ESM4::Cell* destinationCell
+            = reference == nullptr ? nullptr : mStore.get<ESM4::Cell>().search(reference->mParent);
+        const ESM4::World* destinationWorld
+            = destinationCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(destinationCell->mParent);
+
+        const MWWorld::Cell* playerCell
+            = getPlayerPtr().getCell() == nullptr ? nullptr : getPlayerPtr().getCell()->getCell();
+        const ESM4::Cell* currentCell
+            = playerCell != nullptr && playerCell->isEsm4() ? &playerCell->getEsm4() : nullptr;
+        const ESM4::World* currentWorld
+            = currentCell == nullptr ? nullptr : mStore.get<ESM4::World>().search(currentCell->mParent);
+
+        FalloutFastTravelResolution resolution = resolveFalloutFastTravelDestination(reference, destinationCell,
+            destinationWorld, getFalloutMapMarkerState(marker), currentCell, currentWorld,
+            mFalloutPlayerRuntimeState.isFastTravelEnabled(), mPlayer->enemiesNearby());
+        if (!resolution)
+        {
+            error = std::move(resolution.mError);
+            Log(Debug::Warning) << "FNV/ESM4 map: fast travel rejected marker="
+                                << ESM::RefId(marker).serializeText() << " reason=\"" << error << "\"";
+            return false;
+        }
+
+        const FalloutFastTravelDestination& destination = *resolution.mDestination;
+        setPlayerTraveling(true);
+        // Use the normal gameplay teleport path so the player render node,
+        // camera, physics state, and followers all move with the cell change.
+        // Calling changeToCell directly only moved the world-side player
+        // state, leaving the rendered camera behind at the departure point.
+        ActionTeleport(destination.mCell, destination.mPosition, true).execute(getPlayerPtr());
+        Log(Debug::Info) << "FNV/ESM4 map: fast travel complete marker="
+                         << ESM::RefId(marker).serializeText() << " cell=" << destination.mCell << " pos=("
+                         << destination.mPosition.pos[0] << ", " << destination.mPosition.pos[1] << ", "
+                         << destination.mPosition.pos[2] << ")";
+        error.clear();
+        return true;
+    }
+
+    void World::discoverFalloutMapMarkersNearPlayer()
+    {
+        const MWWorld::Ptr player = getPlayerPtr();
+        if (!player.isInCell() || player.getCell()->getCell() == nullptr || !player.getCell()->getCell()->isExterior())
+            return;
+
+        const ESM::RefId playerWorldspace = player.getCell()->getCell()->getWorldSpace();
+        const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+        constexpr float revealDistance = 4000.f;
+        constexpr float revealDistanceSquared = revealDistance * revealDistance;
+        std::size_t discovered = 0;
+        std::size_t markerCount = 0;
+        std::size_t resolvedExteriorCount = 0;
+        std::size_t sameWorldspaceCount = 0;
+        const ESM4::Reference* nearestMarker = nullptr;
+        float nearestDistanceSquared = std::numeric_limits<float>::max();
+
+        const auto& references = mStore.get<ESM4::Reference>();
+        if (!mFalloutMapMarkersUnlockedForSession
+            && std::getenv("OPENMW_FNV_UNLOCK_ALL_MAP_MARKERS") != nullptr)
+        {
+            std::size_t unlocked = 0;
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                    continue;
+                const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+                if (markerCell == nullptr || !markerCell->isExterior()
+                    || markerCell->mParent != playerWorldspace)
+                    continue;
+                if (mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+                    ++unlocked;
+            }
+            mFalloutMapMarkersUnlockedForSession = true;
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: unlocked all authored exterior markers for local session count="
+                             << unlocked << " worldspace=" << playerWorldspace;
+        }
+        const bool auditAllMarkers = !mFalloutMapMarkerAuditLogged
+            && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT_ALL") != nullptr;
+        for (std::size_t index = 0; index < references.getSize(); ++index)
+        {
+            const ESM4::Reference* marker = references.at(index);
+            if (marker == nullptr || !marker->mIsMapMarker || marker->mFullName.empty())
+                continue;
+            ++markerCount;
+
+            const ESM4::Cell* markerCell = mStore.get<ESM4::Cell>().search(marker->mParent);
+            if (markerCell == nullptr || !markerCell->isExterior())
+                continue;
+            ++resolvedExteriorCount;
+            if (markerCell->mParent != playerWorldspace)
+                continue;
+            ++sameWorldspaceCount;
+
+            const float distanceSquared = (marker->mPos.asVec3() - playerPosition).length2();
+            if (auditAllMarkers)
+            {
+                Log(Debug::Info) << "FNV/ESM4 map audit marker: id="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" cell=" << ESM::RefId(marker->mParent).serializeText() << " pos=("
+                                 << marker->mPos.pos[0] << ", " << marker->mPos.pos[1] << ", "
+                                 << marker->mPos.pos[2] << ")";
+            }
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestMarker = marker;
+                nearestDistanceSquared = distanceSquared;
+            }
+            if (getFalloutMapMarkerState(marker->mId) != 2 && distanceSquared <= revealDistanceSquared
+                && mFalloutPlayerRuntimeState.setMapMarkerState(marker->mId, 2))
+            {
+                ++discovered;
+                Log(Debug::Info) << "FNV/ESM4 map: discovered marker="
+                                 << ESM::RefId(marker->mId).serializeText() << " name=\"" << marker->mFullName
+                                 << "\" distance=" << std::sqrt(distanceSquared);
+            }
+        }
+
+        if (!mFalloutMapMarkerAuditLogged && std::getenv("OPENMW_FNV_MAP_MARKER_AUDIT") != nullptr)
+        {
+            mFalloutMapMarkerAuditLogged = true;
+            Log(Debug::Info) << "FNV/ESM4 map audit: markers=" << markerCount
+                             << " resolvedExterior=" << resolvedExteriorCount
+                             << " sameWorldspace=" << sameWorldspaceCount << " playerWorldspace="
+                             << playerWorldspace << " nearest="
+                             << (nearestMarker == nullptr ? "<none>" : nearestMarker->mFullName) << " nearestId="
+                             << (nearestMarker == nullptr ? "<none>"
+                                                         : ESM::RefId(nearestMarker->mId).serializeText())
+                             << " distance="
+                             << (nearestMarker == nullptr ? -1.f : std::sqrt(nearestDistanceSquared));
+        }
+
+        if (discovered != 0)
+        {
+            if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
+                windowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV/ESM4 map: proximity discovery published " << discovered << " marker(s)";
+        }
     }
 
     void World::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -409,11 +1840,19 @@ namespace MWWorld
             MWBase::Environment::get().getWindowManager()->writeFog(cellstore);
         }
 
+        MWMechanics::CreatureStats::writeActorIdCounter(writer);
+
+>>>>>>> origin/main
         mStore.write(writer, progress); // dynamic Store must be written (and read) before Cells, so that
                                         // references to custom made records will be recognized
         mWorldModel.write(writer, progress); // the player's cell needs to be loaded before the player
         mPlayer->write(writer, progress);
         mGlobalVariables.write(writer, progress);
+<<<<<<< HEAD
+=======
+        mESM4QuestRuntime.write(writer);
+        mFalloutPlayerRuntimeState.write(writer);
+>>>>>>> origin/main
         mWeatherManager->write(writer, progress);
         mProjectileManager->write(writer, progress);
 
@@ -444,6 +1883,15 @@ namespace MWWorld
                 Misc::Rng::deserialize(data, mPrng);
             }
             break;
+<<<<<<< HEAD
+=======
+            case ESM::REC_FQST:
+                mESM4QuestRuntime.readRecord(reader);
+                break;
+            case ESM::REC_FPLR:
+                mFalloutPlayerRuntimeState.readRecord(reader);
+                break;
+>>>>>>> origin/main
             case ESM::REC_PLAY:
                 if (reader.getFormatVersion() <= ESM::MaxPlayerBeforeCellDataFormatVersion && !mIdsRebuilt)
                 {
@@ -476,30 +1924,107 @@ namespace MWWorld
 
     void World::ensureNeededRecords()
     {
+<<<<<<< HEAD
         for (const auto& [name, value] : generateDefaultGlobals())
         {
             if (mStore.get<ESM::Global>().search(ESM::RefId::stringRefId(name.getValue())) == nullptr)
             {
+=======
+        for (const auto& [id, value] : generateDefaultGameSettings())
+        {
+            if (mStore.get<ESM::GameSetting>().search(id) == nullptr)
+            {
+                ESM::GameSetting record;
+                record.mId = ESM::RefId::stringRefId(id);
+                record.mValue = value;
+                record.mRecordFlags = 0;
+                mStore.insertStatic(record);
+            }
+        }
+
+        for (const auto& [name, value] : generateDefaultGlobals())
+        {
+            if (mStore.get<ESM::Global>().search(ESM::RefId::stringRefId(name.getValue())) == nullptr)
+            {
+>>>>>>> origin/main
                 ESM::Global record;
                 record.mId = ESM::RefId::stringRefId(name.getValue());
                 record.mValue = value;
                 record.mRecordFlags = 0;
                 mStore.insertStatic(record);
+<<<<<<< HEAD
+=======
+            }
+        }
+
+        for (const auto& [id, model] : generateDefaultStatics())
+        {
+            if (mStore.get<ESM::Static>().search(ESM::RefId::stringRefId(id)) == nullptr)
+            {
+                ESM::Static record;
+                record.mId = ESM::RefId::stringRefId(id);
+                record.mModel = model;
+                record.mRecordFlags = 0;
+                mStore.insertStatic(record);
+            }
+        }
+
+        for (const auto& [id, model] : generateDefaultDoors())
+        {
+            if (mStore.get<ESM::Door>().search(ESM::RefId::stringRefId(id)) == nullptr)
+            {
+                ESM::Door record;
+                record.mId = ESM::RefId::stringRefId(id);
+                record.mModel = model;
+                record.mRecordFlags = 0;
+                mStore.insertStatic(record);
+>>>>>>> origin/main
             }
         }
     }
 
     World::~World()
     {
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown begin";
+
         // Must be cleared before mRendering is destroyed
         if (mProjectileManager)
             mProjectileManager->clear();
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown projectile-clear";
+>>>>>>> origin/main
 
         if (Settings::navigator().mWaitForAllJobsOnExit && mNavigator != nullptr)
         {
             Log(Debug::Verbose) << "Waiting for all navmesh jobs to be done...";
             mNavigator->wait(DetourNavigator::WaitConditionType::allJobsDone, nullptr);
         }
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown navigator-wait";
+
+        mProjectileManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown projectile-manager";
+        mWeatherManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown weather";
+        mWorldScene = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown scene";
+        if (mRendering)
+            mRendering->clearLiveObjectsForShutdown();
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown render-live-clear";
+        mRendering = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown rendering";
+        mPhysics = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown physics";
+        mNavigator = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown navigator";
+        mPlayer = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown player";
+        mTimeManager = nullptr;
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown time";
+        Log(Debug::Info) << "FNV/ESM4 proof: world teardown end";
+>>>>>>> origin/main
     }
 
     void World::setRandomSeed(uint32_t seed)
@@ -649,6 +2174,18 @@ namespace MWWorld
         throw std::runtime_error(error);
     }
 
+<<<<<<< HEAD
+=======
+    Ptr World::searchPtrViaActorId(int actorId)
+    {
+        // The player is not registered in any CellStore so must be checked manually
+        if (actorId == getPlayerPtr().getClass().getCreatureStats(getPlayerPtr()).getActorId())
+            return getPlayerPtr();
+        // Now search cells
+        return mWorldScene->searchPtrViaActorId(actorId);
+    }
+
+>>>>>>> origin/main
     struct FindContainerVisitor
     {
         ConstPtr mContainedPtr;
@@ -786,6 +2323,7 @@ namespace MWWorld
 
     void World::advanceTime(double hours, bool incremental)
     {
+<<<<<<< HEAD
         if (!incremental)
         {
             // When we fast-forward time, we should recharge magic items
@@ -803,6 +2341,34 @@ namespace MWWorld
 
         if (!incremental)
         {
+=======
+        if (incremental && std::getenv("OPENMW_FNV_PROOF_FREEZE_TIME") != nullptr)
+        {
+            static int proofFreezeLogs = 0;
+            if (proofFreezeLogs++ < 8)
+                Log(Debug::Info) << "FNV/ESM4 proof: froze incremental game time advance hours=" << hours
+                                 << " currentHour=" << mTimeManager->getTimeStamp().getHour();
+            return;
+        }
+
+        if (!incremental)
+        {
+            // When we fast-forward time, we should recharge magic items
+            // in all loaded cells, using game world time
+            float duration = hours * 3600;
+            const float timeScaleFactor = mTimeManager->getGameTimeScale();
+            if (timeScaleFactor != 0.0f)
+                duration /= timeScaleFactor;
+
+            rechargeItems(duration, false);
+        }
+
+        mWeatherManager->advanceTime(hours, incremental);
+        mTimeManager->advanceTime(hours, mGlobalVariables);
+
+        if (!incremental)
+        {
+>>>>>>> origin/main
             mRendering->notifyWorldSpaceChanged();
             mProjectileManager->clear();
             mDiscardMovements = true;
@@ -854,6 +2420,8 @@ namespace MWWorld
         removeContainerScripts(getPlayerPtr());
         mWorldScene->changeToInteriorCell(cellName, position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
     }
 
     void World::changeToCell(
@@ -878,6 +2446,11 @@ namespace MWWorld
         else
             mWorldScene->changeToInteriorCell(destinationCell->getNameId(), position, adjustPlayerPos, changeEvent);
         addContainerScripts(getPlayerPtr(), getPlayerPtr().getCell());
+<<<<<<< HEAD
+=======
+        if (changeEvent && mFalloutPlayerRuntimeState.isInitialized())
+            mFalloutPlayerRuntimeState.notifyCellChanged();
+>>>>>>> origin/main
     }
 
     float World::getMaxActivationDistance() const
@@ -890,6 +2463,7 @@ namespace MWWorld
         return static_cast<float>(iMaxActivateDist);
     }
 
+<<<<<<< HEAD
     MWWorld::Ptr World::getFocusObject()
     {
         if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame)
@@ -931,6 +2505,54 @@ namespace MWWorld
         const MWRender::Animation* anim = mRendering->getAnimation(actor);
         if (anim)
         {
+=======
+    MWWorld::Ptr World::getFacedObject()
+    {
+        // ## VR_PATCH BEGIN
+        if (VR::getVR())
+            return MWVR::Util::getPointerTarget().first;
+
+        // ## VR_PATCH END
+        MWWorld::Ptr facedObject;
+
+        if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame)
+            return facedObject;
+
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode()
+            && MWBase::Environment::get().getWindowManager()->isConsoleMode())
+            facedObject = getFacedObject(getMaxActivationDistance() * 50, false);
+        else
+        {
+            float activationDistance = getActivationDistancePlusTelekinesis();
+
+            facedObject = getFacedObject(activationDistance, true);
+
+            if (!facedObject.isEmpty() && !facedObject.getClass().allowTelekinesis(facedObject)
+                && mDistanceToFacedObject > getMaxActivationDistance()
+                && !MWBase::Environment::get().getWindowManager()->isGuiMode())
+                return nullptr;
+        }
+        return facedObject;
+    }
+
+    float World::getDistanceToFacedObject()
+    {
+        // ## VR_PATCH BEGIN
+        if (VR::getVR())
+        {
+            return MWVR::Util::getPointerTarget().second;
+        }
+        else
+            return mDistanceToFacedObject;
+        // ## VR_PATCH END
+    }
+
+    osg::Matrixf World::getActorHeadTransform(const MWWorld::ConstPtr& actor) const
+    {
+        const MWRender::Animation* anim = mRendering->getAnimation(actor);
+        if (anim)
+        {
+>>>>>>> origin/main
             const osg::Node* node = anim->getNode("Head");
             if (!node)
                 node = anim->getNode("Bip01 Head");
@@ -944,8 +2566,28 @@ namespace MWWorld
         return osg::Matrixf::translate(actor.getRefData().getPosition().asVec3());
     }
 
+<<<<<<< HEAD
     void World::deleteObject(const Ptr& ptr)
     {
+=======
+    std::optional<osg::Matrixf> World::getActorNodeTransform(
+        const MWWorld::ConstPtr& actor, std::string_view nodeName) const
+    {
+        const MWRender::Animation* animation = mRendering->getAnimation(actor);
+        if (animation == nullptr)
+            return std::nullopt;
+        const osg::Node* node = animation->getNode(nodeName);
+        if (node == nullptr)
+            return std::nullopt;
+        const osg::NodePathList paths = node->getParentalNodePaths();
+        if (paths.empty())
+            return std::nullopt;
+        return osg::computeLocalToWorld(paths.front());
+    }
+
+    void World::deleteObject(const Ptr& ptr)
+    {
+>>>>>>> origin/main
         if (!ptr.mRef->isDeleted() && ptr.getContainerStore() == nullptr)
         {
             if (ptr == getPlayerPtr())
@@ -1178,9 +2820,15 @@ namespace MWWorld
              * currently it's done so for rotating the camera, which needs
              * clamping.
              */
+<<<<<<< HEAD
             objRot[0] = std::clamp(objRot[0], -osg::PI_2f, osg::PI_2f);
             objRot[1] = static_cast<float>(Misc::normalizeAngle(objRot[1]));
             objRot[2] = static_cast<float>(Misc::normalizeAngle(objRot[2]));
+=======
+            objRot[0] = std::clamp<float>(objRot[0], -osg::PI_2, osg::PI_2);
+            objRot[1] = Misc::normalizeAngle(objRot[1]);
+            objRot[2] = Misc::normalizeAngle(objRot[2]);
+>>>>>>> origin/main
         }
 
         ptr.getRefData().setPosition(pos);
@@ -1233,8 +2881,13 @@ namespace MWWorld
             && !(ptr.getClass().isPersistent(ptr) && ptr.getClass().getCreatureStats(ptr).isDeathAnimationFinished());
         if (force || !ptr.getClass().isActor() || (!isFlying(ptr) && !swims && isActorCollisionEnabled(ptr)))
         {
+<<<<<<< HEAD
             float height = static_cast<float>(ESM::getCellSize(ptr.getCell()->getCell()->getWorldSpace()));
             osg::Vec3f traced = mPhysics->traceDown(ptr, pos, height);
+=======
+            osg::Vec3f traced
+                = mPhysics->traceDown(ptr, pos, ESM::getCellSize(ptr.getCell()->getCell()->getWorldSpace()));
+>>>>>>> origin/main
             pos.z() = std::min(pos.z(), traced.z());
         }
 
@@ -1270,8 +2923,13 @@ namespace MWWorld
                 break;
         }
         targetPos.z() += distance / 2.f; // move up a bit to get out from geometry, will snap down later
+<<<<<<< HEAD
         float height = static_cast<float>(ESM::getCellSize(actor.getCell()->getCell()->getWorldSpace()));
         osg::Vec3f traced = mPhysics->traceDown(actor, targetPos, height);
+=======
+        osg::Vec3f traced
+            = mPhysics->traceDown(actor, targetPos, ESM::getCellSize(actor.getCell()->getCell()->getWorldSpace()));
+>>>>>>> origin/main
         if (traced != pos)
         {
             esmPos.pos[0] = traced.x();
@@ -1332,9 +2990,15 @@ namespace MWWorld
             spawnPoint.z() += 30; // move up a little to account for slopes, will snap down later
 
             if (!mPhysics
+<<<<<<< HEAD
                      ->castRay(spawnPoint, osg::Vec3f(pos.x(), pos.y(), pos.z() + 20),
                          MWPhysics::CollisionType_World | MWPhysics::CollisionType_Door)
                      .mHit)
+=======
+                    ->castRay(spawnPoint, osg::Vec3f(pos.x(), pos.y(), pos.z() + 20),
+                        MWPhysics::CollisionType_World | MWPhysics::CollisionType_Door)
+                    .mHit)
+>>>>>>> origin/main
             {
                 // safe
                 break;
@@ -1460,18 +3124,41 @@ namespace MWWorld
         // Cancel door closing sound if collision with actor is detected
         if (collisionWithActor)
         {
+<<<<<<< HEAD
             const ESM::Door* ref = door.get<ESM::Door>()->mBase;
 
             if (state == MWWorld::DoorState::Opening)
             {
                 const ESM::RefId& openSound = ref->mOpenSound;
+=======
+            ESM::RefId openSound;
+            ESM::RefId closeSound;
+            if (door.getType() == ESM::REC_DOOR)
+            {
+                const ESM::Door* ref = door.get<ESM::Door>()->mBase;
+                openSound = ref->mOpenSound;
+                closeSound = ref->mCloseSound;
+            }
+            else if (door.getType() == ESM::REC_DOOR4)
+            {
+                const ESM4::Door* ref = door.get<ESM4::Door>()->mBase;
+                openSound = ESM::RefId(ref->mOpenSound);
+                closeSound = ESM::RefId(ref->mCloseSound);
+            }
+
+            if (state == MWWorld::DoorState::Opening)
+            {
+>>>>>>> origin/main
                 if (!openSound.empty()
                     && MWBase::Environment::get().getSoundManager()->getSoundPlaying(door, openSound))
                     MWBase::Environment::get().getSoundManager()->stopSound3D(door, openSound);
             }
             else if (state == MWWorld::DoorState::Closing)
             {
+<<<<<<< HEAD
                 const ESM::RefId& closeSound = ref->mCloseSound;
+=======
+>>>>>>> origin/main
                 if (!closeSound.empty()
                     && MWBase::Environment::get().getSoundManager()->getSoundPlaying(door, closeSound))
                     MWBase::Environment::get().getSoundManager()->stopSound3D(door, closeSound);
@@ -1570,6 +3257,7 @@ namespace MWWorld
 
         mPlayer->update();
 
+<<<<<<< HEAD
         mPhysics->debugDraw();
 
         mWorldScene->update(duration);
@@ -1581,6 +3269,29 @@ namespace MWWorld
         mSpellPreloadTimer -= duration;
         if (mSpellPreloadTimer <= 0.f)
         {
+=======
+        if (!paused)
+        {
+            mFalloutMapMarkerDiscoveryTimer -= duration;
+            if (mFalloutMapMarkerDiscoveryTimer <= 0.f)
+            {
+                mFalloutMapMarkerDiscoveryTimer = 0.25f;
+                discoverFalloutMapMarkersNearPlayer();
+            }
+        }
+
+        mPhysics->debugDraw();
+
+        mWorldScene->update(duration);
+
+        mRendering->update(duration, paused);
+
+        updateSoundListener();
+
+        mSpellPreloadTimer -= duration;
+        if (mSpellPreloadTimer <= 0.f)
+        {
+>>>>>>> origin/main
             mSpellPreloadTimer = 0.1f;
             preloadSpells();
         }
@@ -1670,12 +3381,20 @@ namespace MWWorld
         MWBase::Environment::get().getSoundManager()->setListenerPosDir(listenerPos, forward, up, underwater);
     }
 
+<<<<<<< HEAD
     void World::updateFocusObject()
+=======
+    void World::updateWindowManager()
+>>>>>>> origin/main
     {
         try
         {
             // inform the GUI about focused object
+<<<<<<< HEAD
             MWWorld::Ptr object = getFocusObject();
+=======
+            MWWorld::Ptr object = getFacedObject();
+>>>>>>> origin/main
 
             // retrieve the object's top point's screen position so we know where to place the floating label
             if (!object.isEmpty())
@@ -1696,6 +3415,7 @@ namespace MWWorld
         }
         catch (std::exception& e)
         {
+<<<<<<< HEAD
             Log(Debug::Error) << "Error updating focus object: " << e.what();
         }
     }
@@ -1706,6 +3426,20 @@ namespace MWWorld
         maxDistance += camDist;
         MWWorld::Ptr focusObject;
         MWRender::RenderingManager::RayResult rayToObject;
+=======
+            Log(Debug::Error) << "Error updating window manager: " << e.what();
+        }
+    }
+
+    MWWorld::Ptr World::getFacedObject(float maxDistance, bool ignorePlayer)
+    {
+        const float camDist = mRendering->getCamera()->getCameraDistance();
+        maxDistance += camDist;
+        MWWorld::Ptr facedObject;
+        // ## VR_PATCH BEGIN
+        MWRender::RayResult rayToObject;
+        // ## VR_PATCH END
+>>>>>>> origin/main
 
         if (MWBase::Environment::get().getWindowManager()->isGuiMode())
         {
@@ -1715,6 +3449,7 @@ namespace MWWorld
         }
         else
             rayToObject = mRendering->castCameraToViewportRay(0.5f, 0.5f, maxDistance, ignorePlayer);
+<<<<<<< HEAD
 
         focusObject = rayToObject.mHitObject;
         if (focusObject.isEmpty() && rayToObject.mHitRefnum.isSet())
@@ -1724,17 +3459,64 @@ namespace MWWorld
         else
             mDistanceToFocusObject = -1;
         return focusObject;
+=======
+
+        facedObject = rayToObject.mHitObject;
+        if (facedObject.isEmpty() && rayToObject.mHitRefnum.isSet())
+            facedObject = MWBase::Environment::get().getWorldModel()->getPtr(rayToObject.mHitRefnum);
+
+        // Native ESM4 creatures can assemble their visible body from separately skinned NIF parts. Until those
+        // parts have valid cull-time geometry the rendering ray can miss an actor whose physics body is already
+        // usable. Fall back to that body only for actors, keeping precise object and door selection unchanged.
+        if (facedObject.isEmpty() && !MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            const osg::Vec3f rayOrigin(mRendering->getCamera()->getPosition());
+            const osg::Vec3f rayDirection
+                = mRendering->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+            const MWPhysics::RayCastingResult actorHit = mPhysics->castRay(rayOrigin,
+                rayOrigin + rayDirection * maxDistance, { getPlayerPtr() }, {}, MWPhysics::CollisionType_Actor);
+            if (actorHit.mHit && !actorHit.mHitObject.isEmpty())
+            {
+                facedObject = actorHit.mHitObject;
+                mDistanceToFacedObject = std::max(0.f, (actorHit.mHitPos - rayOrigin).length() - camDist);
+                if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+                    Log(Debug::Info) << "FNV interaction audit: faced object source=physics-actor target="
+                                     << facedObject.toString() << " distance=" << mDistanceToFacedObject;
+                return facedObject;
+            }
+        }
+
+        if (rayToObject.mHit)
+            mDistanceToFacedObject = (rayToObject.mRatio * maxDistance) - camDist;
+        else
+            mDistanceToFacedObject = -1;
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr && !facedObject.isEmpty())
+            Log(Debug::Info) << "FNV interaction audit: faced object source=render target="
+                             << facedObject.toString() << " distance=" << mDistanceToFacedObject;
+        return facedObject;
+>>>>>>> origin/main
     }
 
     bool World::castRenderingRay(MWPhysics::RayCastingResult& res, const osg::Vec3f& from, const osg::Vec3f& to,
         bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList)
     {
+<<<<<<< HEAD
         MWRender::RenderingManager::RayResult rayRes
             = mRendering->castRay(from, to, ignorePlayer, ignoreActors, ignoreList);
+=======
+        MWRender::RayResult rayRes
+            // ## VR_PATCH BEGIN
+            = mRendering->castRay(from, to, ignorePlayer, ignoreActors, true, ignoreList);
+        // ## VR_PATCH END
+>>>>>>> origin/main
         res.mHit = rayRes.mHit;
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
         res.mHitObject = rayRes.mHitObject;
+<<<<<<< HEAD
+=======
+        res.mHitNodePath = std::move(rayRes.mHitNodePath);
+>>>>>>> origin/main
         if (res.mHitObject.isEmpty() && rayRes.mHitRefnum.isSet())
             res.mHitObject = MWBase::Environment::get().getWorldModel()->getPtr(rayRes.mHitRefnum);
         return res.mHit;
@@ -1827,6 +3609,14 @@ namespace MWWorld
         mWeatherManager->changeWeather(region, id);
     }
 
+<<<<<<< HEAD
+=======
+    bool World::forceWeather(const ESM::RefId& id)
+    {
+        return mWeatherManager->forceWeather(id);
+    }
+
+>>>>>>> origin/main
     void World::modRegion(const ESM::RefId& regionid, const std::vector<uint8_t>& chances)
     {
         mWeatherManager->modRegion(regionid, chances);
@@ -1899,8 +3689,14 @@ namespace MWWorld
     {
         const float maxDist = 200.f;
 
+<<<<<<< HEAD
         MWRender::RenderingManager::RayResult result
             = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
+=======
+        // ## VR_PATCH BEGIN
+        MWRender::RayResult result = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
+        // ## VR_PATCH END
+>>>>>>> origin/main
 
         CellStore* cell = getPlayerPtr().getCell();
 
@@ -1928,8 +3724,14 @@ namespace MWWorld
     bool World::canPlaceObject(float cursorX, float cursorY)
     {
         const float maxDist = 200.f;
+<<<<<<< HEAD
         MWRender::RenderingManager::RayResult result
             = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
+=======
+        // ## VR_PATCH BEGIN
+        MWRender::RayResult result = mRendering->castCameraToViewportRay(cursorX, cursorY, maxDist, true, true);
+        // ## VR_PATCH END
+>>>>>>> origin/main
 
         if (result.mHit)
         {
@@ -2033,7 +3835,13 @@ namespace MWWorld
 
         float len = 1000000.0;
 
+<<<<<<< HEAD
         MWRender::RenderingManager::RayResult result = mRendering->castRay(orig, orig + dir * len, true, true);
+=======
+        // ## VR_PATCH BEGIN
+        MWRender::RayResult result = mRendering->castRay(orig, orig + dir * len, true, true, true);
+        // ## VR_PATCH END
+>>>>>>> origin/main
         if (result.mHit)
             pos.pos[2] = result.mHitPointWorld.z();
 
@@ -2204,12 +4012,19 @@ namespace MWWorld
         return true;
     }
 
+<<<<<<< HEAD
     void World::saveLoaded(const ESM::ESMReader& reader)
+=======
+    void World::saveLoaded()
+>>>>>>> origin/main
     {
         mStore.rebuildIdsIndex();
         mStore.validateDynamic();
         mTimeManager->setup(mGlobalVariables);
+<<<<<<< HEAD
         mProjectileManager->saveLoaded(reader);
+=======
+>>>>>>> origin/main
     }
 
     void World::setupPlayer()
@@ -2278,7 +4093,11 @@ namespace MWWorld
             result |= Rest_PlayerIsUnderwater;
 
         float fallHeight = player.getClass().getCreatureStats(player).getFallHeight();
+<<<<<<< HEAD
         float epsilon = 1e-4f;
+=======
+        float epsilon = 1e-4;
+>>>>>>> origin/main
         if ((actor->getCollisionMode() && (!mPhysics->isOnSolidGround(player) || fallHeight >= epsilon))
             || isFlying(player))
             result |= Rest_PlayerIsInAir;
@@ -2310,6 +4129,15 @@ namespace MWWorld
         return mRendering->getAnimation(ptr);
     }
 
+<<<<<<< HEAD
+=======
+    MWRender::Animation* World::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        return mRendering->getFalloutWeaponAnimation(ptr, firstPerson);
+    }
+
+>>>>>>> origin/main
     void World::screenshot(osg::Image* image, int w, int h)
     {
         mRendering->screenshot(image, w, h);
@@ -2334,6 +4162,50 @@ namespace MWWorld
                 state = MWWorld::DoorState::Closing; // if opening, then close
                 break;
         }
+
+        if (door.getType() == ESM::REC_DOOR4)
+        {
+            MWRender::Animation* animation = getAnimation(door);
+            const std::string_view group = state == MWWorld::DoorState::Opening ? "Open" : "Close";
+            const std::string_view oppositeGroup = state == MWWorld::DoorState::Opening ? "Close" : "Open";
+
+            if (animation && animation->hasAnimation(group))
+            {
+                animation->disable(oppositeGroup);
+                animation->play(group, MWRender::AnimPriority(1), MWRender::BlendMask_All, true, 1.f, "start", "stop",
+                    0.f, 1, true);
+
+                if (state == MWWorld::DoorState::Opening)
+                {
+                    mPhysics->markAsNonSolid(door);
+                    mPhysics->remove(door);
+                    if (osg::Node* node = door.getRefData().getBaseNode())
+                        node->setNodeMask(0);
+                }
+
+                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
+                mDoorStates.erase(door);
+
+                Log(Debug::Info) << "FNV/ESM4 proof: played animated door group '" << group
+                                 << "' instead of rotating door " << door.getCellRef().getRefId();
+                return;
+            }
+
+            if (state == MWWorld::DoorState::Opening)
+            {
+                mPhysics->markAsNonSolid(door);
+                mPhysics->remove(door);
+                if (osg::Node* node = door.getRefData().getBaseNode())
+                    node->setNodeMask(0);
+                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
+                mDoorStates.erase(door);
+
+                Log(Debug::Warning) << "FNV/ESM4 proof: removed animated ESM4 door collision and hidden fallback gate "
+                                    << door.getCellRef().getRefId();
+                return;
+            }
+        }
+
         door.getClass().setDoorState(door, state);
         mDoorStates[door] = state;
     }
@@ -2485,8 +4357,14 @@ namespace MWWorld
             if (ptr.mRef->isDeleted())
                 return true;
 
+<<<<<<< HEAD
             // vanilla Morrowind does not allow to sell items from containers with zero capacity
             if (ptr.getClass().getCapacity(ptr) <= 0.f)
+=======
+            // Vanilla Morrowind does not allow selling from zero-capacity TES3 containers. Fallout containers do not
+            // use TES3 capacity semantics, and retail vendor chests commonly have a zero weight/capacity field.
+            if (ptr.getType() == ESM::Container::sRecordId && ptr.getClass().getCapacity(ptr) <= 0.f)
+>>>>>>> origin/main
                 return true;
 
             if (ptr.getCellRef().getOwner() == mOwner.getCellRef().getRefId())
@@ -2502,6 +4380,10 @@ namespace MWWorld
         {
             GetContainersOwnedByVisitor visitor(owner, out);
             cellstore->forEachType<ESM::Container>(visitor);
+<<<<<<< HEAD
+=======
+            cellstore->forEachType<ESM4::Container>(visitor);
+>>>>>>> origin/main
         }
     }
 
@@ -2784,7 +4666,13 @@ namespace MWWorld
         int idx = 0;
         for (const std::string& file : content)
         {
+<<<<<<< HEAD
             const Files::MultiDirCollection& col = fileCollections.getCollection(Misc::getFileExtension(file));
+=======
+            const auto filename = Files::pathFromUnicodeString(file);
+            const Files::MultiDirCollection& col
+                = fileCollections.getCollection(Files::pathToUnicodeString(filename.extension()));
+>>>>>>> origin/main
             if (col.doesExist(file))
             {
                 gameContentLoader.load(col.getPath(file), idx, listener);
@@ -2876,9 +4764,28 @@ namespace MWWorld
 
         const bool casterIsPlayer = actor == MWMechanics::getPlayer();
         MWWorld::Ptr target;
+<<<<<<< HEAD
         // For scripted spells we should not use hit contact
         if (scriptedSpell)
         {
+=======
+        // ## VR_PATCH BEGIN
+        if (VR::getVR())
+        {
+            if (VR::getKBMouseModeActive())
+                target = getFacedObject();
+            else
+                target = MWVR::Util::getTouchTarget().first;
+        }
+
+        // if the faced object can not be activated, do not use it
+        if (!target.isEmpty() && !target.getClass().hasToolTip(target))
+            target = nullptr;
+        // ## VR_PATCH END
+        //  For scripted spells we should not use hit contact
+        if (scriptedSpell)
+        {
+>>>>>>> origin/main
             if (!casterIsPlayer)
             {
                 for (const auto& package : stats.getAiSequence())
@@ -2893,8 +4800,19 @@ namespace MWWorld
         }
         else
         {
+<<<<<<< HEAD
             if (casterIsPlayer)
                 target = getFocusObject();
+=======
+            bool aimFromVRPointer = casterIsPlayer && VR::getVR() && !VR::getKBMouseModeActive();
+            if (casterIsPlayer)
+            {
+                if (aimFromVRPointer)
+                    target = MWVR::Util::getTouchTarget().first;
+                else
+                    target = getFacedObject();
+            }
+>>>>>>> origin/main
 
             if (target.isEmpty() || !target.getClass().hasToolTip(target))
             {
@@ -2905,17 +4823,44 @@ namespace MWWorld
                 // If we used the bounding boxes for static objects, then we would not be able to target e.g.
                 // objects lying on a shelf.
                 const float fCombatDistance = mStore.get<ESM::GameSetting>().find("fCombatDistance")->mValue.getFloat();
+<<<<<<< HEAD
                 target = MWMechanics::getHitContact(actor, fCombatDistance).first;
+=======
+                if (!aimFromVRPointer)
+                    target = MWMechanics::getHitContact(actor, fCombatDistance).first;
+>>>>>>> origin/main
 
                 if (target.isEmpty())
                 {
                     // Get the target using the facing direction from Head node
+<<<<<<< HEAD
                     const osg::Vec3f origin = getActorHeadTransform(actor).getTrans();
                     const osg::Quat orient = osg::Quat(actor.getRefData().getPosition().rot[0], osg::Vec3f(-1, 0, 0))
                         * osg::Quat(actor.getRefData().getPosition().rot[2], osg::Vec3f(0, 0, -1));
                     const osg::Vec3f direction = orient * osg::Vec3f(0, 1, 0);
                     const osg::Vec3f dest = origin + direction * getMaxActivationDistance();
                     const MWRender::RenderingManager::RayResult result = mRendering->castRay(origin, dest, true, true);
+=======
+                    osg::Vec3f origin = getActorHeadTransform(actor).getTrans();
+                    osg::Quat orient = osg::Quat(actor.getRefData().getPosition().rot[0], osg::Vec3f(-1, 0, 0))
+                        * osg::Quat(actor.getRefData().getPosition().rot[2], osg::Vec3f(0, 0, -1));
+                    // ## VR_PATCH BEGIN
+                    //  VR should aim from the HAND unless it's KBMouseMode
+                    if (aimFromVRPointer)
+                    {
+                        auto* node = MWVR::VRInputManager::instance().vrAimNode();
+                        if (node)
+                        {
+                            auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
+                            origin = worldMatrix.getTrans();
+                            orient = worldMatrix.getRotate();
+                        }
+                    }
+                    // ## VR_PATCH END
+                    const osg::Vec3f direction = orient * osg::Vec3f(0, 1, 0);
+                    const osg::Vec3f dest = origin + direction * getMaxActivationDistance();
+                    const MWRender::RayResult result = mRendering->castRay(origin, dest, true, true);
+>>>>>>> origin/main
                     if (result.mHit)
                         target = result.mHitObject;
                 }
@@ -3001,9 +4946,52 @@ namespace MWWorld
         mProjectileManager->launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength);
     }
 
+<<<<<<< HEAD
     void World::launchMagicBolt(
         const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
     {
+=======
+    bool World::launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+        const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
+    bool World::launchFalloutHitscanTracer(
+        ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+        const osg::Vec3f& impactNormal)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutHitscanTracer(
+                projectile, origin, destination, impactNormal);
+    }
+
+    std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->countPendingFalloutVatsProjectiles(actor)
+            : 0;
+    }
+
+    unsigned int World::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->detonateFalloutPlacedExplosives(actor)
+            : 0;
+    }
+
+    bool World::playFalloutImageSpaceModifier(ESM::FormId modifier, float strength)
+    {
+        return mWeatherManager != nullptr
+            && mWeatherManager->playFalloutImageSpaceModifier(modifier, strength);
+    }
+
+    void World::launchMagicBolt(
+        const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
+    {
+>>>>>>> origin/main
         mProjectileManager->launchMagicBolt(spellId, caster, fallbackDirection, item);
     }
 
@@ -3017,7 +5005,11 @@ namespace MWWorld
         const MWWorld::Class& cls = ptr.getClass();
         if (cls.isActor())
         {
+<<<<<<< HEAD
             std::set<ESM::RefId> playing;
+=======
+            std::set<int> playing;
+>>>>>>> origin/main
             for (const auto& params : cls.getCreatureStats(ptr).getActiveSpells())
             {
                 for (const auto& effect : params.getEffects())
@@ -3263,7 +5255,11 @@ namespace MWWorld
         mWorldModel.forEachLoadedCellStore([hours](CellStore& store) { store.rest(hours); });
     }
 
+<<<<<<< HEAD
     void World::rechargeItems(float duration, bool activeOnly)
+=======
+    void World::rechargeItems(double duration, bool activeOnly)
+>>>>>>> origin/main
     {
         MWWorld::Ptr player = getPlayerPtr();
         player.getClass().getInventoryStore(player).rechargeItems(duration);
@@ -3304,10 +5300,54 @@ namespace MWWorld
 
             const ESM::RefId& playerRegion = getPlayerPtr().getCell()->getCell()->getRegion();
             mWeatherManager->playerTeleported(playerRegion, isExterior);
+<<<<<<< HEAD
         }
 
         const TimeStamp time = getTimeStamp();
         mWeatherManager->update(duration, paused, time, isExterior);
+=======
+        }
+
+        const TimeStamp time = getTimeStamp();
+        mWeatherManager->update(duration, paused, time, isExterior);
+        if (const char* weatherIdEnv = std::getenv("OPENMW_FNV_PROOF_WEATHER_ID"))
+        {
+            static bool loggedProofWeather = false;
+            const std::string_view weatherText(weatherIdEnv);
+            if (weatherText.starts_with("FormId:") || weatherText.starts_with("formid:"))
+            {
+                const ESM::RefId weatherId = ESM::RefId::deserializeText(weatherText);
+                const bool forced = mWeatherManager->forceWeather(weatherId);
+                if (!loggedProofWeather)
+                {
+                    Log(forced ? Debug::Info : Debug::Warning)
+                        << "FNV/ESM4 proof: force-weather FormID override weatherId=" << weatherId
+                        << " resolved=" << forced << " isExterior=" << isExterior;
+                    loggedProofWeather = true;
+                }
+            }
+            else
+            {
+                char* end = nullptr;
+                const long weatherId = std::strtol(weatherIdEnv, &end, 10);
+                if (end != weatherIdEnv && weatherId >= 0)
+                {
+                    mWeatherManager->forceWeather(static_cast<int>(weatherId));
+                    if (!loggedProofWeather)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 proof: force-weather manager override weatherId=" << weatherId
+                                         << " isExterior=" << isExterior;
+                        loggedProofWeather = true;
+                    }
+                }
+                else if (!loggedProofWeather)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid force-weather id '" << weatherIdEnv << "'";
+                    loggedProofWeather = true;
+                }
+            }
+        }
+>>>>>>> origin/main
     }
 
     struct AddDetectedReferenceVisitor
@@ -3428,8 +5468,28 @@ namespace MWWorld
     float World::feetToGameUnits(float feet)
     {
         // Original engine rounds size upward
+<<<<<<< HEAD
         static const float unitsPerFoot = std::ceil(Constants::UnitsPerFoot);
         return feet * unitsPerFoot;
+=======
+        static const int unitsPerFoot = ceil(Constants::UnitsPerFoot);
+        return feet * unitsPerFoot;
+    }
+
+    float World::getActivationDistancePlusTelekinesis()
+    {
+        float telekinesisRangeBonus = mPlayer->getPlayer()
+                                          .getClass()
+                                          .getCreatureStats(mPlayer->getPlayer())
+                                          .getMagicEffects()
+                                          .getOrDefault(ESM::MagicEffect::Telekinesis)
+                                          .getMagnitude();
+        telekinesisRangeBonus = feetToGameUnits(telekinesisRangeBonus);
+
+        float activationDistance = getMaxActivationDistance() + telekinesisRangeBonus;
+
+        return activationDistance;
+>>>>>>> origin/main
     }
 
     MWWorld::Ptr World::getPlayerPtr()
@@ -3564,6 +5624,14 @@ namespace MWWorld
             return mPhysics->getHalfExtents(object);
     }
 
+<<<<<<< HEAD
+=======
+    osg::Vec3f World::getActorCollisionPosition(const ConstPtr& actor) const
+    {
+        return mPhysics->getCollisionObjectPosition(actor);
+    }
+
+>>>>>>> origin/main
     std::filesystem::path World::exportSceneGraph(const Ptr& ptr)
     {
         auto file = mUserDataPath / "openmw.osgt";
@@ -3596,6 +5664,7 @@ namespace MWWorld
     }
 
     void World::spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
+<<<<<<< HEAD
         const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight, std::string_view effectId,
         bool loop)
     {
@@ -3605,6 +5674,26 @@ namespace MWWorld
     void World::removeEffect(std::string_view effectId)
     {
         mRendering->removeEffect(effectId);
+=======
+        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM::RefId& lightId, const osg::Quat& orientation, float authoredDuration)
+    {
+        const ESM4::Light* light = lightId.empty()
+            ? nullptr
+            : mStore.get<ESM4::Light>().search(lightId);
+        if (!lightId.empty() && light == nullptr)
+            Log(Debug::Error) << "Effect references missing ESM4 light: " << lightId;
+        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX,
+            useAmbientLight, light, isCellExterior(), orientation, authoredDuration);
+    }
+
+    void World::spawnFalloutDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPos,
+        const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+        const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime)
+    {
+        mRendering->spawnFalloutDecal(texture, worldPos, surfaceNormal, width, height,
+            depth, color, alphaBlend, alphaTest, lifetime);
+>>>>>>> origin/main
     }
 
     struct ResetActorsVisitor
@@ -3748,6 +5837,85 @@ namespace MWWorld
         return btRayAabb(localFrom, localTo, aabbMin, aabbMax, hitDistance, hitNormal);
     }
 
+<<<<<<< HEAD
+=======
+    // ## VR_PATCH BEGIN
+    float World::getTargetObject(MWRender::RayResult& result, const osg::Vec3f& origin, const osg::Quat& orientation,
+        float maxDistance, bool ignorePlayer, uint32_t ignoreMask)
+    {
+        osg::Vec3f direction = orientation * osg::Vec3f(0, 1, 0);
+        direction.normalize();
+        osg::Vec3f end = origin + direction * maxDistance;
+        result = mRendering->castRay(origin, end, ignorePlayer, false, ignoreMask);
+        if (!result.mHit)
+            return 0.f;
+
+        MWWorld::Ptr facedObject = result.mHitObject;
+        if (facedObject.isEmpty() && result.mHitRefnum.hasContentFile())
+        {
+            facedObject = MWBase::Environment::get().getWorldModel()->getPtr(result.mHitRefnum);
+        }
+        result.mHitObject = facedObject;
+
+        return result.mRatio * maxDistance;
+    }
+
+    MWWorld::Ptr World::placeObject(const MWWorld::ConstPtr& object, const MWRender::RayResult& ray, int amount)
+    {
+        CellStore* cell = getPlayerPtr().getCell();
+
+        ESM::Position pos = getPlayerPtr().getRefData().getPosition();
+
+        if (ray.mHit && !ray.mHitObject.isEmpty())
+        {
+            pos.pos[0] = ray.mHitPointWorld.x();
+            pos.pos[1] = ray.mHitPointWorld.y();
+            pos.pos[2] = ray.mHitPointWorld.z();
+        }
+        // We want only the Z part of the player's rotation
+        // TODO: Use the hand to orient in VR?
+        pos.rot[0] = 0;
+        pos.rot[1] = 0;
+
+        // copy the object and set its count
+        MWWorld::Ptr dropped = copyObjectToCell(object, cell, pos, amount, true);
+
+        // only the player place items in the world, so no need to check actor
+        PCDropped(dropped);
+
+        return dropped;
+    }
+
+    int World::getActiveWeaponType(void)
+    {
+        if (mPlayer)
+        {
+            if (mPlayer->getDrawState() == MWMechanics::DrawState::Nothing)
+                return ESM::Weapon::Type::None;
+
+            if (mPlayer->getDrawState() == MWMechanics::DrawState::Spell)
+                return ESM::Weapon::Type::Spell;
+
+            MWWorld::Ptr ptr = mPlayer->getPlayer();
+            const MWWorld::InventoryStore& invStore = ptr.getClass().getInventoryStore(ptr);
+            MWWorld::ConstContainerStoreIterator it = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            if (it != invStore.end())
+            {
+                if (it->getTypeDescription() == "Weapon")
+                    return ESM::Weapon::Type(it->get<ESM::Weapon>()->mBase->mData.mType);
+                if (it->getTypeDescription() == "Lockpick")
+                    return ESM::Weapon::Type::PickProbe;
+                if (it->getTypeDescription() == "Probe")
+                    return ESM::Weapon::Type::PickProbe;
+            }
+            return ESM::Weapon::Type::HandToHand;
+        }
+        return ESM::Weapon::Type::None;
+    }
+
+    // ## VR_PATCH END
+
+>>>>>>> origin/main
     bool World::isAreaOccupiedByOtherActor(const MWWorld::ConstPtr& actor, const osg::Vec3f& position) const
     {
         const osg::Vec3f halfExtents = getPathfindingAgentBounds(actor).mHalfExtents;
@@ -3772,6 +5940,46 @@ namespace MWWorld
         return mPrng;
     }
 
+<<<<<<< HEAD
+=======
+    // ## VR_PATCH BEGIN
+    void World::enableVRPointer(bool left, bool right)
+    {
+        mRendering->enableVRPointer(left, right);
+    }
+
+    std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> MWWorld::World::getVRMeleeHitContact(MWWorld::Ptr ptr)
+    {
+        if (ptr.getClass().getCreatureStats(ptr).getDrawState() != MWMechanics::DrawState::Weapon)
+            return std::nullopt;
+
+        const MWWorld::Store<ESM::GameSetting>& store = getStore().get<ESM::GameSetting>();
+
+        // Get the weapon used (if hand-to-hand, weapon = inv.end())
+        MWWorld::InventoryStore& inv = ptr.getClass().getInventoryStore(ptr);
+        MWWorld::ContainerStoreIterator weaponslot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        MWWorld::Ptr weapon = ((weaponslot != inv.end()) ? *weaponslot : MWWorld::Ptr());
+        if (!weapon.isEmpty() && weapon.getType() != ESM::Weapon::sRecordId)
+            weapon = MWWorld::Ptr();
+
+        const float fCombatDistance = store.find("fCombatDistance")->mValue.getFloat();
+        float distance = fCombatDistance
+            * (!weapon.isEmpty() ? weapon.get<ESM::Weapon>()->mBase->mData.mReach
+                                 : store.find("fHandToHandReach")->mValue.getFloat());
+
+        auto* node = MWVR::VRInputManager::instance().vrAimNode();
+        if (!node)
+            return std::nullopt;
+        auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
+        auto result = mPhysics->getHitContact(ptr, worldMatrix.getTrans(), worldMatrix.getRotate(), distance);
+        if (result.first.isEmpty())
+            return std::nullopt;
+        Log(Debug::Verbose) << "Hit: " << result.first.getTypeDescription();
+        return result;
+    }
+
+    // ## VR_PATCH END
+>>>>>>> origin/main
     MWRender::PostProcessor* World::getPostProcessor()
     {
         return mRendering->getPostProcessor();

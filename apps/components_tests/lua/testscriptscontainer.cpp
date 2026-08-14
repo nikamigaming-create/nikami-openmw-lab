@@ -225,7 +225,11 @@ CUSTOM, PLAYER: useInterface.lua
 CUSTOM: unload.lua
 CUSTOM: customdata.lua
 )X");
+<<<<<<< HEAD
             mCfg.init(std::move(cfg), false);
+=======
+            mCfg.init(std::move(cfg));
+>>>>>>> origin/main
         }
 
         int getId(VFS::Path::NormalizedView path) const
@@ -650,6 +654,7 @@ CUSTOM: customdata.lua
             EXPECT_FALSE(true);
         });
     }
+<<<<<<< HEAD
 
     TEST_F(LuaScriptsContainerTest, ScriptOrderChange)
     {
@@ -679,4 +684,6 @@ CUSTOM: test1.lua
         EXPECT_EQ(newScriptId, 2);
         EXPECT_TRUE(scripts2.hasScript(newScriptId));
     }
+=======
+>>>>>>> origin/main
 }

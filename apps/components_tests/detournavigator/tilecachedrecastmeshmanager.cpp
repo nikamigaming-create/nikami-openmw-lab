@@ -503,6 +503,7 @@ namespace
 
         ASSERT_EQ(manager.getCachedMesh(mWorldspace, tilePosition), nullptr);
     }
+<<<<<<< HEAD
 
     TEST_F(DetourNavigatorTileCachedRecastMeshManagerTest, add_heightfield_plane_should_add_tiles)
     {
@@ -577,4 +578,6 @@ namespace
             for (int y = -1; y < 1; ++y)
                 EXPECT_NE(manager.getMesh(mWorldspace, TilePosition(x, y)), nullptr) << x << " " << y;
     }
+=======
+>>>>>>> origin/main
 }

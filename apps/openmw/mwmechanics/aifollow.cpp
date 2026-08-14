@@ -30,8 +30,12 @@ namespace MWMechanics
 {
     int AiFollow::mFollowIndexCounter = 0;
 
+<<<<<<< HEAD
     AiFollow::AiFollow(
         ESM::RefNum actor, std::string_view cellId, float duration, float x, float y, float z, bool repeat)
+=======
+    AiFollow::AiFollow(const ESM::RefId& actorId, float duration, float x, float y, float z, bool repeat)
+>>>>>>> origin/main
         : TypedAiPackage<AiFollow>(repeat)
         , mAlwaysFollow(false)
         , mDuration(duration)
@@ -39,11 +43,18 @@ namespace MWMechanics
         , mX(x)
         , mY(y)
         , mZ(z)
+<<<<<<< HEAD
         , mCellId(cellId)
         , mActive(false)
         , mFollowIndex(mFollowIndexCounter++)
     {
         mTargetActor = actor;
+=======
+        , mActive(false)
+        , mFollowIndex(mFollowIndexCounter++)
+    {
+        mTargetActorRefId = actorId;
+>>>>>>> origin/main
     }
 
     AiFollow::AiFollow(
@@ -74,7 +85,11 @@ namespace MWMechanics
         , mFollowIndex(mFollowIndexCounter++)
     {
         mTargetActorRefId = actor.getCellRef().getRefId();
+<<<<<<< HEAD
         mTargetActor = actor.getCellRef().getRefNum();
+=======
+        mTargetActorId = actor.getClass().getCreatureStats(actor).getActorId();
+>>>>>>> origin/main
     }
 
     AiFollow::AiFollow(const ESM::AiSequence::AiFollow* follow)
@@ -91,7 +106,11 @@ namespace MWMechanics
         , mFollowIndex(mFollowIndexCounter++)
     {
         mTargetActorRefId = follow->mTargetId;
+<<<<<<< HEAD
         mTargetActor = follow->mTargetActor;
+=======
+        mTargetActorId = follow->mTargetActorId;
+>>>>>>> origin/main
     }
 
     bool AiFollow::execute(
@@ -246,9 +265,15 @@ namespace MWMechanics
         follow->mData.mX = mX;
         follow->mData.mY = mY;
         follow->mData.mZ = mZ;
+<<<<<<< HEAD
         follow->mData.mDuration = static_cast<int16_t>(mDuration);
         follow->mTargetId = mTargetActorRefId;
         follow->mTargetActor = mTargetActor;
+=======
+        follow->mData.mDuration = mDuration;
+        follow->mTargetId = mTargetActorRefId;
+        follow->mTargetActorId = mTargetActorId;
+>>>>>>> origin/main
         follow->mRemainingDuration = mRemainingDuration;
         follow->mCellId = mCellId;
         follow->mAlwaysFollow = mAlwaysFollow;

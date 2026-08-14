@@ -89,8 +89,13 @@ namespace MWLua
             if (worldspace != ESM::Cell::sDefaultWorldspaceId)
                 return values;
 
+<<<<<<< HEAD
             const int cellSize = ESM::getCellSize(worldspace);
             const float offset = (cellSize / ESM::LandRecordData::sLandTextureSize) * 0.25f;
+=======
+            const float cellSize = ESM::getCellSize(worldspace);
+            const float offset = (cellSize / ESM::LandRecordData::sLandTextureSize) * 0.25;
+>>>>>>> origin/main
             const osg::Vec3f correctedPos = pos + osg::Vec3f{ -offset, +offset, 0.0f };
 
             const ESM::Land* land = nullptr;
@@ -110,7 +115,11 @@ namespace MWLua
                 return values;
 
             const ESMTerrain::UniqueTextureId textureId
+<<<<<<< HEAD
                 = getTextureAt(landData->mTextures, land->getPlugin(), correctedPos, static_cast<float>(cellSize));
+=======
+                = getTextureAt(landData->mTextures, land->getPlugin(), correctedPos, cellSize);
+>>>>>>> origin/main
 
             // Need to check for 0, 0 so that we can safely subtract 1 later, as per documentation on UniqueTextureId
             if (textureId.first != 0)

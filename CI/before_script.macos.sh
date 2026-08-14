@@ -66,16 +66,30 @@ fi
 mkdir -p build
 cd build
 
+<<<<<<< HEAD
 DEPENDENCIES_ROOT_PATH="/tmp/openmw-deps"
 
 if [[ "${MACOS_AMD64}" ]]; then
     QT_PATH=$(arch -x86_64 /bin/bash -c "qmake -v | sed -rn -e 's/Using Qt version [.0-9]+ in //p'")
 else
     QT_PATH=$(qmake -v | sed -rn -e "s/Using Qt version [.0-9]+ in //p")
+=======
+DEPENDENCIES_ROOT="/tmp/openmw-deps"
+
+if [[ "${MACOS_AMD64}" ]]; then
+    QT_PATH=$(arch -x86_64 /bin/bash -c "qmake -v | sed -rn -e 's/Using Qt version [.0-9]+ in //p'")
+    ICU_PATH=$(arch -x86_64 /usr/local/bin/brew --prefix icu4c)
+    OPENAL_PATH=$(arch -x86_64 /usr/local/bin/brew --prefix openal-soft)
+else
+    QT_PATH=$(qmake -v | sed -rn -e "s/Using Qt version [.0-9]+ in //p")
+    ICU_PATH=$(brew --prefix icu4c)
+    OPENAL_PATH=$(brew --prefix openal-soft)
+>>>>>>> origin/main
 fi
 
 if [[ -n $VERBOSE ]]; then
     echo "Using Qt path: ${QT_PATH}"
+<<<<<<< HEAD
 fi
 
 declare -a CMAKE_CONF_OPTS=(
@@ -83,6 +97,22 @@ declare -a CMAKE_CONF_OPTS=(
 -D CMAKE_C_COMPILER="clang"
 -D CMAKE_CXX_COMPILER="clang++"
 -DOPENMW_USE_SYSTEM_YAML_CPP=OFF
+=======
+    echo "Using ICU path: ${ICU_PATH}"
+    echo "Using OpenAL path: ${OPENAL_PATH}"
+fi
+
+declare -a CMAKE_CONF_OPTS=(
+-D CMAKE_PREFIX_PATH="$DEPENDENCIES_ROOT;$QT_PATH;$OPENAL_PATH"
+-D CMAKE_CXX_FLAGS="-stdlib=libc++"
+-D CMAKE_C_COMPILER="clang"
+-D CMAKE_CXX_COMPILER="clang++"
+-D CMAKE_OSX_DEPLOYMENT_TARGET="13.6"
+-D OPENMW_USE_SYSTEM_RECASTNAVIGATION=TRUE
+-D Boost_INCLUDE_DIR="$DEPENDENCIES_ROOT/include"
+-D OSGPlugins_LIB_DIR="$DEPENDENCIES_ROOT/lib/osgPlugins-3.6.5"
+-D ICU_ROOT="$ICU_PATH"
+>>>>>>> origin/main
 -D OPENMW_OSX_DEPLOYMENT=TRUE
 )
 
@@ -99,6 +129,7 @@ declare -a BUILD_OPTS=(
 )
 
 if [[ "${MACOS_AMD64}" ]]; then
+<<<<<<< HEAD
     VCPKG_TARGET_TRIPLET="x64-osx-dynamic"
     CMAKE_CONF_OPTS+=(
         -D CMAKE_OSX_ARCHITECTURES="x86_64"
@@ -121,6 +152,13 @@ CMAKE_CONF_OPTS+=(
     -DCMAKE_TOOLCHAIN_FILE="$DEPENDENCIES_ROOT_PATH/scripts/buildsystems/vcpkg.cmake"
 )
 
+=======
+    CMAKE_CONF_OPTS+=(
+        -D CMAKE_OSX_ARCHITECTURES="x86_64"
+    )
+fi
+
+>>>>>>> origin/main
 if [[ "${CMAKE_BUILD_TYPE}" ]]; then
     CMAKE_CONF_OPTS+=(
         -D CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}

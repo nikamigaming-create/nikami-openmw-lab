@@ -34,8 +34,13 @@ namespace MWRender
     void PingPongCull::operator()(osg::Node* node, osgUtil::CullVisitor* cv)
     {
         osgUtil::RenderStage* renderStage = cv->getCurrentRenderStage();
+<<<<<<< HEAD
         unsigned frame = cv->getTraversalNumber();
         unsigned frameId = frame % 2;
+=======
+        size_t frame = cv->getTraversalNumber();
+        size_t frameId = frame % 2;
+>>>>>>> origin/main
 
         if (Stereo::getStereo())
         {
@@ -59,6 +64,7 @@ namespace MWRender
         }
         else
         {
+<<<<<<< HEAD
             renderStage->setMultisampleResolveFramebufferObject(
                 mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId));
             renderStage->setFrameBufferObject(mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId));
@@ -67,6 +73,17 @@ namespace MWRender
             // changed. So we do blit manually in this case
             if (Stereo::getMultiview() && !renderStage->getDrawCallback())
                 Stereo::setMultiviewMSAAResolveCallback(renderStage);
+=======
+//## VR_PATCH BEGIN
+// VR branch bases itself on my build of osg that doesn't have this bug
+            if (mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId)
+                != renderStage->getMultisampleResolveFramebufferObject())
+                renderStage->setMultisampleResolveFramebufferObject(
+                    mPostProcessor->getFbo(PostProcessor::FBO_Primary, frameId));
+            if (mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId) != renderStage->getFrameBufferObject())
+                renderStage->setFrameBufferObject(mPostProcessor->getFbo(PostProcessor::FBO_Multisample, frameId));
+//## VR_PATCH END
+>>>>>>> origin/main
         }
 
         if (mViewportStateset)

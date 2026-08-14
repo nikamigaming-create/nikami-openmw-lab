@@ -5,6 +5,7 @@
 #include <string>
 
 #include <QCompleter>
+<<<<<<< HEAD
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QMenu>
@@ -16,6 +17,17 @@
 
 #include "utils/openalutil.hpp"
 
+=======
+#include <QFileDialog>
+#include <QString>
+
+#include <components/config/gamesettings.hpp>
+
+#include <components/settings/values.hpp>
+
+#include "utils/openalutil.hpp"
+
+>>>>>>> origin/main
 namespace
 {
     void loadSettingBool(const Settings::SettingValue<bool>& value, QCheckBox& checkbox)
@@ -71,6 +83,7 @@ namespace
         }
         return 0;
     }
+<<<<<<< HEAD
 
     enum FileTypeRoles
     {
@@ -104,6 +117,12 @@ Launcher::SettingsPage::SettingsPage(
     const Files::ConfigurationManager& configurationManager, Config::GameSettings& gameSettings, QWidget* parent)
     : QWidget(parent)
     , mCfgMgr(configurationManager)
+=======
+}
+
+Launcher::SettingsPage::SettingsPage(Config::GameSettings& gameSettings, QWidget* parent)
+    : QWidget(parent)
+>>>>>>> origin/main
     , mGameSettings(gameSettings)
 {
     setObjectName("SettingsPage");
@@ -119,6 +138,7 @@ Launcher::SettingsPage::SettingsPage(
     }
 
     loadSettings();
+<<<<<<< HEAD
 
     mCellNameCompleter.setModel(&mCellNameCompleterModel);
     startDefaultCharacterAtField->setCompleter(&mCellNameCompleter);
@@ -185,6 +205,27 @@ void Launcher::SettingsPage::on_skipMenuCheckBox_stateChanged(int state)
     startDefaultCharacterAtField->setEnabled(state == Qt::Checked);
 }
 
+=======
+
+    mCellNameCompleter.setModel(&mCellNameCompleterModel);
+    startDefaultCharacterAtField->setCompleter(&mCellNameCompleter);
+}
+
+void Launcher::SettingsPage::loadCellsForAutocomplete(QStringList cellNames)
+{
+    // Update the list of suggestions for the "Start default character at" field
+    mCellNameCompleterModel.setStringList(cellNames);
+    mCellNameCompleter.setCompletionMode(QCompleter::PopupCompletion);
+    mCellNameCompleter.setCaseSensitivity(Qt::CaseSensitivity::CaseInsensitive);
+}
+
+void Launcher::SettingsPage::on_skipMenuCheckBox_stateChanged(int state)
+{
+    startDefaultCharacterAtLabel->setEnabled(state == Qt::Checked);
+    startDefaultCharacterAtField->setEnabled(state == Qt::Checked);
+}
+
+>>>>>>> origin/main
 void Launcher::SettingsPage::on_runScriptAfterStartupBrowseButton_clicked()
 {
     QString scriptFile = QFileDialog::getOpenFileName(
@@ -331,6 +372,7 @@ bool Launcher::SettingsPage::loadSettings()
 
         connect(shadowDistanceCheckBox, &QCheckBox::toggled, this, &SettingsPage::slotShadowDistLimitToggled);
 
+<<<<<<< HEAD
         int lightingMethod = 0;
         switch (Settings::shaders().mLightingMethod)
         {
@@ -340,6 +382,20 @@ bool Launcher::SettingsPage::loadSettings()
             case SceneUtil::LightingMethod::SingleUBO:
                 lightingMethod = 1;
                 break;
+=======
+        int lightingMethod = 1;
+        switch (Settings::shaders().mLightingMethod)
+        {
+            case SceneUtil::LightingMethod::FFP:
+                lightingMethod = 0;
+                break;
+            case SceneUtil::LightingMethod::PerObjectUniform:
+                lightingMethod = 1;
+                break;
+            case SceneUtil::LightingMethod::SingleUBO:
+                lightingMethod = 2;
+                break;
+>>>>>>> origin/main
         }
         lightingMethodComboBox->setCurrentIndex(lightingMethod);
     }
@@ -406,8 +462,11 @@ bool Launcher::SettingsPage::loadSettings()
         screenshotFormatComboBox->setCurrentIndex(screenshotFormatComboBox->findText(screenshotFormatString));
 
         loadSettingBool(Settings::general().mNotifyOnSavedScreenshot, *notifyOnSavedScreenshotCheckBox);
+<<<<<<< HEAD
 
         populateLoadedConfigs();
+=======
+>>>>>>> origin/main
     }
 
     // Testing
@@ -425,6 +484,7 @@ bool Launcher::SettingsPage::loadSettings()
         startDefaultCharacterAtField->setText(mGameSettings.value("start").value);
         runScriptAfterStartupField->setText(mGameSettings.value("script-run").value);
     }
+<<<<<<< HEAD
     return true;
 }
 
@@ -517,6 +577,28 @@ void Launcher::SettingsPage::populateLoadedConfigs()
     }
 }
 
+=======
+
+    // VR
+    {
+        auto& vr = Settings::vr();
+        auto& vrd = Settings::vrDebug();
+        auto& stereo = Settings::stereo();
+        realisticCombatMinimumSwingSpeedSpinBox->setValue(vr.mRealisticCombatMinimumSwingVelocity);
+        realisticCombatMaximumSwingSpeedSpinBox->setValue(vr.mRealisticCombatMaximumSwingVelocity);
+
+        loadSettingBool(vr.mLeftHandedMode, *leftHandedModeCheckBox);
+        loadSettingBool(stereo.mMultiview, *useMultiviewCheckBox);
+        loadSettingBool(stereo.mAllowDisplayListsForMultiview, *allowDisplayListsCheckBox);
+        loadSettingBool(stereo.mSharedShadowMaps, *useSharedShadowMapsCheckBox);
+        loadSettingBool(vrd.mLogAllOpenxrCalls, *logAllXrCallsCheckBox);
+        loadSettingBool(vrd.mContinueOnErrors, *ignoreXrErrorsCheckBox);
+        loadSettingBool(vrd.mSkywindBlasterWorkaround, *skywindBlasterBoltWorkaroundCheckBox);
+    }
+    return true;
+}
+
+>>>>>>> origin/main
 void Launcher::SettingsPage::saveSettings()
 {
     // Game mechanics
@@ -584,7 +666,12 @@ void Launcher::SettingsPage::saveSettings()
         saveSettingBool(*skyBlendingCheckBox, Settings::fog().mSkyBlending);
         Settings::fog().mSkyBlendingStart.set(skyBlendingStartComboBox->value());
 
+<<<<<<< HEAD
         static constexpr std::array<SceneUtil::LightingMethod, 2> lightingMethodMap = {
+=======
+        static constexpr std::array<SceneUtil::LightingMethod, 3> lightingMethodMap = {
+            SceneUtil::LightingMethod::FFP,
+>>>>>>> origin/main
             SceneUtil::LightingMethod::PerObjectUniform,
             SceneUtil::LightingMethod::SingleUBO,
         };
@@ -706,6 +793,28 @@ void Launcher::SettingsPage::saveSettings()
         if (scriptRun != mGameSettings.value("script-run").value)
             mGameSettings.setValue("script-run", { scriptRun });
     }
+<<<<<<< HEAD
+=======
+
+    // VR
+    {
+        auto& vr = Settings::vr();
+        auto& vrd = Settings::vrDebug();
+        auto& stereo = Settings::stereo();
+        double minimumSwingSpeed = realisticCombatMinimumSwingSpeedSpinBox->value();
+        double maximumSwingSpeed = realisticCombatMaximumSwingSpeedSpinBox->value();
+
+        vr.mRealisticCombatMinimumSwingVelocity.set(minimumSwingSpeed);
+        vr.mRealisticCombatMaximumSwingVelocity.set(maximumSwingSpeed);
+        saveSettingBool(*leftHandedModeCheckBox, vr.mLeftHandedMode);
+        saveSettingBool(*useMultiviewCheckBox, stereo.mMultiview);
+        saveSettingBool(*allowDisplayListsCheckBox, stereo.mAllowDisplayListsForMultiview);
+        saveSettingBool(*useSharedShadowMapsCheckBox, stereo.mSharedShadowMaps);
+        saveSettingBool(*logAllXrCallsCheckBox, vrd.mLogAllOpenxrCalls);
+        saveSettingBool(*ignoreXrErrorsCheckBox, vrd.mContinueOnErrors);
+        saveSettingBool(*skywindBlasterBoltWorkaroundCheckBox, vrd.mSkywindBlasterWorkaround);
+    }
+>>>>>>> origin/main
 }
 
 void Launcher::SettingsPage::slotLoadedCellsChanged(QStringList cellNames)
@@ -753,9 +862,12 @@ void Launcher::SettingsPage::slotDistantLandToggled(bool checked)
     activeGridObjectPagingCheckBox->setEnabled(checked);
     objectPagingMinSizeComboBox->setEnabled(checked);
 }
+<<<<<<< HEAD
 
 void Launcher::SettingsPage::slotOpenFile(QTreeWidgetItem* item)
 {
     QUrl configFolderUrl = item->data(0, Role_ThisFile).toUrl();
     QDesktopServices::openUrl(configFolderUrl);
 }
+=======
+>>>>>>> origin/main

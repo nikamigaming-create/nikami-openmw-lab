@@ -46,9 +46,13 @@ namespace LuaUi
 
     void LuaTextEdit::textChange(MyGUI::EditBox*)
     {
+<<<<<<< HEAD
         protectedCall([this](LuaUtil::LuaView& view) {
             triggerEvent("textChanged", sol::make_object(view.sol(), mEditBox->getCaption().asUTF8()));
         });
+=======
+        triggerEvent("textChanged", sol::make_object(lua(), mEditBox->getCaption().asUTF8()));
+>>>>>>> origin/main
     }
 
     void LuaTextEdit::updateCoord()
@@ -76,6 +80,7 @@ namespace LuaUi
         }
         return normalSize;
     }
+<<<<<<< HEAD
 
     const std::vector<std::string_view>& LuaTextEdit::allUsedProperties() const
     {
@@ -88,4 +93,6 @@ namespace LuaUi
         });
         return usedProps;
     }
+=======
+>>>>>>> origin/main
 }

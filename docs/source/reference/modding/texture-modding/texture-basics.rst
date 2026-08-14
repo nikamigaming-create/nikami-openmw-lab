@@ -10,6 +10,13 @@ cracks and other small details.
 
 `Specular mapping`_ is used to vary the shininess/specularity along the surface of an object.
 
+<<<<<<< HEAD
+=======
+The prerequisite to using these techniques are
+`shaders <https://en.wikipedia.org/wiki/Shader>`_.
+OpenMW automatically uses shaders for objects with these mapping techniques.
+
+>>>>>>> origin/main
 Normal Mapping
 ##############
 
@@ -76,7 +83,11 @@ The above settings are not enabled by default to prevent incompatibilities
 with mods that may be inadvertently using these naming schemes.
 
 On the topic of shader settings,
+<<<<<<< HEAD
 you may be interested in these two settings as well:
+=======
+you may be interested in these three settings as well: :ref:`force shaders`,
+>>>>>>> origin/main
 :ref:`force per pixel lighting`, and :ref:`clamp lighting`.
 In particular, `clamp lighting = false` makes normal maps look much better!
 

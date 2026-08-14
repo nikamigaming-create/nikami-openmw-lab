@@ -136,7 +136,10 @@ CSMWorld::Data::Data(ToUTF8::FromType encoding, const Files::PathContainer& data
     const std::vector<std::string>& archives, const std::filesystem::path& resDir)
     : mEncoder(encoding)
     , mPathgrids(mCells)
+<<<<<<< HEAD
     , mReferenceables(mMagicEffects)
+=======
+>>>>>>> origin/main
     , mRefs(mCells)
     , mDialogue(nullptr)
     , mReaderIndex(0)
@@ -152,6 +155,7 @@ CSMWorld::Data::Data(ToUTF8::FromType encoding, const Files::PathContainer& data
     mResourceSystem
         = std::make_unique<Resource::ResourceSystem>(mVFS.get(), expiryDelay, &mEncoder.getStatelessEncoder());
 
+<<<<<<< HEAD
     auto defines = Shader::getDefaultDefines();
 
     auto shadowDefines = SceneUtil::ShadowManager::getShadowsDisabledDefines();
@@ -474,6 +478,331 @@ CSMWorld::Data::Data(ToUTF8::FromType encoding, const Files::PathContainer& data
     mEnchantments.getNestableColumn(index)->addColumn(
         new NestedChildColumn(Columns::ColumnId_MaxMagnitude, ColumnBase::Display_Integer));
 
+=======
+    Shader::ShaderManager::DefineMap defines
+        = mResourceSystem->getSceneManager()->getShaderManager().getGlobalDefines();
+    Shader::ShaderManager::DefineMap shadowDefines = SceneUtil::ShadowManager::getShadowsDisabledDefines();
+    defines["forcePPL"] = "0"; // Don't force per-pixel lighting
+    defines["clamp"] = "1"; // Clamp lighting
+    defines["preLightEnv"] = "0"; // Apply environment maps after lighting like Morrowind
+    defines["radialFog"] = "0";
+    defines["lightingModel"] = "0";
+    defines["reverseZ"] = "0";
+    defines["waterRefraction"] = "0";
+    for (const auto& define : shadowDefines)
+        defines[define.first] = define.second;
+    mResourceSystem->getSceneManager()->getShaderManager().setGlobalDefines(defines);
+
+    mResourceSystem->getSceneManager()->setShaderPath(resDir / "shaders");
+
+    int index = 0;
+
+    mGlobals.addColumn(new StringIdColumn<ESM::Global>);
+    mGlobals.addColumn(new RecordStateColumn<ESM::Global>);
+    mGlobals.addColumn(new FixedRecordTypeColumn<ESM::Global>(UniversalId::Type_Global));
+    mGlobals.addColumn(new VarTypeColumn<ESM::Global>(ColumnBase::Display_GlobalVarType));
+    mGlobals.addColumn(new VarValueColumn<ESM::Global>);
+
+    mGmsts.addColumn(new StringIdColumn<ESM::GameSetting>);
+    mGmsts.addColumn(new RecordStateColumn<ESM::GameSetting>);
+    mGmsts.addColumn(new FixedRecordTypeColumn<ESM::GameSetting>(UniversalId::Type_Gmst));
+    mGmsts.addColumn(new VarTypeColumn<ESM::GameSetting>(ColumnBase::Display_GmstVarType));
+    mGmsts.addColumn(new VarValueColumn<ESM::GameSetting>);
+
+    mSkills.addColumn(new StringIdColumn<ESM::Skill>);
+    mSkills.addColumn(new RecordStateColumn<ESM::Skill>);
+    mSkills.addColumn(new FixedRecordTypeColumn<ESM::Skill>(UniversalId::Type_Skill));
+    mSkills.addColumn(new AttributeColumn<ESM::Skill>);
+    mSkills.addColumn(new SpecialisationColumn<ESM::Skill>);
+    for (int i = 0; i < 4; ++i)
+        mSkills.addColumn(new UseValueColumn<ESM::Skill>(i));
+    mSkills.addColumn(new DescriptionColumn<ESM::Skill>);
+
+    mClasses.addColumn(new StringIdColumn<ESM::Class>);
+    mClasses.addColumn(new RecordStateColumn<ESM::Class>);
+    mClasses.addColumn(new FixedRecordTypeColumn<ESM::Class>(UniversalId::Type_Class));
+    mClasses.addColumn(new NameColumn<ESM::Class>);
+    mClasses.addColumn(new AttributesColumn<ESM::Class>(0));
+    mClasses.addColumn(new AttributesColumn<ESM::Class>(1));
+    mClasses.addColumn(new SpecialisationColumn<ESM::Class>);
+    for (int i = 0; i < 5; ++i)
+        mClasses.addColumn(new SkillsColumn<ESM::Class>(i, true, true));
+    for (int i = 0; i < 5; ++i)
+        mClasses.addColumn(new SkillsColumn<ESM::Class>(i, true, false));
+    mClasses.addColumn(new PlayableColumn<ESM::Class>);
+    mClasses.addColumn(new DescriptionColumn<ESM::Class>);
+
+    mFactions.addColumn(new StringIdColumn<ESM::Faction>);
+    mFactions.addColumn(new RecordStateColumn<ESM::Faction>);
+    mFactions.addColumn(new FixedRecordTypeColumn<ESM::Faction>(UniversalId::Type_Faction));
+    mFactions.addColumn(new NameColumn<ESM::Faction>(ColumnBase::Display_String32));
+    mFactions.addColumn(new AttributesColumn<ESM::Faction>(0));
+    mFactions.addColumn(new AttributesColumn<ESM::Faction>(1));
+    mFactions.addColumn(new HiddenColumn<ESM::Faction>);
+    for (int i = 0; i < 7; ++i)
+        mFactions.addColumn(new SkillsColumn<ESM::Faction>(i));
+    // Faction Reactions
+    mFactions.addColumn(new NestedParentColumn<ESM::Faction>(Columns::ColumnId_FactionReactions));
+    index = mFactions.getColumns() - 1;
+    mFactions.addAdapter(std::make_pair(&mFactions.getColumn(index), new FactionReactionsAdapter()));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Faction, ColumnBase::Display_Faction));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionReaction, ColumnBase::Display_Integer));
+
+    // Faction Ranks
+    mFactions.addColumn(new NestedParentColumn<ESM::Faction>(Columns::ColumnId_FactionRanks));
+    index = mFactions.getColumns() - 1;
+    mFactions.addAdapter(std::make_pair(&mFactions.getColumn(index), new FactionRanksAdapter()));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_RankName, ColumnBase::Display_Rank));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionAttrib1, ColumnBase::Display_Integer));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionAttrib2, ColumnBase::Display_Integer));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionPrimSkill, ColumnBase::Display_Integer));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionFavSkill, ColumnBase::Display_Integer));
+    mFactions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FactionRep, ColumnBase::Display_Integer));
+
+    mRaces.addColumn(new StringIdColumn<ESM::Race>);
+    mRaces.addColumn(new RecordStateColumn<ESM::Race>);
+    mRaces.addColumn(new FixedRecordTypeColumn<ESM::Race>(UniversalId::Type_Race));
+    mRaces.addColumn(new NameColumn<ESM::Race>);
+    mRaces.addColumn(new DescriptionColumn<ESM::Race>);
+    mRaces.addColumn(new FlagColumn<ESM::Race>(Columns::ColumnId_Playable, 0x1));
+    mRaces.addColumn(new FlagColumn<ESM::Race>(Columns::ColumnId_BeastRace, 0x2));
+    mRaces.addColumn(new WeightHeightColumn<ESM::Race>(true, true));
+    mRaces.addColumn(new WeightHeightColumn<ESM::Race>(true, false));
+    mRaces.addColumn(new WeightHeightColumn<ESM::Race>(false, true));
+    mRaces.addColumn(new WeightHeightColumn<ESM::Race>(false, false));
+    // Race spells
+    mRaces.addColumn(new NestedParentColumn<ESM::Race>(Columns::ColumnId_PowerList));
+    index = mRaces.getColumns() - 1;
+    mRaces.addAdapter(std::make_pair(&mRaces.getColumn(index), new SpellListAdapter<ESM::Race>()));
+    mRaces.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_SpellId, ColumnBase::Display_Spell));
+    // Race attributes
+    mRaces.addColumn(new NestedParentColumn<ESM::Race>(
+        Columns::ColumnId_RaceAttributes, ColumnBase::Flag_Dialogue, true)); // fixed rows table
+    index = mRaces.getColumns() - 1;
+    mRaces.addAdapter(std::make_pair(&mRaces.getColumn(index), new RaceAttributeAdapter()));
+    mRaces.getNestableColumn(index)->addColumn(new NestedChildColumn(
+        Columns::ColumnId_Attribute, ColumnBase::Display_Attribute, ColumnBase::Flag_Dialogue, false));
+    mRaces.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Male, ColumnBase::Display_Integer));
+    mRaces.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Female, ColumnBase::Display_Integer));
+    // Race skill bonus
+    mRaces.addColumn(new NestedParentColumn<ESM::Race>(
+        Columns::ColumnId_RaceSkillBonus, ColumnBase::Flag_Dialogue, true)); // fixed rows table
+    index = mRaces.getColumns() - 1;
+    mRaces.addAdapter(std::make_pair(&mRaces.getColumn(index), new RaceSkillsBonusAdapter()));
+    mRaces.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Skill, ColumnBase::Display_SkillId));
+    mRaces.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_RaceBonus, ColumnBase::Display_Integer));
+
+    mSounds.addColumn(new StringIdColumn<ESM::Sound>);
+    mSounds.addColumn(new RecordStateColumn<ESM::Sound>);
+    mSounds.addColumn(new FixedRecordTypeColumn<ESM::Sound>(UniversalId::Type_Sound));
+    mSounds.addColumn(new SoundParamColumn<ESM::Sound>(SoundParamColumn<ESM::Sound>::Type_Volume));
+    mSounds.addColumn(new SoundParamColumn<ESM::Sound>(SoundParamColumn<ESM::Sound>::Type_MinRange));
+    mSounds.addColumn(new SoundParamColumn<ESM::Sound>(SoundParamColumn<ESM::Sound>::Type_MaxRange));
+    mSounds.addColumn(new SoundFileColumn<ESM::Sound>);
+
+    mScripts.addColumn(new StringIdColumn<ESM::Script>);
+    mScripts.addColumn(new RecordStateColumn<ESM::Script>);
+    mScripts.addColumn(new FixedRecordTypeColumn<ESM::Script>(UniversalId::Type_Script));
+    mScripts.addColumn(new ScriptColumn<ESM::Script>(ScriptColumn<ESM::Script>::Type_File));
+
+    mRegions.addColumn(new StringIdColumn<ESM::Region>);
+    mRegions.addColumn(new RecordStateColumn<ESM::Region>);
+    mRegions.addColumn(new FixedRecordTypeColumn<ESM::Region>(UniversalId::Type_Region));
+    mRegions.addColumn(new NameColumn<ESM::Region>);
+    mRegions.addColumn(new MapColourColumn<ESM::Region>);
+    mRegions.addColumn(new SleepListColumn<ESM::Region>);
+    // Region Weather
+    mRegions.addColumn(new NestedParentColumn<ESM::Region>(Columns::ColumnId_RegionWeather));
+    index = mRegions.getColumns() - 1;
+    mRegions.addAdapter(std::make_pair(&mRegions.getColumn(index), new RegionWeatherAdapter()));
+    mRegions.getNestableColumn(index)->addColumn(new NestedChildColumn(
+        Columns::ColumnId_WeatherName, ColumnBase::Display_String, ColumnBase::Flag_Dialogue, false));
+    mRegions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_WeatherChance, ColumnBase::Display_UnsignedInteger8));
+    // Region Sounds
+    mRegions.addColumn(new NestedParentColumn<ESM::Region>(Columns::ColumnId_RegionSounds));
+    index = mRegions.getColumns() - 1;
+    mRegions.addAdapter(std::make_pair(&mRegions.getColumn(index), new RegionSoundListAdapter()));
+    mRegions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_SoundName, ColumnBase::Display_Sound));
+    mRegions.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_SoundChance, ColumnBase::Display_UnsignedInteger8));
+    mRegions.getNestableColumn(index)->addColumn(new NestedChildColumn(
+        Columns::ColumnId_SoundProbability, ColumnBase::Display_String, ColumnBase::Flag_Dialogue, false));
+
+    mBirthsigns.addColumn(new StringIdColumn<ESM::BirthSign>);
+    mBirthsigns.addColumn(new RecordStateColumn<ESM::BirthSign>);
+    mBirthsigns.addColumn(new FixedRecordTypeColumn<ESM::BirthSign>(UniversalId::Type_Birthsign));
+    mBirthsigns.addColumn(new NameColumn<ESM::BirthSign>);
+    mBirthsigns.addColumn(new TextureColumn<ESM::BirthSign>);
+    mBirthsigns.addColumn(new DescriptionColumn<ESM::BirthSign>);
+    // Birthsign spells
+    mBirthsigns.addColumn(new NestedParentColumn<ESM::BirthSign>(Columns::ColumnId_PowerList));
+    index = mBirthsigns.getColumns() - 1;
+    mBirthsigns.addAdapter(std::make_pair(&mBirthsigns.getColumn(index), new SpellListAdapter<ESM::BirthSign>()));
+    mBirthsigns.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_SpellId, ColumnBase::Display_Spell));
+
+    mSpells.addColumn(new StringIdColumn<ESM::Spell>);
+    mSpells.addColumn(new RecordStateColumn<ESM::Spell>);
+    mSpells.addColumn(new FixedRecordTypeColumn<ESM::Spell>(UniversalId::Type_Spell));
+    mSpells.addColumn(new NameColumn<ESM::Spell>);
+    mSpells.addColumn(new SpellTypeColumn<ESM::Spell>);
+    mSpells.addColumn(new CostColumn<ESM::Spell>);
+    mSpells.addColumn(new FlagColumn<ESM::Spell>(Columns::ColumnId_AutoCalc, 0x1));
+    mSpells.addColumn(new FlagColumn<ESM::Spell>(Columns::ColumnId_StarterSpell, 0x2));
+    mSpells.addColumn(new FlagColumn<ESM::Spell>(Columns::ColumnId_AlwaysSucceeds, 0x4));
+    // Spell effects
+    mSpells.addColumn(new NestedParentColumn<ESM::Spell>(Columns::ColumnId_EffectList));
+    index = mSpells.getColumns() - 1;
+    mSpells.addAdapter(std::make_pair(&mSpells.getColumn(index), new EffectsListAdapter<ESM::Spell>()));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectId, ColumnBase::Display_EffectId));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Skill, ColumnBase::Display_EffectSkill));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Attribute, ColumnBase::Display_EffectAttribute));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectRange, ColumnBase::Display_EffectRange));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectArea, ColumnBase::Display_String));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Duration, ColumnBase::Display_Integer)); // reuse from light
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_MinMagnitude, ColumnBase::Display_Integer));
+    mSpells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_MaxMagnitude, ColumnBase::Display_Integer));
+
+    mTopics.addColumn(new StringIdColumn<ESM::Dialogue>);
+    mTopics.addColumn(new RecordStateColumn<ESM::Dialogue>);
+    mTopics.addColumn(new FixedRecordTypeColumn<ESM::Dialogue>(UniversalId::Type_Topic));
+    mTopics.addColumn(new DialogueTypeColumn<ESM::Dialogue>);
+
+    mJournals.addColumn(new StringIdColumn<ESM::Dialogue>);
+    mJournals.addColumn(new RecordStateColumn<ESM::Dialogue>);
+    mJournals.addColumn(new FixedRecordTypeColumn<ESM::Dialogue>(UniversalId::Type_Journal));
+    mJournals.addColumn(new DialogueTypeColumn<ESM::Dialogue>(true));
+
+    mTopicInfos.addColumn(new StringIdColumn<Info>(true));
+    mTopicInfos.addColumn(new RecordStateColumn<Info>);
+    mTopicInfos.addColumn(new FixedRecordTypeColumn<Info>(UniversalId::Type_TopicInfo));
+    mTopicInfos.addColumn(new TopicColumn<Info>(false));
+    mTopicInfos.addColumn(new ResponseColumn<Info>);
+    mTopicInfos.addColumn(new ActorColumn<Info>);
+    mTopicInfos.addColumn(new RaceColumn<Info>);
+    mTopicInfos.addColumn(new ClassColumn<Info>);
+    mTopicInfos.addColumn(new FactionColumn<Info>);
+    mTopicInfos.addColumn(new CellColumn<Info>);
+    mTopicInfos.addColumn(new DispositionColumn<Info>);
+    mTopicInfos.addColumn(new RankColumn<Info>);
+    mTopicInfos.addColumn(new GenderColumn<Info>);
+    mTopicInfos.addColumn(new PcFactionColumn<Info>);
+    mTopicInfos.addColumn(new PcRankColumn<Info>);
+    mTopicInfos.addColumn(new SoundFileColumn<Info>);
+    // Result script
+    mTopicInfos.addColumn(new NestedParentColumn<Info>(
+        Columns::ColumnId_InfoList, ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_List));
+    index = mTopicInfos.getColumns() - 1;
+    mTopicInfos.addAdapter(std::make_pair(&mTopicInfos.getColumn(index), new InfoListAdapter()));
+    mTopicInfos.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_ScriptText, ColumnBase::Display_ScriptLines));
+    // Special conditions
+    mTopicInfos.addColumn(new NestedParentColumn<Info>(Columns::ColumnId_InfoCondition));
+    index = mTopicInfos.getColumns() - 1;
+    mTopicInfos.addAdapter(std::make_pair(&mTopicInfos.getColumn(index), new InfoConditionAdapter()));
+    mTopicInfos.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_InfoCondFunc, ColumnBase::Display_InfoCondFunc));
+    // FIXME: don't have dynamic value enum delegate, use Display_String for now
+    mTopicInfos.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_InfoCondVar, ColumnBase::Display_InfoCondVar));
+    mTopicInfos.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_InfoCondComp, ColumnBase::Display_InfoCondComp));
+    mTopicInfos.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Value, ColumnBase::Display_Var));
+
+    mJournalInfos.addColumn(new StringIdColumn<Info>(true));
+    mJournalInfos.addColumn(new RecordStateColumn<Info>);
+    mJournalInfos.addColumn(new FixedRecordTypeColumn<Info>(UniversalId::Type_JournalInfo));
+    mJournalInfos.addColumn(new TopicColumn<Info>(true));
+    mJournalInfos.addColumn(new QuestStatusTypeColumn<Info>);
+    mJournalInfos.addColumn(new QuestIndexColumn<Info>);
+    mJournalInfos.addColumn(new QuestDescriptionColumn<Info>);
+
+    mCells.addColumn(new StringIdColumn<Cell>);
+    mCells.addColumn(new RecordStateColumn<Cell>);
+    mCells.addColumn(new FixedRecordTypeColumn<Cell>(UniversalId::Type_Cell));
+    mCells.addColumn(new NameColumn<Cell>(ColumnBase::Display_String64));
+    mCells.addColumn(new FlagColumn<Cell>(Columns::ColumnId_SleepForbidden, ESM::Cell::NoSleep));
+    mCells.addColumn(new FlagColumn<Cell>(Columns::ColumnId_InteriorWater, ESM::Cell::HasWater,
+        ColumnBase::Flag_Table | ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_Refresh));
+    mCells.addColumn(new FlagColumn<Cell>(Columns::ColumnId_InteriorSky, ESM::Cell::QuasiEx,
+        ColumnBase::Flag_Table | ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_Refresh));
+    mCells.addColumn(new RegionColumn<Cell>);
+    mCells.addColumn(new RefNumCounterColumn<Cell>);
+    // Misc Cell data
+    mCells.addColumn(new NestedParentColumn<Cell>(
+        Columns::ColumnId_Cell, ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_List));
+    index = mCells.getColumns() - 1;
+    mCells.addAdapter(std::make_pair(&mCells.getColumn(index), new CellListAdapter()));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Interior, ColumnBase::Display_Boolean,
+            ColumnBase::Flag_Table | ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_Refresh));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Ambient, ColumnBase::Display_Colour));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Sunlight, ColumnBase::Display_Colour));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Fog, ColumnBase::Display_Colour));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_FogDensity, ColumnBase::Display_Float));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_WaterLevel, ColumnBase::Display_Float));
+    mCells.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_MapColor, ColumnBase::Display_Colour));
+
+    mEnchantments.addColumn(new StringIdColumn<ESM::Enchantment>);
+    mEnchantments.addColumn(new RecordStateColumn<ESM::Enchantment>);
+    mEnchantments.addColumn(new FixedRecordTypeColumn<ESM::Enchantment>(UniversalId::Type_Enchantment));
+    mEnchantments.addColumn(new EnchantmentTypeColumn<ESM::Enchantment>);
+    mEnchantments.addColumn(new CostColumn<ESM::Enchantment>);
+    mEnchantments.addColumn(new ChargesColumn2<ESM::Enchantment>);
+    mEnchantments.addColumn(new FlagColumn<ESM::Enchantment>(Columns::ColumnId_AutoCalc, ESM::Enchantment::Autocalc));
+    // Enchantment effects
+    mEnchantments.addColumn(new NestedParentColumn<ESM::Enchantment>(Columns::ColumnId_EffectList));
+    index = mEnchantments.getColumns() - 1;
+    mEnchantments.addAdapter(
+        std::make_pair(&mEnchantments.getColumn(index), new EffectsListAdapter<ESM::Enchantment>()));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectId, ColumnBase::Display_EffectId));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Skill, ColumnBase::Display_EffectSkill));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Attribute, ColumnBase::Display_EffectAttribute));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectRange, ColumnBase::Display_EffectRange));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_EffectArea, ColumnBase::Display_String));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_Duration, ColumnBase::Display_Integer)); // reuse from light
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_MinMagnitude, ColumnBase::Display_Integer));
+    mEnchantments.getNestableColumn(index)->addColumn(
+        new NestedChildColumn(Columns::ColumnId_MaxMagnitude, ColumnBase::Display_Integer));
+
+>>>>>>> origin/main
     mBodyParts.addColumn(new StringIdColumn<ESM::BodyPart>);
     mBodyParts.addColumn(new RecordStateColumn<ESM::BodyPart>);
     mBodyParts.addColumn(new FixedRecordTypeColumn<ESM::BodyPart>(UniversalId::Type_BodyPart));

@@ -41,7 +41,13 @@ namespace MWMechanics
     class AiFollow final : public TypedAiPackage<AiFollow>
     {
     public:
+<<<<<<< HEAD
         AiFollow(ESM::RefNum actor, std::string_view cellId, float duration, float x, float y, float z, bool repeat);
+=======
+        /// Follow Actor for duration or until you arrive at a world position
+        AiFollow(const ESM::RefId& actorId, float duration, float x, float y, float z, bool repeat);
+        /// Follow Actor for duration or until you arrive at a position in a cell
+>>>>>>> origin/main
         AiFollow(
             const ESM::RefId& actorId, std::string_view cellId, float duration, float x, float y, float z, bool repeat);
         /// Follow Actor indefinitely

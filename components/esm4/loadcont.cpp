@@ -103,6 +103,11 @@ void ESM4::Container::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadcont"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::CONT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

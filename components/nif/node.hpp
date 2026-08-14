@@ -116,11 +116,30 @@ namespace Nif
 
         NiAVObjectList mChildren;
         NiAVObjectList mEffects;
+<<<<<<< HEAD
+=======
+        // NiNode::read historically clears the sole non-Bip01 root transform.
+        // Retain the parsed value for consumers that must reconstruct the
+        // original Bethesda actor-part scene graph without changing the
+        // legacy transform-discard behaviour for ordinary meshes.
+        NiTransform mDiscardedRootTransform = NiTransform::getIdentity();
+        bool mHasDiscardedRootTransform{ false };
+>>>>>>> origin/main
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;
     };
 
+<<<<<<< HEAD
+=======
+    struct BSFaceGenNiNode : NiNode
+    {
+        uint16_t mUnknown{ 0 };
+
+        void read(NIFStream* nif) override;
+    };
+
+>>>>>>> origin/main
     struct NiGeometry : NiAVObject
     {
         /* Possible flags:
@@ -232,10 +251,15 @@ namespace Nif
         {
             float mMinRange;
             float mMaxRange;
+<<<<<<< HEAD
 
             void read(NIFStream* nif);
         };
 
+=======
+        };
+
+>>>>>>> origin/main
         osg::Vec3f mLODCenter;
         std::vector<LODRange> mLODLevels;
 
@@ -378,6 +402,17 @@ namespace Nif
 
     struct BSTriShape : NiAVObject
     {
+<<<<<<< HEAD
+=======
+        struct BSGeometryMeshRef
+        {
+            uint32_t mTriangleIndexCount{ 0 };
+            uint32_t mVertexCount{ 0 };
+            uint32_t mFlags{ 0 };
+            std::string mMeshPath;
+        };
+
+>>>>>>> origin/main
         osg::BoundingSpheref mBoundingSphere;
         std::array<float, 6> mBoundMinMax;
         RecordPtrT<Record> mSkin;
@@ -385,13 +420,20 @@ namespace Nif
         NiAlphaPropertyPtr mAlphaProperty;
         BSVertexDesc mVertDesc;
         uint32_t mDataSize;
+<<<<<<< HEAD
         uint16_t mNumVertices;
+=======
+>>>>>>> origin/main
         std::vector<BSVertexData> mVertData;
         std::vector<unsigned short> mTriangles;
         uint32_t mParticleDataSize;
         std::vector<Misc::float16_t> mParticleVerts;
         std::vector<Misc::float16_t> mParticleNormals;
         std::vector<unsigned short> mParticleTriangles;
+<<<<<<< HEAD
+=======
+        std::vector<BSGeometryMeshRef> mExternalGeometry;
+>>>>>>> origin/main
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;

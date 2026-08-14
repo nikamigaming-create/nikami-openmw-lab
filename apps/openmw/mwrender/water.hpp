@@ -114,6 +114,10 @@ namespace MWRender
         void changeCell(const MWWorld::CellStore* store);
         void setHeight(const float height);
         void setRainIntensity(const float rainIntensity);
+<<<<<<< HEAD
+=======
+        void setRainRipplesEnabled(bool enableRipples);
+>>>>>>> origin/main
 
         void update(float dt, bool paused);
 

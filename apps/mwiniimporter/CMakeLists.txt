@@ -19,10 +19,13 @@ target_link_libraries(openmw-iniimporter
 )
 
 if (WIN32)
+<<<<<<< HEAD
     target_sources(openmw-iniimporter PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
 if (WIN32)
+=======
+>>>>>>> origin/main
     INSTALL(TARGETS openmw-iniimporter RUNTIME DESTINATION ".")
 endif(WIN32)
 
@@ -36,5 +39,12 @@ if (BUILD_WITH_CODE_COVERAGE)
 endif()
 
 if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
+<<<<<<< HEAD
     target_precompile_headers(openmw-iniimporter REUSE_FROM components)
+=======
+    target_precompile_headers(openmw-iniimporter PRIVATE
+        <string>
+        <vector>
+    )
+>>>>>>> origin/main
 endif()

@@ -15,6 +15,14 @@ namespace SceneUtil
 
     ShadowManager* ShadowManager::sInstance = nullptr;
 
+<<<<<<< HEAD
+=======
+    bool ShadowManager::exists()
+    {
+        return sInstance != nullptr;
+    }
+
+>>>>>>> origin/main
     const ShadowManager& ShadowManager::instance()
     {
         if (sInstance)
@@ -61,7 +69,11 @@ namespace SceneUtil
         else if (Misc::StringUtils::ciEqual(computeSceneBounds, "bounds"))
             mShadowSettings->setComputeNearFarModeOverride(osg::CullSettings::COMPUTE_NEAR_FAR_USING_BOUNDING_VOLUMES);
 
+<<<<<<< HEAD
         const short mapres = static_cast<short>(settings.mShadowMapResolution);
+=======
+        const int mapres = settings.mShadowMapResolution;
+>>>>>>> origin/main
         mShadowSettings->setTextureSize(osg::Vec2s(mapres, mapres));
 
         mShadowTechnique->setSplitPointUniformLogarithmicRatio(settings.mSplitPointUniformLogarithmicRatio);
@@ -95,6 +107,13 @@ namespace SceneUtil
         fakeShadowMapTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
         fakeShadowMapTexture->setShadowComparison(true);
         fakeShadowMapTexture->setShadowCompareFunc(osg::Texture::ShadowCompareFunc::ALWAYS);
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// Gave this shadow map a name for debugging purposes.
+        fakeShadowMapTexture->setName("fakeShadowMapTexture");
+//## VR_PATCH END
+>>>>>>> origin/main
         for (unsigned int i = mShadowSettings->getBaseShadowTextureUnit();
              i < mShadowSettings->getBaseShadowTextureUnit() + mShadowSettings->getNumShadowMapsPerLight(); ++i)
         {

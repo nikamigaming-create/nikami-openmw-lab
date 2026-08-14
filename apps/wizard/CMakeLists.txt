@@ -3,12 +3,21 @@ set(WIZARD
     conclusionpage.cpp
     existinginstallationpage.cpp
     importpage.cpp
+<<<<<<< HEAD
+=======
+    inisettings.cpp
+>>>>>>> origin/main
     installationtargetpage.cpp
     intropage.cpp
     languageselectionpage.cpp
     main.cpp
     mainwizard.cpp
     methodselectionpage.cpp
+<<<<<<< HEAD
+=======
+
+    utils/componentlistwidget.cpp
+>>>>>>> origin/main
 )
 
 if(WIN32)
@@ -20,11 +29,16 @@ set(WIZARD_HEADER
     conclusionpage.hpp
     existinginstallationpage.hpp
     importpage.hpp
+<<<<<<< HEAD
+=======
+    inisettings.hpp
+>>>>>>> origin/main
     installationtargetpage.hpp
     intropage.hpp
     languageselectionpage.hpp
     mainwizard.hpp
     methodselectionpage.hpp
+<<<<<<< HEAD
 )
 
 if (OPENMW_USE_UNSHIELD)
@@ -41,6 +55,16 @@ if (OPENMW_USE_UNSHIELD)
          unshield/unshieldworker.hpp
     )
     add_compile_definitions(OPENMW_USE_UNSHIELD)
+=======
+
+    utils/componentlistwidget.hpp
+)
+
+if (OPENMW_USE_UNSHIELD)
+    set (WIZARD ${WIZARD} installationpage.cpp unshield/unshieldworker.cpp)
+    set (WIZARD_HEADER ${WIZARD_HEADER} installationpage.hpp unshield/unshieldworker.hpp)
+    add_definitions(-DOPENMW_USE_UNSHIELD)
+>>>>>>> origin/main
 endif (OPENMW_USE_UNSHIELD)
 
 
@@ -82,10 +106,13 @@ if (OPENMW_USE_UNSHIELD)
     target_link_libraries(openmw-wizard ${LIBUNSHIELD_LIBRARIES})
 endif()
 
+<<<<<<< HEAD
 if (WIN32)
     target_sources(openmw-wizard PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
+=======
+>>>>>>> origin/main
 if(DPKG_PROGRAM)
     INSTALL(TARGETS openmw-wizard RUNTIME DESTINATION games COMPONENT openmw-wizard)
 endif()

@@ -15,6 +15,20 @@
 #include <components/esm3/loadprob.hpp>
 #include <components/esm3/loadrepa.hpp>
 #include <components/esm3/loadweap.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadweap.hpp>
+>>>>>>> origin/main
 #include <components/misc/utf8stream.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -34,6 +48,7 @@ namespace
         switch (type)
         {
             case ESM::Weapon::sRecordId:
+<<<<<<< HEAD
                 return 0;
             case ESM::Armor::sRecordId:
                 return 1;
@@ -59,6 +74,44 @@ namespace
                 return 11;
         }
         assert(false && "Invalid type value");
+=======
+            case ESM4::Weapon::sRecordId:
+                return 0;
+            case ESM::Armor::sRecordId:
+            case ESM4::Armor::sRecordId:
+                return 1;
+            case ESM4::Ammunition::sRecordId:
+                return 2;
+            case ESM::Clothing::sRecordId:
+            case ESM4::Clothing::sRecordId:
+                return 3;
+            case ESM::Potion::sRecordId:
+            case ESM4::Potion::sRecordId:
+                return 4;
+            case ESM::Ingredient::sRecordId:
+            case ESM4::Ingredient::sRecordId:
+                return 5;
+            case ESM::Apparatus::sRecordId:
+                return 6;
+            case ESM::Book::sRecordId:
+            case ESM4::Book::sRecordId:
+                return 7;
+            case ESM::Light::sRecordId:
+            case ESM4::Light::sRecordId:
+                return 8;
+            case ESM::Miscellaneous::sRecordId:
+            case ESM4::ItemMod::sRecordId:
+            case ESM4::Key::sRecordId:
+            case ESM4::MiscItem::sRecordId:
+                return 9;
+            case ESM::Lockpick::sRecordId:
+                return 10;
+            case ESM::Repair::sRecordId:
+                return 11;
+            case ESM::Probe::sRecordId:
+                return 12;
+        }
+>>>>>>> origin/main
         return std::numeric_limits<unsigned int>::max();
     }
 
@@ -79,6 +132,11 @@ namespace
             if (mSortByType && left.mType != right.mType)
                 return left.mType < right.mType;
 
+<<<<<<< HEAD
+=======
+            float result = 0;
+
+>>>>>>> origin/main
             // compare items by type
             auto leftType = left.mBase.getType();
             auto rightType = right.mBase.getType();
@@ -90,11 +148,17 @@ namespace
             std::string leftName = Utf8Stream::lowerCaseUtf8(left.mBase.getClass().getName(left.mBase));
             std::string rightName = Utf8Stream::lowerCaseUtf8(right.mBase.getClass().getName(right.mBase));
 
+<<<<<<< HEAD
             {
                 int result = leftName.compare(rightName);
                 if (result != 0)
                     return result < 0;
             }
+=======
+            result = leftName.compare(rightName);
+            if (result != 0)
+                return result < 0;
+>>>>>>> origin/main
 
             // compare items by enchantment:
             // 1. enchanted items showed before non-enchanted
@@ -133,22 +197,33 @@ namespace
                 }
             }
 
+<<<<<<< HEAD
             {
                 int result = leftChargePercent - rightChargePercent;
                 if (result != 0)
                     return result > 0;
             }
+=======
+            result = leftChargePercent - rightChargePercent;
+            if (result != 0)
+                return result > 0;
+>>>>>>> origin/main
 
             // compare items by condition
             if (left.mBase.getClass().hasItemHealth(left.mBase) && right.mBase.getClass().hasItemHealth(right.mBase))
             {
+<<<<<<< HEAD
                 int result = left.mBase.getClass().getItemHealth(left.mBase)
+=======
+                result = left.mBase.getClass().getItemHealth(left.mBase)
+>>>>>>> origin/main
                     - right.mBase.getClass().getItemHealth(right.mBase);
                 if (result != 0)
                     return result > 0;
             }
 
             // compare items by remaining usage time
+<<<<<<< HEAD
             {
                 float result = left.mBase.getClass().getRemainingUsageTime(left.mBase)
                     - right.mBase.getClass().getRemainingUsageTime(right.mBase);
@@ -165,6 +240,20 @@ namespace
 
             // compare items by weight
             float result = left.mBase.getClass().getWeight(left.mBase) - right.mBase.getClass().getWeight(right.mBase);
+=======
+            result = left.mBase.getClass().getRemainingUsageTime(left.mBase)
+                - right.mBase.getClass().getRemainingUsageTime(right.mBase);
+            if (result != 0)
+                return result > 0;
+
+            // compare items by value
+            result = left.mBase.getClass().getValue(left.mBase) - right.mBase.getClass().getValue(right.mBase);
+            if (result != 0)
+                return result > 0;
+
+            // compare items by weight
+            result = left.mBase.getClass().getWeight(left.mBase) - right.mBase.getClass().getWeight(right.mBase);
+>>>>>>> origin/main
             if (result != 0)
                 return result > 0;
 
@@ -208,6 +297,7 @@ namespace MWGui
         switch (base.getType())
         {
             case ESM::Armor::sRecordId:
+<<<<<<< HEAD
             case ESM::Clothing::sRecordId:
                 category = Category_Apparel;
                 break;
@@ -219,6 +309,30 @@ namespace MWGui
                 category = Category_Magic;
                 break;
             case ESM::Miscellaneous::sRecordId:
+=======
+            case ESM4::Armor::sRecordId:
+            case ESM::Clothing::sRecordId:
+            case ESM4::Clothing::sRecordId:
+                category = Category_Apparel;
+                break;
+            case ESM::Weapon::sRecordId:
+            case ESM4::Weapon::sRecordId:
+                category = Category_Weapon;
+                break;
+            case ESM::Ingredient::sRecordId:
+            case ESM4::Ingredient::sRecordId:
+            case ESM::Potion::sRecordId:
+            case ESM4::Potion::sRecordId:
+                category = Category_Magic;
+                break;
+            case ESM::Miscellaneous::sRecordId:
+            case ESM4::Ammunition::sRecordId:
+            case ESM4::Book::sRecordId:
+            case ESM4::ItemMod::sRecordId:
+            case ESM4::Key::sRecordId:
+            case ESM4::Light::sRecordId:
+            case ESM4::MiscItem::sRecordId:
+>>>>>>> origin/main
             case ESM::Repair::sRecordId:
             case ESM::Lockpick::sRecordId:
             case ESM::Light::sRecordId:
@@ -385,7 +499,12 @@ namespace MWGui
         {
             ItemStack item = mSourceModel->getItem(static_cast<ModelIndex>(i));
 
+<<<<<<< HEAD
             for (const std::pair<MWWorld::Ptr, size_t>& drag : mDragItems)
+=======
+            for (std::vector<std::pair<MWWorld::Ptr, size_t>>::iterator it = mDragItems.begin(); it != mDragItems.end();
+                 ++it)
+>>>>>>> origin/main
             {
                 if (item.mBase == drag.first)
                 {

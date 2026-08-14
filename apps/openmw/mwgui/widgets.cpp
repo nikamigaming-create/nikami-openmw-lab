@@ -147,9 +147,14 @@ namespace MWGui::Widgets
         }
         if (mAttributeValueWidget)
         {
+<<<<<<< HEAD
             float modified = mValue.getModified();
             float base = mValue.getBase();
             mAttributeValueWidget->setCaption(MyGUI::utility::toString(static_cast<int>(modified)));
+=======
+            int modified = mValue.getModified(), base = mValue.getBase();
+            mAttributeValueWidget->setCaption(MyGUI::utility::toString(modified));
+>>>>>>> origin/main
             if (modified > base)
                 mAttributeValueWidget->_setWidgetState("increased");
             else if (modified < base)
@@ -216,8 +221,13 @@ namespace MWGui::Widgets
                 = creator->createWidget<MWSpellEffect>("MW_EffectImage", coord, MyGUI::Align::Default);
             SpellEffectParams params;
             params.mEffectID = effectInfo.mData.mEffectID;
+<<<<<<< HEAD
             params.mSkill = effectInfo.mData.mSkill;
             params.mAttribute = effectInfo.mData.mAttribute;
+=======
+            params.mSkill = ESM::Skill::indexToRefId(effectInfo.mData.mSkill);
+            params.mAttribute = ESM::Attribute::indexToRefId(effectInfo.mData.mAttribute);
+>>>>>>> origin/main
             params.mDuration = effectInfo.mData.mDuration;
             params.mMagnMin = effectInfo.mData.mMagnMin;
             params.mMagnMax = effectInfo.mData.mMagnMax;
@@ -333,8 +343,13 @@ namespace MWGui::Widgets
         {
             SpellEffectParams params;
             params.mEffectID = effectInfo.mData.mEffectID;
+<<<<<<< HEAD
             params.mSkill = effectInfo.mData.mSkill;
             params.mAttribute = effectInfo.mData.mAttribute;
+=======
+            params.mSkill = ESM::Skill::indexToRefId(effectInfo.mData.mSkill);
+            params.mAttribute = ESM::Attribute::indexToRefId(effectInfo.mData.mAttribute);
+>>>>>>> origin/main
             params.mDuration = effectInfo.mData.mDuration;
             params.mMagnMin = effectInfo.mData.mMagnMin;
             params.mMagnMax = effectInfo.mData.mMagnMax;
@@ -477,7 +492,11 @@ namespace MWGui::Widgets
         mRequestedWidth = mTextWidget->getTextSize().width + sIconOffset;
 
         mImageWidget->setImageTexture(Misc::ResourceHelpers::correctIconPath(
+<<<<<<< HEAD
             VFS::Path::toNormalized(magicEffect->mIcon), *MWBase::Environment::get().getResourceSystem()->getVFS()));
+=======
+            magicEffect->mIcon, MWBase::Environment::get().getResourceSystem()->getVFS()));
+>>>>>>> origin/main
     }
 
     MWSpellEffect::~MWSpellEffect() {}

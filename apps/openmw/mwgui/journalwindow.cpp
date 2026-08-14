@@ -53,8 +53,15 @@ namespace
             std::shared_ptr<MWGui::TypesetBook> mBook;
         };
 
+<<<<<<< HEAD
         std::stack<DisplayState> mStates;
         std::shared_ptr<MWGui::TypesetBook> mTopicIndexBook;
+=======
+        typedef std::stack<DisplayState> DisplayStateStack;
+
+        DisplayStateStack mStates;
+        Book mTopicIndexBook;
+>>>>>>> origin/main
         bool mQuestMode;
         bool mOptionsMode;
         bool mTopicsMode;
@@ -89,7 +96,11 @@ namespace
 
         MWGui::BookPage* getPage(std::string_view name) { return getWidget<MWGui::BookPage>(name); }
 
+<<<<<<< HEAD
         JournalWindowImpl(std::shared_ptr<MWGui::JournalViewModel> model, bool questList, ToUTF8::FromType encoding)
+=======
+        JournalWindowImpl(MWGui::JournalViewModel::Ptr model, bool questList, ToUTF8::FromType encoding)
+>>>>>>> origin/main
             : JournalBooks(std::move(model), encoding)
             , JournalWindow()
         {
@@ -121,10 +132,14 @@ namespace
             topicsList->eventItemSelected += MyGUI::newDelegate(this, &JournalWindowImpl::notifyTopicSelected);
 
             {
+<<<<<<< HEAD
                 MWGui::BookPage::ClickCallback callback = [this](MWGui::TypesetBook::InteractiveId linkId) {
                     const MWDialogue::Topic& topic = *reinterpret_cast<const MWDialogue::Topic*>(linkId);
                     notifyTopicClicked(topic);
                 };
+=======
+                MWGui::BookPage::ClickCallback callback = [this](intptr_t linkId) { notifyTopicClicked(linkId); };
+>>>>>>> origin/main
 
                 getPage(LeftBookPage)->adviseLinkClicked(callback);
                 getPage(RightBookPage)->adviseLinkClicked(std::move(callback));
@@ -136,9 +151,14 @@ namespace
             }
 
             {
+<<<<<<< HEAD
                 MWGui::BookPage::ClickCallback callback = [this](MWGui::TypesetBook::InteractiveId index) {
                     notifyIndexLinkClicked(static_cast<Utf8Stream::UnicodeChar>(index));
                 };
+=======
+                MWGui::BookPage::ClickCallback callback
+                    = [this](MWGui::TypesetBook::InteractiveId index) { notifyIndexLinkClicked(index); };
+>>>>>>> origin/main
 
                 getPage(LeftTopicIndex)->adviseLinkClicked(callback);
                 getPage(CenterTopicIndex)->adviseLinkClicked(callback);
@@ -161,8 +181,13 @@ namespace
             {
                 // english button has a 7 pixel wide strip of garbage on its right edge
                 nextButton->setSize(64 - 7, nextButton->getSize().height);
+<<<<<<< HEAD
                 nextButton->setImageCoord(MyGUI::IntCoord(0, 0, static_cast<int>((64 - 7) * nextButtonScale),
                     static_cast<int>(nextButton->getSize().height * nextButtonScale)));
+=======
+                nextButton->setImageCoord(
+                    MyGUI::IntCoord(0, 0, (64 - 7) * nextButtonScale, nextButton->getSize().height * nextButtonScale));
+>>>>>>> origin/main
             }
 
             if (!questList)
@@ -242,18 +267,30 @@ namespace
 
             setBookMode();
 
+<<<<<<< HEAD
             std::shared_ptr<MWGui::TypesetBook> journalBook;
+=======
+            Book journalBook;
+>>>>>>> origin/main
             if (mModel->isEmpty())
                 journalBook = createEmptyJournalBook();
             else
                 journalBook = createJournalBook();
 
+<<<<<<< HEAD
             pushBook(journalBook);
+=======
+            pushBook(journalBook, 0);
+>>>>>>> origin/main
 
             // fast forward to the last page
             if (!mStates.empty())
             {
+<<<<<<< HEAD
                 size_t& page = mStates.top().mPage;
+=======
+                unsigned int& page = mStates.top().mPage;
+>>>>>>> origin/main
                 page = mStates.top().mBook->pageCount() - 1;
                 if (page % 2)
                     --page;
@@ -270,8 +307,13 @@ namespace
         {
             mModel->unload();
 
+<<<<<<< HEAD
             getPage(LeftBookPage)->showPage({}, 0);
             getPage(RightBookPage)->showPage({}, 0);
+=======
+            getPage(LeftBookPage)->showPage(Book(), 0);
+            getPage(RightBookPage)->showPage(Book(), 0);
+>>>>>>> origin/main
 
             while (!mStates.empty())
                 mStates.pop();
@@ -317,7 +359,11 @@ namespace
 
             // TODO: figure out how to make "options" page overlay book page
             //       correctly, so that text may show underneath
+<<<<<<< HEAD
             getPage(RightBookPage)->showPage({}, 0);
+=======
+            getPage(RightBookPage)->showPage(Book(), 0);
+>>>>>>> origin/main
 
             // If in quest mode, ensure the quest list is updated
             if (mQuestMode)
@@ -328,7 +374,11 @@ namespace
             MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
         }
 
+<<<<<<< HEAD
         void pushBook(std::shared_ptr<MWGui::TypesetBook>& book)
+=======
+        void pushBook(Book& book, unsigned int page)
+>>>>>>> origin/main
         {
             DisplayState bs;
             bs.mPage = 0;
@@ -338,11 +388,19 @@ namespace
             updateCloseJournalButton();
         }
 
+<<<<<<< HEAD
         void replaceBook(std::shared_ptr<MWGui::TypesetBook>& book)
         {
             assert(!mStates.empty());
             mStates.top().mBook = book;
             mStates.top().mPage = 0;
+=======
+        void replaceBook(Book& book, unsigned int page)
+        {
+            assert(!mStates.empty());
+            mStates.top().mBook = book;
+            mStates.top().mPage = page;
+>>>>>>> origin/main
             updateShowingPages();
         }
 
@@ -394,6 +452,7 @@ namespace
 
             setVisible(PageOneNum, relPages > 0);
             setVisible(PageTwoNum, relPages > 1);
+<<<<<<< HEAD
 
             if (relPages > 0)
             {
@@ -405,6 +464,10 @@ namespace
                 getPage(LeftBookPage)->showPage({}, page + 0);
                 getPage(RightBookPage)->showPage({}, page + 1);
             }
+=======
+
+            getPage(LeftBookPage)->showPage((relPages > 0) ? book : Book(), page + 0);
+            getPage(RightBookPage)->showPage((relPages > 0) ? std::move(book) : Book(), page + 1);
 
             setText(PageOneNum, page + 1);
             setText(PageTwoNum, page + 2);
@@ -412,6 +475,51 @@ namespace
             MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
         }
 
+        void notifyKeyPress(MyGUI::Widget* sender, MyGUI::KeyCode key, MyGUI::Char character)
+        {
+            if (key == MyGUI::KeyCode::ArrowUp)
+                notifyPrevPage(sender);
+            else if (key == MyGUI::KeyCode::ArrowDown)
+                notifyNextPage(sender);
+        }
+
+        void notifyTopicClicked(intptr_t linkId)
+        {
+            Book topicBook = createTopicBook(linkId);
+
+            if (mStates.size() > 1)
+                replaceBook(topicBook, 0);
+            else
+                pushBook(topicBook, 0);
+
+            setVisible(OptionsOverlay, false);
+            setVisible(OptionsBTN, true);
+            setVisible(JournalBTN, true);
+
+            mOptionsMode = false;
+            mTopicsMode = false;
+
+            MWBase::Environment::get().getWindowManager()->playSound(ESM::RefId::stringRefId("book page"));
+            MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
+        }
+
+        void notifyTopicSelected(const std::string& topicIdString, int id)
+        {
+            ESM::RefId topic = ESM::RefId::stringRefId(topicIdString);
+            const MWBase::Journal* journal = MWBase::Environment::get().getJournal();
+            intptr_t topicId = 0; /// \todo get rid of intptr ids
+            const auto it = journal->getTopics().find(topic);
+            if (it != journal->getTopics().end())
+                topicId = intptr_t(&it->second);
+>>>>>>> origin/main
+
+            setText(PageOneNum, page + 1);
+            setText(PageTwoNum, page + 2);
+
+            MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
+        }
+
+<<<<<<< HEAD
         void notifyKeyPress(MyGUI::Widget* sender, MyGUI::KeyCode key, MyGUI::Char character)
         {
             if (key == MyGUI::KeyCode::ArrowUp)
@@ -428,18 +536,32 @@ namespace
                 replaceBook(topicBook);
             else
                 pushBook(topicBook);
+=======
+        void notifyQuestClicked(const std::string& name, int id)
+        {
+            Book book = createQuestBook(name);
+
+            if (mStates.size() > 1)
+                replaceBook(book, 0);
+            else
+                pushBook(book, 0);
+>>>>>>> origin/main
 
             setVisible(OptionsOverlay, false);
             setVisible(OptionsBTN, true);
             setVisible(JournalBTN, true);
 
             mOptionsMode = false;
+<<<<<<< HEAD
             mTopicsMode = false;
+=======
+>>>>>>> origin/main
 
             MWBase::Environment::get().getWindowManager()->playSound(ESM::RefId::stringRefId("book page"));
             MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
         }
 
+<<<<<<< HEAD
         void notifyTopicSelected(const std::string& topicIdString, int id)
         {
             ESM::RefId topic = ESM::RefId::stringRefId(topicIdString);
@@ -470,6 +592,10 @@ namespace
 
         void notifyOptions(MyGUI::Widget* /*sender*/)
         {
+=======
+        void notifyOptions(MyGUI::Widget* /*sender*/)
+        {
+>>>>>>> origin/main
             setOptionsMode();
 
             if (!mTopicIndexBook)
@@ -515,7 +641,11 @@ namespace
             }
         }
 
+<<<<<<< HEAD
         void notifyIndexLinkClicked(Utf8Stream::UnicodeChar index)
+=======
+        void notifyIndexLinkClicked(MWGui::TypesetBook::InteractiveId index)
+>>>>>>> origin/main
         {
             setVisible(LeftTopicIndex, false);
             setVisible(CenterTopicIndex, false);
@@ -611,7 +741,11 @@ namespace
             if (Settings::gui().mControllerMenus)
             {
                 addControllerButtons(list, mSelectedQuest);
+<<<<<<< HEAD
                 setControllerFocusedQuest(std::min(mSelectedQuest, mButtons.size()));
+=======
+                setControllerFocusedQuest(MWGui::wrap(mSelectedQuest, mButtons.size()));
+>>>>>>> origin/main
             }
 
             if (mAllQuests)
@@ -670,8 +804,13 @@ namespace
                 return;
             if (!mStates.empty())
             {
+<<<<<<< HEAD
                 size_t& page = mStates.top().mPage;
                 std::shared_ptr<MWGui::TypesetBook> book = mStates.top().mBook;
+=======
+                unsigned int& page = mStates.top().mPage;
+                Book book = mStates.top().mBook;
+>>>>>>> origin/main
 
                 if (page + 2 < book->pageCount())
                 {
@@ -689,7 +828,11 @@ namespace
                 return;
             if (!mStates.empty())
             {
+<<<<<<< HEAD
                 size_t& page = mStates.top().mPage;
+=======
+                unsigned int& page = mStates.top().mPage;
+>>>>>>> origin/main
 
                 if (page >= 2)
                 {
@@ -725,8 +868,13 @@ namespace
 
         void setIndexControllerFocus(bool focused)
         {
+<<<<<<< HEAD
             size_t col = mSelectedIndex / mIndexRowCount;
             size_t row = mSelectedIndex % mIndexRowCount;
+=======
+            int col = mSelectedIndex / mIndexRowCount;
+            int row = mSelectedIndex % mIndexRowCount;
+>>>>>>> origin/main
             mTopicIndexBook->setColour(col, row, 0, focused ? MWGui::journalHeaderColour : MyGUI::Colour::Black);
         }
 
@@ -735,7 +883,11 @@ namespace
             setIndexControllerFocus(false);
 
             int numChars = mEncoding == ToUTF8::WINDOWS_1251 ? 30 : 26;
+<<<<<<< HEAD
             size_t col = mSelectedIndex / mIndexRowCount;
+=======
+            int col = mSelectedIndex / mIndexRowCount;
+>>>>>>> origin/main
 
             if (offset == -1) // Up
             {
@@ -792,8 +944,12 @@ namespace
                     if (mSelectedIndex >= 27)
                         russianOffset++; // 27, not 28, because of skipping char 26
                     bool isRussian = (mEncoding == ToUTF8::WINDOWS_1251);
+<<<<<<< HEAD
                     size_t ch = isRussian ? mSelectedIndex + russianOffset : mSelectedIndex + 'A';
                     notifyIndexLinkClicked(static_cast<Utf8Stream::UnicodeChar>(ch));
+=======
+                    notifyIndexLinkClicked(isRussian ? mSelectedIndex + russianOffset : mSelectedIndex + 'A');
+>>>>>>> origin/main
                 }
             }
             else if (arg.button == SDL_CONTROLLER_BUTTON_B) // B: Back
@@ -844,7 +1000,11 @@ namespace
                         return true;
 
                     // Scroll through the list of quests or topics
+<<<<<<< HEAD
                     setControllerFocusedQuest(MWGui::wrap(mSelectedQuest, mButtons.size(), -1));
+=======
+                    setControllerFocusedQuest(MWGui::wrap(mSelectedQuest - 1, mButtons.size()));
+>>>>>>> origin/main
                 }
                 else
                     moveSelectedIndex(-1);
@@ -857,12 +1017,17 @@ namespace
                         return true;
 
                     // Scroll through the list of quests or topics
+<<<<<<< HEAD
                     setControllerFocusedQuest(MWGui::wrap(mSelectedQuest, mButtons.size(), 1));
+=======
+                    setControllerFocusedQuest(MWGui::wrap(mSelectedQuest + 1, mButtons.size()));
+>>>>>>> origin/main
                 }
                 else
                     moveSelectedIndex(1);
             }
             else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && !mQuestMode && !mTopicsMode)
+<<<<<<< HEAD
                 moveSelectedIndex(-static_cast<int>(mIndexRowCount));
             else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && !mQuestMode && !mTopicsMode)
                 moveSelectedIndex(static_cast<int>(mIndexRowCount));
@@ -870,6 +1035,15 @@ namespace
             {
                 // Scroll up 5 items in the list of quests or topics
                 setControllerFocusedQuest(mSelectedQuest >= 5 ? mSelectedQuest - 5 : 0);
+=======
+                moveSelectedIndex(-mIndexRowCount);
+            else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && !mQuestMode && !mTopicsMode)
+                moveSelectedIndex(mIndexRowCount);
+            else if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER && (mQuestMode || mTopicsMode))
+            {
+                // Scroll up 5 items in the list of quests or topics
+                setControllerFocusedQuest(std::max(static_cast<int>(mSelectedQuest) - 5, 0));
+>>>>>>> origin/main
             }
             else if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && (mQuestMode || mTopicsMode))
             {
@@ -953,7 +1127,11 @@ namespace
 
 // glue the implementation to the interface
 std::unique_ptr<MWGui::JournalWindow> MWGui::JournalWindow::create(
+<<<<<<< HEAD
     std::shared_ptr<JournalViewModel> model, bool questList, ToUTF8::FromType encoding)
+=======
+    JournalViewModel::Ptr model, bool questList, ToUTF8::FromType encoding)
+>>>>>>> origin/main
 {
     return std::make_unique<JournalWindowImpl>(model, questList, encoding);
 }

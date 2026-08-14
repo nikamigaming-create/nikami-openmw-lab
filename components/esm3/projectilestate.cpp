@@ -11,7 +11,11 @@ namespace ESM
         esm.writeHNRefId("ID__", mId);
         esm.writeHNT("VEC3", mPosition);
         esm.writeHNT("QUAT", mOrientation);
+<<<<<<< HEAD
         esm.writeFormId(mCaster, true, "ACTO");
+=======
+        esm.writeHNT("ACTO", mActorId);
+>>>>>>> origin/main
     }
 
     void BaseProjectileState::load(ESMReader& esm)
@@ -19,6 +23,7 @@ namespace ESM
         mId = esm.getHNRefId("ID__");
         esm.getHNT("VEC3", mPosition.mValues);
         esm.getHNT("QUAT", mOrientation.mValues);
+<<<<<<< HEAD
         if (esm.getFormatVersion() <= MaxActorIdSaveGameFormatVersion)
         {
             mCaster.mIndex = static_cast<uint32_t>(-1);
@@ -26,6 +31,9 @@ namespace ESM
         }
         else
             mCaster = esm.getFormId(true, "ACTO");
+=======
+        esm.getHNT(mActorId, "ACTO");
+>>>>>>> origin/main
     }
 
     void MagicBoltState::save(ESMWriter& esm) const
@@ -70,4 +78,83 @@ namespace ESM
         esm.getHNOT(mAttackStrength, "STR_");
     }
 
+<<<<<<< HEAD
+=======
+    void FalloutProjectileState::save(ESMWriter& esm) const
+    {
+        BaseProjectileState::save(esm);
+
+        esm.writeHNT("VEL_", mVelocity);
+        esm.writeHNT("RVEL", mRotationVelocity);
+        esm.writeHNT("PREV", mPreviousPosition);
+        esm.writeHNT("GRAV", mGravity);
+        esm.writeHNT("RANG", mMaximumRange);
+        esm.writeHNT("DIST", mDistanceTravelled);
+        esm.writeHNT("ELAP", mElapsedTime);
+        esm.writeHNT("BNCE", mBounceCount);
+        esm.writeHNRefId("WEAP", mWeapon);
+        esm.writeHNT("DAMG", mRawDamage);
+        esm.writeHNT("LDAM", mLimbDamageMultiplier);
+        if (!mExplosion.empty())
+            esm.writeHNRefId("EXPL", mExplosion);
+        esm.writeHNT("EDMG", mExplosionDamageMultiplier);
+        esm.writeHNT("PSKL", mProjectileSkill);
+        esm.writeHNT("FLAG", mFlags);
+        for (const RefId& effect : mAmmoEffects)
+            esm.writeHNRefId("AMEF", effect);
+
+        if ((mFlags & HasVatsAction) != 0)
+        {
+            esm.writeHNRefId("VTGT", mVats.mTarget);
+            esm.writeHNT("VPRT", mVats.mBodyPart);
+            esm.writeHNT("VCHN", mVats.mDisplayedHitChance);
+            esm.writeHNT("VHPC", mVats.mHealthPercent);
+            esm.writeHNT("VAV_", mVats.mActorValue);
+            esm.writeHNT("VAPC", mVats.mActionPointCost);
+            esm.writeHNT("VHDM", mVats.mHealthDamageMultiplier);
+            esm.writeHNT("VLDM", mVats.mLimbDamageMultiplier);
+            esm.writeHNString("VBNM", mVats.mBodyPartName);
+            esm.writeHNString("VTND", mVats.mTargetNode);
+        }
+    }
+
+    void FalloutProjectileState::load(ESMReader& esm)
+    {
+        BaseProjectileState::load(esm);
+
+        esm.getHNT("VEL_", mVelocity.mValues);
+        esm.getHNT("RVEL", mRotationVelocity.mValues);
+        esm.getHNT("PREV", mPreviousPosition.mValues);
+        esm.getHNT(mGravity, "GRAV");
+        esm.getHNT(mMaximumRange, "RANG");
+        esm.getHNT(mDistanceTravelled, "DIST");
+        esm.getHNOT(mElapsedTime, "ELAP");
+        esm.getHNOT(mBounceCount, "BNCE");
+        mWeapon = esm.getHNRefId("WEAP");
+        esm.getHNT(mRawDamage, "DAMG");
+        esm.getHNT(mLimbDamageMultiplier, "LDAM");
+        if (esm.isNextSub("EXPL"))
+            mExplosion = esm.getRefId();
+        esm.getHNOT(mExplosionDamageMultiplier, "EDMG");
+        esm.getHNOT(mProjectileSkill, "PSKL");
+        esm.getHNT(mFlags, "FLAG");
+        while (esm.isNextSub("AMEF"))
+            mAmmoEffects.push_back(esm.getRefId());
+
+        if ((mFlags & HasVatsAction) != 0)
+        {
+            mVats.mTarget = esm.getHNRefId("VTGT");
+            esm.getHNT(mVats.mBodyPart, "VPRT");
+            esm.getHNT(mVats.mDisplayedHitChance, "VCHN");
+            esm.getHNT(mVats.mHealthPercent, "VHPC");
+            esm.getHNT(mVats.mActorValue, "VAV_");
+            esm.getHNT(mVats.mActionPointCost, "VAPC");
+            esm.getHNT(mVats.mHealthDamageMultiplier, "VHDM");
+            esm.getHNT(mVats.mLimbDamageMultiplier, "VLDM");
+            mVats.mBodyPartName = esm.getHNString("VBNM");
+            mVats.mTargetNode = esm.getHNString("VTND");
+        }
+    }
+
+>>>>>>> origin/main
 }

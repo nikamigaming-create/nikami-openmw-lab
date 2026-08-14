@@ -93,6 +93,11 @@ void ESM4::ItemMod::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadimod"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::IMOD::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

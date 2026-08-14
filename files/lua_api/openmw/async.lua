@@ -1,7 +1,11 @@
 ---
 -- Contains timers and coroutine utilities. All functions require
 -- the package itself as a first argument.
+<<<<<<< HEAD
 -- @context global|menu|local|player|load
+=======
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module async
 -- @usage local async = require('openmw.async')
 

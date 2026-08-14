@@ -46,6 +46,7 @@ namespace LuaUi
         WidgetExtension::updateProperties();
     }
 
+<<<<<<< HEAD
     const std::vector<std::string_view>& LuaWindow::allUsedProperties() const
     {
         static std::vector<std::string_view> usedProps = std::invoke([this] {
@@ -57,6 +58,8 @@ namespace LuaUi
         return usedProps;
     }
 
+=======
+>>>>>>> origin/main
     void LuaWindow::notifyMousePress(MyGUI::Widget* sender, int left, int top, MyGUI::MouseButton id)
     {
         if (id != MyGUI::MouseButton::Left)
@@ -89,11 +92,18 @@ namespace LuaUi
         mPreviousMouse.left = left;
         mPreviousMouse.top = top;
 
+<<<<<<< HEAD
         protectedCall([this](LuaUtil::LuaView& view) {
             sol::table table = view.newTable();
             table["position"] = osg::Vec2f(static_cast<float>(mCoord.left), static_cast<float>(mCoord.top));
             table["size"] = osg::Vec2f(static_cast<float>(mCoord.width), static_cast<float>(mCoord.height));
             triggerEvent("windowDrag", table);
         });
+=======
+        sol::table table = makeTable();
+        table["position"] = osg::Vec2f(mCoord.left, mCoord.top);
+        table["size"] = osg::Vec2f(mCoord.width, mCoord.height);
+        triggerEvent("windowDrag", table);
+>>>>>>> origin/main
     }
 }

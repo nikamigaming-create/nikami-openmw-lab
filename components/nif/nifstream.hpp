@@ -5,18 +5,28 @@
 
 #include <array>
 #include <cassert>
+<<<<<<< HEAD
 #include <cerrno>
 #include <format>
+=======
+#include <ios>
+>>>>>>> origin/main
 #include <istream>
 #include <stdexcept>
 #include <stdint.h>
 #include <string>
+<<<<<<< HEAD
 #include <system_error>
+=======
+>>>>>>> origin/main
 #include <type_traits>
 #include <vector>
 
 #include <components/files/istreamptr.hpp>
+<<<<<<< HEAD
 #include <components/files/utils.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/endianness.hpp>
 #include <components/misc/float16.hpp>
 
@@ -44,9 +54,15 @@ namespace Nif
             std::is_arithmetic_v<T> || std::is_same_v<T, Misc::float16_t>, "Buffer element type is not arithmetic");
         static_assert(!std::is_same_v<T, bool>, "Buffer element type is boolean");
         pIStream->read((char*)dest, numInstances * sizeof(T));
+<<<<<<< HEAD
         if (pIStream->fail())
             throw std::runtime_error(std::format("Failed to read typed ({}) dynamic buffer of {} instances: {}",
                 typeid(T).name(), numInstances, std::generic_category().message(errno)));
+=======
+        if (pIStream->bad())
+            throw std::runtime_error("Failed to read typed (" + std::string(typeid(T).name()) + ") buffer of "
+                + std::to_string(numInstances) + " instances");
+>>>>>>> origin/main
         if constexpr (Misc::IS_BIG_ENDIAN)
             for (std::size_t i = 0; i < numInstances; i++)
                 Misc::swapEndiannessInplace(dest[i]);
@@ -65,14 +81,21 @@ namespace Nif
             std::is_arithmetic_v<T> || std::is_same_v<T, Misc::float16_t>, "Buffer element type is not arithmetic");
         static_assert(!std::is_same_v<T, bool>, "Buffer element type is boolean");
         pIStream->read((char*)dest, numInstances * sizeof(T));
+<<<<<<< HEAD
         if (pIStream->fail())
             throw std::runtime_error(std::format("Failed to read typed ({}) dynamic buffer of {} instances: {}",
                 typeid(T).name(), numInstances, std::generic_category().message(errno)));
+=======
+        if (pIStream->bad())
+            throw std::runtime_error("Failed to read typed (" + std::string(typeid(T).name()) + ") dynamic buffer of "
+                + std::to_string(numInstances) + " instances");
+>>>>>>> origin/main
         if constexpr (Misc::IS_BIG_ENDIAN)
             for (std::size_t i = 0; i < numInstances; i++)
                 Misc::swapEndiannessInplace(dest[i]);
     }
 
+<<<<<<< HEAD
     class NIFStream;
 
     template <class T>
@@ -86,13 +109,25 @@ namespace Nif
         std::string mBuffer;
         std::size_t mStreamSize;
 
+=======
+    class NIFStream
+    {
+        const Reader& mReader;
+        Files::IStreamPtr mStream;
+        const ToUTF8::StatelessUtf8Encoder* mEncoder;
+        std::string mBuffer;
+
+>>>>>>> origin/main
     public:
         explicit NIFStream(
             const Reader& reader, Files::IStreamPtr&& stream, const ToUTF8::StatelessUtf8Encoder* encoder)
             : mReader(reader)
             , mStream(std::move(stream))
             , mEncoder(encoder)
+<<<<<<< HEAD
             , mStreamSize(static_cast<std::size_t>(Files::getStreamSizeLeft(*mStream)))
+=======
+>>>>>>> origin/main
         {
         }
 
@@ -108,6 +143,19 @@ namespace Nif
             return (major << 24) + (minor << 16) + (patch << 8) + rev;
         }
 
+<<<<<<< HEAD
+=======
+        std::streampos tell() { return mStream->tellg(); }
+
+        void seek(std::streampos pos)
+        {
+            mStream->clear();
+            mStream->seekg(pos);
+            if (mStream->bad())
+                throw std::runtime_error("Failed to seek NIF stream");
+        }
+
+>>>>>>> origin/main
         void skip(size_t size) { mStream->ignore(size); }
 
         /// Read into a single instance of type
@@ -137,9 +185,12 @@ namespace Nif
         {
             if (size == 0)
                 return;
+<<<<<<< HEAD
 
             checkStreamSize(size * sizeof(T));
 
+=======
+>>>>>>> origin/main
             vec.resize(size);
             read(vec.data(), size);
         }
@@ -170,6 +221,7 @@ namespace Nif
 
         /// Read a sequence of null-terminated strings
         std::string getStringPalette();
+<<<<<<< HEAD
 
         template <class Count, class T, class Read>
         void readVectorOfRecords(Count count, Read&& read, std::vector<T>& values)
@@ -234,6 +286,32 @@ namespace Nif
     void NIFStream::read<std::string>(std::string& str);
 
     template <>
+=======
+    };
+
+    template <>
+    void NIFStream::read<osg::Vec2f>(osg::Vec2f& vec);
+    template <>
+    void NIFStream::read<osg::Vec3f>(osg::Vec3f& vec);
+    template <>
+    void NIFStream::read<osg::Vec4f>(osg::Vec4f& vec);
+    template <>
+    void NIFStream::read<Matrix3>(Matrix3& mat);
+    template <>
+    void NIFStream::read<osg::Quat>(osg::Quat& quat);
+    template <>
+    void NIFStream::read<osg::BoundingSpheref>(osg::BoundingSpheref& sphere);
+    template <>
+    void NIFStream::read<NiTransform>(NiTransform& transform);
+    template <>
+    void NIFStream::read<NiQuatTransform>(NiQuatTransform& transform);
+    template <>
+    void NIFStream::read<bool>(bool& data);
+    template <>
+    void NIFStream::read<std::string>(std::string& str);
+
+    template <>
+>>>>>>> origin/main
     void NIFStream::read<osg::Vec2f>(osg::Vec2f* dest, size_t size);
     template <>
     void NIFStream::read<osg::Vec3f>(osg::Vec3f* dest, size_t size);

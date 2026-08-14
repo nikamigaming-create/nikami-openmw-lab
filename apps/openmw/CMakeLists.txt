@@ -1,5 +1,9 @@
 set(OPENMW_SOURCES
     engine.cpp
+<<<<<<< HEAD
+=======
+    fnvsidecaripc.cpp
+>>>>>>> origin/main
     options.cpp
 )
 
@@ -11,6 +15,10 @@ set(OPENMW_RESOURCES
 set(OPENMW_HEADERS
     doc.hpp
     engine.hpp
+<<<<<<< HEAD
+=======
+    fnvsidecaripc.hpp
+>>>>>>> origin/main
     options.hpp
     profile.hpp
 )
@@ -23,7 +31,11 @@ add_openmw_dir (mwrender
     bulletdebugdraw globalmap characterpreview camera localmap water terrainstorage ripplesimulation
     renderbin actoranimation landmanager navmesh actorspaths recastmesh fogmanager objectpaging groundcover
     postprocessor pingpongcull luminancecalculator pingpongcanvas transparentpass precipitationocclusion ripples
+<<<<<<< HEAD
     actorutil distortion animationpriority bonegroup blendmask animblendcontroller
+=======
+    falloutlodselection actorutil distortion animationpriority bonegroup blendmask animblendcontroller
+>>>>>>> origin/main
     )
 
 add_openmw_dir (mwinput
@@ -40,7 +52,7 @@ add_openmw_dir (mwgui
     itemselection spellbuyingwindow loadingscreen levelupdialog waitdialog spellcreationdialog
     enchantingdialog trainingwindow travelwindow exposedwindow cursor spellicons
     merchantrepair repair soulgemdialog companionwindow bookpage journalviewmodel journalbooks
-    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview
+    itemmodel containeritemmodel inventoryitemmodel sortfilteritemmodel itemview falloutquestlistpolicy
     tradeitemmodel companionitemmodel pickpocketitemmodel controllers savegamedialog
     recharge mode videowidget backgroundimage itemwidget screenfader debugwindow spellmodel spellview
     draganddrop timeadvancer jailscreen itemchargeview keyboardnavigation textcolours statswatcher
@@ -48,7 +60,11 @@ add_openmw_dir (mwgui
     )
 
 add_openmw_dir (mwdialogue
+<<<<<<< HEAD
     dialoguemanagerimp journalimp journalentry quest topic filter selectwrapper keywordsearch scripttest
+=======
+    dialoguemanagerimp esm4dialogueutils esm4resultscript journalimp journalentry quest topic filter selectwrapper hypertextparser keywordsearch scripttest
+>>>>>>> origin/main
     )
 
 add_openmw_dir (mwscript
@@ -59,6 +75,7 @@ add_openmw_dir (mwscript
     )
 
 add_openmw_dir (mwlua
+<<<<<<< HEAD
     luamanagerimp object objectlists userdataserializer luaevents engineevents objectvariant loadscripts contentbindings
     context menuscripts globalscripts localscripts playerscripts luabindings objectbindings cellbindings coremwscriptbindings
     mwscriptbindings camerabindings vfsbindings uibindings soundbindings inputbindings nearbybindings dialoguebindings
@@ -73,14 +90,40 @@ add_openmw_dir (mwlua
 add_openmw_dir (mwsound
     soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer sounddecoder soundoutput
     loudness movieaudiofactory alext efx efxpresets regionsoundselector watersoundupdater
+=======
+    luamanagerimp object objectlists triggervolume userdataserializer luaevents engineevents objectvariant
+    context menuscripts globalscripts localscripts playerscripts luabindings objectbindings cellbindings coremwscriptbindings
+    mwscriptbindings camerabindings vfsbindings uibindings soundbindings inputbindings nearbybindings dialoguebindings
+    postprocessingbindings stats recordstore debugbindings corebindings worldbindings worker landbindings magicbindings factionbindings
+    classbindings itemdata inputprocessor animationbindings birthsignbindings racebindings markupbindings weatherbindings regionbindings obscriptbindings obscriptcompiler
+    vrbindings
+    types/types types/door types/item types/actor types/container types/lockable types/weapon types/npc
+    types/creature types/player types/activator types/book types/lockpick types/probe types/apparatus
+    types/potion types/ingredient types/misc types/repair types/armor types/light types/static
+    types/clothing types/levelledlist types/terminal
+    )
+
+add_openmw_dir (mwsound
+    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer falloutsoundpath sounddecoder soundoutput
+    loudness movieaudiofactory alext efx efxpresets regionsoundselector saysequence watersoundupdater
+>>>>>>> origin/main
     )
 
 add_openmw_dir (mwworld
     refdata worldimp scene globals class action nullaction actionteleport
     containerstore actiontalk actiontake manualref player cellvisitors failedaction
+<<<<<<< HEAD
     worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
+=======
+    worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest actionesm4radio actionesm4terminal
+    actionfnvcrafting fnvradioprogram
+    actionequip timestamp actionalchemy cellstore actionapply actioneat
+    store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
+    esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime
+    fnvweather fnvsavepreflight fnvfasttravel
+>>>>>>> origin/main
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry
     positioncellgrid
@@ -88,13 +131,18 @@ add_openmw_dir (mwworld
 
 add_openmw_dir (mwphysics
     physicssystem trace collisiontype actor convert object heightfield closestnotmerayresultcallback
+<<<<<<< HEAD
     contacttestresultcallback stepper movementsolver projectile
+=======
+    contacttestresultcallback deepestnotmecontacttestresultcallback stepper movementsolver projectile
+>>>>>>> origin/main
     actorconvexcallback raycasting mtphysics contacttestwrapper projectileconvexcallback
     )
 
 add_openmw_dir (mwclass
     classes activator creature npc weapon armor potion apparatus book clothing container door
     ingredient creaturelevlist itemlevlist light lockpick misc probe repair static actor bodypart
+<<<<<<< HEAD
     esm4base esm4npc light4
     )
 
@@ -104,6 +152,17 @@ add_openmw_dir (mwmechanics
     aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellcasting spellresistance
     disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction summoning
     character actors objects aistate weaponpriority spellpriority weapontype spellutil
+=======
+    esm4base esm4activator esm4container esm4creature esm4npc fnvaipackage fnvsandbox esm4talkingactivator esm4terminal light4
+    )
+
+add_openmw_dir (mwmechanics
+    mechanicsmanagerimp ownership stat creaturestats magiceffects movement actorutil spelllist
+    drawstate spells activespells npcstats aipackage aisequence aipursue alchemy aiwander aitravel aifollow aiavoiddoor aibreathe
+    aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellcasting spellresistance
+    disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction summoning
+    character dialoguefacing falloutcombat falloutweaponsound actors objects aistate weaponpriority spellpriority weapontype spellutil
+>>>>>>> origin/main
     spelleffects
     )
 
@@ -116,6 +175,14 @@ add_openmw_dir (mwbase
     inputmanager windowmanager statemanager luamanager
     )
 
+add_openmw_dir (mwvr
+     openxrinput
+     fnvxrliveframesurface
+     radialmenu realisticcombat
+     vranimation vrgui vrinputmanager vrinput vrlistbox vrmetamenu vrpingpongcallback vrpointer vrtracking vrtypes vrutil vrvirtualkeyboard
+    )
+
+
 # Main executable
 
 add_library(openmw-lib STATIC
@@ -123,6 +190,7 @@ add_library(openmw-lib STATIC
     ${OPENMW_SOURCES}
 )
 
+<<<<<<< HEAD
 if (MSVC)
     # these TUs take a lot of memory for codegen
     # in CI, they often go over the 8GB memory limit if another cl.exe is running at the same time
@@ -147,6 +215,66 @@ if(BUILD_OPENMW)
         )
     else()
         openmw_add_executable(openmw
+=======
+option(BUILD_OPENMW_SWG_LAB "Build isolated SWG lab targets" OFF)
+
+if(BUILD_OPENMW_SWG_LAB)
+    set(OPENMW_SWG_LAB_FILES ${OPENMW_FILES})
+    set(OPENMW_SWG_LAB_MWRENDER_FILES)
+    set(OPENMW_SWG_LAB_MWWORLD_FILES)
+    foreach(source_file IN LISTS OPENMW_FILES)
+        if(source_file MATCHES "^mwrender/.+\\.cpp$")
+            list(REMOVE_ITEM OPENMW_SWG_LAB_FILES "${source_file}")
+            if(NOT source_file STREQUAL "mwrender/objects.cpp"
+                AND NOT source_file STREQUAL "mwrender/renderingmanager.cpp")
+                list(APPEND OPENMW_SWG_LAB_MWRENDER_FILES "${source_file}")
+            endif()
+        elseif(source_file MATCHES "^mwworld/.+\\.cpp$")
+            list(REMOVE_ITEM OPENMW_SWG_LAB_FILES "${source_file}")
+            if(NOT source_file STREQUAL "mwworld/worldimp.cpp")
+                list(APPEND OPENMW_SWG_LAB_MWWORLD_FILES "${source_file}")
+            endif()
+        elseif(source_file MATCHES "/ub_mwrender\\.cpp$" OR source_file MATCHES "/ub_mwworld\\.cpp$")
+            list(REMOVE_ITEM OPENMW_SWG_LAB_FILES "${source_file}")
+        endif()
+    endforeach()
+    set(OPENMW_SWG_LAB_MWRENDER_UNITY ${CMAKE_CURRENT_BINARY_DIR}/ub_swg_lab_mwrender.cpp)
+    file(WRITE ${OPENMW_SWG_LAB_MWRENDER_UNITY} "// SWG lab unity build generated by CMake\n")
+    foreach(source_file IN LISTS OPENMW_SWG_LAB_MWRENDER_FILES)
+        file(APPEND ${OPENMW_SWG_LAB_MWRENDER_UNITY} "#include <${source_file}>\n")
+    endforeach()
+    set(OPENMW_SWG_LAB_MWWORLD_UNITY ${CMAKE_CURRENT_BINARY_DIR}/ub_swg_lab_mwworld.cpp)
+    file(WRITE ${OPENMW_SWG_LAB_MWWORLD_UNITY} "// SWG lab unity build generated by CMake\n")
+    foreach(source_file IN LISTS OPENMW_SWG_LAB_MWWORLD_FILES)
+        file(APPEND ${OPENMW_SWG_LAB_MWWORLD_UNITY} "#include <${source_file}>\n")
+    endforeach()
+    list(APPEND OPENMW_SWG_LAB_FILES
+        ${OPENMW_SWG_LAB_MWRENDER_UNITY}
+        ${OPENMW_SWG_LAB_MWWORLD_UNITY}
+        mwrender/objects_swg_lab.cpp
+        mwrender/renderingmanager_swg_lab.cpp
+        mwworld/worldimp_swg_lab.cpp
+    )
+    source_group("apps\\openmw\\swg-lab" FILES
+        mwrender/objects_swg_lab.cpp
+        mwrender/renderingmanager_swg_lab.cpp
+        mwworld/worldimp_swg_lab.cpp
+    )
+    add_library(openmw-lib-swg-lab STATIC
+        ${OPENMW_SWG_LAB_FILES}
+        ${OPENMW_SOURCES}
+    )
+    target_compile_definitions(openmw-lib-swg-lab PRIVATE OPENMW_SWG_LAB_TARGET=1)
+endif()
+
+if(BUILD_OPENMW)
+    if (ANDROID)
+        add_library(openmw SHARED
+            main.cpp
+            androidmain.cpp
+        )
+    else()
+        openmw_add_executable(openmw
             ${APPLE_BUNDLE_RESOURCES}
             ${OPENMW_RESOURCES}
             main.cpp
@@ -160,12 +288,60 @@ if(BUILD_OPENMW)
     if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
         set_target_properties(openmw PROPERTIES ENABLE_EXPORTS ON)
     endif()
+
+    if(TARGET openmw-lib-swg-lab)
+        openmw_add_executable(openmw_swg_lab
+            ${APPLE_BUNDLE_RESOURCES}
+            ${OPENMW_RESOURCES}
+            main.cpp
+        )
+        target_link_libraries(openmw_swg_lab openmw-lib-swg-lab)
+        target_compile_definitions(openmw_swg_lab PRIVATE OPENMW_SWG_LAB_TARGET=1)
+    endif()
+endif()
+
+if(BUILD_OPENMW_VR)
+    openmw_add_executable(openmw_vr
+        ${APPLE_BUNDLE_RESOURCES}
+        ${OPENMW_RESOURCES}
+        main.cpp
+    )
+    target_link_libraries(openmw_vr openmw-lib)
+    target_compile_definitions(openmw_vr PRIVATE OPENMW_VR=1)
+    if(TARGET openmw-lib-swg-lab)
+        openmw_add_executable(openmw_vr_swg_lab
+>>>>>>> origin/main
+            ${APPLE_BUNDLE_RESOURCES}
+            ${OPENMW_RESOURCES}
+            main.cpp
+        )
+<<<<<<< HEAD
+    endif()
+
+    target_link_libraries(openmw openmw-lib)
+
+    # Workaround necessary to ensure osgAnimation::MatrixLinearSampler dynamic casts work under Clang
+    # NOTE: it's unclear whether the broken behavior is spec-compliant
+    if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
+        set_target_properties(openmw PROPERTIES ENABLE_EXPORTS ON)
+    endif()
+=======
+        target_link_libraries(openmw_vr_swg_lab openmw-lib-swg-lab)
+        target_compile_definitions(openmw_vr_swg_lab PRIVATE OPENMW_VR=1 OPENMW_SWG_LAB_TARGET=1)
+    endif()
+    #if (WIN32)
+    #    target_compile_options(openmw_vr PUBLIC XR_USE_GRAPHICS_API_OPENGL XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32)
+    #elseif(UNIX)
+    #    target_compile_options(openmw_vr PUBLIC XR_USE_GRAPHICS_API_OPENGL XR_USE_PLATFORM_XLIB XR_USE_PLATFORM_WAYLAND)
+    #endif()
+>>>>>>> origin/main
 endif()
 
 # Sound stuff - here so CMake doesn't stupidly recompile EVERYTHING
 # when we change the backend.
 include_directories(
     ${FFmpeg_INCLUDE_DIRS}
+<<<<<<< HEAD
 )
 
 target_link_libraries(openmw-lib
@@ -191,6 +367,37 @@ target_link_libraries(openmw-lib
     components
 )
 
+=======
+)
+
+set(OPENMW_LIB_LINK_LIBRARIES
+    # CMake's built-in OSG finder does not use pkgconfig, so we have to
+    # manually ensure the order is correct for inter-library dependencies.
+    # This only makes a difference with `-DOPENMW_USE_SYSTEM_OSG=ON -DOSG_STATIC=ON`.
+    # https://gitlab.kitware.com/cmake/cmake/-/issues/21701
+    ${OSGPARTICLE_LIBRARIES}
+    ${OSGVIEWER_LIBRARIES}
+    ${OSGGA_LIBRARIES}
+    ${OSGSHADOW_LIBRARIES}
+    ${OSGDB_LIBRARIES}
+    ${OSGUTIL_LIBRARIES}
+    ${OSG_LIBRARIES}
+    Boost::program_options
+    ${OPENAL_LIBRARY}
+    ${FFmpeg_LIBRARIES}
+    ${MyGUI_LIBRARIES}
+    SDL2::SDL2
+    ${RecastNavigation_LIBRARIES}
+    "osg-ffmpeg-videoplayer"
+    "oics"
+    components
+)
+target_link_libraries(openmw-lib ${OPENMW_LIB_LINK_LIBRARIES})
+if(TARGET openmw-lib-swg-lab)
+    target_link_libraries(openmw-lib-swg-lab ${OPENMW_LIB_LINK_LIBRARIES})
+endif()
+
+>>>>>>> origin/main
 if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
     target_precompile_headers(openmw-lib PRIVATE
         <boost/program_options/options_description.hpp>
@@ -217,55 +424,111 @@ if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
     )
 endif()
 
+<<<<<<< HEAD
 if (ANDROID)
     target_link_libraries(openmw-lib EGL android log z)
+=======
+add_definitions(-DMYGUI_DONT_USE_OBSOLETE=ON)
+
+if (ANDROID)
+    target_link_libraries(openmw-lib EGL android log z)
+    if(TARGET openmw-lib-swg-lab)
+        target_link_libraries(openmw-lib-swg-lab EGL android log z)
+    endif()
+>>>>>>> origin/main
 endif (ANDROID)
 
 if (USE_SYSTEM_TINYXML)
     target_link_libraries(openmw-lib ${TinyXML_LIBRARIES})
+<<<<<<< HEAD
+=======
+    if(TARGET openmw-lib-swg-lab)
+        target_link_libraries(openmw-lib-swg-lab ${TinyXML_LIBRARIES})
+    endif()
+else()
+    target_link_libraries(openmw-lib local_tinyxml)
+    if(TARGET openmw-lib-swg-lab)
+        target_link_libraries(openmw-lib-swg-lab local_tinyxml)
+    endif()
+>>>>>>> origin/main
 endif()
 
 if (NOT UNIX)
     target_link_libraries(openmw-lib ${SDL2MAIN_LIBRARY})
+<<<<<<< HEAD
+=======
+    if(TARGET openmw-lib-swg-lab)
+        target_link_libraries(openmw-lib-swg-lab ${SDL2MAIN_LIBRARY})
+    endif()
+>>>>>>> origin/main
 endif()
 
 # Fix for not visible pthreads functions for linker with glibc 2.15
 if (UNIX AND NOT APPLE)
     target_link_libraries(openmw-lib ${CMAKE_THREAD_LIBS_INIT})
+<<<<<<< HEAD
 endif()
 
 if(APPLE AND BUILD_OPENMW)
+=======
+    if(TARGET openmw-lib-swg-lab)
+        target_link_libraries(openmw-lib-swg-lab ${CMAKE_THREAD_LIBS_INIT})
+    endif()
+endif()
+
+if(APPLE AND (BUILD_OPENMW OR BUILD_OPENMW_VR))
+>>>>>>> origin/main
     set(BUNDLE_RESOURCES_DIR "${APP_BUNDLE_DIR}/Contents/Resources")
 
     set(OPENMW_RESOURCES_ROOT ${BUNDLE_RESOURCES_DIR})
 
     add_subdirectory(../../files/ ${CMAKE_CURRENT_BINARY_DIR}/files)
 
+<<<<<<< HEAD
+=======
+    configure_file("${OpenMW_BINARY_DIR}/overrides.bin" ${BUNDLE_RESOURCES_DIR} COPYONLY)
+>>>>>>> origin/main
     configure_file("${OpenMW_BINARY_DIR}/defaults.bin" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/openmw.cfg" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/gamecontrollerdb.txt" ${BUNDLE_RESOURCES_DIR} COPYONLY)
 
+<<<<<<< HEAD
     add_custom_command(TARGET openmw
         POST_BUILD
         COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${BUNDLE_RESOURCES_DIR}/resources")
 
+=======
+>>>>>>> origin/main
     find_library(COCOA_FRAMEWORK Cocoa)
     find_library(IOKIT_FRAMEWORK IOKit)
-    target_link_libraries(openmw ${COCOA_FRAMEWORK} ${IOKIT_FRAMEWORK})
 
+<<<<<<< HEAD
     if (FFmpeg_FOUND)
         target_link_options(openmw PRIVATE "LINKER:SHELL:-framework CoreVideo"
+=======
+    ### VR_PATCH.
+    #Use a commond list of link targets for openmw and openmw_vr
+    set(OPENMW_LINK_TARGETS ${COCOA_FRAMEWORK} ${IOKIT_FRAMEWORK})
+
+    if (FFmpeg_FOUND)
+        set(OPENMW_LINK_OPTIONS PRIVATE "LINKER:SHELL:-framework CoreVideo"
+>>>>>>> origin/main
                                            "LINKER:SHELL:-framework CoreMedia"
                                            "LINKER:SHELL:-framework VideoToolbox"
                                            "LINKER:SHELL:-framework AudioToolbox"
                                            "LINKER:SHELL:-framework VideoDecodeAcceleration")
     endif()
+<<<<<<< HEAD
+=======
+    ### /VR_PATCH
+>>>>>>> origin/main
 endif()
 
 if (BUILD_WITH_CODE_COVERAGE)
     target_compile_options(openmw-lib PRIVATE --coverage)
     target_link_libraries(openmw-lib gcov)
     if (NOT ANDROID AND BUILD_OPENMW)
+<<<<<<< HEAD
         target_compile_options(openmw PRIVATE --coverage)
         target_link_libraries(openmw gcov)
     endif()
@@ -273,4 +536,84 @@ endif()
 
 if (WIN32 AND BUILD_OPENMW)
     INSTALL(TARGETS openmw RUNTIME DESTINATION ".")
+=======
+        ### VR_PATCH.
+        #Use a commond list of link targets for openmw and openmw_vr
+        set(OPENMW_COMPILE_OPTIONS PRIVATE --coverage)
+        list(APPEND OPENMW_LINK_TARGETS gcov)
+        ### /VR_PATCH
+    endif()
+endif()
+
+### VR_PATCH
+# apply options to both VR and non-VR
+if(BUILD_OPENMW)
+    target_link_libraries(openmw ${OPENMW_LINK_TARGETS})
+    if(TARGET openmw_swg_lab)
+        target_link_libraries(openmw_swg_lab ${OPENMW_LINK_TARGETS})
+    endif()
+    if(OPENMW_LINK_OPTIONS)
+        target_link_options(openmw ${OPENMW_LINK_OPTIONS})
+        if(TARGET openmw_swg_lab)
+            target_link_options(openmw_swg_lab ${OPENMW_LINK_OPTIONS})
+        endif()
+    endif()
+    if(OPENMW_COMPILE_OPTIONS)
+        target_compile_options(openmw ${OPENMW_COMPILE_OPTIONS})
+        if(TARGET openmw_swg_lab)
+            target_compile_options(openmw_swg_lab ${OPENMW_COMPILE_OPTIONS})
+        endif()
+    endif()
+    if(APPLE)
+        add_custom_command(TARGET openmw
+            POST_BUILD
+            COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${BUNDLE_RESOURCES_DIR}/resources")
+    endif(APPLE)
+endif()
+if(BUILD_OPENMW_VR)
+    target_link_libraries(openmw_vr ${OPENMW_LINK_TARGETS})
+    if(TARGET openmw_vr_swg_lab)
+        target_link_libraries(openmw_vr_swg_lab ${OPENMW_LINK_TARGETS})
+    endif()
+    if(OPENMW_LINK_OPTIONS)
+        target_link_options(openmw_vr ${OPENMW_LINK_OPTIONS})
+        if(TARGET openmw_vr_swg_lab)
+            target_link_options(openmw_vr_swg_lab ${OPENMW_LINK_OPTIONS})
+        endif()
+    endif()
+    if(OPENMW_COMPILE_OPTIONS)
+        target_compile_options(openmw_vr ${OPENMW_COMPILE_OPTIONS})
+        if(TARGET openmw_vr_swg_lab)
+            target_compile_options(openmw_vr_swg_lab ${OPENMW_COMPILE_OPTIONS})
+        endif()
+    endif()
+    if(APPLE)
+        add_custom_command(TARGET openmw_vr
+            POST_BUILD
+            COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${BUNDLE_RESOURCES_DIR}/resources")
+        if(TARGET openmw_vr_swg_lab)
+            add_custom_command(TARGET openmw_vr_swg_lab
+                POST_BUILD
+                COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${BUNDLE_RESOURCES_DIR}/resources")
+        endif()
+    endif(APPLE)
+    configure_resource_file(${OpenMW_SOURCE_DIR}/files/openxrinteractionprofiles.xml
+        "${OpenMW_BINARY_DIR}" "openxrinteractionprofiles.xml")
+
+endif()
+### /VR_PATCH
+
+if (WIN32 AND BUILD_OPENMW)
+    INSTALL(TARGETS openmw RUNTIME DESTINATION ".")
+    if(TARGET openmw_swg_lab)
+        INSTALL(TARGETS openmw_swg_lab RUNTIME DESTINATION ".")
+    endif()
+endif()
+
+if (WIN32 AND BUILD_OPENMW_VR)
+    INSTALL(TARGETS openmw_vr RUNTIME DESTINATION ".")
+    if(TARGET openmw_vr_swg_lab)
+        INSTALL(TARGETS openmw_vr_swg_lab RUNTIME DESTINATION ".")
+    endif()
+>>>>>>> origin/main
 endif()

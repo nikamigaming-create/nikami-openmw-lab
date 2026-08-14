@@ -9,7 +9,10 @@
 #include <regex>
 #include <set>
 #include <sstream>
+<<<<<<< HEAD
 #include <system_error>
+=======
+>>>>>>> origin/main
 #include <unordered_map>
 
 #include <osg/Program>
@@ -70,10 +73,32 @@ namespace
         {
             lineDirectivePosition = 0;
         }
+<<<<<<< HEAD
         lineNumber
             += static_cast<int>(std::count(source.begin() + lineDirectivePosition, source.begin() + foundPos, '\n'));
         return lineNumber;
     }
+=======
+        lineNumber += std::count(source.begin() + lineDirectivePosition, source.begin() + foundPos, '\n');
+        return lineNumber;
+    }
+}
+
+namespace Shader
+{
+
+    ShaderManager::ShaderManager()
+    {
+        mHotReloadManager = std::make_unique<HotReloadManager>();
+    }
+
+    ShaderManager::~ShaderManager() = default;
+
+    void ShaderManager::setShaderPath(const std::filesystem::path& path)
+    {
+        mPath = path;
+    }
+>>>>>>> origin/main
 
     bool addLineDirectivesAfterConditionalBlocks(std::string& source)
     {
@@ -106,7 +131,11 @@ namespace
     // Adjusts #line statements accordingly and detects cyclic includes.
     // cycleIncludeChecker is the set of files that include this file directly or indirectly, and is intentionally not a
     // reference to allow automatic cleanup.
+<<<<<<< HEAD
     bool parseIncludes(const std::filesystem::path& shaderPath, std::string& source, const std::string& fileName,
+=======
+    static bool parseIncludes(const std::filesystem::path& shaderPath, std::string& source, const std::string& fileName,
+>>>>>>> origin/main
         int& fileNumber, std::set<std::filesystem::path> cycleIncludeChecker,
         std::set<std::filesystem::path>& includedFiles)
     {
@@ -154,8 +183,12 @@ namespace
             includeFstream.open(includePath);
             if (includeFstream.fail())
             {
+<<<<<<< HEAD
                 Log(Debug::Error) << "Shader " << fileName << " error: Failed to open include " << includePath << ": "
                                   << std::generic_category().message(errno);
+=======
+                Log(Debug::Error) << "Shader " << fileName << " error: Failed to open include " << includePath;
+>>>>>>> origin/main
                 return false;
             }
             int includedFileNumber = fileNumber++;
@@ -179,6 +212,7 @@ namespace
         }
         return true;
     }
+<<<<<<< HEAD
 }
 
 namespace Shader
@@ -300,6 +334,8 @@ namespace Shader
     {
         mPath = path;
     }
+=======
+>>>>>>> origin/main
 
     bool parseForeachDirective(std::string& source, const std::string& templateName, size_t foundPos)
     {
@@ -504,6 +540,113 @@ namespace Shader
         return true;
     }
 
+<<<<<<< HEAD
+=======
+    struct HotReloadManager
+    {
+        using KeysHolder = std::set<ShaderManager::MapKey>;
+
+        std::unordered_map<std::string, KeysHolder> mShaderFiles;
+        std::unordered_map<std::string, std::set<std::filesystem::path>> templateIncludedFiles;
+        std::filesystem::file_time_type mLastAutoRecompileTime;
+        bool mHotReloadEnabled;
+        bool mTriggerReload;
+
+        HotReloadManager()
+        {
+            mTriggerReload = false;
+            mHotReloadEnabled = false;
+            mLastAutoRecompileTime = std::filesystem::file_time_type::clock::now();
+        }
+
+        void addShaderFiles(const std::string& templateName, const ShaderManager::DefineMap& defines)
+        {
+            const std::set<std::filesystem::path>& shaderFiles = templateIncludedFiles[templateName];
+            for (const std::filesystem::path& file : shaderFiles)
+            {
+                mShaderFiles[Files::pathToUnicodeString(file)].insert(std::make_pair(templateName, defines));
+            }
+        }
+
+        void update(ShaderManager& manager, osgViewer::Viewer& viewer)
+        {
+            auto timeSinceLastCheckMillis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::filesystem::file_time_type::clock::now() - mLastAutoRecompileTime);
+            if ((mHotReloadEnabled && timeSinceLastCheckMillis.count() > 200) || mTriggerReload == true)
+            {
+                reloadTouchedShaders(manager, viewer);
+            }
+            mTriggerReload = false;
+        }
+
+        void reloadTouchedShaders(ShaderManager& manager, osgViewer::Viewer& viewer)
+        {
+            bool threadsRunningToStop = false;
+            for (auto& [pathShaderToTest, shaderKeys] : mShaderFiles)
+            {
+                const std::filesystem::file_time_type writeTime = std::filesystem::last_write_time(pathShaderToTest);
+                if (writeTime.time_since_epoch() > mLastAutoRecompileTime.time_since_epoch())
+                {
+                    if (!threadsRunningToStop)
+                    {
+                        threadsRunningToStop = viewer.areThreadsRunning();
+                        if (threadsRunningToStop)
+                            viewer.stopThreading();
+                    }
+
+                    for (const auto& [templateName, shaderDefines] : shaderKeys)
+                    {
+                        ShaderManager::ShaderMap::iterator shaderIt
+                            = manager.mShaders.find(std::make_pair(templateName, shaderDefines));
+                        if (shaderIt == manager.mShaders.end())
+                        {
+                            Log(Debug::Error) << "Failed to find shader " << templateName;
+                            continue;
+                        }
+
+                        ShaderManager::TemplateMap::iterator templateIt = manager.mShaderTemplates.find(
+                            templateName); // Can't be Null, if we're here it means the template was added
+                        assert(templateIt != manager.mShaderTemplates.end());
+                        std::string& shaderSource = templateIt->second;
+                        std::set<std::filesystem::path> insertedPaths;
+                        std::filesystem::path path = (std::filesystem::path(manager.mPath) / templateName);
+                        std::ifstream stream;
+                        stream.open(path);
+                        if (stream.fail())
+                        {
+                            Log(Debug::Error) << "Failed to open " << Files::pathToUnicodeString(path);
+                        }
+                        std::stringstream buffer;
+                        buffer << stream.rdbuf();
+
+                        // parse includes
+                        int fileNumber = 1;
+                        std::string source = buffer.str();
+                        if (!addLineDirectivesAfterConditionalBlocks(source)
+                            || !parseIncludes(std::filesystem::path(manager.mPath), source, templateName, fileNumber,
+                                {}, insertedPaths))
+                        {
+                            break;
+                        }
+                        shaderSource = std::move(source);
+
+                        std::vector<std::string> linkedShaderNames;
+                        if (!manager.createSourceFromTemplate(
+                                shaderSource, linkedShaderNames, templateName, shaderDefines))
+                        {
+                            break;
+                        }
+                        shaderIt->second->setShaderSource(shaderSource);
+                    }
+                }
+            }
+            if (threadsRunningToStop)
+                viewer.startThreading();
+            mLastAutoRecompileTime = std::filesystem::file_time_type::clock::now();
+        }
+    };
+
+>>>>>>> origin/main
     osg::ref_ptr<osg::Shader> ShaderManager::getShader(
         std::string templateName, const ShaderManager::DefineMap& defines, std::optional<osg::Shader::Type> type)
     {
@@ -525,7 +668,11 @@ namespace Shader
             stream.open(path);
             if (stream.fail())
             {
+<<<<<<< HEAD
                 Log(Debug::Error) << "Failed to open shader " << path << ": " << std::generic_category().message(errno);
+=======
+                Log(Debug::Error) << "Failed to open " << path;
+>>>>>>> origin/main
                 return nullptr;
             }
             std::stringstream buffer;
@@ -743,6 +890,7 @@ namespace Shader
         mHotReloadManager->mTriggerReload = true;
     }
 
+<<<<<<< HEAD
     ShaderManager::DefineMap getDefaultDefines()
     {
         return {
@@ -762,4 +910,6 @@ namespace Shader
             { "numViews", "1" },
         };
     }
+=======
+>>>>>>> origin/main
 }

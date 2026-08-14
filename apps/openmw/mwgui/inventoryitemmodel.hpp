@@ -16,6 +16,13 @@ namespace MWGui
         size_t getItemCount() override;
 
         bool onTakeItem(const MWWorld::Ptr& item, int count) override;
+<<<<<<< HEAD
+=======
+
+        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        void removeItem(const ItemStack& item, size_t count) override;
+>>>>>>> origin/main
 
         /// Move items from this model to \a otherModel.
         MWWorld::Ptr moveItem(

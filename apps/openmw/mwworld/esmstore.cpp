@@ -1,27 +1,101 @@
 #include "esmstore.hpp"
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <fstream>
 #include <tuple>
+=======
+#include <array>
+#include <cctype>
+#include <cstdlib>
+#include <fstream>
+#include <limits>
+#include <optional>
+#include <string_view>
+#include <tuple>
+#include <type_traits>
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+<<<<<<< HEAD
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/common.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
+=======
+#include <components/esm3/loaddial.hpp>
+#include <components/esm3/loadmgef.hpp>
+#include <components/esm3/readerscache.hpp>
+#include <components/esm4/common.hpp>
+#include <components/esm4/loadgmst.hpp>
+#include <components/esm4/reader.hpp>
+#include <components/esm4/readerutils.hpp>
+#include <components/esm4/records.hpp>
+>>>>>>> origin/main
 #include <components/esmloader/load.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/lua/configuration.hpp>
 #include <components/misc/algorithm.hpp>
+<<<<<<< HEAD
+=======
+#include <components/misc/strings/algorithm.hpp>
+>>>>>>> origin/main
 
 #include "../mwmechanics/spelllist.hpp"
 
 namespace
 {
+<<<<<<< HEAD
+=======
+    MWWorld::ESM4Game detectESM4Game(const std::filesystem::path& path)
+    {
+        std::string filename = path.filename().string();
+        std::transform(filename.begin(), filename.end(), filename.begin(), [](unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+
+        if (filename == "oblivion.esm")
+            return MWWorld::ESM4Game::Oblivion;
+        if (filename == "fallout3.esm")
+            return MWWorld::ESM4Game::Fallout3;
+        if (filename == "falloutnv.esm")
+            return MWWorld::ESM4Game::FalloutNewVegas;
+        if (filename == "skyrim.esm" || filename == "skyrimvr.esm")
+            return MWWorld::ESM4Game::Skyrim;
+        if (filename == "fallout4.esm")
+            return MWWorld::ESM4Game::Fallout4;
+        if (filename == "starfield.esm")
+            return MWWorld::ESM4Game::Starfield;
+        return MWWorld::ESM4Game::Unknown;
+    }
+
+    std::string_view gameName(MWWorld::ESM4Game game)
+    {
+        switch (game)
+        {
+            case MWWorld::ESM4Game::Oblivion:
+                return "Oblivion";
+            case MWWorld::ESM4Game::Fallout3:
+                return "Fallout 3";
+            case MWWorld::ESM4Game::FalloutNewVegas:
+                return "Fallout: New Vegas";
+            case MWWorld::ESM4Game::Skyrim:
+                return "Skyrim";
+            case MWWorld::ESM4Game::Fallout4:
+                return "Fallout 4";
+            case MWWorld::ESM4Game::Starfield:
+                return "Starfield";
+            case MWWorld::ESM4Game::Unknown:
+                return "unknown";
+        }
+        return "unknown";
+    }
+
+>>>>>>> origin/main
     struct Ref
     {
         ESM::RefNum mRefNum;
@@ -91,6 +165,405 @@ namespace
         throw std::runtime_error("List of NPC races is empty!");
     }
 
+<<<<<<< HEAD
+=======
+    struct ValidatedFalloutPlayer
+    {
+        MWWorld::FalloutPlayerState mState;
+        MWWorld::FalloutNativePlayerRecords mNativeRecords;
+    };
+
+    std::optional<ValidatedFalloutPlayer> resolveValidatedFalloutPlayer(std::size_t masterCandidateCount,
+        const std::optional<std::int32_t>& masterCandidateIndex, const MWWorld::Store<ESM4::Npc>& npcs,
+        const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races,
+        const MWWorld::Store<ESM4::FormIdList>& formLists,
+        const MWWorld::Store<ESM4::Ammunition>& ammunition)
+    {
+        if (masterCandidateCount == 0)
+            return std::nullopt;
+        if (masterCandidateCount != 1)
+            throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+        if (!masterCandidateIndex)
+            throw std::runtime_error("FalloutNV.esm master candidate has no valid normalized namespace");
+
+        const std::int32_t master = *masterCandidateIndex;
+        MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+        if (!player)
+            throw std::runtime_error(player.mError);
+
+        player = MWWorld::resolveFalloutPlayerInventoryFormLists(
+            std::move(*player.mState), formLists, ammunition);
+        if (!player)
+            throw std::runtime_error(player.mError);
+
+        MWWorld::FalloutNativePlayerRecordsResolution native
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *player.mState);
+        if (!native)
+            throw std::runtime_error(native.mError);
+
+        return ValidatedFalloutPlayer{ std::move(*player.mState), *native.mRecords };
+    }
+
+    struct FalloutPlayerCompatibilityCarriers
+    {
+        ESM::Class mClass;
+        ESM::Race mRace;
+        ESM::NPC mPlayer;
+    };
+
+    FalloutPlayerCompatibilityCarriers makeFalloutPlayerCompatibilityCarriers(
+        const MWWorld::FalloutPlayerState& playerState, const ESM4::Class& nativeClass,
+        const ESM4::Race& nativeRace)
+    {
+        // These records are structural carriers for the existing ESM3 Player machinery. The validated native FNV
+        // records remain authoritative; no Morrowind gameplay labels, assets, sounds, or formulas are projected.
+        FalloutPlayerCompatibilityCarriers result;
+
+        result.mClass.mId = ESM::RefId::formIdRefId(playerState.mClass);
+        result.mClass.blank();
+        result.mClass.mName = nativeClass.mFullName;
+        result.mClass.mDescription = nativeClass.mDesc;
+
+        result.mRace.mId = ESM::RefId::formIdRefId(playerState.mRace);
+        result.mRace.blank();
+        result.mRace.mName = nativeRace.mFullName;
+        result.mRace.mDescription = nativeRace.mDesc;
+        result.mRace.mData.mMaleHeight = nativeRace.mHeightMale;
+        result.mRace.mData.mFemaleHeight = nativeRace.mHeightFemale;
+        result.mRace.mData.mMaleWeight = nativeRace.mWeightMale;
+        result.mRace.mData.mFemaleWeight = nativeRace.mWeightFemale;
+
+        result.mPlayer.mId = ESM::RefId::stringRefId("Player");
+        result.mPlayer.blank();
+        result.mPlayer.mRace = result.mRace.mId;
+        result.mPlayer.mClass = result.mClass.mId;
+        MWWorld::seedFalloutPlayerProxy(result.mPlayer, playerState);
+
+        return result;
+    }
+
+    std::optional<ESM::Variant> bridgeFalloutGameSettingValue(const ESM4::GameSetting::Data& value)
+    {
+        return std::visit(
+            [](const auto& item) -> std::optional<ESM::Variant> {
+                using T = std::decay_t<decltype(item)>;
+                if constexpr (std::is_same_v<T, std::monostate>)
+                    return std::nullopt;
+                else if constexpr (std::is_same_v<T, bool>)
+                    return ESM::Variant(static_cast<std::int32_t>(item));
+                else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, std::int32_t>
+                    || std::is_same_v<T, std::string>)
+                    return ESM::Variant(item);
+                else
+                {
+                    if (item > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                        return std::nullopt;
+                    return ESM::Variant(static_cast<std::int32_t>(item));
+                }
+            },
+            value);
+    }
+
+    std::vector<std::pair<std::string_view, ESM::Variant>> falloutCompatibilityGameSettings()
+    {
+        return {
+            { "fSwimHeightScale", ESM::Variant(0.9f) },
+            { "fStromWindSpeed", ESM::Variant(0.7f) },
+            { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+            { "fUnarmoredBase1", ESM::Variant(0.1f) },
+            { "fUnarmoredBase2", ESM::Variant(0.065f) },
+            { "fMessageTimePerChar", ESM::Variant(0.1f) },
+            { "fMoveBaseSpeed", ESM::Variant(77.f) },
+            { "fMoveRunMult", ESM::Variant(4.f) },
+            { "fMoveSneakMult", ESM::Variant(0.57f) },
+            { "sDefaultCellname", ESM::Variant(std::string("Wasteland")) },
+        };
+    }
+
+    std::vector<std::pair<std::string_view, ESM::Variant>> falloutCompatibilityGlobals()
+    {
+        // The exact save transaction replaces gamehour before the first rendered frame. The rest initialize the
+        // legacy DateTimeManager until native saved globals are decoded and applied.
+        return {
+            { "gamehour", ESM::Variant(0.f) },
+            { "dayspassed", ESM::Variant(std::int32_t{ 0 }) },
+            { "timescale", ESM::Variant(30.f) },
+            { "day", ESM::Variant(std::int32_t{ 1 }) },
+            { "month", ESM::Variant(std::int32_t{ 0 }) },
+            { "year", ESM::Variant(std::int32_t{ 2281 }) },
+        };
+    }
+
+    bool containsAsciiNoCase(std::string_view value, std::string_view needle)
+    {
+        auto it = std::search(value.begin(), value.end(), needle.begin(), needle.end(), [](char left, char right) {
+            return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
+        });
+        return it != value.end();
+    }
+
+    std::string_view chooseViewerPlayerSkeleton(bool hasStarfieldContent, const MWWorld::Store<ESM4::World>& worlds,
+        const MWWorld::Store<ESM4::ArmorAddon>& armorAddons, const MWWorld::Store<ESM4::HeadPart>& headParts)
+    {
+        if (hasStarfieldContent)
+            return "actors/human/characterassets/skeleton.nif";
+
+        for (const ESM4::World& world : worlds)
+        {
+            if (containsAsciiNoCase(world.mEditorId, "Wasteland") || containsAsciiNoCase(world.mEditorId, "DCWorld"))
+                return "characters/_male/skeleton.nif";
+            if (containsAsciiNoCase(world.mEditorId, "Commonwealth"))
+                return "actors/character/character assets/skeleton.nif";
+        }
+
+        // Starfield retained the record families used by Skyrim and Fallout 4, so the mere presence of
+        // ARMA/HDPT records cannot distinguish it from those games.  Its authored human parts do provide an
+        // unambiguous contract, however: they live below actors/human and bind to HumanExportRoot.  Select the
+        // shipped Starfield skeleton from that source data instead of falling through to Skyrim's Bip01 rig.
+        for (const ESM4::HeadPart& part : headParts)
+        {
+            if (containsAsciiNoCase(part.mModel, "actors/human/"))
+                return "actors/human/characterassets/skeleton.nif";
+        }
+        for (const ESM4::ArmorAddon& addon : armorAddons)
+        {
+            if (containsAsciiNoCase(addon.mModelMale, "actors/human/")
+                || containsAsciiNoCase(addon.mModelFemale, "actors/human/"))
+                return "actors/human/characterassets/skeleton.nif";
+        }
+
+        const bool hasTes5ActorParts = armorAddons.begin() != armorAddons.end() || headParts.begin() != headParts.end();
+        if (hasTes5ActorParts)
+            return "actors/character/character assets/skeleton.nif";
+
+        return "characters/_male/skeleton.nif";
+    }
+
+    void ensureFalloutCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
+        MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
+        MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons,
+        MWWorld::Store<ESM::Potion>& potions, MWWorld::Store<ESM::Miscellaneous>& miscItems,
+        const MWWorld::FalloutPlayerState* falloutPlayerState, std::string_view playerSkeleton)
+    {
+        const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
+        const ESM::RefId raceId = ESM::RefId::stringRefId("FNV_Wastelander");
+
+        if (classes.begin() == classes.end())
+        {
+            ESM::Class courier;
+            courier.mId = classId;
+            courier.blank();
+            courier.mName = "Courier";
+            courier.mDescription = "Fallout proof default player class";
+            courier.mData.mIsPlayable = 1;
+            courier.mData.mAttribute[0] = 0; // Strength
+            courier.mData.mAttribute[1] = 3; // Agility
+            courier.mData.mSpecialization = ESM::Class::Combat;
+            courier.mData.mSkills = { { { 5, 10 }, { 12, 13 }, { 14, 15 }, { 16, 17 }, { 18, 19 } } };
+            classes.insertStatic(courier);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player class FNV_Courier";
+        }
+
+        if (races.begin() == races.end())
+        {
+            ESM::Race wastelander;
+            wastelander.mId = raceId;
+            wastelander.blank();
+            wastelander.mName = "Wastelander";
+            wastelander.mDescription = "Fallout proof default player race";
+            wastelander.mData.mFlags = ESM::Race::Playable;
+            for (int i = 0; i < ESM::Attribute::Length; ++i)
+            {
+                wastelander.mData.mAttributeValues[i] = 50;
+                wastelander.mData.mAttributeValues[i + ESM::Attribute::Length] = 50;
+            }
+            races.insertStatic(wastelander);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player race FNV_Wastelander";
+        }
+
+        int insertedSkills = 0;
+        for (int i = 0; i < ESM::Skill::Length; ++i)
+        {
+            const ESM::RefId id = ESM::Skill::indexToRefId(i);
+            if (id.empty() || skills.searchStatic(id) != nullptr)
+                continue;
+
+            ESM::Skill skill;
+            skill.mId = ESM::SkillId(id.serializeText());
+            skill.mRecordFlags = 0;
+            skill.mName = id.serializeText();
+            skill.mDescription.clear();
+            skill.mIcon.clear();
+            skill.mWerewolfValue = 1.f;
+            skill.mData.mAttribute = i % ESM::Attribute::Length;
+            skill.mData.mSpecialization
+                = i < 9 ? ESM::Class::Combat : (i < 18 ? ESM::Class::Magic : ESM::Class::Stealth);
+            for (float& value : skill.mData.mUseValue)
+                value = 1.f;
+            skills.insertStatic(skill);
+            ++insertedSkills;
+        }
+        if (insertedSkills > 0)
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 skills count=" << insertedSkills;
+
+        int insertedMagicEffects = 0;
+        for (int i = 0; i < ESM::MagicEffect::Length; ++i)
+        {
+            if (magicEffects.search(i) != nullptr)
+                continue;
+
+            ESM::MagicEffect effect;
+            effect.mIndex = i;
+            effect.mId = ESM::MagicEffect::indexToRefId(i);
+            effect.blank();
+            effect.mData.mFlags = ESM::MagicEffect::NoDuration | ESM::MagicEffect::NoMagnitude;
+            effect.mData.mRed = 128;
+            effect.mData.mGreen = 128;
+            effect.mData.mBlue = 128;
+            magicEffects.insertStatic(effect);
+            ++insertedMagicEffects;
+        }
+        if (insertedMagicEffects > 0)
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 magic effects count=" << insertedMagicEffects;
+
+        const auto ensureDialogue = [&dialogues](std::string_view id, ESM::Dialogue::Type type) {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (dialogues.search(refId) != nullptr)
+                return;
+
+            ESM::Dialogue dialogue;
+            dialogue.mId = refId;
+            dialogue.blank();
+            dialogue.mStringId = std::string(id);
+            dialogue.mType = type;
+            dialogues.insertStatic(dialogue);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 dialogue " << id;
+        };
+
+        ensureDialogue("VCG01", ESM::Dialogue::Journal);
+        for (std::string_view topic : { "attack", "flee", "hello", "hit", "idle", "intruder", "thief" })
+        {
+            ensureDialogue(topic, ESM::Dialogue::Voice);
+        }
+
+        if (npcs.searchStatic(ESM::RefId::stringRefId("Player")) == nullptr)
+        {
+            ESM::NPC player;
+            player.mId = ESM::RefId::stringRefId("Player");
+            player.blank();
+            player.mName = "Courier";
+            player.mModel = std::string(playerSkeleton);
+            player.mRace = raceId;
+            player.mClass = classId;
+            player.mNpdt.mLevel = 1;
+            player.mNpdt.mAttributes.fill(50);
+            player.mNpdt.mSkills.fill(35);
+            player.mNpdt.mHealth = 125;
+            player.mNpdt.mMana = 60;
+            player.mNpdt.mFatigue = 220;
+            player.mNpdt.mDisposition = 50;
+            player.mNpdt.mGold = 0;
+            if (falloutPlayerState != nullptr)
+                MWWorld::seedFalloutPlayerProxy(player, *falloutPlayerState);
+            npcs.insertStatic(player);
+            Log(Debug::Info) << "FNV/ESM4: inserted ESM3 Player compatibility shell for normal save/load model="
+                             << player.mModel << " nativeState=" << static_cast<bool>(falloutPlayerState);
+        }
+
+        const auto ensureWeapon
+            = [&weapons](std::string_view id, std::string_view name, std::string_view icon, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (weapons.searchStatic(refId) != nullptr)
+                      return;
+
+                  ESM::Weapon weapon;
+                  weapon.mId = refId;
+                  weapon.blank();
+                  weapon.mName = std::string(name);
+                  weapon.mIcon = std::string(icon);
+                  weapon.mData.mWeight = 2.f;
+                  weapon.mData.mValue = value;
+                  weapon.mData.mType = ESM::Weapon::MarksmanThrown;
+                  weapon.mData.mHealth = 100;
+                  weapon.mData.mSpeed = 1.f;
+                  weapon.mData.mReach = 1.f;
+                  weapon.mData.mChop = { 4, 12 };
+                  weapon.mData.mSlash = { 4, 12 };
+                  weapon.mData.mThrust = { 4, 12 };
+                  weapons.insertStatic(weapon);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
+              };
+
+        const auto ensurePotion
+            = [&potions](std::string_view id, std::string_view name, std::string_view icon, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (potions.searchStatic(refId) != nullptr)
+                      return;
+
+                  ESM::Potion potion;
+                  potion.mId = refId;
+                  potion.blank();
+                  potion.mName = std::string(name);
+                  potion.mIcon = std::string(icon);
+                  potion.mData.mWeight = 0.1f;
+                  potion.mData.mValue = value;
+                  potions.insertStatic(potion);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
+              };
+
+        const auto ensureMisc
+            = [&miscItems](std::string_view id, std::string_view name, std::string_view icon, float weight, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (miscItems.searchStatic(refId) != nullptr)
+                      return;
+
+                  ESM::Miscellaneous item;
+                  item.mId = refId;
+                  item.blank();
+                  item.mName = std::string(name);
+                  item.mIcon = std::string(icon);
+                  item.mData.mWeight = weight;
+                  item.mData.mValue = value;
+                  miscItems.insertStatic(item);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
+              };
+
+        ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol",
+            "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds", 100);
+        ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle",
+            "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds", 75);
+        ensurePotion(
+            "FNV_PROOF_STIMPAK", "Stimpak", "textures/interface/icons/pipboyimages/items/items_stimpack.dds", 25);
+        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round", "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds",
+            0.01f, 1);
+        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin", "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds",
+            0.01f, 1);
+        ensureMisc("FNV_PROOF_CAPS", "Bottle Cap",
+            "textures/interface/icons/pipboyimages/items/items_nuka_cola_cap.dds", 0.f, 1);
+    }
+
+    bool shouldEnsureFalloutProofCharacterDefaults()
+    {
+        return std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr
+            || std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr
+            || std::getenv("OPENMW_FNV_PROOF_ENABLE_ESM3_FALLBACKS") != nullptr;
+    }
+
+    bool shouldEnsureFalloutCharacterDefaults(const MWWorld::Store<ESM::Class>& classes,
+        const MWWorld::Store<ESM::Race>& races, const MWWorld::Store<ESM4::Npc>& npcs,
+        const MWWorld::Store<ESM4::Creature>& creatures, const MWWorld::Store<ESM4::Race>& esm4Races)
+    {
+        if (shouldEnsureFalloutProofCharacterDefaults())
+            return true;
+
+        const bool missingEsm3CharacterBasis = classes.begin() == classes.end() || races.begin() == races.end();
+        const bool hasEsm4CharacterData = npcs.begin() != npcs.end() || creatures.begin() != creatures.end()
+            || esm4Races.begin() != esm4Races.end();
+        return missingEsm3CharacterBasis && hasEsm4CharacterData;
+    }
+
+>>>>>>> origin/main
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
         const MWWorld::Store<ESM::Class>& classes, const MWWorld::Store<ESM::Race>& races,
         const MWWorld::Store<ESM::Script>& scripts, const std::unordered_map<ESM::RefId, ESM::NPC>& npcs)
@@ -175,12 +648,17 @@ namespace
                 if (!mgef)
                 {
                     Log(Debug::Verbose) << RecordType::getRecordType() << " " << spell.mId
+<<<<<<< HEAD
                                         << ": dropping invalid effect (" << iter->mData.mEffectID << ")";
+=======
+                                        << ": dropping invalid effect (index " << iter->mData.mEffectID << ")";
+>>>>>>> origin/main
                     iter = spell.mEffects.mList.erase(iter);
                     changed = true;
                     continue;
                 }
 
+<<<<<<< HEAD
                 if (!(mgef->mData.mFlags & ESM::MagicEffect::TargetAttribute) && !iter->mData.mAttribute.empty())
                 {
                     iter->mData.mAttribute = ESM::RefId();
@@ -196,6 +674,23 @@ namespace
                     Log(Debug::Verbose) << RecordType::getRecordType() << " " << spell.mId
                                         << ": dropping unexpected skill argument of " << iter->mData.mEffectID
                                         << " effect";
+=======
+                if (!(mgef->mData.mFlags & ESM::MagicEffect::TargetAttribute) && iter->mData.mAttribute != -1)
+                {
+                    iter->mData.mAttribute = -1;
+                    Log(Debug::Verbose) << RecordType::getRecordType() << " " << spell.mId
+                                        << ": dropping unexpected attribute argument of "
+                                        << ESM::MagicEffect::indexToGmstString(iter->mData.mEffectID) << " effect";
+                    changed = true;
+                }
+
+                if (!(mgef->mData.mFlags & ESM::MagicEffect::TargetSkill) && iter->mData.mSkill != -1)
+                {
+                    iter->mData.mSkill = -1;
+                    Log(Debug::Verbose) << RecordType::getRecordType() << " " << spell.mId
+                                        << ": dropping unexpected skill argument of "
+                                        << ESM::MagicEffect::indexToGmstString(iter->mData.mEffectID) << " effect";
+>>>>>>> origin/main
                     changed = true;
                 }
 
@@ -241,6 +736,16 @@ namespace MWWorld
         IDMap mIds;
         IDMap mStaticIds;
 
+<<<<<<< HEAD
+=======
+        struct StarfieldPackIn
+        {
+            ESM::FormId mStorageCell;
+            std::string mEditorId;
+        };
+        std::unordered_map<ESM::FormId, StarfieldPackIn> mStarfieldPackIns;
+
+>>>>>>> origin/main
         template <typename T>
         static void assignStoreToIndex(ESMStore& stores, Store<T>& store)
         {
@@ -285,10 +790,152 @@ namespace MWWorld
             return false;
         }
 
+<<<<<<< HEAD
         static bool readRecord(ESM4::Reader& reader, ESMStore& store)
         {
             return std::apply(
                 [&reader](auto&... x) { return (typedReadRecordESM4(reader, x) || ...); }, store.mStoreImp->mStores);
+=======
+        static bool isStarfieldViewerUsefulRecord(ESM4::RecordTypes recordType)
+        {
+            switch (recordType)
+            {
+                case ESM4::REC_ACHR:
+                case ESM4::REC_ACRE:
+                case ESM4::REC_ACTI:
+                case ESM4::REC_ARMA:
+                case ESM4::REC_ARMO:
+                case ESM4::REC_CELL:
+                case ESM4::REC_CREA:
+                case ESM4::REC_HDPT:
+                case ESM4::REC_HAIR:
+                case ESM4::REC_LAND:
+                case ESM4::REC_LTEX:
+                case ESM4::REC_LVLI:
+                case ESM4::REC_MSTT:
+                case ESM4::REC_NPC_:
+                case ESM4::REC_OTFT:
+                case ESM4::REC_PKIN:
+                case ESM4::REC_RACE:
+                case ESM4::REC_REFR:
+                case ESM4::REC_STAT:
+                case ESM4::REC_TXST:
+                case ESM4::REC_WRLD:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool shouldSkipStarfieldViewerRecord(ESM4::Reader& reader, ESM4::RecordTypes recordType)
+        {
+            if (reader.esmVersionF() < 0.959f || reader.esmVersionF() > 0.961f)
+                return false;
+
+            if (isStarfieldViewerUsefulRecord(recordType))
+                return false;
+
+            static int logged = 0;
+            if (logged < 80)
+            {
+                Log(Debug::Info) << "World viewer: Starfield coarse scan skipped record type="
+                                 << ESM::printName(reader.hdr().record.typeId)
+                                 << " id=" << reader.hdr().record.getFormId().toString();
+                ++logged;
+            }
+            else if (logged == 80)
+            {
+                Log(Debug::Info) << "World viewer: further Starfield coarse scan skipped-record logs suppressed";
+                ++logged;
+            }
+            return true;
+        }
+
+        static bool readStarfieldPackIn(ESM4::Reader& reader, ESMStore& store)
+        {
+            reader.getRecordData();
+            const ESM::FormId id = reader.getFormIdFromHeader();
+            const std::uint32_t flags = reader.hdr().record.flags;
+            StarfieldPackIn value;
+            while (reader.getSubRecordHeader())
+            {
+                const ESM4::SubRecordHeader& subHeader = reader.subRecordHeader();
+                switch (subHeader.typeId)
+                {
+                    case ESM::fourCC("EDID"):
+                        reader.getZString(value.mEditorId);
+                        break;
+                    case ESM::fourCC("CNAM"):
+                        reader.getFormId(value.mStorageCell);
+                        break;
+                    default:
+                        // PKIN owns component metadata in BETH/REFL blobs, but the authored default set-piece
+                        // composition is the CNAM storage cell. Preserve forward compatibility by ignoring the
+                        // remaining component payload here rather than pretending it is a legacy MODL record.
+                        reader.skipSubRecordData();
+                        break;
+                }
+            }
+
+            if (!value.mStorageCell.isZeroOrUnset())
+            {
+                store.mStoreImp->mStarfieldPackIns.insert_or_assign(id, value);
+                static int logged = 0;
+                if (logged < 120)
+                {
+                    Log(Debug::Info) << "World viewer: Starfield PKIN base=" << id
+                                     << " editor=\"" << value.mEditorId << "\" storageCell="
+                                     << value.mStorageCell << " flags=0x" << std::hex << flags << std::dec;
+                    ++logged;
+                }
+                else if (logged == 120)
+                {
+                    Log(Debug::Info) << "World viewer: further Starfield PKIN record logs suppressed";
+                    ++logged;
+                }
+            }
+            return true;
+        }
+
+        static bool readRecord(ESM4::Reader& reader, ESMStore& store)
+        {
+            const auto recordType = static_cast<ESM4::RecordTypes>(reader.hdr().record.typeId);
+            if (shouldSkipStarfieldViewerRecord(reader, recordType))
+                return false;
+
+            // AMEF, AVIF, EXPL, FACT, IPCT, IPDS, MESG, MGEF, PERK, RCCT, RCPE, SPEL, and NOTE are not cross-game schemas. These typed loaders
+            // implement only the frozen Fallout: New Vegas contracts.
+            if ((recordType == ESM4::REC_AMEF || recordType == ESM4::REC_AVIF || recordType == ESM4::REC_EXPL
+                    || recordType == ESM4::REC_FACT || recordType == ESM4::REC_IPCT
+                    || recordType == ESM4::REC_IPDS || recordType == ESM4::REC_MESG
+                    || recordType == ESM4::REC_MGEF
+                    || recordType == ESM4::REC_PERK || recordType == ESM4::REC_RCCT
+                    || recordType == ESM4::REC_RCPE || recordType == ESM4::REC_SPEL || recordType == ESM4::REC_NOTE)
+                && store.mESM4Game != ESM4Game::FalloutNewVegas)
+                return false;
+
+            const bool result = recordType == ESM4::REC_PKIN
+                ? readStarfieldPackIn(reader, store)
+                : std::apply(
+                    [&reader](auto&... x) { return (typedReadRecordESM4(reader, x) || ...); },
+                    store.mStoreImp->mStores);
+            if (recordType == ESM4::REC_CELL || recordType == ESM4::REC_WRLD || recordType == ESM4::REC_REFR
+                || recordType == ESM4::REC_ACHR || recordType == ESM4::REC_ACRE || recordType == ESM4::REC_NPC_
+                || recordType == ESM4::REC_CREA || recordType == ESM4::REC_LVLI || recordType == ESM4::REC_LVLN
+                || recordType == ESM4::REC_LVLC || recordType == ESM4::REC_ARMA || recordType == ESM4::REC_ARMO
+                || recordType == ESM4::REC_STAT)
+            {
+                static int logged = 0;
+                if (logged < 120)
+                {
+                    Log(Debug::Info) << "World viewer: ESM4 dispatch type="
+                                     << ESM::printName(reader.hdr().record.typeId)
+                                     << " id=" << reader.hdr().record.getFormId().toString() << " handled=" << result;
+                    ++logged;
+                }
+            }
+            return result;
+>>>>>>> origin/main
         }
     };
 
@@ -359,8 +1006,15 @@ namespace MWWorld
             case ESM::REC_ACTI4:
             case ESM::REC_ALCH4:
             case ESM::REC_AMMO4:
+<<<<<<< HEAD
             case ESM::REC_ARMO4:
             case ESM::REC_BOOK4:
+=======
+            case ESM::REC_ARMA4:
+            case ESM::REC_ARMO4:
+            case ESM::REC_BOOK4:
+            case ESM::REC_CLOT4:
+>>>>>>> origin/main
             case ESM::REC_CONT4:
             case ESM::REC_CREA4:
             case ESM::REC_DOOR4:
@@ -368,6 +1022,10 @@ namespace MWWorld
             case ESM::REC_FURN4:
             case ESM::REC_IMOD4:
             case ESM::REC_INGR4:
+<<<<<<< HEAD
+=======
+            case ESM::REC_KEYM4:
+>>>>>>> origin/main
             case ESM::REC_LIGH4:
             case ESM::REC_LVLI4:
             case ESM::REC_LVLC4:
@@ -375,9 +1033,19 @@ namespace MWWorld
             case ESM::REC_MISC4:
             case ESM::REC_MSTT4:
             case ESM::REC_NPC_4:
+<<<<<<< HEAD
             case ESM::REC_SCOL4:
             case ESM::REC_STAT4:
             case ESM::REC_TERM4:
+=======
+            case ESM::REC_PROJ4:
+            case ESM::REC_SCOL4:
+            case ESM::REC_SNDR4:
+            case ESM::REC_SOUN4:
+            case ESM::REC_STAT4:
+            case ESM::REC_TERM4:
+            case ESM::REC_TACT4:
+>>>>>>> origin/main
             case ESM::REC_TREE4:
             case ESM::REC_WEAP4:
                 return true;
@@ -470,6 +1138,7 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+<<<<<<< HEAD
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
         auto visitorRec = [this, listener](ESM4::Reader& r) {
@@ -515,10 +1184,281 @@ namespace MWWorld
         return cfg;
     }
 
+=======
+        // Any further native content load invalidates a previously published resolution. Publication resumes only
+        // after validate() proves the complete typed identity against the resulting winning stores.
+        mFalloutPlayerState.reset();
+
+        const bool isFalloutNewVegasMasterCandidate
+            = Misc::StringUtils::ciEqual(reader.getFileName().filename().string(), "FalloutNV.esm");
+        if (isFalloutNewVegasMasterCandidate)
+        {
+            ++mFalloutNewVegasMasterCandidateCount;
+            mFalloutNewVegasMasterCandidateIndex.reset();
+
+            if (mFalloutNewVegasMasterCandidateCount != 1)
+                throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+            if (reader.getModIndex() > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                throw std::runtime_error("FalloutNV.esm master index cannot be represented by a normalized FormID");
+
+            mFalloutNewVegasMasterCandidateIndex = static_cast<std::int32_t>(reader.getModIndex());
+        }
+
+        const ESM4Game detectedGame = detectESM4Game(reader.getFileName());
+        if (detectedGame != ESM4Game::Unknown && detectedGame != mESM4Game)
+        {
+            if (mESM4Game == ESM4Game::Unknown)
+            {
+                mESM4Game = detectedGame;
+                mESM4GameMasterIndex = reader.getModIndex();
+                Log(Debug::Info) << "World viewer: session game=" << gameName(mESM4Game)
+                                 << " master=" << reader.getFileName().filename().string()
+                                 << " loadOrderIndex=" << *mESM4GameMasterIndex;
+            }
+            else
+            {
+                Log(Debug::Warning) << "World viewer: ignoring conflicting game master="
+                                    << reader.getFileName().filename().string() << " detected=" << gameName(detectedGame)
+                                    << " session=" << gameName(mESM4Game);
+            }
+        }
+        mHasStarfieldContent = mHasStarfieldContent || (reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f);
+        if (listener != nullptr)
+            listener->setProgressRange(::EsmLoader::fileProgress);
+        int seenWorlds = 0;
+        int seenCells = 0;
+        int seenRefs = 0;
+        int seenActors = 0;
+        int seenNpcBases = 0;
+        int seenStatics = 0;
+        int handledWorlds = 0;
+        int handledCells = 0;
+        int handledRefs = 0;
+        int handledActors = 0;
+        int handledNpcBases = 0;
+        int handledStatics = 0;
+        auto visitorRec = [this, listener, &seenWorlds, &seenCells, &seenRefs, &seenActors, &seenNpcBases, &seenStatics,
+                              &handledWorlds, &handledCells, &handledRefs, &handledActors, &handledNpcBases,
+                              &handledStatics](ESM4::Reader& r) {
+            const auto recordType = static_cast<ESM4::RecordTypes>(r.hdr().record.typeId);
+            bool result = ESMStoreImp::readRecord(r, *this);
+            switch (recordType)
+            {
+                case ESM4::REC_WRLD:
+                    ++seenWorlds;
+                    if (result)
+                        ++handledWorlds;
+                    break;
+                case ESM4::REC_CELL:
+                    ++seenCells;
+                    if (result)
+                        ++handledCells;
+                    break;
+                case ESM4::REC_REFR:
+                    ++seenRefs;
+                    if (result)
+                        ++handledRefs;
+                    break;
+                case ESM4::REC_ACHR:
+                    ++seenActors;
+                    if (result)
+                        ++handledActors;
+                    break;
+                case ESM4::REC_NPC_:
+                    ++seenNpcBases;
+                    if (result)
+                        ++handledNpcBases;
+                    break;
+                case ESM4::REC_STAT:
+                    ++seenStatics;
+                    if (result)
+                        ++handledStatics;
+                    break;
+                default:
+                    break;
+            }
+            if (listener != nullptr)
+                listener->setProgress(::EsmLoader::fileProgress * r.getFileOffset() / r.getFileSize());
+            return result;
+        };
+        auto visitorGroup = [](ESM4::Reader& r) {
+            static int logged = 0;
+            if (logged >= 220)
+                return;
+            const ESM4::GroupTypeHeader& group = r.hdr().group;
+            if (r.stackSize() == 0 || group.type == ESM4::Grp_RecordType || group.type == ESM4::Grp_WorldChild)
+            {
+                Log(Debug::Info) << "World viewer: ESM4 group offset=" << r.getFileOffset()
+                                 << " stack=" << r.stackSize() << " " << ESM4::printLabel(group.label, group.type)
+                                 << " size=" << group.groupSize;
+                ++logged;
+            }
+        };
+        try
+        {
+            ESM4::ReaderUtils::readAll(reader, visitorRec, visitorGroup);
+        }
+        catch (...)
+        {
+            // A matching filename whose records did not load completely cannot establish normalized provenance.
+            if (isFalloutNewVegasMasterCandidate)
+                mFalloutNewVegasMasterCandidateIndex.reset();
+            throw;
+        }
+        Log(Debug::Info) << "World viewer: ESM4 record counters"
+                         << " seenWorlds=" << seenWorlds << "/" << handledWorlds << " seenCells=" << seenCells << "/"
+                         << handledCells << " seenRefs=" << seenRefs << "/" << handledRefs
+                         << " seenActors=" << seenActors << "/" << handledActors << " seenNpcBases=" << seenNpcBases
+                         << "/" << handledNpcBases << " seenStatics=" << seenStatics << "/" << handledStatics;
+        Log(Debug::Info) << "World viewer: ESM4 load counts offset=" << reader.getFileOffset() << "/"
+                         << reader.getFileSize() << " worlds=" << get<ESM4::World>().getSize()
+                         << " cells=" << get<ESM4::Cell>().getSize() << " refs=" << get<ESM4::Reference>().getSize()
+                         << " actors=" << get<ESM4::ActorCharacter>().getSize()
+                         << " creatures=" << get<ESM4::ActorCreature>().getSize()
+                         << " npcBases=" << get<ESM4::Npc>().getSize()
+                         << " creatureBases=" << get<ESM4::Creature>().getSize()
+                         << " leveledNpcBases=" << get<ESM4::LevelledNpc>().getSize()
+                         << " leveledCreatureBases=" << get<ESM4::LevelledCreature>().getSize()
+                         << " quests=" << get<ESM4::Quest>().getSize()
+                         << " dialogueTopics=" << get<ESM4::Dialogue>().getSize()
+                         << " dialogueInfos=" << get<ESM4::DialogInfo>().getSize()
+                         << " scripts=" << get<ESM4::Script>().getSize()
+                         << " globals=" << get<ESM4::GlobalVariable>().getSize()
+                         << " formLists=" << get<ESM4::FormIdList>().getSize()
+                         << " animatedObjects=" << get<ESM4::AnimObject>().getSize()
+                         << " statics=" << get<ESM4::Static>().getSize()
+                         << " textureSets=" << get<ESM4::TextureSet>().getSize()
+                         << " magicEffects=" << get<ESM4::MagicEffect>().getSize()
+                         << " spells=" << get<ESM4::Spell>().getSize()
+                         << " packIns=" << mStoreImp->mStarfieldPackIns.size();
+    }
+
+    std::optional<ESM::FormId> ESMStore::getStarfieldPackInStorageCell(ESM::FormId id) const
+    {
+        const auto found = mStoreImp->mStarfieldPackIns.find(id);
+        if (found != mStoreImp->mStarfieldPackIns.end())
+            return found->second.mStorageCell;
+
+        // Starfield's self-master FormIDs can arrive with the session content index while raw base records use
+        // local index zero. Mirror the existing placed-base fallback without weakening lookups for other games.
+        if (id.hasContentFile() && id.mContentFile != 0)
+        {
+            id.mContentFile = 0;
+            const auto local = mStoreImp->mStarfieldPackIns.find(id);
+            if (local != mStoreImp->mStarfieldPackIns.end())
+                return local->second.mStorageCell;
+        }
+        return std::nullopt;
+    }
+
+    FalloutNativePlayerRecordsResolution ESMStore::getFalloutNativePlayerRecords() const
+    {
+        if (!mFalloutPlayerState)
+            return { std::nullopt, "native FNV Player state has not been fully validated" };
+        return resolveFalloutNativePlayerRecords(
+            get<ESM4::Npc>(), get<ESM4::Class>(), get<ESM4::Race>(), *mFalloutPlayerState);
+    }
+
+    bool ESMStore::prepareFalloutNewVegasCompatibilityRecords()
+    {
+        const std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
+            mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
+            get<ESM4::Class>(), get<ESM4::Race>(), get<ESM4::FormIdList>(), get<ESM4::Ammunition>());
+        if (!player)
+            return false;
+
+        auto& gameSettings = getWritable<ESM::GameSetting>();
+        std::size_t bridged = 0;
+        std::size_t skipped = 0;
+        for (const ESM4::GameSetting& source : get<ESM4::GameSetting>())
+        {
+            if (source.mEditorId.empty())
+                continue;
+
+            const std::optional<ESM::Variant> value = bridgeFalloutGameSettingValue(source.mData);
+            if (!value)
+            {
+                ++skipped;
+                continue;
+            }
+
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(source.mEditorId);
+            record.mValue = *value;
+            record.mRecordFlags = source.mFlags;
+            gameSettings.insertStatic(record);
+            ++bridged;
+        }
+
+        for (const auto& [id, value] : falloutCompatibilityGameSettings())
+        {
+            if (gameSettings.search(id) != nullptr)
+                continue;
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(id);
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            gameSettings.insertStatic(record);
+        }
+
+        auto& globals = getWritable<ESM::Global>();
+        for (const auto& [id, value] : falloutCompatibilityGlobals())
+        {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (globals.search(refId) != nullptr)
+                continue;
+            ESM::Global record;
+            record.mId = refId;
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            globals.insertStatic(record);
+        }
+
+        Log(Debug::Info) << "FNV compatibility: bridged " << bridged << " native GMST records; skipped " << skipped
+                         << " values outside the ESM3 carrier domain";
+        return true;
+    }
+
+    void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
+    {
+        mStoreImp->mIds[id] = type;
+    }
+
+    ESM::LuaScriptsCfg ESMStore::getLuaScriptsCfg() const
+    {
+        ESM::LuaScriptsCfg cfg;
+        for (const LuaContent& c : mLuaContent)
+        {
+            if (std::holds_alternative<std::filesystem::path>(c))
+            {
+                // *.omwscripts are intentionally reloaded every time when `getLuaScriptsCfg` is called.
+                // It is important for the `reloadlua` console command.
+                try
+                {
+                    auto file = std::ifstream(std::get<std::filesystem::path>(c));
+                    std::string fileContent(std::istreambuf_iterator<char>(file), {});
+                    LuaUtil::parseOMWScripts(cfg, fileContent);
+                }
+                catch (std::exception& e)
+                {
+                    Log(Debug::Error) << e.what();
+                }
+            }
+            else
+            {
+                const ESM::LuaScriptsCfg& addition = std::get<ESM::LuaScriptsCfg>(c);
+                cfg.mScripts.insert(cfg.mScripts.end(), addition.mScripts.begin(), addition.mScripts.end());
+            }
+        }
+        return cfg;
+    }
+
+>>>>>>> origin/main
     void ESMStore::setUp()
     {
         if (mIsSetUpDone)
             throw std::logic_error("ESMStore::setUp() is called twice");
+<<<<<<< HEAD
         mIsSetUpDone = true;
 
         for (const auto& [_, store] : mStoreImp->mRecNameToStore)
@@ -526,6 +1466,33 @@ namespace MWWorld
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
+=======
+
+        // The basename is provenance only. Select the FNV-only compatibility path after the exact Player NPC_,
+        // engine-reserved runtime reference, CLAS, and RACE records all validate in one namespace.
+        const bool isOfficialFalloutNewVegas = prepareFalloutNewVegasCompatibilityRecords();
+        mIsSetUpDone = true;
+
+        for (const auto& [recordType, store] : mStoreImp->mRecNameToStore)
+        {
+            if (isOfficialFalloutNewVegas && recordType == ESM::REC_GMST)
+                continue;
+            store->setUp();
+        }
+
+        if (isOfficialFalloutNewVegas)
+        {
+            getWritable<ESM::Skill>().setUpNeutral();
+            getWritable<ESM::MagicEffect>().setUpNeutral();
+            getWritable<ESM::Attribute>().setUpNeutral();
+        }
+        else
+        {
+            getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
+            getWritable<ESM::MagicEffect>().setUp();
+            getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
+        }
+>>>>>>> origin/main
         getWritable<ESM4::Land>().updateLandPositions(get<ESM4::Cell>());
         getWritable<ESM4::Reference>().preprocessReferences(get<ESM4::Cell>());
         getWritable<ESM4::ActorCharacter>().preprocessReferences(get<ESM4::Cell>());
@@ -533,6 +1500,222 @@ namespace MWWorld
 
         rebuildIdsIndex();
         mStoreImp->mStaticIds = mStoreImp->mIds;
+<<<<<<< HEAD
+=======
+    }
+
+    void ESMStore::rebuildIdsIndex()
+    {
+        mStoreImp->mIds.clear();
+        for (const auto& [recordType, store] : mStoreImp->mRecNameToStore)
+        {
+            if (isCacheableRecord(recordType))
+            {
+                std::vector<ESM::RefId> identifiers;
+                store->listIdentifier(identifiers);
+                for (auto& record : identifiers)
+                    mStoreImp->mIds[record] = recordType;
+            }
+        }
+    }
+
+    void ESMStore::validateRecords(ESM::ReadersCache& readers)
+    {
+        validate();
+        countAllCellRefsAndMarkKeys(readers);
+    }
+
+    void ESMStore::countAllCellRefsAndMarkKeys(ESM::ReadersCache& readers)
+    {
+        // TODO: We currently need to read entire files here again.
+        // We should consider consolidating or deferring this reading.
+        if (!mRefCount.empty())
+            return;
+        std::vector<Ref> refs;
+        std::set<ESM::RefId> keyIDs;
+        std::vector<ESM::RefId> refIDs;
+        const Store<ESM::Cell>& cells = get<ESM::Cell>();
+        for (auto it = cells.intBegin(); it != cells.intEnd(); ++it)
+            readRefs(*it, refs, refIDs, keyIDs, readers);
+        for (auto it = cells.extBegin(); it != cells.extEnd(); ++it)
+            readRefs(*it, refs, refIDs, keyIDs, readers);
+        const auto lessByRefNum = [](const Ref& l, const Ref& r) { return l.mRefNum < r.mRefNum; };
+        std::stable_sort(refs.begin(), refs.end(), lessByRefNum);
+        const auto equalByRefNum = [](const Ref& l, const Ref& r) { return l.mRefNum == r.mRefNum; };
+        const auto incrementRefCount = [&](const Ref& value) {
+            if (value.mRefID != deletedRefID)
+            {
+                ESM::RefId& refId = refIDs[value.mRefID];
+                ++mRefCount[std::move(refId)];
+            }
+        };
+        Misc::forEachUnique(refs.rbegin(), refs.rend(), equalByRefNum, incrementRefCount);
+        auto& store = getWritable<ESM::Miscellaneous>().mStatic;
+        for (const auto& id : keyIDs)
+        {
+            auto it = store.find(id);
+            if (it != store.end())
+                it->second.mData.mFlags |= ESM::Miscellaneous::Key;
+        }
+    }
+
+    int ESMStore::getRefCount(const ESM::RefId& id) const
+    {
+        auto it = mRefCount.find(id);
+        if (it == mRefCount.end())
+            return 0;
+        return it->second;
+    }
+
+    void ESMStore::validate()
+    {
+        // Publish native Player state transactionally. A prior successful resolution never survives a failed
+        // revalidation, and compatibility carriers are built only from the exact winning typed records.
+        mFalloutPlayerState.reset();
+        std::optional<FalloutPlayerState> validatedFalloutPlayerState;
+        std::optional<FalloutPlayerCompatibilityCarriers> falloutPlayerCarriers;
+        std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
+            mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
+            get<ESM4::Class>(), get<ESM4::Race>(), get<ESM4::FormIdList>(), get<ESM4::Ammunition>());
+        if (player)
+        {
+            falloutPlayerCarriers.emplace(makeFalloutPlayerCompatibilityCarriers(
+                player->mState, *player->mNativeRecords.mClass, *player->mNativeRecords.mRace));
+            validatedFalloutPlayerState = std::move(player->mState);
+        }
+
+        auto& npcs = getWritable<ESM::NPC>();
+        if (!player && shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+        {
+            ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
+                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
+                nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+        }
+        rebuildIdsIndex();
+        mStoreImp->mStaticIds = mStoreImp->mIds;
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mStatic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
+        }
+
+        for (const ESM::NPC& npc : npcsToReplace)
+        {
+            npcs.eraseStatic(npc.mId);
+            npcs.insertStatic(npc);
+        }
+
+        removeMissingScripts(getWritable<ESM::Script>(), getWritable<ESM::Creature>().mStatic);
+
+        // Validate spell effects and enchantments for invalid arguments
+        auto& spells = getWritable<ESM::Spell>();
+        auto& enchantments = getWritable<ESM::Enchantment>();
+        auto& magicEffects = getWritable<ESM::MagicEffect>();
+
+        std::vector<ESM::Spell> spellsToReplace = getSpellsToReplace(spells, magicEffects);
+        for (const ESM::Spell& spell : spellsToReplace)
+        {
+            spells.eraseStatic(spell.mId);
+            spells.insertStatic(spell);
+        }
+
+        std::vector<ESM::Enchantment> enchantmentsToReplace = getSpellsToReplace(enchantments, magicEffects);
+        for (const ESM::Enchantment& enchantment : enchantmentsToReplace)
+        {
+            enchantments.eraseStatic(enchantment.mId);
+            enchantments.insertStatic(enchantment);
+        }
+
+        if (falloutPlayerCarriers)
+        {
+            getWritable<ESM::Class>().insertStatic(falloutPlayerCarriers->mClass);
+            getWritable<ESM::Race>().insertStatic(falloutPlayerCarriers->mRace);
+            npcs.insertStatic(falloutPlayerCarriers->mPlayer);
+
+            // setUp() captured the static snapshot before validation materialized Player. Refresh it so the normal
+            // movePlayerRecord()/clearDynamic() path owns the carrier without any FNV-only lookup special case.
+            rebuildIdsIndex();
+            mStoreImp->mStaticIds = mStoreImp->mIds;
+        }
+
+        if (validatedFalloutPlayerState)
+        {
+            Log(Debug::Info) << "FNV/ESM4: validated native Player base="
+                             << validatedFalloutPlayerState->mBaseRecord
+                             << " reference=" << validatedFalloutPlayerState->mReferenceRecord
+                             << " stats=" << validatedFalloutPlayerState->mStatsRecord
+                             << " ai=" << validatedFalloutPlayerState->mAIDataRecord
+                             << " health=" << validatedFalloutPlayerState->mHealth;
+        }
+        mFalloutPlayerState = std::move(validatedFalloutPlayerState);
+    }
+
+    void ESMStore::movePlayerRecord()
+    {
+        auto& npcs = getWritable<ESM::NPC>();
+        auto player = npcs.find(ESM::RefId::stringRefId("Player"));
+        npcs.insert(*player);
+    }
+
+    void ESMStore::validateDynamic()
+    {
+        auto& npcs = getWritable<ESM::NPC>();
+        if (!mFalloutPlayerState
+            && shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+        {
+            ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
+                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
+                nullptr, chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+        }
+        rebuildIdsIndex();
+        auto& scripts = getWritable<ESM::Script>();
+
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mDynamic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mDynamic);
+        }
+
+        for (const ESM::NPC& npc : npcsToReplace)
+            npcs.insert(npc);
+
+        removeMissingScripts(scripts, getWritable<ESM::Armor>().mDynamic);
+        removeMissingScripts(scripts, getWritable<ESM::Book>().mDynamic);
+        removeMissingScripts(scripts, getWritable<ESM::Clothing>().mDynamic);
+        removeMissingScripts(scripts, getWritable<ESM::Creature>().mDynamic);
+        removeMissingScripts(scripts, getWritable<ESM::Weapon>().mDynamic);
+
+        removeMissingObjects(getWritable<ESM::CreatureLevList>());
+        removeMissingObjects(getWritable<ESM::ItemLevList>());
+    }
+
+    // Leveled lists can be modified by scripts. This removes items that no longer exist (presumably because the
+    // plugin was removed) from modified lists
+    template <class T>
+    void ESMStore::removeMissingObjects(Store<T>& store)
+    {
+        for (auto& entry : store.mDynamic)
+        {
+            auto first = std::remove_if(entry.second.mList.begin(), entry.second.mList.end(), [&](const auto& item) {
+                if (!find(item.mId))
+                {
+                    Log(Debug::Verbose) << "Leveled list " << entry.first << " has nonexistent object " << item.mId
+                                        << ", ignoring it.";
+                    return true;
+                }
+                return false;
+            });
+            entry.second.mList.erase(first, entry.second.mList.end());
+        }
+>>>>>>> origin/main
     }
 
     void ESMStore::rebuildIdsIndex()
@@ -690,9 +1873,13 @@ namespace MWWorld
             + get<ESM::Activator>().getDynamicSize() + get<ESM::Miscellaneous>().getDynamicSize()
             + get<ESM::Weapon>().getDynamicSize() + get<ESM::CreatureLevList>().getDynamicSize()
             + get<ESM::ItemLevList>().getDynamicSize() + get<ESM::Creature>().getDynamicSize()
+<<<<<<< HEAD
             + get<ESM::Container>().getDynamicSize() + get<ESM::Light>().getDynamicSize()
             + get<ESM::Static>().getDynamicSize() + get<ESM::Door>().getDynamicSize()
             + get<ESM::Probe>().getDynamicSize();
+=======
+            + get<ESM::Container>().getDynamicSize() + get<ESM::Light>().getDynamicSize();
+>>>>>>> origin/main
     }
 
     void ESMStore::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -719,9 +1906,12 @@ namespace MWWorld
         get<ESM::Creature>().write(writer, progress);
         get<ESM::Container>().write(writer, progress);
         get<ESM::Light>().write(writer, progress);
+<<<<<<< HEAD
         get<ESM::Static>().write(writer, progress);
         get<ESM::Door>().write(writer, progress);
         get<ESM::Probe>().write(writer, progress);
+=======
+>>>>>>> origin/main
     }
 
     bool ESMStore::readRecord(ESM::ESMReader& reader, uint32_t typeId)
@@ -747,9 +1937,12 @@ namespace MWWorld
             case ESM::REC_LEVI:
             case ESM::REC_LEVC:
             case ESM::REC_LIGH:
+<<<<<<< HEAD
             case ESM::REC_STAT:
             case ESM::REC_DOOR:
             case ESM::REC_PROB:
+=======
+>>>>>>> origin/main
                 mStoreImp->mRecNameToStore[type]->read(reader, true);
                 return true;
 

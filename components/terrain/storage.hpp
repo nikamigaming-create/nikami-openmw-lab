@@ -36,8 +36,13 @@ namespace Terrain
         virtual bool hasData(ESM::ExteriorCellLocation cellLocation)
         {
             float dummy;
+<<<<<<< HEAD
             return getMinMaxHeights(1.f, osg::Vec2f(cellLocation.mX + 0.5f, cellLocation.mY + 0.5f),
                 cellLocation.mWorldspace, dummy, dummy);
+=======
+            return getMinMaxHeights(
+                1, osg::Vec2f(cellLocation.mX + 0.5, cellLocation.mY + 0.5), cellLocation.mWorldspace, dummy, dummy);
+>>>>>>> origin/main
         }
 
         /// Get the minimum and maximum heights of a terrain region.

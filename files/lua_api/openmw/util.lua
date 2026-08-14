@@ -1,6 +1,10 @@
 ---
 -- Defines utility functions and classes like 3D vectors, that don't depend on the game world.
+<<<<<<< HEAD
 -- @context global|menu|local|player|load
+=======
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module util
 -- @usage local util = require('openmw.util')
 
@@ -478,6 +482,7 @@
 -- @return #Color
 
 ---
+<<<<<<< HEAD
 -- Creates a Color from comma-separated string (in RGB or RGBA order, spaces are ignored)
 -- @function [parent=#COLOR] commaString
 -- @param #string str
@@ -488,6 +493,8 @@
 -- @usage local color = util.color.commaString('0,255,0,128') -- green color, semi-transparent
 
 ---
+=======
+>>>>>>> origin/main
 -- Creates a Color from RGB format. Equivalent to calling util.rgba with a = 1.
 -- @function [parent=#COLOR] rgb
 -- @param #number r

@@ -115,6 +115,11 @@ void ESM4::Potion::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadalch"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::ALCH::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -2,6 +2,12 @@
 #define OPENMW_MECHANICS_ACTOR_H
 
 #include <memory>
+<<<<<<< HEAD
+=======
+#include <set>
+#include <utility>
+#include <vector>
+>>>>>>> origin/main
 
 #include "character.hpp"
 #include "creaturestats.hpp"
@@ -32,6 +38,17 @@ namespace MWMechanics
             : mCharacterController(ptr, animation)
             , mPositionAdjusted(ptr.getClass().getCreatureStats(ptr).getFallHeight() > 0)
         {
+<<<<<<< HEAD
+=======
+            std::vector<MWWorld::Ptr> targets;
+            ptr.getClass().getCreatureStats(ptr).getAiSequence().getCombatTargets(targets);
+            for (const MWWorld::Ptr& target : targets)
+            {
+                if (!target.isEmpty() && target.getClass().isActor())
+                    mObservedCombatTargets.insert(target.getClass().getCreatureStats(target).getActorId());
+            }
+            mHasObservedCombatState = true;
+>>>>>>> origin/main
         }
 
         const MWWorld::Ptr& getPtr() const { return mCharacterController.getPtr(); }
@@ -69,16 +86,36 @@ namespace MWMechanics
         }
         bool isInvalid() const { return mInvalid; }
 
+<<<<<<< HEAD
+=======
+        bool hasObservedCombatState() const { return mHasObservedCombatState; }
+        const std::set<int>& getObservedCombatTargets() const { return mObservedCombatTargets; }
+        void setObservedCombatTargets(std::set<int> targets)
+        {
+            mObservedCombatTargets = std::move(targets);
+            mHasObservedCombatState = true;
+        }
+
+>>>>>>> origin/main
     private:
         CharacterController mCharacterController;
         int mGreetingTimer{ 0 };
         float mTargetAngleRadians{ 0.f };
         GreetingState mGreetingState{ GreetingState::None };
         Misc::DeviatingPeriodicTimer mEngageCombat{ 1.0f, 0.25f,
+<<<<<<< HEAD
             Misc::Rng::deviate(0, 0.25f, MWBase::Environment::get().getWorld()->getPrng()) };
         bool mIsTurningToPlayer{ false };
         bool mInvalid{ false };
         bool mPositionAdjusted;
+=======
+            Misc::Rng::deviate(0.f, 0.25f, MWBase::Environment::get().getWorld()->getPrng()) };
+        bool mIsTurningToPlayer{ false };
+        bool mInvalid{ false };
+        bool mPositionAdjusted;
+        bool mHasObservedCombatState{ false };
+        std::set<int> mObservedCombatTargets;
+>>>>>>> origin/main
     };
 
 }

@@ -33,7 +33,11 @@ namespace DetourNavigator
             float mHeight;
         };
 
+<<<<<<< HEAD
         std::vector<float> getOffMeshVerts(std::span<const OffMeshConnection> connections)
+=======
+        std::vector<float> getOffMeshVerts(const std::vector<OffMeshConnection>& connections)
+>>>>>>> origin/main
         {
             std::vector<float> result;
 
@@ -72,7 +76,11 @@ namespace DetourNavigator
             return Flag_none;
         }
 
+<<<<<<< HEAD
         std::vector<unsigned char> getOffMeshConAreas(std::span<const OffMeshConnection> connections)
+=======
+        std::vector<unsigned char> getOffMeshConAreas(const std::vector<OffMeshConnection>& connections)
+>>>>>>> origin/main
         {
             std::vector<unsigned char> result;
             result.reserve(connections.size());
@@ -81,7 +89,11 @@ namespace DetourNavigator
             return result;
         }
 
+<<<<<<< HEAD
         std::vector<unsigned short> getOffMeshFlags(std::span<const OffMeshConnection> connections)
+=======
+        std::vector<unsigned short> getOffMeshFlags(const std::vector<OffMeshConnection>& connections)
+>>>>>>> origin/main
         {
             std::vector<unsigned short> result;
             result.reserve(connections.size());
@@ -550,8 +562,13 @@ namespace DetourNavigator
     }
 
     NavMeshData makeNavMeshTileData(const PreparedNavMeshData& data,
+<<<<<<< HEAD
         std::span<const OffMeshConnection> offMeshConnections, const AgentBounds& agentBounds, const TilePosition& tile,
         const RecastSettings& settings)
+=======
+        const std::vector<OffMeshConnection>& offMeshConnections, const AgentBounds& agentBounds,
+        const TilePosition& tile, const RecastSettings& settings)
+>>>>>>> origin/main
     {
         const auto offMeshConVerts = getOffMeshVerts(offMeshConnections);
         const std::vector<float> offMeshConRad(offMeshConnections.size(), getRadius(settings, agentBounds));
@@ -594,8 +611,14 @@ namespace DetourNavigator
 
         unsigned char* navMeshData;
         int navMeshDataSize;
+<<<<<<< HEAD
 
         if (!dtCreateNavMeshData(&params, &navMeshData, &navMeshDataSize))
+=======
+        const auto navMeshDataCreated = dtCreateNavMeshData(&params, &navMeshData, &navMeshDataSize);
+
+        if (!navMeshDataCreated)
+>>>>>>> origin/main
             throw NavigatorException("Failed to create navmesh tile data");
 
         return NavMeshData(navMeshData, navMeshDataSize);

@@ -1,4 +1,8 @@
 #include "spellview.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/world.hpp"
+>>>>>>> origin/main
 
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_Gui.h>
@@ -6,6 +10,10 @@
 #include <MyGUI_ScrollView.h>
 
 #include <components/settings/values.hpp>
+<<<<<<< HEAD
+=======
+#include <components/debug/debuglog.hpp>
+>>>>>>> origin/main
 #include <components/widgets/box.hpp>
 #include <components/widgets/sharedstatebutton.hpp>
 
@@ -19,6 +27,11 @@
 namespace MWGui
 {
 
+<<<<<<< HEAD
+=======
+    const char* SpellView::sSpellModelIndex = "SpellModelIndex";
+
+>>>>>>> origin/main
     SpellView::LineInfo::LineInfo(
         MyGUI::Widget* leftWidget, MyGUI::Widget* rightWidget, SpellModel::ModelIndex spellIndex)
         : mLeftWidget(leftWidget)
@@ -27,6 +40,18 @@ namespace MWGui
     {
     }
 
+<<<<<<< HEAD
+=======
+    SpellView::SpellView()
+        : mScrollView(nullptr)
+        , mShowCostColumn(true)
+        , mHighlightSelected(true)
+        , mControllerActiveWindow(false)
+        , mControllerFocus(0)
+    {
+    }
+
+>>>>>>> origin/main
     void SpellView::initialiseOverride()
     {
         Base::initialiseOverride();
@@ -95,12 +120,46 @@ namespace MWGui
             const Spell& spell = mModel->getItem(i);
             if (curType != spell.mType)
             {
+<<<<<<< HEAD
                 if (spell.mType == Spell::Type_Power)
                     addGroup("#{sPowers}", {});
                 else if (spell.mType == Spell::Type_Spell)
                     addGroup("#{sSpells}", mShowCostColumn ? "#{sCostChance}" : "");
                 else
                     addGroup("#{sMagicItem}", mShowCostColumn ? "#{sCostCharge}" : "");
+=======
+                bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+                if (!falloutContent && MWBase::Environment::get().getWorld())
+                {
+                    for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+                    {
+                        if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                        {
+                            falloutContent = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (spell.mType == Spell::Type_Power)
+                {
+                    addGroup(falloutContent ? "TRAITS" : "#{sPowers}", {});
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied TRAITS";
+                }
+                else if (spell.mType == Spell::Type_Spell)
+                {
+                    addGroup(falloutContent ? "PERKS" : "#{sSpells}", mShowCostColumn ? "#{sCostChance}" : "");
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied PERKS";
+                }
+                else
+                {
+                    addGroup(falloutContent ? "EFFX" : "#{sMagicItem}", mShowCostColumn ? "#{sCostCharge}" : "");
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied EFFX";
+                }
+>>>>>>> origin/main
                 curType = spell.mType;
             }
 
@@ -115,7 +174,11 @@ namespace MWGui
             t->setCaption(spell.mName + captionSuffix);
             t->setTextAlign(MyGUI::Align::Left);
             adjustSpellWidget(spell, i, t);
+<<<<<<< HEAD
             mButtons.emplace_back(t, i);
+=======
+            mButtons.emplace_back(std::make_pair(t, i));
+>>>>>>> origin/main
 
             if (!spell.mCostColumn.empty() && mShowCostColumn)
             {
@@ -188,7 +251,11 @@ namespace MWGui
         }
 
         // special case, look for spells added to model that are beyond last updatable item
+<<<<<<< HEAD
         auto topSpellIndex = static_cast<SpellModel::ModelIndex>(mModel->getItemCount() - 1);
+=======
+        SpellModel::ModelIndex topSpellIndex = mModel->getItemCount() - 1;
+>>>>>>> origin/main
         if (fullUpdateRequired || ((0 <= topSpellIndex) && (maxSpellIndexFound < topSpellIndex)))
         {
             update();
@@ -224,8 +291,13 @@ namespace MWGui
 
         if (Settings::gui().mControllerMenus)
         {
+<<<<<<< HEAD
             mControllerFocus = std::min(mControllerFocus, mButtons.size());
             updateControllerFocus(mButtons.size(), mControllerFocus);
+=======
+            mControllerFocus = wrap(mControllerFocus, mButtons.size());
+            updateControllerFocus(-1, mControllerFocus);
+>>>>>>> origin/main
         }
 
         // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the
@@ -296,7 +368,11 @@ namespace MWGui
             widget->setUserString("Spell", spell.mId.serialize());
         }
 
+<<<<<<< HEAD
         widget->setUserString("SpellModelIndex", MyGUI::utility::toString(index));
+=======
+        widget->setUserString(sSpellModelIndex, MyGUI::utility::toString(index));
+>>>>>>> origin/main
 
         widget->eventMouseWheel += MyGUI::newDelegate(this, &SpellView::onMouseWheelMoved);
         widget->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellView::onSpellSelected);
@@ -304,7 +380,11 @@ namespace MWGui
 
     SpellModel::ModelIndex SpellView::getSpellModelIndex(MyGUI::Widget* widget)
     {
+<<<<<<< HEAD
         return MyGUI::utility::parseInt(widget->getUserString("SpellModelIndex"));
+=======
+        return MyGUI::utility::parseInt(widget->getUserString(sSpellModelIndex));
+>>>>>>> origin/main
     }
 
     void SpellView::onSpellSelected(MyGUI::Widget* sender)
@@ -338,14 +418,24 @@ namespace MWGui
         if (mButtons.empty())
             return;
 
+<<<<<<< HEAD
         size_t prevFocus = mControllerFocus;
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
         int delta = 0;
+=======
+        int prevFocus = mControllerFocus;
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+
+>>>>>>> origin/main
         switch (button)
         {
             case SDL_CONTROLLER_BUTTON_A:
                 // Select the focused item, if any.
+<<<<<<< HEAD
                 if (mControllerFocus < mButtons.size())
+=======
+                if (mControllerFocus >= 0 && mControllerFocus < static_cast<int>(mButtons.size()))
+>>>>>>> origin/main
                 {
                     onSpellSelected(mButtons[mControllerFocus].first);
                     MWBase::Environment::get().getWindowManager()->playSound(ESM::RefId::stringRefId("Menu Click"));
@@ -357,6 +447,7 @@ namespace MWGui
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
                 winMgr->restoreControllerTooltips();
+<<<<<<< HEAD
                 delta = -1;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
@@ -370,12 +461,32 @@ namespace MWGui
             case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                 winMgr->restoreControllerTooltips();
                 delta = 10;
+=======
+                mControllerFocus--;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                winMgr->restoreControllerTooltips();
+                mControllerFocus++;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                winMgr->restoreControllerTooltips();
+                mControllerFocus = std::max(0, mControllerFocus - 10);
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                winMgr->restoreControllerTooltips();
+                mControllerFocus = std::min(mControllerFocus + 10, static_cast<int>(mButtons.size()) - 1);
+>>>>>>> origin/main
                 break;
             case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
             {
                 // Jump to first item in previous group
+<<<<<<< HEAD
                 size_t prevGroupIndex = 0;
                 for (size_t groupIndex : mGroupIndices)
+=======
+                int prevGroupIndex = 0;
+                for (int groupIndex : mGroupIndices)
+>>>>>>> origin/main
                 {
                     if (groupIndex >= mControllerFocus)
                         break;
@@ -388,8 +499,13 @@ namespace MWGui
             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
             {
                 // Jump to first item in next group
+<<<<<<< HEAD
                 size_t newFocus = mControllerFocus;
                 for (size_t groupIndex : mGroupIndices)
+=======
+                int newFocus = mControllerFocus;
+                for (int groupIndex : mGroupIndices)
+>>>>>>> origin/main
                 {
                     if (groupIndex > mControllerFocus)
                     {
@@ -407,27 +523,46 @@ namespace MWGui
                 return;
         }
 
+<<<<<<< HEAD
         mControllerFocus = wrap(mControllerFocus, mButtons.size(), delta);
+=======
+        mControllerFocus = wrap(mControllerFocus, mButtons.size());
+>>>>>>> origin/main
 
         if (prevFocus != mControllerFocus)
             updateControllerFocus(prevFocus, mControllerFocus);
         else
+<<<<<<< HEAD
             updateControllerFocus(mButtons.size(), mControllerFocus);
     }
 
     void SpellView::updateControllerFocus(size_t prevFocus, size_t newFocus)
+=======
+            updateControllerFocus(-1, mControllerFocus);
+    }
+
+    void SpellView::updateControllerFocus(int prevFocus, int newFocus)
+>>>>>>> origin/main
     {
         if (mButtons.empty())
             return;
 
+<<<<<<< HEAD
         if (prevFocus < mButtons.size())
+=======
+        if (prevFocus >= 0 && prevFocus < static_cast<int>(mButtons.size()))
+>>>>>>> origin/main
         {
             Gui::SharedStateButton* prev = mButtons[prevFocus].first;
             if (prev)
                 prev->onMouseLostFocus(nullptr);
         }
 
+<<<<<<< HEAD
         if (mControllerActiveWindow && newFocus < mButtons.size())
+=======
+        if (mControllerActiveWindow && newFocus >= 0 && newFocus < static_cast<int>(mButtons.size()))
+>>>>>>> origin/main
         {
             Gui::SharedStateButton* focused = mButtons[newFocus].first;
             if (focused)

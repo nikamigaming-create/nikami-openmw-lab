@@ -2,9 +2,15 @@
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
 
+<<<<<<< HEAD
 #include <components/esm3/loadmgef.hpp>
 
 #include <limits>
+=======
+#include <algorithm>
+#include <limits>
+#include <utility>
+>>>>>>> origin/main
 
 namespace ESM
 {
@@ -119,16 +125,22 @@ namespace ESM
                 esm.getHNOT(effectIndex, "EIND");
                 int32_t actorId;
                 esm.getHNT(actorId, "ACID");
+<<<<<<< HEAD
                 mSummonedCreatureMap[SummonKey(ESM::MagicEffect::indexToRefId(magicEffect), source, effectIndex)]
                     = actorId;
                 mSummonedCreatures.emplace(ESM::MagicEffect::indexToRefId(magicEffect),
                     RefNum{ .mIndex = static_cast<uint32_t>(actorId), .mContentFile = -1 });
+=======
+                mSummonedCreatureMap[SummonKey(magicEffect, source, effectIndex)] = actorId;
+                mSummonedCreatures.emplace(magicEffect, actorId);
+>>>>>>> origin/main
             }
         }
         else
         {
             while (esm.isNextSub("SUMM"))
             {
+<<<<<<< HEAD
                 RefId effectId;
                 if (esm.getFormatVersion() <= MaxSerializeEffectRefIdFormatVersion)
                 {
@@ -144,6 +156,13 @@ namespace ESM
                 else
                     actor = esm.getFormId(true, "ACID");
                 mSummonedCreatures.emplace(effectId, actor);
+=======
+                int32_t magicEffect;
+                esm.getHT(magicEffect);
+                int32_t actorId;
+                esm.getHNT(actorId, "ACID");
+                mSummonedCreatures.emplace(magicEffect, actorId);
+>>>>>>> origin/main
             }
         }
 
@@ -180,6 +199,28 @@ namespace ESM
             mMissingACDT = false;
             esm.getHNOT(mMissingACDT, "NOAC");
         }
+<<<<<<< HEAD
+=======
+        mFalloutLimbDamage.fill(0.f);
+        esm.getHNOT(mFalloutLimbDamage, "FLMB");
+        mFalloutActiveEffects.clear();
+        while (esm.isNextSub("FAEF"))
+        {
+            FalloutActiveEffect effect;
+            std::uint32_t kind = 0;
+            esm.getHT(kind);
+            effect.mKind = static_cast<FalloutActiveEffectKind>(kind);
+            effect.mSpell = esm.getHNRefId("FASP");
+            effect.mBaseEffect = esm.getHNRefId("FABE");
+            esm.getHNT(effect.mFlags, "FAFL");
+            esm.getHNT(effect.mActorValue, "FAAV");
+            esm.getHNT(effect.mMagnitude, "FAMG");
+            esm.getHNT(effect.mDuration, "FADR");
+            esm.getHNT(effect.mTimeLeft, "FATL");
+            esm.getHNT(effect.mCasterActorId, "FACA");
+            mFalloutActiveEffects.push_back(std::move(effect));
+        }
+>>>>>>> origin/main
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -245,6 +286,12 @@ namespace ESM
         if (mLevel != 1)
             esm.writeHNT("LEVL", mLevel);
 
+<<<<<<< HEAD
+=======
+        if (mActorId != -1)
+            esm.writeHNT("ACID", mActorId);
+
+>>>>>>> origin/main
         if (mDeathAnimation != -1)
             esm.writeHNT("DANM", mDeathAnimation);
 
@@ -256,10 +303,22 @@ namespace ESM
         mAiSequence.save(esm);
         mMagicEffects.save(esm);
 
+<<<<<<< HEAD
         for (const auto& [effectId, actor] : mSummonedCreatures)
         {
             esm.writeHNRefId("SUMM", effectId);
             esm.writeFormId(actor, true, "ACID");
+=======
+        for (const auto& [effectId, actorId] : mSummonedCreatures)
+        {
+            esm.writeHNT("SUMM", effectId);
+            esm.writeHNT("ACID", actorId);
+        }
+
+        for (int32_t key : mSummonGraveyard)
+        {
+            esm.writeHNT("GRAV", key);
+>>>>>>> origin/main
         }
 
         esm.writeHNT("AISE", mHasAiSettings);
@@ -270,6 +329,23 @@ namespace ESM
         }
         if (mMissingACDT)
             esm.writeHNT("NOAC", mMissingACDT);
+<<<<<<< HEAD
+=======
+        if (std::any_of(mFalloutLimbDamage.begin(), mFalloutLimbDamage.end(), [](float value) { return value != 0.f; }))
+            esm.writeHNT("FLMB", mFalloutLimbDamage);
+        for (const FalloutActiveEffect& effect : mFalloutActiveEffects)
+        {
+            esm.writeHNT("FAEF", static_cast<std::uint32_t>(effect.mKind));
+            esm.writeHNRefId("FASP", effect.mSpell);
+            esm.writeHNRefId("FABE", effect.mBaseEffect);
+            esm.writeHNT("FAFL", effect.mFlags);
+            esm.writeHNT("FAAV", effect.mActorValue);
+            esm.writeHNT("FAMG", effect.mMagnitude);
+            esm.writeHNT("FADR", effect.mDuration);
+            esm.writeHNT("FATL", effect.mTimeLeft);
+            esm.writeHNT("FACA", effect.mCasterActorId);
+        }
+>>>>>>> origin/main
     }
 
     void CreatureStats::blank()
@@ -299,6 +375,11 @@ namespace ESM
         mLevel = 1;
         mCorprusSpells.clear();
         mMissingACDT = false;
+<<<<<<< HEAD
+=======
+        mFalloutLimbDamage.fill(0.f);
+        mFalloutActiveEffects.clear();
+>>>>>>> origin/main
     }
 
 }

@@ -17,6 +17,12 @@
 #include <components/sceneutil/util.hpp>
 #include <components/vfs/pathutil.hpp>
 
+<<<<<<< HEAD
+=======
+#include <osg/Node>
+#include <osg/StateSet>
+
+>>>>>>> origin/main
 #include <map>
 #include <span>
 #include <string>
@@ -47,6 +53,7 @@ namespace SceneUtil
 
 namespace MWRender
 {
+<<<<<<< HEAD
 
     class ResetAccumRootCallback;
     class RotateController;
@@ -54,6 +61,17 @@ namespace MWRender
 
     using ActiveControllersVector = std::vector<std::pair<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::Callback>>>;
 
+=======
+    enum class FonvWeaponAction : std::uint8_t;
+
+
+    class ResetAccumRootCallback;
+    class RotateController;
+    class TransparencyUpdater;
+
+    using ActiveControllersVector = std::vector<std::pair<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::Callback>>>;
+
+>>>>>>> origin/main
     class EffectAnimationTime : public SceneUtil::ControllerSource
     {
     private:
@@ -144,6 +162,7 @@ namespace MWRender
             float getValue(osg::NodeVisitor* nv) override { return 0.f; }
         };
 
+<<<<<<< HEAD
         struct AnimSource;
 
         struct AnimState
@@ -301,6 +320,197 @@ namespace MWRender
 
         void clearAnimSources();
 
+=======
+        struct AnimSource
+        {
+            osg::ref_ptr<const SceneUtil::KeyframeHolder> mKeyframes;
+            std::string mSourceName;
+
+            typedef std::map<std::string, osg::ref_ptr<SceneUtil::KeyframeController>> ControllerMap;
+
+            ControllerMap mControllerMap[sNumBlendMasks];
+
+            const SceneUtil::TextKeyMap& getTextKeys() const;
+
+            osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
+            bool mFalloutProcedureIdle = false;
+        };
+
+        struct AnimState
+        {
+            std::shared_ptr<AnimSource> mSource;
+            float mStartTime = 0;
+            float mLoopStartTime = 0;
+            float mLoopStopTime = 0;
+            float mStopTime = 0;
+
+            std::shared_ptr<float> mTime = std::make_shared<float>(0.0f);
+            float mSpeedMult = 1;
+
+            bool mPlaying = false;
+            bool mLoopingEnabled = true;
+            uint32_t mLoopCount = 0;
+
+            AnimPriority mPriority{ 0 };
+            int mBlendMask = 0;
+            bool mAutoDisable = true;
+
+            std::string mGroupname;
+            std::string mStartKey;
+
+            float getTime() const { return *mTime; }
+            void setTime(float time) { *mTime = time; }
+            bool blendMaskContains(size_t blendMask) const { return (mBlendMask & (1 << blendMask)); }
+            bool shouldLoop() const { return getTime() >= mLoopStopTime && mLoopingEnabled && mLoopCount > 0; }
+        };
+
+        typedef std::map<std::string, AnimState, std::less<>> AnimStateMap;
+        AnimStateMap mStates;
+
+        typedef std::vector<std::shared_ptr<AnimSource>> AnimSourceList;
+        AnimSourceList mAnimSources;
+
+        std::unordered_set<std::string_view> mSupportedAnimations;
+        mutable std::vector<std::pair<std::string, MWWorld::MovementDirectionFlags>> mSupportedDirections;
+
+        osg::ref_ptr<osg::Group> mInsert;
+
+        osg::ref_ptr<osg::Group> mObjectRoot;
+        SceneUtil::Skeleton* mSkeleton;
+
+        osg::ref_ptr<osg::MatrixTransform> mFalloutCorpseTransform;
+        bool mFalloutCorpsePoseApplied = false;
+
+        virtual void applyPostManualFalloutActorPose() {}
+        void applyFalloutDeathPoseFallback();
+
+        // The node expected to accumulate movement during movement animations.
+        osg::ref_ptr<osg::Node> mAccumRoot;
+
+        // The controller animating that node.
+        osg::ref_ptr<SceneUtil::KeyframeController> mAccumCtrl;
+
+        // Used to reset the position of the accumulation root every frame - the movement should be applied to the
+        // physics system
+        osg::ref_ptr<ResetAccumRootCallback> mResetAccumRootCallback;
+
+        // Keep track of controllers that we added to our scene graph.
+        // We may need to rebuild these controllers when the active animation groups / sources change.
+        ActiveControllersVector mActiveControllers;
+
+        // Keep track of the animation controllers for easy access
+        std::map<osg::ref_ptr<osg::Node>, osg::ref_ptr<NifAnimBlendController>> mAnimBlendControllers;
+        std::map<osg::ref_ptr<osg::Node>, osg::ref_ptr<BoneAnimBlendController>> mBoneAnimBlendControllers;
+
+        std::shared_ptr<AnimationTime> mAnimationTimePtr[sNumBlendMasks];
+
+        mutable NodeMap mNodeMap;
+        mutable bool mNodeMapCreated;
+
+        MWWorld::Ptr mPtr;
+
+        Resource::ResourceSystem* mResourceSystem;
+
+        osg::Vec3f mAccumulate;
+
+        TextKeyListener* mTextKeyListener;
+
+        osg::ref_ptr<RotateController> mHeadController;
+        osg::ref_ptr<RotateController> mSpineController;
+        osg::ref_ptr<RotateController> mRootController;
+        float mHeadYawRadians;
+        float mHeadPitchRadians;
+        float mUpperBodyYawRadians;
+        float mLegsYawRadians;
+        float mBodyPitchRadians;
+
+        osg::ref_ptr<RotateController> addRotateController(std::string_view bone);
+
+        bool mHasMagicEffects;
+
+        osg::ref_ptr<SceneUtil::LightSource> mGlowLight;
+        osg::ref_ptr<SceneUtil::GlowUpdater> mGlowUpdater;
+        osg::ref_ptr<TransparencyUpdater> mTransparencyUpdater;
+        osg::ref_ptr<SceneUtil::LightSource> mExtraLightSource;
+
+        float mAlpha;
+
+        mutable std::map<std::string, float, std::less<>> mAnimVelocities;
+
+        osg::ref_ptr<SceneUtil::LightListCallback> mLightListCallback;
+
+        bool mPlayScriptedOnly;
+        bool mRequiresBoneMap;
+        bool mProofPreviewAnimation;
+        bool mProofPreviewGameplayAudit;
+        int mBethesdaBoneLodLevel;
+
+        const NodeMap& getNodeMap() const;
+
+        /* Sets the appropriate animations on the bone groups based on priority by finding
+         * the highest priority AnimationStates and linking the appropriate controllers stored
+         * in the AnimationState to the corresponding nodes.
+         */
+        void resetActiveGroups();
+        void detachActiveControllers();
+
+        int getBethesdaBoneLodLevel() const;
+        bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
+        bool shouldDeferBethesdaBoneLodChange() const;
+
+        std::string describeActiveFalloutAnimationStates() const;
+        size_t forceFalloutNativeUpdateTraversalOnce(std::string_view reason);
+
+        size_t detectBlendMask(const osg::Node* node, const std::string& controllerName) const;
+
+        /* Updates the position of the accum root node for the given time, and
+         * returns the wanted movement vector from the previous time. */
+        void updatePosition(float oldtime, float newtime, osg::Vec3f& position);
+
+        /* Resets the animation to the time of the specified start marker, without
+         * moving anything, and set the end time to the specified stop marker. If
+         * the marker is not found, or if the markers are the same, it returns
+         * false.
+         */
+        bool reset(AnimState& state, const SceneUtil::TextKeyMap& keys, std::string_view groupname,
+            std::string_view start, std::string_view stop, float startpoint, bool loopfallback);
+
+        void handleTextKey(AnimState& state, std::string_view groupname, SceneUtil::TextKeyMap::ConstIterator key,
+            const SceneUtil::TextKeyMap& map);
+
+        /** Sets the root model of the object.
+         *
+         * Note that you must make sure all animation sources are cleared before resetting the object
+         * root. All nodes previously retrieved with getNode will also become invalidated.
+         * @param forceskeleton Wrap the object root in a Skeleton, even if it contains no skinned parts. Use this if
+         * you intend to add skinned parts manually.
+         * @param baseonly If true, then any meshes or particle systems in the model are ignored
+         *      (useful for NPCs, where only the skeleton is needed for the root, and the actual NPC parts are then
+         * assembled from separate files).
+         */
+        void setObjectRoot(const std::string& model, bool forceskeleton, bool baseonly, bool isCreature);
+
+        void loadAdditionalAnimations(VFS::Path::NormalizedView model, const std::string& baseModel);
+
+        /** Adds the keyframe controllers in the specified model as a new animation source.
+         * @note Later added animation sources have the highest priority when it comes to finding a particular
+         * animation.
+         * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
+         * @param baseModel The filename of the mObjectRoot, only used for error messages.
+         * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
+         * @param falloutSemanticGroup Optional semantic alias synthesized for a selected Fallout creature source.
+         */
+        virtual void addAnimSource(std::string_view model, const std::string& baseModel);
+        std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
+            bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
+            std::string_view falloutSemanticGroup = {});
+
+        /** Adds an additional light to the given node using the specified ESM record. */
+        void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
+
+        void clearAnimSources();
+
+>>>>>>> origin/main
         /**
          * Provided to allow derived classes adding their own controllers. Note, the controllers must be added to
          * mActiveControllers so they get cleaned up properly on the next controller rebuild. A controller rebuild may
@@ -317,8 +527,11 @@ namespace MWRender
             const AnimBlendStateData& stateData, const osg::ref_ptr<const SceneUtil::AnimBlendRules>& blendRules,
             const AnimState& active);
 
+<<<<<<< HEAD
         void animationEnded(AnimState& state) const;
 
+=======
+>>>>>>> origin/main
     public:
         Animation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
@@ -330,6 +543,17 @@ namespace MWRender
 
         MWWorld::Ptr getPtr() { return mPtr; }
 
+<<<<<<< HEAD
+=======
+        bool addFalloutDialogueAnimSource(
+            const std::string& model, const std::string& baseModel, std::string_view semanticGroup);
+
+        void setProofPreviewAnimation(bool enabled);
+        void setProofPreviewGameplayAudit(bool enabled);
+        bool isProofPreviewAnimation() const { return mProofPreviewAnimation; }
+        bool shouldAuditProofPreviewGameplay() const { return !mProofPreviewAnimation || mProofPreviewGameplayAudit; }
+
+>>>>>>> origin/main
         /// Set active flag on the object skeleton, if one exists.
         /// @see SceneUtil::Skeleton::setActive
         /// 0 = Inactive, 1 = Active in place, 2 = Active
@@ -362,10 +586,73 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
+<<<<<<< HEAD
+=======
+        /// Render every authored VATS limb as an amber wireframe and the selected limb as green.
+        /// Passing false restores every node's exact prior StateSet.
+        void setFalloutVatsWireframes(
+            std::span<const std::string_view> targetNodes, std::string_view selectedNode, bool enabled);
+
+>>>>>>> origin/main
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 
         bool hasAnimation(std::string_view anim) const;
 
+<<<<<<< HEAD
+=======
+        /// Return the source selected by play() for this group. An empty string means the group has no source.
+        /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
+        std::string getAnimationSourceName(std::string_view anim) const;
+
+        struct SourceOverrideBinding
+        {
+            bool mLoaded = false;
+            std::string mGroup;
+            std::string mPreviousGroup;
+            std::string mPreviousSource;
+            std::string mSelectedSource;
+            unsigned int mControllerMask = 0;
+        };
+
+        /// Load a path-based compatibility animation as the highest-priority
+        /// source for a group and report the exact source it displaced.
+        SourceOverrideBinding bindSourceOverride(
+            std::string_view path, std::string_view requestedGroup = {});
+
+        /// Remove one path override from the source stack and prove that the
+        /// original source selected before installation is active again.
+        SourceOverrideBinding restoreSourceOverride(std::string_view path, std::string_view installedGroup,
+            std::string_view expectedPreviousSource, std::string_view previousGroup = {});
+
+        /// Return the first group from a specific source whose name begins with the requested prefix.
+        /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+
+        /// Attach or clear a Fallout ANIO model for the duration of an authored idle group.
+        virtual bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) { return false; }
+
+        /// Bind the exact action sources selected by a Fallout weapon's DNAM fields.
+        /// Sources are added on demand so weapon-family changes and inventory-backed players cannot retain a stale
+        /// action manifest. Returns false when any required authored source is unavailable.
+        virtual bool prepareFalloutWeaponAnimation(
+            std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action);
+
+        /// Bind the audited retail New Vegas humanoid hit reaction on demand.
+        /// Non-New-Vegas actors are not affected. A New Vegas NPC fails closed unless the exact shared skeleton and
+        /// fully bound source are selected.
+        bool prepareFalloutHitReaction();
+
+        /// Return every animation group currently bound to this assembled object.
+        /// The result is copied and sorted so proof/telemetry callers can build a
+        /// deterministic pose inventory without depending on animation-source order.
+        std::vector<std::string> getAnimationGroups() const;
+
+        /// Return the bone-group controller coverage of the same highest-priority source that play() would select.
+        /// This lets diagnostics distinguish complete actions from overlays/metadata without naming either one.
+        unsigned int getAnimationGroupControllerMask(std::string_view group) const;
+
+>>>>>>> origin/main
         bool isLoopingAnimation(std::string_view group) const;
 
         // Specifies the axis' to accumulate on. Non-accumulated axis will just
@@ -415,7 +702,11 @@ namespace MWRender
          * \return True if the animation is active, false otherwise.
          */
         bool getInfo(std::string_view groupname, float* complete = nullptr, float* speedmult = nullptr,
+<<<<<<< HEAD
             uint32_t* loopcount = nullptr) const;
+=======
+            size_t* loopcount = nullptr) const;
+>>>>>>> origin/main
 
         /// Returns the group name of the animation currently active on that bone group.
         std::string_view getActiveGroup(BoneGroup boneGroup) const;
@@ -438,6 +729,12 @@ namespace MWRender
         /** Retrieves the velocity (in units per second) that the animation will move. */
         float getVelocity(std::string_view groupname) const;
 
+<<<<<<< HEAD
+=======
+        /** Retrieves the interpolated value of the requested Fallout head animation track */
+        float getFalloutHeadAnimTrackValue(std::string_view trackName) const;
+
+>>>>>>> origin/main
         virtual osg::Vec3f runAnimation(float duration);
 
         void setLoopingEnabled(std::string_view groupname, bool enabled);
@@ -458,6 +755,10 @@ namespace MWRender
         virtual bool useShieldAnimations() const { return false; }
         virtual bool getWeaponsShown() const { return false; }
         virtual void showWeapons(bool showWeapon) {}
+<<<<<<< HEAD
+=======
+        virtual osg::Node* getEquippedWeaponNode() { return nullptr; }
+>>>>>>> origin/main
         virtual bool getCarriedLeftShown() const { return false; }
         virtual void showCarriedLeft(bool show) {}
         virtual void setWeaponGroup(const std::string& group, bool relativeDuration) {}
@@ -492,6 +793,14 @@ namespace MWRender
 
         virtual void removeFromScene();
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        virtual void updateCrosshairs(){}
+        bool useSmoothAnimationTransitions() const;
+
+//## VR_PATCH END
+>>>>>>> origin/main
     private:
         Animation(const Animation&);
         void operator=(Animation&);

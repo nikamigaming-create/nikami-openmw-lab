@@ -22,9 +22,15 @@ namespace Files
     namespace
     {
 #if defined(_WIN32) || defined(__WINDOWS__)
+<<<<<<< HEAD
         constexpr auto sApplicationName = "OpenMW";
 #else
         constexpr auto sApplicationName = "openmw";
+=======
+        constexpr auto applicationName = "OpenMW";
+#else
+        constexpr auto applicationName = "openmw";
+>>>>>>> origin/main
 #endif
 
         using GetPath = const std::filesystem::path& (Files::FixedPath<>::*)() const;
@@ -37,7 +43,11 @@ namespace Files
     }
 
     ConfigurationManager::ConfigurationManager(bool silent)
+<<<<<<< HEAD
         : mFixedPath(sApplicationName)
+=======
+        : mFixedPath(applicationName)
+>>>>>>> origin/main
         , mSilent(silent)
     {
         // Initialize with fixed paths, will be overridden in `readConfiguration`.
@@ -419,9 +429,15 @@ namespace Files
         return mFixedPath.getCachePath();
     }
 
+<<<<<<< HEAD
     std::vector<std::filesystem::path> ConfigurationManager::getInstallPaths() const
     {
         return mFixedPath.getInstallPaths();
+=======
+    const std::filesystem::path& ConfigurationManager::getInstallPath() const
+    {
+        return mFixedPath.getInstallPath();
+>>>>>>> origin/main
     }
 
     const std::filesystem::path& ConfigurationManager::getScreenshotPath() const

@@ -5,6 +5,7 @@
 #include <components/esm3/loadarmo.hpp>
 #include <components/esm3/loadbook.hpp>
 #include <components/esm3/loadclot.hpp>
+<<<<<<< HEAD
 #include <components/esm3/loadcont.hpp>
 #include <components/esm3/loadcrea.hpp>
 #include <components/esm3/loaddoor.hpp>
@@ -15,12 +16,20 @@
 #include <components/esm3/loadprob.hpp>
 #include <components/esm3/loadspel.hpp>
 #include <components/esm3/loadstat.hpp>
+=======
+#include <components/esm3/loadligh.hpp>
+#include <components/esm3/loadmisc.hpp>
+#include <components/esm3/loadnpc.hpp>
+>>>>>>> origin/main
 #include <components/esm3/loadweap.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/misc/finitevalues.hpp>
 
 #include "../mwbase/environment.hpp"
+<<<<<<< HEAD
 #include "../mwbase/mechanicsmanager.hpp"
+=======
+>>>>>>> origin/main
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -68,6 +77,7 @@ namespace MWLua
     {
         using Misc::FiniteFloat;
 
+<<<<<<< HEAD
         Misc::NotNullPtr<MWBase::World> world = MWBase::Environment::get().getWorld();
         MWWorld::DateTimeManager* timeManager = world->getTimeManager();
 
@@ -80,6 +90,9 @@ namespace MWLua
                 MWBase::Environment::get().getMechanicsManager()->fastForwardAi();
             });
         };
+=======
+        MWWorld::DateTimeManager* timeManager = MWBase::Environment::get().getWorld()->getTimeManager();
+>>>>>>> origin/main
 
         api["setGameTimeScale"] = [timeManager](const FiniteFloat scale) { timeManager->setGameTimeScale(scale); };
         api["setSimulationTimeScale"] = [context, timeManager](const FiniteFloat scale) {
@@ -200,10 +213,13 @@ namespace MWLua
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(book);
             },
+<<<<<<< HEAD
             [lua = context.mLua](const ESM::Enchantment& enchantment) -> const ESM::Enchantment* {
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(enchantment);
             },
+=======
+>>>>>>> origin/main
             [lua = context.mLua](const ESM::Miscellaneous& misc) -> const ESM::Miscellaneous* {
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(misc);
@@ -212,6 +228,7 @@ namespace MWLua
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(potion);
             },
+<<<<<<< HEAD
             [lua = context.mLua](const ESM::Probe& probe) -> const ESM::Probe* {
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(probe);
@@ -224,6 +241,8 @@ namespace MWLua
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(stat);
             },
+=======
+>>>>>>> origin/main
             [lua = context.mLua](const ESM::NPC& npc) -> const ESM::NPC* {
                 checkGameInitialized(lua);
                 if (npc.mId.empty())
@@ -232,6 +251,7 @@ namespace MWLua
                 copy.mId = {};
                 return MWBase::Environment::get().getESMStore()->insert(copy);
             },
+<<<<<<< HEAD
             [lua = context.mLua](const ESM::Creature& crea) -> const ESM::Creature* {
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(crea);
@@ -244,6 +264,8 @@ namespace MWLua
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(cont);
             },
+=======
+>>>>>>> origin/main
             [lua = context.mLua](const ESM::Weapon& weapon) -> const ESM::Weapon* {
                 checkGameInitialized(lua);
                 return MWBase::Environment::get().getESMStore()->insert(weapon);

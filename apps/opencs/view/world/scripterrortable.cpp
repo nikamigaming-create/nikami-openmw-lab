@@ -28,7 +28,11 @@ void CSVWorld::ScriptErrorTable::report(const std::string& message, const Compil
     addMessage(stream.str(),
         type == Compiler::ErrorHandler::WarningMessage ? CSMDoc::Message::Severity_Warning
                                                        : CSMDoc::Message::Severity_Error,
+<<<<<<< HEAD
         loc.mLine, loc.mColumn - static_cast<int>(loc.mLiteral.length()));
+=======
+        loc.mLine, loc.mColumn - loc.mLiteral.length());
+>>>>>>> origin/main
 }
 
 void CSVWorld::ScriptErrorTable::report(const std::string& message, Type type)

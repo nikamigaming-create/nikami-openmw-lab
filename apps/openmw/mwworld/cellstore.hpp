@@ -73,10 +73,18 @@ namespace ESM4
     struct Flora;
     struct Ingredient;
     struct ItemMod;
+<<<<<<< HEAD
+=======
+    struct Key;
+>>>>>>> origin/main
     struct MiscItem;
     struct MovableStatic;
     struct StaticCollection;
     struct Terminal;
+<<<<<<< HEAD
+=======
+    struct TalkingActivator;
+>>>>>>> origin/main
     struct Tree;
     struct Weapon;
     struct Creature;
@@ -88,6 +96,7 @@ namespace MWWorld
     class ESMStore;
     struct CellStoreImp;
 
+<<<<<<< HEAD
     using CellStoreTuple = std::tuple<CellRefList<ESM::Activator>, CellRefList<ESM::Potion>,
         CellRefList<ESM::Apparatus>, CellRefList<ESM::Armor>, CellRefList<ESM::Book>, CellRefList<ESM::Clothing>,
         CellRefList<ESM::Container>, CellRefList<ESM::Creature>, CellRefList<ESM::Door>, CellRefList<ESM::Ingredient>,
@@ -100,6 +109,25 @@ namespace MWWorld
         CellRefList<ESM4::Container>, CellRefList<ESM4::Door>, CellRefList<ESM4::Flora>, CellRefList<ESM4::Ingredient>,
         CellRefList<ESM4::ItemMod>, CellRefList<ESM4::Terminal>, CellRefList<ESM4::Tree>, CellRefList<ESM4::MiscItem>,
         CellRefList<ESM4::MovableStatic>, CellRefList<ESM4::Weapon>, CellRefList<ESM4::Furniture>,
+=======
+    bool isEsm4CellResetDue(const TimeStamp& now, const TimeStamp& lastReset, int resetHours);
+    bool isEsm4ReferenceResettable(std::uint32_t recordFlags);
+
+    using CellStoreTuple = std::tuple<CellRefList<ESM::Activator>, CellRefList<ESM::Potion>,
+        CellRefList<ESM::Apparatus>, CellRefList<ESM::Armor>, CellRefList<ESM::Book>, CellRefList<ESM::Clothing>,
+        CellRefList<ESM::Container>, CellRefList<ESM::Creature>, CellRefList<ESM::Door>, CellRefList<ESM::Ingredient>,
+        CellRefList<ESM::CreatureLevList>, CellRefList<ESM::ItemLevList>, CellRefList<ESM::Light>,
+        CellRefList<ESM::Lockpick>, CellRefList<ESM::Miscellaneous>, CellRefList<ESM::NPC>, CellRefList<ESM::Probe>,
+        CellRefList<ESM::Repair>, CellRefList<ESM::Static>, CellRefList<ESM::Weapon>, CellRefList<ESM::BodyPart>,
+
+        CellRefList<ESM4::Static>, CellRefList<ESM4::Light>, CellRefList<ESM4::Activator>, CellRefList<ESM4::Potion>,
+        CellRefList<ESM4::Ammunition>, CellRefList<ESM4::Armor>, CellRefList<ESM4::Book>, CellRefList<ESM4::Clothing>,
+        CellRefList<ESM4::Container>, CellRefList<ESM4::Door>, CellRefList<ESM4::Flora>, CellRefList<ESM4::Ingredient>,
+        CellRefList<ESM4::ItemMod>, CellRefList<ESM4::Key>, CellRefList<ESM4::Terminal>,
+        CellRefList<ESM4::TalkingActivator>, CellRefList<ESM4::Tree>, CellRefList<ESM4::MiscItem>,
+        CellRefList<ESM4::MovableStatic>, CellRefList<ESM4::Weapon>,
+        CellRefList<ESM4::Furniture>,
+>>>>>>> origin/main
         CellRefList<ESM4::Creature>, CellRefList<ESM4::Npc>, CellRefList<ESM4::StaticCollection>>;
 
     /// \brief Mutable state of a cell
@@ -183,6 +211,7 @@ namespace MWWorld
         /// containers.
         /// @note Does not trigger CellStore hasState flag.
 
+<<<<<<< HEAD
         float getWaterLevel() const;
 
         bool movedHere(const MWWorld::Ptr& ptr) const;
@@ -215,6 +244,43 @@ namespace MWWorld
             if (mState != State_Loaded)
                 return false;
 
+=======
+        Ptr searchViaActorId(int id);
+        ///< Will return an empty Ptr if cell is not loaded.
+
+        float getWaterLevel() const;
+
+        bool movedHere(const MWWorld::Ptr& ptr) const;
+
+        void setWaterLevel(float level);
+
+        void setFog(std::unique_ptr<ESM::FogState>&& fog);
+        ///< \note Takes ownership of the pointer
+
+        ESM::FogState* getFog() const;
+
+        std::size_t count() const;
+        ///< Return total number of references, including deleted ones.
+
+        void load();
+        ///< Load references from content file.
+
+        void preload();
+        ///< Build ID list from content file.
+
+        /// Call visitor (MWWorld::Ptr) for each reference. visitor must return a bool. Returning
+        /// false will abort the iteration.
+        /// \note Prefer using forEachConst when possible.
+        /// \note Do not modify this cell (i.e. remove/add objects) during the forEach, doing this may result in
+        /// unintended behaviour. \attention This function also lists deleted (count 0) objects!
+        /// \return Iteration completed?
+        template <class Visitor>
+        bool forEach(Visitor&& visitor, bool includeDeleted = false)
+        {
+            if (mState != State_Loaded)
+                return false;
+
+>>>>>>> origin/main
             if (mMergedRefsNeedsUpdate)
                 updateMergedRefs(includeDeleted);
             if (mMergedRefs.empty())
@@ -333,6 +399,11 @@ namespace MWWorld
         void respawn();
         ///< Check mLastRespawn and respawn references if necessary. This is a no-op if the cell is not loaded.
 
+<<<<<<< HEAD
+=======
+        Ptr getMovedActor(int actorId) const;
+
+>>>>>>> origin/main
         CellStore* getOriginCell(const Ptr& object) const;
 
         Ptr getPtr(ESM::RefId id);
@@ -423,6 +494,11 @@ namespace MWWorld
         void loadRefs();
 
         void loadRef(const ESM4::Reference& ref);
+<<<<<<< HEAD
+=======
+        void loadStarfieldPackInReference(const ESM4::Reference& ref, ESM::FormId storageCell,
+            unsigned int depth, std::vector<ESM::FormId>& stack);
+>>>>>>> origin/main
         void loadRef(const ESM4::ActorCharacter& ref);
         void loadRef(ESM::CellRef& ref, bool deleted, std::map<ESM::RefNum, ESM::RefId>& refNumToID);
         ///< Make case-adjustments to \a ref and insert it into the respective container.

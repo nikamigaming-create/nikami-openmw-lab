@@ -7,6 +7,10 @@
 
 #include <osg/Stats>
 
+<<<<<<< HEAD
+=======
+#include <components/esm/luascripts.hpp>
+>>>>>>> origin/main
 #include <components/lua/inputactions.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/scripttracker.hpp>
@@ -19,12 +23,25 @@
 
 #include "engineevents.hpp"
 #include "globalscripts.hpp"
+<<<<<<< HEAD
 #include "loadscripts.hpp"
+=======
+>>>>>>> origin/main
 #include "localscripts.hpp"
 #include "luaevents.hpp"
 #include "menuscripts.hpp"
 #include "object.hpp"
 #include "objectlists.hpp"
+<<<<<<< HEAD
+=======
+#include "triggervolume.hpp"
+
+namespace VFS
+{
+    class Manager;
+    class InMemoryArchive;
+}
+>>>>>>> origin/main
 
 namespace MWLua
 {
@@ -41,10 +58,18 @@ namespace MWLua
         LuaManager(LuaManager&&) = delete;
         ~LuaManager();
 
+<<<<<<< HEAD
         // Called by engine.cpp as part of content file loading
         void initPreLoad();
         void contentFilesLoaded() override;
         void initPostLoad();
+=======
+        // Called by engine.cpp when the environment is fully initialized.
+        void init();
+
+        // Translates ESM4 script records (SCPT) and remembers their per-record attachments.
+        void compileObScripts(VFS::Manager& vfs, VFS::InMemoryArchive& out);
+>>>>>>> origin/main
 
         void loadPermanentStorage(const std::filesystem::path& userConfigPath);
         void savePermanentStorage(const std::filesystem::path& userConfigPath) override;
@@ -74,11 +99,22 @@ namespace MWLua
         // Available everywhere through the MWBase::LuaManager interface.
         // LuaManager queues these events and propagates to scripts on the next `update` call.
         void newGameStarted() override;
+<<<<<<< HEAD
+=======
+        void prepareGameLoad() override;
+>>>>>>> origin/main
         void gameLoaded() override;
         void gameEnded() override;
         void noGame() override;
         void objectAddedToScene(const MWWorld::Ptr& ptr) override;
         void objectRemovedFromScene(const MWWorld::Ptr& ptr) override;
+<<<<<<< HEAD
+=======
+        void objectReset(const MWWorld::Ptr& ptr) override
+        {
+            mEngineEvents.addToQueue(EngineEvents::OnReset{ getId(ptr) });
+        }
+>>>>>>> origin/main
         void inputEvent(const InputEvent& event) override;
         void itemConsumed(const MWWorld::Ptr& consumable, const MWWorld::Ptr& actor) override
         {
@@ -86,6 +122,11 @@ namespace MWLua
         }
         void objectActivated(const MWWorld::Ptr& object, const MWWorld::Ptr& actor) override
         {
+<<<<<<< HEAD
+=======
+            if (object.getRefData().isDestroyed())
+                return;
+>>>>>>> origin/main
             mEngineEvents.addToQueue(EngineEvents::OnActivate{ getId(actor), getId(object) });
         }
         void useItem(const MWWorld::Ptr& object, const MWWorld::Ptr& actor, bool force) override;
@@ -94,14 +135,22 @@ namespace MWLua
             const MWRender::AnimPriority& priority, int blendMask, bool autodisable, float speedmult,
             std::string_view start, std::string_view stop, float startpoint, uint32_t loops,
             bool loopfallback) override;
+<<<<<<< HEAD
         void animationEnded(const MWWorld::Ptr& actor, std::string_view groupname, float time, float completion,
             std::string_view startKey, std::string_view stopKey) override;
+=======
+>>>>>>> origin/main
         void skillUse(const MWWorld::Ptr& actor, ESM::RefId skillId, int useType, float scale) override;
         void skillLevelUp(const MWWorld::Ptr& actor, ESM::RefId skillId, std::string_view source) override;
         void jailTimeServed(const MWWorld::Ptr& actor, int days) override;
         void onHit(const MWWorld::Ptr& attacker, const MWWorld::Ptr& victim, const MWWorld::Ptr& weapon,
             const MWWorld::Ptr& ammo, int attackType, float attackStrength, float damage, bool isHealth,
             const osg::Vec3f& hitPos, bool successful, MWMechanics::DamageSourceType sourceType) override;
+<<<<<<< HEAD
+=======
+        void actorStartedCombat(const MWWorld::Ptr& actor, const MWWorld::Ptr& target) override;
+        void actorEndedCombat(const MWWorld::Ptr& actor) override;
+>>>>>>> origin/main
         void exteriorCreated(MWWorld::CellStore& cell) override
         {
             mEngineEvents.addToQueue(EngineEvents::OnNewExterior{ cell });
@@ -109,9 +158,14 @@ namespace MWLua
         void objectTeleported(const MWWorld::Ptr& ptr) override;
         void questUpdated(const ESM::RefId& questId, int stage) override;
         void uiModeChanged(const MWWorld::Ptr& arg) override;
+<<<<<<< HEAD
         void actorDied(const MWWorld::Ptr& actor) override;
         void onDialogueResponse(
             const MWWorld::Ptr& actor, const ESM::DialInfo& info, const ESM::Dialogue& record) override;
+=======
+        void vrRecentered(bool vertical, bool horizontal) override;
+        void actorDied(const MWWorld::Ptr& actor) override;
+>>>>>>> origin/main
 
         MWBase::LuaManager::ActorControls* getActorControls(const MWWorld::Ptr&) const override;
 
@@ -178,13 +232,22 @@ namespace MWLua
         LuaUtil::InputAction::Registry& inputActions() { return mInputActions; }
         LuaUtil::InputTrigger::Registry& inputTriggers() { return mInputTriggers; }
 
+<<<<<<< HEAD
+=======
+        void onVRFrame();
+
+>>>>>>> origin/main
         void sendLocalEvent(
             const MWWorld::Ptr& target, const std::string& name, const std::optional<sol::table>& data = std::nullopt);
 
         bool isSynchronizedUpdateRunning() const { return mRunningSynchronizedUpdates; }
 
     private:
+<<<<<<< HEAD
         void initConfiguration(bool reload);
+=======
+        void initConfiguration();
+>>>>>>> origin/main
         LocalScripts* createLocalScripts(const MWWorld::Ptr& ptr,
             std::optional<LuaUtil::ScriptIdsWithInitializationData> autoStartConf = std::nullopt);
         void reloadAllScriptsImpl();
@@ -198,17 +261,30 @@ namespace MWLua
         bool mReloadAllScriptsRequested = false;
         bool mRunningSynchronizedUpdates = false;
         LuaUtil::ScriptsConfiguration mConfiguration;
+<<<<<<< HEAD
+=======
+        ESM::LuaScriptsCfg mObScriptCfg;
+>>>>>>> origin/main
         LuaUtil::LuaState mLua;
         LuaUi::ResourceManager mUiResourceManager;
         std::map<std::string, sol::object> mLocalPackages;
         std::map<std::string, sol::object> mPlayerPackages;
 
+<<<<<<< HEAD
         LoadScripts mLoadScripts{ &mLua };
         MenuScripts mMenuScripts{ &mLua };
         GlobalScripts mGlobalScripts{ &mLua };
         std::set<LuaUtil::ScriptsContainerWeakPtr, std::less<>> mActiveLocalScripts;
         std::vector<LuaUtil::ScriptsContainerWeakPtr> mQueuedAutoStartedScripts;
         ObjectLists mObjectLists;
+=======
+        MenuScripts mMenuScripts{ &mLua };
+        GlobalScripts mGlobalScripts{ &mLua };
+        std::set<LocalScripts*> mActiveLocalScripts;
+        std::vector<LocalScripts*> mQueuedAutoStartedScripts;
+        ObjectLists mObjectLists;
+        TriggerVolumeTracker mTriggerVolumes;
+>>>>>>> origin/main
 
         MWWorld::Ptr mPlayer;
 

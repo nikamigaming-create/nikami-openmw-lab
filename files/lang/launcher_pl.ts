@@ -578,6 +578,7 @@ do domyślnych czcionek Morrowind. Zaznacz to pole, jeśli nadal wolisz oryginal
         <source>Text file (*.txt)</source>
         <translation>Plik tekstowy (*.txt)</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Open Directory</source>
         <translation>Otwórz katalog</translation>
@@ -622,6 +623,8 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
         <source>User config directory used because %1 contains the line config=%2.</source>
         <translation>Katalog konfiguracyjny użytkownika używany, ponieważ %1 zawiera wiersz config=%2.</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>MainWindow</name>
@@ -849,6 +852,17 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
         <translation>Klasyczne zachowanie odbitych zaklęć Absorpcji</translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Makes unarmed creature attacks able to reduce armor condition, just as attacks from NPCs and armed creatures.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="vanished">&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Sprawia, że ataki nieuzbrojonych stworzeń mogą zmniejszać wytrzymałość pancerza, tak jak ataki NPC i uzbrojonych stworzeń.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Unarmed Creature Attacks Damage Armor</source>
+        <translation type="vanished">Ataki nieuzbrojonych stworzeń uszkadzają pancerz</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Factor Strength into Hand-to-Hand Combat</source>
         <translation>Uwzględnij siłę w walce wręcz</translation>
     </message>
@@ -1038,9 +1052,17 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Normally environment map reflections aren&apos;t affected by lighting, which makes environment-mapped (and thus bump-mapped objects) glow in the dark.
                   Morrowind Code Patch includes an option to remedy that by doing environment-mapping before applying lighting, this is the equivalent of that option.
+<<<<<<< HEAD
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Zazwyczaj odbicia z mapy środowiska nie są wpływane przez oświetlenie, co powoduje, że obiekty z mapą środowiska (a więc również z mapą wypukłości) świecą w ciemności.
                   Morrowind Code Patch zawiera opcję rozwiązującą ten problem przez nakładanie mapy środowiska przed zastosowaniem oświetlenia -- to jest jej odpowiednik.
+=======
+                  Affected objects will use shaders.
+                  &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Zazwyczaj odbicia z mapy środowiska nie są wpływane przez oświetlenie, co powoduje, że obiekty z mapą środowiska (a więc również z mapą wypukłości) świecą w ciemności. 
+                  Morrowind Code Patch zawiera opcję rozwiązującą ten problem przez nakładanie mapy środowiska przed zastosowaniem oświetlenia -- to jest jej odpowiednik.
+                  Obiekty objęte tą opcją będą korzystać z shaderów.
+>>>>>>> origin/main
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
@@ -1275,10 +1297,19 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the internal handling of light sources.&lt;/p&gt;
+<<<<<<< HEAD
 &lt;p&gt;&quot;Shaders (compatibility)&quot; It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
 &lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Ustaw wewnętrzne zarządzanie źródłami światła.&lt;/p&gt;
 &lt;p&gt;&quot;Shadery (kompatybilność)&quot; Zaleca się używać go na starszym sprzęcie z limitem świateł bliskim 8.&lt;/p&gt;
+=======
+&lt;p&gt; &quot;Legacy&quot; always uses 8 lights per object. It provides results most similar to Morrowind&apos;s lighting.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (compatibility)&quot; removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+&lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Ustaw wewnętrzne zarządzanie źródłami światła.&lt;/p&gt;
+&lt;p&gt;&quot;Tryb klasyczny&quot; zawsze używa 8 świateł na obiekt. Zapewnia efekty najbardziej zbliżone do oświetlenia w Morrowind.&lt;/p&gt;
+&lt;p&gt;&quot;Shadery (kompatybilność)&quot; usuwa limit 8 świateł. Ten tryb włącza także oświetlenie na pokrywie terenu. Zaleca się używać go na starszym sprzęcie z limitem świateł bliskim 8.&lt;/p&gt;
+>>>>>>> origin/main
 &lt;p&gt;„Shadery” zawiera wszystkie zalety trybu &quot;Shadery (kompatybilność)&quot;, ale stosuje nowoczesne podejście pozwalające na większą maksymalną liczbę świateł bez lub z minimalnymi spadkami wydajności na nowoczesnym sprzęcie.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
@@ -1286,6 +1317,13 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
         <translation>Metoda oświetlenia</translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Legacy</source>
+        <translation>Tryb klasyczny</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Shaders (compatibility)</source>
         <translation>Shadery (kompatybilność)</translation>
     </message>
@@ -1533,9 +1571,12 @@ Logi i ustawienia zmienione za pomocą programu uruchamiającego i w grze zostan
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If enabled - makes transitions between different animations/poses much smoother. Also allows to load animation blending config YAML files that can be bundled with animations in order to customise blending styles.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Jeśli włączone -- sprawia, że przejścia między różnymi animacjami/pozycjami są znacznie płynniejsze. Pozwala również na ładowanie plików konfiguracyjnych blendowania animacji w formacie YAML, które mogą być dołączone do animacji w celu dostosowania stylów blendowania.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Active Config Directories</source>
         <translation>Aktywne katalogi konfiguracyjne</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 </TS>

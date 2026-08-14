@@ -162,9 +162,12 @@ local function updateStandingPreview()
     local mode = camera.getMode()
     if not previewIfStandStill or next(noStandingPreview)
         or mode == MODE.FirstPerson or mode == MODE.Static or mode == MODE.Vanity then
+<<<<<<< HEAD
         if third_person.standingPreview and mode == MODE.Preview then
             camera.setMode(primaryMode)
         end
+=======
+>>>>>>> origin/main
         third_person.standingPreview = false
         return
     end
@@ -253,16 +256,28 @@ return {
         -- @field [parent=#Camera] #number version
         version = 1,
 
+<<<<<<< HEAD
         --- Return the primary mode (MODE.FirstPerson or MODE.ThirdPerson).
+=======
+        --- Return primary mode (MODE.FirstPerson or MODE.ThirdPerson).
+>>>>>>> origin/main
         -- @function [parent=#Camera] getPrimaryMode
         -- @return #number @{openmw.camera#MODE}
         getPrimaryMode = function() return primaryMode end,
 
+<<<<<<< HEAD
         --- Get the base third person distance (without applying angle and speed modifiers).
         -- @function [parent=#Camera] getBaseThirdPersonDistance
         -- @return #number
         getBaseThirdPersonDistance = function() return third_person.baseDistance end,
         --- Set the base third person distance
+=======
+        --- Get base third person distance (without applying angle and speed modifiers).
+        -- @function [parent=#Camera] getBaseThirdPersonDistance
+        -- @return #number
+        getBaseThirdPersonDistance = function() return third_person.baseDistance end,
+        --- Set base third person distance
+>>>>>>> origin/main
         -- @function [parent=#Camera] setBaseThirdPersonDistance
         -- @param #number value
         setBaseThirdPersonDistance = function(v) third_person.baseDistance = v end,

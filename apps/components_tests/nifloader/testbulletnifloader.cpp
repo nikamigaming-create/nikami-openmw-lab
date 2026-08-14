@@ -1,7 +1,10 @@
 #include "../nif/node.hpp"
 
 #include <components/bullethelpers/processtrianglecallback.hpp>
+<<<<<<< HEAD
 #include <components/misc/convert.hpp>
+=======
+>>>>>>> origin/main
 #include <components/nif/data.hpp>
 #include <components/nif/extra.hpp>
 #include <components/nif/node.hpp>
@@ -301,10 +304,17 @@ namespace
 
     void copy(const btTransform& src, Nif::NiTransform& dst)
     {
+<<<<<<< HEAD
         dst.mTranslation = Misc::Convert::makeOsgVec3f(src.getOrigin());
         for (int row = 0; row < 3; ++row)
             for (int column = 0; column < 3; ++column)
                 dst.mRotation.mValues[row][column] = static_cast<float>(src.getBasis().getRow(row)[column]);
+=======
+        dst.mTranslation = osg::Vec3f(src.getOrigin().x(), src.getOrigin().y(), src.getOrigin().z());
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                dst.mRotation.mValues[row][column] = src.getBasis().getRow(row)[column];
+>>>>>>> origin/main
     }
 
     struct TestBulletNifLoader : Test
@@ -325,6 +335,10 @@ namespace
         Nif::NiStringExtraData mNiStringExtraData;
         Nif::NiStringExtraData mNiStringExtraData2;
         Nif::NiIntegerExtraData mNiIntegerExtraData;
+<<<<<<< HEAD
+=======
+        Nif::BSBound mBSBound;
+>>>>>>> origin/main
         Nif::NiTimeController mController;
         btTransform mTransform{ btMatrix3x3(btQuaternion(btVector3(1, 0, 0), 0.5f)), btVector3(1, 2, 3) };
         btTransform mTransformScale2{ btMatrix3x3(btQuaternion(btVector3(1, 0, 0), 0.5f)), btVector3(2, 4, 6) };
@@ -345,21 +359,38 @@ namespace
             init(mNiSkinInstance);
             init(mNiStringExtraData);
             init(mNiStringExtraData2);
+<<<<<<< HEAD
             init(mController);
 
             mNiTriShapeData.mRecordType = Nif::RC_NiTriShapeData;
+=======
+            init(static_cast<Nif::Extra&>(mBSBound));
+            init(mController);
+
+            mBSBound.recType = Nif::RC_BSBound;
+
+            mNiTriShapeData.recType = Nif::RC_NiTriShapeData;
+>>>>>>> origin/main
             mNiTriShapeData.mVertices = { osg::Vec3f(0, 0, 0), osg::Vec3f(1, 0, 0), osg::Vec3f(1, 1, 0) };
             mNiTriShapeData.mNumTriangles = 1;
             mNiTriShapeData.mTriangles = { 0, 1, 2 };
             mNiTriShape.mData = Nif::NiGeometryDataPtr(&mNiTriShapeData);
 
+<<<<<<< HEAD
             mNiTriShapeData2.mRecordType = Nif::RC_NiTriShapeData;
+=======
+            mNiTriShapeData2.recType = Nif::RC_NiTriShapeData;
+>>>>>>> origin/main
             mNiTriShapeData2.mVertices = { osg::Vec3f(0, 0, 1), osg::Vec3f(1, 0, 1), osg::Vec3f(1, 1, 1) };
             mNiTriShapeData2.mNumTriangles = 1;
             mNiTriShapeData2.mTriangles = { 0, 1, 2 };
             mNiTriShape2.mData = Nif::NiGeometryDataPtr(&mNiTriShapeData2);
 
+<<<<<<< HEAD
             mNiTriStripsData.mRecordType = Nif::RC_NiTriStripsData;
+=======
+            mNiTriStripsData.recType = Nif::RC_NiTriStripsData;
+>>>>>>> origin/main
             mNiTriStripsData.mVertices
                 = { osg::Vec3f(0, 0, 0), osg::Vec3f(1, 0, 0), osg::Vec3f(1, 1, 0), osg::Vec3f(0, 1, 0) };
             mNiTriStripsData.mNumTriangles = 2;
@@ -410,7 +441,11 @@ namespace
 
     TEST_F(TestBulletNifLoader, for_default_root_collision_node_nif_node_should_return_default)
     {
+<<<<<<< HEAD
         mNode.mRecordType = Nif::RC_RootCollisionNode;
+=======
+        mNode.recType = Nif::RC_RootCollisionNode;
+>>>>>>> origin/main
 
         Nif::NIFFile file(testNif);
         file.mRoots.push_back(&mNode);
@@ -478,6 +513,65 @@ namespace
         EXPECT_EQ(*result, expected);
     }
 
+<<<<<<< HEAD
+=======
+    TEST_F(TestBulletNifLoader, for_root_bsbound_should_return_shape_with_bounding_box_data)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&mNode);
+        file.mHash = mHash;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+
+        const auto result = mLoader.load(file);
+
+        Resource::BulletShape expected;
+        expected.mCollisionBox.mExtents = mBSBound.mExtents;
+        expected.mCollisionBox.mCenter = mBSBound.mCenter;
+
+        EXPECT_EQ(*result, expected);
+    }
+
+    TEST_F(TestBulletNifLoader, legacy_nif_should_ignore_bsbound)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_MW;
+        file.mRoots.push_back(&mNode);
+
+        const auto result = mLoader.load(file);
+
+        EXPECT_EQ(result->mCollisionBox.mExtents, osg::Vec3f());
+        EXPECT_EQ(result->mCollisionBox.mCenter, osg::Vec3f());
+    }
+
+    TEST_F(TestBulletNifLoader, named_bounding_box_should_take_precedence_over_bsbound)
+    {
+        mBSBound.mExtents = osg::Vec3f(13.91f, 9.77f, 9.755f);
+        mBSBound.mCenter = osg::Vec3f(0.f, 0.f, 8.9f);
+        mNode.mExtraList.emplace_back(&mBSBound);
+        mNode.mName = "Bounding Box";
+        mNode.mBounds.mType = Nif::BoundingVolume::Type::BOX_BV;
+        mNode.mBounds.mBox.mExtents = osg::Vec3f(1.f, 2.f, 3.f);
+        mNode.mBounds.mBox.mCenter = osg::Vec3f(-1.f, -2.f, -3.f);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&mNode);
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+
+        const auto result = mLoader.load(file);
+
+        EXPECT_EQ(result->mCollisionBox.mExtents, mNode.mBounds.mBox.mExtents);
+        EXPECT_EQ(result->mCollisionBox.mCenter, mNode.mBounds.mBox.mCenter);
+    }
+
+>>>>>>> origin/main
     TEST_F(TestBulletNifLoader, for_root_with_bounds_and_child_bounding_box_should_use_bounding_box)
     {
         mNode.mName = "Bounding Box";
@@ -831,7 +925,11 @@ namespace
 
     TEST_F(TestBulletNifLoader, for_tri_shape_child_node_with_controller_should_return_animated_shape)
     {
+<<<<<<< HEAD
         mController.mRecordType = Nif::RC_NiKeyframeController;
+=======
+        mController.recType = Nif::RC_NiKeyframeController;
+>>>>>>> origin/main
         mController.mFlags |= Nif::NiTimeController::Flag_Active;
         copy(mTransform, mNiTriShape.mTransform);
         mNiTriShape.mTransform.mScale = 3;
@@ -861,7 +959,11 @@ namespace
 
     TEST_F(TestBulletNifLoader, for_two_tri_shape_children_nodes_where_one_with_controller_should_return_animated_shape)
     {
+<<<<<<< HEAD
         mController.mRecordType = Nif::RC_NiKeyframeController;
+=======
+        mController.recType = Nif::RC_NiKeyframeController;
+>>>>>>> origin/main
         mController.mFlags |= Nif::NiTimeController::Flag_Active;
         copy(mTransform, mNiTriShape.mTransform);
         mNiTriShape.mTransform.mScale = 3;
@@ -940,7 +1042,11 @@ namespace
     {
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
+<<<<<<< HEAD
         mNiNode.mRecordType = Nif::RC_AvoidNode;
+=======
+        mNiNode.recType = Nif::RC_AvoidNode;
+>>>>>>> origin/main
 
         Nif::NIFFile file(testNif);
         file.mRoots.push_back(&mNiNode);
@@ -1001,7 +1107,11 @@ namespace
         for_root_node_with_extra_data_string_equal_ncc_should_return_shape_with_cameraonly_collision)
     {
         mNiStringExtraData.mData = "NCC__";
+<<<<<<< HEAD
         mNiStringExtraData.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
@@ -1032,7 +1142,11 @@ namespace
     {
         mNiStringExtraData.mNext = Nif::ExtraPtr(&mNiStringExtraData2);
         mNiStringExtraData2.mData = "NCC__";
+<<<<<<< HEAD
         mNiStringExtraData2.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData2.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
@@ -1061,7 +1175,11 @@ namespace
         TestBulletNifLoader, for_root_node_with_extra_data_string_starting_with_nc_should_return_shape_with_nocollision)
     {
         mNiStringExtraData.mData = "NC___";
+<<<<<<< HEAD
         mNiStringExtraData.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
@@ -1091,7 +1209,11 @@ namespace
     {
         mNiStringExtraData.mNext = Nif::ExtraPtr(&mNiStringExtraData2);
         mNiStringExtraData2.mData = "NC___";
+<<<<<<< HEAD
         mNiStringExtraData2.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData2.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
@@ -1119,7 +1241,11 @@ namespace
     TEST_F(TestBulletNifLoader, for_tri_shape_child_node_with_extra_data_string_should_ignore_extra_data)
     {
         mNiStringExtraData.mData = "NC___";
+<<<<<<< HEAD
         mNiStringExtraData.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiTriShape.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
@@ -1153,7 +1279,11 @@ namespace
         niTriShape.mData = Nif::NiGeometryDataPtr(&mNiTriShapeData);
         niTriShape.mParents.push_back(&mNiNode);
 
+<<<<<<< HEAD
         emptyCollisionNode.mRecordType = Nif::RC_RootCollisionNode;
+=======
+        emptyCollisionNode.recType = Nif::RC_RootCollisionNode;
+>>>>>>> origin/main
         emptyCollisionNode.mParents.push_back(&mNiNode);
 
         mNiNode.mChildren
@@ -1184,7 +1314,11 @@ namespace
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiTriShape.mName = "EditorMarker";
         mNiIntegerExtraData.mData = 34; // BSXFlags "has collision" | "editor marker"
+<<<<<<< HEAD
         mNiIntegerExtraData.mRecordType = Nif::RC_BSXFlags;
+=======
+        mNiIntegerExtraData.recType = Nif::RC_BSXFlags;
+>>>>>>> origin/main
         mNiNode.mExtraList.push_back(Nif::ExtraPtr(&mNiIntegerExtraData));
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
 
@@ -1205,7 +1339,11 @@ namespace
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiTriShape.mName = "Tri EditorMarker";
         mNiStringExtraData.mData = "MRK";
+<<<<<<< HEAD
         mNiStringExtraData.mRecordType = Nif::RC_NiStringExtraData;
+=======
+        mNiStringExtraData.recType = Nif::RC_NiStringExtraData;
+>>>>>>> origin/main
         mNiNode.mExtra = Nif::ExtraPtr(&mNiStringExtraData);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
 
@@ -1276,7 +1414,11 @@ namespace
     {
         mNiTriShape.mParents.push_back(&mNiNode);
         mNiNode.mChildren = Nif::NiAVObjectList{ Nif::NiAVObjectPtr(&mNiTriShape) };
+<<<<<<< HEAD
         mNiNode.mRecordType = Nif::RC_AvoidNode;
+=======
+        mNiNode.recType = Nif::RC_AvoidNode;
+>>>>>>> origin/main
         mNiTriStripsData.mStrips.front() = { 0, 1 };
 
         Nif::NIFFile file(testNif);

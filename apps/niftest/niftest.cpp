@@ -1,10 +1,27 @@
 /// Program to test .nif files both on the FileSystem and in BSA archives.
 
+<<<<<<< HEAD
 #include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
+=======
+#include <algorithm>
+#include <cmath>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <set>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+>>>>>>> origin/main
 #include <utility>
 #include <vector>
 
@@ -14,12 +31,28 @@
 #include <components/files/conversion.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/nif/niffile.hpp>
+<<<<<<< HEAD
+=======
+#include <components/nif/controller.hpp>
+#include <components/nif/data.hpp>
+#include <components/nif/particle.hpp>
+#include <components/nifosg/matrixtransform.hpp>
+#include <components/nifosg/nifloader.hpp>
+#include <components/sceneutil/keyframe.hpp>
+>>>>>>> origin/main
 #include <components/vfs/archive.hpp>
 #include <components/vfs/bsaarchive.hpp>
 #include <components/vfs/filesystemarchive.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/vfs/recursivedirectoryiterator.hpp>
 
+<<<<<<< HEAD
+=======
+#include <osg/Group>
+#include <osg/MatrixTransform>
+#include <osg/NodeVisitor>
+
+>>>>>>> origin/main
 #include <boost/program_options.hpp>
 
 // Create local aliases for brevity
@@ -105,6 +138,1818 @@ std::string getFileTypeName(FileType fileType)
     }
 }
 
+<<<<<<< HEAD
+=======
+std::string jsonEscape(const std::string& value)
+{
+    std::ostringstream out;
+    for (char ch : value)
+    {
+        switch (ch)
+        {
+            case '\\':
+                out << "\\\\";
+                break;
+            case '"':
+                out << "\\\"";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
+            default:
+                out << ch;
+                break;
+        }
+    }
+    return out.str();
+}
+
+std::string formatVec3Json(const osg::Vec3f& value)
+{
+    std::ostringstream out;
+    out << std::setprecision(9) << "[" << value.x() << "," << value.y() << "," << value.z() << "]";
+    return out.str();
+}
+
+std::string formatQuatJson(const osg::Quat& value)
+{
+    std::ostringstream out;
+    out << std::setprecision(9) << "[" << value.x() << "," << value.y() << "," << value.z() << "," << value.w()
+        << "]";
+    return out.str();
+}
+
+std::string formatMatrixJson(const osg::Matrixf& matrix)
+{
+    std::ostringstream out;
+    out << std::setprecision(9) << "[";
+    for (int row = 0; row < 4; ++row)
+    {
+        if (row != 0)
+            out << ",";
+        out << "[";
+        for (int column = 0; column < 4; ++column)
+        {
+            if (column != 0)
+                out << ",";
+            out << matrix(row, column);
+        }
+        out << "]";
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string getNifStringPaletteValue(const Nif::NiStringPalettePtr& palette, uint32_t offset)
+{
+    if (palette.empty() || offset == std::numeric_limits<uint32_t>::max())
+        return {};
+
+    const std::string& text = palette->mPalette;
+    if (offset >= text.size())
+        return {};
+
+    const std::size_t end = text.find('\0', offset);
+    if (end == std::string::npos)
+        return text.substr(offset);
+
+    return text.substr(offset, end - offset);
+}
+
+std::string resolveNifControlledBlockTargetName(
+    const Nif::NiControllerSequence& sequence, const Nif::ControlledBlock& block)
+{
+    if (!block.mNodeName.empty())
+        return block.mNodeName;
+    if (!block.mTargetName.empty())
+        return block.mTargetName;
+
+    std::string targetName = getNifStringPaletteValue(block.mStringPalette, block.mNodeNameOffset);
+    if (!targetName.empty())
+        return targetName;
+
+    targetName = getNifStringPaletteValue(sequence.mStringPalette, block.mNodeNameOffset);
+    if (!targetName.empty())
+        return targetName;
+
+    return {};
+}
+
+bool isLoadedFNVTransformInterpolator(int recType)
+{
+    return recType == Nif::RC_NiTransformInterpolator || recType == Nif::RC_NiBSplineTransformInterpolator
+        || recType == Nif::RC_NiBSplineCompTransformInterpolator || recType == Nif::RC_NiBlendTransformInterpolator;
+}
+
+osg::Matrixf makeLocalMatrixLike(osg::MatrixTransform* transform, const osg::Quat& rotation, const osg::Vec3f& translation)
+{
+    if (auto* nifTransform = dynamic_cast<NifOsg::MatrixTransform*>(transform))
+    {
+        NifOsg::MatrixTransform probe(*nifTransform, osg::CopyOp::SHALLOW_COPY);
+        probe.setRotation(rotation);
+        probe.setTranslation(translation);
+        return probe.getMatrix();
+    }
+
+    return osg::Matrixf::rotate(rotation) * osg::Matrixf::translate(translation);
+}
+
+osg::Quat fnvDumpHalfTurn(char axis)
+{
+    switch (axis)
+    {
+        case 'x':
+            return osg::Quat(osg::PI, osg::Vec3f(1.f, 0.f, 0.f));
+        case 'z':
+            return osg::Quat(osg::PI, osg::Vec3f(0.f, 0.f, 1.f));
+        default:
+            return osg::Quat();
+    }
+}
+
+bool isFNVLowerBodyDumpBone(const std::string& lowerName)
+{
+    return lowerName.find("thigh") != std::string::npos || lowerName.find("calf") != std::string::npos
+        || lowerName.find("foot") != std::string::npos || lowerName.find("toe") != std::string::npos;
+}
+
+bool isFNVCoreDumpBone(const std::string& lowerName)
+{
+    return lowerName == "bip01" || lowerName == "bip01 nonaccum" || lowerName.find("pelvis") != std::string::npos
+        || lowerName.find("spine") != std::string::npos || lowerName.find("neck") != std::string::npos
+        || lowerName.find("head") != std::string::npos;
+}
+
+bool isFNVArmDumpBone(const std::string& lowerName)
+{
+    return lowerName.find("clavicle") != std::string::npos || lowerName.find("upperarm") != std::string::npos
+        || lowerName.find("forearm") != std::string::npos || lowerName.find("hand") != std::string::npos
+        || lowerName.find("finger") != std::string::npos || lowerName.find("thumb") != std::string::npos
+        || lowerName.find("foretwist") != std::string::npos || lowerName.find("uparmtwist") != std::string::npos;
+}
+
+bool isFNVUpperArmDumpBone(const std::string& lowerName)
+{
+    return lowerName.find("clavicle") != std::string::npos || lowerName.find("upperarm") != std::string::npos
+        || lowerName.find("uparmtwist") != std::string::npos;
+}
+
+bool isFNVForearmDumpBone(const std::string& lowerName)
+{
+    return lowerName.find("forearm") != std::string::npos || lowerName.find("foretwist") != std::string::npos;
+}
+
+bool isFNVHandDumpBone(const std::string& lowerName)
+{
+    return lowerName.find("hand") != std::string::npos || lowerName.find("finger") != std::string::npos
+        || lowerName.find("thumb") != std::string::npos;
+}
+
+bool isFNVArmOrHandDumpBone(const std::string& lowerName)
+{
+    return isFNVUpperArmDumpBone(lowerName) || isFNVForearmDumpBone(lowerName) || isFNVHandDumpBone(lowerName);
+}
+
+double quatDeltaDegrees(osg::Quat left, osg::Quat right)
+{
+    const double leftLength = std::sqrt(
+        left.x() * left.x() + left.y() * left.y() + left.z() * left.z() + left.w() * left.w());
+    const double rightLength = std::sqrt(
+        right.x() * right.x() + right.y() * right.y() + right.z() * right.z() + right.w() * right.w());
+    if (leftLength <= 0.0 || rightLength <= 0.0)
+        return 0.0;
+
+    double dot = (left.x() * right.x() + left.y() * right.y() + left.z() * right.z() + left.w() * right.w())
+        / (leftLength * rightLength);
+    dot = std::clamp(std::abs(dot), 0.0, 1.0);
+    return 2.0 * std::acos(dot) * 180.0 / osg::PI;
+}
+
+osg::Quat composeFNVTransformDumpRotation(
+    const std::string& mode, const std::string& lowerName, const osg::Quat& keyRotation, const osg::Quat& bindRotation)
+{
+    if (mode == "bindCoreRawLimbs" && isFNVCoreDumpBone(lowerName))
+        return bindRotation;
+    if (mode == "bindCoreBindLowerRawUpper"
+        && (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName)))
+        return bindRotation;
+    if (mode == "bindCoreBindLowerSplitUpper")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName))
+            return bindRotation;
+        if (isFNVArmDumpBone(lowerName))
+            return keyRotation * fnvDumpHalfTurn('x') * bindRotation;
+    }
+    if (mode == "bindCoreRawLowerBindUpper")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVArmDumpBone(lowerName))
+            return bindRotation;
+        if (isFNVLowerBodyDumpBone(lowerName))
+            return keyRotation;
+    }
+    if (mode == "rawCoreBindLowerRawUpper" && isFNVLowerBodyDumpBone(lowerName))
+        return bindRotation;
+    if (mode == "bindCoreBindLowerBindUpper" && (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName)
+                                                    || isFNVArmOrHandDumpBone(lowerName)))
+        return bindRotation;
+    if (mode == "bindCoreBindLowerBindArmsRawHands")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName) || isFNVUpperArmDumpBone(lowerName)
+            || isFNVForearmDumpBone(lowerName))
+            return bindRotation;
+        if (isFNVHandDumpBone(lowerName))
+            return keyRotation;
+    }
+    if (mode == "bindCoreBindLowerBindUpperRawForearmsHands")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName) || isFNVUpperArmDumpBone(lowerName))
+            return bindRotation;
+        if (isFNVForearmDumpBone(lowerName) || isFNVHandDumpBone(lowerName))
+            return keyRotation;
+    }
+    if (mode == "bindCoreBindLowerRawUpperBindHands")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName) || isFNVHandDumpBone(lowerName))
+            return bindRotation;
+        if (isFNVUpperArmDumpBone(lowerName) || isFNVForearmDumpBone(lowerName))
+            return keyRotation;
+    }
+    if (mode == "bindCoreBindLowerRawClavicleBindArms")
+    {
+        if (isFNVCoreDumpBone(lowerName) || isFNVLowerBodyDumpBone(lowerName) || isFNVForearmDumpBone(lowerName)
+            || isFNVHandDumpBone(lowerName))
+            return bindRotation;
+        if (lowerName.find("clavicle") != std::string::npos || lowerName.find("upperarm") != std::string::npos
+            || lowerName.find("uparmtwist") != std::string::npos)
+            return keyRotation;
+    }
+    if (mode == "bind")
+        return bindRotation;
+    if (mode == "rawKey")
+        return keyRotation;
+    if (mode == "bindThenKey")
+        return bindRotation * keyRotation;
+    if (mode == "keyThenBind")
+        return keyRotation * bindRotation;
+    if (mode == "splitKeyXZThenBind")
+        return keyRotation * fnvDumpHalfTurn(isFNVLowerBodyDumpBone(lowerName) ? 'z' : 'x') * bindRotation;
+    return keyRotation;
+}
+
+osg::Matrixf parentWorldMatrix(osg::MatrixTransform* transform, const std::unordered_map<osg::MatrixTransform*, osg::Matrixf>& worlds)
+{
+    if (transform == nullptr || transform->getNumParents() == 0)
+        return osg::Matrixf::identity();
+
+    osg::Node* parent = transform->getParent(0);
+    while (parent != nullptr)
+    {
+        if (auto* parentTransform = dynamic_cast<osg::MatrixTransform*>(parent))
+        {
+            const auto found = worlds.find(parentTransform);
+            if (found != worlds.end())
+                return found->second;
+        }
+        if (parent->getNumParents() == 0)
+            break;
+        parent = parent->getParent(0);
+    }
+    return osg::Matrixf::identity();
+}
+
+struct TransformDumpNode
+{
+    std::string mName;
+    std::string mLowerName;
+    std::string mParentName;
+    osg::MatrixTransform* mTransform = nullptr;
+    osg::MatrixTransform* mParentTransform = nullptr;
+    osg::Matrixf mBindLocal;
+    osg::Matrixf mBindWorld;
+};
+
+class ConstantTransformDumpTimeSource : public SceneUtil::ControllerSource
+{
+public:
+    explicit ConstantTransformDumpTimeSource(float time)
+        : mTime(time)
+    {
+    }
+
+    float getValue(osg::NodeVisitor*) override { return mTime; }
+
+private:
+    float mTime;
+};
+
+class TransformDumpVisitor : public osg::NodeVisitor
+{
+public:
+    TransformDumpVisitor(std::vector<TransformDumpNode>& nodes,
+        std::unordered_map<osg::MatrixTransform*, osg::Matrixf>& worldByNode)
+        : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        , mNodes(nodes)
+        , mWorldByNode(worldByNode)
+    {
+    }
+
+    void apply(osg::MatrixTransform& node) override
+    {
+        const osg::Matrixf parentWorld = mWorldStack.empty() ? osg::Matrixf::identity() : mWorldStack.back();
+        const osg::Matrixf local = node.getMatrix();
+        const osg::Matrixf world = local * parentWorld;
+        mWorldByNode[&node] = world;
+
+        const bool keep = !node.getName().empty() && Misc::StringUtils::ciStartsWith(node.getName(), "Bip01");
+        if (keep)
+        {
+            TransformDumpNode item;
+            item.mName = node.getName();
+            item.mLowerName = Misc::StringUtils::lowerCase(node.getName());
+            item.mParentName = mNameStack.empty() ? std::string() : mNameStack.back();
+            item.mTransform = &node;
+            item.mParentTransform = mTransformStack.empty() ? nullptr : mTransformStack.back();
+            item.mBindLocal = local;
+            item.mBindWorld = world;
+            mNodes.push_back(item);
+        }
+
+        mWorldStack.push_back(world);
+        mNameStack.push_back(node.getName());
+        mTransformStack.push_back(&node);
+        traverse(node);
+        mTransformStack.pop_back();
+        mNameStack.pop_back();
+        mWorldStack.pop_back();
+    }
+
+private:
+    std::vector<TransformDumpNode>& mNodes;
+    std::unordered_map<osg::MatrixTransform*, osg::Matrixf>& mWorldByNode;
+    std::vector<osg::Matrixf> mWorldStack;
+    std::vector<std::string> mNameStack;
+    std::vector<osg::MatrixTransform*> mTransformStack;
+};
+
+bool isImportantFNVHumanBone(const std::string& lowerName)
+{
+    static const std::set<std::string> sImportant = {
+        "bip01",
+        "bip01 nonaccum",
+        "bip01 pelvis",
+        "bip01 spine",
+        "bip01 spine1",
+        "bip01 spine2",
+        "bip01 neck",
+        "bip01 head",
+        "bip01 l clavicle",
+        "bip01 r clavicle",
+        "bip01 l upperarm",
+        "bip01 r upperarm",
+        "bip01 l forearm",
+        "bip01 r forearm",
+        "bip01 l hand",
+        "bip01 r hand",
+        "bip01 l thumb1",
+        "bip01 l thumb11",
+        "bip01 l thumb12",
+        "bip01 r thumb1",
+        "bip01 r thumb11",
+        "bip01 r thumb12",
+        "bip01 l finger0",
+        "bip01 l finger01",
+        "bip01 l finger02",
+        "bip01 l finger1",
+        "bip01 l finger11",
+        "bip01 l finger12",
+        "bip01 l finger2",
+        "bip01 l finger21",
+        "bip01 l finger22",
+        "bip01 l finger3",
+        "bip01 l finger31",
+        "bip01 l finger32",
+        "bip01 l finger4",
+        "bip01 l finger41",
+        "bip01 l finger42",
+        "bip01 r finger0",
+        "bip01 r finger01",
+        "bip01 r finger02",
+        "bip01 r finger1",
+        "bip01 r finger11",
+        "bip01 r finger12",
+        "bip01 r finger2",
+        "bip01 r finger21",
+        "bip01 r finger22",
+        "bip01 r finger3",
+        "bip01 r finger31",
+        "bip01 r finger32",
+        "bip01 r finger4",
+        "bip01 r finger41",
+        "bip01 r finger42",
+        "bip01 l foretwist",
+        "bip01 r foretwist",
+        "bip01 luparmtwistbone",
+        "bip01 ruparmtwistbone",
+        "bip01 lpauldron",
+        "bip01 rpauldron",
+        "bip01 l thigh",
+        "bip01 r thigh",
+        "bip01 l calf",
+        "bip01 r calf",
+        "bip01 l foot",
+        "bip01 r foot",
+        "bip01 l toe0",
+        "bip01 r toe0",
+    };
+    return sImportant.count(lowerName) != 0;
+}
+
+std::unique_ptr<Nif::NIFFile> readNifFile(const std::filesystem::path& path)
+{
+    auto file = std::make_unique<Nif::NIFFile>(VFS::Path::Normalized(Files::pathToUnicodeString(path)));
+    Nif::Reader reader(*file, nullptr);
+    reader.parse(Files::openConstrainedFileStream(path));
+    return file;
+}
+
+float fnvMatrixMaxAbsDelta(const osg::Matrixf& left, const osg::Matrixf& right)
+{
+    float result = 0.f;
+    const float* leftPtr = left.ptr();
+    const float* rightPtr = right.ptr();
+    for (int i = 0; i < 16; ++i)
+        result = std::max(result, std::abs(leftPtr[i] - rightPtr[i]));
+    return result;
+}
+
+osg::Vec3f fnvAuditExtent(const osg::BoundingBox& box)
+{
+    if (!box.valid())
+        return osg::Vec3f();
+    return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+}
+
+void collectNifWorldMatrices(const Nif::NiAVObject* node, const osg::Matrixf& parentWorld,
+    std::unordered_map<std::string, osg::Matrixf>& worldsByLowerName)
+{
+    if (node == nullptr)
+        return;
+
+    const osg::Matrixf local = node->mTransform.toMatrix();
+    const osg::Matrixf world = local * parentWorld;
+    if (!node->mName.empty())
+        worldsByLowerName[Misc::StringUtils::lowerCase(node->mName)] = world;
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifWorldMatrices(child.getPtr(), world, worldsByLowerName);
+}
+
+void collectSkinnedGeometries(const Nif::NiAVObject* node, std::vector<const Nif::NiGeometry*>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mSkin.empty() && !geometry->mSkin->mData.empty() && !geometry->mData.empty())
+            geometries.push_back(geometry);
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectSkinnedGeometries(child.getPtr(), geometries);
+}
+
+void collectNifGeometries(const Nif::NiAVObject* node, std::vector<const Nif::NiGeometry*>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mData.empty())
+            geometries.push_back(geometry);
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifGeometries(child.getPtr(), geometries);
+}
+
+struct FnvGeometryDumpInfo
+{
+    const Nif::NiGeometry* mGeometry = nullptr;
+    osg::Matrixf mWorldTransform;
+};
+
+void collectNifGeometryInfos(const Nif::NiAVObject* node, const osg::Matrixf& parentWorld,
+    std::vector<FnvGeometryDumpInfo>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    const osg::Matrixf local = node->mTransform.toMatrix();
+    const osg::Matrixf world = local * parentWorld;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mData.empty())
+            geometries.push_back({ geometry, world });
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifGeometryInfos(child.getPtr(), world, geometries);
+}
+
+int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::vector<FnvGeometryDumpInfo> geometries;
+    for (const Nif::Record* record : meshFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectNifGeometryInfos(root, osg::Matrixf::identity(), geometries);
+
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n";
+    out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"geometryCount\": " << geometries.size() << ",\n";
+    out << "  \"geometries\": [";
+
+    bool firstGeometry = true;
+    for (const FnvGeometryDumpInfo& info : geometries)
+    {
+        const Nif::NiGeometry* geometry = info.mGeometry;
+        if (geometry->mData.empty())
+            continue;
+
+        const std::vector<osg::Vec3f>& vertices = geometry->mData->mVertices;
+        const auto* triBased = dynamic_cast<const Nif::NiTriBasedGeomData*>(geometry->mData.getPtr());
+        const auto* triShape = dynamic_cast<const Nif::NiTriShapeData*>(geometry->mData.getPtr());
+        const auto* triStrips = dynamic_cast<const Nif::NiTriStripsData*>(geometry->mData.getPtr());
+        std::size_t stripIndexCount = 0;
+        if (triStrips != nullptr)
+            for (const auto& strip : triStrips->mStrips)
+                stripIndexCount += strip.size();
+
+        osg::Vec2f uvMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec2f uvMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        if (!geometry->mData->mUVList.empty())
+            for (const osg::Vec2f& uv : geometry->mData->mUVList.front())
+            {
+                uvMin.x() = std::min(uvMin.x(), uv.x());
+                uvMin.y() = std::min(uvMin.y(), uv.y());
+                uvMax.x() = std::max(uvMax.x(), uv.x());
+                uvMax.y() = std::max(uvMax.y(), uv.y());
+            }
+
+        osg::Vec4f colorMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec4f colorMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        for (const osg::Vec4f& color : geometry->mData->mColors)
+        {
+            for (int component = 0; component < 4; ++component)
+            {
+                colorMin[component] = std::min(colorMin[component], color[component]);
+                colorMax[component] = std::max(colorMax[component], color[component]);
+            }
+        }
+        osg::BoundingBox box;
+        osg::BoundingBox worldBox;
+        for (const osg::Vec3f& vertex : vertices)
+        {
+            box.expandBy(vertex);
+            worldBox.expandBy(vertex * info.mWorldTransform);
+        }
+
+        if (!firstGeometry)
+            out << ",";
+        firstGeometry = false;
+
+        const Nif::NiAlphaProperty* alphaProperty = geometry->mAlphaProperty.empty()
+            ? nullptr
+            : geometry->mAlphaProperty.getPtr();
+        const Nif::BSShaderProperty* shaderProperty = geometry->mShaderProperty.empty()
+            ? nullptr
+            : geometry->mShaderProperty.getPtr();
+        for (const auto& property : geometry->mProperties)
+        {
+            if (property.empty())
+                continue;
+            if (property->recType == Nif::RC_NiAlphaProperty)
+                alphaProperty = static_cast<const Nif::NiAlphaProperty*>(property.getPtr());
+            if (const auto* shader = dynamic_cast<const Nif::BSShaderProperty*>(property.getPtr()))
+                shaderProperty = shader;
+        }
+
+        out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
+            << ",\"avFlags\":" << geometry->mFlags
+            << ",\"hidden\":" << (geometry->isHidden() ? "true" : "false")
+            << ",\"vertexCount\":" << vertices.size()
+            << ",\"dataRecordType\":" << geometry->mData->recType
+            << ",\"authoredTriangleCount\":" << (triBased == nullptr ? 0 : triBased->mNumTriangles)
+            << ",\"triangleIndexCount\":" << (triShape == nullptr ? 0 : triShape->mTriangles.size())
+            << ",\"stripCount\":" << (triStrips == nullptr ? 0 : triStrips->mStrips.size())
+            << ",\"stripIndexCount\":" << stripIndexCount
+            << ",\"hasSkin\":" << (!geometry->mSkin.empty() ? "true" : "false")
+            << ",\"uvSets\":" << geometry->mData->mUVList.size()
+            << ",\"uv0Count\":"
+            << (geometry->mData->mUVList.empty() ? 0 : geometry->mData->mUVList.front().size())
+            << ",\"uv0Min\":["
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMin.x()) << ","
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMin.y()) << "]"
+            << ",\"uv0Max\":["
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMax.x()) << ","
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMax.y()) << "]"
+            << ",\"vertexColors\":" << geometry->mData->mColors.size()
+            << ",\"vertexColorMin\":["
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.r()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.g()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.b()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.a()) << "]"
+            << ",\"vertexColorMax\":["
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.r()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.g()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.b()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.a()) << "]"
+            << ",\"alphaFlags\":" << (alphaProperty == nullptr ? -1 : alphaProperty->mFlags)
+            << ",\"alphaBlend\":"
+            << (alphaProperty != nullptr && alphaProperty->useAlphaBlending() ? "true" : "false")
+            << ",\"alphaSource\":" << (alphaProperty == nullptr ? -1 : alphaProperty->sourceBlendMode())
+            << ",\"alphaDestination\":"
+            << (alphaProperty == nullptr ? -1 : alphaProperty->destinationBlendMode())
+            << ",\"shaderFlags1\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags1)
+            << ",\"shaderFlags2\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags2)
+            << ",\"shaderDepthTest\":"
+            << (shaderProperty != nullptr && shaderProperty->depthTest() ? "true" : "false")
+            << ",\"shaderDepthWrite\":"
+            << (shaderProperty != nullptr && shaderProperty->depthWrite() ? "true" : "false")
+            << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
+            << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
+            << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
+            << ",\"worldTransform\":" << formatMatrixJson(info.mWorldTransform)
+            << ",\"vertices\":[";
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << formatVec3Json(vertices[i]);
+        }
+        out << "],\"worldVertices\":[";
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << formatVec3Json(vertices[i] * info.mWorldTransform);
+        }
+        out << "],\"uv0\":[";
+        if (!geometry->mData->mUVList.empty())
+        {
+            const auto& uvSet = geometry->mData->mUVList.front();
+            for (std::size_t i = 0; i < uvSet.size(); ++i)
+            {
+                if (i != 0)
+                    out << ",";
+                out << "[" << uvSet[i].x() << "," << uvSet[i].y() << "]";
+            }
+        }
+        out << "],\"vertexColorAlpha\":[";
+        for (std::size_t i = 0; i < geometry->mData->mColors.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << geometry->mData->mColors[i].a();
+        }
+        out << "],\"triangleIndices\":[";
+        if (triShape != nullptr)
+        {
+            for (std::size_t i = 0; i < triShape->mTriangles.size(); ++i)
+            {
+                if (i != 0)
+                    out << ",";
+                out << triShape->mTriangles[i];
+            }
+        }
+        out << "],\"stripIndices\":[";
+        if (triStrips != nullptr)
+        {
+            bool firstIndex = true;
+            for (const auto& strip : triStrips->mStrips)
+                for (const unsigned short index : strip)
+                {
+                    if (!firstIndex)
+                        out << ",";
+                    firstIndex = false;
+                    out << index;
+                }
+        }
+        out << "]";
+
+        if (!geometry->mSkin.empty() && !geometry->mSkin->mData.empty())
+        {
+            const Nif::NiSkinData& skinData = *geometry->mSkin->mData.getPtr();
+            const osg::Matrixf skinRoot = skinData.mTransform.toMatrix();
+            osg::Matrixf invSkinRoot;
+            const bool hasInvSkinRoot = invSkinRoot.invert(skinRoot);
+
+            auto writeVertexArray = [&](std::string_view name, const std::vector<osg::Vec3f>& values) {
+                out << ",\"" << name << "\":[";
+                for (std::size_t i = 0; i < values.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ",";
+                    out << formatVec3Json(values[i]);
+                }
+                out << "]";
+            };
+
+            auto writeMatrixSpace = [&](std::string_view name, const osg::Matrixf& matrix) {
+                std::vector<osg::Vec3f> values;
+                values.reserve(vertices.size());
+                for (const osg::Vec3f& vertex : vertices)
+                    values.push_back(vertex * matrix);
+                writeVertexArray(name, values);
+            };
+
+            auto writeWeightedSpace = [&](std::string_view name, const std::vector<osg::Matrixf>& matrices) {
+                std::vector<std::vector<std::pair<std::size_t, float>>> influencesByVertex(vertices.size());
+                for (std::size_t boneIndex = 0; boneIndex < skinData.mBones.size() && boneIndex < matrices.size();
+                     ++boneIndex)
+                {
+                    for (const auto& [vertexIndex, weight] : skinData.mBones[boneIndex].mWeights)
+                        if (vertexIndex < vertices.size())
+                            influencesByVertex[vertexIndex].push_back({ boneIndex, weight });
+                }
+
+                std::vector<osg::Vec3f> values;
+                values.reserve(vertices.size());
+                for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
+                {
+                    osg::Vec3f value(0.f, 0.f, 0.f);
+                    float weightSum = 0.f;
+                    for (const auto& [boneIndex, weight] : influencesByVertex[vertexIndex])
+                    {
+                        value += (vertices[vertexIndex] * matrices[boneIndex]) * weight;
+                        weightSum += weight;
+                    }
+
+                    if (influencesByVertex[vertexIndex].empty())
+                        value = vertices[vertexIndex];
+                    else if (weightSum > 0.0001f && std::abs(weightSum - 1.f) > 0.0001f)
+                        value /= weightSum;
+                    values.push_back(value);
+                }
+
+                writeVertexArray(name, values);
+            };
+
+            writeMatrixSpace("skinRootVertices", skinRoot);
+            if (hasInvSkinRoot)
+                writeMatrixSpace("invSkinRootVertices", invSkinRoot);
+
+            std::vector<osg::Matrixf> authoredInvBindMatrices;
+            std::vector<osg::Matrixf> authoredInvBindSkinRootMatrices;
+            std::vector<osg::Matrixf> authoredBindMatrices;
+            authoredInvBindMatrices.reserve(skinData.mBones.size());
+            authoredInvBindSkinRootMatrices.reserve(skinData.mBones.size());
+            authoredBindMatrices.reserve(skinData.mBones.size());
+            for (const Nif::NiSkinData::BoneInfo& boneInfo : skinData.mBones)
+            {
+                const osg::Matrixf invBind = boneInfo.mTransform.toMatrix();
+                authoredInvBindMatrices.push_back(invBind);
+                authoredInvBindSkinRootMatrices.push_back(invBind * skinRoot);
+
+                osg::Matrixf bind;
+                if (bind.invert(invBind))
+                    authoredBindMatrices.push_back(bind);
+                else
+                    authoredBindMatrices.push_back(osg::Matrixf());
+            }
+            writeWeightedSpace("authoredInvBindVertices", authoredInvBindMatrices);
+            writeWeightedSpace("authoredInvBindSkinRootVertices", authoredInvBindSkinRootMatrices);
+            writeWeightedSpace("authoredBindVertices", authoredBindMatrices);
+        }
+
+        out << "}";
+    }
+
+    out << "\n  ],\n";
+    out << "  \"controllers\": [";
+    bool firstController = true;
+    for (const auto& record : meshFile->mRecords)
+    {
+        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
+        if (object == nullptr)
+            continue;
+
+        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+             controller = controller->mNext)
+        {
+            if (!firstController)
+                out << ",";
+            firstController = false;
+            out << "\n    {\"node\":\"" << jsonEscape(object->mName) << "\""
+                << ",\"type\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"flags\":" << controller->mFlags
+                << ",\"frequency\":" << controller->mFrequency
+                << ",\"phase\":" << controller->mPhase
+                << ",\"start\":" << controller->mTimeStart
+                << ",\"stop\":" << controller->mTimeStop;
+
+            const auto* transformController
+                = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr());
+            const auto* transformInterpolator = transformController == nullptr
+                ? nullptr
+                : dynamic_cast<const Nif::NiTransformInterpolator*>(
+                    transformController->mInterpolator.getPtr());
+            if (transformInterpolator != nullptr)
+            {
+                out << ",\"defaultTranslation\":"
+                    << formatVec3Json(transformInterpolator->mDefaultValue.mTranslation)
+                    << ",\"defaultRotation\":"
+                    << formatQuatJson(transformInterpolator->mDefaultValue.mRotation)
+                    << ",\"defaultScale\":" << transformInterpolator->mDefaultValue.mScale;
+                if (!transformInterpolator->mData.empty())
+                {
+                    const Nif::NiKeyframeData& data = *transformInterpolator->mData.getPtr();
+                    out << ",\"translations\":[";
+                    for (std::size_t i = 0; i < data.mTranslations->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mTranslations->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":"
+                            << formatVec3Json(key.mValue) << "}";
+                    }
+                    out << "],\"scales\":[";
+                    for (std::size_t i = 0; i < data.mScales->mKeys.size(); ++i)
+                    {
+                        if (i != 0)
+                            out << ",";
+                        const auto& [time, key] = data.mScales->mKeys[i];
+                        out << "{\"time\":" << time << ",\"value\":" << key.mValue << "}";
+                    }
+                    out << "]";
+                }
+            }
+            out << "}";
+        }
+    }
+    out << "\n  ]\n";
+    out << "}\n";
+    return 0;
+}
+
+int runFnvParticleDump(const std::filesystem::path& meshPath, const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath))
+        << "\",\n  \"systems\": [";
+
+    bool firstSystem = true;
+    for (const std::unique_ptr<Nif::Record>& record : meshFile->mRecords)
+    {
+        const auto* system = dynamic_cast<const Nif::NiParticleSystem*>(record.get());
+        if (system == nullptr)
+            continue;
+
+        if (!firstSystem)
+            out << ',';
+        firstSystem = false;
+
+        const auto* data = system->mData.empty()
+            ? nullptr
+            : dynamic_cast<const Nif::NiParticlesData*>(system->mData.getPtr());
+        out << "\n    {\"name\":\"" << jsonEscape(system->mName) << "\""
+            << ",\"flags\":" << system->mFlags
+            << ",\"worldSpace\":" << (system->mWorldSpace ? "true" : "false")
+            << ",\"numParticles\":" << (data == nullptr ? 0 : data->mNumParticles)
+            << ",\"activeCount\":" << (data == nullptr ? 0 : data->mActiveCount)
+            << ",\"aspectRatio\":" << (data == nullptr ? 0.f : data->mAspectRatio)
+            << ",\"modifiers\":[";
+
+        bool firstModifier = true;
+        for (const Nif::NiPSysModifierPtr& modifierPtr : system->mModifiers)
+        {
+            if (modifierPtr.empty())
+                continue;
+            const Nif::NiPSysModifier* modifier = modifierPtr.getPtr();
+            if (!firstModifier)
+                out << ',';
+            firstModifier = false;
+            out << "{\"type\":\"" << jsonEscape(modifier->recName) << "\""
+                << ",\"name\":\"" << jsonEscape(modifier->mName) << "\""
+                << ",\"active\":" << (modifier->mActive ? "true" : "false")
+                << ",\"order\":" << static_cast<uint32_t>(modifier->mOrder);
+
+            if (const auto* emitter = dynamic_cast<const Nif::NiPSysEmitter*>(modifier))
+            {
+                out << ",\"speed\":" << emitter->mSpeed
+                    << ",\"speedVariation\":" << emitter->mSpeedVariation
+                    << ",\"declination\":" << emitter->mDeclination
+                    << ",\"declinationVariation\":" << emitter->mDeclinationVariation
+                    << ",\"planarAngle\":" << emitter->mPlanarAngle
+                    << ",\"planarAngleVariation\":" << emitter->mPlanarAngleVariation
+                    << ",\"initialColor\":[" << emitter->mInitialColor.r() << ','
+                    << emitter->mInitialColor.g() << ',' << emitter->mInitialColor.b() << ','
+                    << emitter->mInitialColor.a() << ']'
+                    << ",\"initialRadius\":" << emitter->mInitialRadius
+                    << ",\"radiusVariation\":" << emitter->mRadiusVariation
+                    << ",\"lifespan\":" << emitter->mLifespan
+                    << ",\"lifespanVariation\":" << emitter->mLifespanVariation;
+
+                if (const auto* box = dynamic_cast<const Nif::NiPSysBoxEmitter*>(emitter))
+                    out << ",\"box\":[" << box->mWidth << ',' << box->mDepth << ',' << box->mHeight << ']';
+                else if (const auto* cylinder = dynamic_cast<const Nif::NiPSysCylinderEmitter*>(emitter))
+                    out << ",\"cylinder\":[" << cylinder->mRadius << ',' << cylinder->mHeight << ']';
+                else if (const auto* sphere = dynamic_cast<const Nif::NiPSysSphereEmitter*>(emitter))
+                    out << ",\"sphereRadius\":" << sphere->mRadius;
+                else if (const auto* mesh = dynamic_cast<const Nif::NiPSysMeshEmitter*>(emitter))
+                    out << ",\"meshCount\":" << mesh->mEmitterMeshes.size()
+                        << ",\"initialVelocityType\":" << mesh->mInitialVelocityType
+                        << ",\"emissionType\":" << mesh->mEmissionType
+                        << ",\"emissionAxis\":" << formatVec3Json(mesh->mEmissionAxis);
+            }
+            else if (const auto* growFade = dynamic_cast<const Nif::NiPSysGrowFadeModifier*>(modifier))
+            {
+                out << ",\"growTime\":" << growFade->mGrowTime
+                    << ",\"fadeTime\":" << growFade->mFadeTime
+                    << ",\"baseScale\":" << growFade->mBaseScale;
+            }
+            else if (const auto* bomb = dynamic_cast<const Nif::NiPSysBombModifier*>(modifier))
+            {
+                out << ",\"axis\":" << formatVec3Json(bomb->mBombAxis)
+                    << ",\"range\":" << bomb->mRange
+                    << ",\"strength\":" << bomb->mStrength
+                    << ",\"decayType\":" << static_cast<uint32_t>(bomb->mDecayType)
+                    << ",\"symmetryType\":" << static_cast<uint32_t>(bomb->mSymmetryType)
+                    << ",\"object\":\""
+                    << jsonEscape(bomb->mBombObject.empty() ? std::string() : bomb->mBombObject->mName) << "\"";
+            }
+            else if (const auto* gravity = dynamic_cast<const Nif::NiPSysGravityModifier*>(modifier))
+            {
+                out << ",\"axis\":" << formatVec3Json(gravity->mGravityAxis)
+                    << ",\"decay\":" << gravity->mDecay
+                    << ",\"strength\":" << gravity->mStrength
+                    << ",\"forceType\":" << static_cast<uint32_t>(gravity->mForceType)
+                    << ",\"turbulence\":" << gravity->mTurbulence
+                    << ",\"turbulenceScale\":" << gravity->mTurbulenceScale
+                    << ",\"worldAligned\":" << (gravity->mWorldAligned ? "true" : "false")
+                    << ",\"object\":\""
+                    << jsonEscape(gravity->mGravityObject.empty() ? std::string() : gravity->mGravityObject->mName)
+                    << "\"";
+            }
+            else if (const auto* scale = dynamic_cast<const Nif::BSPSysScaleModifier*>(modifier))
+            {
+                out << ",\"scales\":[";
+                for (std::size_t i = 0; i < scale->mScales.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ',';
+                    out << scale->mScales[i];
+                }
+                out << ']';
+            }
+            else if (const auto* simpleColor = dynamic_cast<const Nif::BSPSysSimpleColorModifier*>(modifier))
+            {
+                out << ",\"fadeInPercent\":" << simpleColor->mFadeInPercent
+                    << ",\"fadeOutPercent\":" << simpleColor->mFadeOutPercent
+                    << ",\"color1EndPercent\":" << simpleColor->mColor1EndPercent
+                    << ",\"color1StartPercent\":" << simpleColor->mColor1StartPercent
+                    << ",\"color2EndPercent\":" << simpleColor->mColor2EndPercent
+                    << ",\"color2StartPercent\":" << simpleColor->mColor2StartPercent
+                    << ",\"colors\":[";
+                for (std::size_t i = 0; i < simpleColor->mColors.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ',';
+                    const osg::Vec4f& color = simpleColor->mColors[i];
+                    out << '[' << color.r() << ',' << color.g() << ',' << color.b() << ',' << color.a() << ']';
+                }
+                out << ']';
+            }
+            out << '}';
+        }
+        out << "],\"controllers\":[";
+        bool firstController = true;
+        for (Nif::NiTimeControllerPtr controllerPtr = system->mController; !controllerPtr.empty();
+             controllerPtr = controllerPtr->mNext)
+        {
+            const Nif::NiTimeController* controller = controllerPtr.getPtr();
+            if (!firstController)
+                out << ',';
+            firstController = false;
+            out << "{\"type\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"flags\":" << controller->mFlags
+                << ",\"frequency\":" << controller->mFrequency
+                << ",\"phase\":" << controller->mPhase
+                << ",\"start\":" << controller->mTimeStart
+                << ",\"stop\":" << controller->mTimeStop;
+            if (const auto* emitterController = dynamic_cast<const Nif::NiPSysEmitterCtlr*>(controller))
+            {
+                out << ",\"modifierName\":\"" << jsonEscape(emitterController->mModifierName) << "\"";
+                if (!emitterController->mInterpolator.empty())
+                {
+                    out << ",\"interpolatorType\":\""
+                        << jsonEscape(emitterController->mInterpolator->recName) << "\"";
+                    if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(
+                            emitterController->mInterpolator.getPtr()))
+                        out << ",\"defaultRate\":" << value->mDefaultValue;
+                    else if (const auto* blend = dynamic_cast<const Nif::NiBlendFloatInterpolator*>(
+                                 emitterController->mInterpolator.getPtr()))
+                    {
+                        out << ",\"blendValue\":" << blend->mValue << ",\"blendItems\":[";
+                        for (std::size_t i = 0; i < blend->mItems.size(); ++i)
+                        {
+                            if (i != 0)
+                                out << ',';
+                            out << "{\"weight\":" << blend->mItems[i].mWeight;
+                            if (!blend->mItems[i].mInterpolator.empty())
+                            {
+                                out << ",\"type\":\""
+                                    << jsonEscape(blend->mItems[i].mInterpolator->recName) << "\"";
+                                if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(
+                                        blend->mItems[i].mInterpolator.getPtr()))
+                                    out << ",\"value\":" << value->mDefaultValue;
+                            }
+                            out << '}';
+                        }
+                        out << ']';
+                    }
+                }
+            }
+            out << '}';
+        }
+        out << "]}";
+    }
+    out << "\n  ],\n  \"controllerSequences\": [";
+    bool firstSequence = true;
+    for (const std::unique_ptr<Nif::Record>& record : meshFile->mRecords)
+    {
+        const auto* sequence = dynamic_cast<const Nif::NiControllerSequence*>(record.get());
+        if (sequence == nullptr)
+            continue;
+
+        if (!firstSequence)
+            out << ',';
+        firstSequence = false;
+        out << "\n    {\"name\":\"" << jsonEscape(sequence->mName) << "\""
+            << ",\"frequency\":" << sequence->mFrequency
+            << ",\"phase\":" << sequence->mPhase
+            << ",\"start\":" << sequence->mStartTime
+            << ",\"stop\":" << sequence->mStopTime
+            << ",\"blocks\":[";
+        bool firstBlock = true;
+        for (const Nif::ControlledBlock& block : sequence->mControlledBlocks)
+        {
+            if (!firstBlock)
+                out << ',';
+            firstBlock = false;
+            out << "{\"target\":\"" << jsonEscape(resolveNifControlledBlockTargetName(*sequence, block)) << "\""
+                << ",\"controllerType\":\"" << jsonEscape(block.mControllerType) << "\""
+                << ",\"controllerId\":\"" << jsonEscape(block.mControllerId) << "\""
+                << ",\"interpolatorId\":\"" << jsonEscape(block.mInterpolatorId) << "\"";
+            if (!block.mInterpolator.empty())
+            {
+                out << ",\"interpolatorType\":\"" << jsonEscape(block.mInterpolator->recName) << "\"";
+                if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(block.mInterpolator.getPtr()))
+                {
+                    out << ",\"defaultValue\":" << value->mDefaultValue;
+                    if (!value->mData.empty() && value->mData->mKeyList)
+                    {
+                        out << ",\"keys\":[";
+                        bool firstKey = true;
+                        for (const auto& [time, key] : value->mData->mKeyList->mKeys)
+                        {
+                            if (!firstKey)
+                                out << ',';
+                            firstKey = false;
+                            out << '[' << time << ',' << key.mValue << ']';
+                        }
+                        out << ']';
+                    }
+                }
+                else if (const auto* value
+                    = dynamic_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr()))
+                    out << ",\"defaultValue\":" << (value->mDefaultValue ? "true" : "false");
+            }
+            out << '}';
+        }
+        out << "]}";
+    }
+    out << "\n  ]\n}\n";
+    return 0;
+}
+
+struct FnvSkinCandidateMetric
+{
+    std::string mName;
+    float mMaxVertexDelta = 0.f;
+    unsigned int mMaxVertex = 0;
+    float mMaxBlendedVertexDelta = 0.f;
+    unsigned int mMaxBlendedVertex = 0;
+    osg::BoundingBox mSourceBox;
+    osg::BoundingBox mSkinnedBox;
+};
+
+std::vector<osg::Matrixf> makeFNVWeightedBoneMatrices(const std::string& candidate,
+    const Nif::NiSkinData& data, const Nif::NiSkinInstance& skin,
+    const std::unordered_map<std::string, osg::Matrixf>& skeletonWorlds)
+{
+    std::vector<osg::Matrixf> matrices;
+    matrices.reserve(skin.mBones.size());
+    const osg::Matrixf skinTransform = data.mTransform.toMatrix();
+    osg::Matrixf inverseSkinTransform;
+    const bool hasInverseSkinTransform = inverseSkinTransform.invert(skinTransform);
+
+    for (std::size_t i = 0; i < skin.mBones.size(); ++i)
+    {
+        const Nif::NiAVObject* bone = skin.mBones[i].getPtr();
+        const std::string lowerName = bone != nullptr ? Misc::StringUtils::lowerCase(bone->mName) : std::string();
+        const auto found = skeletonWorlds.find(lowerName);
+        const osg::Matrixf bindWorld = found != skeletonWorlds.end() ? found->second : osg::Matrixf::identity();
+        const osg::Matrixf skinBone = i < data.mBones.size() ? data.mBones[i].mTransform.toMatrix() : osg::Matrixf();
+
+        osg::Matrixf inverseBindWorld;
+        const bool hasInverseBindWorld = inverseBindWorld.invert(bindWorld);
+        osg::Matrixf inverseSkinBone;
+        const bool hasInverseSkinBone = inverseSkinBone.invert(skinBone);
+
+        if (candidate == "engine")
+            matrices.push_back(skinBone * bindWorld * skinTransform);
+        else if (candidate == "engineNoSkinRoot")
+            matrices.push_back(skinBone * bindWorld);
+        else if (candidate == "skeletonDerived")
+            matrices.push_back(hasInverseBindWorld ? inverseBindWorld * bindWorld : osg::Matrixf());
+        else if (candidate == "skeletonDerivedSkinRoot")
+            matrices.push_back(hasInverseBindWorld ? inverseBindWorld * bindWorld * skinTransform : osg::Matrixf());
+        else if (candidate == "skinRootInverseThenEngine")
+            matrices.push_back(hasInverseSkinTransform ? inverseSkinTransform * skinBone * bindWorld * skinTransform
+                                                       : osg::Matrixf());
+        else if (candidate == "inverseSkinBoneThenBind")
+            matrices.push_back(hasInverseSkinBone ? inverseSkinBone * bindWorld : osg::Matrixf());
+        else
+            matrices.push_back(osg::Matrixf());
+    }
+
+    return matrices;
+}
+
+FnvSkinCandidateMetric auditFNVRestCandidate(const std::string& candidate, const Nif::NiGeometry& geometry,
+    const Nif::NiSkinData& data, const Nif::NiSkinInstance& skin,
+    const std::unordered_map<std::string, osg::Matrixf>& skeletonWorlds)
+{
+    FnvSkinCandidateMetric metric;
+    metric.mName = candidate;
+
+    const std::vector<osg::Matrixf> boneMatrices = makeFNVWeightedBoneMatrices(candidate, data, skin, skeletonWorlds);
+    const std::vector<osg::Vec3f>& vertices = geometry.mData->mVertices;
+    if (vertices.empty())
+        return metric;
+
+    for (const osg::Vec3f& vertex : vertices)
+        metric.mSourceBox.expandBy(vertex);
+
+    std::vector<std::vector<std::pair<std::size_t, float>>> influencesByVertex(vertices.size());
+    for (std::size_t boneIndex = 0; boneIndex < data.mBones.size() && boneIndex < boneMatrices.size(); ++boneIndex)
+    {
+        const osg::Matrixf& boneMatrix = boneMatrices[boneIndex];
+        for (const auto& [vertexIndex, weight] : data.mBones[boneIndex].mWeights)
+        {
+            if (vertexIndex >= vertices.size())
+                continue;
+
+            // This per-bone max is intentionally conservative. Full blended vertex accumulation is logged separately
+            // by the renderer; the bind audit rejects any individual influence that cannot preserve the rest pose.
+            const osg::Vec3f skinned = vertices[vertexIndex] * boneMatrix;
+            const float delta = (skinned - vertices[vertexIndex]).length() * std::abs(weight);
+            if (delta > metric.mMaxVertexDelta)
+            {
+                metric.mMaxVertexDelta = delta;
+                metric.mMaxVertex = vertexIndex;
+            }
+            influencesByVertex[vertexIndex].push_back({ boneIndex, weight });
+        }
+    }
+
+    for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
+    {
+        osg::Vec3f skinned(0.f, 0.f, 0.f);
+        float weightSum = 0.f;
+        for (const auto& [boneIndex, weight] : influencesByVertex[vertexIndex])
+        {
+            skinned += (vertices[vertexIndex] * boneMatrices[boneIndex]) * weight;
+            weightSum += weight;
+        }
+
+        if (influencesByVertex[vertexIndex].empty())
+            skinned = vertices[vertexIndex];
+        else if (weightSum > 0.0001f && std::abs(weightSum - 1.f) > 0.0001f)
+            skinned /= weightSum;
+
+        metric.mSkinnedBox.expandBy(skinned);
+        const float delta = (skinned - vertices[vertexIndex]).length();
+        if (delta > metric.mMaxBlendedVertexDelta)
+        {
+            metric.mMaxBlendedVertexDelta = delta;
+            metric.mMaxBlendedVertex = static_cast<unsigned int>(vertexIndex);
+        }
+    }
+
+    return metric;
+}
+
+int runFnvSkinBindAudit(const std::filesystem::path& skeletonPath, const std::filesystem::path& meshPath,
+    const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> skeletonFile = readNifFile(skeletonPath);
+    std::unordered_map<std::string, osg::Matrixf> skeletonWorlds;
+    for (const Nif::Record* record : skeletonFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectNifWorldMatrices(root, osg::Matrixf::identity(), skeletonWorlds);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::vector<const Nif::NiGeometry*> geometries;
+    for (const Nif::Record* record : meshFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectSkinnedGeometries(root, geometries);
+
+    const std::vector<std::string> candidates = { "engine", "engineNoSkinRoot", "skeletonDerived",
+        "skeletonDerivedSkinRoot", "skinRootInverseThenEngine", "inverseSkinBoneThenBind" };
+
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n";
+    out << "  \"skeleton\": \"" << jsonEscape(Files::pathToUnicodeString(skeletonPath)) << "\",\n";
+    out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"skeletonNodeCount\": " << skeletonWorlds.size() << ",\n";
+    out << "  \"skinnedGeometryCount\": " << geometries.size() << ",\n";
+    out << "  \"restPoseInvariant\": \"A valid bind-pose skinning formula should keep source vertices stationary at bind pose.\",\n";
+    out << "  \"geometries\": [";
+    bool firstGeometry = true;
+    for (const Nif::NiGeometry* geometry : geometries)
+    {
+        const Nif::NiSkinInstance* skin = geometry->mSkin.getPtr();
+        const Nif::NiSkinData* data = skin != nullptr ? skin->mData.getPtr() : nullptr;
+        if (skin == nullptr || data == nullptr || geometry->mData.empty())
+            continue;
+
+        if (!firstGeometry)
+            out << ",";
+        firstGeometry = false;
+
+        std::size_t missingBones = 0;
+        float maxSkinBoneVsSkeletonInverseDelta = 0.f;
+        for (std::size_t i = 0; i < skin->mBones.size() && i < data->mBones.size(); ++i)
+        {
+            const Nif::NiAVObject* bone = skin->mBones[i].getPtr();
+            const std::string lowerName = bone != nullptr ? Misc::StringUtils::lowerCase(bone->mName) : std::string();
+            const auto found = skeletonWorlds.find(lowerName);
+            if (found == skeletonWorlds.end())
+            {
+                ++missingBones;
+                continue;
+            }
+
+            osg::Matrixf inverseBindWorld;
+            if (!inverseBindWorld.invert(found->second))
+                continue;
+            maxSkinBoneVsSkeletonInverseDelta = std::max(maxSkinBoneVsSkeletonInverseDelta,
+                fnvMatrixMaxAbsDelta(data->mBones[i].mTransform.toMatrix(), inverseBindWorld));
+        }
+
+        out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
+            << ",\"vertexCount\":" << geometry->mData->mVertices.size()
+            << ",\"boneCount\":" << skin->mBones.size()
+            << ",\"missingSkeletonBones\":" << missingBones
+            << ",\"maxSkinBoneVsSkeletonInverseDelta\":" << maxSkinBoneVsSkeletonInverseDelta
+            << ",\"skinRootTransform\":" << formatMatrixJson(data->mTransform.toMatrix())
+            << ",\"candidates\":[";
+
+        bool firstCandidate = true;
+        for (const std::string& candidate : candidates)
+        {
+            const FnvSkinCandidateMetric metric
+                = auditFNVRestCandidate(candidate, *geometry, *data, *skin, skeletonWorlds);
+            const osg::Vec3f sourceExtent = fnvAuditExtent(metric.mSourceBox);
+            const osg::Vec3f skinnedExtent = fnvAuditExtent(metric.mSkinnedBox);
+            if (!firstCandidate)
+                out << ",";
+            firstCandidate = false;
+            out << "{\"name\":\"" << candidate << "\""
+                << ",\"maxWeightedVertexDelta\":" << metric.mMaxVertexDelta
+                << ",\"maxVertex\":" << metric.mMaxVertex
+                << ",\"maxBlendedVertexDelta\":" << metric.mMaxBlendedVertexDelta
+                << ",\"maxBlendedVertex\":" << metric.mMaxBlendedVertex
+                << ",\"sourceExtent\":" << formatVec3Json(sourceExtent)
+                << ",\"skinnedExtent\":" << formatVec3Json(skinnedExtent)
+                << ",\"verdict\":\"" << (metric.mMaxBlendedVertexDelta <= 0.01f ? "PASS" : "FAIL") << "\"}";
+        }
+        out << "]}";
+    }
+    out << "\n  ]\n";
+    out << "}\n";
+
+    return 0;
+}
+
+int runFnvTransformDump(
+    const std::filesystem::path& skeletonPath, const std::filesystem::path& kfPath,
+    const std::filesystem::path& outPath, float sampleTime)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> skeletonFile = readNifFile(skeletonPath);
+    osg::ref_ptr<osg::Node> skeleton = NifOsg::Loader::load(*skeletonFile, nullptr, nullptr);
+    if (skeleton == nullptr)
+        throw std::runtime_error("failed to load skeleton scene graph");
+
+    std::unique_ptr<Nif::NIFFile> kfFile = readNifFile(kfPath);
+    SceneUtil::KeyframeHolder keyframes;
+    NifOsg::Loader::loadKf(*kfFile, keyframes);
+
+    std::shared_ptr<SceneUtil::ControllerSource> sampleTimeSource
+        = std::make_shared<ConstantTransformDumpTimeSource>(sampleTime);
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+    {
+        auto* mutableController = const_cast<SceneUtil::KeyframeController*>(controller.get());
+        mutableController->setSource(sampleTimeSource);
+    }
+
+    std::vector<TransformDumpNode> nodes;
+    std::unordered_map<osg::MatrixTransform*, osg::Matrixf> bindWorlds;
+    TransformDumpVisitor visitor(nodes, bindWorlds);
+    skeleton->accept(visitor);
+
+    std::map<std::string, TransformDumpNode*> nodesByLower;
+    for (TransformDumpNode& node : nodes)
+        nodesByLower.emplace(node.mLowerName, &node);
+
+    const std::vector<std::string> modes = { "bind", "rawKey", "bindThenKey", "keyThenBind", "splitKeyXZThenBind",
+        "bindCoreRawLimbs", "bindCoreBindLowerRawUpper", "bindCoreBindLowerSplitUpper",
+        "bindCoreRawLowerBindUpper", "rawCoreBindLowerRawUpper", "bindCoreBindLowerBindUpper",
+        "bindCoreBindLowerBindArmsRawHands", "bindCoreBindLowerBindUpperRawForearmsHands",
+        "bindCoreBindLowerRawUpperBindHands", "bindCoreBindLowerRawClavicleBindArms" };
+    std::unordered_map<osg::MatrixTransform*, SceneUtil::KeyframeController::KfTransform> sampledKeyframes;
+    std::unordered_map<osg::MatrixTransform*, std::map<std::string, osg::Matrixf>> recursiveWorlds;
+
+    const auto findController = [&](const std::string& nodeName) {
+        auto controllerIt = keyframes.mKeyframeControllers.find(nodeName);
+        if (controllerIt != keyframes.mKeyframeControllers.end())
+            return controllerIt;
+
+        for (auto it = keyframes.mKeyframeControllers.begin(); it != keyframes.mKeyframeControllers.end(); ++it)
+        {
+            if (Misc::StringUtils::ciEqual(it->first, nodeName))
+                return it;
+        }
+        return keyframes.mKeyframeControllers.end();
+    };
+
+    for (TransformDumpNode& node : nodes)
+    {
+        auto controllerIt = findController(node.mName);
+        SceneUtil::KeyframeController::KfTransform keyTransform;
+        if (controllerIt != keyframes.mKeyframeControllers.end())
+        {
+            auto* controller = const_cast<SceneUtil::KeyframeController*>(controllerIt->second.get());
+            *controller->mTime = sampleTime;
+            keyTransform = controller->getCurrentTransformation(nullptr);
+        }
+        sampledKeyframes.emplace(node.mTransform, keyTransform);
+
+        const osg::Vec3f keyTranslation = keyTransform.mTranslation.value_or(node.mBindLocal.getTrans());
+        const osg::Quat keyRotation = keyTransform.mRotation.value_or(node.mBindLocal.getRotate());
+        const osg::Quat bindRotation = node.mBindLocal.getRotate();
+
+        for (const std::string& mode : modes)
+        {
+            const osg::Quat modeRotation
+                = composeFNVTransformDumpRotation(mode, node.mLowerName, keyRotation, bindRotation);
+            const osg::Vec3f modeTranslation
+                = mode == "bind" ? osg::Vec3f(node.mBindLocal.getTrans()) : keyTranslation;
+            const osg::Matrixf local = makeLocalMatrixLike(node.mTransform, modeRotation, modeTranslation);
+            osg::Matrixf parentWorld = osg::Matrixf::identity();
+            if (node.mParentTransform != nullptr)
+            {
+                auto parentIt = recursiveWorlds.find(node.mParentTransform);
+                if (parentIt != recursiveWorlds.end())
+                {
+                    auto modeIt = parentIt->second.find(mode);
+                    if (modeIt != parentIt->second.end())
+                        parentWorld = modeIt->second;
+                }
+            }
+            recursiveWorlds[node.mTransform][mode] = local * parentWorld;
+        }
+    }
+
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n";
+    out << "  \"skeleton\": \"" << jsonEscape(Files::pathToUnicodeString(skeletonPath)) << "\",\n";
+    out << "  \"kf\": \"" << jsonEscape(Files::pathToUnicodeString(kfPath)) << "\",\n";
+    out << "  \"sampleTime\": " << sampleTime << ",\n";
+    out << "  \"controllerCount\": " << keyframes.mKeyframeControllers.size() << ",\n";
+    out << "  \"textKeys\": [";
+    bool firstTextKey = true;
+    for (const auto& [time, text] : keyframes.mTextKeys)
+    {
+        if (!firstTextKey)
+            out << ",";
+        firstTextKey = false;
+        out << "{\"time\":" << time << ",\"text\":\"" << jsonEscape(text) << "\"}";
+    }
+    out << "],\n";
+    out << "  \"skeletonControllers\": [";
+    bool firstSkeletonController = true;
+    for (const auto& record : skeletonFile->mRecords)
+    {
+        const auto* object = dynamic_cast<const Nif::NiObjectNET*>(record.get());
+        if (object == nullptr)
+            continue;
+        for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+             controller = controller->mNext)
+        {
+            if (!firstSkeletonController)
+                out << ',';
+            firstSkeletonController = false;
+            out << "{\"node\":\"" << jsonEscape(object->mName) << "\""
+                << ",\"controllerType\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"controllerRecordType\":" << controller->recType
+                << ",\"flags\":" << controller->mFlags;
+            if (const auto* transformController = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr()))
+            {
+                const Nif::NiInterpolator* interpolator = transformController->mInterpolator.getPtr();
+                out << ",\"interpolatorType\":\""
+                    << jsonEscape(interpolator != nullptr ? interpolator->recName : std::string()) << "\"";
+                if (const auto* blend = dynamic_cast<const Nif::NiBlendInterpolator*>(interpolator))
+                {
+                    out << ",\"blendFlags\":" << static_cast<unsigned int>(blend->mFlags)
+                        << ",\"blendManagerControlled\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_ManagerControlled) ? "true" : "false")
+                        << ",\"blendOnlyUseHighestWeight\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_OnlyUseHighestWeight) ? "true" : "false");
+                }
+            }
+            out << "}";
+        }
+    }
+    out << "],\n";
+    out << "  \"boneLodControllers\": [";
+    bool firstBoneLodController = true;
+    for (const auto& record : skeletonFile->mRecords)
+    {
+        const auto* controller = dynamic_cast<const Nif::NiBoneLODController*>(record.get());
+        if (controller == nullptr)
+            continue;
+        if (!firstBoneLodController)
+            out << ',';
+        firstBoneLodController = false;
+        out << "{\"type\":\"" << jsonEscape(controller->recName) << "\""
+            << ",\"activeLod\":" << controller->mLOD
+            << ",\"numNodeGroups\":" << controller->mNumNodeGroups
+            << ",\"groups\":[";
+        bool firstGroup = true;
+        for (std::size_t groupIndex = 0; groupIndex < controller->mNodeGroups.size(); ++groupIndex)
+        {
+            if (!firstGroup)
+                out << ',';
+            firstGroup = false;
+            out << "{\"index\":" << groupIndex << ",\"nodes\":[";
+            bool firstNode = true;
+            for (const auto& node : controller->mNodeGroups[groupIndex])
+            {
+                if (node.empty())
+                    continue;
+                if (!firstNode)
+                    out << ',';
+                firstNode = false;
+                out << "\"" << jsonEscape(node->mName) << "\"";
+            }
+            out << "]}";
+        }
+        out << "]}";
+    }
+    out << "],\n";
+    out << "  \"controllerNames\": [";
+    bool firstControllerName = true;
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+    {
+        (void)controller;
+        if (!firstControllerName)
+            out << ",";
+        firstControllerName = false;
+        out << "\"" << jsonEscape(name) << "\"";
+    }
+    out << "],\n";
+    out << "  \"controllerBindings\": [";
+    bool firstControllerBinding = true;
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
+    {
+        auto* mutableController = const_cast<SceneUtil::KeyframeController*>(controller.get());
+        *mutableController->mTime = sampleTime;
+        const SceneUtil::KeyframeController::KfTransform keyTransform
+            = mutableController->getCurrentTransformation(nullptr);
+        const std::string lowerName = Misc::StringUtils::lowerCase(name);
+        if (!firstControllerBinding)
+            out << ",";
+        firstControllerBinding = false;
+        out << "{\"name\":\"" << jsonEscape(name) << "\""
+            << ",\"hasSkeletonNode\":" << (nodesByLower.find(lowerName) != nodesByLower.end() ? "true" : "false")
+            << ",\"isHashHelper\":" << (Misc::StringUtils::ciStartsWith(name, "##") ? "true" : "false")
+            << ",\"isWeaponTarget\":" << (Misc::StringUtils::ciEqual(name, "Weapon") ? "true" : "false")
+            << ",\"hasKeyTranslation\":" << (keyTransform.mTranslation ? "true" : "false")
+            << ",\"hasKeyRotation\":" << (keyTransform.mRotation ? "true" : "false")
+            << ",\"keyTranslation\":"
+            << formatVec3Json(keyTransform.mTranslation.value_or(osg::Vec3f()))
+            << ",\"keyRotationQuat\":"
+            << formatQuatJson(keyTransform.mRotation.value_or(osg::Quat()))
+            << "}";
+    }
+    out << "],\n";
+    out << "  \"controlledBlocks\": [";
+    bool firstBlock = true;
+    for (const auto& record : kfFile->mRecords)
+    {
+        if (!record || record->recType != Nif::RC_NiControllerSequence)
+            continue;
+
+        const auto& sequence = static_cast<const Nif::NiControllerSequence&>(*record);
+        for (const Nif::ControlledBlock& block : sequence.mControlledBlocks)
+        {
+            const std::string targetName = resolveNifControlledBlockTargetName(sequence, block);
+            const int interpolatorType = block.mInterpolator.empty() ? 0 : block.mInterpolator->recType;
+            const std::string interpolatorName = block.mInterpolator.empty() ? "" : block.mInterpolator->recName;
+            if (!firstBlock)
+                out << ",";
+            firstBlock = false;
+            out << "{\"sequence\":\"" << jsonEscape(sequence.mName) << "\""
+                << ",\"target\":\"" << jsonEscape(targetName) << "\""
+                << ",\"targetName\":\"" << jsonEscape(block.mTargetName) << "\""
+                << ",\"nodeName\":\"" << jsonEscape(block.mNodeName) << "\""
+                << ",\"controllerId\":\"" << jsonEscape(block.mControllerId) << "\""
+                << ",\"interpolatorId\":\"" << jsonEscape(block.mInterpolatorId) << "\""
+                << ",\"interpolatorType\":" << interpolatorType
+                << ",\"interpolatorName\":\"" << jsonEscape(interpolatorName) << "\""
+                << ",\"loadedAsTransform\":" << (isLoadedFNVTransformInterpolator(interpolatorType) ? "true" : "false");
+            if (interpolatorType == Nif::RC_NiTransformInterpolator)
+            {
+                const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
+                const osg::Quat& defaultRotation = transform->mDefaultValue.mRotation;
+                const osg::Vec3f& defaultTranslation = transform->mDefaultValue.mTranslation;
+                const bool defaultRotationReasonable = std::isfinite(defaultRotation.x())
+                    && std::isfinite(defaultRotation.y()) && std::isfinite(defaultRotation.z())
+                    && std::isfinite(defaultRotation.w()) && std::abs(defaultRotation.x()) <= 2.f
+                    && std::abs(defaultRotation.y()) <= 2.f && std::abs(defaultRotation.z()) <= 2.f
+                    && std::abs(defaultRotation.w()) <= 2.f;
+                out << ",\"defaultTranslation\":" << formatVec3Json(defaultTranslation)
+                    << ",\"defaultRotationQuat\":" << formatQuatJson(defaultRotation)
+                    << ",\"defaultScale\":" << transform->mDefaultValue.mScale
+                    << ",\"defaultRotationFinite\":"
+                    << (std::isfinite(defaultRotation.x()) && std::isfinite(defaultRotation.y())
+                                && std::isfinite(defaultRotation.z()) && std::isfinite(defaultRotation.w())
+                            ? "true"
+                            : "false")
+                    << ",\"defaultRotationReasonable\":" << (defaultRotationReasonable ? "true" : "false");
+                if (!transform->mData.empty())
+                {
+                    const Nif::NiKeyframeData& data = *transform->mData.getPtr();
+                    float minimumRotationNorm2 = std::numeric_limits<float>::max();
+                    float maximumRotationNorm2 = 0.f;
+                    std::size_t unreasonableRotationKeys = 0;
+                    for (const auto& [time, key] : data.mRotations->mKeys)
+                    {
+                        (void)time;
+                        const osg::Quat& value = key.mValue;
+                        const float norm2 = value.length2();
+                        minimumRotationNorm2 = std::min(minimumRotationNorm2, norm2);
+                        maximumRotationNorm2 = std::max(maximumRotationNorm2, norm2);
+                        if (!std::isfinite(norm2) || norm2 < 0.0001f || norm2 > 4.f)
+                            ++unreasonableRotationKeys;
+                    }
+                    out << ",\"rotationInterpolation\":" << data.mRotations->mInterpolationType
+                        << ",\"rotationKeys\":" << data.mRotations->mKeys.size()
+                        << ",\"rotationFirstTime\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : data.mRotations->mKeys.front().first)
+                        << ",\"rotationLastTime\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : data.mRotations->mKeys.back().first)
+                        << ",\"rotationMinNorm2\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : minimumRotationNorm2)
+                        << ",\"rotationMaxNorm2\":"
+                        << (data.mRotations->mKeys.empty() ? -1.f : maximumRotationNorm2)
+                        << ",\"unreasonableRotationKeys\":" << unreasonableRotationKeys
+                        << ",\"xRotationKeys\":" << (data.mXRotations ? data.mXRotations->mKeys.size() : 0)
+                        << ",\"yRotationKeys\":" << (data.mYRotations ? data.mYRotations->mKeys.size() : 0)
+                        << ",\"zRotationKeys\":" << (data.mZRotations ? data.mZRotations->mKeys.size() : 0)
+                        << ",\"translationInterpolation\":" << data.mTranslations->mInterpolationType
+                        << ",\"translationKeys\":" << data.mTranslations->mKeys.size()
+                        << ",\"scaleInterpolation\":" << data.mScales->mInterpolationType
+                        << ",\"scaleKeys\":" << data.mScales->mKeys.size();
+                }
+            }
+            out << "}";
+        }
+    }
+    out << "],\n";
+    out << "  \"modePosture\": [";
+    bool firstMode = true;
+    for (const std::string& mode : modes)
+    {
+        const auto getModeOrigin = [&](const std::string& lowerName) {
+            const auto nodeIt = nodesByLower.find(lowerName);
+            if (nodeIt == nodesByLower.end())
+                return osg::Vec3f();
+            const auto worldIt = recursiveWorlds.find(nodeIt->second->mTransform);
+            if (worldIt == recursiveWorlds.end())
+                return osg::Vec3f();
+            const auto modeIt = worldIt->second.find(mode);
+            if (modeIt == worldIt->second.end())
+                return osg::Vec3f();
+            return osg::Vec3f(modeIt->second.getTrans());
+        };
+        const auto getModeRotation = [&](const std::string& lowerName) {
+            const auto nodeIt = nodesByLower.find(lowerName);
+            if (nodeIt == nodesByLower.end())
+                return osg::Quat();
+
+            SceneUtil::KeyframeController::KfTransform keyTransform;
+            const auto sampledIt = sampledKeyframes.find(nodeIt->second->mTransform);
+            if (sampledIt != sampledKeyframes.end())
+                keyTransform = sampledIt->second;
+
+            const osg::Quat keyRotation = keyTransform.mRotation.value_or(nodeIt->second->mBindLocal.getRotate());
+            const osg::Quat bindRotation = nodeIt->second->mBindLocal.getRotate();
+            return composeFNVTransformDumpRotation(mode, lowerName, keyRotation, bindRotation);
+        };
+        const auto rotationBindDelta = [&](const std::string& lowerName) {
+            const auto nodeIt = nodesByLower.find(lowerName);
+            if (nodeIt == nodesByLower.end())
+                return 0.0;
+            return quatDeltaDegrees(getModeRotation(lowerName), nodeIt->second->mBindLocal.getRotate());
+        };
+        const auto distance = [](const osg::Vec3f& left, const osg::Vec3f& right) {
+            return (left - right).length();
+        };
+
+        const osg::Vec3f head = getModeOrigin("bip01 head");
+        const osg::Vec3f pelvis = getModeOrigin("bip01 pelvis");
+        const osg::Vec3f leftFoot = getModeOrigin("bip01 l foot");
+        const osg::Vec3f rightFoot = getModeOrigin("bip01 r foot");
+        const osg::Vec3f leftUpperArm = getModeOrigin("bip01 l upperarm");
+        const osg::Vec3f rightUpperArm = getModeOrigin("bip01 r upperarm");
+        const osg::Vec3f leftForearm = getModeOrigin("bip01 l forearm");
+        const osg::Vec3f rightForearm = getModeOrigin("bip01 r forearm");
+        const osg::Vec3f leftHand = getModeOrigin("bip01 l hand");
+        const osg::Vec3f rightHand = getModeOrigin("bip01 r hand");
+        const osg::Vec3f avgFoot = (leftFoot + rightFoot) * 0.5f;
+        const osg::Vec2f torsoHorizontal(head.x() - pelvis.x(), head.y() - pelvis.y());
+        const osg::Vec2f footSpread(leftFoot.x() - rightFoot.x(), leftFoot.y() - rightFoot.y());
+        const double leftUpperArmBindDelta = rotationBindDelta("bip01 l upperarm");
+        const double rightUpperArmBindDelta = rotationBindDelta("bip01 r upperarm");
+        const double leftForearmBindDelta = rotationBindDelta("bip01 l forearm");
+        const double rightForearmBindDelta = rotationBindDelta("bip01 r forearm");
+        const double leftHandBindDelta = rotationBindDelta("bip01 l hand");
+        const double rightHandBindDelta = rotationBindDelta("bip01 r hand");
+        const double maxArmBindDelta = std::max({ leftUpperArmBindDelta, rightUpperArmBindDelta, leftForearmBindDelta,
+            rightForearmBindDelta, leftHandBindDelta, rightHandBindDelta });
+        if (!firstMode)
+            out << ",";
+        firstMode = false;
+        out << "{\"mode\":\"" << jsonEscape(mode) << "\""
+            << ",\"headMinusPelvisZ\":" << (head.z() - pelvis.z())
+            << ",\"pelvisMinusAvgFeetZ\":" << (pelvis.z() - avgFoot.z())
+            << ",\"torsoHorizontal\":" << torsoHorizontal.length()
+            << ",\"footSpread\":" << footSpread.length()
+            << ",\"leftUpperArmBindDeltaDeg\":" << leftUpperArmBindDelta
+            << ",\"rightUpperArmBindDeltaDeg\":" << rightUpperArmBindDelta
+            << ",\"leftForearmBindDeltaDeg\":" << leftForearmBindDelta
+            << ",\"rightForearmBindDeltaDeg\":" << rightForearmBindDelta
+            << ",\"leftHandBindDeltaDeg\":" << leftHandBindDelta
+            << ",\"rightHandBindDeltaDeg\":" << rightHandBindDelta
+            << ",\"maxArmBindDeltaDeg\":" << maxArmBindDelta
+            << ",\"leftUpperToForearmDistance\":" << distance(leftUpperArm, leftForearm)
+            << ",\"rightUpperToForearmDistance\":" << distance(rightUpperArm, rightForearm)
+            << ",\"leftForearmToHandDistance\":" << distance(leftForearm, leftHand)
+            << ",\"rightForearmToHandDistance\":" << distance(rightForearm, rightHand)
+            << ",\"leftHandToHeadDistance\":" << distance(leftHand, head)
+            << ",\"rightHandToHeadDistance\":" << distance(rightHand, head)
+            << ",\"leftHandToPelvisDistance\":" << distance(leftHand, pelvis)
+            << ",\"rightHandToPelvisDistance\":" << distance(rightHand, pelvis)
+            << ",\"headOrigin\":" << formatVec3Json(head)
+            << ",\"pelvisOrigin\":" << formatVec3Json(pelvis)
+            << ",\"leftFootOrigin\":" << formatVec3Json(leftFoot)
+            << ",\"rightFootOrigin\":" << formatVec3Json(rightFoot)
+            << ",\"leftHandOrigin\":" << formatVec3Json(leftHand)
+            << ",\"rightHandOrigin\":" << formatVec3Json(rightHand)
+            << "}";
+    }
+    out << "],\n";
+    out << "  \"bones\": [\n";
+
+    bool firstBone = true;
+    for (TransformDumpNode& node : nodes)
+    {
+        if (!isImportantFNVHumanBone(node.mLowerName))
+            continue;
+
+        auto controllerIt = findController(node.mName);
+        bool hasController = controllerIt != keyframes.mKeyframeControllers.end();
+        SceneUtil::KeyframeController::KfTransform keyTransform;
+        const auto sampledIt = sampledKeyframes.find(node.mTransform);
+        if (sampledIt != sampledKeyframes.end())
+            keyTransform = sampledIt->second;
+
+        osg::Vec3f keyTranslation = keyTransform.mTranslation.value_or(node.mBindLocal.getTrans());
+        osg::Quat keyRotation = keyTransform.mRotation.value_or(node.mBindLocal.getRotate());
+        osg::Quat bindRotation = node.mBindLocal.getRotate();
+        osg::Matrixf rawLocal = makeLocalMatrixLike(node.mTransform, keyRotation, keyTranslation);
+        osg::Matrixf bindThenKeyLocal = makeLocalMatrixLike(node.mTransform, bindRotation * keyRotation, keyTranslation);
+        osg::Matrixf keyThenBindLocal = makeLocalMatrixLike(node.mTransform, keyRotation * bindRotation, keyTranslation);
+        osg::Matrixf rawWorld = recursiveWorlds[node.mTransform]["rawKey"];
+        osg::Matrixf bindThenKeyWorld = recursiveWorlds[node.mTransform]["bindThenKey"];
+        osg::Matrixf keyThenBindWorld = recursiveWorlds[node.mTransform]["keyThenBind"];
+
+        if (!firstBone)
+            out << ",\n";
+        firstBone = false;
+
+        out << "    {\n";
+        out << "      \"name\": \"" << jsonEscape(node.mName) << "\",\n";
+        out << "      \"parent\": \"" << jsonEscape(node.mParentName) << "\",\n";
+        out << "      \"hasController\": " << (hasController ? "true" : "false") << ",\n";
+        out << "      \"hasKeyTranslation\": " << (keyTransform.mTranslation ? "true" : "false") << ",\n";
+        out << "      \"hasKeyRotation\": " << (keyTransform.mRotation ? "true" : "false") << ",\n";
+        out << "      \"bindLocalTranslation\": " << formatVec3Json(node.mBindLocal.getTrans()) << ",\n";
+        out << "      \"bindWorldOrigin\": " << formatVec3Json(node.mBindWorld.getTrans()) << ",\n";
+        out << "      \"bindLocalQuat\": " << formatQuatJson(bindRotation) << ",\n";
+        out << "      \"keyTranslation\": " << formatVec3Json(keyTranslation) << ",\n";
+        out << "      \"keyRotationQuat\": " << formatQuatJson(keyRotation) << ",\n";
+        out << "      \"rawWorldOrigin\": " << formatVec3Json(rawWorld.getTrans()) << ",\n";
+        out << "      \"bindThenKeyWorldOrigin\": " << formatVec3Json(bindThenKeyWorld.getTrans()) << ",\n";
+        out << "      \"keyThenBindWorldOrigin\": " << formatVec3Json(keyThenBindWorld.getTrans()) << ",\n";
+        out << "      \"modeWorldOrigins\": {";
+        bool firstModeOrigin = true;
+        for (const std::string& mode : modes)
+        {
+            if (!firstModeOrigin)
+                out << ",";
+            firstModeOrigin = false;
+            out << "\"" << jsonEscape(mode) << "\":"
+                << formatVec3Json(recursiveWorlds[node.mTransform][mode].getTrans());
+        }
+        out << "},\n";
+        out << "      \"bindLocalMatrix\": " << formatMatrixJson(node.mBindLocal) << ",\n";
+        out << "      \"rawLocalMatrix\": " << formatMatrixJson(rawLocal) << "\n";
+        out << "    }";
+    }
+
+    out << "\n  ]\n";
+    out << "}\n";
+
+    return 0;
+}
+
+>>>>>>> origin/main
 bool isBSA(const std::filesystem::path& path)
 {
     return classifyFile(path).second == FileClass::Archive;
@@ -190,8 +2035,13 @@ void readVFS(std::unique_ptr<VFS::Archive>&& archive, const std::filesystem::pat
     if (!archivePath.empty() && !isBSA(archivePath))
     {
         const Files::Collections fileCollections({ archivePath });
+<<<<<<< HEAD
         const Files::MultiDirCollection& bsaCol = fileCollections.getCollection("bsa");
         const Files::MultiDirCollection& ba2Col = fileCollections.getCollection("ba2");
+=======
+        const Files::MultiDirCollection& bsaCol = fileCollections.getCollection(".bsa");
+        const Files::MultiDirCollection& ba2Col = fileCollections.getCollection(".ba2");
+>>>>>>> origin/main
         for (const Files::MultiDirCollection& collection : { bsaCol, ba2Col })
         {
             for (auto& file : collection)
@@ -266,6 +2116,62 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+<<<<<<< HEAD
+=======
+    if (argc == 4 && std::string_view(argv[1]) == "--fnv-particle-dump")
+    {
+        try
+        {
+            return runFnvParticleDump(argv[2], argv[3]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV particle dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
+    if (argc == 4 && std::string_view(argv[1]) == "--fnv-geometry-dump")
+    {
+        try
+        {
+            return runFnvGeometryDump(argv[2], argv[3]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV geometry dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
+    if (argc == 5 && std::string_view(argv[1]) == "--fnv-skin-bind-audit")
+    {
+        try
+        {
+            return runFnvSkinBindAudit(argv[2], argv[3], argv[4]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV skin bind audit failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
+    if ((argc == 5 || argc == 6) && std::string_view(argv[1]) == "--fnv-transform-dump")
+    {
+        try
+        {
+            const float sampleTime = argc == 6 ? std::stof(argv[5]) : 1.2f;
+            return runFnvTransformDump(argv[2], argv[3], argv[4], sampleTime);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV transform dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
+>>>>>>> origin/main
     Files::PathContainer files, sources;
     bool writeDebugLog = false;
     bool quiet = false;

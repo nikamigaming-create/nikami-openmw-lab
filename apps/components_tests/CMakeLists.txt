@@ -4,15 +4,31 @@ include_directories(SYSTEM ${GMOCK_INCLUDE_DIRS})
 file(GLOB UNITTEST_SRC_FILES
     main.cpp
 
+<<<<<<< HEAD
+=======
+    ../openmw/fnvsidecaripc.cpp
+    openmw/testfnvsidecaripc.cpp
+
+>>>>>>> origin/main
     esm/testfixedstring.cpp
     esm/testrefid.cpp
     esm/variant.cpp
 
     lua/testasync.cpp
+<<<<<<< HEAD
+=======
+    lua/testactivationhandlers.cpp
+>>>>>>> origin/main
     lua/testconfiguration.cpp
     lua/testinputactions.cpp
     lua/testl10n.cpp
     lua/testlua.cpp
+<<<<<<< HEAD
+=======
+    lua/testobscriptparser.cpp
+    lua/testobscriptruntime.cpp
+    lua/testobscripttranspiler.cpp
+>>>>>>> origin/main
     lua/testscriptscontainer.cpp
     lua/testserialization.cpp
     lua/teststorage.cpp
@@ -69,6 +85,34 @@ file(GLOB UNITTEST_SRC_FILES
     toutf8/toutf8.cpp
 
     esm4/includes.cpp
+<<<<<<< HEAD
+=======
+    esm4/fonvsavegame.cpp
+    esm4/testlip.cpp
+    esm4/testloadbehavior.cpp
+    esm4/testscdadecoder.cpp
+    esm4/testloadachr.cpp
+    esm4/testloadcreature.cpp
+    esm4/testloadarmor.cpp
+    esm4/testloadclimate.cpp
+    esm4/testloadamef.cpp
+    esm4/testloadmgef.cpp
+    esm4/testloadspel.cpp
+    esm4/testloadweap.cpp
+    esm4/testloadproj.cpp
+    esm4/testloadexpl.cpp
+    esm4/testloadweather.cpp
+    esm4/testloadimagespace.cpp
+    esm4/testloadlvli.cpp
+    esm4/testloadperk.cpp
+    esm4/testloadrcct.cpp
+    esm4/testloadrcpe.cpp
+    esm4/testloadnote.cpp
+    esm4/testloadmesg.cpp
+    esm4/testloadterm.cpp
+    esm4/testloadregion.cpp
+    esm4/testloadrace.cpp
+>>>>>>> origin/main
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -80,12 +124,18 @@ file(GLOB UNITTEST_SRC_FILES
     esm3/testcstringids.cpp
 
     nifosg/testnifloader.cpp
+<<<<<<< HEAD
+=======
+    nifosg/testcontroller.cpp
+    nifosg/testparticle.cpp
+>>>>>>> origin/main
 
     esmterrain/testgridsampling.cpp
 
     resource/testobjectcache.cpp
     resource/testresourcesystem.cpp
 
+<<<<<<< HEAD
     vfs/testpathutil.cpp
 
     sceneutil/osgacontroller.cpp
@@ -95,6 +145,18 @@ file(GLOB UNITTEST_SRC_FILES
 
     nif/node.hpp
     nif/testphysics.cpp
+=======
+    vfs/testinmemoryarchive.cpp
+    vfs/testpathutil.cpp
+
+    sceneutil/lightcommon.cpp
+    sceneutil/osgacontroller.cpp
+    sceneutil/riggeometry.cpp
+    sceneutil/visitor.cpp
+
+    bsa/testbsafile.cpp
+    bsa/testcompressedbsafile.cpp
+>>>>>>> origin/main
 )
 
 source_group(apps\\components-tests FILES ${UNITTEST_SRC_FILES})
@@ -107,10 +169,13 @@ target_link_libraries(components-tests
     components
 )
 
+<<<<<<< HEAD
 if (WIN32)
     target_sources(components-tests PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
+=======
+>>>>>>> origin/main
 # Fix for not visible pthreads functions for linker with glibc 2.15
 if (UNIX AND NOT APPLE)
     target_link_libraries(components-tests ${CMAKE_THREAD_LIBS_INIT})

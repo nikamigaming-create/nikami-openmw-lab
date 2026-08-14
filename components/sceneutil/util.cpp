@@ -8,6 +8,11 @@
 #include <osg/FrameBufferObject>
 #include <osg/Node>
 #include <osg/NodeVisitor>
+<<<<<<< HEAD
+=======
+#include <osg/TexEnvCombine>
+#include <osg/TexGen>
+>>>>>>> origin/main
 #include <osgUtil/CullVisitor>
 #include <osgUtil/RenderStage>
 
@@ -83,6 +88,23 @@ namespace SceneUtil
         else
         {
             stateset->setTextureMode(mTexUnit, GL_TEXTURE_2D, osg::StateAttribute::ON);
+<<<<<<< HEAD
+=======
+            osg::TexGen* texGen = new osg::TexGen;
+            texGen->setMode(osg::TexGen::SPHERE_MAP);
+
+            stateset->setTextureAttributeAndModes(
+                mTexUnit, texGen, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+
+            osg::TexEnvCombine* texEnv = new osg::TexEnvCombine;
+            texEnv->setSource0_RGB(osg::TexEnvCombine::CONSTANT);
+            texEnv->setConstantColor(mColor);
+            texEnv->setCombine_RGB(osg::TexEnvCombine::INTERPOLATE);
+            texEnv->setSource2_RGB(osg::TexEnvCombine::TEXTURE);
+            texEnv->setOperand2_RGB(osg::TexEnvCombine::SRC_COLOR);
+
+            stateset->setTextureAttributeAndModes(mTexUnit, texEnv, osg::StateAttribute::ON);
+>>>>>>> origin/main
             stateset->addUniform(new osg::Uniform("envMapColor", mColor));
         }
     }
@@ -90,6 +112,11 @@ namespace SceneUtil
     void GlowUpdater::removeTexture(osg::StateSet* stateset)
     {
         stateset->removeTextureAttribute(mTexUnit, osg::StateAttribute::TEXTURE);
+<<<<<<< HEAD
+=======
+        stateset->removeTextureAttribute(mTexUnit, osg::StateAttribute::TEXGEN);
+        stateset->removeTextureAttribute(mTexUnit, osg::StateAttribute::TEXENV);
+>>>>>>> origin/main
         stateset->removeTextureMode(mTexUnit, GL_TEXTURE_2D);
         stateset->removeUniform("envMapColor");
 
@@ -113,8 +140,13 @@ namespace SceneUtil
         if ((mDuration >= 0) && mStartingTime == 0)
             mStartingTime = nv->getFrameStamp()->getSimulationTime();
 
+<<<<<<< HEAD
         double time = nv->getFrameStamp()->getSimulationTime();
         int index = static_cast<int>(time * 16) % mTextures.size();
+=======
+        float time = nv->getFrameStamp()->getSimulationTime();
+        int index = (int)(time * 16) % mTextures.size();
+>>>>>>> origin/main
         stateset->setTextureAttribute(
             mTexUnit, mTextures[index], osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
@@ -400,4 +432,18 @@ namespace SceneUtil
 
         return texture.getName();
     }
+<<<<<<< HEAD
+=======
+    osg::Quat getRotationFromMatrix_SkewFriendly(const osg::Matrix& m)
+    {
+        // multiply with .w=0 to ignore translate
+        osg::Vec4 dir4 = osg::Vec4(0, 1, 0, 0) * m;
+        osg::Vec3 dir3 = osg::Vec3(dir4.x(), dir4.y(), dir4.z());
+        dir3.normalize();
+
+        osg::Quat res;
+        res.makeRotate(osg::Vec3(0, 1, 0), dir3);
+        return res;
+    }
+>>>>>>> origin/main
 }

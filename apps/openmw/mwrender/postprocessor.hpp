@@ -174,6 +174,13 @@ namespace MWRender
 
         void setUnderwaterFlag(bool underwater) { mUnderwater = underwater; }
 
+<<<<<<< HEAD
+=======
+        void setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+            const osg::Vec4f& tint, const osg::Vec4f& fade, float blurRadius);
+        void clearFalloutImageSpace();
+
+>>>>>>> origin/main
         void toggleMode();
 
         std::shared_ptr<Fx::Technique> loadTechnique(VFS::Path::NormalizedView path, bool loadNextFrame = false);
@@ -220,7 +227,11 @@ namespace MWRender
 
         void updateLiveReload();
 
+<<<<<<< HEAD
         void cull(unsigned frameId, osgUtil::CullVisitor* cv);
+=======
+        void cull(size_t frameId, osgUtil::CullVisitor* cv);
+>>>>>>> origin/main
 
         osg::ref_ptr<osg::Group> mRootNode;
         osg::ref_ptr<osg::Camera> mHUDCamera;
@@ -232,6 +243,10 @@ namespace MWRender
         TechniqueList mTemplates;
         TechniqueList mQueuedTemplates;
         TechniqueList mInternalTechniques;
+<<<<<<< HEAD
+=======
+        std::shared_ptr<Fx::Technique> mFalloutImageSpaceTechnique;
+>>>>>>> origin/main
 
         std::unordered_set<VFS::Path::Normalized, VFS::Path::Hash, std::equal_to<>> mTechniqueFiles;
 
@@ -241,7 +256,11 @@ namespace MWRender
 
         size_t mDirtyFrameId = 0;
         size_t mLastFrameNumber = 0;
+<<<<<<< HEAD
         double mLastSimulationTime = 0.0;
+=======
+        float mLastSimulationTime = 0.f;
+>>>>>>> origin/main
 
         bool mDirty = false;
         bool mReload = true;

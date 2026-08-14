@@ -33,8 +33,16 @@ namespace MWWorld
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
     class Actor;
     class CharacterController;
+=======
+    struct FalloutProjectileImpactContract;
+    struct FalloutVatsQueuedAction;
+    class Actor;
+    class CharacterController;
+    class CreatureStats;
+>>>>>>> origin/main
     class SidingCache;
 
     class Actors
@@ -83,6 +91,10 @@ namespace MWMechanics
 
         /// Removes an actor from combat and makes all of their allies stop fighting the actor's targets
         void stopCombat(const MWWorld::Ptr& ptr) const;
+<<<<<<< HEAD
+=======
+        bool playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const;
+>>>>>>> origin/main
 
         void playIdleDialogue(const MWWorld::Ptr& actor) const;
         void updateMovementSpeed(const MWWorld::Ptr& actor) const;
@@ -111,6 +123,19 @@ namespace MWMechanics
         bool isSneaking(const MWWorld::Ptr& ptr) const;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
+<<<<<<< HEAD
+=======
+        bool reloadFalloutWeapon(const MWWorld::Ptr& actor) const;
+        bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const;
+        bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const;
+        bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const;
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+            const FalloutProjectileImpactContract& impact) const;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) const;
+>>>>>>> origin/main
 
         bool playAnimationGroup(const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number,
             bool scripted = false) const;
@@ -127,7 +152,11 @@ namespace MWMechanics
 
         bool isAnyObjectInRange(const osg::Vec3f& position, float radius) const;
 
+<<<<<<< HEAD
         void cleanupSummonedCreature(ESM::RefNum creature) const;
+=======
+        void cleanupSummonedCreature(CreatureStats& casterStats, int creatureActorId) const;
+>>>>>>> origin/main
 
         /// Returns the list of actors which are siding with the given actor in fights
         /**ie AiFollow or AiEscort is active and the target is the actor **/
@@ -164,6 +193,10 @@ namespace MWMechanics
         int getGreetingTimer(const MWWorld::Ptr& ptr) const;
         float getAngleToPlayer(const MWWorld::Ptr& ptr) const;
         GreetingState getGreetingState(const MWWorld::Ptr& ptr) const;
+<<<<<<< HEAD
+=======
+        bool isTurningToPlayer(const MWWorld::Ptr& ptr) const;
+>>>>>>> origin/main
 
     private:
         std::map<ESM::RefId, int> mDeathCount;
@@ -176,18 +209,37 @@ namespace MWMechanics
         float mTimerUpdateHello = 0;
         float mSneakTimer = 0; // Times update of sneak icon
         float mSneakSkillTimer = 0; // Times sneak skill progress from "avoid notice"
+<<<<<<< HEAD
 
         void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
 
+=======
+        int mDialogueFacingActorId = -1;
+
+        void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
+
+        MWWorld::Ptr getDialogueActorForFacing(const MWWorld::Ptr& player) const;
+        void updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn,
+            bool updatePausedHeadTracking = false);
+
+>>>>>>> origin/main
         void adjustMagicEffects(const MWWorld::Ptr& creature, float duration) const;
 
         void calculateRestoration(const MWWorld::Ptr& ptr, float duration) const;
 
         void updateCrimePursuit(const MWWorld::Ptr& ptr, float duration, SidingCache& cachedAllies) const;
+<<<<<<< HEAD
 
         void killDeadActors();
 
         void purgeSpellEffects(ESM::RefNum creature) const;
+=======
+        void updateCombatEvents(Actor& actor) const;
+
+        void killDeadActors();
+
+        void purgeSpellEffects(int casterActorId) const;
+>>>>>>> origin/main
 
         void predictAndAvoidCollisions(float duration) const;
 

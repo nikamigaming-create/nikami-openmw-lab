@@ -7,6 +7,7 @@
 #include <sol/property.hpp>
 #include <sol/usertype.hpp>
 
+<<<<<<< HEAD
 #include "../contentbindings.hpp"
 
 namespace MWLua
@@ -35,6 +36,16 @@ namespace MWLua
                 T& recordValue = mutRec.find();
                 recordValue.mModel = Misc::ResourceHelpers::meshPathForESM3(path);
             });
+=======
+namespace MWLua
+{
+    template <class T>
+    void addModelProperty(sol::usertype<T>& recordType)
+    {
+        recordType["model"] = sol::readonly_property([](const T& recordValue) -> std::string {
+            return Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(recordValue.mModel)).value();
+        });
+>>>>>>> origin/main
     }
 }
 

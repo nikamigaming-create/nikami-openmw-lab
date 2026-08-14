@@ -1,8 +1,11 @@
 #ifndef OPENMW_LUAUI_TEXT
 #define OPENMW_LUAUI_TEXT
 
+<<<<<<< HEAD
 #include <vector>
 
+=======
+>>>>>>> origin/main
 #include <MyGUI_EditBox.h>
 
 #include "widget.hpp"
@@ -19,8 +22,11 @@ namespace LuaUi
         void updateProperties() override;
         void setCaption(const MyGUI::UString& caption) override;
 
+<<<<<<< HEAD
         const std::vector<std::string_view>& allUsedProperties() const override;
 
+=======
+>>>>>>> origin/main
     private:
         bool mAutoSized;
 

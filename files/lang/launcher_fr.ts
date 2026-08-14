@@ -574,6 +574,7 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>Text file (*.txt)</source>
         <translation>Fichier texte (*.txt)</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Open Directory</source>
         <translation>Ouvrir le dossier</translation>
@@ -617,6 +618,8 @@ Les logs et préférences modifiées y seront sauvegardés.</translation>
         <source>User config directory used because %1 contains the line config=%2.</source>
         <translation>Le dossier de configuration utilisateur est utilisé car %1 contient la ligne config=%2.</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>MainWindow</name>
@@ -818,8 +821,14 @@ Les logs et préférences modifiées y seront sauvegardés.</translation>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Normally environment map reflections aren&apos;t affected by lighting, which makes environment-mapped (and thus bump-mapped objects) glow in the dark.
                   Morrowind Code Patch includes an option to remedy that by doing environment-mapping before applying lighting, this is the equivalent of that option.
+<<<<<<< HEAD
                   &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;En temps normal, les réflexions dues au placage d&apos;environnement (environment map) ne sont pas affectées par l&apos;éclairage de la scène. En conséquence, les objets affectés par le placage d&apos;environnement (et de relief) ont tendance à briller dans le noir. Le &quot;Morrowind Code Patch&quot; a, pour remédier à ça, inclus une option qui applique le placage d&apos;environnement (et de relief) avant d&apos;appliquer l&apos;éclairage. Cette option est son équivalent.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+=======
+                  Affected objects will use shaders.
+                  &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;En temps normal, les réflexions dues au placage d&apos;environnement (environment map) ne sont pas affectées par l&apos;éclairage de la scène. En conséquence, les objets affectés par le placage d&apos;environnement (et de relief) ont tendance à briller dans le noir. Le &quot;Morrowind Code Patch&quot; a, pour remédier à ça, inclus une option qui applique le placage d&apos;environnement (et de relief) avant d&apos;appliquer l&apos;éclairage. Cette option est son équivalent. Les objets affectés utilisent toujours les shaders.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+>>>>>>> origin/main
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Allows MSAA to work with alpha-tested meshes, producing better-looking edges without pixelation. Can negatively impact performance.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
@@ -1124,6 +1133,7 @@ Les logs et préférences modifiées y seront sauvegardés.</translation>
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the internal handling of light sources.&lt;/p&gt;
+<<<<<<< HEAD
 &lt;p&gt;&quot;Shaders (compatibility)&quot; It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
 &lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;body&gt;&lt;p&gt;Définit la gestion des sources lumineuses :&lt;/p&gt;
@@ -1131,6 +1141,21 @@ Les logs et préférences modifiées y seront sauvegardés.</translation>
 &lt;p&gt;&quot;Shaders&quot; offre tous les bénéfices apportés par &quot;Shaders (mode de compatibilité)&quot;, mais utilise une approche moderne. Celle-ci permet, sur du matériel moderne, d&apos;augmenter le nombre de sources lumineuses par objet sans perte de performance.&quot;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
+=======
+&lt;p&gt; &quot;Legacy&quot; always uses 8 lights per object. It provides results most similar to Morrowind&apos;s lighting.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (compatibility)&quot; removes the 8 light limit. This mode also enables lighting on groundcover. It is recommended to use this with older hardware and a light limit closer to 8.&lt;/p&gt;
+&lt;p&gt; &quot;Shaders&quot; carries all of the benefits that &quot;Shaders (compatibility)&quot; does, but uses a modern approach that allows for a higher max lights count with little to no performance penalties on modern hardware.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;body&gt;&lt;p&gt;Définit la gestion des sources lumineuses :&lt;/p&gt;
+&lt;p&gt;&quot;Traditionnelle&quot; Chaque objet est éclairé par 8 sources lumineuses. Cet méthode est la plus proche du jeu original.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders (mode de compatibilité)&quot; supprime la limite des 8 sources lumineuses. Cette méthode permet d&apos;éclairer la végétation au sol. Ce choix est recommandé pour les ordinateurs plus anciens avec un nombre de sources lumineuses proche de 8.&lt;/p&gt;
+&lt;p&gt;&quot;Shaders&quot; offre tous les bénéfices apportés par &quot;Shaders (mode de compatibilité)&quot;, mais utilise une approche moderne. Celle-ci permet, sur du matériel moderne, d&apos;augmenter le nombre de sources lumineuses par objet sans perte de performance.&quot;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Legacy</source>
+        <translation>Traditionnelle</translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Shaders (compatibility)</source>
         <translation>Shaders (mode de compatibilité)</translation>
     </message>
@@ -1514,9 +1539,12 @@ Les logs et préférences modifiées y seront sauvegardés.</translation>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Controls the strength of the Doppler effect. Zero means it is completely disabled.&lt;/p&gt;&lt;p&gt;The Doppler effect increases or decreases the pitch of sounds relative to the velocity of the sound source and the listener.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Controle la puissance de l&apos;effet Doppler. La valeur zéro le désactivant complétement.&lt;/p&gt;&lt;p&gt;L&apos;effet Doppler augmente ou diminue la hauteur des sons relativement à la vélocité de leur source par rapport au joueur.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>Active Config Directories</source>
         <translation>Dossier de configuration actif</translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 </TS>

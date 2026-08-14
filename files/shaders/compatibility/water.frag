@@ -80,6 +80,10 @@ uniform float near;
 uniform float far;
 
 uniform float rainIntensity;
+<<<<<<< HEAD
+=======
+uniform bool enableRainRipples;
+>>>>>>> origin/main
 
 uniform vec2 screenRes;
 
@@ -111,7 +115,11 @@ void main(void)
 
     vec4 rainRipple;
 
+<<<<<<< HEAD
     if (rainIntensity > 0.01)
+=======
+    if (rainIntensity > 0.01 && enableRainRipples)
+>>>>>>> origin/main
         rainRipple = rainCombined(position.xy/1000.0, waterTimer) * clamp(rainIntensity, 0.0, 1.0);
     else
         rainRipple = vec4(0.0);

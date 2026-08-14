@@ -3,6 +3,12 @@
 #include <cmath>
 
 #include "apps/openmw/mwworld/timestamp.hpp"
+<<<<<<< HEAD
+=======
+#include "apps/openmw/mwworld/cellstore.hpp"
+
+#include "components/esm4/common.hpp"
+>>>>>>> origin/main
 
 namespace MWWorld
 {
@@ -63,5 +69,23 @@ namespace MWWorld
             TimeStamp timeStamp(13, 42);
             EXPECT_THROW(timeStamp += -1, std::runtime_error);
         }
+<<<<<<< HEAD
+=======
+
+        TEST(MWWorldTimeStampTest, esm4CellResetRequiresMoreThanRetailDefaultHours)
+        {
+            const TimeStamp lastReset(12, 10);
+            EXPECT_FALSE(isEsm4CellResetDue(lastReset + 72, lastReset, 72));
+            EXPECT_TRUE(isEsm4CellResetDue(lastReset + 72.01, lastReset, 72));
+            EXPECT_FALSE(isEsm4CellResetDue(lastReset + 1000, lastReset, -1));
+        }
+
+        TEST(MWWorldTimeStampTest, esm4NoRespawnReferenceNeverResets)
+        {
+            EXPECT_TRUE(isEsm4ReferenceResettable(0));
+            EXPECT_FALSE(isEsm4ReferenceResettable(ESM4::Rec_NoRespawn));
+            EXPECT_FALSE(isEsm4ReferenceResettable(ESM4::Rec_NoRespawn | ESM4::Rec_Persistent));
+        }
+>>>>>>> origin/main
     }
 }

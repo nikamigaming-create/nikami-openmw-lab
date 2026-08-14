@@ -35,11 +35,27 @@
   * - :doc:`MWUI </reference/lua-scripting/interface_mwui>`
     - |bdg-ctx-menu| |bdg-ctx-player|
     - Morrowind-style UI templates.
+<<<<<<< HEAD
+=======
+  * - :doc:`vrspaces </reference/lua-scripting/interface_vrspaces>`
+    - |bdg-ctx-player| |bdg-ctx-menu|
+    - Read VR tracking data
+  * - :doc:`vrui </reference/lua-scripting/interface_vrui>`
+    - |bdg-ctx-player|
+    - Manipulate VR GUI layers
+  * - :doc:`vrinputs </reference/lua-scripting/interface_vrinputs>`
+    - |bdg-ctx-player|
+    - VR inputs (Under construction)
+>>>>>>> origin/main
   * - :doc:`Settings </reference/lua-scripting/interface_settings>`
     - |bdg-ctx-global| |bdg-ctx-menu| |bdg-ctx-player| 
     - Save, display and track changes of setting values.
   * - :doc:`SkillProgression </reference/lua-scripting/interface_skill_progression>`
+<<<<<<< HEAD
     - |bdg-ctx-player|
+=======
+    - |bdg-ctx-local|
+>>>>>>> origin/main
     - Control, extend, and override skill progression of the player.
   * - :doc:`UI </reference/lua-scripting/interface_ui>`
     - |bdg-ctx-player|

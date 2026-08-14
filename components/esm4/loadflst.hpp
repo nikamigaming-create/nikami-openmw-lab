@@ -41,8 +41,13 @@ namespace ESM4
 
     struct FormIdList
     {
+<<<<<<< HEAD
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+=======
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+>>>>>>> origin/main
 
         std::string mEditorId;
         std::string mFullName;

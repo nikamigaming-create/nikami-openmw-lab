@@ -28,18 +28,32 @@ namespace Files
         TContainer mFiles;
 
     public:
+<<<<<<< HEAD
         MultiDirCollection(const Files::PathContainer& directories, std::string_view extension);
         ///< Directories are listed with increasing priority.
         /// \param extension The extension that should be listed in this collection. Must
         /// contain the leading dot.
 
         std::filesystem::path getPath(std::string_view file) const;
+=======
+        MultiDirCollection(const Files::PathContainer& directories, const std::string& extension);
+        ///< Directories are listed with increasing priority.
+        /// \param extension The extension that should be listed in this collection. Must
+        /// contain the leading dot.
+        /// \param foldCase Ignore filename case
+
+        std::filesystem::path getPath(const std::string& file) const;
+>>>>>>> origin/main
         ///< Return full path (including filename) of \a file.
         ///
         /// If the file does not exist, an exception is thrown. \a file must include
         /// the extension.
 
+<<<<<<< HEAD
         bool doesExist(std::string_view file) const;
+=======
+        bool doesExist(const std::string& file) const;
+>>>>>>> origin/main
         ///< \return Does a file with the given name exist?
 
         TIter begin() const;

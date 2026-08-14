@@ -100,6 +100,12 @@ namespace MWMechanics
             return options;
         }
 
+<<<<<<< HEAD
+=======
+        /// Returns target ID
+        MWWorld::Ptr getTarget() const override;
+
+>>>>>>> origin/main
         void writeState(ESM::AiSequence::AiSequence& sequence) const override;
 
     private:

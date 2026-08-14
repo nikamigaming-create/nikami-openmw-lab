@@ -2,12 +2,24 @@
 #include "magiceffects.hpp"
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <fstream>
+=======
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <set>
+#include <type_traits>
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/format.hpp>
+<<<<<<< HEAD
 #include <components/esm3/actoridconverter.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/cellref.hpp>
 #include <components/esm3/cellstate.hpp>
 #include <components/esm3/containerstate.hpp>
@@ -42,6 +54,10 @@
 #include <components/esm3/objectstate.hpp>
 #include <components/esm3/readerscache.hpp>
 
+<<<<<<< HEAD
+=======
+#include <components/esm4/common.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
@@ -58,6 +74,10 @@
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadligh.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadidlm.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -65,21 +85,40 @@
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadterm.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadtact.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/readerutils.hpp>
 
 #include <components/files/openfile.hpp>
+<<<<<<< HEAD
+=======
+#include <components/misc/convert.hpp>
+#include <components/misc/mathutil.hpp>
+>>>>>>> origin/main
 #include <components/misc/tuplehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 
 #include "../mwbase/environment.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/luamanager.hpp"
+>>>>>>> origin/main
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/recharge.hpp"
 #include "../mwmechanics/spellutil.hpp"
+<<<<<<< HEAD
+=======
+
+#include "../mwclass/esm4creature.hpp"
+#include "../mwclass/fnvactorstate.hpp"
+>>>>>>> origin/main
 
 #include "class.hpp"
 #include "containerstore.hpp"
@@ -90,6 +129,14 @@
 
 namespace
 {
+<<<<<<< HEAD
+=======
+    bool worldViewerActorTelemetryEnabled()
+    {
+        const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+>>>>>>> origin/main
 
     template <typename Record>
     struct RecordToState
@@ -118,6 +165,24 @@ namespace
         using StateType = ESM::ContainerState;
     };
     template <>
+<<<<<<< HEAD
+=======
+    struct RecordToState<ESM4::Container>
+    {
+        using StateType = ESM::ContainerState;
+    };
+    template <>
+    struct RecordToState<ESM4::Creature>
+    {
+        using StateType = ESM::CreatureState;
+    };
+    template <>
+    struct RecordToState<ESM4::Npc>
+    {
+        using StateType = ESM::CreatureState;
+    };
+    template <>
+>>>>>>> origin/main
     struct RecordToState<ESM::CreatureLevList>
     {
         using StateType = ESM::CreatureLevListState;
@@ -143,12 +208,79 @@ namespace
     }
 
     template <typename T>
+<<<<<<< HEAD
     void writeReferenceCollection(ESM::ESMWriter& writer, const MWWorld::CellRefList<T>& collection)
     {
         // references
         for (const MWWorld::LiveCellRef<T>& liveCellRef : collection.mList)
         {
             if (ESM::isESM4Rec(T::sRecordId))
+            {
+                // TODO: Implement loading/saving of REFR4 and ACHR4 with ESM3 reader/writer.
+                continue;
+            }
+            if (!liveCellRef.mData.hasChanged() && !liveCellRef.mRef.hasChanged() && liveCellRef.mRef.hasContentFile())
+            {
+                // Reference that came from a content file and has not been changed -> ignore
+                continue;
+            }
+            if (liveCellRef.mRef.getCount() == 0 && !liveCellRef.mRef.hasContentFile())
+            {
+                // Deleted reference that did not come from a content file -> ignore
+                continue;
+            }
+            using StateType = typename RecordToState<T>::StateType;
+            StateType state;
+            liveCellRef.save(state);
+
+            // recordId currently unused
+            writer.writeHNT("OBJE", collection.mList.front().mBase->sRecordId);
+
+            state.save(writer);
+=======
+    MWWorld::Ptr searchViaActorId(MWWorld::CellRefList<T>& actorList, int actorId, MWWorld::CellStore* cell,
+        const std::map<MWWorld::LiveCellRefBase*, MWWorld::CellStore*>& toIgnore)
+    {
+        for (typename MWWorld::CellRefList<T>::List::iterator iter(actorList.mList.begin());
+             iter != actorList.mList.end(); ++iter)
+        {
+            MWWorld::Ptr actor(&*iter, cell);
+
+            if (toIgnore.find(&*iter) != toIgnore.end())
+                continue;
+
+            if (actor.getClass().getCreatureStats(actor).matchesActorId(actorId) && actor.getCellRef().getCount() > 0)
+                return actor;
+>>>>>>> origin/main
+        }
+    }
+
+<<<<<<< HEAD
+    template <class RecordType, class T>
+    void fixRestockingImpl(const T* base, RecordType& state)
+    {
+        // Workaround for old saves not containing negative quantities
+        for (const auto& baseItem : base->mInventory.mList)
+        {
+            if (baseItem.mCount < 0)
+            {
+=======
+    template <typename T>
+    void writeReferenceCollection(ESM::ESMWriter& writer, const MWWorld::CellRefList<T>& collection)
+    {
+        // references
+        for (const MWWorld::LiveCellRef<T>& liveCellRef : collection.mList)
+        {
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
+            {
+                // CreatureState is an FNV compatibility contract. Other ESM4 games keep the historical omission
+                // until they have a format matching their own actor-value/inventory semantics.
+                if (liveCellRef.mBase == nullptr || !liveCellRef.mBase->mIsFONV)
+                    continue;
+            }
+            if constexpr (ESM::isESM4Rec(T::sRecordId) && !std::is_same_v<T, ESM4::Container>
+                && !std::is_same_v<T, ESM4::Creature> && !std::is_same_v<T, ESM4::Npc>
+                && !std::is_same_v<T, ESM4::Door>)
             {
                 // TODO: Implement loading/saving of REFR4 and ACHR4 with ESM3 reader/writer.
                 continue;
@@ -182,6 +314,7 @@ namespace
         {
             if (baseItem.mCount < 0)
             {
+>>>>>>> origin/main
                 for (auto& item : state.mInventory.mItems)
                 {
                     if (item.mRef.mCount > 0 && baseItem.mItem == item.mRef.mRefID)
@@ -216,7 +349,12 @@ namespace
 
     template <typename T>
     void readReferenceCollection(ESM::ESMReader& reader, MWWorld::CellRefList<T>& collection, const ESM::CellRef& cref,
+<<<<<<< HEAD
         const MWWorld::ESMStore& esmStore, MWWorld::CellStore* cellstore)
+=======
+        const MWWorld::ESMStore& esmStore, MWWorld::CellStore* cellstore,
+        std::set<ESM::RefNum>* acceptedFnvStateRefs = nullptr)
+>>>>>>> origin/main
     {
         using StateType = typename RecordToState<T>::StateType;
         StateType state;
@@ -235,10 +373,61 @@ namespace
         if (!record)
             return;
 
+<<<<<<< HEAD
         if (state.mVersion <= ESM::MaxOldRestockingFormatVersion)
             fixRestocking(record, state);
         if (state.mVersion <= ESM::MaxClearModifiersFormatVersion)
         {
+=======
+        if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
+        {
+            std::string error;
+            constexpr std::string_view actorKind
+                = std::is_same_v<T, ESM4::Creature> ? std::string_view("CREA") : std::string_view("NPC_");
+            if (!MWClass::validateFnvActorState(record->mIsFONV, actorKind, state, esmStore, error))
+            {
+                Log(Debug::Warning) << "Dropping invalid FNV actor state for " << state.mRef.mRefID << ": "
+                                    << error;
+                return;
+            }
+            if (acceptedFnvStateRefs != nullptr && acceptedFnvStateRefs->contains(state.mRef.mRefNum))
+            {
+                // The payload has already been fully parsed and semantically validated. First valid state wins;
+                // never allocate/register inventory references for duplicate OBJE records.
+                Log(Debug::Warning) << "Dropping duplicate FNV actor state for placement " << state.mRef.mRefNum;
+                return;
+            }
+        }
+        else if constexpr (std::is_same_v<T, ESM4::Door>)
+        {
+            std::string error;
+            if (!MWClass::validateFnvPlacedObjectState(state, "door", error))
+            {
+                Log(Debug::Warning) << "Dropping invalid FNV door state for " << state.mRef.mRefID << ": "
+                                    << error;
+                return;
+            }
+            if (acceptedFnvStateRefs != nullptr && acceptedFnvStateRefs->contains(state.mRef.mRefNum))
+            {
+                Log(Debug::Warning) << "Dropping duplicate FNV door state for placement " << state.mRef.mRefNum;
+                return;
+            }
+        }
+
+        const auto markFnvStateAccepted = [&]() {
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>
+                || std::is_same_v<T, ESM4::Door>)
+            {
+                if (acceptedFnvStateRefs != nullptr)
+                    acceptedFnvStateRefs->insert(state.mRef.mRefNum);
+            }
+        };
+
+        if (state.mVersion <= ESM::MaxOldRestockingFormatVersion)
+            fixRestocking(record, state);
+        if (state.mVersion <= ESM::MaxClearModifiersFormatVersion)
+        {
+>>>>>>> origin/main
             if constexpr (std::is_same_v<T, ESM::Creature>)
                 MWWorld::convertMagicEffects(state.mCreatureStats, state.mInventory);
             else if constexpr (std::is_same_v<T, ESM::NPC>)
@@ -257,6 +446,7 @@ namespace
             if constexpr (std::is_same_v<T, ESM::Creature> || std::is_same_v<T, ESM::NPC>)
                 MWWorld::convertEnchantmentSlots(state.mCreatureStats, state.mInventory);
         }
+<<<<<<< HEAD
         if constexpr (std::is_same_v<T, ESM::Creature> || std::is_same_v<T, ESM::NPC>)
         {
             if (reader.mActorIdConverter && state.mHasCustomState)
@@ -265,6 +455,8 @@ namespace
                 reader.mActorIdConverter->mMappings.emplace(state.mCreatureStats.mActorId, state.mRef.mRefNum);
             }
         }
+=======
+>>>>>>> origin/main
 
         if (state.mRef.mRefNum.hasContentFile())
         {
@@ -278,6 +470,7 @@ namespace
                     const ESM::Position& oldpos = iter->mRef.getPosition();
                     const ESM::Position& newpos = iter->mData.getPosition();
                     const MWWorld::Ptr ptr(&*iter, cellstore);
+<<<<<<< HEAD
                     if ((oldscale != iter->mRef.getScale() || oldpos.asVec3() != newpos.asVec3()
                             || oldpos.rot[0] != newpos.rot[0] || oldpos.rot[1] != newpos.rot[1]
                             || oldpos.rot[2] != newpos.rot[2])
@@ -289,6 +482,21 @@ namespace
                         MWBase::Environment::get().getWorld()->disable(ptr);
                     }
                     MWBase::Environment::get().getWorldModel()->registerPtr(ptr);
+=======
+                    MWBase::World* world = MWBase::Environment::tryGetWorld();
+                    if ((oldscale != iter->mRef.getScale() || oldpos.asVec3() != newpos.asVec3()
+                            || oldpos.rot[0] != newpos.rot[0] || oldpos.rot[1] != newpos.rot[1]
+                            || oldpos.rot[2] != newpos.rot[2])
+                        && !ptr.getClass().isActor() && world != nullptr)
+                        world->moveObject(ptr, newpos.asVec3());
+                    if (!iter->mData.isEnabled() && world != nullptr)
+                    {
+                        iter->mData.enable();
+                        world->disable(ptr);
+                    }
+                    MWBase::Environment::get().getWorldModel()->registerPtr(ptr);
+                    markFnvStateAccepted();
+>>>>>>> origin/main
                     return;
                 }
 
@@ -313,6 +521,10 @@ namespace
 
         MWWorld::LiveCellRefBase* base = &collection.mList.back();
         MWBase::Environment::get().getWorldModel()->registerPtr(MWWorld::Ptr(base, cellstore));
+<<<<<<< HEAD
+=======
+        markFnvStateAccepted();
+>>>>>>> origin/main
     }
 
     // this function allows us to link a CellRefList<T> to the associated recNameInt, and apply a function
@@ -325,25 +537,85 @@ namespace
         }
     }
 
+<<<<<<< HEAD
+=======
+    template <class LiveRef>
+    void logWorldViewerActorIteration(const LiveRef& ref, std::string_view phase, bool accessible)
+    {
+        using BaseType = std::remove_cv_t<std::remove_pointer_t<decltype(ref.mBase)>>;
+        if constexpr (std::is_same_v<BaseType, ESM4::Npc> || std::is_same_v<BaseType, ESM4::Creature>)
+        {
+            if (!worldViewerActorTelemetryEnabled())
+                return;
+
+            const ESM::RefNum refnum = ref.mRef.getRefNum();
+            Log(Debug::Info) << "World viewer actor ledger: phase=" << phase
+                             << " type=" << ref.getTypeDescription()
+                             << " ref=" << refnum.toString("FormId:")
+                             << " base=" << ref.mRef.getRefId().toDebugString()
+                             << " count=" << ref.mRef.getCount(false)
+                             << " hasContentFile=" << refnum.hasContentFile()
+                             << " refSet=" << refnum.isSet()
+                             << " deleted=" << ref.mData.isDeletedByContentFile()
+                             << " enabled=" << ref.mData.isEnabled()
+                             << " accessible=" << accessible;
+        }
+    }
+
+>>>>>>> origin/main
     // helper function for forEachInternal
     template <class Visitor, class List>
     bool forEachImp(Visitor& visitor, List& list, MWWorld::CellStore& cellStore, bool includeDeleted)
     {
         for (auto& v : list.mList)
         {
+<<<<<<< HEAD
             if (!includeDeleted && !MWWorld::CellStore::isAccessible(v.mData, v.mRef))
+=======
+            const bool accessible = MWWorld::CellStore::isAccessible(v.mData, v.mRef);
+            logWorldViewerActorIteration(v, accessible ? "cell-foreach-accept" : "cell-foreach-skip", accessible);
+            if (!includeDeleted && !accessible)
+>>>>>>> origin/main
                 continue;
             if (!visitor(MWWorld::Ptr(&v, &cellStore)))
                 return false;
         }
         return true;
+<<<<<<< HEAD
+=======
+    }
+
+    template <class Store>
+    constexpr bool isWorldViewerPriorityActorStore()
+    {
+        using StoreType = std::remove_cv_t<std::remove_reference_t<Store>>;
+        return std::is_same_v<StoreType, MWWorld::CellRefList<ESM::Creature>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM::NPC>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM4::Creature>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM4::Npc>>;
+>>>>>>> origin/main
     }
 }
 
 namespace MWWorld
 {
+<<<<<<< HEAD
     namespace
     {
+=======
+    bool isEsm4CellResetDue(const TimeStamp& now, const TimeStamp& lastReset, int resetHours)
+    {
+        return resetHours >= 0 && now - lastReset > resetHours;
+    }
+
+    bool isEsm4ReferenceResettable(std::uint32_t recordFlags)
+    {
+        return (recordFlags & ESM4::Rec_NoRespawn) == 0;
+    }
+
+    namespace
+    {
+>>>>>>> origin/main
         template <class T>
         bool isEnabled(const T& ref, const ESMStore& store)
         {
@@ -356,17 +628,89 @@ namespace MWWorld
             //  - every time when the parent is enabled/disabled we should also enable/disable
             //        all objects that are linked to it.
             // But for now we assume that the parent remains in its initial state.
+<<<<<<< HEAD
             if (const ESM4::Reference* parentRef = store.get<ESM4::Reference>().searchStatic(ref.mEsp.parent))
             {
+=======
+            const auto parentAllowsEnabled = [&](const auto* parentRef) {
+>>>>>>> origin/main
                 const bool parentDisabled = parentRef->mFlags & ESM4::Rec_Disabled;
                 const bool inversed = ref.mEsp.flags & ESM4::EnableParent::Flag_Inversed;
                 if (parentDisabled != inversed)
                     return false;
 
                 return isEnabled(*parentRef, store);
+<<<<<<< HEAD
             }
 
             return true;
+=======
+            };
+
+            if (const ESM4::Reference* parentRef = store.get<ESM4::Reference>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
+
+            if (const ESM4::ActorCharacter* parentRef
+                = store.get<ESM4::ActorCharacter>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
+
+            if (const ESM4::ActorCreature* parentRef = store.get<ESM4::ActorCreature>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
+
+            return true;
+        }
+
+        bool worldViewerRenderDisabledActors()
+        {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_RENDER_DISABLED_ACTORS");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }
+
+        ESM::Position composeStarfieldPackInPosition(
+            const ESM4::Reference& parent, const ESM4::Reference& child)
+        {
+            ESM::Position result = child.mPos;
+            osg::Quat parentRotation = Misc::Convert::makeOsgQuat(parent.mPos);
+            osg::Quat childRotation = Misc::Convert::makeOsgQuat(child.mPos);
+
+            const osg::Vec3f local = child.mPos.asVec3() * parent.mScale;
+            const osg::Vec3f world = parent.mPos.asVec3() + parentRotation * local;
+            result.pos[0] = world.x();
+            result.pos[1] = world.y();
+            result.pos[2] = world.z();
+
+            // ESM4 object rotations are Rz(-z) * Ry(-y) * Rx(-x). Compose in quaternion space, then invert that
+            // exact convention instead of adding Euler components (which breaks tilted Starfield pack-ins).
+            osg::Quat rotation = parentRotation * childRotation;
+            const double qx = rotation.x();
+            const double qy = rotation.y();
+            const double qz = rotation.z();
+            const double qw = rotation.w();
+            const double rx = std::atan2(2.0 * (qw * qx + qy * qz),
+                1.0 - 2.0 * (qx * qx + qy * qy));
+            const double sinY = std::clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0);
+            const double ry = std::asin(sinY);
+            const double rz = std::atan2(2.0 * (qw * qz + qx * qy),
+                1.0 - 2.0 * (qy * qy + qz * qz));
+            result.rot[0] = static_cast<float>(-rx);
+            result.rot[1] = static_cast<float>(-ry);
+            result.rot[2] = static_cast<float>(-rz);
+            return result;
+        }
+
+        ESM::FormId nextStarfieldPackInSyntheticRef()
+        {
+            static std::atomic<std::uint32_t> next{ 1 };
+            // ESM4::Reference is adapted through CellRef, which deliberately rejects OpenMW's negative
+            // generated-FormId namespace. Use the reserved final ESM4 content slot for runtime-only pack-in
+            // children instead. The playable profiles load only their master plus the Morrowind UI fallback,
+            // so 0xfe cannot alias authored content; a process-wide 24-bit counter keeps active cells unique.
+            constexpr std::uint32_t maxIndex = 0x00ffffff;
+            const std::uint32_t index = next.fetch_add(1);
+            if (index == 0 || index > maxIndex)
+                throw std::runtime_error("Starfield pack-in runtime reference namespace exhausted");
+            return ESM::FormId{ index, 0xfe };
+>>>>>>> origin/main
         }
     }
 
@@ -393,8 +737,27 @@ namespace MWWorld
         {
             bool returnValue = true;
 
+<<<<<<< HEAD
             Misc::tupleForEach(cellStore.mCellStoreImp->mRefLists, [&](auto& store) {
                 returnValue = returnValue && forEachImp(visitor, store, cellStore, includeDeleted);
+=======
+            returnValue = returnValue && forEachImp(
+                visitor, std::get<CellRefList<ESM::Creature>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                includeDeleted);
+            returnValue = returnValue
+                && forEachImp(visitor, std::get<CellRefList<ESM::NPC>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                    includeDeleted);
+            returnValue = returnValue && forEachImp(
+                visitor, std::get<CellRefList<ESM4::Creature>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                includeDeleted);
+            returnValue = returnValue
+                && forEachImp(visitor, std::get<CellRefList<ESM4::Npc>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                    includeDeleted);
+
+            Misc::tupleForEach(cellStore.mCellStoreImp->mRefLists, [&](auto& store) {
+                if constexpr (!isWorldViewerPriorityActorStore<decltype(store)>())
+                    returnValue = returnValue && forEachImp(visitor, store, cellStore, includeDeleted);
+>>>>>>> origin/main
             });
 
             return returnValue;
@@ -432,10 +795,35 @@ namespace MWWorld
         return rec == ESM::REC_NPC_4 || rec == ESM::REC_CREA4;
     }
 
+<<<<<<< HEAD
+=======
+    template <typename X>
+    const X* searchEsm4ViewerBase(const MWWorld::Store<X>& store, ESM::FormId baseObj, ESM::FormId* resolvedBase)
+    {
+        if (const X* ptr = store.search(baseObj))
+        {
+            if (resolvedBase != nullptr)
+                *resolvedBase = baseObj;
+            return ptr;
+        }
+
+        if (!baseObj.hasContentFile() || baseObj.mContentFile == 0)
+            return nullptr;
+
+        ESM::FormId localBase = baseObj;
+        localBase.mContentFile = 0;
+        const X* ptr = store.search(localBase);
+        if (ptr && resolvedBase != nullptr)
+            *resolvedBase = localBase;
+        return ptr;
+    }
+
+>>>>>>> origin/main
     template <typename X, typename R>
     static void loadImpl(const R& ref, const MWWorld::ESMStore& esmStore, auto& list)
     {
         const MWWorld::Store<X>& store = esmStore.get<X>();
+<<<<<<< HEAD
         const X* ptr = store.search(ref.mBaseObj);
         if (!ptr)
         {
@@ -448,11 +836,89 @@ namespace MWWorld
         list.push_back(std::move(liveCellRef));
     }
 
+=======
+        ESM::FormId resolvedBase = ref.mBaseObj;
+        const X* ptr = searchEsm4ViewerBase(store, ref.mBaseObj, &resolvedBase);
+        if (!ptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: could not resolve placed reference " << ESM::RefId(ref.mId)
+                                << " base " << ESM::RefId(ref.mBaseObj) << " in parent cell " << ref.mParent
+                                << " (dropping reference)";
+            return;
+        }
+        LiveCellRef<X> liveCellRef(ref, ptr);
+        const bool enabledByData = isEnabled(ref, esmStore);
+        const bool initiallyDisabledByFlag = (ref.mFlags & ESM4::Rec_Disabled) != 0;
+        bool forcedEnabledForWorldViewer = false;
+        if (!enabledByData || initiallyDisabledByFlag || !liveCellRef.mData.isEnabled())
+        {
+            if constexpr (isESM4ActorRec(X::sRecordId))
+                forcedEnabledForWorldViewer = worldViewerRenderDisabledActors();
+
+            if (forcedEnabledForWorldViewer)
+                liveCellRef.mData.enable();
+            else if (!enabledByData)
+                liveCellRef.mData.disable();
+        }
+        if constexpr (isESM4ActorRec(X::sRecordId))
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
+                             << ref.mEditorId << "' full '" << ref.mFullName << "' base " << ESM::RefId(ref.mBaseObj)
+                             << " resolvedBase " << ESM::RefId(resolvedBase)
+                             << " baseEditor '" << ptr->mEditorId << "' baseFull '" << ptr->mFullName << "' parent "
+                             << ref.mParent << " pos=(" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", "
+                             << ref.mPos.pos[2] << ") flags=0x" << std::hex << ref.mFlags << std::dec
+                             << " enableParent=" << ESM::RefId(ref.mEsp.parent) << " enableFlags=0x" << std::hex
+                             << static_cast<int>(ref.mEsp.flags) << std::dec
+                             << " enabledByData=" << enabledByData
+                             << " initiallyDisabledByFlag=" << initiallyDisabledByFlag
+                             << " forcedEnabledForWorldViewer=" << forcedEnabledForWorldViewer
+                             << " enabled=" << liveCellRef.mData.isEnabled();
+        }
+        list.push_back(std::move(liveCellRef));
+    }
+
+    bool isValidFnvTalkingActivatorReference(const ESM4::Reference& ref)
+    {
+        const auto finitePosition = [](const ESM::Position& position) {
+            for (const float value : position.pos)
+                if (!std::isfinite(value))
+                    return false;
+            for (const float value : position.rot)
+                if (!std::isfinite(value))
+                    return false;
+            return true;
+        };
+
+        return !ref.mId.isZeroOrUnset() && !ref.mBaseObj.isZeroOrUnset() && std::isfinite(ref.mScale)
+            && ref.mScale > 0.f && finitePosition(ref.mPos) && std::isfinite(ref.mRadio.rangeRadius)
+            && ref.mRadio.broadcastRange <= 4 && std::isfinite(ref.mRadio.staticPercentage);
+    }
+
+>>>>>>> origin/main
     template <typename X>
     void CellRefList<X>::load(const ESM4::Reference& ref, const MWWorld::ESMStore& esmStore)
     {
         if constexpr (ESM::isESM4Rec(X::sRecordId) && !isESM4ActorRec(X::sRecordId))
+<<<<<<< HEAD
             loadImpl<X>(ref, esmStore, mList);
+=======
+        {
+            if constexpr (std::is_same_v<X, ESM4::TalkingActivator>)
+            {
+                if (!isValidFnvTalkingActivatorReference(ref))
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 TACT: dropping malformed placed reference "
+                                        << ESM::RefId(ref.mId) << " base=" << ESM::RefId(ref.mBaseObj)
+                                        << " scale=" << ref.mScale << " radioRange=" << ref.mRadio.rangeRadius
+                                        << " broadcastRange=" << ref.mRadio.broadcastRange
+                                        << " static=" << ref.mRadio.staticPercentage;
+                    return;
+                }
+            }
+            loadImpl<X>(ref, esmStore, mList);
+        }
+>>>>>>> origin/main
     }
     template <typename X>
     void CellRefList<X>::load(const ESM4::ActorCharacter& ref, const MWWorld::ESMStore& esmStore)
@@ -662,6 +1128,7 @@ namespace MWWorld
     };
 
     Ptr CellStore::search(const ESM::RefId& id)
+<<<<<<< HEAD
     {
         SearchVisitor<MWWorld::Ptr> searchVisitor(id);
         forEach(searchVisitor);
@@ -673,6 +1140,39 @@ namespace MWWorld
         SearchVisitor<MWWorld::ConstPtr> searchVisitor(id);
         forEachConst(searchVisitor);
         return searchVisitor.mFound;
+=======
+    {
+        SearchVisitor<MWWorld::Ptr> searchVisitor(id);
+        forEach(searchVisitor);
+        return searchVisitor.mFound;
+    }
+
+    ConstPtr CellStore::searchConst(const ESM::RefId& id) const
+    {
+        SearchVisitor<MWWorld::ConstPtr> searchVisitor(id);
+        forEachConst(searchVisitor);
+        return searchVisitor.mFound;
+    }
+
+    Ptr CellStore::searchViaActorId(int id)
+    {
+        if (Ptr ptr = ::searchViaActorId(get<ESM::NPC>(), id, this, mMovedToAnotherCell); !ptr.isEmpty())
+            return ptr;
+
+        if (Ptr ptr = ::searchViaActorId(get<ESM::Creature>(), id, this, mMovedToAnotherCell); !ptr.isEmpty())
+            return ptr;
+
+        for (const auto& [base, _] : mMovedHere)
+        {
+            MWWorld::Ptr actor(base, this);
+            if (!actor.getClass().isActor())
+                continue;
+            if (actor.getClass().getCreatureStats(actor).matchesActorId(id) && actor.getCellRef().getCount() > 0)
+                return actor;
+        }
+
+        return Ptr();
+>>>>>>> origin/main
     }
 
     class RefNumSearchVisitor
@@ -700,7 +1200,11 @@ namespace MWWorld
 
     float CellStore::getWaterLevel() const
     {
+<<<<<<< HEAD
         if (isExterior())
+=======
+        if (isExterior() && !mHasState)
+>>>>>>> origin/main
             return getCell()->getWaterHeight();
         return mWaterLevel;
     }
@@ -927,17 +1431,127 @@ namespace MWWorld
     {
         const MWWorld::ESMStore& store = mStore;
 
+<<<<<<< HEAD
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
+=======
+        if (const std::optional<ESM::FormId> storageCell = store.getStarfieldPackInStorageCell(ref.mBaseObj))
+        {
+            std::vector<ESM::FormId> stack;
+            loadStarfieldPackInReference(ref, *storageCell, 0, stack);
+            return;
+        }
+
+        ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
+        if (foundType == 0)
+        {
+            // IDLM references are authored, invisible AI interaction points. They stay in the
+            // ESM4 reference store for sandbox-package discovery and deliberately have no live
+            // render/physics object in the cell's reference lists.
+            if (store.get<ESM4::IdleMarker>().search(ref.mBaseObj) != nullptr)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained invisible idle marker reference "
+                                    << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
+                                    << " in parent cell " << ref.mParent;
+                return;
+            }
+            Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
+                                << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
+>>>>>>> origin/main
 
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {
             recNameSwitcher(x, foundType, [&ref, &store](auto& storeIn) { storeIn.load(ref, store); });
         });
     }
 
+<<<<<<< HEAD
+=======
+    void CellStore::loadStarfieldPackInReference(const ESM4::Reference& ref, ESM::FormId storageCell,
+        unsigned int depth, std::vector<ESM::FormId>& stack)
+    {
+        constexpr unsigned int maxDepth = 16;
+        if (depth >= maxDepth || std::find(stack.begin(), stack.end(), storageCell) != stack.end())
+        {
+            Log(Debug::Warning) << "World viewer: Starfield PKIN expansion stopped base=" << ref.mBaseObj
+                                << " storageCell=" << storageCell << " depth=" << depth
+                                << " reason=\"depth or cycle guard\"";
+            return;
+        }
+
+        stack.push_back(storageCell);
+        const auto children = mStore.get<ESM4::Reference>().getByCell(storageCell);
+        unsigned int emitted = 0;
+        unsigned int nested = 0;
+        for (const ESM4::Reference* source : children)
+        {
+            if (source == nullptr || source->mBaseObj.isZeroOrUnset())
+                continue;
+
+            ESM4::Reference child = *source;
+            child.mId = nextStarfieldPackInSyntheticRef();
+            child.mParent = ref.mParent;
+            child.mPos = composeStarfieldPackInPosition(ref, *source);
+            child.mScale = ref.mScale * source->mScale;
+            if ((ref.mFlags & ESM4::Rec_Disabled) != 0)
+                child.mFlags |= ESM4::Rec_Disabled;
+            if (child.mEsp.parent.isZeroOrUnset() && !ref.mEsp.parent.isZeroOrUnset())
+                child.mEsp = ref.mEsp;
+
+            if (const std::optional<ESM::FormId> nestedCell
+                = mStore.getStarfieldPackInStorageCell(child.mBaseObj))
+            {
+                ++nested;
+                loadStarfieldPackInReference(child, *nestedCell, depth + 1, stack);
+            }
+            else
+            {
+                ++emitted;
+                loadRef(child);
+            }
+        }
+        stack.pop_back();
+
+        static std::atomic<unsigned int> logged{ 0 };
+        const unsigned int logIndex = logged.fetch_add(1);
+        if (logIndex < 240)
+        {
+            Log(Debug::Info) << "World viewer: Starfield PKIN expanded base=" << ref.mBaseObj
+                             << " ref=" << ref.mId << " storageCell=" << storageCell
+                             << " sourceChildren=" << children.size() << " emitted=" << emitted
+                             << " nested=" << nested << " depth=" << depth << " parentCell=" << ref.mParent;
+        }
+        else if (logIndex == 240)
+            Log(Debug::Info) << "World viewer: further Starfield PKIN expansion logs suppressed";
+    }
+
+>>>>>>> origin/main
     void CellStore::loadRef(const ESM4::ActorCharacter& ref)
     {
         const MWWorld::ESMStore& store = mStore;
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
+<<<<<<< HEAD
+=======
+        if (foundType == 0)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: unresolved actor reference " << ESM::RefId(ref.mId)
+                                << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
+        if (worldViewerActorTelemetryEnabled())
+        {
+            Log(Debug::Info) << "World viewer actor ledger: phase=cell-ref-resolved"
+                             << " ref=" << ESM::RefId(ref.mId)
+                             << " editor=\"" << ref.mEditorId << "\""
+                             << " base=" << ESM::RefId(ref.mBaseObj)
+                             << " foundType=" << ESM::printName(static_cast<std::uint32_t>(foundType))
+                             << " parent=" << ref.mParent
+                             << " pos=(" << ref.mPos.pos[0] << "," << ref.mPos.pos[1] << "," << ref.mPos.pos[2]
+                             << ")";
+        }
+>>>>>>> origin/main
 
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {
             recNameSwitcher(x, foundType, [&ref, &store](auto& storeIn) { storeIn.load(ref, store); });
@@ -1046,11 +1660,20 @@ namespace MWWorld
     void CellStore::readReferences(ESM::ESMReader& reader, GetCellStoreCallback* callback)
     {
         mHasState = true;
+<<<<<<< HEAD
 
         while (reader.isNextSub("OBJE"))
         {
             unsigned int unused;
             reader.getHT(unused);
+=======
+        std::set<ESM::RefNum> acceptedFnvStateRefs;
+
+        while (reader.isNextSub("OBJE"))
+        {
+            unsigned int savedType;
+            reader.getHT(savedType);
+>>>>>>> origin/main
 
             // load the RefID first so we know what type of object it is
             ESM::CellRef cref;
@@ -1069,15 +1692,43 @@ namespace MWWorld
                 continue;
             }
 
+<<<<<<< HEAD
+=======
+            if ((type == ESM::REC_CREA4 || type == ESM::REC_NPC_4 || type == ESM::REC_DOOR4)
+                && savedType != static_cast<unsigned int>(type))
+            {
+                Log(Debug::Warning) << "Dropping reference to " << cref.mRefID << " (OBJE type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(savedType)).toStringView()
+                                    << " does not match base record type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(type)).toStringView() << ")";
+                // Reject the wrong state variant before constructing/loading RecordToState<T>.
+                while (reader.hasMoreSubs() && !reader.peekNextSub("OBJE") && !reader.peekNextSub("MVRF"))
+                {
+                    reader.getSubName();
+                    reader.skipHSub();
+                }
+                continue;
+            }
+
+>>>>>>> origin/main
             if (type != 0)
             {
                 bool foundCorrespondingStore = false;
                 Misc::tupleForEach(
+<<<<<<< HEAD
                     this->mCellStoreImp->mRefLists, [&reader, this, &cref, &foundCorrespondingStore, type](auto&& x) {
                         recNameSwitcher(x, static_cast<ESM::RecNameInts>(type),
                             [&reader, this, &cref, &foundCorrespondingStore](auto& store) {
                                 foundCorrespondingStore = true;
                                 readReferenceCollection(reader, store, cref, mStore, this);
+=======
+                    this->mCellStoreImp->mRefLists,
+                    [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvStateRefs, type](auto&& x) {
+                        recNameSwitcher(x, static_cast<ESM::RecNameInts>(type),
+                            [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvStateRefs](auto& store) {
+                                foundCorrespondingStore = true;
+                                readReferenceCollection(reader, store, cref, mStore, this, &acceptedFnvStateRefs);
+>>>>>>> origin/main
                             });
                     });
 
@@ -1220,6 +1871,29 @@ namespace MWWorld
     {
         if (mState == State_Loaded)
         {
+<<<<<<< HEAD
+=======
+            if (getCell()->isEsm4())
+            {
+                const int respawnHours
+                    = mStore.get<ESM::GameSetting>().find("iHoursToRespawnCell")->mValue.getInteger();
+                const MWWorld::TimeStamp now = MWBase::Environment::get().getWorld()->getTimeStamp();
+                if (isEsm4CellResetDue(now, mLastRespawn, respawnHours))
+                {
+                    mLastRespawn = now;
+                    for (LiveCellRefBase& base : get<ESM4::Flora>().mList)
+                    {
+                        Ptr ptr = getCurrentPtr(&base);
+                        if (ptr.isEmpty() || ptr.mRef->isDeleted()
+                            || !isEsm4ReferenceResettable(ptr.getCellRef().getEsm4RecordFlags()))
+                            continue;
+                        MWBase::Environment::get().getLuaManager()->objectReset(ptr);
+                    }
+                }
+                return;
+            }
+
+>>>>>>> origin/main
             static const int iMonthsToRespawn
                 = mStore.get<ESM::GameSetting>().find("iMonthsToRespawn")->mValue.getInteger();
             if (MWBase::Environment::get().getWorld()->getTimeStamp() - mLastRespawn > 24 * 30 * iMonthsToRespawn)
@@ -1332,6 +2006,23 @@ namespace MWWorld
                 ptr.getBase(), static_cast<float>(MWMechanics::getEnchantmentCharge(*enchantment)));
     }
 
+<<<<<<< HEAD
+=======
+    Ptr MWWorld::CellStore::getMovedActor(int actorId) const
+    {
+        for (const auto& [cellRef, cell] : mMovedToAnotherCell)
+        {
+            if (cellRef->mClass->isActor() && cellRef->mData.getCustomData())
+            {
+                Ptr actor(cellRef, cell);
+                if (actor.getClass().getCreatureStats(actor).getActorId() == actorId)
+                    return actor;
+            }
+        }
+        return {};
+    }
+
+>>>>>>> origin/main
     CellStore* MWWorld::CellStore::getOriginCell(const Ptr& object) const
     {
         MovedRefTracker::const_iterator found = mMovedHere.find(object.getBase());
@@ -1360,4 +2051,8 @@ namespace MWWorld
 
         return Ptr();
     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
 }

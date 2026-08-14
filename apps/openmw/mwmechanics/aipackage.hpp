@@ -26,7 +26,10 @@ namespace ESM
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
     class AiSequence;
+=======
+>>>>>>> origin/main
     class CharacterController;
     class PathgridGraph;
 
@@ -172,6 +175,7 @@ namespace MWMechanics
         AiReactionTimer mReaction;
 
         ESM::RefId mTargetActorRefId;
+<<<<<<< HEAD
         mutable ESM::RefNum mTargetActor;
         osg::Vec3f mShortcutFailPos; // position of last shortcut fail
         float mLastDestinationTolerance = 0;
@@ -181,6 +185,17 @@ namespace MWMechanics
         bool mShortcutProhibited = false; // shortcutting may be prohibited after unsuccessful attempt
 
         friend class AiSequence;
+=======
+        mutable int mTargetActorId;
+        mutable MWWorld::Ptr mCachedTarget;
+
+        short mRotateOnTheRunChecks; // attempts to check rotation to the pathpoint on the run possibility
+
+        bool mIsShortcutting; // if shortcutting at the moment
+        bool mShortcutProhibited; // shortcutting may be prohibited after unsuccessful attempt
+        osg::Vec3f mShortcutFailPos; // position of last shortcut fail
+        float mLastDestinationTolerance = 0;
+>>>>>>> origin/main
 
     private:
         bool isNearInactiveCell(osg::Vec3f position);

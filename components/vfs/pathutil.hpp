@@ -4,7 +4,10 @@
 #include <components/misc/strings/lower.hpp>
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <cassert>
+=======
+>>>>>>> origin/main
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -15,11 +18,16 @@ namespace VFS::Path
     inline constexpr char separator = '/';
     inline constexpr char extensionSeparator = '.';
 
+<<<<<<< HEAD
     [[nodiscard]] inline constexpr char normalize(char c)
+=======
+    inline constexpr char normalize(char c)
+>>>>>>> origin/main
     {
         return c == '\\' ? separator : Misc::StringUtils::toLower(c);
     }
 
+<<<<<<< HEAD
     [[nodiscard]] inline constexpr bool isNormalized(std::string_view name)
     {
         if (name.empty())
@@ -61,13 +69,27 @@ namespace VFS::Path
         end = removeDuplicatedSeparators(begin, end);
         begin = removeLeadingSeparator(begin, end);
         return std::pair(begin, end);
+=======
+    inline constexpr bool isNormalized(std::string_view name)
+    {
+        return std::all_of(name.begin(), name.end(), [](char v) { return v == normalize(v); });
+    }
+
+    inline void normalizeFilenameInPlace(auto begin, auto end)
+    {
+        std::transform(begin, end, begin, normalize);
+>>>>>>> origin/main
     }
 
     inline void normalizeFilenameInPlace(std::string& name)
     {
+<<<<<<< HEAD
         const auto [begin, end] = normalizeFilenameInPlace(name.begin(), name.end());
         name.erase(end, name.end());
         name.erase(name.begin(), begin);
+=======
+        normalizeFilenameInPlace(name.begin(), name.end());
+>>>>>>> origin/main
     }
 
     /// Normalize the given filename, making slashes/backslashes consistent, and lower-casing.
@@ -78,11 +100,40 @@ namespace VFS::Path
         return out;
     }
 
+<<<<<<< HEAD
+=======
+    struct PathCharLess
+    {
+        bool operator()(char x, char y) const { return normalize(x) < normalize(y); }
+    };
+
+    inline bool pathLess(std::string_view x, std::string_view y)
+    {
+        return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end(), PathCharLess());
+    }
+
+    inline bool pathEqual(std::string_view x, std::string_view y)
+    {
+        if (std::size(x) != std::size(y))
+            return false;
+        return std::equal(
+            std::begin(x), std::end(x), std::begin(y), [](char l, char r) { return normalize(l) == normalize(r); });
+    }
+
+    struct PathLess
+    {
+        using is_transparent = void;
+
+        bool operator()(std::string_view left, std::string_view right) const { return pathLess(left, right); }
+    };
+
+>>>>>>> origin/main
     inline constexpr auto findSeparatorOrExtensionSeparator(auto begin, auto end)
     {
         return std::find_if(begin, end, [](char v) { return v == extensionSeparator || v == separator; });
     }
 
+<<<<<<< HEAD
     inline constexpr bool isExtension(std::string_view value)
     {
         return isNormalized(value) && findSeparatorOrExtensionSeparator(value.begin(), value.end()) == value.end();
@@ -146,6 +197,8 @@ namespace VFS::Path
         friend class NormalizedView;
     };
 
+=======
+>>>>>>> origin/main
     class Normalized;
 
     class NormalizedView
@@ -170,8 +223,11 @@ namespace VFS::Path
 
         constexpr bool empty() const noexcept { return mValue.empty(); }
 
+<<<<<<< HEAD
         constexpr std::size_t size() const { return mValue.size(); }
 
+=======
+>>>>>>> origin/main
         friend constexpr bool operator==(const NormalizedView& lhs, const NormalizedView& rhs) = default;
 
         friend constexpr bool operator==(const NormalizedView& lhs, const auto& rhs) { return lhs.mValue == rhs; }
@@ -212,6 +268,7 @@ namespace VFS::Path
             return p;
         }
 
+<<<<<<< HEAD
         NormalizedView filename() const
         {
             NormalizedView result(*this);
@@ -224,10 +281,21 @@ namespace VFS::Path
         {
             std::string_view stem = filename().value();
             if (const std::size_t pos = stem.find_last_of(extensionSeparator); pos != std::string_view::npos)
+=======
+        std::string_view stem() const
+        {
+            std::string_view stem = mValue;
+            std::size_t pos = stem.find_last_of(separator);
+            if (pos != std::string_view::npos)
+                stem = stem.substr(pos + 1);
+            pos = stem.find_first_of(extensionSeparator);
+            if (pos != std::string_view::npos)
+>>>>>>> origin/main
                 stem = stem.substr(0, pos);
             return stem;
         }
 
+<<<<<<< HEAD
         constexpr ExtensionView extension() const
         {
             ExtensionView result;
@@ -237,6 +305,8 @@ namespace VFS::Path
             return result;
         }
 
+=======
+>>>>>>> origin/main
     private:
         std::string_view mValue;
     };
@@ -280,24 +350,40 @@ namespace VFS::Path
 
         bool empty() const { return mValue.empty(); }
 
+<<<<<<< HEAD
         constexpr std::size_t size() const { return mValue.size(); }
 
+=======
+>>>>>>> origin/main
         operator std::string_view() const { return mValue; }
 
         operator const std::string&() const { return mValue; }
 
+<<<<<<< HEAD
         bool changeExtension(ExtensionView extension)
         {
+=======
+        bool changeExtension(std::string_view extension)
+        {
+            if (findSeparatorOrExtensionSeparator(extension.begin(), extension.end()) != extension.end())
+                throw std::invalid_argument("Invalid extension: " + std::string(extension));
+>>>>>>> origin/main
             const auto it = findSeparatorOrExtensionSeparator(mValue.rbegin(), mValue.rend());
             if (it == mValue.rend() || *it == separator)
                 return false;
             const std::string::difference_type pos = mValue.rend() - it;
+<<<<<<< HEAD
             mValue.replace(pos, mValue.size(), extension.value());
+=======
+            mValue.replace(pos, mValue.size(), extension);
+            normalizeFilenameInPlace(mValue.begin() + pos, mValue.end());
+>>>>>>> origin/main
             return true;
         }
 
         void clear() { mValue.clear(); }
 
+<<<<<<< HEAD
         void reserve(std::size_t capacity) { mValue.reserve(capacity); }
 
         void append(NormalizedView value)
@@ -341,6 +427,8 @@ namespace VFS::Path
             mValue += extension.value();
         }
 
+=======
+>>>>>>> origin/main
         Normalized& operator=(NormalizedView value)
         {
             mValue = value.value();
@@ -349,13 +437,27 @@ namespace VFS::Path
 
         Normalized& operator/=(NormalizedView value)
         {
+<<<<<<< HEAD
             append(value);
+=======
+            mValue.reserve(mValue.size() + value.value().size() + 1);
+            mValue += separator;
+            mValue += value.value();
+>>>>>>> origin/main
             return *this;
         }
 
         Normalized& operator/=(std::string_view value)
         {
+<<<<<<< HEAD
             append(value);
+=======
+            mValue.reserve(mValue.size() + value.size() + 1);
+            mValue += separator;
+            const std::size_t offset = mValue.size();
+            mValue += value;
+            normalizeFilenameInPlace(mValue.begin() + offset, mValue.end());
+>>>>>>> origin/main
             return *this;
         }
 
@@ -415,6 +517,7 @@ namespace VFS::Path
             return NormalizedView(*this).stem();
         }
 
+<<<<<<< HEAD
         NormalizedView filename() const
         {
             return NormalizedView(*this).filename();
@@ -425,6 +528,8 @@ namespace VFS::Path
             return NormalizedView(*this).extension();
         }
 
+=======
+>>>>>>> origin/main
     private:
         std::string mValue;
     };
@@ -467,6 +572,7 @@ namespace VFS::Path
     Normalized toNormalized(NormalizedView value) = delete;
 
     Normalized toNormalized(Normalized value) = delete;
+<<<<<<< HEAD
 
     constexpr std::size_t singleCapacity(const auto& value)
     {
@@ -503,6 +609,8 @@ namespace VFS::Path
         assert(result.size() <= size);
         return result;
     }
+=======
+>>>>>>> origin/main
 }
 
 #endif

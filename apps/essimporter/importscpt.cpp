@@ -12,6 +12,7 @@ namespace ESSImport
 
         mSCRI.load(esm);
 
+<<<<<<< HEAD
         if (esm.isNextSub("RNAM"))
         {
             mRunning = true;
@@ -19,6 +20,13 @@ namespace ESSImport
             esm.getHT(refNum);
             mRefNum = ESM::RefNum::fromUint32(refNum);
             mRefNum.mContentFile--;
+=======
+        mRefNum = -1;
+        if (esm.isNextSub("RNAM"))
+        {
+            mRunning = true;
+            esm.getHT(mRefNum);
+>>>>>>> origin/main
         }
         else
             mRunning = false;

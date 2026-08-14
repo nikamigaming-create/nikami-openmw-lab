@@ -92,7 +92,11 @@ namespace MWMechanics
             }
             // Get the actors in range of the effect
             std::vector<MWWorld::Ptr> objects;
+<<<<<<< HEAD
             static const int unitsPerFoot = static_cast<int>(std::ceil(Constants::UnitsPerFoot));
+=======
+            static const int unitsPerFoot = ceil(Constants::UnitsPerFoot);
+>>>>>>> origin/main
             MWBase::Environment::get().getMechanicsManager()->getObjectsInRange(
                 mHitPosition, static_cast<float>(effectInfo.mData.mArea * unitsPerFoot), objects);
             for (const MWWorld::Ptr& affected : objects)
@@ -204,8 +208,13 @@ namespace MWMechanics
             effect.mEffectId = enam.mData.mEffectID;
             effect.mArg = MWMechanics::EffectKey(enam.mData).mArg;
             effect.mMagnitude = 0.f;
+<<<<<<< HEAD
             effect.mMinMagnitude = static_cast<float>(enam.mData.mMagnMin);
             effect.mMaxMagnitude = static_cast<float>(enam.mData.mMagnMax);
+=======
+            effect.mMinMagnitude = enam.mData.mMagnMin;
+            effect.mMaxMagnitude = enam.mData.mMagnMax;
+>>>>>>> origin/main
             effect.mTimeLeft = 0.f;
             effect.mEffectIndex = enam.mIndex;
             effect.mFlags = ESM::ActiveEffect::Flag_None;
@@ -320,7 +329,11 @@ namespace MWMechanics
                     ESM::RefId school = ESM::Skill::Alteration;
                     if (!enchantment->mEffects.mList.empty())
                     {
+<<<<<<< HEAD
                         ESM::RefId effectId = enchantment->mEffects.mList.front().mData.mEffectID;
+=======
+                        short effectId = enchantment->mEffects.mList.front().mData.mEffectID;
+>>>>>>> origin/main
                         const ESM::MagicEffect* magicEffect = store->get<ESM::MagicEffect>().find(effectId);
                         school = magicEffect->mData.mSchool;
                     }
@@ -509,8 +522,13 @@ namespace MWMechanics
             MWRender::Animation* animation = MWBase::Environment::get().getWorld()->getAnimation(mCaster);
             if (animation)
             {
+<<<<<<< HEAD
                 animation->addEffect(
                     castStaticModel.value(), effect->mId.getRefIdString(), false, {}, effect->mParticle);
+=======
+                animation->addEffect(castStaticModel.value(), ESM::MagicEffect::indexToName(effect->mIndex), false, {},
+                    effect->mParticle);
+>>>>>>> origin/main
             }
             else
             {
@@ -585,8 +603,13 @@ namespace MWMechanics
             {
                 const VFS::Path::Normalized castStaticModel
                     = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(castStatic->mModel));
+<<<<<<< HEAD
                 anim->addEffect(
                     castStaticModel.value(), magicEffect.mId.getRefIdString(), loop, {}, magicEffect.mParticle);
+=======
+                anim->addEffect(castStaticModel.value(), ESM::MagicEffect::indexToName(magicEffect.mIndex), loop, {},
+                    magicEffect.mParticle);
+>>>>>>> origin/main
             }
         }
     }

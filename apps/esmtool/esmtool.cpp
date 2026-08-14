@@ -11,6 +11,7 @@
 
 #include <boost/program_options.hpp>
 
+<<<<<<< HEAD
 #include <osg/Math>
 
 #include <components/esm/format.hpp>
@@ -21,6 +22,16 @@
 #include <components/files/openfile.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
+=======
+#include <components/esm/format.hpp>
+#include <components/esm3/esmreader.hpp>
+#include <components/esm3/esmwriter.hpp>
+#include <components/files/configurationmanager.hpp>
+#include <components/files/conversion.hpp>
+#include <components/files/openfile.hpp>
+#include <components/misc/strings/algorithm.hpp>
+
+>>>>>>> origin/main
 #include "arguments.hpp"
 #include "labels.hpp"
 #include "record.hpp"
@@ -253,9 +264,12 @@ namespace
             std::cout << "    ID: " << ref.mRefID << '\n';
             std::cout << "    Position: (" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", " << ref.mPos.pos[2]
                       << ")\n";
+<<<<<<< HEAD
             std::cout << "    Rotation: (" << osg::RadiansToDegrees(ref.mPos.rot[0]) << ", "
                       << osg::RadiansToDegrees(ref.mPos.rot[1]) << ", " << osg::RadiansToDegrees(ref.mPos.rot[2])
                       << ")\n";
+=======
+>>>>>>> origin/main
             if (ref.mScale != 1.f)
                 std::cout << "    Scale: " << ref.mScale << '\n';
             if (!ref.mOwner.empty())
@@ -282,9 +296,12 @@ namespace
             {
                 std::cout << "    Destination position: (" << ref.mDoorDest.pos[0] << ", " << ref.mDoorDest.pos[1]
                           << ", " << ref.mDoorDest.pos[2] << ")\n";
+<<<<<<< HEAD
                 std::cout << "    Destination rotation: (" << osg::RadiansToDegrees(ref.mDoorDest.rot[0]) << ", "
                           << osg::RadiansToDegrees(ref.mDoorDest.rot[1]) << ", "
                           << osg::RadiansToDegrees(ref.mDoorDest.rot[2]) << ")\n";
+=======
+>>>>>>> origin/main
                 if (!ref.mDestCell.empty())
                     std::cout << "    Destination cell: " << ref.mDestCell << '\n';
             }
@@ -490,7 +507,11 @@ namespace
 
         int digitCount = 1; // For a nicer output
         if (recordCount > 0)
+<<<<<<< HEAD
             digitCount = static_cast<int>(std::log10(recordCount)) + 1;
+=======
+            digitCount = (int)std::log10(recordCount) + 1;
+>>>>>>> origin/main
 
         std::cout << "Loaded " << recordCount << " records:\n\n";
 
@@ -515,7 +536,11 @@ namespace
         esm.setEncoder(&encoder);
         esm.setHeader(data.mHeader);
         esm.setVersion(ESM::VER_130);
+<<<<<<< HEAD
         esm.setRecordCount(static_cast<int>(recordCount));
+=======
+        esm.setRecordCount(recordCount);
+>>>>>>> origin/main
 
         std::fstream save(info.outname, std::fstream::out | std::fstream::binary);
         esm.save(save);

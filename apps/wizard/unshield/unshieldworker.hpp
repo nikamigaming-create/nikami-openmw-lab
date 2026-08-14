@@ -8,7 +8,11 @@
 
 #include <libunshield.h>
 
+<<<<<<< HEAD
 #include "inisettings.hpp"
+=======
+#include "../inisettings.hpp"
+>>>>>>> origin/main
 
 namespace Wizard
 {

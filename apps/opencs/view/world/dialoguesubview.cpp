@@ -298,6 +298,7 @@ QWidget* CSVWorld::DialogueDelegateDispatcher::makeEditor(
         }
         else if (qobject_cast<QCheckBox*>(editor))
         {
+<<<<<<< HEAD
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
             connect(static_cast<QCheckBox*>(editor), &QCheckBox::checkStateChanged, proxy,
                 qOverload<>(&DialogueDelegateDispatcherProxy::editorDataCommited));
@@ -305,6 +306,10 @@ QWidget* CSVWorld::DialogueDelegateDispatcher::makeEditor(
             connect(static_cast<QCheckBox*>(editor), &QCheckBox::stateChanged, proxy,
                 qOverload<>(&DialogueDelegateDispatcherProxy::editorDataCommited));
 #endif
+=======
+            connect(static_cast<QCheckBox*>(editor), &QCheckBox::stateChanged, proxy,
+                qOverload<>(&DialogueDelegateDispatcherProxy::editorDataCommited));
+>>>>>>> origin/main
         }
         else if (qobject_cast<QPlainTextEdit*>(editor))
         {

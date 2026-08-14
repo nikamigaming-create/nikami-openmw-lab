@@ -171,7 +171,11 @@ namespace MWScript
         if (!mLocals)
             throw std::runtime_error("local variables not available in this context");
 
+<<<<<<< HEAD
         mLocals->mShorts.at(index) = static_cast<Interpreter::Type_Short>(value);
+=======
+        mLocals->mShorts.at(index) = value;
+>>>>>>> origin/main
     }
 
     void InterpreterContext::setLocalLong(int index, int value)
@@ -439,6 +443,11 @@ namespace MWScript
 
     void InterpreterContext::executeActivation(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor)
     {
+<<<<<<< HEAD
+=======
+        if (ptr.getRefData().isDestroyed())
+            return;
+>>>>>>> origin/main
         // MWScripted activations don't go through Lua because 1-frame delay can brake mwscripts.
 #if 0
         MWBase::Environment::get().getLuaManager()->objectActivated(ptr, actor);
@@ -483,7 +492,11 @@ namespace MWScript
     {
         Locals& locals = getMemberLocals(global, id);
 
+<<<<<<< HEAD
         locals.mShorts[findLocalVariableIndex(id, name, 's')] = static_cast<Interpreter::Type_Short>(value);
+=======
+        locals.mShorts[findLocalVariableIndex(id, name, 's')] = value;
+>>>>>>> origin/main
     }
 
     void InterpreterContext::setMemberLong(ESM::RefId id, std::string_view name, int value, bool global)

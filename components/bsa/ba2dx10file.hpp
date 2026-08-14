@@ -35,6 +35,10 @@ namespace Bsa
         };
 
         uint32_t mVersion{ 0u };
+<<<<<<< HEAD
+=======
+        uint32_t mCompressionMethod{ 0u };
+>>>>>>> origin/main
 
         using FolderRecord = std::map<std::pair<uint32_t, uint32_t>, FileRecord>;
         std::map<uint32_t, FolderRecord> mFolders;
@@ -59,6 +63,10 @@ namespace Bsa
         /// Read header information from the input source
         void readHeader(std::istream& stream) override;
 
+<<<<<<< HEAD
+=======
+        Files::IStreamPtr getFile(const char* filePath);
+>>>>>>> origin/main
         Files::IStreamPtr getFile(const FileStruct* fileStruct);
         void addFile(const std::string& filename, std::istream& file);
     };

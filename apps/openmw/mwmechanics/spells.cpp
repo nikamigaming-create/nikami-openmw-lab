@@ -250,14 +250,22 @@ namespace MWMechanics
 
             // Import data only for player, other actors should not suffer from corprus worsening.
             MWWorld::Ptr player = getPlayer();
+<<<<<<< HEAD
             if (creatureStats != &player.getClass().getCreatureStats(player))
+=======
+            if (creatureStats->getActorId() != player.getClass().getCreatureStats(player).getActorId())
+>>>>>>> origin/main
                 return;
 
             // Note: if target actor has the Restore attribute effects, stats will be restored.
             for (const ESM::SpellState::PermanentSpellEffectInfo& info : it->second)
             {
                 // Applied corprus effects are already in loaded stats modifiers
+<<<<<<< HEAD
                 if (info.mId == ESM::MagicEffect::refIdToIndex(ESM::MagicEffect::FortifyAttribute))
+=======
+                if (info.mId == ESM::MagicEffect::FortifyAttribute)
+>>>>>>> origin/main
                 {
                     auto id = ESM::Attribute::indexToRefId(info.mArg);
                     AttributeValue attr = creatureStats->getAttribute(id);
@@ -265,7 +273,11 @@ namespace MWMechanics
                     attr.damage(-info.mMagnitude);
                     creatureStats->setAttribute(id, attr);
                 }
+<<<<<<< HEAD
                 else if (info.mId == ESM::MagicEffect::refIdToIndex(ESM::MagicEffect::DrainAttribute))
+=======
+                else if (info.mId == ESM::MagicEffect::DrainAttribute)
+>>>>>>> origin/main
                 {
                     auto id = ESM::Attribute::indexToRefId(info.mArg);
                     AttributeValue attr = creatureStats->getAttribute(id);
@@ -305,6 +317,16 @@ namespace MWMechanics
         return result;
     }
 
+<<<<<<< HEAD
+=======
+    void Spells::setSpells(const ESM::RefId& actorId, int actorType)
+    {
+        mSpellList = std::make_shared<SpellList>(actorId, actorType);
+        mSpellList->addListener(this);
+        addAllToInstance(mSpellList->getSpells());
+    }
+
+>>>>>>> origin/main
     void Spells::addAllToInstance(const std::vector<ESM::RefId>& spells)
     {
         for (const ESM::RefId& id : spells)

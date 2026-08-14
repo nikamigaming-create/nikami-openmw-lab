@@ -213,6 +213,25 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
 <context>
     <name>QObject</name>
     <message>
+<<<<<<< HEAD
+=======
+        <source>&lt;br&gt;&lt;b&gt;Could not find Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;The Wizard needs to update settings in this file.&lt;br&gt;&lt;br&gt;Press &quot;Browse...&quot; to specify the location manually.&lt;br&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>B&amp;rowse...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select configuration file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Morrowind.bsa&lt;/b&gt; is missing!&lt;br&gt;Make sure your Morrowind installation is complete.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>&lt;br&gt;&lt;b&gt;There may be a more recent version of Morrowind available.&lt;/b&gt;&lt;br&gt;&lt;br&gt;Do you wish to continue anyway?&lt;br&gt;</source>
         <translation type="unfinished"></translation>
     </message>
@@ -224,6 +243,13 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>Select a valid %1 installation media.&lt;br&gt;&lt;b&gt;Hint&lt;/b&gt;: make sure that it contains at least one &lt;b&gt;.cab&lt;/b&gt; file.</source>
         <translation type="unfinished"></translation>
     </message>
+<<<<<<< HEAD
+=======
+    <message>
+        <source>There may be a more recent version of Morrowind available.&lt;br&gt;&lt;br&gt;Do you wish to continue anyway?</source>
+        <translation type="unfinished"></translation>
+    </message>
+>>>>>>> origin/main
 </context>
 <context>
     <name>Wizard::ComponentSelectionPage</name>
@@ -313,6 +339,7 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>Error detecting Morrowind files</source>
         <translation type="unfinished"></translation>
     </message>
+<<<<<<< HEAD
     <message>
         <source>&lt;br&gt;&lt;b&gt;Could not find Morrowind.ini&lt;/b&gt;&lt;br&gt;&lt;br&gt;The Wizard needs to update settings in this file.&lt;br&gt;&lt;br&gt;Press &quot;Browse...&quot; to specify the location manually.&lt;br&gt;</source>
         <translation type="unfinished"></translation>
@@ -329,6 +356,8 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <source>&lt;b&gt;Morrowind.bsa&lt;/b&gt; is missing!&lt;br&gt;Make sure your Morrowind installation is complete.</source>
         <translation type="unfinished"></translation>
     </message>
+=======
+>>>>>>> origin/main
 </context>
 <context>
     <name>Wizard::InstallationPage</name>
@@ -337,6 +366,13 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <translation type="unfinished"></translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Attempting to install component %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>%1 Installation</source>
         <translation type="unfinished"></translation>
     </message>
@@ -353,6 +389,13 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <translation type="unfinished"></translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Detected old version of component Morrowind.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>Morrowind Installation</source>
         <translation type="unfinished"></translation>
     </message>
@@ -454,6 +497,13 @@ to default Morrowind fonts. Check this box if you still prefer original fonts ov
         <translation type="unfinished"></translation>
     </message>
     <message>
+<<<<<<< HEAD
+=======
+        <source>Error opening Wizard log file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+>>>>>>> origin/main
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;b&gt;Could not open %1 for writing&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Please make sure you have the right permissions and try again.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="unfinished"></translation>
     </message>

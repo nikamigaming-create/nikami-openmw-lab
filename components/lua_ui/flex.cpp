@@ -104,6 +104,7 @@ namespace LuaUi
         updateChildren();
         WidgetExtension::updateCoord();
     }
+<<<<<<< HEAD
 
     const std::vector<std::string_view>& LuaFlex::allUsedProperties() const
     {
@@ -115,4 +116,6 @@ namespace LuaUi
         });
         return usedProps;
     }
+=======
+>>>>>>> origin/main
 }

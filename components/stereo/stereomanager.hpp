@@ -59,7 +59,11 @@ namespace Stereo
         struct CustomViewCallback : public UpdateViewCallback
         {
         public:
+<<<<<<< HEAD
             CustomViewCallback(View& left, View& right);
+=======
+            CustomViewCallback(const View& left, const View& right);
+>>>>>>> origin/main
 
             void updateView(View& left, View& right) override;
 
@@ -78,16 +82,28 @@ namespace Stereo
         //! @Param enableMultiview whether or not to make use of the GL_OVR_Multiview extension, if supported.
         //! @Param near defines distance to near camera clipping plane from view point.
         //! @Param far defines distance to far camera clipping plane from view point.
+<<<<<<< HEAD
         explicit Manager(osgViewer::Viewer* viewer, bool enableStereo, float near, float far);
+=======
+        //! @Param number of samples to use in the multiview framebuffer (if relevant).
+        explicit Manager(osgViewer::Viewer* viewer, bool enableStereo, double nearPlane, double farPlane, int samples);
+>>>>>>> origin/main
         ~Manager();
 
         //! Called during update traversal
         void update();
 
+<<<<<<< HEAD
         void updateSettings(float near, float far)
         {
             mNear = near;
             mFar = far;
+=======
+        void updateSettings(double nearPlane, double farPlane)
+        {
+            mNear = nearPlane;
+            mFar = farPlane;
+>>>>>>> origin/main
         }
 
         //! Initializes all details of stereo if applicable. If the constructor was called with enableMultiview=true,
@@ -97,9 +113,12 @@ namespace Stereo
         //! Callback that updates stereo configuration during the update pass
         void setUpdateViewCallback(std::shared_ptr<UpdateViewCallback> cb);
 
+<<<<<<< HEAD
         //! Set the cull callback on the appropriate camera object
         void setCullCallback(osg::ref_ptr<osg::NodeCallback> cb);
 
+=======
+>>>>>>> origin/main
         osg::Matrixd computeEyeProjection(int view, bool reverseZ) const;
         osg::Matrixd computeEyeViewOffset(int view) const;
 
@@ -131,10 +150,22 @@ namespace Stereo
         /// Determine which view the cull visitor belongs to
         Eye getEye(const osgUtil::CullVisitor* cv) const;
 
+<<<<<<< HEAD
     private:
         friend class MultiviewStereoStatesetUpdateCallback;
         void updateMultiviewStateset(osg::StateSet* stateset);
         void updateStereoFramebuffer();
+=======
+//## VR_PATCH BEGIN
+        void setShouldAttachMultiviewFramebufferToMainCamera(bool attach);
+
+        void setSamples(int samples);
+
+    private:
+        friend class MultiviewStereoStatesetUpdateCallback;
+        void updateMultiviewStateset(osg::StateSet* stateset);
+        void updateMultiviewFramebuffer();
+>>>>>>> origin/main
         void setupBruteForceTechnique();
         void setupOVRMultiView2Technique();
 
@@ -144,10 +175,21 @@ namespace Stereo
         std::string mError;
         osg::Matrixd mMasterProjectionMatrix;
         std::shared_ptr<MultiviewFramebuffer> mMultiviewFramebuffer;
+<<<<<<< HEAD
         bool mEyeResolutionOverriden;
         osg::Vec2i mEyeResolutionOverride;
         float mNear;
         float mFar;
+=======
+        bool mShouldAttachMultiviewFramebufferToMainCamera = false;
+        bool mMultiviewFramebufferIsAttached = false;
+//## VR_PATCH END
+        bool mEyeResolutionOverriden;
+        osg::Vec2i mEyeResolutionOverride;
+        double mNear;
+        double mFar;
+        int mSamples = 0;
+>>>>>>> origin/main
 
         std::array<View, 2> mView;
         std::array<osg::Matrixd, 2> mViewOffsetMatrix;

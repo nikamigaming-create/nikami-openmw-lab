@@ -106,7 +106,11 @@ namespace MWScript
                 chances.reserve(10);
                 while (arg0 > 0)
                 {
+<<<<<<< HEAD
                     chances.push_back(static_cast<uint8_t>(std::clamp(runtime[0].mInteger, 0, 100)));
+=======
+                    chances.push_back(std::clamp(runtime[0].mInteger, 0, 100));
+>>>>>>> origin/main
                     runtime.pop();
                     arg0--;
                 }

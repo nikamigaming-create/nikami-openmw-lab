@@ -4,9 +4,17 @@
 #include <osg/MatrixTransform>
 #include <osg/UserDataContainer>
 
+<<<<<<< HEAD
 #include <osgUtil/CullVisitor>
 #include <osgUtil/RenderBin>
 
+=======
+#include <cstdlib>
+
+#include <osgUtil/CullVisitor>
+#include <osgUtil/RenderBin>
+
+>>>>>>> origin/main
 #include <components/debug/debuglog.hpp>
 
 #include <components/misc/rng.hpp>
@@ -16,6 +24,10 @@
 #include <components/esm3/loadbody.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadweap.hpp>
+>>>>>>> origin/main
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -42,7 +54,10 @@
 #include "actorutil.hpp"
 #include "postprocessor.hpp"
 #include "renderbin.hpp"
+<<<<<<< HEAD
 #include "renderingmanager.hpp"
+=======
+>>>>>>> origin/main
 #include "rotatecontroller.hpp"
 #include "vismask.hpp"
 
@@ -178,11 +193,25 @@ namespace MWRender
         else
         {
             // FIXME: would be nice to hold on to the SoundPtr so we don't have to retrieve it every frame
+<<<<<<< HEAD
             mValue = mTalkStart
                 + (mTalkStop - mTalkStart)
                     * std::min(1.f,
                         MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mReference)
                             * 2); // Rescale a bit (most voices are not very loud)
+=======
+            const float loudness = MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mReference);
+            mValue = mTalkStart + (mTalkStop - mTalkStart) * std::min(1.f, loudness * 2);
+
+            static bool proofTalkLogged = false;
+            if (!proofTalkLogged && std::getenv("OPENMW_PROOF_SAY_ACTOR") != nullptr)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: head talk controller active for " << mReference.toString()
+                                 << " loudness=" << loudness << " value=" << mValue
+                                 << " talkStart=" << mTalkStart << " talkStop=" << mTalkStop;
+                proofTalkLogged = true;
+            }
+>>>>>>> origin/main
         }
     }
 
@@ -323,6 +352,10 @@ namespace MWRender
 
             mStateSet = new osg::StateSet;
             mStateSet->setAttributeAndModes(new osg::ColorMask(false, false, false, false), osg::StateAttribute::ON);
+<<<<<<< HEAD
+=======
+            mStateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+>>>>>>> origin/main
         }
 
         void drawImplementation(
@@ -366,9 +399,14 @@ namespace MWRender
     class OverrideFieldOfViewCallback : public osg::NodeCallback
     {
     public:
+<<<<<<< HEAD
         OverrideFieldOfViewCallback(float fov, RenderingManager* renderingManager)
             : mFov(fov)
             , mRenderingManager(renderingManager)
+=======
+        OverrideFieldOfViewCallback(float fov)
+            : mFov(fov)
+>>>>>>> origin/main
         {
         }
 
@@ -381,6 +419,7 @@ namespace MWRender
                 fov = mFov;
                 osg::ref_ptr<osg::RefMatrix> newProjectionMatrix = new osg::RefMatrix();
                 newProjectionMatrix->makePerspective(fov, aspect, zNear, zFar);
+<<<<<<< HEAD
 
                 osg::Vec2f offset = mRenderingManager->getProjectionOffset();
 
@@ -390,6 +429,8 @@ namespace MWRender
                 const osg::Matrix translation = osg::Matrix::translate(offsetX, offsetY, 0.0);
                 newProjectionMatrix->postMult(translation);
 
+=======
+>>>>>>> origin/main
                 osg::ref_ptr<osg::RefMatrix> invertedOldMatrix = cv->getProjectionMatrix();
                 invertedOldMatrix = new osg::RefMatrix(osg::RefMatrix::inverse(*invertedOldMatrix));
                 osg::ref_ptr<osg::RefMatrix> viewMatrix = new osg::RefMatrix(*cv->getModelViewMatrix());
@@ -405,12 +446,20 @@ namespace MWRender
 
     private:
         float mFov;
+<<<<<<< HEAD
         RenderingManager* mRenderingManager;
     };
 
     void NpcAnimation::setRenderBin()
     {
         if (mViewMode == VM_FirstPerson)
+=======
+    };
+
+    namespace
+    {
+        void configureFirstPersonRenderBin(osg::Group& root)
+>>>>>>> origin/main
         {
             [[maybe_unused]] static const bool prototypeAdded = [&] {
                 osg::ref_ptr<osgUtil::RenderBin> depthClearBin(new osgUtil::RenderBin);
@@ -418,9 +467,28 @@ namespace MWRender
                 osgUtil::RenderBin::addRenderBinPrototype("DepthClear", depthClearBin);
                 return true;
             }();
+<<<<<<< HEAD
             mObjectRoot->getOrCreateStateSet()->setRenderBinDetails(
                 RenderBin_FirstPerson, "DepthClear", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
         }
+=======
+            root.getOrCreateStateSet()->setRenderBinDetails(
+                RenderBin_FirstPerson, "DepthClear", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+        }
+    }
+
+    void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView)
+    {
+        configureFirstPersonRenderBin(root);
+        root.setNodeMask(Mask_FirstPerson);
+        root.addCullCallback(new OverrideFieldOfViewCallback(fieldOfView));
+    }
+
+    void NpcAnimation::setRenderBin()
+    {
+        if (mViewMode == VM_FirstPerson)
+            configureFirstPersonRenderBin(*mObjectRoot);
+>>>>>>> origin/main
         else if (osg::StateSet* stateset = mObjectRoot->getStateSet())
             stateset->setRenderBinToInherit();
     }
@@ -505,7 +573,10 @@ namespace MWRender
         const std::string defaultSkeleton = Misc::ResourceHelpers::correctActorModelPath(
             VFS::Path::toNormalized(getActorSkeleton(is1stPerson, isFemale, isBeast, isWerewolf)),
             mResourceSystem->getVFS());
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
         std::string smodel = defaultSkeleton;
         bool isCustomModel = false;
         if (!is1stPerson && !isWerewolf && !mNpc->mModel.empty())
@@ -535,8 +606,12 @@ namespace MWRender
         if (is1stPerson)
         {
             mObjectRoot->setNodeMask(Mask_FirstPerson);
+<<<<<<< HEAD
             mObjectRoot->addCullCallback(new OverrideFieldOfViewCallback(
                 mFirstPersonFieldOfView, MWBase::Environment::get().getWorld()->getRenderingManager()));
+=======
+            mObjectRoot->addCullCallback(new OverrideFieldOfViewCallback(mFirstPersonFieldOfView));
+>>>>>>> origin/main
         }
 
         mWeaponAnimationTime->updateStartTime();
@@ -597,6 +672,17 @@ namespace MWRender
         const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
         for (size_t i = 0; i < slotlistsize && mViewMode != VM_HeadOnly; i++)
         {
+<<<<<<< HEAD
+=======
+            if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr && mPtr == MWMechanics::getPlayer()
+                && (slotlist[i].mSlot == MWWorld::InventoryStore::Slot_CarriedRight
+                    || slotlist[i].mSlot == MWWorld::InventoryStore::Slot_CarriedLeft))
+            {
+                removePartGroup(slotlist[i].mSlot);
+                continue;
+            }
+
+>>>>>>> origin/main
             MWWorld::ConstContainerStoreIterator store = inv.getSlot(slotlist[i].mSlot);
 
             removePartGroup(slotlist[i].mSlot);
@@ -938,7 +1024,13 @@ namespace MWRender
                 }
             }
         }
+<<<<<<< HEAD
         else if (mViewMode == VM_Normal)
+=======
+//## VR_PATCH BEGIN
+        else if (mViewMode != VM_HeadOnly)
+//## VR_PATCH END
+>>>>>>> origin/main
         {
             WeaponAnimation::addControllers(mNodeMap, mActiveControllers, mObjectRoot.get());
         }
@@ -946,6 +1038,12 @@ namespace MWRender
 
     void NpcAnimation::showWeapons(bool showWeapon)
     {
+<<<<<<< HEAD
+=======
+        if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr && mPtr == MWMechanics::getPlayer())
+            showWeapon = false;
+
+>>>>>>> origin/main
         mShowWeapons = showWeapon;
         mAmmunition.reset();
         if (showWeapon)
@@ -954,10 +1052,23 @@ namespace MWRender
             MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (weapon != inv.end())
             {
+<<<<<<< HEAD
                 osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
                 const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
                 addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
                     !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+=======
+                // Native Fallout weapons are attached by the ESM4 player-equipment bridge using the retail
+                // Bip01 weapon nodes. The ESM3 part path targets "Weapon Bone", which does not exist in Fallout
+                // skeletons and used to emit an error every time a saved weapon was switched or redrawn.
+                if (weapon->getType() != ESM4::Weapon::sRecordId)
+                {
+                    osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
+                    const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
+                    addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
+                        !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                }
+>>>>>>> origin/main
 
                 // Crossbows start out with a bolt attached
                 if (weapon->getType() == ESM::Weapon::sRecordId

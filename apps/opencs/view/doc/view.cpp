@@ -663,6 +663,7 @@ void CSVDoc::View::addSubView(const CSMWorld::UniversalId& id, const std::string
 
     mSubViewWindow.addDockWidget(Qt::TopDockWidgetArea, view);
 
+<<<<<<< HEAD
     // Horizontal orientation doesn't respect layout direction, so we need to move the new view
     if (windows["subview-open-direction"].toString() == "Open Left" && mSubViews.size() > 1)
     {
@@ -692,6 +693,12 @@ void CSVDoc::View::addSubView(const CSMWorld::UniversalId& id, const std::string
 
     connect(view, &SubView::focusId, this, &View::addSubView);
 
+=======
+    updateSubViewIndices();
+
+    connect(view, &SubView::focusId, this, &View::addSubView);
+
+>>>>>>> origin/main
     connect(view, qOverload<SubView*>(&SubView::closeRequest), this, &View::closeRequest);
 
     connect(view, &SubView::updateTitle, this, &View::updateTitle);
@@ -731,11 +738,15 @@ void CSVDoc::View::moveScrollBarToEnd(int min, int max)
 {
     if (mScroll)
     {
+<<<<<<< HEAD
         CSMPrefs::Category& windows = CSMPrefs::State::get()["Windows"];
         if (windows["subview-open-direction"].toString() == "Open Left")
             mScroll->horizontalScrollBar()->setValue(min);
         else
             mScroll->horizontalScrollBar()->setValue(max);
+=======
+        mScroll->horizontalScrollBar()->setValue(max);
+>>>>>>> origin/main
 
         QObject::disconnect(mScroll->horizontalScrollBar(), &QScrollBar::rangeChanged, this, &View::moveScrollBarToEnd);
     }
@@ -1151,8 +1162,12 @@ void CSVDoc::View::updateWidth(bool isGrowLimit, int minSubViewWidth)
         if (newWidth + frameWidth <= rect.width())
         {
             resize(newWidth, height());
+<<<<<<< HEAD
             // WARNING: below code assumes that the frame geometry expands to the right.
             // This doesn't conflict with subview-open-direction.
+=======
+            // WARNING: below code assumes that new subviews are added to the right
+>>>>>>> origin/main
             if (x() > rect.width() - (newWidth + frameWidth))
                 move(rect.width() - (newWidth + frameWidth), y()); // shift left to stay within the screen
         }

@@ -7,7 +7,13 @@ namespace CSMWorld
     {
         virtual ~NestedTableWrapperBase() = default;
 
+<<<<<<< HEAD
         virtual size_t size() const = 0;
+=======
+        virtual int size() const { return -5; }
+
+        NestedTableWrapperBase() = default;
+>>>>>>> origin/main
     };
 
     template <typename NestedTable>
@@ -22,7 +28,11 @@ namespace CSMWorld
 
         ~NestedTableWrapper() override = default;
 
+<<<<<<< HEAD
         size_t size() const override
+=======
+        int size() const override
+>>>>>>> origin/main
         {
             return mNestedTable.size(); // i hope that this will be enough
         }

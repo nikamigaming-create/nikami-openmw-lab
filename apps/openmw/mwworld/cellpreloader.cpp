@@ -122,12 +122,19 @@ namespace MWWorld
                     if (!vfs.exists(mesh))
                         continue;
 
+<<<<<<< HEAD
                     constexpr VFS::Path::ExtensionView nif("nif");
                     if (Misc::getFileName(mesh).starts_with('x') && mesh.extension() == nif)
                     {
                         kfname = mesh;
                         constexpr VFS::Path::ExtensionView kf("kf");
                         kfname.changeExtension(kf);
+=======
+                    if (Misc::getFileName(mesh).starts_with('x') && Misc::getFileExtension(mesh) == "nif")
+                    {
+                        kfname = mesh;
+                        kfname.changeExtension("kf");
+>>>>>>> origin/main
                         if (vfs.exists(kfname))
                             mPreloadedObjects.insert(mKeyframeManager->get(kfname));
                     }
@@ -290,6 +297,19 @@ namespace MWWorld
         ++mAdded;
     }
 
+<<<<<<< HEAD
+=======
+    CellPreloader::PreloadState CellPreloader::getPreloadState(const CellStore& cell) const
+    {
+        const auto found = mPreloadCells.find(&cell);
+        if (found == mPreloadCells.end())
+            return PreloadState::NotRequested;
+        if (found->second.mWorkItem != nullptr && found->second.mWorkItem->isDone())
+            return PreloadState::Complete;
+        return PreloadState::Pending;
+    }
+
+>>>>>>> origin/main
     void CellPreloader::notifyLoaded(CellStore* cell)
     {
         PreloadMap::iterator found = mPreloadCells.find(cell);
@@ -404,7 +424,11 @@ namespace MWWorld
                 mTerrainViews.resize(positions.size());
             else if (mTerrainViews.size() < positions.size())
             {
+<<<<<<< HEAD
                 for (size_t i = mTerrainViews.size(); i < positions.size(); ++i)
+=======
+                for (unsigned int i = mTerrainViews.size(); i < positions.size(); ++i)
+>>>>>>> origin/main
                     mTerrainViews.emplace_back(mTerrain->createView());
             }
 
@@ -458,10 +482,18 @@ namespace MWWorld
 
     void CellPreloader::reportStats(unsigned int frameNumber, osg::Stats& stats) const
     {
+<<<<<<< HEAD
         stats.setAttribute(frameNumber, "CellPreloader Count", static_cast<double>(mPreloadCells.size()));
         stats.setAttribute(frameNumber, "CellPreloader Added", static_cast<double>(mAdded));
         stats.setAttribute(frameNumber, "CellPreloader Evicted", static_cast<double>(mEvicted));
         stats.setAttribute(frameNumber, "CellPreloader Loaded", static_cast<double>(mLoaded));
         stats.setAttribute(frameNumber, "CellPreloader Expired", static_cast<double>(mExpired));
+=======
+        stats.setAttribute(frameNumber, "CellPreloader Count", mPreloadCells.size());
+        stats.setAttribute(frameNumber, "CellPreloader Added", mAdded);
+        stats.setAttribute(frameNumber, "CellPreloader Evicted", mEvicted);
+        stats.setAttribute(frameNumber, "CellPreloader Loaded", mLoaded);
+        stats.setAttribute(frameNumber, "CellPreloader Expired", mExpired);
+>>>>>>> origin/main
     }
 }

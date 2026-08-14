@@ -14,7 +14,10 @@ namespace DetourNavigator
             out.setAttribute(frameNumber, "NavMesh Delayed", static_cast<double>(stats.mWaiting.mDelayed));
             out.setAttribute(frameNumber, "NavMesh Pushed", static_cast<double>(stats.mPushed));
             out.setAttribute(frameNumber, "NavMesh Processing", static_cast<double>(stats.mProcessing));
+<<<<<<< HEAD
             out.setAttribute(frameNumber, "NavMesh Posted", static_cast<double>(stats.mPosted));
+=======
+>>>>>>> origin/main
 
             if (stats.mDb.has_value())
             {

@@ -1,6 +1,10 @@
 #ifndef OPENMW_MWRENDER_SKY_H
 #define OPENMW_MWRENDER_SKY_H
 
+<<<<<<< HEAD
+=======
+#include <array>
+>>>>>>> origin/main
 #include <memory>
 #include <string>
 #include <vector>
@@ -132,12 +136,23 @@ namespace MWRender
         osg::ref_ptr<CloudUpdater> mNextCloudUpdater;
         osg::ref_ptr<osg::PositionAttitudeTransform> mCloudMesh;
         osg::ref_ptr<osg::PositionAttitudeTransform> mNextCloudMesh;
+<<<<<<< HEAD
+=======
+        std::array<osg::ref_ptr<CloudUpdater>, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudUpdaters;
+        std::array<osg::ref_ptr<osg::Node>, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudLayerNodes;
+        osg::ref_ptr<osg::PositionAttitudeTransform> mFalloutCloudMesh;
+>>>>>>> origin/main
 
         osg::ref_ptr<osg::Node> mAtmosphereDay;
 
         osg::ref_ptr<osg::PositionAttitudeTransform> mAtmosphereNightNode;
         float mAtmosphereNightRoll;
         osg::ref_ptr<AtmosphereNightUpdater> mAtmosphereNightUpdater;
+<<<<<<< HEAD
+=======
+        bool mNativeAtmosphereNight;
+        bool mFalloutAtmosphereDay;
+>>>>>>> origin/main
 
         osg::ref_ptr<AtmosphereUpdater> mAtmosphereUpdater;
 
@@ -160,6 +175,10 @@ namespace MWRender
 
         bool mTimescaleClouds;
         float mCloudAnimationTimer;
+        bool mHasFalloutCloudLayers;
+        std::array<float, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudAnimationTimers{};
+        std::array<float, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudSpeeds{};
+        float mFalloutCloudProofElapsed = 0.f;
 
         // particle system rotation is independent of cloud rotation internally
         osg::Vec3f mStormParticleDirection;
@@ -169,12 +188,24 @@ namespace MWRender
         // remember some settings so we don't have to apply them again if they didn't change
         std::string mClouds;
         std::string mNextClouds;
+<<<<<<< HEAD
+=======
+        std::array<std::string, WeatherResult::sFalloutCloudLayerCount> mFalloutClouds;
+        std::array<osg::Vec4f, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudColours{};
+>>>>>>> origin/main
         float mCloudBlendFactor;
         float mCloudSpeed;
         float mStarsOpacity;
         osg::Vec4f mCloudColour;
         osg::Vec4f mSkyColour;
+<<<<<<< HEAD
         osg::Vec4f mFogColour;
+=======
+        osg::Vec4f mSkyLowerColour;
+        osg::Vec4f mSkyHorizonColour;
+        osg::Vec4f mFogColour;
+        bool mLoggedFalloutAtmosphereGradient;
+>>>>>>> origin/main
 
         VFS::Path::Normalized mCurrentParticleEffect;
 

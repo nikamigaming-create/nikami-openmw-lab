@@ -46,7 +46,10 @@ namespace DetourNavigator
         std::size_t mPushed = 0;
         std::size_t mProcessing = 0;
         std::size_t mDbGetTileHits = 0;
+<<<<<<< HEAD
         std::size_t mPosted = 0;
+=======
+>>>>>>> origin/main
         std::optional<DbWorkerStats> mDb;
         NavMeshTilesCacheStats mCache;
     };

@@ -46,6 +46,7 @@ namespace LuaUi
             updateCoord();
     }
 
+<<<<<<< HEAD
     const std::vector<std::string_view>& LuaText::allUsedProperties() const
     {
         static std::vector<std::string_view> usedProps = std::invoke([this] {
@@ -58,6 +59,8 @@ namespace LuaUi
         return usedProps;
     }
 
+=======
+>>>>>>> origin/main
     MyGUI::IntSize LuaText::calculateSize() const
     {
         if (mAutoSized)

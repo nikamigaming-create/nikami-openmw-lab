@@ -1,6 +1,10 @@
 #include "hash.hpp"
 
+<<<<<<< HEAD
 #include <smhasher/MurmurHash3.h>
+=======
+#include <extern/smhasher/MurmurHash3.h>
+>>>>>>> origin/main
 
 #include <array>
 #include <cstdint>

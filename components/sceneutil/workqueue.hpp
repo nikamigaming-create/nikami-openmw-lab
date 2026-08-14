@@ -62,9 +62,15 @@ namespace SceneUtil
         /// @par Used internally by the WorkThread.
         osg::ref_ptr<WorkItem> removeWorkItem();
 
+<<<<<<< HEAD
         size_t getNumItems() const;
 
         size_t getNumActiveThreads() const;
+=======
+        unsigned int getNumItems() const;
+
+        unsigned int getNumActiveThreads() const;
+>>>>>>> origin/main
 
     private:
         bool mIsReleased;

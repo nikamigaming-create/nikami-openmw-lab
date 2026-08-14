@@ -65,7 +65,11 @@ CSVWorld::NestedTable::NestedTable(CSMDoc::Document& document, const CSMWorld::U
             removeRowShortcut->associateAction(mRemoveRowAction);
         }
 
+<<<<<<< HEAD
         mEditIdAction = new TableEditIdAction(*this, mDocument.getData(), this);
+=======
+        mEditIdAction = new TableEditIdAction(*this, this);
+>>>>>>> origin/main
         connect(mEditIdAction, &QAction::triggered, this, &NestedTable::editCell);
     }
 }
@@ -87,8 +91,14 @@ void CSVWorld::NestedTable::contextMenuEvent(QContextMenuEvent* event)
 
     int currentRow = rowAt(event->y());
     int currentColumn = columnAt(event->x());
+<<<<<<< HEAD
     if (mEditIdAction->setCell(currentRow, currentColumn))
     {
+=======
+    if (mEditIdAction->isValidIdCell(currentRow, currentColumn))
+    {
+        mEditIdAction->setCell(currentRow, currentColumn);
+>>>>>>> origin/main
         menu.addAction(mEditIdAction);
         menu.addSeparator();
     }

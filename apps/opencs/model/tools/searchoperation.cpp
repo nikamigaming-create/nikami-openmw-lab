@@ -16,7 +16,11 @@
 #include "searchstage.hpp"
 
 CSMTools::SearchOperation::SearchOperation(CSMDoc::Document& document)
+<<<<<<< HEAD
     : CSMDoc::Operation(CSMDoc::State_Searching)
+=======
+    : CSMDoc::Operation(CSMDoc::State_Searching, false)
+>>>>>>> origin/main
 {
     std::vector<CSMWorld::UniversalId::Type> types = CSMWorld::UniversalId::listTypes(
         CSMWorld::UniversalId::Class_RecordList | CSMWorld::UniversalId::Class_ResourceList);

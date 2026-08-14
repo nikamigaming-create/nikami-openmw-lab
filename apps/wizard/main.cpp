@@ -3,11 +3,17 @@
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
 
+<<<<<<< HEAD
 #include <components/debug/debugging.hpp>
 #include <components/files/qtconversion.hpp>
 #include <components/l10n/qttranslations.hpp>
 #include <components/platform/application.hpp>
 #include <components/platform/platform.hpp>
+=======
+#include <components/files/qtconversion.hpp>
+#include <components/l10n/qttranslations.hpp>
+#include <components/platform/application.hpp>
+>>>>>>> origin/main
 
 #include "mainwizard.hpp"
 
@@ -17,7 +23,11 @@
 #define MAC_OS_X_VERSION_MIN_REQUIRED __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
 #endif // MAC_OS_X_VERSION_MIN_REQUIRED
 
+<<<<<<< HEAD
 int runWizard(int argc, char* argv[])
+=======
+int main(int argc, char* argv[])
+>>>>>>> origin/main
 {
     boost::program_options::variables_map variables;
     boost::program_options::options_description description;
@@ -25,8 +35,11 @@ int runWizard(int argc, char* argv[])
     configurationManager.addCommonOptions(description);
     configurationManager.readConfiguration(variables, description, true);
 
+<<<<<<< HEAD
     Debug::setupLogging(configurationManager.getLogPath(), "Wizard");
 
+=======
+>>>>>>> origin/main
     Platform::Application app(argc, argv);
 
     // Now we make sure the current dir is set to application path

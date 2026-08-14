@@ -4,6 +4,11 @@
 
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
+<<<<<<< HEAD
+=======
+#include <components/settings/values.hpp>
+#include <components/settings/categories/vr.hpp>
+>>>>>>> origin/main
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/soundmanager.hpp"
@@ -13,11 +18,24 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 
+<<<<<<< HEAD
+=======
+#include "../mwmechanics/actorutil.hpp"
+>>>>>>> origin/main
 #include "../mwmechanics/combat.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "animation.hpp"
 #include "rotatecontroller.hpp"
+<<<<<<< HEAD
+=======
+
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwvr/vrinputmanager.hpp"
+
+//## VR_PATCH END
+>>>>>>> origin/main
 
 namespace MWRender
 {
@@ -113,6 +131,22 @@ namespace MWRender
         osg::Quat orient = osg::Quat(actor.getRefData().getPosition().rot[0], osg::Vec3f(-1, 0, 0))
             * osg::Quat(actor.getRefData().getPosition().rot[2], osg::Vec3f(0, 0, -1));
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        if (VR::getVR() && !VR::getKBMouseModeActive() && actor == MWMechanics::getPlayer())
+        {
+            // In VR weapon aim is taken from the real orientation of the weapon.
+            auto* node = MWVR::VRInputManager::instance().vrAimNode();
+            if (node)
+            {
+                auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
+                orient = SceneUtil::getRotationFromMatrix_SkewFriendly(worldMatrix);
+            }
+        }
+
+//## VR_PATCH END
+>>>>>>> origin/main
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
 
@@ -156,7 +190,12 @@ namespace MWRender
             osg::NodePathList nodepaths = ammoNode->getParentalNodePaths();
             if (nodepaths.empty())
                 return;
+<<<<<<< HEAD
             osg::Vec3f launchPos = osg::computeLocalToWorld(nodepaths[0]).getTrans();
+=======
+            auto localToWorld = osg::computeLocalToWorld(nodepaths[0]);
+            osg::Vec3f launchPos = localToWorld.getTrans();
+>>>>>>> origin/main
 
             float fProjectileMinSpeed = gmst.find("fProjectileMinSpeed")->mValue.getFloat();
             float fProjectileMaxSpeed = gmst.find("fProjectileMaxSpeed")->mValue.getFloat();
@@ -164,6 +203,25 @@ namespace MWRender
 
             MWWorld::Ptr weaponPtr = *weapon;
             MWWorld::Ptr ammoPtr = *ammo;
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+            if (VR::getVR() && VR::getRightControllerActive() && (actor == MWMechanics::getPlayer()))
+            {
+                if (Settings::vrDebug().mSkywindBlasterWorkaround)
+                {
+                    // Skywind has a blaster asset that doesn't properly orient projectiles before launching them
+                    auto id = ammo->getCellRef().getRefId().getRefIdString();
+                    if (id.find("sw_blastbolt") == std::string::npos)
+                        orient = SceneUtil::getRotationFromMatrix_SkewFriendly(localToWorld);
+                }
+                else
+                {
+                    orient = SceneUtil::getRotationFromMatrix_SkewFriendly(localToWorld);
+                }
+            }
+//## VR_PATCH END
+>>>>>>> origin/main
             MWBase::Environment::get().getWorld()->launchProjectile(
                 actor, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength);
 

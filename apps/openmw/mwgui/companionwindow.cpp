@@ -89,7 +89,11 @@ namespace MWGui
         }
 
         MWWorld::Ptr object = item.mBase;
+<<<<<<< HEAD
         size_t count = item.mCount;
+=======
+        int count = item.mCount;
+>>>>>>> origin/main
         bool shift = MyGUI::InputManager::getInstance().isShiftPressed();
         if (MyGUI::InputManager::getInstance().isControlPressed())
             count = 1;
@@ -101,7 +105,11 @@ namespace MWGui
             CountDialog* dialog = MWBase::Environment::get().getWindowManager()->getCountDialog();
             std::string name{ object.getClass().getName(object) };
             name += MWGui::ToolTips::getSoulString(object.getCellRef());
+<<<<<<< HEAD
             dialog->openCountDialog(name, "#{sTake}", static_cast<int>(count));
+=======
+            dialog->openCountDialog(name, "#{sTake}", count);
+>>>>>>> origin/main
             dialog->eventOkClicked.clear();
             if (Settings::gui().mControllerMenus || MyGUI::InputManager::getInstance().isAltPressed())
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &CompanionWindow::transferItem);
@@ -154,6 +162,11 @@ namespace MWGui
         mItemView->resetScrollBars();
 
         setTitle(actor.getClass().getName(actor));
+<<<<<<< HEAD
+=======
+
+        mPtr.getClass().getContainerStore(mPtr).setContListener(this);
+>>>>>>> origin/main
     }
 
     void CompanionWindow::onFrame(float dt)
@@ -172,9 +185,15 @@ namespace MWGui
     {
         if (mPtr.isEmpty())
             return;
+<<<<<<< HEAD
         int capacity = static_cast<int>(mPtr.getClass().getCapacity(mPtr));
         float encumbrance = std::ceil(mPtr.getClass().getEncumbrance(mPtr));
         mEncumbranceBar->setValue(static_cast<int>(encumbrance), capacity);
+=======
+        float capacity = mPtr.getClass().getCapacity(mPtr);
+        float encumbrance = mPtr.getClass().getEncumbrance(mPtr);
+        mEncumbranceBar->setValue(std::ceil(encumbrance), static_cast<int>(capacity));
+>>>>>>> origin/main
 
         if (mModel && mModel->hasProfit(mPtr))
         {
@@ -228,10 +247,21 @@ namespace MWGui
         mSortModel = nullptr;
     }
 
+<<<<<<< HEAD
     void CompanionWindow::onInventoryUpdate(const MWWorld::Ptr& ptr)
     {
         if (ptr == mPtr)
             mUpdateNextFrame = true;
+=======
+    void CompanionWindow::itemAdded(const MWWorld::ConstPtr& item, int count)
+    {
+        mUpdateNextFrame = true;
+    }
+
+    void CompanionWindow::itemRemoved(const MWWorld::ConstPtr& item, int count)
+    {
+        mUpdateNextFrame = true;
+>>>>>>> origin/main
     }
 
     void CompanionWindow::onOpen()

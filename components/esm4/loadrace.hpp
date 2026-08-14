@@ -28,8 +28,15 @@
 #define ESM4_RACE
 
 #include <array>
+<<<<<<< HEAD
 #include <cstdint>
 #include <map>
+=======
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <span>
+>>>>>>> origin/main
 #include <vector>
 
 #include "actor.hpp" // AttributeValues, BodyTemplate
@@ -44,12 +51,35 @@ namespace ESM4
     struct Race
     {
 #pragma pack(push, 1)
+<<<<<<< HEAD
         struct Data
         {
             std::uint8_t flags; // 0x01 = not playable, 0x02 = not male, 0x04 = not female, ?? = fixed
         };
 #pragma pack(pop)
 
+=======
+        struct SkillBoost
+        {
+            std::uint8_t mRawActorValue = 0;
+            std::int8_t mBoost = 0;
+        };
+
+        struct Data
+        {
+            std::array<SkillBoost, 7> mSkillBoosts{};
+            std::array<std::uint8_t, 2> mReserved{};
+            float mHeightMale = 1.0f;
+            float mHeightFemale = 1.0f;
+            float mWeightMale = 1.0f;
+            float mWeightFemale = 1.0f;
+            std::uint32_t mRawFlags = 0;
+        };
+#pragma pack(pop)
+
+        static_assert(sizeof(Data) == 36);
+
+>>>>>>> origin/main
         enum SkillIndex
         {
             Skill_Armorer = 0x0C,
@@ -107,8 +137,13 @@ namespace ESM4
             std::string texture; // can be empty e.g. eye left, eye right
         };
 
+<<<<<<< HEAD
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+=======
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+>>>>>>> origin/main
 
         bool mIsTES5 = false;
 
@@ -118,16 +153,28 @@ namespace ESM4
         std::string mModelMale; // TES5 skeleton (in TES4 skeleton is found in npc_)
         std::string mModelFemale; // TES5 skeleton (in TES4 skeleton is found in npc_)
 
+<<<<<<< HEAD
         AttributeValues mAttribMale;
         AttributeValues mAttribFemale;
         std::map<SkillIndex, std::uint8_t> mSkillBonus;
+=======
+        AttributeValues mAttribMale{};
+        AttributeValues mAttribFemale{};
+        std::map<SkillIndex, std::uint8_t> mSkillBonus;
+        Data mFalloutData{};
+        bool mHasFalloutData = false;
+>>>>>>> origin/main
 
         // DATA
         float mHeightMale = 1.0f;
         float mHeightFemale = 1.0f;
         float mWeightMale = 1.0f;
         float mWeightFemale = 1.0f;
+<<<<<<< HEAD
         std::uint32_t mRaceFlags; // 0x0001 = playable?
+=======
+        std::uint32_t mRaceFlags = 0; // raw game-native flags; do not map to TES3 flags
+>>>>>>> origin/main
 
         std::vector<BodyPart> mHeadParts; // see HeadPartIndex
         std::vector<BodyPart> mHeadPartsFemale; // see HeadPartIndex
@@ -138,8 +185,13 @@ namespace ESM4
         std::vector<ESM::FormId> mEyeChoices; // texture only
         std::vector<ESM::FormId> mHairChoices; // not for TES5
 
+<<<<<<< HEAD
         float mFaceGenMainClamp;
         float mFaceGenFaceClamp;
+=======
+        float mFaceGenMainClamp = 0.0f;
+        float mFaceGenFaceClamp = 0.0f;
+>>>>>>> origin/main
         std::vector<float> mSymShapeModeCoefficients; // should be 50
         std::vector<float> mSymShapeModeCoeffFemale; // should be 50
         std::vector<float> mAsymShapeModeCoefficients; // should be 30
@@ -149,6 +201,7 @@ namespace ESM4
 
         std::map<ESM::FormId, std::int32_t> mDisposition; // race adjustments
         std::vector<ESM::FormId> mBonusSpells; // race ability/power
+<<<<<<< HEAD
         std::array<ESM::FormId, 2> mVNAM; // don't know what these are; 1 or 2 RACE FormIds
         std::array<ESM::FormId, 2> mDefaultHair; // male/female (HAIR FormId for TES4)
 
@@ -156,12 +209,26 @@ namespace ESM4
 
         ESM::FormId mSkin; // TES5
         BodyTemplate mBodyTemplate; // TES5
+=======
+        std::array<ESM::FormId, 2> mVNAM{}; // don't know what these are; 1 or 2 RACE FormIds
+        std::array<ESM::FormId, 2> mDefaultHair{}; // male/female (HAIR FormId for TES4)
+        ESM::FormId mBodyPartData{}; // FO3/FONV GNAM
+
+        std::uint32_t mNumKeywords = 0;
+
+        ESM::FormId mSkin{}; // TES5
+        BodyTemplate mBodyTemplate{}; // TES5
+>>>>>>> origin/main
 
         // FIXME: there's no fixed order?
         // head, mouth, eyes, brow, hair
         std::vector<ESM::FormId> mHeadPartIdsMale; // TES5
         std::vector<ESM::FormId> mHeadPartIdsFemale; // TES5
 
+<<<<<<< HEAD
+=======
+        static Data decodeFalloutData(std::span<const std::uint8_t> payload);
+>>>>>>> origin/main
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
 

@@ -24,7 +24,12 @@ namespace MWLua
             : LuaUtil::ScriptsContainer(lua, "Menu")
             , mInputProcessor(this)
         {
+<<<<<<< HEAD
             registerEngineHandlers({ &mOnFrameHandlers, &mStateChanged, &mConsoleCommandHandlers, &mUiModeChanged });
+=======
+            registerEngineHandlers({ &mOnFrameHandlers, &mOnVRFrameHandlers, &mOnVRRecenter, &mStateChanged,
+                &mConsoleCommandHandlers, &mUiModeChanged });
+>>>>>>> origin/main
         }
 
         void processInputEvent(const MWBase::LuaManager::InputEvent& event)
@@ -34,6 +39,12 @@ namespace MWLua
 
         void onFrame(float dt) { callEngineHandlers(mOnFrameHandlers, dt); }
 
+<<<<<<< HEAD
+=======
+        void onVRFrame() { callEngineHandlers(mOnVRFrameHandlers); }
+        void onVRRecenter(bool vertical, bool horizontal) { callEngineHandlers(mOnVRRecenter, vertical, horizontal); }
+
+>>>>>>> origin/main
         void stateChanged() { callEngineHandlers(mStateChanged); }
 
         bool consoleCommand(const std::string& consoleMode, const std::string& command)
@@ -48,6 +59,11 @@ namespace MWLua
         friend class MWLua::InputProcessor<MenuScripts>;
         MWLua::InputProcessor<MenuScripts> mInputProcessor;
         EngineHandlerList mOnFrameHandlers{ "onFrame" };
+<<<<<<< HEAD
+=======
+        EngineHandlerList mOnVRFrameHandlers{ "onVRFrame" };
+        EngineHandlerList mOnVRRecenter{ "onVRRecenter" };
+>>>>>>> origin/main
         EngineHandlerList mStateChanged{ "onStateChanged" };
         EngineHandlerList mConsoleCommandHandlers{ "onConsoleCommand" };
         EngineHandlerList mUiModeChanged{ "_onUiModeChanged" };

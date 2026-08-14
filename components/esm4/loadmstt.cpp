@@ -79,6 +79,11 @@ void ESM4::MovableStatic::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadmstt"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::MSTT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

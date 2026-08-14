@@ -21,7 +21,10 @@ namespace LuaUtil
         static sol::table initPlayerPackage(
             LuaUtil::LuaView& view, LuaStorage* globalStorage, LuaStorage* playerStorage);
         static sol::table initMenuPackage(LuaUtil::LuaView& view, LuaStorage* globalStorage, LuaStorage* playerStorage);
+<<<<<<< HEAD
         static sol::table initLoadPackage(LuaUtil::LuaView& view, LuaStorage* playerStorage);
+=======
+>>>>>>> origin/main
 
         explicit LuaStorage() {}
 

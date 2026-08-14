@@ -32,7 +32,11 @@ namespace CSMWorld
         Q_OBJECT
 
         std::shared_ptr<CSMFilter::Node> mFilter;
+<<<<<<< HEAD
         QTimer mFilterTimer;
+=======
+        std::unique_ptr<QTimer> mFilterTimer;
+>>>>>>> origin/main
         std::shared_ptr<CSMFilter::Node> mAwaitingFilter;
         std::map<int, int> mColumnMap; // column ID, column index in this model (or -1)
 
@@ -56,9 +60,17 @@ namespace CSMWorld
 
         void setFilter(const std::shared_ptr<CSMFilter::Node>& filter);
 
+<<<<<<< HEAD
     protected:
         bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 
+=======
+        void refreshFilter();
+
+    protected:
+        bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
+
+>>>>>>> origin/main
         bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
 
         QString getRecordId(int sourceRow) const;

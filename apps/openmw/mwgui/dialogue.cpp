@@ -19,8 +19,11 @@
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+<<<<<<< HEAD
 
 #include "../mwdialogue/keywordsearch.hpp"
+=======
+>>>>>>> origin/main
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
@@ -33,6 +36,15 @@
 
 #include "bookpage.hpp"
 #include "textcolours.hpp"
+<<<<<<< HEAD
+=======
+
+#include "journalbooks.hpp" // to_utf8_span
+
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+>>>>>>> origin/main
 
 namespace MWGui
 {
@@ -186,13 +198,21 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
         {
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
         {
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
 
@@ -208,10 +228,26 @@ namespace MWGui
         mText = text;
     }
 
+<<<<<<< HEAD
     void Response::write(std::shared_ptr<BookTypesetter> typesetter, const MWDialogue::KeywordSearch& keywordSearch,
         std::unordered_map<std::string, std::unique_ptr<Link>>& topicLinks) const
     {
         using namespace MWDialogue;
+=======
+    void Response::write(BookTypesetter::Ptr typesetter, KeywordSearchT* keywordSearch,
+        std::map<std::string, std::unique_ptr<Link>>& topicLinks) const
+    {
+        typesetter->sectionBreak(mNeedMargin ? 9 : 0);
+        auto windowManager = MWBase::Environment::get().getWindowManager();
+
+        if (!mTitle.empty())
+        {
+            const MyGUI::Colour& headerColour = windowManager->getTextColours().header;
+            BookTypesetter::Style* title = typesetter->createStyle({}, headerColour, false);
+            typesetter->write(title, to_utf8_span(mTitle));
+            typesetter->sectionBreak();
+        }
+>>>>>>> origin/main
 
         MWBase::WindowManager& windowManager = *MWBase::Environment::get().getWindowManager();
         const Translation::Storage& translationStorage = windowManager.getTranslationDataStorage();
@@ -219,6 +255,7 @@ namespace MWGui
 
         typesetter->sectionBreak(mNeedMargin ? 9 : 0);
 
+<<<<<<< HEAD
         if (!mTitle.empty())
         {
             BookTypesetter::Style* title = typesetter->createStyle({}, colors.header, false);
@@ -252,6 +289,76 @@ namespace MWGui
             auto value = topicLinks.find(token.mTopicId);
             if (value != topicLinks.end())
                 tokens.emplace_back(text.size() - displayName.size(), text.size(), value->second.get());
+=======
+        size_t posEnd = std::string::npos;
+        for (;;)
+        {
+            const size_t posBegin = text.find('@');
+            if (posBegin != std::string::npos)
+                posEnd = text.find('#', posBegin);
+
+            if (posBegin != std::string::npos && posEnd != std::string::npos)
+            {
+                std::string link = text.substr(posBegin + 1, posEnd - posBegin - 1);
+                const char specialPseudoAsteriskCharacter = 127;
+                std::replace(link.begin(), link.end(), specialPseudoAsteriskCharacter, '*');
+                std::string topicName
+                    = Misc::StringUtils::lowerCase(windowManager->getTranslationDataStorage().topicStandardForm(link));
+
+                std::string displayName = std::move(link);
+                while (displayName[displayName.size() - 1] == '*')
+                    displayName.erase(displayName.size() - 1, 1);
+
+                text.replace(posBegin, posEnd + 1 - posBegin, displayName);
+
+                if (topicLinks.find(topicName) != topicLinks.end())
+                    hyperLinks[std::make_pair(posBegin, posBegin + displayName.size())]
+                        = intptr_t(topicLinks[topicName].get());
+            }
+            else
+                break;
+        }
+
+        typesetter->addContent(to_utf8_span(text));
+
+        if (hyperLinks.size()
+            && MWBase::Environment::get().getWindowManager()->getTranslationDataStorage().hasTranslation())
+        {
+            const TextColours& textColours = MWBase::Environment::get().getWindowManager()->getTextColours();
+
+            BookTypesetter::Style* style = typesetter->createStyle({}, textColours.normal, false);
+            size_t formatted = 0; // points to the first character that is not laid out yet
+            for (auto& hyperLink : hyperLinks)
+            {
+                intptr_t topicId = hyperLink.second;
+                BookTypesetter::Style* hotStyle = typesetter->createHotStyle(
+                    style, textColours.link, textColours.linkOver, textColours.linkPressed, topicId);
+                if (formatted < hyperLink.first.first)
+                    typesetter->write(style, formatted, hyperLink.first.first);
+                typesetter->write(hotStyle, hyperLink.first.first, hyperLink.first.second);
+                formatted = hyperLink.first.second;
+            }
+            if (formatted < text.size())
+                typesetter->write(style, formatted, text.size());
+        }
+        else
+        {
+            std::vector<KeywordSearchT::Match> matches;
+            keywordSearch->highlightKeywords(text.begin(), text.end(), matches);
+
+            std::string::const_iterator i = text.begin();
+            for (KeywordSearchT::Match& match : matches)
+            {
+                if (i != match.mBeg)
+                    addTopicLink(typesetter, 0, i - text.begin(), match.mBeg - text.begin());
+
+                addTopicLink(typesetter, match.mValue, match.mBeg - text.begin(), match.mEnd - text.begin());
+
+                i = match.mEnd;
+            }
+            if (i != text.end())
+                addTopicLink(std::move(typesetter), 0, i - text.begin(), text.size());
+>>>>>>> origin/main
         }
         text.append(pos, mText.end());
 
@@ -276,18 +383,42 @@ namespace MWGui
             typesetter->write(textStyle, i, text.size());
     }
 
+<<<<<<< HEAD
+=======
+    void Response::addTopicLink(BookTypesetter::Ptr typesetter, intptr_t topicId, size_t begin, size_t end) const
+    {
+        const TextColours& textColours = MWBase::Environment::get().getWindowManager()->getTextColours();
+
+        BookTypesetter::Style* style = typesetter->createStyle({}, textColours.normal, false);
+
+        if (topicId)
+            style = typesetter->createHotStyle(
+                style, textColours.link, textColours.linkOver, textColours.linkPressed, topicId);
+        typesetter->write(style, begin, end);
+    }
+
+>>>>>>> origin/main
     Message::Message(std::string_view text)
     {
         mText = text;
     }
 
+<<<<<<< HEAD
     void Message::write(std::shared_ptr<BookTypesetter> typesetter, const MWDialogue::KeywordSearch&,
         std::unordered_map<std::string, std::unique_ptr<Link>>&) const
+=======
+    void Message::write(BookTypesetter::Ptr typesetter, KeywordSearchT* keywordSearch,
+        std::map<std::string, std::unique_ptr<Link>>& topicLinks) const
+>>>>>>> origin/main
     {
         const MyGUI::Colour& textColour = MWBase::Environment::get().getWindowManager()->getTextColours().notify;
         BookTypesetter::Style* title = typesetter->createStyle({}, textColour, false);
         typesetter->sectionBreak(9);
+<<<<<<< HEAD
         typesetter->write(title, mText);
+=======
+        typesetter->write(title, to_utf8_span(mText));
+>>>>>>> origin/main
     }
 
     // --------------------------------------------------------------------------------------------------
@@ -316,7 +447,13 @@ namespace MWGui
     static constexpr int sVerticalPadding = 3;
 
     DialogueWindow::DialogueWindow()
+<<<<<<< HEAD
         : WindowBase("openmw_dialogue_window.layout")
+=======
+//## VR_PATCH BEGIN
+        : WindowBase(VR::getVR() ? "openmw_dialogue_window_vr.layout" : "openmw_dialogue_window.layout")
+//## VR_PATCH END
+>>>>>>> origin/main
         , mIsCompanion(false)
         , mGoodbye(false)
         , mPersuasionDialog(std::make_unique<ResponseCallback>(this))
@@ -382,6 +519,7 @@ namespace MWGui
     {
         // if the window has only been moved, not resized, we don't need to update
         if (mCurrentWindowSize == sender->getSize())
+<<<<<<< HEAD
             return;
 
         redrawTopicsList();
@@ -397,6 +535,21 @@ namespace MWGui
         const int newPos = static_cast<int>(mScrollBar->getScrollPosition()) - step;
         const int maxPos = static_cast<int>(mScrollBar->getScrollRange()) - 1;
         mScrollBar->setScrollPosition(static_cast<size_t>(std::clamp(newPos, 0, maxPos)));
+=======
+            return;
+
+        redrawTopicsList();
+        updateHistory();
+        mCurrentWindowSize = sender->getSize();
+    }
+
+    void DialogueWindow::onMouseWheel(MyGUI::Widget* /*sender*/, int rel)
+    {
+        if (!mScrollBar->getVisible())
+            return;
+        mScrollBar->setScrollPosition(
+            std::clamp<int>(mScrollBar->getScrollPosition() - rel * 0.3, 0, mScrollBar->getScrollRange() - 1));
+>>>>>>> origin/main
         onScrollbarMoved(mScrollBar, mScrollBar->getScrollPosition());
     }
 
@@ -408,7 +561,11 @@ namespace MWGui
         }
     }
 
+<<<<<<< HEAD
     void DialogueWindow::onSelectListItem(const std::string& topic, int /*id*/)
+=======
+    void DialogueWindow::onSelectListItem(const std::string& topic, int id)
+>>>>>>> origin/main
     {
         MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
 
@@ -418,6 +575,7 @@ namespace MWGui
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
 
+<<<<<<< HEAD
         const std::string& sPersuasion = gmst.find("sPersuasion")->mValue.getString();
         const std::string& sCompanionShare = gmst.find("sCompanionShare")->mValue.getString();
         const std::string& sBarter = gmst.find("sBarter")->mValue.getString();
@@ -427,6 +585,23 @@ namespace MWGui
         const std::string& sEnchanting = gmst.find("sEnchanting")->mValue.getString();
         const std::string& sServiceTrainingTitle = gmst.find("sServiceTrainingTitle")->mValue.getString();
         const std::string& sRepair = gmst.find("sRepair")->mValue.getString();
+=======
+        // Service labels are game-specific. Fallout does not define every Morrowind service GMST, so resolving
+        // the entire Morrowind set eagerly can throw before an ordinary authored topic is dispatched.
+        const auto getServiceLabel = [&](std::string_view id) {
+            const ESM::GameSetting* setting = gmst.search(id);
+            return setting != nullptr ? setting->mValue.getString() : std::string();
+        };
+        const std::string sPersuasion = getServiceLabel("sPersuasion");
+        const std::string sCompanionShare = getServiceLabel("sCompanionShare");
+        const std::string sBarter = getServiceLabel("sBarter");
+        const std::string sSpells = getServiceLabel("sSpells");
+        const std::string sTravel = getServiceLabel("sTravel");
+        const std::string sSpellMakingMenuTitle = getServiceLabel("sSpellMakingMenuTitle");
+        const std::string sEnchanting = getServiceLabel("sEnchanting");
+        const std::string sServiceTrainingTitle = getServiceLabel("sServiceTrainingTitle");
+        const std::string sRepair = getServiceLabel("sRepair");
+>>>>>>> origin/main
 
         if (topic != sPersuasion && topic != sCompanionShare && topic != sBarter && topic != sSpells && topic != sTravel
             && topic != sSpellMakingMenuTitle && topic != sEnchanting && topic != sServiceTrainingTitle
@@ -504,11 +679,23 @@ namespace MWGui
         }
 
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mGoodbyeButton);
+<<<<<<< HEAD
 
         setTitle(mPtr.getClass().getName(mPtr));
 
         updateTopics();
         updateTopicsPane(); // force update for new services
+=======
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: key focus ready";
+
+        setTitle(mPtr.getClass().getName(mPtr));
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: title ready";
+
+        updateTopics();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: initial topics ready";
+        updateTopicsPane(); // force update for new services
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane ready";
+>>>>>>> origin/main
 
         if (Settings::gui().mControllerMenus && !sameActor)
         {
@@ -519,7 +706,12 @@ namespace MWGui
         }
 
         updateDisposition();
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: disposition ready";
+>>>>>>> origin/main
         restock();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: restock ready";
     }
 
     void DialogueWindow::restock()
@@ -573,8 +765,14 @@ namespace MWGui
 
     void DialogueWindow::updateTopicsPane()
     {
+<<<<<<< HEAD
         std::string focusedTopic;
         if (Settings::gui().mControllerMenus && mControllerFocus < mTopicsList->getItemCount())
+=======
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane begin";
+        std::string focusedTopic;
+        if (Settings::gui().mControllerMenus && mControllerFocus < static_cast<int>(mTopicsList->getItemCount()))
+>>>>>>> origin/main
             focusedTopic = mTopicsList->getItemNameAt(mControllerFocus);
 
         mTopicsList->clear();
@@ -584,6 +782,10 @@ namespace MWGui
         mKeywordSearch.clear();
 
         int services = mPtr.getClass().getServices(mPtr);
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: services=" << services;
+>>>>>>> origin/main
 
         bool travel = (mPtr.getType() == ESM::NPC::sRecordId && !mPtr.get<ESM::NPC>()->mBase->getTransport().empty())
             || (mPtr.getType() == ESM::Creature::sRecordId
@@ -591,6 +793,7 @@ namespace MWGui
 
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
+<<<<<<< HEAD
 
         if (mPtr.getType() == ESM::NPC::sRecordId)
             mTopicsList->addItem(gmst.find("sPersuasion")->mValue.getString());
@@ -618,20 +821,60 @@ namespace MWGui
 
         if (isCompanion())
             mTopicsList->addItem(gmst.find("sCompanionShare")->mValue.getString());
+=======
+        const auto addServiceItem = [&](std::string_view id) {
+            if (const ESM::GameSetting* setting = gmst.search(id))
+                mTopicsList->addItem(setting->mValue.getString());
+        };
+
+        if (mPtr.getType() == ESM::NPC::sRecordId)
+            addServiceItem("sPersuasion");
+
+        if (services & ESM::NPC::AllItems)
+            addServiceItem("sBarter");
+
+        if (services & ESM::NPC::Spells)
+            addServiceItem("sSpells");
+
+        if (travel)
+            addServiceItem("sTravel");
+
+        if (services & ESM::NPC::Spellmaking)
+            addServiceItem("sSpellmakingMenuTitle");
+
+        if (services & ESM::NPC::Enchanting)
+            addServiceItem("sEnchanting");
+
+        if (services & ESM::NPC::Training)
+            addServiceItem("sServiceTrainingTitle");
+
+        if (services & ESM::NPC::Repair)
+            addServiceItem("sRepair");
+
+        if (isCompanion())
+            addServiceItem("sCompanionShare");
+>>>>>>> origin/main
 
         if (mTopicsList->getItemCount() > 0)
             mTopicsList->addSeparator();
 
+<<<<<<< HEAD
         MWBase::WindowManager& windowManager = *MWBase::Environment::get().getWindowManager();
         const Translation::Storage& translationStorage = windowManager.getTranslationDataStorage();
 
+=======
+>>>>>>> origin/main
         for (const auto& keyword : mKeywords)
         {
             std::string topicId = Misc::StringUtils::lowerCase(keyword);
             mTopicsList->addItem(keyword, sVerticalPadding);
 
             auto t = std::make_unique<Topic>(keyword);
+<<<<<<< HEAD
             mKeywordSearch.seed(translationStorage.topicKeyword(keyword), topicId);
+=======
+            mKeywordSearch.seed(topicId, intptr_t(t.get()));
+>>>>>>> origin/main
             t->eventTopicActivated += MyGUI::newDelegate(this, &DialogueWindow::onTopicActivated);
             mTopicLinks[topicId] = std::move(t);
 
@@ -640,10 +883,20 @@ namespace MWGui
         }
 
         redrawTopicsList();
+<<<<<<< HEAD
         updateHistory();
 
         if (Settings::gui().mControllerMenus)
             setControllerFocus(mControllerFocus, true);
+=======
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topic list redrawn count=" << mTopicsList->getItemCount();
+        updateHistory();
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: history updated";
+
+        if (Settings::gui().mControllerMenus)
+            setControllerFocus(mControllerFocus, true);
+        Log(Debug::Info) << "FNV/ESM4 dialogue UI: topics pane end";
+>>>>>>> origin/main
     }
 
     void DialogueWindow::updateHistory(bool scrollbar)
@@ -659,11 +912,18 @@ namespace MWGui
             mScrollBar->setVisible(true);
         }
 
+<<<<<<< HEAD
         std::shared_ptr<BookTypesetter> typesetter
             = BookTypesetter::create(mHistory->getWidth(), std::numeric_limits<int>::max());
 
         for (const auto& text : mHistoryContents)
             text->write(typesetter, mKeywordSearch, mTopicLinks);
+=======
+        BookTypesetter::Ptr typesetter = BookTypesetter::create(mHistory->getWidth(), std::numeric_limits<int>::max());
+
+        for (const auto& text : mHistoryContents)
+            text->write(typesetter, &mKeywordSearch, mTopicLinks);
+>>>>>>> origin/main
 
         BookTypesetter::Style* body = typesetter->createStyle({}, MyGUI::Colour::White, false);
 
@@ -683,7 +943,11 @@ namespace MWGui
             typesetter->lineBreak();
             BookTypesetter::Style* questionStyle = typesetter->createHotStyle(
                 body, textColours.answer, textColours.answerOver, textColours.answerPressed, interactiveId);
+<<<<<<< HEAD
             typesetter->write(questionStyle, choice.first);
+=======
+            typesetter->write(questionStyle, to_utf8_span(choice.first));
+>>>>>>> origin/main
             mChoiceStyles.push_back(questionStyle);
         }
 
@@ -702,7 +966,11 @@ namespace MWGui
             BookTypesetter::Style* questionStyle = typesetter->createHotStyle(
                 body, textColours.answer, textColours.answerOver, textColours.answerPressed, interactiveId);
             typesetter->lineBreak();
+<<<<<<< HEAD
             typesetter->write(questionStyle, goodbye);
+=======
+            typesetter->write(questionStyle, to_utf8_span(goodbye));
+>>>>>>> origin/main
         }
 
         std::shared_ptr<TypesetBook> book = typesetter->complete();
@@ -941,10 +1209,17 @@ namespace MWGui
                 else if (mControllerChoice >= 0 && mControllerChoice < static_cast<int>(mChoices.size()))
                     onChoiceActivated(mChoices[mControllerChoice].second);
             }
+<<<<<<< HEAD
             else if (mControllerFocus == mTopicsList->getItemCount())
                 onGoodbyeActivated();
             else
                 onSelectListItem(mTopicsList->getItemNameAt(mControllerFocus), static_cast<int>(mControllerFocus));
+=======
+            else if (mControllerFocus == static_cast<int>(mTopicsList->getItemCount()))
+                onGoodbyeActivated();
+            else
+                onSelectListItem(mTopicsList->getItemNameAt(mControllerFocus), mControllerFocus);
+>>>>>>> origin/main
             MWBase::Environment::get().getWindowManager()->playSound(ESM::RefId::stringRefId("Menu Click"));
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_B && mChoices.empty())
@@ -984,9 +1259,15 @@ namespace MWGui
             {
                 // Number of items is mTopicsList.length+1 because of "Goodbye" button.
                 setControllerFocus(mControllerFocus, false);
+<<<<<<< HEAD
                 if (mControllerFocus >= mTopicsList->getItemCount())
                     mControllerFocus = 0;
                 else if (mControllerFocus == mTopicsList->getItemCount() - 1)
+=======
+                if (mControllerFocus >= static_cast<int>(mTopicsList->getItemCount()))
+                    mControllerFocus = 0;
+                else if (mControllerFocus == static_cast<int>(mTopicsList->getItemCount()) - 1)
+>>>>>>> origin/main
                     mControllerFocus = mTopicsList->getItemCount(); // "Goodbye" button
                 else if (mTopicsList->getItemNameAt(mControllerFocus + 1).empty())
                     mControllerFocus += 2; // Skip separator
@@ -998,13 +1279,21 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER && mChoices.size() == 0)
         {
             setControllerFocus(mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = mControllerFocus > 5 ? mControllerFocus - 5 : 0;
+=======
+            mControllerFocus = std::max(mControllerFocus - 5, 0);
+>>>>>>> origin/main
             setControllerFocus(mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && mChoices.size() == 0)
         {
             setControllerFocus(mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = std::min(mControllerFocus + 5, mTopicsList->getItemCount());
+=======
+            mControllerFocus = std::min(mControllerFocus + 5, static_cast<int>(mTopicsList->getItemCount()));
+>>>>>>> origin/main
             setControllerFocus(mControllerFocus, true);
         }
 

@@ -19,9 +19,18 @@
 
 #include "keywordsearch.hpp"
 
+#include "esm4dialogueutils.hpp"
+
 namespace ESM
 {
     struct Dialogue;
+}
+
+namespace ESM4
+{
+    struct Dialogue;
+    struct DialogInfo;
+    struct DialogResponse;
 }
 
 namespace MWDialogue
@@ -43,6 +52,7 @@ namespace MWDialogue
         std::map<ESM::RefId, ActorKnownTopicInfo> mActorKnownTopics;
 
         Translation::Storage& mTranslationDataStorage;
+<<<<<<< HEAD
         mutable bool mKeywordSearchInitialized{ false };
         mutable MWDialogue::KeywordSearch mKeywordSearch;
 
@@ -58,13 +68,40 @@ namespace MWDialogue
         bool mGoodbye;
 
         std::vector<std::pair<std::string, int>> mChoices;
+=======
+        MWScript::CompilerContext mCompilerContext;
+        Compiler::StreamErrorHandler mErrorHandler;
+
+        MWWorld::Ptr mActor;
+        bool mTalkedTo;
+
+        int mChoice;
+        ESM::RefId mLastTopic; // last topic ID, lowercase
+        bool mIsInChoice;
+        bool mGoodbye;
+
+        std::vector<std::pair<std::string, int>> mChoices;
+
+        bool mEsm4Dialogue = false;
+        ESM::FormId mLastEsm4Topic{};
+        Esm4DialoguePicker mEsm4Picker;
+        std::set<ESM::FormId> mEsm4SaidInfos;
+        std::set<ESM::FormId> mEsm4AddedTopics;
+        std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
+        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4ResultReferenceIds;
+        mutable std::unordered_map<ESM::FormId, std::vector<const ESM4::DialogInfo*>> mEsm4InfosByTopic;
+>>>>>>> origin/main
 
         int mOriginalDisposition;
         int mCurrentDisposition;
         int mPermanentDispositionChange;
 
+<<<<<<< HEAD
         const MWDialogue::KeywordSearch& getKeywordSearch() const;
         std::vector<ESM::RefId> parseTopicIdsFromText(const std::string& text) const;
+=======
+        std::vector<ESM::RefId> parseTopicIdsFromText(const std::string& text);
+>>>>>>> origin/main
         void addTopicsFromText(const std::string& text);
 
         void updateActorKnownTopics();
@@ -75,6 +112,20 @@ namespace MWDialogue
         void executeScript(const std::string& script, const MWWorld::Ptr& actor);
 
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
+<<<<<<< HEAD
+=======
+        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
+            const ESM4::DialogInfo* retainedInfo = nullptr);
+        const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic, bool requireActorAffinity = false) const;
+        const ESM4::DialogInfo* resolveEsm4Selection(const Esm4DialogueSelection& selection) const;
+        bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
+        int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
+        std::string resolveEsm4Voice(
+            const ESM4::DialogInfo& info, const ESM4::DialogResponse& response, std::size_t responseIndex);
+        ESM::FormId resolveEsm4ResultReferenceId(std::string_view editorId);
+        void executeEsm4ResultSource(std::string_view source);
+        void updateEsm4Topics();
+>>>>>>> origin/main
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);
 
@@ -88,6 +139,10 @@ namespace MWDialogue
         bool isInChoice() const override;
 
         bool startDialogue(const MWWorld::Ptr& actor, ResponseCallback* callback) override;
+<<<<<<< HEAD
+=======
+        const MWWorld::Ptr& getActor() const override { return mActor; }
+>>>>>>> origin/main
 
         std::list<std::string> getAvailableTopics() override;
         int getTopicFlag(const ESM::RefId& topicId) const override;
@@ -106,6 +161,10 @@ namespace MWDialogue
         bool checkServiceRefused(ResponseCallback* callback, ServiceType service = ServiceType::Any) override;
 
         bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) override;
+<<<<<<< HEAD
+=======
+        bool say(const MWWorld::Ptr& actor, const MWWorld::Ptr& listener, const ESM::FormId& topic) override;
+>>>>>>> origin/main
 
         // calbacks for the GUI
         void keywordSelected(std::string_view keyword, ResponseCallback* callback) override;
@@ -117,7 +176,11 @@ namespace MWDialogue
         /// @note Controlled by an option, gets discarded when dialogue ends by default
         void applyBarterDispositionChange(int delta) override;
 
+<<<<<<< HEAD
         size_t countSavedGameRecords() const override;
+=======
+        int countSavedGameRecords() const override;
+>>>>>>> origin/main
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const override;
 

@@ -109,6 +109,22 @@ namespace ESM
         else
             mSelectedEnchantItem = selectedEnchantItem;
 
+<<<<<<< HEAD
+=======
+        while (esm.isNextSub("FAWE"))
+        {
+            const ESM::RefId weapon = esm.getRefId();
+            const ESM::RefId ammo = esm.getHNRefId("FAAM");
+            mFalloutAmmoSelections[weapon] = ammo;
+            int32_t loaded = 0;
+            if (esm.isNextSub("FALD"))
+            {
+                esm.getHT(loaded);
+                mFalloutLoadedAmmo[weapon] = loaded;
+            }
+        }
+
+>>>>>>> origin/main
         // Old saves had restocking levelled items in a special map
         // This turns items from that map into negative quantities
         for (const auto& entry : levelledItemMap)
@@ -161,6 +177,18 @@ namespace ESM
 
         if (mSelectedEnchantItem)
             esm.writeHNT("SELE", *mSelectedEnchantItem);
+<<<<<<< HEAD
+=======
+
+        for (const auto& [weapon, ammo] : mFalloutAmmoSelections)
+        {
+            esm.writeHNRefId("FAWE", weapon);
+            esm.writeHNRefId("FAAM", ammo);
+            const auto loaded = mFalloutLoadedAmmo.find(weapon);
+            if (loaded != mFalloutLoadedAmmo.end())
+                esm.writeHNT("FALD", loaded->second);
+        }
+>>>>>>> origin/main
     }
 
 }

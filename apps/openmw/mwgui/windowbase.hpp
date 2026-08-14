@@ -14,8 +14,13 @@ namespace MWGui
 {
     class DragAndDrop;
 
+<<<<<<< HEAD
     size_t wrap(size_t index, size_t max, int delta);
     void setControllerFocus(const std::vector<MyGUI::Button*>& buttons, size_t index, bool selected);
+=======
+    int wrap(int index, int max);
+    void setControllerFocus(const std::vector<MyGUI::Button*>& buttons, int index, bool selected);
+>>>>>>> origin/main
 
     struct ControllerButtons
     {
@@ -73,10 +78,20 @@ namespace MWGui
 
         virtual void onDeleteCustomData(const MWWorld::Ptr& ptr) {}
 
+<<<<<<< HEAD
         virtual void onInventoryUpdate(const MWWorld::Ptr& ptr) {}
 
         virtual std::string_view getWindowIdForLua() const { return {}; }
         void setDisabledByLua(bool disabled) { mDisabledByLua = disabled; }
+=======
+        virtual std::string_view getWindowIdForLua() const { return ""; }
+        void setDisabledByLua(bool disabled) { mDisabledByLua = disabled; }
+//## VR_PATCH BEGIN
+        
+        /// Called when Window widget changes in size
+        virtual void onWindowResize(MyGUI::Window* window) {}
+//## VR_PATCH END
+>>>>>>> origin/main
 
         static void clampWindowCoordinates(MyGUI::Window* window);
 

@@ -33,7 +33,11 @@ namespace
 
     osg::Vec3f generateAgentHalfExtents(float min, float max, auto& random)
     {
+<<<<<<< HEAD
         std::uniform_real_distribution<float> distribution(min, max);
+=======
+        std::uniform_int_distribution<int> distribution(min, max);
+>>>>>>> origin/main
         return osg::Vec3f(distribution(random), distribution(random), distribution(random));
     }
 
@@ -94,9 +98,15 @@ namespace
         std::vector<AreaType> areaTypes;
         if (distribution(random) < 0.939)
         {
+<<<<<<< HEAD
             generateVertices(std::back_inserter(vertices), static_cast<std::size_t>(triangles * 2.467), random);
             generateIndices(std::back_inserter(indices), static_cast<int>(vertices.size() / 3) - 1,
                 static_cast<std::size_t>(vertices.size() * 1.279), random);
+=======
+            generateVertices(std::back_inserter(vertices), triangles * 2.467, random);
+            generateIndices(std::back_inserter(indices), static_cast<int>(vertices.size() / 3) - 1,
+                vertices.size() * 1.279, random);
+>>>>>>> origin/main
             generateAreaTypes(std::back_inserter(areaTypes), indices.size() / 3, random);
         }
         return Mesh(std::move(indices), std::move(vertices), std::move(areaTypes));
@@ -109,7 +119,11 @@ namespace
         result.mCellPosition = generateVec2i(1000, random);
         result.mCellSize = ESM::Land::REAL_SIZE;
         result.mMinHeight = distribution(random);
+<<<<<<< HEAD
         result.mMaxHeight = result.mMinHeight + 1.0f;
+=======
+        result.mMaxHeight = result.mMinHeight + 1.0;
+>>>>>>> origin/main
         result.mLength = static_cast<std::uint8_t>(ESM::Land::LAND_SIZE);
         std::generate_n(
             std::back_inserter(result.mHeights), ESM::Land::LAND_NUM_VERTS, [&] { return distribution(random); });

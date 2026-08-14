@@ -1,14 +1,31 @@
 #include "spellwindow.hpp"
 
+<<<<<<< HEAD
+=======
+#include <algorithm>
+#include <optional>
+
+#include <MyGUI_Button.h>
+>>>>>>> origin/main
 #include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_Window.h>
 
+<<<<<<< HEAD
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/settings/values.hpp>
+=======
+#include <components/debug/debuglog.hpp>
+#include <components/esm3/loadbsgn.hpp>
+#include <components/esm3/loadrace.hpp>
+#include <components/esm4/loadqust.hpp>
+#include <components/misc/strings/format.hpp>
+#include <components/settings/values.hpp>
+#include <components/widgets/list.hpp>
+>>>>>>> origin/main
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -17,6 +34,10 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwworld/esm4questruntime.hpp"
+>>>>>>> origin/main
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
@@ -30,33 +51,69 @@
 #include "spellicons.hpp"
 #include "spellview.hpp"
 #include "statswindow.hpp"
+<<<<<<< HEAD
+=======
+
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+>>>>>>> origin/main
 
 namespace MWGui
 {
 
     SpellWindow::SpellWindow(DragAndDrop* drag)
-        : WindowPinnableBase("openmw_spell_window.layout")
+//## VR_PATCH BEGIN
+        : WindowPinnableBase(VR::getVR() ? "openmw_spell_window_vr.layout" : "openmw_spell_window.layout")
+//## VR_PATCH END
         , NoDrop(drag, mMainWidget)
         , mSpellView(nullptr)
+<<<<<<< HEAD
         , mUpdateTimer(0.0f)
     {
         mSpellIcons = std::make_unique<SpellIcons>();
 
         MyGUI::Widget* deleteButton;
         getWidget(deleteButton, "DeleteSpellButton");
+=======
+        , mFilterEdit(nullptr)
+        , mDeleteButton(nullptr)
+        , mFalloutQuestList(nullptr)
+        , mUpdateTimer(0.0f)
+    {
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window body begin";
+        mSpellIcons = std::make_unique<SpellIcons>();
+
+        getWidget(mDeleteButton, "DeleteSpellButton");
+>>>>>>> origin/main
 
         getWidget(mSpellView, "SpellView");
         getWidget(mEffectBox, "EffectsBox");
         getWidget(mFilterEdit, "FilterEdit");
+<<<<<<< HEAD
 
         mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
         mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
         deleteButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellWindow::onDeleteClicked);
+=======
+        getWidget(mFalloutQuestList, "FalloutQuestList");
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window widgets ready";
+
+        mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
+        mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
+        mDeleteButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellWindow::onDeleteClicked);
+        mFalloutQuestList->eventItemSelected += MyGUI::newDelegate(this, &SpellWindow::onFalloutQuestSelected);
+>>>>>>> origin/main
 
         setCoord(498, 300, 302, 300);
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window coordinates ready";
 
         // Adjust the spell filtering widget size because of MyGUI limitations.
+<<<<<<< HEAD
         int filterWidth = mSpellView->getSize().width - deleteButton->getSize().width - 3;
+=======
+        int filterWidth = mSpellView->getSize().width - mDeleteButton->getSize().width - 3;
+>>>>>>> origin/main
         mFilterEdit->setSize(filterWidth, mFilterEdit->getSize().height);
 
         if (Settings::gui().mControllerMenus)
@@ -66,6 +123,10 @@ namespace MWGui
             mControllerButtons.mB = "#{Interface:Back}";
             mControllerButtons.mR3 = "#{Interface:Info}";
         }
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 UI init: data window body complete";
+>>>>>>> origin/main
     }
 
     void SpellWindow::onPinToggled()
@@ -87,6 +148,22 @@ namespace MWGui
 
     void SpellWindow::onOpen()
     {
+<<<<<<< HEAD
+=======
+        const bool fallout = isFalloutDataMode();
+        mFalloutQuestList->setVisible(fallout);
+        mSpellView->setVisible(!fallout);
+        mEffectBox->getParent()->setVisible(!fallout);
+        mFilterEdit->setVisible(!fallout);
+        mDeleteButton->getParent()->setVisible(!fallout);
+        if (fallout)
+        {
+            setTitle("DATA / QUESTS");
+            updateFalloutQuestList();
+            return;
+        }
+
+>>>>>>> origin/main
         // Reset the filter focus when opening the window
         MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
         if (focus == mFilterEdit)
@@ -98,6 +175,12 @@ namespace MWGui
     void SpellWindow::onFrame(float dt)
     {
         NoDrop::onFrame(dt);
+<<<<<<< HEAD
+=======
+        if (isFalloutDataMode())
+            return;
+
+>>>>>>> origin/main
         mUpdateTimer += dt;
         if (0.5f < mUpdateTimer)
         {
@@ -112,6 +195,12 @@ namespace MWGui
 
     void SpellWindow::updateSpells()
     {
+        if (isFalloutDataMode())
+        {
+            updateFalloutQuestList();
+            return;
+        }
+
         mSpellIcons->updateWidgets(mEffectBox, false);
 
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), mFilterEdit->getCaption()));
@@ -188,6 +277,12 @@ namespace MWGui
 
     void SpellWindow::onModelIndexSelected(SpellModel::ModelIndex index)
     {
+<<<<<<< HEAD
+=======
+        if (isFalloutDataMode())
+            return;
+
+>>>>>>> origin/main
         const Spell& spell = mSpellView->getModel()->getItem(index);
         if (spell.mType == Spell::Type_EnchantedItem)
         {
@@ -204,6 +299,11 @@ namespace MWGui
 
     void SpellWindow::onFilterChanged(MyGUI::EditBox* sender)
     {
+<<<<<<< HEAD
+=======
+        if (isFalloutDataMode())
+            return;
+>>>>>>> origin/main
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), sender->getCaption()));
     }
 
@@ -245,6 +345,12 @@ namespace MWGui
 
     void SpellWindow::cycle(bool next)
     {
+<<<<<<< HEAD
+=======
+        if (isFalloutDataMode())
+            return;
+
+>>>>>>> origin/main
         MWWorld::Ptr player = MWMechanics::getPlayer();
 
         if (MWBase::Environment::get().getMechanicsManager()->isAttackingOrSpell(player))
@@ -255,7 +361,11 @@ namespace MWGui
             return;
 
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer()));
+<<<<<<< HEAD
         int itemCount = static_cast<int>(mSpellView->getModel()->getItemCount());
+=======
+        int itemCount = mSpellView->getModel()->getItemCount();
+>>>>>>> origin/main
         if (itemCount == 0)
             return;
 
@@ -304,6 +414,42 @@ namespace MWGui
 
     bool SpellWindow::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
     {
+<<<<<<< HEAD
+=======
+        if (isFalloutDataMode())
+        {
+            if (arg.button == SDL_CONTROLLER_BUTTON_B)
+                MWBase::Environment::get().getWindowManager()->exitCurrentGuiMode();
+            else if (!mFalloutQuestRows.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
+            {
+                if (const std::optional<std::size_t> row
+                    = advanceFalloutQuestHeader(mFalloutQuestRows, mFalloutSelectedQuestRow, false))
+                {
+                    setFalloutQuestSelection(*row);
+                }
+            }
+            else if (!mFalloutQuestRows.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+            {
+                if (const std::optional<std::size_t> row
+                    = advanceFalloutQuestHeader(mFalloutQuestRows, mFalloutSelectedQuestRow, true))
+                {
+                    setFalloutQuestSelection(*row);
+                }
+            }
+            else if (mFalloutSelectedQuestRow < mFalloutQuestRows.size()
+                && arg.button == SDL_CONTROLLER_BUTTON_A)
+            {
+                const FalloutQuestListRow& row = mFalloutQuestRows[mFalloutSelectedQuestRow];
+                if (row.mKind != FalloutQuestRowKind::Header)
+                    return true;
+                MWBase::Environment::get().getWorld()->getESM4QuestRuntime().forceActiveQuest(
+                    row.mQuest);
+                updateFalloutQuestList();
+            }
+            return true;
+        }
+
+>>>>>>> origin/main
         if (arg.button == SDL_CONTROLLER_BUTTON_B)
             MWBase::Environment::get().getWindowManager()->exitCurrentGuiMode();
         else
@@ -332,8 +478,143 @@ namespace MWGui
                 active && Settings::gui().mControllerTooltips);
         }
 
+<<<<<<< HEAD
         mSpellView->setActiveControllerWindow(active);
 
         WindowBase::setActiveControllerWindow(active);
     }
+=======
+        if (isFalloutDataMode())
+            setFalloutQuestSelection(mFalloutSelectedQuestRow);
+        else
+            mSpellView->setActiveControllerWindow(active);
+
+        WindowBase::setActiveControllerWindow(active);
+    }
+
+    bool SpellWindow::isFalloutDataMode() const
+    {
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        return world != nullptr && world->getStore().getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas;
+    }
+
+    void SpellWindow::updateFalloutQuestList()
+    {
+        if (mFalloutQuestList == nullptr || !isFalloutDataMode())
+            return;
+
+        const MWBase::World& world = *MWBase::Environment::get().getWorld();
+        const MWWorld::ESM4QuestRuntime& runtime = world.getESM4QuestRuntime();
+        const std::optional<ESM::FormId> activeQuest = runtime.getActiveQuest();
+        const std::optional<ESM::FormId> selectedQuest = mFalloutSelectedQuestRow < mFalloutQuestRows.size()
+            ? std::optional<ESM::FormId>(mFalloutQuestRows[mFalloutSelectedQuestRow].mQuest)
+            : activeQuest;
+
+        struct VisibleQuest
+        {
+            const ESM4::Quest* mQuest = nullptr;
+            const MWWorld::ESM4QuestState* mState = nullptr;
+        };
+        std::vector<VisibleQuest> visible;
+        for (const ESM4::Quest& quest : world.getStore().get<ESM4::Quest>())
+        {
+            const MWWorld::ESM4QuestState* state = runtime.search(quest.mId);
+            if (state == nullptr)
+                continue;
+            const bool hasDisplayedObjective = std::ranges::any_of(state->mObjectiveStatus, [](const auto& objective) {
+                return (objective.second & MWWorld::ESM4QuestState::Objective_Displayed) != 0;
+            });
+            if ((state->mFlags & MWWorld::ESM4QuestState::Flag_ShownInPipBoy) == 0 && !hasDisplayedObjective)
+                continue;
+            visible.push_back({ &quest, state });
+        }
+        std::ranges::sort(visible, [activeQuest](const VisibleQuest& left, const VisibleQuest& right) {
+            const bool leftActive = activeQuest && left.mQuest->mId == *activeQuest;
+            const bool rightActive = activeQuest && right.mQuest->mId == *activeQuest;
+            if (leftActive != rightActive)
+                return leftActive;
+            return left.mQuest->mQuestName < right.mQuest->mQuestName;
+        });
+
+        mFalloutQuestList->clear();
+        mFalloutQuestRows.clear();
+        for (const VisibleQuest& entry : visible)
+        {
+            const ESM4::Quest& quest = *entry.mQuest;
+            const MWWorld::ESM4QuestState& state = *entry.mState;
+            const std::string_view title = quest.mQuestName.empty() ? std::string_view(quest.mEditorId)
+                                                                    : std::string_view(quest.mQuestName);
+            std::string header = activeQuest && quest.mId == *activeQuest ? "> " : "  ";
+            if ((state.mFlags & MWWorld::ESM4QuestState::Flag_Failed) != 0)
+                header += "[FAILED] ";
+            else if ((state.mFlags & MWWorld::ESM4QuestState::Flag_Completed) != 0)
+                header += "[DONE] ";
+            header += title;
+            mFalloutQuestList->addItem(header, 4);
+            mFalloutQuestRows.push_back({ quest.mId, FalloutQuestRowKind::Header });
+
+            for (const ESM4::QuestObjective& objective : quest.mObjectives)
+            {
+                const auto status = state.mObjectiveStatus.find(objective.mIndex);
+                if (status == state.mObjectiveStatus.end()
+                    || (status->second & MWWorld::ESM4QuestState::Objective_Displayed) == 0)
+                    continue;
+                const bool completed = (status->second & MWWorld::ESM4QuestState::Objective_Completed) != 0;
+                std::string text = completed ? "      [x] " : "      [ ] ";
+                text += objective.mDescription.empty()
+                    ? "Objective " + std::to_string(objective.mIndex)
+                    : objective.mDescription;
+                mFalloutQuestList->addItem(text, 2);
+                mFalloutQuestRows.push_back({ quest.mId, FalloutQuestRowKind::Objective });
+            }
+        }
+        if (mFalloutQuestRows.empty())
+            mFalloutQuestList->addItem("No active quests in the loaded save", 8);
+        mFalloutQuestList->adjustSize();
+        if (const std::optional<std::size_t> row = selectFalloutQuestHeader(mFalloutQuestRows, selectedQuest))
+            setFalloutQuestSelection(*row);
+        else
+            mFalloutSelectedQuestRow = 0;
+    }
+
+    void SpellWindow::onFalloutQuestSelected(const std::string& /*name*/, int index)
+    {
+        if (index < 0 || static_cast<std::size_t>(index) >= mFalloutQuestRows.size())
+            return;
+        const FalloutQuestListRow& row = mFalloutQuestRows[static_cast<std::size_t>(index)];
+        if (row.mKind != FalloutQuestRowKind::Header)
+        {
+            setFalloutQuestSelection(static_cast<std::size_t>(index));
+            return;
+        }
+        mFalloutSelectedQuestRow = static_cast<std::size_t>(index);
+        MWBase::Environment::get().getWorld()->getESM4QuestRuntime().forceActiveQuest(
+            row.mQuest);
+        updateFalloutQuestList();
+    }
+
+    void SpellWindow::setFalloutQuestSelection(std::size_t index)
+    {
+        if (mFalloutQuestRows.empty())
+            return;
+        const std::optional<ESM::FormId> requestedQuest = index < mFalloutQuestRows.size()
+            ? std::optional<ESM::FormId>(mFalloutQuestRows[index].mQuest)
+            : std::nullopt;
+        const std::optional<std::size_t> selected = selectFalloutQuestHeader(mFalloutQuestRows, requestedQuest);
+        if (!selected)
+            return;
+        mFalloutSelectedQuestRow = *selected;
+        for (std::size_t i = 0; i < mFalloutQuestRows.size(); ++i)
+        {
+            if (MyGUI::Button* item = mFalloutQuestList->getItemWidget(mFalloutQuestList->getItemNameAt(i)))
+            {
+                item->setStateSelected(i == mFalloutSelectedQuestRow);
+                // The TES3 list skin applies a dim default colour. Override it at full
+                // opacity so FNV quest/objective text remains legible over the world view.
+                item->setTextColour(i == mFalloutSelectedQuestRow ? MyGUI::Colour(1.f, 0.95f, 0.55f, 1.f)
+                                                                  : MyGUI::Colour(1.f, 0.82f, 0.22f, 1.f));
+            }
+        }
+    }
+>>>>>>> origin/main
 }

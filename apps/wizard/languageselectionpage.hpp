@@ -23,6 +23,12 @@ namespace Wizard
 
     private:
         MainWizard* mWizard;
+<<<<<<< HEAD
+=======
+
+    protected:
+        void initializePage() override;
+>>>>>>> origin/main
     };
 }
 

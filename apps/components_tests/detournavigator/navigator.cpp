@@ -82,6 +82,7 @@ namespace
         0, -25, -100, -100, -100, // row 4
     } };
 
+<<<<<<< HEAD
     template <class T, std::size_t size>
     std::pair<T, T> getMinMaxHeight(const std::array<T, size>& values)
     {
@@ -91,20 +92,31 @@ namespace
         return { *min, *max };
     }
 
+=======
+>>>>>>> origin/main
     template <std::size_t size>
     std::unique_ptr<btHeightfieldTerrainShape> makeSquareHeightfieldTerrainShape(
         const std::array<btScalar, size>& values, btScalar heightScale = 1, int upAxis = 2,
         PHY_ScalarType heightDataType = PHY_FLOAT, bool flipQuadEdges = false)
     {
         const int width = static_cast<int>(std::sqrt(size));
+<<<<<<< HEAD
         const auto [minHeight, maxHeight] = getMinMaxHeight(values);
         return std::make_unique<btHeightfieldTerrainShape>(
             width, width, values.data(), heightScale, minHeight, maxHeight, upAxis, heightDataType, flipQuadEdges);
+=======
+        const btScalar min = *std::min_element(values.begin(), values.end());
+        const btScalar max = *std::max_element(values.begin(), values.end());
+        const btScalar greater = std::max(std::abs(min), std::abs(max));
+        return std::make_unique<btHeightfieldTerrainShape>(
+            width, width, values.data(), heightScale, -greater, greater, upAxis, heightDataType, flipQuadEdges);
+>>>>>>> origin/main
     }
 
     template <std::size_t size>
     HeightfieldSurface makeSquareHeightfieldSurface(const std::array<float, size>& values)
     {
+<<<<<<< HEAD
         const auto [minHeight, maxHeight] = getMinMaxHeight(values);
         return HeightfieldSurface{
             .mHeights = values.data(),
@@ -112,6 +124,16 @@ namespace
             .mMinHeight = minHeight,
             .mMaxHeight = maxHeight,
         };
+=======
+        const auto [min, max] = std::minmax_element(values.begin(), values.end());
+        const float greater = std::max(std::abs(*min), std::abs(*max));
+        HeightfieldSurface surface;
+        surface.mHeights = values.data();
+        surface.mMinHeight = -greater;
+        surface.mMaxHeight = greater;
+        surface.mSize = static_cast<int>(std::sqrt(size));
+        return surface;
+>>>>>>> origin/main
     }
 
     template <class T>
@@ -316,6 +338,7 @@ namespace
         CollisionShapeInstance heightfield2(makeSquareHeightfieldTerrainShape(heightfieldData2));
         heightfield2.shape().setLocalScaling(btVector3(128, 128, 1));
 
+<<<<<<< HEAD
         const ObjectTransform objectTransform{ ESM::Position{ { 256, 256, -50 }, { 0, 0, 0 } }, 0.0f };
         const btTransform transform{ btMatrix3x3::getIdentity(), btVector3(256, 256, -50) };
 
@@ -324,6 +347,13 @@ namespace
             transform, nullptr);
         mNavigator->addObject(ObjectId(&heightfield2.shape()), ObjectShapes(heightfield2.instance(), objectTransform),
             transform, nullptr);
+=======
+        ASSERT_TRUE(mNavigator->addAgent(mAgentBounds));
+        mNavigator->addObject(ObjectId(&heightfield1.shape()), ObjectShapes(heightfield1.instance(), mObjectTransform),
+            mTransform, nullptr);
+        mNavigator->addObject(ObjectId(&heightfield2.shape()), ObjectShapes(heightfield2.instance(), mObjectTransform),
+            mTransform, nullptr);
+>>>>>>> origin/main
         mNavigator->update(mPlayerPosition, nullptr);
         mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
 
@@ -340,7 +370,11 @@ namespace
     TEST_F(DetourNavigatorNavigatorTest, only_one_heightfield_per_cell_is_allowed)
     {
         const HeightfieldSurface surface1 = makeSquareHeightfieldSurface(defaultHeightfieldData);
+<<<<<<< HEAD
         const int cellSize1 = heightfieldTileSize * static_cast<int>(surface1.mSize - 1);
+=======
+        const int cellSize1 = heightfieldTileSize * (surface1.mSize - 1);
+>>>>>>> origin/main
 
         const std::array<float, 5 * 5> heightfieldData2{ {
             -25, -25, -25, -25, -25, // row 0
@@ -350,7 +384,11 @@ namespace
             -25, -25, -25, -25, -25, // row 4
         } };
         const HeightfieldSurface surface2 = makeSquareHeightfieldSurface(heightfieldData2);
+<<<<<<< HEAD
         const int cellSize2 = heightfieldTileSize * static_cast<int>(surface2.mSize - 1);
+=======
+        const int cellSize2 = heightfieldTileSize * (surface2.mSize - 1);
+>>>>>>> origin/main
 
         ASSERT_TRUE(mNavigator->addAgent(mAgentBounds));
         mNavigator->addHeightfield(mCellPosition, cellSize1, surface1, nullptr);
@@ -400,10 +438,17 @@ namespace
 
         EXPECT_THAT(mPath,
             ElementsAre( //
+<<<<<<< HEAD
                 Vec3fEq(56.66664886474609375, 460, 51.999996185302734375),
                 Vec3fEq(192.666656494140625, 249.3332977294921875, 6.666663646697998046875),
                 Vec3fEq(249.3332977294921875, 192.666656494140625, 6.666663646697998046875),
                 Vec3fEq(460, 56.66664886474609375, 51.999996185302734375)))
+=======
+                Vec3fEq(56.66664886474609375, 460, 1.99999392032623291015625),
+                Vec3fEq(158.6666412353515625, 249.3332977294921875, -20.6666717529296875),
+                Vec3fEq(249.3332977294921875, 158.6666412353515625, -20.6666717529296875),
+                Vec3fEq(460, 56.66664886474609375, 1.99999392032623291015625)))
+>>>>>>> origin/main
             << mPath;
     }
 
@@ -543,12 +588,18 @@ namespace
         CollisionShapeInstance heightfield(makeSquareHeightfieldTerrainShape(defaultHeightfieldDataScalar));
         heightfield.shape().setLocalScaling(btVector3(128, 128, 1));
 
+<<<<<<< HEAD
         const ObjectTransform objectTransform{ ESM::Position{ { 256, 256, -50 }, { 0, 0, 0 } }, 0.0f };
         const btTransform transform{ btMatrix3x3::getIdentity(), btVector3(256, 256, -50) };
 
         ASSERT_TRUE(mNavigator->addAgent(mAgentBounds));
         mNavigator->addObject(
             ObjectId(&heightfield.shape()), ObjectShapes(heightfield.instance(), objectTransform), transform, nullptr);
+=======
+        ASSERT_TRUE(mNavigator->addAgent(mAgentBounds));
+        mNavigator->addObject(ObjectId(&heightfield.shape()), ObjectShapes(heightfield.instance(), mObjectTransform),
+            mTransform, nullptr);
+>>>>>>> origin/main
         mNavigator->update(mPlayerPosition, nullptr);
         mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
 
@@ -556,8 +607,13 @@ namespace
         mNavigator->update(mPlayerPosition, nullptr);
         mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
 
+<<<<<<< HEAD
         mNavigator->addObject(
             ObjectId(&heightfield.shape()), ObjectShapes(heightfield.instance(), objectTransform), transform, nullptr);
+=======
+        mNavigator->addObject(ObjectId(&heightfield.shape()), ObjectShapes(heightfield.instance(), mObjectTransform),
+            mTransform, nullptr);
+>>>>>>> origin/main
         mNavigator->update(mPlayerPosition, nullptr);
         mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
 
@@ -651,9 +707,14 @@ namespace
 
         for (std::size_t i = 0; i < boxes.size(); ++i)
         {
+<<<<<<< HEAD
             const btScalar diameter = static_cast<btScalar>(i) * 10;
             const btTransform transform(
                 btMatrix3x3::getIdentity(), btVector3(shift.x() + diameter, shift.y() + diameter, diameter));
+=======
+            const btTransform transform(
+                btMatrix3x3::getIdentity(), btVector3(shift.x() + i * 10, shift.y() + i * 10, i * 10));
+>>>>>>> origin/main
             mNavigator->addObject(
                 ObjectId(&boxes[i].shape()), ObjectShapes(boxes[i].instance(), mObjectTransform), transform, nullptr);
         }
@@ -662,9 +723,14 @@ namespace
 
         for (std::size_t i = 0; i < boxes.size(); ++i)
         {
+<<<<<<< HEAD
             const btScalar diameter = static_cast<btScalar>(i) * 10 + 1;
             const btTransform transform(
                 btMatrix3x3::getIdentity(), btVector3(shift.x() + diameter, shift.y() + diameter, diameter));
+=======
+            const btTransform transform(
+                btMatrix3x3::getIdentity(), btVector3(shift.x() + i * 10 + 1, shift.y() + i * 10 + 1, i * 10 + 1));
+>>>>>>> origin/main
             mNavigator->updateObject(
                 ObjectId(&boxes[i].shape()), ObjectShapes(boxes[i].instance(), mObjectTransform), transform, nullptr);
         }
@@ -694,8 +760,12 @@ namespace
 
         for (std::size_t i = 0; i < shapes.size(); ++i)
         {
+<<<<<<< HEAD
             const btScalar diameter = static_cast<btScalar>(i) * 32;
             const btTransform transform(btMatrix3x3::getIdentity(), btVector3(diameter, diameter, diameter));
+=======
+            const btTransform transform(btMatrix3x3::getIdentity(), btVector3(i * 32, i * 32, i * 32));
+>>>>>>> origin/main
             mNavigator->addObject(
                 ObjectId(&shapes[i].shape()), ObjectShapes(shapes[i].instance(), mObjectTransform), transform, nullptr);
         }
@@ -705,8 +775,12 @@ namespace
         const auto start = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < shapes.size(); ++i)
         {
+<<<<<<< HEAD
             const btScalar diameter = static_cast<btScalar>(i) * 32 + 1;
             const btTransform transform(btMatrix3x3::getIdentity(), btVector3(diameter, diameter, diameter));
+=======
+            const btTransform transform(btMatrix3x3::getIdentity(), btVector3(i * 32 + 1, i * 32 + 1, i * 32 + 1));
+>>>>>>> origin/main
             mNavigator->updateObject(
                 ObjectId(&shapes[i].shape()), ObjectShapes(shapes[i].instance(), mObjectTransform), transform, nullptr);
         }
@@ -715,8 +789,12 @@ namespace
 
         for (std::size_t i = 0; i < shapes.size(); ++i)
         {
+<<<<<<< HEAD
             const btScalar diameter = static_cast<btScalar>(i) * 32 + 2;
             const btTransform transform(btMatrix3x3::getIdentity(), btVector3(diameter, diameter, diameter));
+=======
+            const btTransform transform(btMatrix3x3::getIdentity(), btVector3(i * 32 + 2, i * 32 + 2, i * 32 + 2));
+>>>>>>> origin/main
             mNavigator->updateObject(
                 ObjectId(&shapes[i].shape()), ObjectShapes(shapes[i].instance(), mObjectTransform), transform, nullptr);
         }
@@ -1222,6 +1300,7 @@ namespace
             std::nullopt);
     }
 
+<<<<<<< HEAD
     TEST_F(DetourNavigatorNavigatorTest, should_not_post_jobs_for_tiles_outside_processing_range)
     {
         CollisionShapeInstance compound(std::make_unique<btCompoundShape>());
@@ -1294,6 +1373,8 @@ namespace
             << mPath;
     }
 
+=======
+>>>>>>> origin/main
     struct DetourNavigatorUpdateTest : TestWithParam<std::function<void(Navigator&)>>
     {
     };

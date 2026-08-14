@@ -205,10 +205,22 @@ namespace LuaUtil
                 using T = std::decay_t<decltype(variant)>;
                 if constexpr (std::is_same_v<T, UnloadedData>)
                 {
+<<<<<<< HEAD
                     for (const ESM::LuaScript& script : variant.mScripts)
                     {
                         if (script.mScriptId == scriptId)
                             return true;
+=======
+                    const auto& conf = mLua.getConfiguration();
+                    if (scriptId >= 0 && static_cast<size_t>(scriptId) < conf.size())
+                    {
+                        const auto& path = conf[scriptId].mScriptPath;
+                        for (const ESM::LuaScript& script : variant.mScripts)
+                        {
+                            if (script.mScriptPath == path)
+                                return true;
+                        }
+>>>>>>> origin/main
                     }
                     return false;
                 }
@@ -329,8 +341,13 @@ namespace LuaUtil
 
     void ScriptsContainer::insertHandler(std::vector<Handler>& list, int scriptId, sol::function fn)
     {
+<<<<<<< HEAD
         size_t pos = list.size();
         list.emplace_back();
+=======
+        list.emplace_back();
+        int pos = list.size() - 1;
+>>>>>>> origin/main
         while (pos > 0 && list[pos - 1].mScriptId > scriptId)
         {
             list[pos] = std::move(list[pos - 1]);
@@ -365,9 +382,15 @@ namespace LuaUtil
                 return;
             }
             EventHandlerList& list = it->second;
+<<<<<<< HEAD
             for (size_t i = list.size(); i > 0; --i)
             {
                 const Handler& h = list[i - 1];
+=======
+            for (int i = list.size() - 1; i >= 0; --i)
+            {
+                const Handler& h = list[i];
+>>>>>>> origin/main
                 try
                 {
                     sol::object res = LuaUtil::call({ this, h.mScriptId }, h.mFn, object);
@@ -408,6 +431,7 @@ namespace LuaUtil
             data.mScripts = unloadedData->mScripts;
             return;
         }
+<<<<<<< HEAD
         mLua.protectedCall([&](LuaView& view) { save(view, data); });
     }
 
@@ -418,6 +442,8 @@ namespace LuaUtil
             data.mScripts = unloadedData->mScripts;
             return;
         }
+=======
+>>>>>>> origin/main
         const auto& loadedData = std::get<LoadedData>(mData);
         std::map<int, std::vector<ESM::LuaTimer>> timers;
         auto saveTimerFn = [&](const Timer& timer, TimerType timerType) {
@@ -438,7 +464,13 @@ namespace LuaUtil
         for (auto& [scriptId, script] : loadedData.mScripts)
         {
             ESM::LuaScript savedScript;
+<<<<<<< HEAD
             savedScript.mScriptId = scriptId;
+=======
+            // Note: We can not use `scriptPath(scriptId)` here because `save` can be called during
+            // evaluating "reloadlua" command when ScriptsConfiguration is already changed.
+            savedScript.mScriptPath = script.mPath;
+>>>>>>> origin/main
             if (script.mOnSave)
             {
                 try
@@ -468,10 +500,17 @@ namespace LuaUtil
             scripts[scriptId] = { initData, nullptr };
         for (const ESM::LuaScript& s : data.mScripts)
         {
+<<<<<<< HEAD
             std::optional<int> scriptId = cfg.mapId(s.mScriptId);
             if (!scriptId)
             {
                 Log(Debug::Verbose) << "Ignoring " << mNamePrefix << "[" << s.mScriptId << "]; script not registered";
+=======
+            std::optional<int> scriptId = cfg.findId(s.mScriptPath);
+            if (!scriptId)
+            {
+                Log(Debug::Verbose) << "Ignoring " << mNamePrefix << "[" << s.mScriptPath << "]; script not registered";
+>>>>>>> origin/main
                 continue;
             }
             auto it = scripts.find(*scriptId);
@@ -480,7 +519,11 @@ namespace LuaUtil
             else if (cfg.isCustomScript(*scriptId))
                 scripts[*scriptId] = { cfg[*scriptId].mInitializationData, &s };
             else
+<<<<<<< HEAD
                 Log(Debug::Verbose) << "Ignoring " << mNamePrefix << "[" << cfg[*scriptId].mScriptPath
+=======
+                Log(Debug::Verbose) << "Ignoring " << mNamePrefix << "[" << s.mScriptPath
+>>>>>>> origin/main
                                     << "]; this script is not allowed here";
         }
 
@@ -492,7 +535,10 @@ namespace LuaUtil
                 if (scriptInfo.mSavedData == nullptr)
                     continue;
                 ESM::LuaScript& script = container.mScripts.emplace_back(*scriptInfo.mSavedData);
+<<<<<<< HEAD
                 script.mScriptId = scriptId;
+=======
+>>>>>>> origin/main
                 if (!script.mData.empty())
                 {
                     try
@@ -543,11 +589,20 @@ namespace LuaUtil
             scripts[scriptId] = { initData, nullptr };
         for (const ESM::LuaScript& s : savedScripts)
         {
+<<<<<<< HEAD
             auto it = scripts.find(s.mScriptId);
             if (it != scripts.end())
                 it->second.mSavedData = &s;
             else if (cfg.isCustomScript(s.mScriptId))
                 scripts[s.mScriptId] = { cfg[s.mScriptId].mInitializationData, &s };
+=======
+            std::optional<int> scriptId = cfg.findId(s.mScriptPath);
+            auto it = scripts.find(*scriptId);
+            if (it != scripts.end())
+                it->second.mSavedData = &s;
+            else if (cfg.isCustomScript(*scriptId))
+                scripts[*scriptId] = { cfg[*scriptId].mInitializationData, &s };
+>>>>>>> origin/main
         }
 
         mLua.protectedCall([&](LuaView& view) {
@@ -617,12 +672,20 @@ namespace LuaUtil
         return data;
     }
 
+<<<<<<< HEAD
     ScriptsContainer::UnloadedData& ScriptsContainer::ensureUnloaded(LuaView& view)
+=======
+    ScriptsContainer::UnloadedData& ScriptsContainer::ensureUnloaded(LuaView&)
+>>>>>>> origin/main
     {
         if (UnloadedData* data = std::get_if<UnloadedData>(&mData))
             return *data;
         UnloadedData data;
+<<<<<<< HEAD
         save(view, data);
+=======
+        save(data);
+>>>>>>> origin/main
         mAPI.erase("openmw.interfaces");
         UnloadedData& out = mData.emplace<UnloadedData>(std::move(data));
         for (auto& [_, handlers] : mEngineHandlers)
@@ -754,11 +817,17 @@ namespace LuaUtil
 
     void ScriptsContainer::processTimers(double simulationTime, double gameTime)
     {
+<<<<<<< HEAD
         mLua.protectedCall([&](LuaView& view) {
             LoadedData& data = ensureLoaded();
             updateTimerQueue(data.mSimulationTimersQueue, simulationTime);
             updateTimerQueue(data.mGameTimersQueue, gameTime);
         });
+=======
+        LoadedData& data = ensureLoaded();
+        updateTimerQueue(data.mSimulationTimersQueue, simulationTime);
+        updateTimerQueue(data.mGameTimersQueue, gameTime);
+>>>>>>> origin/main
     }
 
     static constexpr float instructionCountAvgCoef = 1.0f / 30; // averaging over approximately 30 frames
@@ -831,11 +900,14 @@ namespace LuaUtil
             stats[id].mMemoryUsage += mem;
     }
 
+<<<<<<< HEAD
     ScriptsContainerWeakPtr ScriptsContainer::getWeakPointer() const
     {
         return ScriptsContainerWeakPtr(mThis);
     }
 
+=======
+>>>>>>> origin/main
     ScriptsContainer::Script::~Script()
     {
         if (mHiddenData != sol::nil)

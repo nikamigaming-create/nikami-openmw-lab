@@ -20,7 +20,12 @@ namespace MWLua
             : LocalScripts(lua, obj)
             , mInputProcessor(this)
         {
+<<<<<<< HEAD
             registerEngineHandlers({ &mConsoleCommandHandlers, &mOnFrameHandlers, &mQuestUpdate, &mUiModeChanged });
+=======
+            registerEngineHandlers({ &mConsoleCommandHandlers, &mOnFrameHandlers, &mOnVRFrameHandlers, &mOnVRRecenter,
+                &mQuestUpdate, &mUiModeChanged });
+>>>>>>> origin/main
         }
 
         void processInputEvent(const MWBase::LuaManager::InputEvent& event)
@@ -29,6 +34,11 @@ namespace MWLua
         }
 
         void onFrame(float dt) { callEngineHandlers(mOnFrameHandlers, dt); }
+<<<<<<< HEAD
+=======
+        void onVRFrame() { callEngineHandlers(mOnVRFrameHandlers); }
+        void onVRRecenter(bool vertical, bool horizontal) { callEngineHandlers(mOnVRRecenter, vertical, horizontal); }
+>>>>>>> origin/main
         void onQuestUpdate(std::string_view questId, int stage) { callEngineHandlers(mQuestUpdate, questId, stage); }
 
         bool consoleCommand(
@@ -52,6 +62,11 @@ namespace MWLua
         InputProcessor<PlayerScripts> mInputProcessor;
         EngineHandlerList mConsoleCommandHandlers{ "onConsoleCommand" };
         EngineHandlerList mOnFrameHandlers{ "onFrame" };
+<<<<<<< HEAD
+=======
+        EngineHandlerList mOnVRFrameHandlers{ "onVRFrame" };
+        EngineHandlerList mOnVRRecenter{ "onVRRecenter" };
+>>>>>>> origin/main
         EngineHandlerList mQuestUpdate{ "onQuestUpdate" };
         EngineHandlerList mUiModeChanged{ "_onUiModeChanged" };
     };

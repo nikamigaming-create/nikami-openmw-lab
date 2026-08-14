@@ -34,6 +34,12 @@ namespace CSVRender
         void buildShape(const ESM::Land& esmLand);
 
     private:
+<<<<<<< HEAD
+=======
+        static const int CellSize;
+        static const int VertexCount;
+
+>>>>>>> origin/main
         size_t landIndex(int x, int y);
         float scaleToWorld(int val);
 

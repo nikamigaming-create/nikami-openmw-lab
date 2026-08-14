@@ -1,7 +1,10 @@
 #include "variantimp.hpp"
 
 #include <cmath>
+<<<<<<< HEAD
 #include <limits>
+=======
+>>>>>>> origin/main
 #include <sstream>
 #include <stdexcept>
 
@@ -10,6 +13,7 @@
 
 namespace ESM
 {
+<<<<<<< HEAD
     namespace
     {
         template <class T>
@@ -24,6 +28,8 @@ namespace ESM
             return static_cast<T>(static_cast<int32_t>(value));
         }
     }
+=======
+>>>>>>> origin/main
 
     void readESMVariantValue(ESMReader& esm, Variant::Format format, VarType type, std::string& out)
     {
@@ -72,9 +78,18 @@ namespace ESM
             esm.getHNT(value, "FLTV");
 
             if (type == VT_Short)
+<<<<<<< HEAD
                 out = floatCast<int16_t>(value);
             else if (type == VT_Long)
                 out = floatCast<int32_t>(value);
+=======
+                if (std::isnan(value))
+                    out = 0;
+                else
+                    out = static_cast<int16_t>(value);
+            else if (type == VT_Long)
+                out = static_cast<int32_t>(value);
+>>>>>>> origin/main
             else
                 esm.fail("unsupported global variable integer type");
         }

@@ -44,15 +44,39 @@ namespace MWGui
 
     protected:
         void initialiseOverride() override;
+<<<<<<< HEAD
+=======
+        void onMouseSetFocus(MyGUI::Widget* oldWidget) override;
+        void onMouseLostFocus(MyGUI::Widget* newWidget) override;
+        void updateFocusHighlight();
+>>>>>>> origin/main
 
         MyGUI::ImageBox* mItem;
         MyGUI::ImageBox* mItemShadow;
         MyGUI::ImageBox* mFrame;
         MyGUI::ImageBox* mControllerBorder;
         MyGUI::TextBox* mText;
+<<<<<<< HEAD
 
         std::string mCurrentIcon;
         std::string mCurrentFrame;
+=======
+        MyGUI::TextBox* mName;
+
+        std::string mCurrentIcon;
+        std::string mCurrentFrame;
+        bool mControllerFocused = false;
+        bool mMouseFocused = false;
+//## VR_PATCH BEGIN
+    public:
+        const std::string& getIcon() const { return mCurrentIcon; }
+        bool hasFrame() const { return !!mFrame; }
+        const std::string& getFrame() const { return mCurrentFrame; }
+        const MyGUI::IntCoord& getFrameCoords() const { return mCurrentFrameCoords; }
+    protected:
+        MyGUI::IntCoord mCurrentFrameCoords;
+//## VR_PATCH END
+>>>>>>> origin/main
 
         static std::map<std::string, float> mScales;
     };

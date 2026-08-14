@@ -5,8 +5,11 @@
 #include <memory>
 #include <string>
 
+<<<<<<< HEAD
 #include <components/vfs/pathutil.hpp>
 
+=======
+>>>>>>> origin/main
 namespace osgViewer
 {
     class Viewer;
@@ -39,7 +42,11 @@ namespace MyGUIPlatform
     {
     public:
         Platform(osgViewer::Viewer* viewer, osg::Group* guiRoot, Resource::ImageManager* imageManager,
+<<<<<<< HEAD
             const VFS::Manager* vfs, float uiScalingFactor, VFS::Path::NormalizedView resourcePath,
+=======
+            const VFS::Manager* vfs, float uiScalingFactor, const std::filesystem::path& resourcePath,
+>>>>>>> origin/main
             const std::filesystem::path& logName = "MyGUI.log");
 
         ~Platform();

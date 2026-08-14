@@ -91,6 +91,11 @@ void ESM4::PlacedGrenade::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadpgre"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::PGRE::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

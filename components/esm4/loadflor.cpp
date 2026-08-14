@@ -91,6 +91,11 @@ void ESM4::Flora::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadflor"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::FLOR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -2,7 +2,10 @@
 #define OPENMW_MWRENDER_PINGPONGCANVAS_H
 
 #include <array>
+<<<<<<< HEAD
 #include <optional>
+=======
+>>>>>>> origin/main
 
 #include <osg/FrameBufferObject>
 #include <osg/Geometry>
@@ -21,6 +24,22 @@ namespace MWRender
 {
     class PingPongCanvas : public osg::Geometry
     {
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    public:
+        class PingPongCallback
+        {
+        public:
+            virtual ~PingPongCallback(){}
+
+            virtual void pingPongBegin(osg::State& state, const PingPongCanvas& canvas) = 0;
+            virtual void pingPongEnd(osg::State& state, const PingPongCanvas& canvas) = 0;
+        };
+        
+
+//## VR_PATCH END
+>>>>>>> origin/main
     public:
         PingPongCanvas(
             Shader::ShaderManager& shaderManager, const std::shared_ptr<LuminanceCalculator>& luminanceCalculator);
@@ -56,6 +75,22 @@ namespace MWRender
 
         const osg::ref_ptr<osg::Texture>& getSceneTexture(size_t frameId) const { return mTextureScene; }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        void setDestinationFbo(osg::ref_ptr<osg::FrameBufferObject> fbo) const
+        {
+            mDestinationFBO = fbo;
+        }
+        void setDestinationViewport(size_t frameId, osg::ref_ptr<osg::Viewport> viewport) const
+        {
+            mDestinationViewport = viewport;
+        }
+
+        void setPingPongCallback(std::unique_ptr<PingPongCallback> cb);
+
+//## VR_PATCH END
+>>>>>>> origin/main
     private:
         bool mAvgLum = false;
         bool mPostprocessing = false;
@@ -80,6 +115,13 @@ namespace MWRender
         mutable osg::ref_ptr<osg::FrameBufferObject> mDestinationFBO;
         mutable std::array<osg::ref_ptr<osg::FrameBufferObject>, 3> mFbos;
         mutable std::shared_ptr<LuminanceCalculator> mLuminanceCalculator;
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        std::unique_ptr<PingPongCallback> mPingPongCallback;
+        mutable osg::ref_ptr<osg::Viewport> mDestinationViewport;
+//## VR_PATCH END
+>>>>>>> origin/main
     };
 }
 

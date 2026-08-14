@@ -16,11 +16,19 @@ namespace MWState
         bool mQuitRequest;
         bool mAskLoadRecent;
         bool mNewGameRequest = false;
+<<<<<<< HEAD
         std::optional<std::pair<const Character*, std::filesystem::path>> mLoadRequest;
+=======
+        std::optional<std::filesystem::path> mLoadRequest;
+>>>>>>> origin/main
         State mState;
         CharacterManager mCharacterManager;
         double mTimePlayed;
         std::filesystem::path mLastSavegame;
+<<<<<<< HEAD
+=======
+        bool mNativeFalloutSaveLoaded = false;
+>>>>>>> origin/main
 
     private:
         void cleanup(bool force = false);
@@ -43,6 +51,7 @@ namespace MWState
         void askLoadRecent() override;
 
         void requestNewGame() override { mNewGameRequest = true; }
+<<<<<<< HEAD
         void requestLoad(const Character* character, const std::filesystem::path& filepath) override
         {
             mLoadRequest.emplace(character, filepath);
@@ -82,6 +91,48 @@ namespace MWState
         /// for a Character containing this save file, and set this Character current if one was found.
         /// Otherwise, a new Character will be created.
 
+=======
+        void requestLoad(const std::filesystem::path& filepath) override { mLoadRequest = filepath; }
+
+        State getState() const override;
+
+        /// True only while the running session was created from a normal retail Fallout .fos transaction.
+        /// The engine uses this to keep diagnostic/proof camera paths from replacing save-authored camera state.
+        bool isNativeFalloutSaveLoaded() const { return mNativeFalloutSaveLoaded; }
+
+        void newGame(bool bypass = false) override;
+        ///< Start a new game.
+        ///
+        /// \param bypass Skip new game mechanics.
+
+        void endGame();
+
+        void resumeGame() override;
+
+        void deleteGame(const MWState::Character* character, const MWState::Slot* slot) override;
+        ///< Delete a saved game slot from this character. If all save slots are deleted, the character will be deleted
+        ///< too.
+
+        void saveGame(std::string_view description, const Slot* slot = nullptr) override;
+        ///< Write a saved game to \a slot or create a new slot if \a slot == 0.
+        ///
+        /// \note Slot must belong to the current character.
+
+        /// Saves a file, using supplied filename, overwritting if needed
+        /** This is mostly used for quicksaving and autosaving, for they use the same name over and over again
+            \param name Name of save, defaults to "Quicksave"**/
+        void quickSave(std::string name = "Quicksave") override;
+
+        /// Loads the last saved file
+        /** Used for quickload **/
+        void quickLoad() override;
+
+        void loadGame(const std::filesystem::path& filepath) override;
+        ///< Load a saved game directly from the given file path. This will search the CharacterManager
+        /// for a Character containing this save file, and set this Character current if one was found.
+        /// Otherwise, a new Character will be created.
+
+>>>>>>> origin/main
         void loadGame(const Character* character, const std::filesystem::path& filepath) override;
         ///< Load a saved game file belonging to the given character.
 

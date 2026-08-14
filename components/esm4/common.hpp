@@ -40,6 +40,10 @@ namespace ESM4
         REC_ACTI = fourCC("ACTI"), // Activator
         REC_ADDN = fourCC("ADDN"), // Addon Node
         REC_ALCH = fourCC("ALCH"), // Potion
+<<<<<<< HEAD
+=======
+        REC_AMEF = fourCC("AMEF"), // Ammo Effect
+>>>>>>> origin/main
         REC_AMMO = fourCC("AMMO"), // Ammo
         REC_ANIO = fourCC("ANIO"), // Animated Object
         REC_APPA = fourCC("APPA"), // Apparatus (probably unused)
@@ -131,7 +135,14 @@ namespace ESM4
         REC_PROJ = fourCC("PROJ"), // Projectile
         REC_QUST = fourCC("QUST"), // Quest
         REC_RACE = fourCC("RACE"), // Race / Creature type
+<<<<<<< HEAD
         REC_REFR = fourCC("REFR"), // Object Reference
+=======
+        REC_RCCT = fourCC("RCCT"), // Recipe Category
+        REC_RCPE = fourCC("RCPE"), // Recipe
+        REC_REFR = fourCC("REFR"), // Object Reference
+        REC_REPU = fourCC("REPU"), // Reputation (Fallout: New Vegas)
+>>>>>>> origin/main
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship
         REC_REVB = fourCC("REVB"), // Reverb Parameters
@@ -170,6 +181,10 @@ namespace ESM4
         REC_IMOD = fourCC("IMOD"), // Item Mod
         REC_PWAT = fourCC("PWAT"), // Placeable Water
         REC_SCOL = fourCC("SCOL"), // Static Collection
+<<<<<<< HEAD
+=======
+        REC_PKIN = fourCC("PKIN"), // Starfield Pack-In (authored storage-cell set piece)
+>>>>>>> origin/main
         REC_CCRD = fourCC("CCRD"), // Caravan Card
         REC_CMNY = fourCC("CMNY"), // Caravan Money
         REC_ALOC = fourCC("ALOC"), // Audio Location Controller
@@ -204,6 +219,10 @@ namespace ESM4
         Rec_IgnoreObj = 0x00100000, // (ACTI) Ignore Object Interaction
                                     //   Ignore Object Interaction Sets Dangerous Automatically
         Rec_Marker = 0x00800000, // Is Marker
+<<<<<<< HEAD
+=======
+        Rec_Destroyed = 0x00800000, // (REFR/ACHR/ACRE, Fallout) Destroyed/non-functional
+>>>>>>> origin/main
         Rec_Obstacle = 0x02000000, // (ACTI) Obstacle / (REFR) No AI Acquire
         Rec_NavMFilter = 0x04000000, // NavMesh Gen - Filter
         Rec_NavMBBox = 0x08000000, // NavMesh Gen - Bounding Box

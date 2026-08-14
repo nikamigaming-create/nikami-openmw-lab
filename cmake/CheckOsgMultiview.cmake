@@ -20,7 +20,13 @@ try_compile(RESULT_VAR
     )
 set(HAVE_MULTIVIEW ${RESULT_VAR})
 if(HAVE_MULTIVIEW)
+<<<<<<< HEAD
     message(STATUS "OSG supports multiview")
 else(HAVE_MULTIVIEW)
     message(STATUS "OSG does not support multiview, disabling use of GL_OVR_multiview")
+=======
+    message(STATUS "Osg supports multiview")
+else(HAVE_MULTIVIEW)
+    message(NOTICE "Osg does not support multiview, disabling use of GL_OVR_multiview")
+>>>>>>> origin/main
 endif(HAVE_MULTIVIEW)

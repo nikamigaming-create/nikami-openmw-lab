@@ -37,12 +37,20 @@
 -- @param #boolean force
 
 ---
+<<<<<<< HEAD
 -- If set to true then after switching from Preview to ThirdPerson the player character turns to the camera view direction. Otherwise, the camera turns to the character view direction.
+=======
+-- If set to true then after switching from Preview to ThirdPerson the player character turns to the camera view direction. Otherwise the camera turns to the character view direction.
+>>>>>>> origin/main
 -- @function [parent=#camera] allowCharacterDeferredRotation
 -- @param #boolean boolValue
 
 ---
+<<<<<<< HEAD
 -- Show/hide the crosshair.
+=======
+-- Show/hide crosshair.
+>>>>>>> origin/main
 -- @function [parent=#camera] showCrosshair
 -- @param #boolean boolValue
 
@@ -79,12 +87,20 @@
 -- @param #number value
 
 ---
+<<<<<<< HEAD
 -- Get the camera roll angle (radians).
+=======
+-- Get camera roll angle (radians).
+>>>>>>> origin/main
 -- @function [parent=#camera] getRoll
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Set the camera roll angle (radians).
+=======
+-- Set camera roll angle (radians).
+>>>>>>> origin/main
 -- @function [parent=#camera] setRoll
 -- @param #number value
 
@@ -126,6 +142,7 @@
 -- @param #number value
 
 ---
+<<<<<<< HEAD
 -- Applies an offset to the cameras projection matrix, measured in pixels.
 -- Small offsets of up to roughly 2 pixels are safe, large offsets are only for debugging and will cause visual glitches.
 -- @function [parent=#camera] setProjectionOffset
@@ -138,6 +155,9 @@
 
 ---
 -- Set the camera position; can be used only if camera is in Static mode.
+=======
+-- Set camera position; can be used only if camera is in Static mode.
+>>>>>>> origin/main
 -- @function [parent=#camera] setStaticPosition
 -- @param openmw.util#Vector3 pos
 
@@ -152,16 +172,27 @@
 -- @param openmw.util#Vector3 offset
 
 ---
+<<<<<<< HEAD
 -- Preferred offset between the tracked position (see `getTrackedPosition`) and the camera focal point (the center of the screen) in third person mode.
+=======
+-- Preferred offset between tracked position (see `getTrackedPosition`) and the camera focal point (the center of the screen) in third person mode.
+>>>>>>> origin/main
 -- See `setFocalPreferredOffset`.
 -- @function [parent=#camera] getFocalPreferredOffset
 -- @return openmw.util#Vector2
 
 ---
+<<<<<<< HEAD
 -- Set the preferred offset between the tracked position (see `getTrackedPosition`) and the camera focal point (the center of the screen) in third person mode.
 -- The offset is a 2d vector (X, Y) where X is horizontal (to the right from the character) and Y component is vertical (upward).
 -- The real offset can differ from the preferred one during smooth transition or if blocked by an obstacle.
 -- Smooth transition happens by default every time the preferred offset changes. Use `instantTransition()` to skip the current transition.
+=======
+-- Set preferred offset between tracked position (see `getTrackedPosition`) and the camera focal point (the center of the screen) in third person mode.
+-- The offset is a 2d vector (X, Y) where X is horizontal (to the right from the character) and Y component is vertical (upward).
+-- The real offset can differ from the preferred one during smooth transition or if blocked by an obstacle.
+-- Smooth transition happens by default every time when the preferred offset was changed. Use `instantTransition()` to skip the current transition.
+>>>>>>> origin/main
 -- @function [parent=#camera] setFocalPreferredOffset
 -- @param openmw.util#Vector2 offset
 
@@ -182,7 +213,11 @@
 
 ---
 -- Set the speed coefficient of focal point (the center of the screen in third person mode) smooth transition.
+<<<<<<< HEAD
 -- Smooth transition happens by default every time the preferred offset changes. Use `instantTransition()` to skip the current transition.
+=======
+-- Smooth transition happens by default every time when the preferred offset was changed. Use `instantTransition()` to skip the current transition.
+>>>>>>> origin/main
 -- @function [parent=#camera] setFocalTransitionSpeed
 -- Set the speed coefficient
 -- @param #number speed
@@ -191,6 +226,7 @@
 -- Make instant the current transition of camera focal point and the current deferred rotation (see `allowCharacterDeferredRotation`).
 -- @function [parent=#camera] instantTransition
 
+<<<<<<< HEAD
 --- Get the current camera collision type (see @{openmw.nearby#COLLISION_TYPE}).
 -- @function [parent=#camera] getCollisionType
 -- @return #number
@@ -220,21 +256,64 @@
 -- @return #number
 
 --- Set the view distance.
+=======
+--- Get current camera collision type (see @{openmw.nearby#COLLISION_TYPE}).
+-- @function [parent=#camera] getCollisionType
+-- @return #number
+
+--- Set camera collision type (see @{openmw.nearby#COLLISION_TYPE}).
+-- @function [parent=#camera] setCollisionType
+-- @param #number collisionType
+
+--- Return base field of view vertical angle in radians
+-- @function [parent=#camera] getBaseFieldOfView
+-- @return #number
+
+--- Return current field of view vertical angle in radians
+-- @function [parent=#camera] getFieldOfView
+-- @return #number
+
+--- Set field of view
+-- @function [parent=#camera] setFieldOfView
+-- @param #number fov Field of view vertical angle in radians
+
+--- Return base view distance.
+-- @function [parent=#camera] getBaseViewDistance
+-- @return #number
+
+--- Return current view distance.
+-- @function [parent=#camera] getViewDistance
+-- @return #number
+
+--- Set view distance.
+>>>>>>> origin/main
 --- Takes effect on the next frame.
 -- @function [parent=#camera] setViewDistance
 -- @param #number distance View distance in game units
 
+<<<<<<< HEAD
 --- Get the world to local transform for the camera.
 -- @function [parent=#camera] getViewTransform
 -- @return openmw.util#Transform
 
 --- Get a vector from the camera to the world for the given point in the viewport.
+=======
+--- Get world to local transform for the camera.
+-- @function [parent=#camera] getViewTransform
+-- @return openmw.util#Transform
+
+--- Get vector from the camera to the world for the given point in viewport.
+>>>>>>> origin/main
 -- (0, 0) is the top left corner of the screen.
 -- @function [parent=#camera] viewportToWorldVector
 -- @param openmw.util#Vector2 normalizedScreenPos
 -- @return openmw.util#Vector3
 
+<<<<<<< HEAD
 --- Get a vector from the world to the viewport for the given point in the world space.
+=======
+--- Get vector from the world to the viewport for the given point in world space.
+>>>>>>> origin/main
 -- (0, 0) is the top left corner of the screen.
 -- The z component of the return value holds the distance from the camera to the position, in world space
 -- @function [parent=#camera] worldToViewportVector

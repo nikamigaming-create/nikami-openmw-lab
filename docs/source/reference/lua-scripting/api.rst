@@ -16,6 +16,13 @@ API Reference
     Engine Handlers <engine_handlers>
     events
     Iterables <iterables>
+<<<<<<< HEAD
+=======
+    openmw_vr
+    interface_vrinputs
+    interface_vrspaces
+    interface_vrui
+>>>>>>> origin/main
 
 **API packages**
 

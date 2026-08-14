@@ -114,11 +114,18 @@ namespace MWRender
                 }
 
                 // move the plane back along its normal a little bit to prevent bleeding at the water shore
+<<<<<<< HEAD
                 const float fov = Settings::camera().mFieldOfView;
                 constexpr double clipFudgeMin = 2.5; // minimum offset of clip plane
                 constexpr double clipFudgeScale = -15000.0;
                 double clipFudge
                     = std::abs(std::abs((*mCullPlane)[3]) - eyePoint.z()) * fov / clipFudgeScale - clipFudgeMin;
+=======
+                float fov = Settings::camera().mFieldOfView;
+                const float clipFudgeMin = 2.5; // minimum offset of clip plane
+                const float clipFudgeScale = -15000.0;
+                float clipFudge = abs(abs((*mCullPlane)[3]) - eyePoint.z()) * fov / clipFudgeScale - clipFudgeMin;
+>>>>>>> origin/main
                 modelViewMatrix->preMultTranslate(mCullPlane->getNormal() * clipFudge);
 
                 cv->pushModelViewMatrix(modelViewMatrix, osg::Transform::RELATIVE_RF);
@@ -189,7 +196,11 @@ namespace MWRender
     public:
         void operator()(osg::Node* node, osgUtil::CullVisitor* cv)
         {
+<<<<<<< HEAD
             const float fudge = 0.2f;
+=======
+            const float fudge = 0.2;
+>>>>>>> origin/main
             if (std::abs(cv->getEyeLocal().z()) < fudge)
             {
                 float diff = fudge - cv->getEyeLocal().z();
@@ -212,15 +223,31 @@ namespace MWRender
     class RainSettingsUpdater : public SceneUtil::StateSetUpdater
     {
     public:
+<<<<<<< HEAD
         RainSettingsUpdater() = default;
 
         void setRainIntensity(float rainIntensity) { mRainIntensity = rainIntensity; }
+=======
+        RainSettingsUpdater()
+            : mRainIntensity(0.f)
+            , mEnableRipples(false)
+        {
+        }
+
+        void setRainIntensity(float rainIntensity) { mRainIntensity = rainIntensity; }
+        void setRipplesEnabled(bool enableRipples) { mEnableRipples = enableRipples; }
+>>>>>>> origin/main
 
     protected:
         void setDefaults(osg::StateSet* stateset) override
         {
             osg::ref_ptr<osg::Uniform> rainIntensityUniform = new osg::Uniform("rainIntensity", 0.0f);
             stateset->addUniform(rainIntensityUniform.get());
+<<<<<<< HEAD
+=======
+            osg::ref_ptr<osg::Uniform> enableRainRipplesUniform = new osg::Uniform("enableRainRipples", false);
+            stateset->addUniform(enableRainRipplesUniform.get());
+>>>>>>> origin/main
         }
 
         void apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/) override
@@ -228,10 +255,21 @@ namespace MWRender
             osg::ref_ptr<osg::Uniform> rainIntensityUniform = stateset->getUniform("rainIntensity");
             if (rainIntensityUniform != nullptr)
                 rainIntensityUniform->set(mRainIntensity);
+<<<<<<< HEAD
         }
 
     private:
         float mRainIntensity{ 0.f };
+=======
+            osg::ref_ptr<osg::Uniform> enableRainRipplesUniform = stateset->getUniform("enableRainRipples");
+            if (enableRainRipplesUniform != nullptr)
+                enableRainRipplesUniform->set(mEnableRipples);
+        }
+
+    private:
+        float mRainIntensity;
+        bool mEnableRipples;
+>>>>>>> origin/main
     };
 
     class Refraction : public SceneUtil::RTTNode
@@ -412,7 +450,11 @@ namespace MWRender
         void drawImplementation(osg::RenderInfo& renderInfo, const osg::Drawable* drawable) const override
         {
             static bool supported = osg::isGLExtensionOrVersionSupported(
+<<<<<<< HEAD
                 renderInfo.getState()->getContextID(), "GL_ARB_depth_clamp", 3.3f);
+=======
+                renderInfo.getState()->getContextID(), "GL_ARB_depth_clamp", 3.3);
+>>>>>>> origin/main
             if (!supported)
             {
                 drawable->drawImplementation(renderInfo);
@@ -603,7 +645,14 @@ namespace MWRender
         // use a shader to render the simple water, ensuring that fog is applied per pixel as required.
         // this could be removed if a more detailed water mesh, using some sort of paging solution, is implemented.
         Resource::SceneManager* sceneManager = mResourceSystem->getSceneManager();
+<<<<<<< HEAD
         sceneManager->recreateShaders(node);
+=======
+        bool oldValue = sceneManager->getForceShaders();
+        sceneManager->setForceShaders(true);
+        sceneManager->recreateShaders(node);
+        sceneManager->setForceShaders(oldValue);
+>>>>>>> origin/main
     }
 
     class ShaderWaterStateSetUpdater : public SceneUtil::StateSetUpdater
@@ -793,6 +842,15 @@ namespace MWRender
             mRainSettingsUpdater->setRainIntensity(rainIntensity);
     }
 
+<<<<<<< HEAD
+=======
+    void Water::setRainRipplesEnabled(bool enableRipples)
+    {
+        if (mRainSettingsUpdater)
+            mRainSettingsUpdater->setRipplesEnabled(enableRipples);
+    }
+
+>>>>>>> origin/main
     void Water::update(float dt, bool paused)
     {
         if (!paused)

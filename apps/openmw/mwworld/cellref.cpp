@@ -1,6 +1,12 @@
 #include "cellref.hpp"
 
+<<<<<<< HEAD
 #include <cassert>
+=======
+#include <algorithm>
+#include <cassert>
+#include <limits>
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm/refid.hpp>
@@ -308,7 +314,11 @@ namespace MWWorld
         {
             mChanged = true;
             std::visit(ESM::VisitOverload{
+<<<<<<< HEAD
                            [&](ESM4::Reference& ref) { ref.mLockLevel = static_cast<int8_t>(lockLevel); },
+=======
+                           [&](ESM4::Reference& ref) { ref.mLockLevel = lockLevel; },
+>>>>>>> origin/main
                            [&](ESM4::ActorCharacter&) {},
                            [&](ESM::CellRef& ref) { ref.mLockLevel = lockLevel; },
                        },
@@ -341,6 +351,13 @@ namespace MWWorld
 
     void CellRef::setLocked(bool locked)
     {
+<<<<<<< HEAD
+=======
+        if (locked == isLocked())
+            return;
+
+        mChanged = true;
+>>>>>>> origin/main
         std::visit(ESM::VisitOverload{
                        [&](ESM4::Reference& ref) { ref.mIsLocked = locked; },
                        [&](ESM4::ActorCharacter&) {},
@@ -393,6 +410,7 @@ namespace MWWorld
         }
     }
 
+<<<<<<< HEAD
     void CellRef::writeState(ESM::ObjectState& state) const
     {
         std::visit(ESM::VisitOverload{
@@ -402,4 +420,75 @@ namespace MWWorld
                    },
             mCellRef.mVariant);
     }
+=======
+    void CellRef::loadState(const ESM::CellRef& state)
+    {
+        std::visit(ESM::VisitOverload{
+                       [&](ESM::CellRef& ref) { ref = state; },
+                       [&](ESM4::Reference& ref) {
+                           ref.mId = state.mRefNum;
+                           ref.mScale = state.mScale;
+                           if (state.mOwner.empty())
+                               ref.mOwner = {};
+                           else if (const ESM::FormId* owner = state.mOwner.getIf<ESM::FormId>())
+                               ref.mOwner = *owner;
+                           ref.mFactionRank = state.mFactionRank;
+                           ref.mCount = state.mCount;
+                           ref.mIsLocked = state.mIsLocked;
+                           ref.mLockLevel = static_cast<std::int8_t>(std::clamp(state.mLockLevel,
+                               static_cast<int>(std::numeric_limits<std::int8_t>::min()),
+                               static_cast<int>(std::numeric_limits<std::int8_t>::max())));
+                           // Unlocked references do not serialize KNAM in the ESM3 save format, so an empty
+                           // state key must retain the authored ESM4 key.
+                           if (const ESM::FormId* key = state.mKey.getIf<ESM::FormId>())
+                               ref.mKey = *key;
+                           ref.mPos = state.mPos;
+                       },
+                       [&](ESM4::ActorCharacter& ref) {
+                           ref.mId = state.mRefNum;
+                           ref.mScale = state.mScale;
+                           if (state.mOwner.empty())
+                               ref.mOwner = {};
+                           else if (const ESM::FormId* owner = state.mOwner.getIf<ESM::FormId>())
+                               ref.mOwner = *owner;
+                           ref.mCount = state.mCount;
+                           ref.mPos = state.mPos;
+                       },
+                   },
+            mCellRef.mVariant);
+        mChanged = true;
+    }
+
+    void CellRef::writeState(ESM::ObjectState& state) const
+    {
+        std::visit(ESM::VisitOverload{
+                       [&](const ESM4::Reference& ref) {
+                           ESM::CellRef result = ESM::makeBlankCellRef();
+                           result.mRefNum = ref.mId;
+                           result.mRefID = ESM::RefId(ref.mBaseObj);
+                           result.mScale = ref.mScale;
+                           result.mOwner = ESM::RefId(ref.mOwner);
+                           result.mFactionRank = ref.mFactionRank;
+                           result.mCount = ref.mCount;
+                           result.mIsLocked = ref.mIsLocked;
+                           result.mLockLevel = ref.mLockLevel;
+                           result.mKey = ESM::RefId(ref.mKey);
+                           result.mPos = ref.mPos;
+                           state.mRef = std::move(result);
+                       },
+                       [&](const ESM4::ActorCharacter& ref) {
+                           ESM::CellRef result = ESM::makeBlankCellRef();
+                           result.mRefNum = ref.mId;
+                           result.mRefID = ESM::RefId(ref.mBaseObj);
+                           result.mScale = ref.mScale;
+                           result.mOwner = ESM::RefId(ref.mOwner);
+                           result.mCount = ref.mCount;
+                           result.mPos = ref.mPos;
+                           state.mRef = std::move(result);
+                       },
+                       [&](const ESM::CellRef& ref) { state.mRef = ref; },
+                   },
+            mCellRef.mVariant);
+    }
+>>>>>>> origin/main
 }

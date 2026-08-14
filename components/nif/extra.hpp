@@ -50,6 +50,38 @@ namespace Nif
     using BSPositionData = TypedVectorExtra<Misc::float16_t>;
     using BSWArray = TypedVectorExtra<int32_t>;
 
+<<<<<<< HEAD
+=======
+    struct SkinAttach : public Extra
+    {
+        std::vector<std::string> mBones;
+
+        void read(NIFStream* nif) override;
+    };
+
+    struct BoneTranslations : public Extra
+    {
+        struct Translation
+        {
+            std::string mBone;
+            osg::Vec3f mTranslation;
+
+            void read(NIFStream* nif);
+        };
+
+        std::vector<Translation> mTranslations;
+
+        void read(NIFStream* nif) override;
+    };
+
+    struct StarfieldNamedRecord : public Record
+    {
+        std::string mName;
+
+        void read(NIFStream* nif) override;
+    };
+
+>>>>>>> origin/main
     // Distinct from NiBinaryExtraData, uses mRecordSize as its size
     struct NiExtraData : public Extra
     {
@@ -77,8 +109,11 @@ namespace Nif
         {
             float mTime;
             std::string mText;
+<<<<<<< HEAD
 
             void read(NIFStream* nif);
+=======
+>>>>>>> origin/main
         };
         std::vector<TextKey> mList;
 

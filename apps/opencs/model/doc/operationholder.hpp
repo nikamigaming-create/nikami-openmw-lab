@@ -15,11 +15,20 @@ namespace CSMDoc
 
         QThread mThread;
         Operation* mOperation;
+<<<<<<< HEAD
 
     public:
         OperationHolder(QObject* parent, Operation* operation);
 
         ~OperationHolder();
+=======
+        bool mRunning;
+
+    public:
+        OperationHolder(Operation* operation = nullptr);
+
+        void setOperation(Operation* operation);
+>>>>>>> origin/main
 
         bool isRunning() const;
 
@@ -27,9 +36,14 @@ namespace CSMDoc
 
         void abort();
 
+<<<<<<< HEAD
         /// Stop the operation, wait for the thread to finish, and delete the operation.
         /// Safe to call multiple times.
         void quit();
+=======
+        // Abort and wait until thread has finished.
+        void abortAndWait();
+>>>>>>> origin/main
 
     private slots:
 

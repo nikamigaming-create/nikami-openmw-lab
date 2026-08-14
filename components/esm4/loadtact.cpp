@@ -82,6 +82,11 @@ void ESM4::TalkingActivator::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadtact"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::TACT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

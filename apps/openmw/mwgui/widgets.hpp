@@ -10,7 +10,10 @@
 #include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/effectlist.hpp>
+<<<<<<< HEAD
 #include <components/esm3/loadmgef.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/loadskil.hpp>
 
 namespace MyGUI
@@ -41,6 +44,10 @@ namespace MWGui
                 , mIsConstant(false)
                 , mNoMagnitude(false)
                 , mKnown(true)
+<<<<<<< HEAD
+=======
+                , mEffectID(-1)
+>>>>>>> origin/main
                 , mMagnMin(-1)
                 , mMagnMax(-1)
                 , mRange(-1)
@@ -55,14 +62,43 @@ namespace MWGui
 
             bool mKnown; // is this effect known to the player? (If not, will display as a question mark instead)
 
+<<<<<<< HEAD
             // value of EmptyRefId here means the effect is unknown to the player
             ESM::RefId mEffectID, mSkill, mAttribute;
+=======
+            // value of -1 here means the effect is unknown to the player
+            short mEffectID;
+
+            ESM::RefId mSkill, mAttribute;
+>>>>>>> origin/main
 
             // value of -1 here means the value is unavailable
             int mMagnMin, mMagnMax, mRange, mDuration;
 
             // value of 0 -> no area effect
             int mArea;
+<<<<<<< HEAD
+=======
+
+            bool operator==(const SpellEffectParams& other) const
+            {
+                if (mEffectID != other.mEffectID)
+                    return false;
+
+                bool involvesAttribute = (mEffectID == 74 // restore attribute
+                    || mEffectID == 85 // absorb attribute
+                    || mEffectID == 17 // drain attribute
+                    || mEffectID == 79 // fortify attribute
+                    || mEffectID == 22); // damage attribute
+                bool involvesSkill = (mEffectID == 78 // restore skill
+                    || mEffectID == 89 // absorb skill
+                    || mEffectID == 21 // drain skill
+                    || mEffectID == 83 // fortify skill
+                    || mEffectID == 26); // damage skill
+                return ((other.mSkill == mSkill) || !involvesSkill)
+                    && ((other.mAttribute == mAttribute) && !involvesAttribute) && (other.mArea == mArea);
+            }
+>>>>>>> origin/main
         };
 
         typedef std::vector<SpellEffectParams> SpellEffectList;

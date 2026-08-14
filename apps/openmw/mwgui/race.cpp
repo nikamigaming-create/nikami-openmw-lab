@@ -163,8 +163,12 @@ namespace MWGui
         mPreviewTexture
             = std::make_unique<MyGUIPlatform::OSGTexture>(mPreview->getTexture(), mPreview->getTextureStateSet());
         mPreviewImage->setRenderItemTexture(mPreviewTexture.get());
+<<<<<<< HEAD
         // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
         mPreviewImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+=======
+        mPreviewImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+>>>>>>> origin/main
 
         const ESM::NPC& proto = mPreview->getPrototype();
         setRaceId(proto.mRace);
@@ -249,7 +253,11 @@ namespace MWGui
 
     void RaceDialog::onHeadRotate(MyGUI::ScrollBar* scroll, size_t position)
     {
+<<<<<<< HEAD
         float angle = (float(position) / (scroll->getScrollRange() - 1) - 0.5f) * osg::PIf * 2;
+=======
+        float angle = (float(position) / (scroll->getScrollRange() - 1) - 0.5f) * osg::PI * 2;
+>>>>>>> origin/main
         mPreview->setAngle(angle);
 
         mCurrentAngle = angle;
@@ -360,10 +368,17 @@ namespace MWGui
         record.mRace = mCurrentRaceId;
         record.setIsMale(mGenderIndex == 0);
 
+<<<<<<< HEAD
         if (mFaceIndex < mAvailableHeads.size())
             record.mHead = mAvailableHeads[mFaceIndex];
 
         if (mHairIndex < mAvailableHairs.size())
+=======
+        if (mFaceIndex >= 0 && mFaceIndex < int(mAvailableHeads.size()))
+            record.mHead = mAvailableHeads[mFaceIndex];
+
+        if (mHairIndex >= 0 && mHairIndex < int(mAvailableHairs.size()))
+>>>>>>> origin/main
             record.mHair = mAvailableHairs[mHairIndex];
 
         try

@@ -33,6 +33,11 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+<<<<<<< HEAD
+=======
+#include "decaldata.hpp"
+
+>>>>>>> origin/main
 namespace ESM4
 {
     class Reader;
@@ -59,6 +64,10 @@ namespace ESM4
         std::string mFlow;
         std::uint16_t mDataFlags;
         std::string mMaterial;
+<<<<<<< HEAD
+=======
+        DecalData mDecal;
+>>>>>>> origin/main
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

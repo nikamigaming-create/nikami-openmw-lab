@@ -11,16 +11,20 @@
 
 class QTableView;
 
+<<<<<<< HEAD
 namespace CSMWorld
 {
     class Data;
 }
 
+=======
+>>>>>>> origin/main
 namespace CSVWorld
 {
     class TableEditIdAction : public QAction
     {
         const QTableView& mTable;
+<<<<<<< HEAD
         CSMWorld::Data& mData;
         CSMWorld::UniversalId mCurrentId;
 
@@ -30,6 +34,20 @@ namespace CSVWorld
         bool setCell(int row, int column);
 
         CSMWorld::UniversalId getCurrentId() const;
+=======
+        CSMWorld::UniversalId mCurrentId;
+
+        typedef std::pair<CSMWorld::ColumnBase::Display, QString> CellData;
+        CellData getCellData(int row, int column) const;
+
+    public:
+        TableEditIdAction(const QTableView& table, QWidget* parent = nullptr);
+
+        void setCell(int row, int column);
+
+        CSMWorld::UniversalId getCurrentId() const;
+        bool isValidIdCell(int row, int column) const;
+>>>>>>> origin/main
     };
 }
 

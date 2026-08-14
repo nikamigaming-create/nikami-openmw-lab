@@ -6,8 +6,13 @@ thirdPersonSettings: "Tredjepersonsvy"
 viewOverShoulder: "Över-axeln-vy"
 viewOverShoulderDescription: |
     Styr tredjepersonsvyn.
+<<<<<<< HEAD
       Nej: Kameran är centrerad på rollpersonens huvud. Siktet är gömt.
       Ja: När vapnet är inaktiverat positioneras kameran bakom rollpersonens axel. Siktet är synligt.
+=======
+      Nej: Kameran är centrerad på spelfigurens huvud. Siktet är gömt.
+      Ja: När vapnet är inaktiverat positioneras kameran bakom spelfigurens axel. Siktet är synligt.
+>>>>>>> origin/main
 
 shoulderOffsetX: "Över-axeln-vy horisontell placering"
 shoulderOffsetXDescription: >
@@ -20,22 +25,39 @@ shoulderOffsetYDescription: >
 
 autoSwitchShoulder: "Byt axel automatiskt"
 autoSwitchShoulderDescription: >
+<<<<<<< HEAD
     När det finns hinder som gör att kameran knuffas närmare rollpersonen,
+=======
+    När det finns hinder som gör att kameran knuffas närmare spelfiguren,
+>>>>>>> origin/main
     gör denna inställning att kameran automatiskt flyttas till axeln längst bort från hindret.
 
 zoomOutWhenMoveCoef: "Zooma ut vid förflyttning, koefficient"
 zoomOutWhenMoveCoefDescription: >
+<<<<<<< HEAD
     Flytta kameran bort från (positivt värde) eller mot (negativt värde) rollpersonen när hen förflyttar sig.
+=======
+    Flytta kameran bort från (positivt värde) eller mot (negativt värde) spelfiguren när spelfiguren förflyttar sig.
+>>>>>>> origin/main
     Fungerar endast om "Kamera över-axeln-vy" är aktiverat. Ställ på noll för att avaktivera (förvalt är 20.0).
 
 previewIfStandStill: "Omloppskamera vid stillastående"
 previewIfStandStillDescription: >
+<<<<<<< HEAD
     Gör att rollpersonen inte vänder sig mot kameravinkeln när rollpersonen är inaktiv och har vapnet inaktiverat.
 
 deferredPreviewRotation: "Fördröjd omloppskamerarotation"
 deferredPreviewRotationDescription: |
     Om aktiverat kommer rollpersonen rotera mjukt mot kameravikeln när omloppskameran avaktiveras.
     Om inaktiverat kommer kameran rotera istället för rollpersonen.
+=======
+    Gör att spelfiguren inte vänder sig mot kameravinkeln när spelfiguren är inaktiv och har vapnet inaktiverat.
+
+deferredPreviewRotation: "Fördröjd omloppskamerarotation"
+deferredPreviewRotationDescription: |
+    Om aktiverat kommer spelfiguren rotera mjukt mot kameravikeln när omloppskameran avaktiveras.
+    Om inaktiverat kommer kameran rotera istället för spelfiguren.
+>>>>>>> origin/main
 
 ignoreNC: "Ignorera 'No Collision'-flaggor"
 ignoreNCDescription: >
@@ -43,7 +65,11 @@ ignoreNCDescription: >
 
 move360: "Kameraoberoende förflyttning"
 move360Description: >
+<<<<<<< HEAD
     Gör rörelseriktningen oberoende av kameravinkeln när rollpersonens vapen är inaktiverat. Till exempel kommer rollpersonen vara vänd mot kameran när spelaren springer bakåt.
+=======
+    Gör rörelseriktningen oberoende av kameravinkeln när spelfigurens vapen är inaktiverat. Till exempel kommer spelfiguren vara vänd mot kameran när spelaren springer bakåt.
+>>>>>>> origin/main
 
 move360TurnSpeed: "Kameraoberoende förflyttning, svänghastighet"
 move360TurnSpeedDescription: "Svänghastighet multiplikator (förvalt är 5.0)."
@@ -52,7 +78,11 @@ slowViewChange: "Mjukt byte mellan kameravyer"
 slowViewChangeDescription: "Gör övergången från första- till tredjepersonsvy icke-omedelbar."
 
 povAutoSwitch: "Automatiskt byte till förstapersonsvy"
+<<<<<<< HEAD
 povAutoSwitchDescription: "Automatiskt byte till förstapersonsvy om det finns ett hinder precis bakom rollpersonen."
+=======
+povAutoSwitchDescription: "Automatiskt byte till förstapersonsvy om det finns ett hinder precis bakom spelfiguren."
+>>>>>>> origin/main
 
 
 headBobbingSettings: "Huvudguppande i förstapersonsvy"

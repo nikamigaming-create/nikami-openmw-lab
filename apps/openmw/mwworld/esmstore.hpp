@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWWORLD_ESMSTORE_H
 #define OPENMW_MWWORLD_ESMSTORE_H
 
+<<<<<<< HEAD
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
@@ -12,6 +13,26 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/misc/tuplemeta.hpp>
 
+=======
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <tuple>
+#include <unordered_map>
+
+#include <components/esm/luascripts.hpp>
+#include <components/esm/refid.hpp>
+#include <components/esm3/loadgmst.hpp>
+#include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadwthr.hpp>
+#include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadimad.hpp>
+#include <components/misc/tuplemeta.hpp>
+
+#include "fnvplayerstate.hpp"
+>>>>>>> origin/main
 #include "store.hpp"
 
 namespace Loading
@@ -75,6 +96,7 @@ namespace ESM4
 {
     class Reader;
     struct Activator;
+<<<<<<< HEAD
     struct ActorCharacter;
     struct ActorCreature;
     struct Ammunition;
@@ -92,6 +114,46 @@ namespace ESM4
     struct HeadPart;
     struct Ingredient;
     struct ItemMod;
+=======
+    struct ActorValueInformation;
+    struct ActorCharacter;
+    struct ActorCreature;
+    struct AnimObject;
+    struct AmmoEffect;
+    struct Ammunition;
+    struct AIPackage;
+    struct Armor;
+    struct ArmorAddon;
+    struct Book;
+    struct BodyPartData;
+    struct Cell;
+    struct Class;
+    struct Climate;
+    struct Colour;
+    struct Clothing;
+    struct Container;
+    struct Creature;
+    struct Dialogue;
+    struct DialogInfo;
+    struct Door;
+    struct Eyes;
+    struct Explosion;
+    struct Faction;
+    struct Flora;
+    struct FormIdList;
+    struct Furniture;
+    struct GameSetting;
+    struct GlobalVariable;
+    struct Hair;
+    struct HeadPart;
+    struct IdleAnimation;
+    struct IdleMarker;
+    struct Ingredient;
+    struct ImpactData;
+    struct ImpactDataSet;
+    struct ItemMod;
+    struct Key;
+>>>>>>> origin/main
     struct Land;
     struct LandTexture;
     struct LevelledCreature;
@@ -99,6 +161,7 @@ namespace ESM4
     struct LevelledNpc;
     struct Light;
     struct MiscItem;
+<<<<<<< HEAD
     struct MovableStatic;
     struct Npc;
     struct Outfit;
@@ -107,12 +170,43 @@ namespace ESM4
     struct Reference;
     struct Sound;
     struct SoundReference;
+=======
+    struct MagicEffect;
+    struct Message;
+    struct MovableStatic;
+    struct Npc;
+    struct Note;
+    struct Outfit;
+    struct Perk;
+    struct Potion;
+    struct Projectile;
+    struct Quest;
+    struct Race;
+    struct Recipe;
+    struct RecipeCategory;
+    struct Region;
+    struct Reference;
+    struct Reputation;
+    struct Script;
+    struct Sound;
+    struct SoundReference;
+    struct Spell;
+>>>>>>> origin/main
     struct Static;
     struct StaticCollection;
     struct Terminal;
     struct TextureSet;
+<<<<<<< HEAD
     struct Tree;
     struct Weapon;
+=======
+    struct TalkingActivator;
+    struct Tree;
+    struct Weapon;
+    struct Weather;
+    struct ImageSpace;
+    struct ImageSpaceModifier;
+>>>>>>> origin/main
     struct World;
 }
 
@@ -120,6 +214,20 @@ namespace MWWorld
 {
     struct ESMStoreImp;
 
+<<<<<<< HEAD
+=======
+    enum class ESM4Game
+    {
+        Unknown,
+        Oblivion,
+        Fallout3,
+        FalloutNewVegas,
+        Skyrim,
+        Fallout4,
+        Starfield,
+    };
+
+>>>>>>> origin/main
     class ESMStore
     {
         friend struct ESMStoreImp; // This allows StoreImp to extend esmstore without beeing included everywhere
@@ -142,6 +250,7 @@ namespace MWWorld
             // Special entry which is hardcoded and not loaded from an ESM
             Store<ESM::Attribute>,
 
+<<<<<<< HEAD
             Store<ESM4::Activator>, Store<ESM4::ActorCharacter>, Store<ESM4::ActorCreature>, Store<ESM4::Ammunition>,
             Store<ESM4::Armor>, Store<ESM4::ArmorAddon>, Store<ESM4::Book>, Store<ESM4::Cell>, Store<ESM4::Clothing>,
             Store<ESM4::Container>, Store<ESM4::Creature>, Store<ESM4::Door>, Store<ESM4::Furniture>,
@@ -162,6 +271,43 @@ namespace MWWorld
 
         std::unique_ptr<ESMStoreImp> mStoreImp;
 
+=======
+            Store<ESM4::Activator>, Store<ESM4::ActorCharacter>, Store<ESM4::ActorCreature>, Store<ESM4::AIPackage>,
+            Store<ESM4::Ammunition>, Store<ESM4::Armor>, Store<ESM4::ArmorAddon>, Store<ESM4::Book>,
+            Store<ESM4::BodyPartData>, Store<ESM4::Cell>, Store<ESM4::Class>, Store<ESM4::Climate>, Store<ESM4::Colour>,
+            Store<ESM4::Clothing>,
+            Store<ESM4::Container>, Store<ESM4::Creature>, Store<ESM4::Dialogue>, Store<ESM4::DialogInfo>,
+            Store<ESM4::Door>, Store<ESM4::Eyes>, Store<ESM4::FormIdList>, Store<ESM4::Furniture>, Store<ESM4::Flora>,
+            Store<ESM4::GlobalVariable>, Store<ESM4::Hair>, Store<ESM4::HeadPart>, Store<ESM4::IdleAnimation>,
+            Store<ESM4::IdleMarker>, Store<ESM4::Ingredient>, Store<ESM4::ItemMod>, Store<ESM4::Key>,
+            Store<ESM4::Land>,
+            Store<ESM4::LandTexture>, Store<ESM4::LevelledCreature>, Store<ESM4::LevelledItem>,
+            Store<ESM4::LevelledNpc>, Store<ESM4::Light>, Store<ESM4::MiscItem>, Store<ESM4::MovableStatic>,
+            Store<ESM4::Npc>, Store<ESM4::Outfit>, Store<ESM4::Potion>, Store<ESM4::Quest>, Store<ESM4::Race>,
+            Store<ESM4::Region>, Store<ESM4::Reference>, Store<ESM4::Script>, Store<ESM4::Sound>, Store<ESM4::SoundReference>,
+            Store<ESM4::Static>, Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>,
+            Store<ESM4::TalkingActivator>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::ImageSpace>,
+            Store<ESM4::ImageSpaceModifier>, Store<ESM4::World>,
+
+            // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
+            // New stores must be appended so an incremental build can never reinterpret an existing slot.
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
+            Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
+            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Message>, Store<ESM4::Reputation>,
+            Store<ESM4::ImpactData>, Store<ESM4::ImpactDataSet>>;
+
+    private:
+        template <typename T>
+        static constexpr std::size_t getTypeIndex()
+        {
+            static_assert(Misc::TupleHasType<Store<T>, StoreTuple>::value);
+            return Misc::TupleTypeIndex<Store<T>, StoreTuple>::value;
+        }
+
+        std::unique_ptr<ESMStoreImp> mStoreImp;
+
+>>>>>>> origin/main
         std::unordered_map<ESM::RefId, int> mRefCount;
 
         std::vector<StoreBase*> mStores;
@@ -171,6 +317,15 @@ namespace MWWorld
 
         mutable std::unordered_map<ESM::RefId, std::weak_ptr<MWMechanics::SpellList>> mSpellListCache;
 
+<<<<<<< HEAD
+=======
+        template <class T>
+        Store<T>& getWritable()
+        {
+            return static_cast<Store<T>&>(*mStores[getTypeIndex<T>()]);
+        }
+
+>>>>>>> origin/main
         /// Validate entries in store after setup
         void validate();
 
@@ -186,6 +341,15 @@ namespace MWWorld
         std::vector<LuaContent> mLuaContent;
 
         bool mIsSetUpDone = false;
+<<<<<<< HEAD
+=======
+        bool mHasStarfieldContent = false;
+        ESM4Game mESM4Game = ESM4Game::Unknown;
+        std::optional<std::uint32_t> mESM4GameMasterIndex;
+        std::size_t mFalloutNewVegasMasterCandidateCount = 0;
+        std::optional<std::int32_t> mFalloutNewVegasMasterCandidateIndex;
+        std::optional<FalloutPlayerState> mFalloutPlayerState;
+>>>>>>> origin/main
 
     public:
         void addOMWScripts(std::filesystem::path filePath) { mLuaContent.push_back(std::move(filePath)); }
@@ -200,6 +364,25 @@ namespace MWWorld
 
         /// Look up the given ID in 'all'. Returns 0 if not found.
         int find(const ESM::RefId& id) const;
+<<<<<<< HEAD
+
+        int findStatic(const ESM::RefId& id) const;
+
+        ESMStore();
+        ~ESMStore();
+
+        void clearDynamic();
+        void rebuildIdsIndex();
+        ESM::RefId generateId() { return ESM::RefId::generated(mDynamicCount++); }
+
+        void movePlayerRecord();
+
+        /// Validate entries in store after loading a save
+        void validateDynamic();
+
+        void load(ESM::ESMReader& esm, Loading::Listener* listener, ESM::Dialogue*& dialogue);
+        void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
+=======
 
         int findStatic(const ESM::RefId& id) const;
 
@@ -218,13 +401,49 @@ namespace MWWorld
         void load(ESM::ESMReader& esm, Loading::Listener* listener, ESM::Dialogue*& dialogue);
         void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
 
+        ESM4Game getESM4Game() const { return mESM4Game; }
+
+        /// Number of content files whose case-insensitive basename is exactly FalloutNV.esm.
+        /// A matching filename establishes only provenance; typed Player validation selects FNV setup.
+        std::size_t getFalloutNewVegasMasterCandidateCount() const
+        {
+            return mFalloutNewVegasMasterCandidateCount;
+        }
+
+        /// Normalized namespace of the sole fully-read FalloutNV.esm candidate, if unambiguous and in range.
+        std::optional<std::int32_t> getFalloutNewVegasMasterCandidateIndex() const
+        {
+            return mFalloutNewVegasMasterCandidateIndex;
+        }
+
+        /// Fully validated, pointer-free native Player state, or nullptr until validation succeeds.
+        const FalloutPlayerState* getFalloutPlayerState() const
+        {
+            return mFalloutPlayerState ? &*mFalloutPlayerState : nullptr;
+        }
+
+        /// Re-resolve exact typed records from the current stores; no raw pointer is retained by ESMStore.
+        FalloutNativePlayerRecordsResolution getFalloutNativePlayerRecords() const;
+
+        /// Bridge validated official FNV GMSTs and the narrow OpenMW compatibility globals/settings before generic
+        /// fallback insertion. Returns false without mutation when no FalloutNV.esm provenance candidate exists.
+        bool prepareFalloutNewVegasCompatibilityRecords();
+
+        /// Return the authored storage cell behind a Starfield BGSPackIn base form.
+        /// Pack-ins are expanded lazily by CellStore so only the active exterior grid pays their assembly cost.
+        std::optional<ESM::FormId> getStarfieldPackInStorageCell(ESM::FormId id) const;
+>>>>>>> origin/main
+
         template <class T>
         const Store<T>& get() const
         {
             return static_cast<const Store<T>&>(*mStores[getTypeIndex<T>()]);
         }
 
+        /// Insert a custom record (i.e. with a generated ID that will not clash will pre-existing records)
+        /// \return pointer to created record
         template <class T>
+<<<<<<< HEAD
         Store<T>& getWritable()
         {
             return static_cast<Store<T>&>(*mStores[getTypeIndex<T>()]);
@@ -237,6 +456,12 @@ namespace MWWorld
         {
             const ESM::RefId id = generateId();
 
+=======
+        const T* insert(const T& x)
+        {
+            const ESM::RefId id = generateId();
+
+>>>>>>> origin/main
             Store<T>& store = getWritable<T>();
             if (store.search(id) != nullptr)
                 throw std::runtime_error("Try to override existing record: " + id.toDebugString());
@@ -271,7 +496,11 @@ namespace MWWorld
         {
             Store<T>& store = getWritable<T>();
             if (store.search(x.mId) != nullptr)
+<<<<<<< HEAD
                 throw std::runtime_error("Try to override existing record " + x.mId.toDebugString());
+=======
+                throw std::runtime_error("Try to override existing record " + x.mId.toString());
+>>>>>>> origin/main
 
             T* ptr = store.insertStatic(x);
             if constexpr (std::is_convertible_v<Store<T>*, DynamicStore*>)

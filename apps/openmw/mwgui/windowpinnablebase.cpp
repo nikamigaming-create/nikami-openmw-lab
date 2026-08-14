@@ -2,6 +2,8 @@
 
 #include "exposedwindow.hpp"
 
+#include <components/vr/vr.hpp>
+
 namespace MWGui
 {
     WindowPinnableBase::WindowPinnableBase(const std::string& parLayout)
@@ -12,6 +14,12 @@ namespace MWGui
         mPinButton = window->getSkinWidget("Button");
 
         mPinButton->eventMouseButtonPressed += MyGUI::newDelegate(this, &WindowPinnableBase::onPinButtonPressed);
+<<<<<<< HEAD
+=======
+
+        if (VR::getVR())
+            setPinButtonVisible(false);
+>>>>>>> origin/main
     }
 
     void WindowPinnableBase::onPinButtonPressed(MyGUI::Widget* /*sender*/, int left, int top, MyGUI::MouseButton id)

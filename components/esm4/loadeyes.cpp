@@ -54,6 +54,11 @@ void ESM4::Eyes::load(ESM4::Reader& reader)
                 reader.get(mData);
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadeyes"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::EYES::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

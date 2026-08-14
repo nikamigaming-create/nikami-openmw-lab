@@ -63,8 +63,13 @@ namespace MWGui
         else
         {
             const ESM::Position playerPos = player.getRefData().getPosition();
+<<<<<<< HEAD
             double d = std::sqrt(std::pow(pos.pos[0] - playerPos.pos[0], 2) + std::pow(pos.pos[1] - playerPos.pos[1], 2)
                 + std::pow(pos.pos[2] - playerPos.pos[2], 2));
+=======
+            float d = sqrt(pow(pos.pos[0] - playerPos.pos[0], 2) + pow(pos.pos[1] - playerPos.pos[1], 2)
+                + pow(pos.pos[2] - playerPos.pos[2], 2));
+>>>>>>> origin/main
             float fTravelMult = gmst.find("fTravelMult")->mValue.getFloat();
             if (fTravelMult != 0)
                 price = static_cast<int>(d / fTravelMult);
@@ -203,6 +208,7 @@ namespace MWGui
         if (mPtr.getCell()->isExterior())
         {
             ESM::Position playerPos = player.getRefData().getPosition();
+<<<<<<< HEAD
             float d = (osg::Vec2f(pos.pos[0], pos.pos[1]) - osg::Vec2f(playerPos.pos[0], playerPos.pos[1])).length();
             const float fTravelTimeMult = MWBase::Environment::get()
                                               .getESMStore()
@@ -210,6 +216,16 @@ namespace MWGui
                                               .find("fTravelTimeMult")
                                               ->mValue.getFloat();
             int hours = static_cast<int>(d / fTravelTimeMult);
+=======
+            float d
+                = (osg::Vec3f(pos.pos[0], pos.pos[1], 0) - osg::Vec3f(playerPos.pos[0], playerPos.pos[1], 0)).length();
+            int hours = static_cast<int>(d
+                / MWBase::Environment::get()
+                      .getESMStore()
+                      ->get<ESM::GameSetting>()
+                      .find("fTravelTimeMult")
+                      ->mValue.getFloat());
+>>>>>>> origin/main
             MWBase::Environment::get().getMechanicsManager()->rest(hours, true);
             MWBase::Environment::get().getWorld()->advanceTime(hours);
         }
@@ -278,7 +294,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mDestinationButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mDestinationButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mDestinationButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mDestinationButtons, mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
@@ -287,7 +307,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mDestinationButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mDestinationButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mDestinationButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mDestinationButtons, mControllerFocus, true);
         }
 
@@ -297,7 +321,11 @@ namespace MWGui
         else
         {
             const int lineHeight = Settings::gui().mFontSize + 2;
+<<<<<<< HEAD
             mDestinationsView->setViewOffset(MyGUI::IntPoint(0, -lineHeight * static_cast<int>(mControllerFocus - 5)));
+=======
+            mDestinationsView->setViewOffset(MyGUI::IntPoint(0, -lineHeight * (mControllerFocus - 5)));
+>>>>>>> origin/main
         }
 
         return true;

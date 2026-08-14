@@ -1,6 +1,10 @@
 #include "pingpongcanvas.hpp"
 
 #include <cassert>
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+>>>>>>> origin/main
 
 #include <components/shader/shadermanager.hpp>
 #include <components/stereo/multiview.hpp>
@@ -10,6 +14,13 @@
 
 #include "postprocessor.hpp"
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+
+>>>>>>> origin/main
 namespace MWRender
 {
     PingPongCanvas::PingPongCanvas(
@@ -35,7 +46,13 @@ namespace MWRender
         Shader::ShaderManager::DefineMap defines;
         Stereo::shaderStereoDefines(defines);
 
+<<<<<<< HEAD
         mFallbackProgram = shaderManager.getProgram("fullscreen_tri");
+=======
+//## VR_PATCH BEGIN
+        mFallbackProgram = shaderManager.getProgram("fullscreen_tri", defines);
+//## VR_PATCH END
+>>>>>>> origin/main
 
         mFallbackStateSet->setAttributeAndModes(mFallbackProgram);
         mFallbackStateSet->addUniform(new osg::Uniform("lastShader", 0));
@@ -63,6 +80,16 @@ namespace MWRender
         osg::Geometry::drawImplementation(renderInfo);
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    void PingPongCanvas::setPingPongCallback(std::unique_ptr<PingPongCallback> cb)
+    {
+        mPingPongCallback = std::move(cb);
+    }
+
+//## VR_PATCH END
+>>>>>>> origin/main
     static void attachCloneOfTemplate(
         osg::FrameBufferObject* fbo, osg::Camera::BufferComponent component, osg::Texture* tex)
     {
@@ -91,14 +118,47 @@ namespace MWRender
             filtered.push_back(i);
         }
 
+<<<<<<< HEAD
         auto* resolveViewport = state.getCurrentViewport();
+=======
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutCanvasLogs = 0;
+            if (falloutCanvasLogs++ < 24)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: post canvas draw frame="
+                                 << state.getFrameStamp()->getFrameNumber()
+                                 << " postprocessing=" << (mPostprocessing ? 1 : 0)
+                                 << " passes=" << mPasses.size()
+                                 << " filtered=" << filtered.size()
+                                 << " mask=" << mMask
+                                 << " fallback=" << ((filtered.empty() || !mPostprocessing) ? 1 : 0);
+            }
+        }
+
+//## VR_PATCH BEGIN
+// VR has its own destination
+        if (mPingPongCallback)
+            mPingPongCallback->pingPongBegin(state, *this);
+
+        auto* resolveViewport
+            = mDestinationViewport ? mDestinationViewport : state.getCurrentViewport();
+//## VR_PATCH END
+>>>>>>> origin/main
 
         if (filtered.empty() || !mPostprocessing)
         {
             state.pushStateSet(mFallbackStateSet);
             state.apply();
 
+<<<<<<< HEAD
             if (Stereo::getMultiview())
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: I'll have to dig back in an figure out what i was doing here :|
+            if (Stereo::getMultiview() && !VR::getVR())
+//## VR_PATCH END
+>>>>>>> origin/main
             {
                 state.pushStateSet(mMultiviewResolveStateSet);
                 state.apply();
@@ -107,14 +167,36 @@ namespace MWRender
             state.applyTextureAttribute(0, mTextureScene);
             resolveViewport->apply(state);
 
+<<<<<<< HEAD
             drawGeometry(renderInfo);
             state.popStateSet();
 
             if (Stereo::getMultiview())
+=======
+//## VR_PATCH BEGIN
+            if (mDestinationFBO)
+            {
+                mDestinationFBO->apply(state, osg::FrameBufferObject::DRAW_FRAMEBUFFER);
+                drawGeometry(renderInfo);
+                ext->glBindFramebuffer(GL_DRAW_FRAMEBUFFER_EXT, 0);
+            }
+            else
+                drawGeometry(renderInfo);
+
+            state.popStateSet();
+
+            if (Stereo::getMultiview() && !VR::getVR())
+>>>>>>> origin/main
             {
                 state.popStateSet();
             }
 
+<<<<<<< HEAD
+=======
+            if (mPingPongCallback)
+                mPingPongCallback->pingPongEnd(state, *this);
+//## VR_PATCH END
+>>>>>>> origin/main
             return;
         }
 
@@ -332,7 +414,13 @@ namespace MWRender
             state.popStateSet();
         }
 
+<<<<<<< HEAD
         if (Stereo::getMultiview())
+=======
+//## VR_PATCH BEGIN
+        if (Stereo::getMultiview() && !VR::getVR())
+//## VR_PATCH END
+>>>>>>> origin/main
         {
             ext->glBindFramebuffer(GL_DRAW_FRAMEBUFFER_EXT, 0);
             lastApplied = 0;
@@ -353,5 +441,13 @@ namespace MWRender
         }
 
         mDirtyAttachments.clear();
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        
+        if (mPingPongCallback)
+            mPingPongCallback->pingPongEnd(state, *this);
+//## VR_PATCH END
+>>>>>>> origin/main
     }
 }

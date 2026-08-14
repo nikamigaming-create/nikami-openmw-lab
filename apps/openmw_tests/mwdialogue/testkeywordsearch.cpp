@@ -1,7 +1,10 @@
 #include "apps/openmw/mwdialogue/keywordsearch.hpp"
 
+<<<<<<< HEAD
 #include <components/translation/translation.hpp>
 
+=======
+>>>>>>> origin/main
 #include <gtest/gtest.h>
 
 struct KeywordSearchTest : public ::testing::Test
@@ -15,6 +18,7 @@ protected:
 TEST_F(KeywordSearchTest, keyword_test_conflict_resolution)
 {
     // test to make sure the longest keyword in a chain of conflicting keywords gets chosen
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("foo bar", {});
     search.seed("bar lock", {});
@@ -23,6 +27,16 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution)
     std::string text = "foo bar lock switch";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("foo bar", 0);
+    search.seed("bar lock", 0);
+    search.seed("lock switch", 0);
+
+    std::string text = "foo bar lock switch";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     // Should contain: "foo bar", "lock switch"
@@ -33,6 +47,7 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution)
 
 TEST_F(KeywordSearchTest, keyword_test_conflict_resolution2)
 {
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("the dwemer", {});
     search.seed("dwemer language", {});
@@ -40,6 +55,15 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution2)
     std::string text = "the dwemer language";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("the dwemer", 0);
+    search.seed("dwemer language", 0);
+
+    std::string text = "the dwemer language";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 1);
@@ -50,6 +74,7 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution3)
 {
     // Test that the longest keyword is chosen, rather than maximizing the
     // amount of highlighted characters by highlighting the first and last keyword
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("foo bar", {});
     search.seed("bar lock", {});
@@ -58,6 +83,16 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution3)
     std::string text = "foo bar lock so";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("foo bar", 0);
+    search.seed("bar lock", 0);
+    search.seed("lock so", 0);
+
+    std::string text = "foo bar lock so";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 1);
@@ -67,17 +102,29 @@ TEST_F(KeywordSearchTest, keyword_test_conflict_resolution3)
 TEST_F(KeywordSearchTest, keyword_test_utf8_word_begin)
 {
     // Make sure that the search works well on UTF-8 strings containing some non-ASCII (French)
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("états", {});
     search.seed("ïrradiés", {});
     search.seed("ça nous déçois", {});
     search.seed("nous", {});
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("états", 0);
+    search.seed("ïrradiés", 0);
+    search.seed("ça nous déçois", 0);
+    search.seed("nous", 0);
+>>>>>>> origin/main
 
     std::string text
         = "les nations unis ont réunis le monde entier, états units inclus pour parler du problème des gens ïrradiés "
           "et ça nous déçois";
 
+<<<<<<< HEAD
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 3);
@@ -89,12 +136,21 @@ TEST_F(KeywordSearchTest, keyword_test_utf8_word_begin)
 TEST_F(KeywordSearchTest, keyword_test_non_alpha_non_whitespace_word_begin)
 {
     // Make sure that the search works well even if the separator is not whitespace
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("Report to caius cosades", {});
 
     std::string text = "I was told to \"Report to Caius Cosades\"";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("Report to caius cosades", 0);
+
+    std::string text = "I was told to \"Report to Caius Cosades\"";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 1);
@@ -104,13 +160,22 @@ TEST_F(KeywordSearchTest, keyword_test_non_alpha_non_whitespace_word_begin)
 TEST_F(KeywordSearchTest, keyword_test_russian_ascii_before)
 {
     // Make sure that the search works well even if the separator is not whitespace with Russian chars
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("Доложить Каю Косадесу", {});
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("Доложить Каю Косадесу", 0);
+>>>>>>> origin/main
 
     std::string text
         = "Что? Да. Я Кай Косадес. То есть как это, вам велели 'Доложить Каю Косадесу'? О чем вы говорите?";
 
+<<<<<<< HEAD
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 1);
@@ -122,6 +187,7 @@ TEST_F(KeywordSearchTest, keyword_test_substrings_without_word_separators)
     // Make sure that the search does not highlight substrings within words
     // i.e. "Force" does not contain "orc"
     // and "bring" does not contain "ring"
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("orc", {});
     search.seed("ring", {});
@@ -129,6 +195,15 @@ TEST_F(KeywordSearchTest, keyword_test_substrings_without_word_separators)
     std::string text = "Bring the Force, Lucan!";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("orc", 0);
+    search.seed("ring", 0);
+
+    std::string text = "Bring the Force, Lucan!";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 0);
@@ -139,6 +214,7 @@ TEST_F(KeywordSearchTest, keyword_test_initial_substrings_match)
     // Make sure that the search highlights prefix substrings
     // "Orcs" should match "orc"
     // "ring" is not matched because "-" is not a word separator
+<<<<<<< HEAD
     MWDialogue::KeywordSearch search;
     search.seed("orc", {});
     search.seed("ring", {});
@@ -146,12 +222,22 @@ TEST_F(KeywordSearchTest, keyword_test_initial_substrings_match)
     std::string text = "Bring the Orcs some gold-rings.";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("orc", 0);
+    search.seed("ring", 0);
+
+    std::string text = "Bring the Orcs some gold-rings.";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 1);
     EXPECT_EQ(std::string(matches[0].mBeg, matches[0].mEnd), "Orc");
 }
 
+<<<<<<< HEAD
 TEST_F(KeywordSearchTest, keyword_test_polish_word_separators)
 {
     // The Polish version supports ( and [ as word separators. The English version doesn't, but refuses to highlight
@@ -182,10 +268,23 @@ TEST_F(KeywordSearchTest, keyword_test_french_substrings)
     std::string text = "traçages et forces";
 
     std::vector<MWDialogue::KeywordSearch::Match> matches;
+=======
+TEST_F(KeywordSearchTest, keyword_test_french_substrings)
+{
+    // Substrings within words should not match
+    MWDialogue::KeywordSearch<int> search;
+    search.seed("ages", 0);
+    search.seed("orc", 0);
+
+    std::string text = "traçages et forces";
+
+    std::vector<MWDialogue::KeywordSearch<int>::Match> matches;
+>>>>>>> origin/main
     search.highlightKeywords(text.begin(), text.end(), matches);
 
     EXPECT_EQ(matches.size(), 0);
 }
+<<<<<<< HEAD
 
 TEST_F(KeywordSearchTest, keyword_test_single_char_strings)
 {
@@ -370,3 +469,5 @@ TEST_F(KeywordSearchTest, parse_hypertext_mark_file_overrides_keyword)
     EXPECT_EQ(matches[1].getDisplayName(), "assassinated");
     EXPECT_EQ(matches[1].mTopicId, "убит");
 }
+=======
+>>>>>>> origin/main

@@ -60,6 +60,10 @@ namespace Compiler
         , mCode(code)
         , mState(BeginState)
         , mReferenceMember(false)
+<<<<<<< HEAD
+=======
+        , mButtons(0)
+>>>>>>> origin/main
         , mType(0)
         , mExprParser(errorHandler, context, locals, literals)
         , mAllowExpression(allowExpression)
@@ -169,6 +173,7 @@ namespace Compiler
 
         if (mState == MessageButtonState)
         {
+<<<<<<< HEAD
             mPotentialButtons.push_back(name);
             // Replicate the fascinating behavior where, to determine the number of actual buttons,
             // Morrowind counts the number of quoted arguments.
@@ -183,6 +188,22 @@ namespace Compiler
         {
             mState = PotentialExplicitState;
             mExplicit = Misc::StringUtils::lowerCase(name);
+=======
+            Generator::pushString(mCode, mLiterals, name);
+            mState = MessageButtonState;
+            ++mButtons;
+            return true;
+        }
+
+        ESM::RefId explicitId = ESM::RefId::deserializeText(name);
+        if (explicitId.empty())
+            explicitId = ESM::RefId::stringRefId(name);
+
+        if (mState == BeginState && getContext().isId(explicitId))
+        {
+            mState = PotentialExplicitState;
+            mExplicit = explicitId.serializeText();
+>>>>>>> origin/main
             return true;
         }
 
@@ -253,9 +274,15 @@ namespace Compiler
             return false;
         }
 
+<<<<<<< HEAD
         if (mState == SetState || mState == MessageButtonState)
         {
             // Allow keywords to be used as variable names and as buttons.
+=======
+        if (mState == SetState)
+        {
+            // allow keywords to be used as variable names when assigning a value to a variable.
+>>>>>>> origin/main
             return parseName(loc.mLiteral, loc, scanner);
         }
 
@@ -460,6 +487,7 @@ namespace Compiler
 
         if (code == Scanner::S_newline && mState == MessageButtonState)
         {
+<<<<<<< HEAD
             if (mNumButtons > 10)
             {
                 getErrorHandler().warning("Only 10 message box buttons can be used", loc);
@@ -470,6 +498,9 @@ namespace Compiler
             Generator::message(mCode, mLiterals, mName, mNumButtons);
             mPotentialButtons.clear();
             mNumButtons = 0;
+=======
+            Generator::message(mCode, mLiterals, mName, mButtons);
+>>>>>>> origin/main
             return false;
         }
 
@@ -499,7 +530,11 @@ namespace Compiler
     }
 
     void GetArgumentsFromMessageFormat::visitedPlaceholder(
+<<<<<<< HEAD
         Placeholder placeholder, int /*flags*/, int /*width*/, int /*precision*/, Notation /*notation*/)
+=======
+        Placeholder placeholder, char /*padding*/, int /*width*/, int /*precision*/, Notation /*notation*/)
+>>>>>>> origin/main
     {
         switch (placeholder)
         {

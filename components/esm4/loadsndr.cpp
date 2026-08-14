@@ -90,6 +90,11 @@ void ESM4::SoundReference::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadsndr"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::SNDR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -218,7 +218,11 @@ namespace MWLua
                     return owner.serializeText();
             };
             auto setOwnerRecordId = [](const OwnerT& o, sol::optional<std::string_view> ownerId) {
+<<<<<<< HEAD
                 if (std::is_same_v<ObjectT, LObject> && !(o.mObj.isSelfObject()))
+=======
+                if (std::is_same_v<ObjectT, LObject> && !dynamic_cast<const SelfObject*>(&o.mObj))
+>>>>>>> origin/main
                     throw std::runtime_error("Local scripts can set an owner only on self");
                 const MWWorld::Ptr& ptr = o.mObj.ptr();
 
@@ -244,7 +248,11 @@ namespace MWLua
             };
             auto setOwnerFactionId = [](const OwnerT& o, sol::optional<std::string> ownerId) {
                 ESM::RefId ownerFac;
+<<<<<<< HEAD
                 if (std::is_same_v<ObjectT, LObject> && !(o.mObj.isSelfObject()))
+=======
+                if (std::is_same_v<ObjectT, LObject> && !dynamic_cast<const SelfObject*>(&o.mObj))
+>>>>>>> origin/main
                     throw std::runtime_error("Local scripts can set an owner faction only on self");
                 if (!ownerId)
                 {
@@ -259,17 +267,28 @@ namespace MWLua
             };
             ownerT["factionId"] = sol::property(getOwnerFactionId, setOwnerFactionId);
 
+<<<<<<< HEAD
             auto getOwnerFactionRank = [](const OwnerT& o) -> sol::optional<int64_t> {
+=======
+            auto getOwnerFactionRank = [](const OwnerT& o) -> sol::optional<size_t> {
+>>>>>>> origin/main
                 int rank = o.mObj.ptr().getCellRef().getFactionRank();
                 if (rank < 0)
                     return sol::nullopt;
                 return LuaUtil::toLuaIndex(rank);
             };
+<<<<<<< HEAD
             auto setOwnerFactionRank = [](const OwnerT& o, sol::optional<int64_t> factionRank) {
                 if (std::is_same_v<ObjectT, LObject> && !(o.mObj.isSelfObject()))
                     throw std::runtime_error("Local scripts can set an owner faction rank only on self");
                 int64_t rank = std::max<int64_t>(0, LuaUtil::fromLuaIndex(factionRank.value_or(0)));
                 o.mObj.ptr().getCellRef().setFactionRank(static_cast<int>(rank));
+=======
+            auto setOwnerFactionRank = [](const OwnerT& o, sol::optional<size_t> factionRank) {
+                if (std::is_same_v<ObjectT, LObject> && !dynamic_cast<const SelfObject*>(&o.mObj))
+                    throw std::runtime_error("Local scripts can set an owner faction rank only on self");
+                o.mObj.ptr().getCellRef().setFactionRank(LuaUtil::fromLuaIndex(factionRank.value_or(0)));
+>>>>>>> origin/main
             };
             ownerT["factionRank"] = sol::property(getOwnerFactionRank, setOwnerFactionRank);
 
@@ -319,6 +338,7 @@ namespace MWLua
             objectT["rotation"] = sol::readonly_property([](const ObjectT& o) -> LuaUtil::TransformQ {
                 return { toQuat(o.ptr().getRefData().getPosition(), o.ptr().getClass().isActor()) };
             });
+<<<<<<< HEAD
             objectT["startingCell"] = sol::readonly_property([](const ObjectT& o) -> sol::optional<Cell<ObjectT>> {
                 const MWWorld::Ptr& ptr = o.ptr();
                 MWWorld::WorldModel* wm = MWBase::Environment::get().getWorldModel();
@@ -326,6 +346,8 @@ namespace MWLua
                     return Cell<ObjectT>{ ptr.getCell()->getOriginCell(ptr) };
                 return sol::nullopt;
             });
+=======
+>>>>>>> origin/main
             objectT["startingPosition"] = sol::readonly_property(
                 [](const ObjectT& o) -> osg::Vec3f { return o.ptr().getCellRef().getPosition().asVec3(); });
             objectT["startingRotation"] = sol::readonly_property([](const ObjectT& o) -> LuaUtil::TransformQ {

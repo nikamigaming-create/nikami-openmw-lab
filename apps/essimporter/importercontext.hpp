@@ -45,8 +45,13 @@ namespace ESSImport
         std::map<std::pair<int, ESM::RefId>, NPCC> mNpcChanges;
         std::map<std::pair<int, ESM::RefId>, CNTC> mContainerChanges;
 
+<<<<<<< HEAD
         std::map<std::pair<int, ESM::RefId>, ESM::RefNum> mActorIdMap;
         ESM::RefNum mNextRefNum;
+=======
+        std::map<std::pair<int, ESM::RefId>, int> mActorIdMap;
+        int mNextActorId;
+>>>>>>> origin/main
 
         std::map<ESM::RefId, ESM::Creature> mCreatures;
         std::map<ESM::RefId, ESM::NPC> mNpcs;
@@ -58,6 +63,10 @@ namespace ESSImport
             , mMonth(0)
             , mYear(0)
             , mHour(0.f)
+<<<<<<< HEAD
+=======
+            , mNextActorId(0)
+>>>>>>> origin/main
         {
             mPlayer.mCellId = ESM::RefId::esm3ExteriorCell(0, 0);
             mPlayer.mLastKnownExteriorPosition[0] = mPlayer.mLastKnownExteriorPosition[1]
@@ -68,7 +77,11 @@ namespace ESSImport
             mPlayer.mObject.blank();
             mPlayer.mObject.mEnabled = true;
             mPlayer.mObject.mRef.mRefID = ESM::RefId::stringRefId("player"); // REFR.mRefID would be PlayerSaveGame
+<<<<<<< HEAD
             generateRefNum(mPlayer.mObject.mRef.mRefNum);
+=======
+            mPlayer.mObject.mCreatureStats.mActorId = generateActorId();
+>>>>>>> origin/main
 
             mGlobalMapState.mBounds.mMinX = 0;
             mGlobalMapState.mBounds.mMaxX = 0;
@@ -78,6 +91,7 @@ namespace ESSImport
             mPlayerBase.blank();
         }
 
+<<<<<<< HEAD
         void generateRefNum(ESM::RefNum& refNum)
         {
             if (!refNum.isSet())
@@ -88,6 +102,9 @@ namespace ESSImport
                 refNum = mNextRefNum;
             }
         }
+=======
+        int generateActorId() { return mNextActorId++; }
+>>>>>>> origin/main
     };
 
 }

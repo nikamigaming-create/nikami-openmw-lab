@@ -16,7 +16,11 @@ include(GNUInstallDirs)
 
 option(OPENMW_GL4ES_MANUAL_INIT "Manually initialize gl4es. This is more reliable on platforms without a windowing system. Requires gl4es to be configured with -DNOEGL=ON -DNO_LOADER=ON -DNO_INIT_CONSTRUCTOR=ON." OFF)
 if(OPENMW_GL4ES_MANUAL_INIT)
+<<<<<<< HEAD
     add_compile_definitions(OPENMW_GL4ES_MANUAL_INIT)
+=======
+    add_definitions(-DOPENMW_GL4ES_MANUAL_INIT)
+>>>>>>> origin/main
 endif()
 
 if (APPLE OR WIN32)
@@ -47,6 +51,15 @@ option(BUILD_OPENCS_TESTS       "Build OpenMW Construction Set tests" OFF)
 option(BUILD_OPENMW_TESTS       "Build OpenMW tests" OFF)
 option(PRECOMPILE_HEADERS_WITH_MSVC "Precompile most common used headers with MSVC (alternative to ccache)" ON)
 
+<<<<<<< HEAD
+=======
+if (ANDROID)
+    option(BUILD_OPENMW_VR          "Build OpenMW-VR VR" OFF)
+else()
+    option(BUILD_OPENMW_VR          "Build OpenMW-VR VR" ON)
+endif()
+
+>>>>>>> origin/main
 set(OpenGL_GL_PREFERENCE LEGACY)  # Use LEGACY as we use GL2; GLNVD is for GL3 and up.
 
 if (BUILD_LAUNCHER OR BUILD_OPENCS OR BUILD_WIZARD OR BUILD_OPENCS_TESTS)
@@ -80,10 +93,17 @@ endif()
 message(STATUS "Configuring OpenMW...")
 
 set(OPENMW_VERSION_MAJOR 0)
+<<<<<<< HEAD
 set(OPENMW_VERSION_MINOR 51)
 set(OPENMW_VERSION_RELEASE 0)
 set(OPENMW_LUA_API_REVISION 129)
 set(OPENMW_POSTPROCESSING_API_REVISION 5)
+=======
+set(OPENMW_VERSION_MINOR 50)
+set(OPENMW_VERSION_RELEASE 0)
+set(OPENMW_LUA_API_REVISION 97)
+set(OPENMW_POSTPROCESSING_API_REVISION 3)
+>>>>>>> origin/main
 
 set(OPENMW_VERSION_COMMITHASH "")
 set(OPENMW_VERSION_TAGHASH "")
@@ -170,6 +190,7 @@ option(OPENMW_LTO_BUILD "Build OpenMW with Link-Time Optimization (Needs ~2GB of
 # OS X deployment
 option(OPENMW_OSX_DEPLOYMENT OFF)
 
+<<<<<<< HEAD
 if (CMAKE_GENERATOR MATCHES "Visual Studio")
     if (OPENMW_MSBUILD_COMPILER_OVERRIDE)
         if (NOT IS_ABSOLUTE OPENMW_MSBUILD_COMPILER_OVERRIDE)
@@ -198,6 +219,8 @@ if ((NOT CMAKE_GENERATOR MATCHES "Visual Studio") OR ("UseMultiToolTask=true" IN
     set(CMAKE_AUTOGEN_PARALLEL 1)
 endif()
 
+=======
+>>>>>>> origin/main
 if (MSVC)
     option(OPENMW_MP_BUILD "Build OpenMW with /MP flag" OFF)
     if (OPENMW_MP_BUILD)
@@ -213,16 +236,28 @@ if (MSVC)
 
     add_compile_options(/Zc:__cplusplus)
 
+<<<<<<< HEAD
     if (CMAKE_CXX_COMPILER_LAUNCHER OR CMAKE_C_COMPILER_LAUNCHER OR OPENMW_MSBUILD_COMPILER_OVERRIDE)
         if ((CMAKE_CXX_COMPILER_LAUNCHER OR CMAKE_C_COMPILER_LAUNCHER) AND CMAKE_GENERATOR MATCHES "Visual Studio")
+=======
+    if (CMAKE_CXX_COMPILER_LAUNCHER OR CMAKE_C_COMPILER_LAUNCHER)
+        if (CMAKE_GENERATOR MATCHES "Visual Studio")
+>>>>>>> origin/main
             message(STATUS "A compiler launcher was specified, but will be unused by the current generator (${CMAKE_GENERATOR})")
         else()
             foreach (config_lower ${CMAKE_CONFIGURATION_TYPES})
                 string(TOUPPER "${config_lower}" config)
+<<<<<<< HEAD
                 if (CMAKE_C_COMPILER_LAUNCHER STREQUAL "ccache" OR OPENMW_MSBUILD_COMPILER_OVERRIDE STREQUAL "ccache")
                     string(REPLACE "/Zi" "/Z7" CMAKE_C_FLAGS_${config} "${CMAKE_C_FLAGS_${config}}")
                 endif()
                 if (CMAKE_CXX_COMPILER_LAUNCHER STREQUAL "ccache" OR OPENMW_MSBUILD_COMPILER_OVERRIDE STREQUAL "ccache")
+=======
+                if (CMAKE_C_COMPILER_LAUNCHER STREQUAL "ccache")
+                    string(REPLACE "/Zi" "/Z7" CMAKE_C_FLAGS_${config} "${CMAKE_C_FLAGS_${config}}")
+                endif()
+                if (CMAKE_CXX_COMPILER_LAUNCHER STREQUAL "ccache")
+>>>>>>> origin/main
                     string(REPLACE "/Zi" "/Z7" CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
                 endif()
             endforeach()
@@ -381,20 +416,34 @@ if(NOT FFmpeg_FOUND)
     message(FATAL_ERROR "FFmpeg was not found" )
 endif()
 
+<<<<<<< HEAD
 # Required for building the FFmpeg headers
 add_compile_definitions(__STDC_CONSTANT_MACROS)
+=======
+if(WIN32)
+    message("Can not detect FFmpeg version, at least the 3.2 is required" )
+endif()
+
+# Required for building the FFmpeg headers
+add_definitions(-D__STDC_CONSTANT_MACROS)
+>>>>>>> origin/main
 
 # TinyXML
 option(USE_SYSTEM_TINYXML "Use system TinyXML library instead of internal." OFF)
 if (USE_SYSTEM_TINYXML)
     find_package(TinyXML REQUIRED)
+<<<<<<< HEAD
     add_compile_definitions(TIXML_USE_STL)
+=======
+    add_definitions (-DTIXML_USE_STL)
+>>>>>>> origin/main
     include_directories(SYSTEM ${TinyXML_INCLUDE_DIRS})
 endif()
 
 # Platform specific
 if (WIN32)
     # Suppress WinMain(), provided by SDL
+<<<<<<< HEAD
     add_compile_definitions(SDL_MAIN_HANDLED)
 
     # Get rid of useless crud from windows.h
@@ -410,6 +459,16 @@ if (WIN32)
     add_compile_definitions(
         _UNICODE
         UNICODE
+=======
+    add_definitions(-DSDL_MAIN_HANDLED)
+
+    # Get rid of useless crud from windows.h
+    add_definitions(
+        -DNOMINMAX # name conflict with std::min, std::max
+        -DWIN32_LEAN_AND_MEAN
+        -DNOMB # name conflict with MWGui::MessageBox
+        -DNOGDI # name conflict with osgAnimation::MorphGeometry::RELATIVE
+>>>>>>> origin/main
     )
 endif()
 
@@ -467,6 +526,10 @@ endif()
 if(OPENMW_USE_SYSTEM_OSG)
     find_package(OpenSceneGraph 3.6.5 REQUIRED ${USED_OSG_COMPONENTS})  # Bump to 3.6.6 when released
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
     if(OSG_STATIC)
         find_package(OSGPlugins REQUIRED COMPONENTS ${USED_OSG_PLUGINS})
     endif()
@@ -475,12 +538,20 @@ endif()
 include_directories(BEFORE SYSTEM ${OPENSCENEGRAPH_INCLUDE_DIRS})
 
 if(OSG_STATIC)
+<<<<<<< HEAD
     add_compile_definitions(OSG_LIBRARY_STATIC)
+=======
+    add_definitions(-DOSG_LIBRARY_STATIC)
+>>>>>>> origin/main
 endif()
 
 include(cmake/CheckOsgMultiview.cmake)
 if(HAVE_MULTIVIEW)
+<<<<<<< HEAD
     add_compile_definitions(OSG_HAS_MULTIVIEW)
+=======
+    add_definitions(-DOSG_HAS_MULTIVIEW)
+>>>>>>> origin/main
 endif(HAVE_MULTIVIEW)
 
 set(BOOST_COMPONENTS iostreams program_options)
@@ -513,6 +584,10 @@ set(SOL_CONFIG_DIR ${OpenMW_SOURCE_DIR}/extern/sol_config)
 
 include_directories(
     BEFORE SYSTEM
+<<<<<<< HEAD
+=======
+    "."
+>>>>>>> origin/main
     ${MyGUI_INCLUDE_DIRS}
     ${OPENAL_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}
@@ -527,7 +602,11 @@ include_directories(".")
 link_directories(${COLLADA_DOM_LIBRARY_DIRS})
 
 if(MYGUI_STATIC)
+<<<<<<< HEAD
     add_compile_definitions(MYGUI_STATIC)
+=======
+    add_definitions(-DMYGUI_STATIC)
+>>>>>>> origin/main
 endif (MYGUI_STATIC)
 
 if (APPLE)
@@ -563,6 +642,7 @@ endif (APPLE)
 pack_resource_file(${OpenMW_SOURCE_DIR}/files/settings-default.cfg
     "${OpenMW_BINARY_DIR}" "defaults.bin")
 
+<<<<<<< HEAD
 configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.appdata.xml
     "${OpenMW_BINARY_DIR}" "openmw.appdata.xml")
 
@@ -588,6 +668,36 @@ pack_resource_file(${OpenMW_SOURCE_DIR}/files/openmw-cs.cfg
 copy_resource_file(${OpenMW_SOURCE_DIR}/files/opencs/defaultfilters
     "${OpenMW_BINARY_DIR}" "resources/defaultfilters")
 
+=======
+pack_resource_file(${OpenMW_SOURCE_DIR}/files/settings-overrides-vr.cfg
+    "${OpenMW_BINARY_DIR}" "overrides.bin")
+
+configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.appdata.xml
+    "${OpenMW_BINARY_DIR}" "openmw.appdata.xml")
+
+if (APPLE)
+    configure_file(${OpenMW_SOURCE_DIR}/files/openmw.cfg
+        "${OpenMW_BINARY_DIR}/openmw.cfg")
+elseif (WIN32)
+    configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.cfg.local
+        "${OpenMW_BINARY_DIR}" "openmw.cfg")
+    configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.cfg.local
+        "${OpenMW_BINARY_DIR}" "openmw.cfg.install")
+else ()
+    configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.cfg.local
+        "${OpenMW_BINARY_DIR}" "openmw.cfg")
+    configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.cfg
+        "${OpenMW_BINARY_DIR}" "openmw.cfg.install")
+endif ()
+
+pack_resource_file(${OpenMW_SOURCE_DIR}/files/openmw-cs.cfg
+    "${OpenMW_BINARY_DIR}" "defaults-cs.bin")
+
+# Needs the copy version because the configure version assumes the end of the file has been reached when a null character is reached and there are no CMake expressions to evaluate.
+copy_resource_file(${OpenMW_SOURCE_DIR}/files/opencs/defaultfilters
+    "${OpenMW_BINARY_DIR}" "resources/defaultfilters")
+
+>>>>>>> origin/main
 configure_resource_file(${OpenMW_SOURCE_DIR}/files/gamecontrollerdb.txt
     "${OpenMW_BINARY_DIR}" "gamecontrollerdb.txt")
 
@@ -642,6 +752,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT
         add_compile_options("/wd${d}")
     endforeach(d)
 
+<<<<<<< HEAD
     set(WARNINGS_EXTRA
         4855 # implicit capture of 'this' via '[=]' is deprecated in 'version'
         )
@@ -650,6 +761,8 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT
         add_compile_options("/w1${d}")
     endforeach(d)
 
+=======
+>>>>>>> origin/main
     if(OPENMW_MSVC_WERROR)
         add_compile_options("/WX")
     endif()
@@ -678,7 +791,11 @@ endif()
 add_subdirectory (components)
 
 # Apps and tools
+<<<<<<< HEAD
 if (BUILD_OPENMW OR BUILD_OPENMW_TESTS)
+=======
+if (BUILD_OPENMW OR BUILD_OPENMW_TESTS OR BUILD_OPENMW_VR)
+>>>>>>> origin/main
     add_subdirectory( apps/openmw )
 endif()
 
@@ -761,6 +878,7 @@ if (WIN32)
             set_target_properties(openmw PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
         endif()
 
+<<<<<<< HEAD
         if (MSVC_VERSION GREATER_EQUAL 1915 AND MSVC_VERSION LESS 1920)
             target_compile_definitions(components INTERFACE _ENABLE_EXTENDED_ALIGNED_STORAGE)
         endif()
@@ -811,6 +929,65 @@ if (OPENMW_OSX_DEPLOYMENT AND APPLE)
         message(FATAL_ERROR "Only x86_64 OR arm64 is accepted for CMAKE_OSX_ARCHITECTURES")
     endif()
 
+=======
+        # TODO: properties and link targets should be copied from openmw to openmw_vr instead of duplicating every line
+        if (USE_DEBUG_CONSOLE AND BUILD_OPENMW_VR)
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+          if(TARGET openmw_vr_swg_lab)
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+          endif()
+          #set_target_properties(openmw_vr PROPERTIES COMPILE_DEFINITIONS $<$<CONFIG:Debug>:_CONSOLE>)
+        elseif (BUILD_OPENMW_VR)
+          # Turn off debug console, debug output will be written to visual studio output instead
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:WINDOWS")
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS")
+          if(TARGET openmw_vr_swg_lab)
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:WINDOWS")
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS")
+          endif()
+        endif()
+
+        if (BUILD_OPENMW_VR)
+            # Release builds don't use the debug console
+            set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+            set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+            if(TARGET openmw_vr_swg_lab)
+                set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+                set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+            endif()
+        endif()
+
+        if (MSVC_VERSION GREATER_EQUAL 1915 AND MSVC_VERSION LESS 1920)
+            target_compile_definitions(components INTERFACE _ENABLE_EXTENDED_ALIGNED_STORAGE)
+        endif()
+        if (BUILD_OPENMW_VR)
+            target_compile_options(openmw_vr PRIVATE ${WARNINGS})
+            if(TARGET openmw_vr_swg_lab)
+                target_compile_options(openmw_vr_swg_lab PRIVATE ${WARNINGS})
+            endif()
+        endif()
+
+    endif(MSVC)
+
+    # TODO: At some point release builds should not use the console but rather write to a log file
+    #set_target_properties(openmw PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+    #set_target_properties(openmw PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+endif()
+
+if (APPLE)
+    target_compile_definitions(components PRIVATE GL_SILENCE_DEPRECATION=1)
+    target_compile_definitions(openmw PRIVATE GL_SILENCE_DEPRECATION=1)
+endif()
+
+# Apple bundling
+if (OPENMW_OSX_DEPLOYMENT AND APPLE)
+    if (CMAKE_VERSION VERSION_LESS 3.19)
+        message(FATAL_ERROR "macOS packaging requires CMake 3.19 or higher to sign macOS app bundles.")
+    endif ()
+
+>>>>>>> origin/main
     get_property(QT_COCOA_PLUGIN_PATH TARGET Qt${QT_VERSION_MAJOR}::QCocoaIntegrationPlugin PROPERTY LOCATION_RELEASE)
     get_filename_component(QT_COCOA_PLUGIN_DIR "${QT_COCOA_PLUGIN_PATH}" DIRECTORY)
     get_filename_component(QT_COCOA_PLUGIN_GROUP "${QT_COCOA_PLUGIN_DIR}" NAME)
@@ -985,12 +1162,39 @@ elseif(NOT APPLE)
         INSTALL(FILES "${OpenMW_SOURCE_DIR}/LICENSE" DESTINATION "." RENAME "LICENSE.txt")
         INSTALL(FILES "${OpenMW_SOURCE_DIR}/AUTHORS.md" DESTINATION "." RENAME "AUTHORS.txt")
         INSTALL(FILES "${INSTALL_SOURCE}/defaults.bin" DESTINATION ".")
+<<<<<<< HEAD
         INSTALL(FILES "${INSTALL_SOURCE}/gamecontrollerdb.txt" DESTINATION ".")
+=======
+        INSTALL(FILES "${INSTALL_SOURCE}/overrides.bin" DESTINATION ".")
+        INSTALL(FILES "${INSTALL_SOURCE}/gamecontrollerdb.txt" DESTINATION ".")
+        IF(BUILD_OPENMW_VR)
+            INSTALL(FILES "${INSTALL_SOURCE}/openxrinteractionprofiles.xml" DESTINATION ".")
+        ENDIF()
+>>>>>>> origin/main
 
         INSTALL(DIRECTORY "${INSTALL_SOURCE}/resources" DESTINATION ".")
 
         SET(CPACK_GENERATOR "NSIS")
+<<<<<<< HEAD
         SET(CPACK_PACKAGE_EXECUTABLES "openmw;OpenMW")
+=======
+        IF(BUILD_OPENMW_VR)
+            SET(CPACK_PACKAGE_NAME "OpenMW-VR")
+            SET(CPACK_PACKAGE_EXECUTABLES "openmw_vr;OpenMW VR")
+            SET(OPENMW_WINDOWS_PACKAGE_DISPLAY_NAME "OpenMW VR")
+        ELSEIF(BUILD_OPENMW)
+            SET(CPACK_PACKAGE_NAME "OpenMW-Flat")
+            SET(CPACK_PACKAGE_EXECUTABLES "openmw;OpenMW Flat")
+            SET(OPENMW_WINDOWS_PACKAGE_DISPLAY_NAME "OpenMW Flat")
+        ELSE()
+            MESSAGE(FATAL_ERROR "Windows packaging requires BUILD_OPENMW or BUILD_OPENMW_VR")
+        ENDIF()
+        SET(CPACK_PACKAGE_VENDOR "OpenMW.org")
+        SET(CPACK_PACKAGE_VERSION ${OPENMW_VERSION})
+        SET(CPACK_PACKAGE_VERSION_MAJOR ${OPENMW_VERSION_MAJOR})
+        SET(CPACK_PACKAGE_VERSION_MINOR ${OPENMW_VERSION_MINOR})
+        SET(CPACK_PACKAGE_VERSION_PATCH ${OPENMW_VERSION_RELEASE})
+>>>>>>> origin/main
         IF(BUILD_LAUNCHER)
             SET(CPACK_PACKAGE_EXECUTABLES "${CPACK_PACKAGE_EXECUTABLES};openmw-launcher;OpenMW Launcher")
         ENDIF(BUILD_LAUNCHER)
@@ -1008,7 +1212,11 @@ elseif(NOT APPLE)
         SET(CPACK_RESOURCE_FILE_README "${OpenMW_SOURCE_DIR}/README.md")
         SET(CPACK_PACKAGE_DESCRIPTION_FILE "${OpenMW_SOURCE_DIR}/README.md")
         SET(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+<<<<<<< HEAD
         SET(CPACK_NSIS_DISPLAY_NAME "OpenMW ${OPENMW_VERSION}")
+=======
+        SET(CPACK_NSIS_DISPLAY_NAME "${OPENMW_WINDOWS_PACKAGE_DISPLAY_NAME} ${OPENMW_VERSION}")
+>>>>>>> origin/main
         SET(CPACK_NSIS_HELP_LINK "https:\\\\\\\\www.openmw.org")
         SET(CPACK_NSIS_URL_INFO_ABOUT "https:\\\\\\\\www.openmw.org")
         SET(CPACK_NSIS_INSTALLED_ICON_NAME "openmw-launcher.exe")
@@ -1080,9 +1288,19 @@ elseif(NOT APPLE)
         ENDIF(BUILD_OPENCS)
 
         # Install global configuration files
+<<<<<<< HEAD
         INSTALL(FILES "${INSTALL_SOURCE}/defaults.bin" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
         INSTALL(FILES "${INSTALL_SOURCE}/openmw.cfg.install" DESTINATION "${SYSCONFDIR}" RENAME "openmw.cfg" COMPONENT "openmw")
         INSTALL(FILES "${INSTALL_SOURCE}/gamecontrollerdb.txt" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
+=======
+        INSTALL(FILES "${INSTALL_SOURCE}/overrides.bin" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
+        INSTALL(FILES "${INSTALL_SOURCE}/defaults.bin" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
+        INSTALL(FILES "${INSTALL_SOURCE}/openmw.cfg.install" DESTINATION "${SYSCONFDIR}" RENAME "openmw.cfg" COMPONENT "openmw")
+        INSTALL(FILES "${INSTALL_SOURCE}/gamecontrollerdb.txt" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
+        IF(BUILD_OPENMW_VR)
+            INSTALL(FILES "${INSTALL_SOURCE}/openxrinteractionprofiles.xml" DESTINATION "${SYSCONFDIR}" COMPONENT "openmw")
+        ENDIF()
+>>>>>>> origin/main
 
         IF(BUILD_OPENCS)
             INSTALL(FILES "${INSTALL_SOURCE}/defaults-cs.bin" DESTINATION "${SYSCONFDIR}" COMPONENT "opencs")

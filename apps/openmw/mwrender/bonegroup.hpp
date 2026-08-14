@@ -9,6 +9,10 @@ namespace MWRender
         BoneGroup_Torso,
         BoneGroup_LeftArm,
         BoneGroup_RightArm,
+<<<<<<< HEAD
+=======
+        BoneGroup_Head,
+>>>>>>> origin/main
 
         Num_BoneGroups
     };

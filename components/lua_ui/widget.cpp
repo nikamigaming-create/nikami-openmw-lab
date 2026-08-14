@@ -1,4 +1,5 @@
 #include "widget.hpp"
+<<<<<<< HEAD
 #include "components/lua_ui/util.hpp"
 #include "element.hpp"
 
@@ -14,6 +15,11 @@ namespace
     constexpr int sExtCalcPositionLeftCap = 10000000;
     constexpr int sExtCalcPositionTopCap = 10000000;
 }
+=======
+
+#include <SDL_events.h>
+#include <components/sdlutil/sdlmappings.hpp>
+>>>>>>> origin/main
 
 namespace LuaUi
 {
@@ -63,6 +69,7 @@ namespace LuaUi
 
     void WidgetExtension::registerEvents(MyGUI::Widget* w)
     {
+<<<<<<< HEAD
         w->eventKeyButtonPressed += MyGUI::newDelegate(this, &WidgetExtension::keyPress);
         w->eventKeyButtonReleased += MyGUI::newDelegate(this, &WidgetExtension::keyRelease);
         w->eventMouseButtonClick += MyGUI::newDelegate(this, &WidgetExtension::mouseClick);
@@ -92,6 +99,63 @@ namespace LuaUi
         w->eventMouseLostFocus.clear();
         w->eventKeySetFocus.clear();
         w->eventKeyLostFocus.clear();
+=======
+//## VR_PATCH BEGIN
+// Upstream uses .clear(), but this interferes with the virtual keyboard
+// Use -= to only clear the handlers WidgetExtension added.
+
+        if (!mEventsInitialized)
+        {
+            mEventKeyButtonPressed = MyGUI::newDelegate(this, &WidgetExtension::keyPress);
+            mEventKeyButtonReleased = MyGUI::newDelegate(this, &WidgetExtension::keyRelease);
+            mEventMouseButtonClick = MyGUI::newDelegate(this, &WidgetExtension::mouseClick);
+            mEventMouseButtonDoubleClick = MyGUI::newDelegate(this, &WidgetExtension::mouseDoubleClick);
+            mEventMouseButtonPressed = MyGUI::newDelegate(this, &WidgetExtension::mousePress);
+            mEventMouseButtonReleased = MyGUI::newDelegate(this, &WidgetExtension::mouseRelease);
+            mEventMouseMove = MyGUI::newDelegate(this, &WidgetExtension::mouseMove);
+            mEventMouseDrag = MyGUI::newDelegate(this, &WidgetExtension::mouseDrag);
+            mEventMouseSetFocus = MyGUI::newDelegate(this, &WidgetExtension::focusGain);
+            mEventMouseLostFocus = MyGUI::newDelegate(this, &WidgetExtension::focusLoss);
+            mEventKeySetFocusDelegate = MyGUI::newDelegate(this, &WidgetExtension::focusGain);
+            mEventKeyLostFocusDelegate = MyGUI::newDelegate(this, &WidgetExtension::focusLoss);
+
+            w->eventKeyButtonPressed += mEventKeyButtonPressed;
+            w->eventKeyButtonReleased += mEventKeyButtonReleased;
+            w->eventMouseButtonClick += mEventMouseButtonClick;
+            w->eventMouseButtonDoubleClick += mEventMouseButtonDoubleClick;
+            w->eventMouseButtonPressed += mEventMouseButtonPressed;
+            w->eventMouseButtonReleased += mEventMouseButtonReleased;
+            w->eventMouseMove += mEventMouseMove;
+            w->eventMouseDrag += mEventMouseDrag;
+            w->eventMouseSetFocus += mEventMouseSetFocus;
+            w->eventMouseLostFocus += mEventMouseLostFocus;
+            w->eventKeySetFocus += mEventKeySetFocusDelegate;
+            w->eventKeyLostFocus += mEventKeyLostFocusDelegate;
+
+            mEventsInitialized = true;
+        }
+    }
+    void WidgetExtension::clearEvents(MyGUI::Widget* w)
+    {
+        if (mEventsInitialized)
+        {
+            w->eventKeyButtonPressed -= mEventKeyButtonPressed;
+            w->eventKeyButtonReleased -= mEventKeyButtonReleased;
+            w->eventMouseButtonClick -= mEventMouseButtonClick;
+            w->eventMouseButtonDoubleClick -= mEventMouseButtonDoubleClick;
+            w->eventMouseButtonPressed -= mEventMouseButtonPressed;
+            w->eventMouseButtonReleased -= mEventMouseButtonReleased;
+            w->eventMouseMove -= mEventMouseMove;
+            w->eventMouseDrag -= mEventMouseDrag;
+            w->eventMouseSetFocus -= mEventMouseSetFocus;
+            w->eventMouseLostFocus -= mEventMouseLostFocus;
+            w->eventKeySetFocus -= mEventKeySetFocusDelegate;
+            w->eventKeyLostFocus -= mEventKeyLostFocusDelegate;
+
+            mEventsInitialized = false;
+        }
+//## VR_PATCH END
+>>>>>>> origin/main
     }
 
     void WidgetExtension::reset()
@@ -181,11 +245,21 @@ namespace LuaUi
         return result;
     }
 
+<<<<<<< HEAD
     sol::object WidgetExtension::keyEvent(LuaUtil::LuaView& view, MyGUI::KeyCode code) const
+=======
+    sol::table WidgetExtension::makeTable() const
+    {
+        return sol::table(lua(), sol::create);
+    }
+
+    sol::object WidgetExtension::keyEvent(MyGUI::KeyCode code) const
+>>>>>>> origin/main
     {
         auto keySym = SDL_Keysym();
         keySym.sym = SDLUtil::myGuiKeyToSdl(code);
         keySym.scancode = SDL_GetScancodeFromKey(keySym.sym);
+<<<<<<< HEAD
         keySym.mod = static_cast<Uint16>(SDL_GetModState());
         return sol::make_object(view.sol(), keySym);
     }
@@ -198,6 +272,19 @@ namespace LuaUi
         osg::Vec2f offset = position
             - osg::Vec2f(static_cast<float>(absolutePosition.left), static_cast<float>(absolutePosition.top));
         sol::table table = view.newTable();
+=======
+        keySym.mod = SDL_GetModState();
+        return sol::make_object(lua(), keySym);
+    }
+
+    sol::object WidgetExtension::mouseEvent(
+        int left, int top, MyGUI::MouseButton button = MyGUI::MouseButton::None) const
+    {
+        osg::Vec2f position(left, top);
+        MyGUI::IntPoint absolutePosition = mWidget->getAbsolutePosition();
+        osg::Vec2f offset = position - osg::Vec2f(absolutePosition.left, absolutePosition.top);
+        sol::table table = makeTable();
+>>>>>>> origin/main
         int sdlButton = SDLUtil::myGuiMouseButtonToSdl(button);
         table["position"] = position;
         table["offset"] = offset;
@@ -330,6 +417,7 @@ namespace LuaUi
 
     MyGUI::IntSize WidgetExtension::calculateSize() const
     {
+<<<<<<< HEAD
         MyGUI::IntSize newSize;
         if (mForceSize)
             newSize = mForcedCoord.size();
@@ -342,11 +430,22 @@ namespace LuaUi
         }
         newSize.width = std::clamp(newSize.width, -sExtCalcSizeWidthCap, sExtCalcSizeWidthCap);
         newSize.height = std::clamp(newSize.height, -sExtCalcSizeHeightCap, sExtCalcSizeHeightCap);
+=======
+        if (mForceSize)
+            return mForcedCoord.size();
+
+        MyGUI::IntSize pSize = parentSize();
+        MyGUI::IntSize newSize;
+        newSize = mAbsoluteCoord.size();
+        newSize.width += mRelativeCoord.width * pSize.width;
+        newSize.height += mRelativeCoord.height * pSize.height;
+>>>>>>> origin/main
         return newSize;
     }
 
     MyGUI::IntPoint WidgetExtension::calculatePosition(const MyGUI::IntSize& size) const
     {
+<<<<<<< HEAD
         MyGUI::IntPoint newPosition;
         if (mForcePosition)
             newPosition = mForcedCoord.point();
@@ -359,6 +458,15 @@ namespace LuaUi
         }
         newPosition.left = std::clamp(newPosition.left, -sExtCalcPositionLeftCap, sExtCalcPositionLeftCap);
         newPosition.top = std::clamp(newPosition.top, -sExtCalcPositionTopCap, sExtCalcPositionTopCap);
+=======
+        if (mForcePosition)
+            return mForcedCoord.point();
+        MyGUI::IntSize pSize = parentSize();
+        MyGUI::IntPoint newPosition;
+        newPosition = mAbsoluteCoord.point();
+        newPosition.left += mRelativeCoord.left * pSize.width - mAnchor.width * size.width;
+        newPosition.top += mRelativeCoord.top * pSize.height - mAnchor.height * size.height;
+>>>>>>> origin/main
         return newPosition;
     }
 
@@ -387,6 +495,7 @@ namespace LuaUi
             it->second.call(argument, mLayout);
     }
 
+<<<<<<< HEAD
     bool WidgetExtension::collectWarnings(Warnings& warnings, int depth, bool generateWarningStrings) const
     {
         auto beginningSize = warnings.size();
@@ -474,27 +583,53 @@ namespace LuaUi
             else
                 propagateEvent("keyPress", [&](auto w) { return w->keyEvent(view, code); });
         });
+=======
+    void WidgetExtension::keyPress(MyGUI::Widget*, MyGUI::KeyCode code, MyGUI::Char ch)
+    {
+        if (code == MyGUI::KeyCode::None)
+        {
+            propagateEvent("textInput", [ch](auto w) {
+                MyGUI::UString uString;
+                uString.push_back(static_cast<MyGUI::UString::unicode_char>(ch));
+                return sol::make_object(w->lua(), uString.asUTF8());
+            });
+        }
+        else
+            propagateEvent("keyPress", [code](auto w) { return w->keyEvent(code); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::keyRelease(MyGUI::Widget*, MyGUI::KeyCode code)
     {
+<<<<<<< HEAD
         protectedCall([=, this](LuaUtil::LuaView& view) {
             propagateEvent("keyRelease", [&](auto w) { return w->keyEvent(view, code); });
         });
+=======
+        propagateEvent("keyRelease", [code](auto w) { return w->keyEvent(code); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::mouseMove(MyGUI::Widget*, int left, int top)
     {
+<<<<<<< HEAD
         protectedCall([=, this](LuaUtil::LuaView& view) {
             propagateEvent("mouseMove", [&](auto w) { return w->mouseEvent(view, left, top); });
         });
+=======
+        propagateEvent("mouseMove", [left, top](auto w) { return w->mouseEvent(left, top); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::mouseDrag(MyGUI::Widget*, int left, int top, MyGUI::MouseButton button)
     {
+<<<<<<< HEAD
         protectedCall([=, this](LuaUtil::LuaView& view) {
             propagateEvent("mouseMove", [&](auto w) { return w->mouseEvent(view, left, top, button); });
         });
+=======
+        propagateEvent("mouseMove", [left, top, button](auto w) { return w->mouseEvent(left, top, button); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::mouseClick(MyGUI::Widget* /*widget*/)
@@ -509,16 +644,24 @@ namespace LuaUi
 
     void WidgetExtension::mousePress(MyGUI::Widget*, int left, int top, MyGUI::MouseButton button)
     {
+<<<<<<< HEAD
         protectedCall([=, this](LuaUtil::LuaView& view) {
             propagateEvent("mousePress", [&](auto w) { return w->mouseEvent(view, left, top, button); });
         });
+=======
+        propagateEvent("mousePress", [left, top, button](auto w) { return w->mouseEvent(left, top, button); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::mouseRelease(MyGUI::Widget*, int left, int top, MyGUI::MouseButton button)
     {
+<<<<<<< HEAD
         protectedCall([=, this](LuaUtil::LuaView& view) {
             propagateEvent("mouseRelease", [&](auto w) { return w->mouseEvent(view, left, top, button); });
         });
+=======
+        propagateEvent("mouseRelease", [left, top, button](auto w) { return w->mouseEvent(left, top, button); });
+>>>>>>> origin/main
     }
 
     void WidgetExtension::focusGain(MyGUI::Widget*, MyGUI::Widget*)

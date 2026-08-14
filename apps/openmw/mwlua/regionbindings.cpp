@@ -46,7 +46,11 @@ namespace MWLua
         regionT["mapColor"] = sol::readonly_property(
             [](const ESM::Region& rec) -> Misc::Color { return Misc::Color::fromRGB(rec.mMapColor); });
         regionT["sleepList"]
+<<<<<<< HEAD
             = sol::readonly_property([](const ESM::Region& rec) -> ESM::RefId { return rec.mSleepList; });
+=======
+            = sol::readonly_property([](const ESM::Region& rec) { return LuaUtil::serializeRefId(rec.mSleepList); });
+>>>>>>> origin/main
 
         regionT["weatherProbabilities"] = sol::readonly_property([lua = lua.lua_state()](const ESM::Region& rec) {
             sol::table res(lua, sol::create);

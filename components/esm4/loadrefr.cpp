@@ -33,12 +33,19 @@
 
 void ESM4::Reference::load(ESM4::Reader& reader)
 {
+<<<<<<< HEAD
+=======
+    const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
+>>>>>>> origin/main
     mId = reader.hdr().record.getFormId();
     reader.adjustFormId(mId);
     mFlags = reader.hdr().record.flags;
     mParent = reader.currCell();
 
+<<<<<<< HEAD
     ESM::FormId mid;
+=======
+>>>>>>> origin/main
     ESM::FormId sid;
 
     while (reader.getSubRecordHeader())
@@ -199,6 +206,7 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 // std::cout << "REFR " << mEditorId << " XRTM : " << formIdToString(marker) << std::endl;// FIXME
                 break;
             }
+<<<<<<< HEAD
             case ESM::fourCC("TNAM"): // reader.get(mMapMarker); break;
             {
                 if (subHdr.dataSize != sizeof(mMapMarker))
@@ -206,6 +214,17 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                     reader.getFormId(mid);
                 else
                     reader.get(mMapMarker); // TES4
+=======
+            case ESM::fourCC("TNAM"):
+            {
+                if (subHdr.dataSize != 2)
+                    reader.skipSubRecordData();
+                else
+                {
+                    reader.get(mMapMarkerType);
+                    reader.skipSubRecordData(1);
+                }
+>>>>>>> origin/main
 
                 break;
             }
@@ -214,9 +233,16 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 break; // all have mBaseObj 0x00000010 "MapMarker"
             case ESM::fourCC("FNAM"):
             {
+<<<<<<< HEAD
                 // std::cout << "REFR " << ESM::printName(subHdr.typeId) << " skipping..."
                 // << subHdr.dataSize << std::endl;
                 reader.skipSubRecordData();
+=======
+                if (subHdr.dataSize == sizeof(mMapMarkerFlags))
+                    reader.get(mMapMarkerFlags);
+                else
+                    reader.skipSubRecordData();
+>>>>>>> origin/main
                 break;
             }
             case ESM::fourCC("XTRG"): // formId
@@ -225,6 +251,36 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 // std::cout << "REFR XRTG : " << formIdToString(id) << std::endl;// FIXME
                 break;
             }
+<<<<<<< HEAD
+=======
+            case ESM::fourCC("XLKR"):
+            {
+                if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.getFormId(mLinkedReference);
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("XPRD"):
+            {
+                if (subHdr.dataSize == sizeof(mPatrolIdleTime))
+                {
+                    reader.get(mPatrolIdleTime);
+                    mHasPatrolIdleTime = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("XPPA"):
+            {
+                if (subHdr.dataSize == 0)
+                    mIsPatrolIdleScriptMarker = true;
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+>>>>>>> origin/main
             case ESM::fourCC("CNAM"):
                 reader.getFormId(mAudioLocation);
                 break; // FONV
@@ -273,6 +329,24 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 reader.get(mCount);
                 break;
             }
+<<<<<<< HEAD
+=======
+            case ESM::fourCC("XPRM"):
+            {
+                constexpr std::uint32_t primitiveSize
+                    = sizeof(mPrimitive.mBounds) + sizeof(mPrimitive.mColor) + sizeof(mPrimitive.mType);
+                if (subHdr.dataSize == primitiveSize)
+                {
+                    reader.get(mPrimitive.mBounds.data(), sizeof(mPrimitive.mBounds));
+                    reader.get(mPrimitive.mColor.data(), sizeof(mPrimitive.mColor));
+                    reader.get(mPrimitive.mType);
+                    mHasPrimitive = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+>>>>>>> origin/main
             // lighting
             case ESM::fourCC("LNAM"): // lighting template formId
             case ESM::fourCC("XLIG"): // struct, FOV, fade, etc
@@ -286,7 +360,10 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XLCM"):
             case ESM::fourCC("ONAM"):
             case ESM::fourCC("VMAD"):
+<<<<<<< HEAD
             case ESM::fourCC("XPRM"):
+=======
+>>>>>>> origin/main
             case ESM::fourCC("INAM"):
             case ESM::fourCC("PDTO"):
             case ESM::fourCC("SCHR"):
@@ -302,7 +379,10 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XIS2"):
             case ESM::fourCC("XLCN"):
             case ESM::fourCC("XLIB"):
+<<<<<<< HEAD
             case ESM::fourCC("XLKR"):
+=======
+>>>>>>> origin/main
             case ESM::fourCC("XLRM"):
             case ESM::fourCC("XLRT"):
             case ESM::fourCC("XLTW"):
@@ -313,8 +393,11 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XOCP"):
             case ESM::fourCC("XPOD"):
             case ESM::fourCC("XPTL"):
+<<<<<<< HEAD
             case ESM::fourCC("XPPA"):
             case ESM::fourCC("XPRD"):
+=======
+>>>>>>> origin/main
             case ESM::fourCC("XPWR"):
             case ESM::fourCC("XRMR"):
             case ESM::fourCC("XSPC"):
@@ -364,9 +447,28 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
                 throw std::runtime_error("ESM4::REFR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadrefr"))
+                    break;
+                throw std::runtime_error("ESM4::REFR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
+        }
+    }
+    if (isStarfield)
+    {
+        // Starfield stores exterior placement coordinates in meter-like units. Its 128-unit cells map to the
+        // 4096-unit ESM4 cell used by OpenMW, so placed geometry and door destinations need the same 32x basis
+        // conversion as Starfield's external mesh vertices.
+        constexpr float starfieldWorldScale = 32.f;
+        for (float& value : mPos.pos)
+            value *= starfieldWorldScale;
+        for (float& value : mDoor.destPos.pos)
+            value *= starfieldWorldScale;
+    }
+>>>>>>> origin/main
     // if (mFormId == 0x0016B74B) // base is TACT vCasinoUltraLuxeRadio in cell ULCasino
     // std::cout << "REFR SCRO " << formIdToString(sid) << std::endl;
 }

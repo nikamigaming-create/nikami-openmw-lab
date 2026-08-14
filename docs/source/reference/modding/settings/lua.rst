@@ -24,7 +24,11 @@ Lua Settings
    :title: lua profiler
    :type: boolean
    :range: true, false
+<<<<<<< HEAD
    :default: false
+=======
+   :default: true
+>>>>>>> origin/main
 
    Enables Lua profiler.
 

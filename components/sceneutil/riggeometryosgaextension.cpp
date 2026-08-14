@@ -216,6 +216,15 @@ namespace SceneUtil
         return mGeometry.at(geometry).get();
     }
 
+<<<<<<< HEAD
+=======
+    void RigGeometryHolder::forceNextUpdate()
+    {
+        mLastFrameNumber = 0;
+        dirtyBound();
+    }
+
+>>>>>>> origin/main
     void RigGeometryHolder::updateBackToOriginTransform(OsgaRigGeometry* geometry)
     {
         osgAnimation::Skeleton* skeleton = geometry->getSkeleton();

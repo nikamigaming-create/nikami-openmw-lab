@@ -14,6 +14,10 @@
 #include <components/esm4/loadarma.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadaspc.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadavif.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>
@@ -26,6 +30,10 @@
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadeyes.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadfact.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadfurn.hpp>
@@ -58,11 +66,20 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadpack.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadperk.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadpgrd.hpp>
 #include <components/esm4/loadpgre.hpp>
 #include <components/esm4/loadpwat.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadrcct.hpp>
+#include <components/esm4/loadrcpe.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadregn.hpp>
 #include <components/esm4/loadroad.hpp>

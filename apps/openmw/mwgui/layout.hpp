@@ -35,10 +35,17 @@ namespace MWGui
             }
         }
 
+<<<<<<< HEAD
         MyGUI::Widget* getWidget(std::string_view name) const;
 
         template <typename T>
         void getWidget(T*& widget, std::string_view name) const
+=======
+        MyGUI::Widget* getWidget(std::string_view name);
+
+        template <typename T>
+        void getWidget(T*& widget, std::string_view name)
+>>>>>>> origin/main
         {
             MyGUI::Widget* w = getWidget(name);
             T* cast = w->castType<T>(false);
@@ -59,6 +66,12 @@ namespace MWGui
 
     public:
         void setCoord(int x, int y, int w, int h);
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        void setCoordf(float x, float y, float w, float h);
+//## VR_PATCH END
+>>>>>>> origin/main
 
         virtual void setVisible(bool b);
 

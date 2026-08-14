@@ -62,24 +62,41 @@ uniform int PointLightCount;
 float lcalcConstantAttenuation(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][0].w;
 #else
     return LightBuffer[lightIndex].attenuation.x;
+=======
+    return @getLight[lightIndex][0].w;
+#elif @lightingMethodUBO
+    return @getLight[lightIndex].attenuation.x;
+#else
+    return @getLight[lightIndex].constantAttenuation;
+>>>>>>> origin/main
 #endif
 }
 
 float lcalcLinearAttenuation(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][1].w;
 #else
     return LightBuffer[lightIndex].attenuation.y;
+=======
+    return @getLight[lightIndex][1].w;
+#elif @lightingMethodUBO
+    return @getLight[lightIndex].attenuation.y;
+#else
+    return @getLight[lightIndex].linearAttenuation;
+>>>>>>> origin/main
 #endif
 }
 
 float lcalcQuadraticAttenuation(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][2].w;
 #else
     return LightBuffer[lightIndex].attenuation.z;
@@ -94,11 +111,35 @@ float lcalcRadius(int lightIndex)
     return LightBuffer[lightIndex].attenuation.w;
 #endif
 }
+=======
+    return @getLight[lightIndex][2].w;
+#elif @lightingMethodUBO
+    return @getLight[lightIndex].attenuation.z;
+#else
+    return @getLight[lightIndex].quadraticAttenuation;
+#endif
+}
+
+#if !@lightingMethodFFP
+float lcalcRadius(int lightIndex)
+{
+#if @lightingMethodPerObjectUniform
+    return @getLight[lightIndex][3].w;
+#else
+    return @getLight[lightIndex].attenuation.w;
+#endif
+}
+#endif
+>>>>>>> origin/main
 
 float lcalcIllumination(int lightIndex, float dist)
 {
     float illumination = 1.0 / (lcalcConstantAttenuation(lightIndex) + lcalcLinearAttenuation(lightIndex) * dist + lcalcQuadraticAttenuation(lightIndex) * dist * dist);
+<<<<<<< HEAD
 #if !@classicFalloff
+=======
+#if !@classicFalloff && !@lightingMethodFFP
+>>>>>>> origin/main
     // Fade illumination between the radius and the radius doubled to diminish pop-in
     illumination *= 1.0 - quickstep((dist / lcalcRadius(lightIndex)) - 1.0);
 #endif
@@ -108,36 +149,66 @@ float lcalcIllumination(int lightIndex, float dist)
 vec3 lcalcPosition(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][0].xyz;
 #else
     return LightBuffer[lightIndex].position.xyz;
+=======
+    return @getLight[lightIndex][0].xyz;
+#else
+    return @getLight[lightIndex].position.xyz;
+>>>>>>> origin/main
 #endif
 }
 
 vec3 lcalcDiffuse(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][2].xyz;
 #else
     return unpackRGB(LightBuffer[lightIndex].packedColors.x) * float(LightBuffer[lightIndex].packedColors.w);
+=======
+    return @getLight[lightIndex][2].xyz;
+#elif @lightingMethodUBO
+    return unpackRGB(@getLight[lightIndex].packedColors.x) * float(@getLight[lightIndex].packedColors.w);
+#else
+    return @getLight[lightIndex].diffuse.xyz;
+>>>>>>> origin/main
 #endif
 }
 
 vec3 lcalcAmbient(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][1].xyz;
 #else
     return unpackRGB(LightBuffer[lightIndex].packedColors.y);
+=======
+    return @getLight[lightIndex][1].xyz;
+#elif @lightingMethodUBO
+    return unpackRGB(@getLight[lightIndex].packedColors.y);
+#else
+    return @getLight[lightIndex].ambient.xyz;
+>>>>>>> origin/main
 #endif
 }
 
 vec4 lcalcSpecular(int lightIndex)
 {
 #if @lightingMethodPerObjectUniform
+<<<<<<< HEAD
     return LightBuffer[lightIndex][3];
 #else
     return unpackRGBA(LightBuffer[lightIndex].packedColors.z);
+=======
+    return @getLight[lightIndex][3];
+#elif @lightingMethodUBO
+    return unpackRGBA(@getLight[lightIndex].packedColors.z);
+#else
+    return @getLight[lightIndex].specular;
+>>>>>>> origin/main
 #endif
 }
 

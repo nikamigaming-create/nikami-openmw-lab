@@ -1,6 +1,10 @@
 #include "videowidget.hpp"
 
+<<<<<<< HEAD
 #include <osg-ffmpeg-videoplayer/videoplayer.hpp>
+=======
+#include <extern/osg-ffmpeg-videoplayer/videoplayer.hpp>
+>>>>>>> origin/main
 
 #include <MyGUI_RenderManager.h>
 
@@ -31,6 +35,10 @@ namespace MWGui
 
     void VideoWidget::playVideo(const std::string& video)
     {
+<<<<<<< HEAD
+=======
+        Log(Debug::Info) << "FNV/ESM4 proof: playing movie \"" << video << "\"";
+>>>>>>> origin/main
         mPlayer->setAudioFactory(new MWSound::MovieAudioFactory());
 
         Files::IStreamPtr videoStream;
@@ -53,8 +61,12 @@ namespace MWGui
         mTexture = std::make_unique<MyGUIPlatform::OSGTexture>(texture);
 
         setRenderItemTexture(mTexture.get());
+<<<<<<< HEAD
         // Both the widget and the video frame are Y-down, so this UV is not inverted
         getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+=======
+        getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+>>>>>>> origin/main
     }
 
     int VideoWidget::getVideoWidth()

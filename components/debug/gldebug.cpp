@@ -273,8 +273,12 @@ namespace Debug
     void DebugGroup::push(osg::State& state) const
     {
         if (isValid())
+<<<<<<< HEAD
             PushDebugGroup::sInstance->glPushDebugGroup(
                 mSource, mId, static_cast<GLsizei>(mMessage.size()), mMessage.c_str());
+=======
+            PushDebugGroup::sInstance->glPushDebugGroup(mSource, mId, mMessage.size(), mMessage.c_str());
+>>>>>>> origin/main
     }
 
     void DebugGroup::pop(osg::State& state) const

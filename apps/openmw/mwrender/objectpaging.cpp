@@ -20,11 +20,19 @@
 #include <components/esm3/loaddoor.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm3/readerscache.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/common.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadstat.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadtact.hpp>
+>>>>>>> origin/main
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -45,11 +53,24 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 
+<<<<<<< HEAD
+=======
+#include "falloutlodselection.hpp"
+>>>>>>> origin/main
 #include "vismask.hpp"
 
 namespace MWRender
 {
 
+<<<<<<< HEAD
+=======
+    bool isObjectPagingChunkInsideActiveGrid(const osg::Vec2f& center, const osg::Vec4i& activeGrid)
+    {
+        return center.x() > activeGrid.x() && center.y() > activeGrid.y() && center.x() < activeGrid.z()
+            && center.y() < activeGrid.w();
+    }
+
+>>>>>>> origin/main
     namespace
     {
         bool typeFilter(int type, bool far)
@@ -67,6 +88,10 @@ namespace MWRender
                 case ESM::REC_ACTI4:
                 case ESM::REC_CONT4:
                 case ESM::REC_FURN4:
+<<<<<<< HEAD
+=======
+                case ESM::REC_TACT4:
+>>>>>>> origin/main
                     return !far;
 
                 default:
@@ -103,6 +128,11 @@ namespace MWRender
                     return getEsm4Model(store.get<ESM4::Tree>().searchStatic(id));
                 case ESM::REC_ACTI4:
                     return getEsm4Model(store.get<ESM4::Activator>().searchStatic(id));
+<<<<<<< HEAD
+=======
+                case ESM::REC_TACT4:
+                    return getEsm4Model(store.get<ESM4::TalkingActivator>().searchStatic(id));
+>>>>>>> origin/main
                 case ESM::REC_CONT4:
                     return getEsm4Model(store.get<ESM4::Container>().searchStatic(id));
                 case ESM::REC_FURN4:
@@ -111,6 +141,32 @@ namespace MWRender
                     return {};
             }
         }
+<<<<<<< HEAD
+=======
+
+        VFS::Path::Normalized correctEsm4StaticModelPath(
+            int type, VFS::Path::NormalizedView model, const VFS::Manager& vfs)
+        {
+            if (type == ESM::REC_TREE4 && Misc::getFileExtension(model.value()) == "spt")
+            {
+                if (vfs.exists(model))
+                    return VFS::Path::Normalized(model);
+
+                const std::string_view value = model.value();
+                const std::size_t pos = value.find_last_of('/');
+                const std::string_view filename = pos == std::string_view::npos ? value : value.substr(pos + 1);
+                std::string treePathValue("trees/");
+                treePathValue.append(filename);
+                const VFS::Path::Normalized treePath(treePathValue);
+                if (vfs.exists(treePath))
+                    return treePath;
+
+                return VFS::Path::Normalized(model);
+            }
+
+            return Misc::ResourceHelpers::correctMeshPath(model);
+        }
+>>>>>>> origin/main
     }
 
     osg::ref_ptr<osg::Node> ObjectPaging::getChunk(float size, const osg::Vec2f& center, unsigned char /*lod*/,
@@ -517,6 +573,10 @@ namespace MWRender
         {
             ESM::RefId mRefId;
             ESM::RefNum mRefNum;
+<<<<<<< HEAD
+=======
+            std::uint32_t mRecordFlags;
+>>>>>>> origin/main
             osg::Vec3f mPosition;
             osg::Vec3f mRotation;
             float mScale;
@@ -527,6 +587,10 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mRefID,
                 .mRefNum = value.mRefNum,
+<<<<<<< HEAD
+=======
+                .mRecordFlags = 0,
+>>>>>>> origin/main
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -538,6 +602,10 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mBaseObj,
                 .mRefNum = value.mId,
+<<<<<<< HEAD
+=======
+                .mRecordFlags = value.mFlags,
+>>>>>>> origin/main
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -627,7 +695,11 @@ namespace MWRender
                         continue;
                     for (const ESM4::Reference* ref4 : store.get<ESM4::Reference>().getByCell(cell->mId))
                     {
+<<<<<<< HEAD
                         if (ref4->mFlags & ESM4::Rec_Disabled)
+=======
+                        if (!isEsm4ReferenceEnabledForPaging(ref4->mFlags))
+>>>>>>> origin/main
                             continue;
                         int type = store.findStatic(ref4->mBaseObj);
                         if (!typeFilter(type, size >= 2))
@@ -727,6 +799,23 @@ namespace MWRender
                     continue;
             }
 
+<<<<<<< HEAD
+=======
+            int esmVersion = 0;
+            bool falloutNewVegas = false;
+            if (!activeGrid)
+            {
+                esmVersion = world.getESMVersions()[refNum.mContentFile];
+                falloutNewVegas = isFalloutNewVegasVersion(esmVersion);
+                if (falloutNewVegas
+                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, false)
+                        == FalloutDistantReferenceSelection::Skip)
+                {
+                    continue;
+                }
+            }
+
+>>>>>>> origin/main
             const float dSqr = (viewPoint - ref.mPosition).length2();
             if (!activeGrid)
             {
@@ -743,17 +832,28 @@ namespace MWRender
             VFS::Path::Normalized model(getModel(type, ref.mRefId, store));
             if (model.empty())
                 continue;
+<<<<<<< HEAD
             model = Misc::ResourceHelpers::correctMeshPath(model);
+=======
+            model = correctEsm4StaticModelPath(type, model, *mSceneManager->getVFS());
+>>>>>>> origin/main
 
             if (activeGrid && type != ESM::REC_STAT && type != ESM::REC_STAT4)
             {
                 model = Misc::ResourceHelpers::correctActorModelPath(model, mSceneManager->getVFS());
+<<<<<<< HEAD
                 constexpr VFS::Path::ExtensionView nif("nif");
                 if (model.extension() == nif)
                 {
                     VFS::Path::Normalized kfname = model;
                     constexpr VFS::Path::ExtensionView kf("kf");
                     kfname.changeExtension(kf);
+=======
+                if (Misc::getFileExtension(model.value()) == "nif")
+                {
+                    VFS::Path::Normalized kfname = model;
+                    kfname.changeExtension("kf");
+>>>>>>> origin/main
                     if (mSceneManager->getVFS()->exists(kfname))
                         continue;
                 }
@@ -761,6 +861,7 @@ namespace MWRender
 
             if (!activeGrid)
             {
+<<<<<<< HEAD
                 std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
                 LODNameCacheKey key{ model, lod };
                 LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
@@ -772,6 +873,30 @@ namespace MWRender
                                     Misc::ResourceHelpers::getLODMeshName(world.getESMVersions()[refNum.mContentFile],
                                         model, *mSceneManager->getVFS(), lod))
                                 ->second;
+=======
+                const VFS::Path::Normalized baseModel = model;
+
+                {
+                    std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
+                    LODNameCacheKey key{ model, lod };
+                    LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
+                    if (found != mLODNameCache.end() && found->first == key)
+                        model = found->second;
+                    else
+                        model = mLODNameCache
+                                    .emplace_hint(found, std::move(key),
+                                        Misc::ResourceHelpers::getLODMeshName(
+                                            esmVersion, model, *mSceneManager->getVFS(), lod))
+                                    ->second;
+                }
+
+                if (falloutNewVegas
+                    && selectFalloutNewVegasDistantReference(ref.mRecordFlags, false, model != baseModel)
+                        == FalloutDistantReferenceSelection::FullModel)
+                {
+                    model = baseModel;
+                }
+>>>>>>> origin/main
             }
 
             osg::ref_ptr<const osg::Node> cnode = mSceneManager->getTemplate(model, false);
@@ -1113,8 +1238,12 @@ namespace MWRender
                 if (!std::get<2>(chunkId))
                     return;
                 const osg::Vec2f& center = std::get<0>(chunkId);
+<<<<<<< HEAD
                 const bool activeGrid = (center.x() > mActiveGrid.x() || center.y() > mActiveGrid.y()
                     || center.x() < mActiveGrid.z() || center.y() < mActiveGrid.w());
+=======
+                const bool activeGrid = isObjectPagingChunkInsideActiveGrid(center, mActiveGrid);
+>>>>>>> origin/main
                 if (!activeGrid)
                     return;
 

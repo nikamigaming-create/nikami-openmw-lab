@@ -31,11 +31,31 @@ namespace MWLua
         {
             ESM::RefNum mObject;
         };
+<<<<<<< HEAD
+=======
+        struct OnReset
+        {
+            ESM::RefNum mObject;
+        };
+>>>>>>> origin/main
         struct OnActivate
         {
             ESM::RefNum mActor;
             ESM::RefNum mObject;
         };
+<<<<<<< HEAD
+=======
+        struct OnTriggerEnter
+        {
+            ESM::RefNum mActor;
+            ESM::RefNum mObject;
+        };
+        struct OnTriggerLeave
+        {
+            ESM::RefNum mActor;
+            ESM::RefNum mObject;
+        };
+>>>>>>> origin/main
         struct OnUseItem
         {
             ESM::RefNum mActor;
@@ -57,6 +77,7 @@ namespace MWLua
             std::string mGroupname;
             std::string mKey;
         };
+<<<<<<< HEAD
         struct OnAnimationEnded
         {
             ESM::RefNum mActor;
@@ -66,6 +87,8 @@ namespace MWLua
             float mTime;
             float mCompletion;
         };
+=======
+>>>>>>> origin/main
         struct OnSkillUse
         {
             ESM::RefNum mActor;
@@ -84,8 +107,14 @@ namespace MWLua
             ESM::RefNum mActor;
             int mDays;
         };
+<<<<<<< HEAD
         using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnUseItem, OnNewExterior, OnTeleported,
             OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed>;
+=======
+        using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnTriggerEnter, OnTriggerLeave,
+            OnUseItem, OnNewExterior, OnTeleported, OnReset, OnAnimationTextKey, OnSkillUse, OnSkillLevelUp,
+            OnJailTimeServed>;
+>>>>>>> origin/main
 
         void clear() { mQueue.clear(); }
         void addToQueue(Event e) { mQueue.push_back(std::move(e)); }

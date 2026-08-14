@@ -48,7 +48,11 @@ namespace
         EXPECT_EQ(LuaUtil::scriptCfgToString(cfg.mScripts[5]), "CUSTOM CREATURE : my_mod/creature.lua");
 
         LuaUtil::ScriptsConfiguration conf;
+<<<<<<< HEAD
         conf.init(std::move(cfg), false);
+=======
+        conf.init(std::move(cfg));
+>>>>>>> origin/main
         ASSERT_EQ(conf.size(), 4);
         EXPECT_EQ(LuaUtil::scriptCfgToString(conf[0]), "GLOBAL : my_mod/#some_global_script.lua");
         // cfg.mScripts[1] is overridden by cfg.mScripts[4]
@@ -68,7 +72,11 @@ namespace
 
         // Check that initialization cleans old data
         cfg = ESM::LuaScriptsCfg();
+<<<<<<< HEAD
         conf.init(std::move(cfg), false);
+=======
+        conf.init(std::move(cfg));
+>>>>>>> origin/main
         EXPECT_EQ(conf.size(), 0);
     }
 
@@ -82,7 +90,11 @@ namespace
         cfg.mScripts.clear();
         EXPECT_NO_THROW(LuaUtil::parseOMWScripts(cfg, "GLOBAL, PLAYER: something.lua"));
         LuaUtil::ScriptsConfiguration conf;
+<<<<<<< HEAD
         EXPECT_ERROR(conf.init(std::move(cfg), false), "Global script can not have local flags");
+=======
+        EXPECT_ERROR(conf.init(std::move(cfg)), "Global script can not have local flags");
+>>>>>>> origin/main
     }
 
     TEST(LuaConfigurationTest, ConfInit)
@@ -112,7 +124,11 @@ namespace
         script1Extra.mRefs.push_back({ false, 2, 3, "" });
 
         LuaUtil::ScriptsConfiguration conf;
+<<<<<<< HEAD
         conf.init(cfg, false);
+=======
+        conf.init(cfg);
+>>>>>>> origin/main
         ASSERT_EQ(conf.size(), 2);
         EXPECT_EQ(LuaUtil::scriptCfgToString(conf[0]),
             "CUSTOM PLAYER CREATURE NPC : script1.lua ; data 5 bytes ; 3 records ; 4 objects");
@@ -141,7 +157,11 @@ namespace
         ESM::LuaScriptCfg& script3 = cfg.mScripts.emplace_back();
         script3.mScriptPath = VFS::Path::Normalized("script1.lua");
         script3.mFlags = ESM::LuaScriptCfg::sGlobal;
+<<<<<<< HEAD
         EXPECT_ERROR(conf.init(cfg, false), "Flags mismatch for script1.lua");
+=======
+        EXPECT_ERROR(conf.init(cfg), "Flags mismatch for script1.lua");
+>>>>>>> origin/main
     }
 
     TEST(LuaConfigurationTest, Serialization)

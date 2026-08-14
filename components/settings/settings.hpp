@@ -38,6 +38,13 @@ namespace Settings
     public:
         static CategorySettingValueMap mDefaultSettings;
         static CategorySettingValueMap mUserSettings;
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// Some settings/features should be overridden/disabled in VR
+        static CategorySettingValueMap mSettingsOverrides;
+//## VR_PATCH END
+>>>>>>> origin/main
 
         static CategorySettingVector mChangedSettings;
         ///< tracks all the settings that were changed since the last apply() call

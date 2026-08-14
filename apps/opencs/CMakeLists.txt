@@ -80,7 +80,11 @@ opencs_units (view/world
     )
 
 opencs_units (view/widget
+<<<<<<< HEAD
     scenetoolbar scenetool scenetoolmode pushbutton scenetooltoggle scenetoolrun modebutton scenetoolvertexpaintbrush
+=======
+    scenetoolbar scenetool scenetoolmode pushbutton scenetooltoggle scenetoolrun modebutton
+>>>>>>> origin/main
     scenetooltoggle2 scenetooltexturebrush scenetoolshapebrush completerpopup coloreditor colorpickerpopup droplineedit
     )
 
@@ -88,11 +92,20 @@ opencs_units (view/render
     scenewidget worldspacewidget pagedworldspacewidget unpagedworldspacewidget
     previewwidget editmode instancemode instanceselectionmode instancemovemode
     orbitcameramode pathgridmode selectionmode pathgridselectionmode cameracontroller
+<<<<<<< HEAD
     cellwater terraintexturemode terrainvertexpaintmode actor terrainselection terrainshapemode brushdraw commands objectmarker
     )
 
 opencs_units (view/render
     object cell terrainstorage cellarrow cellmarker cellborder pathgrid
+=======
+    cellwater terraintexturemode actor terrainselection terrainshapemode brushdraw commands objectmarker
+    )
+
+opencs_units (view/render
+    lighting lightingday lightingnight lightingbright object cell terrainstorage
+    cellarrow cellmarker cellborder pathgrid
+>>>>>>> origin/main
     )
 
 opencs_hdrs (view/render
@@ -246,7 +259,11 @@ target_link_libraries(openmw-cs-lib
 target_link_libraries(openmw-cs-lib Qt::Widgets Qt::Core Qt::Network Qt::OpenGL Qt::OpenGLWidgets Qt::Svg)
 
 if (WIN32)
+<<<<<<< HEAD
     target_sources(openmw-cs PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
+=======
+    target_sources(openmw-cs PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/openmw-cs.exe.manifest)
+>>>>>>> origin/main
 endif()
 
 if (WIN32 AND BUILD_OPENCS)

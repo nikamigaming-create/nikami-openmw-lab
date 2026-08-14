@@ -73,6 +73,20 @@ namespace CSMWorld
         return ESM::RefId::stringRefId(Land::createUniqueRecordId(record.mX, record.mY));
     }
 
+<<<<<<< HEAD
+=======
+    inline ESM::RefId getRecordId(const ESM::MagicEffect& record)
+    {
+        return ESM::RefId::stringRefId(CSMWorld::getStringId(record.mId));
+    }
+
+    inline void setRecordId(const ESM::RefId& id, ESM::MagicEffect& record)
+    {
+        int index = ESM::MagicEffect::indexNameToIndex(id.getRefIdString());
+        record.mId = ESM::RefId::index(ESM::REC_MGEF, static_cast<std::uint32_t>(index));
+    }
+
+>>>>>>> origin/main
     inline void setRecordId(const ESM::RefId& id, ESM::Skill& record)
     {
         if (const auto* skillId = id.getIf<ESM::SkillId>())
@@ -275,6 +289,8 @@ namespace CSMWorld
 
     template <typename ESXRecordT>
     int Collection<ESXRecordT>::touchRecordImp(const ESM::RefId& id)
+<<<<<<< HEAD
+=======
     {
         const int index = getIndex(id);
         Record<ESXRecordT>& record = *mRecords.at(index);
@@ -292,6 +308,112 @@ namespace CSMWorld
     }
 
     template <typename ESXRecordT>
+    void Collection<ESXRecordT>::cloneRecord(
+        const ESM::RefId& origin, const ESM::RefId& destination, const UniversalId::Type type)
+    {
+        cloneRecordImp(origin, destination, type);
+    }
+
+    template <>
+    inline void Collection<Land>::cloneRecord(
+        const ESM::RefId& origin, const ESM::RefId& destination, const UniversalId::Type type)
+    {
+        const int index = cloneRecordImp(origin, destination, type);
+        mRecords.at(index)->get().setPlugin(-1);
+    }
+
+    template <typename ESXRecordT>
+    bool Collection<ESXRecordT>::touchRecord(const ESM::RefId& id)
+    {
+        return touchRecordImp(id) != -1;
+    }
+
+    template <>
+    inline bool Collection<Land>::touchRecord(const ESM::RefId& id)
+    {
+        const int index = touchRecordImp(id);
+        if (index >= 0)
+        {
+            mRecords.at(index)->get().setPlugin(-1);
+            return true;
+        }
+
+        return false;
+    }
+
+    template <typename ESXRecordT>
+    Collection<ESXRecordT>::~Collection()
+    {
+        for (typename std::vector<Column<ESXRecordT>*>::iterator iter(mColumns.begin()); iter != mColumns.end(); ++iter)
+            delete *iter;
+    }
+
+    template <typename ESXRecordT>
+    void Collection<ESXRecordT>::add(const ESXRecordT& record)
+    {
+        const ESM::RefId id = getRecordId(record);
+
+        auto iter = mIndex.find(id);
+
+        if (iter == mIndex.end())
+        {
+            auto record2 = std::make_unique<Record<ESXRecordT>>();
+            record2->mState = Record<ESXRecordT>::State_ModifiedOnly;
+            record2->mModified = record;
+
+            insertRecord(std::move(record2), getAppendIndex(id));
+        }
+        else
+        {
+            mRecords[iter->second]->setModified(record);
+        }
+    }
+
+    template <typename ESXRecordT>
+    int Collection<ESXRecordT>::getSize() const
+    {
+        return mRecords.size();
+    }
+
+    template <typename ESXRecordT>
+    ESM::RefId Collection<ESXRecordT>::getId(int index) const
+    {
+        return getRecordId(mRecords.at(index)->get());
+    }
+
+    template <typename ESXRecordT>
+    int Collection<ESXRecordT>::getIndex(const ESM::RefId& id) const
+    {
+        int index = searchId(id);
+
+        if (index == -1)
+            throw std::runtime_error("ID is not found in collection of " + std::string(ESXRecordT::getRecordType())
+                + " records: " + id.getRefIdString());
+
+        return index;
+    }
+
+    template <typename ESXRecordT>
+    int Collection<ESXRecordT>::getColumns() const
+>>>>>>> origin/main
+    {
+        const int index = getIndex(id);
+        Record<ESXRecordT>& record = *mRecords.at(index);
+        if (record.isDeleted())
+            throw std::runtime_error("attempt to touch deleted record from collection of "
+                + std::string(ESXRecordT::getRecordType()) + ": " + id.toDebugString());
+
+        if (!record.isModified())
+        {
+            record.setModified(record.get());
+            return index;
+        }
+
+        return -1;
+    }
+
+    template <typename ESXRecordT>
+<<<<<<< HEAD
     void Collection<ESXRecordT>::cloneRecord(
         const ESM::RefId& origin, const ESM::RefId& destination, const UniversalId::Type type)
     {
@@ -414,6 +536,38 @@ namespace CSMWorld
     template <typename ESXRecordT>
     void Collection<ESXRecordT>::addColumn(Column<ESXRecordT>* column)
     {
+=======
+    QVariant Collection<ESXRecordT>::getData(int index, int column) const
+    {
+        return mColumns.at(column)->get(*mRecords.at(index));
+    }
+
+    template <typename ESXRecordT>
+    void Collection<ESXRecordT>::setData(int index, int column, const QVariant& data)
+    {
+        return mColumns.at(column)->set(*mRecords.at(index), data);
+    }
+
+    template <typename ESXRecordT>
+    const ColumnBase& Collection<ESXRecordT>::getColumn(int column) const
+    {
+        return *mColumns.at(column);
+    }
+
+    template <typename ESXRecordT>
+    NestableColumn* Collection<ESXRecordT>::getNestableColumn(int column) const
+    {
+        if (column < 0 || column >= static_cast<int>(mColumns.size()))
+            throw std::runtime_error(
+                "column index out of range [0, " + std::to_string(mColumns.size()) + "): " + std::to_string(column));
+
+        return mColumns.at(column);
+    }
+
+    template <typename ESXRecordT>
+    void Collection<ESXRecordT>::addColumn(Column<ESXRecordT>* column)
+    {
+>>>>>>> origin/main
         mColumns.push_back(column);
     }
 

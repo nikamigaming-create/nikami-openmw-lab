@@ -66,6 +66,13 @@ namespace MWGui
         virtual MWWorld::Ptr moveItem(
             const ItemStack& item, size_t count, ItemModel* otherModel, bool allowAutoEquip = true);
 
+<<<<<<< HEAD
+=======
+        virtual MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
+        virtual MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
+        virtual void removeItem(const ItemStack& item, size_t count) = 0;
+
+>>>>>>> origin/main
         /// Is the player allowed to use items from this item model? (default true)
         virtual bool allowedToUseItems() const;
         virtual void onClose() {}
@@ -73,12 +80,15 @@ namespace MWGui
         virtual bool onTakeItem(const MWWorld::Ptr& item, int count);
 
         virtual bool usesContainer(const MWWorld::Ptr& container) = 0;
+<<<<<<< HEAD
 
     protected:
         virtual MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
         virtual MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
         virtual void removeItem(const ItemStack& item, size_t count) = 0;
         friend class ProxyItemModel;
+=======
+>>>>>>> origin/main
 
     private:
         ItemModel(const ItemModel&);
@@ -99,6 +109,12 @@ namespace MWGui
         bool onDropItem(const MWWorld::Ptr& item, int count) override;
         bool onTakeItem(const MWWorld::Ptr& item, int count) override;
 
+<<<<<<< HEAD
+=======
+        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        void removeItem(const ItemStack& item, size_t count) override;
+>>>>>>> origin/main
         ModelIndex getIndex(const ItemStack& item) override;
 
         /// @note Takes ownership of the passed pointer.
@@ -110,11 +126,14 @@ namespace MWGui
         bool usesContainer(const MWWorld::Ptr& container) override;
 
     protected:
+<<<<<<< HEAD
         MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
         MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
         void removeItem(const ItemStack& item, size_t count) override;
 
     protected:
+=======
+>>>>>>> origin/main
         std::unique_ptr<ItemModel> mSourceModel;
     };
 

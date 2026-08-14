@@ -39,7 +39,11 @@
 #include "mergestages.hpp"
 
 CSMTools::MergeOperation::MergeOperation(CSMDoc::Document& document, ToUTF8::FromType encoding)
+<<<<<<< HEAD
     : CSMDoc::Operation(CSMDoc::State_Merging)
+=======
+    : CSMDoc::Operation(CSMDoc::State_Merging, true)
+>>>>>>> origin/main
     , mState(document)
 {
     appendStage(new StartMergeStage(mState));

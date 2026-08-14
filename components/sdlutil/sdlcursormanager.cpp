@@ -119,7 +119,11 @@ namespace SDLUtil
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
         SDL_Texture* cursorTexture = SDL_CreateTextureFromSurface(renderer, cursorSurface);
 
+<<<<<<< HEAD
         SDL_RenderCopyEx(renderer, cursorTexture, nullptr, nullptr, -rotDegrees, nullptr, SDL_FLIP_NONE);
+=======
+        SDL_RenderCopyEx(renderer, cursorTexture, nullptr, nullptr, -rotDegrees, nullptr, SDL_FLIP_VERTICAL);
+>>>>>>> origin/main
 
         SDL_DestroyTexture(cursorTexture);
         SDL_FreeSurface(cursorSurface);

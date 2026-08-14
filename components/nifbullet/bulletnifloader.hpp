@@ -49,6 +49,10 @@ namespace NifBullet
 
     private:
         bool findBoundingBox(const Nif::NiAVObject& node);
+<<<<<<< HEAD
+=======
+        bool findBSBound(const Nif::NiAVObject& node);
+>>>>>>> origin/main
 
         struct HandleNodeArgs
         {

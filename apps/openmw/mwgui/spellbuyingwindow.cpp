@@ -240,7 +240,10 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_B)
         {
             onCancelButtonClicked(mCancelButton);
+<<<<<<< HEAD
             return true;
+=======
+>>>>>>> origin/main
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
         {
@@ -255,7 +258,11 @@ namespace MWGui
                 return true;
 
             mSpellButtons[mControllerFocus].first->setStateSelected(false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mSpellButtons.size());
+>>>>>>> origin/main
             mSpellButtons[mControllerFocus].first->setStateSelected(true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
@@ -266,7 +273,11 @@ namespace MWGui
                 return true;
 
             mSpellButtons[mControllerFocus].first->setStateSelected(false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mSpellButtons.size());
+>>>>>>> origin/main
             mSpellButtons[mControllerFocus].first->setStateSelected(true);
         }
         else
@@ -281,7 +292,11 @@ namespace MWGui
             else
             {
                 const int lineHeight = Settings::gui().mFontSize + 2;
+<<<<<<< HEAD
                 mSpellsView->setViewOffset(MyGUI::IntPoint(0, -lineHeight * static_cast<int>(line - 5)));
+=======
+                mSpellsView->setViewOffset(MyGUI::IntPoint(0, -lineHeight * (line - 5)));
+>>>>>>> origin/main
             }
 
             // Warp the mouse to the selected spell to show the tooltip

@@ -95,7 +95,11 @@ namespace
             if (stateset)
             {
                 const osg::StateSet::TextureAttributeList& texAttributes = stateset->getTextureAttributeList();
+<<<<<<< HEAD
                 for (unsigned i = 0; i < static_cast<unsigned>(texAttributes.size()); i++)
+=======
+                for (size_t i = 0; i < texAttributes.size(); i++)
+>>>>>>> origin/main
                 {
                     const osg::StateAttribute* attr = stateset->getTextureAttribute(i, osg::StateAttribute::TEXTURE);
                     if (!attr)
@@ -115,7 +119,11 @@ namespace
         }
     };
 
+<<<<<<< HEAD
     void addToLevList(ESM::LevelledListBase* list, const ESM::RefId& itemId, uint16_t level)
+=======
+    void addToLevList(ESM::LevelledListBase* list, const ESM::RefId& itemId, int level)
+>>>>>>> origin/main
     {
         for (auto& levelItem : list->mList)
         {
@@ -613,6 +621,7 @@ namespace MWScript
                     return;
                 }
 
+<<<<<<< HEAD
                 ESM::RefId key;
 
                 if (const auto k = ::Misc::StringUtils::toNumeric<long>(effectName);
@@ -620,6 +629,15 @@ namespace MWScript
                     key = ESM::MagicEffect::indexToRefId(*k);
                 else
                     key = ESM::MagicEffect::effectGmstIdToRefId(effectName);
+=======
+                long key;
+
+                if (const auto k = ::Misc::StringUtils::toNumeric<long>(effectName);
+                    k.has_value() && *k >= 0 && *k <= 32767)
+                    key = *k;
+                else
+                    key = ESM::MagicEffect::effectGmstIdToIndex(effectName);
+>>>>>>> origin/main
 
                 const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
                 for (const auto& spell : stats.getActiveSpells())
@@ -1578,7 +1596,11 @@ namespace MWScript
 
                 ESM::CreatureLevList listCopy
                     = *MWBase::Environment::get().getESMStore()->get<ESM::CreatureLevList>().find(levId);
+<<<<<<< HEAD
                 addToLevList(&listCopy, creatureId, static_cast<uint16_t>(level));
+=======
+                addToLevList(&listCopy, creatureId, level);
+>>>>>>> origin/main
                 MWBase::Environment::get().getESMStore()->overrideRecord(listCopy);
             }
         };
@@ -1616,7 +1638,11 @@ namespace MWScript
 
                 ESM::ItemLevList listCopy
                     = *MWBase::Environment::get().getESMStore()->get<ESM::ItemLevList>().find(levId);
+<<<<<<< HEAD
                 addToLevList(&listCopy, itemId, static_cast<uint16_t>(level));
+=======
+                addToLevList(&listCopy, itemId, level);
+>>>>>>> origin/main
                 MWBase::Environment::get().getESMStore()->overrideRecord(listCopy);
             }
         };

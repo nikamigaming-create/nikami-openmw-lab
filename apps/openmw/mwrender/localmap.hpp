@@ -88,9 +88,15 @@ namespace MWRender
         /**
          * Get the interior map texture index and normalized position on this texture, given a world position
          */
+<<<<<<< HEAD
         void worldToInteriorMapPosition(osg::Vec2f pos, float& nX, float& nY, int& x, int& y) const;
 
         osg::Vec2f interiorMapToWorldPosition(float nX, float nY, int x, int y) const;
+=======
+        void worldToInteriorMapPosition(osg::Vec2f pos, float& nX, float& nY, int& x, int& y);
+
+        osg::Vec2f interiorMapToWorldPosition(float nX, float nY, int x, int y);
+>>>>>>> origin/main
 
         /**
          * Check if a given position is explored by the player (i.e. not obscured by fog of war)
@@ -144,12 +150,20 @@ namespace MWRender
         static const int sFogOfWarResolution = 32;
 
         // size of a map segment (for exteriors, 1 cell)
+<<<<<<< HEAD
         int mMapWorldSize;
+=======
+        float mMapWorldSize;
+>>>>>>> origin/main
 
         int mCellDistance;
 
         float mAngle;
+<<<<<<< HEAD
         const osg::Vec2f rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle) const;
+=======
+        const osg::Vec2f rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle);
+>>>>>>> origin/main
 
         void requestExteriorMap(const MWWorld::CellStore* cell, MapSegment& segment);
         void requestInteriorMap(const MWWorld::CellStore* cell);

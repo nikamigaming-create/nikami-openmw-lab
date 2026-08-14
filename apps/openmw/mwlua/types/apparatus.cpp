@@ -42,10 +42,18 @@ namespace MWLua
             = sol::readonly_property([](const ESM::Apparatus& rec) -> std::string { return rec.mId.serializeText(); });
         record["name"] = sol::readonly_property([](const ESM::Apparatus& rec) -> std::string { return rec.mName; });
         addModelProperty(record);
+<<<<<<< HEAD
         record["mwscript"]
             = sol::readonly_property([](const ESM::Apparatus& rec) -> ESM::RefId { return rec.mScript; });
         record["icon"] = sol::readonly_property([vfs](const ESM::Apparatus& rec) -> std::string {
             return Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(rec.mIcon), *vfs);
+=======
+        record["mwscript"] = sol::readonly_property([](const ESM::Apparatus& rec) -> sol::optional<std::string> {
+            return LuaUtil::serializeRefId(rec.mScript);
+        });
+        record["icon"] = sol::readonly_property([vfs](const ESM::Apparatus& rec) -> std::string {
+            return Misc::ResourceHelpers::correctIconPath(rec.mIcon, vfs);
+>>>>>>> origin/main
         });
         record["type"] = sol::readonly_property([](const ESM::Apparatus& rec) -> int { return rec.mData.mType; });
         record["value"] = sol::readonly_property([](const ESM::Apparatus& rec) -> int { return rec.mData.mValue; });
@@ -53,4 +61,8 @@ namespace MWLua
         record["quality"]
             = sol::readonly_property([](const ESM::Apparatus& rec) -> float { return rec.mData.mQuality; });
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/main

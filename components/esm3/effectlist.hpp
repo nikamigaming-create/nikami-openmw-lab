@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <vector>
 
+<<<<<<< HEAD
 #include <components/esm/refid.hpp>
 
+=======
+>>>>>>> origin/main
 namespace ESM
 {
     class ESMReader;
@@ -16,12 +19,21 @@ namespace ESM
      */
     struct ENAMstruct
     {
+<<<<<<< HEAD
         // Magical effect, serialized to int16
         ESM::RefId mEffectID;
 
         // Which skills/attributes are affected (for restore/drain spells
         // etc.)
         ESM::RefId mSkill, mAttribute; // EmptyRefId if N/A
+=======
+        // Magical effect, hard-coded ID
+        int16_t mEffectID;
+
+        // Which skills/attributes are affected (for restore/drain spells
+        // etc.)
+        signed char mSkill, mAttribute; // -1 if N/A
+>>>>>>> origin/main
 
         // Other spell parameters
         int32_t mRange; // 0 - self, 1 - touch, 2 - target (RangeType enum)

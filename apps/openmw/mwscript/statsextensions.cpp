@@ -4,6 +4,11 @@
 
 #include <components/esm3/loadcrea.hpp>
 #include <components/esm3/loadnpc.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+>>>>>>> origin/main
 
 #include "../mwworld/esmstore.hpp"
 
@@ -580,8 +585,12 @@ namespace MWScript
                 runtime.pop();
 
                 if (ptr.getClass().isActor())
+<<<<<<< HEAD
                     ptr.getClass().getCreatureStats(ptr).getActiveSpells().purgeEffect(
                         ptr, ESM::MagicEffect::indexToRefId(static_cast<int>(effectId)));
+=======
+                    ptr.getClass().getCreatureStats(ptr).getActiveSpells().purgeEffect(ptr, effectId);
+>>>>>>> origin/main
             }
         };
 
@@ -1226,10 +1235,30 @@ namespace MWScript
                     MWBase::Environment::get().getWorld()->disable(ptr);
                     // The actor's base record may have changed after this specific reference was created.
                     // So we need to update to the current version
+<<<<<<< HEAD
                     if (ptr.getClass().isNpc())
                         updateBaseRecord<ESM::NPC>(ptr);
                     else
                         updateBaseRecord<ESM::Creature>(ptr);
+=======
+                    switch (ptr.getType())
+                    {
+                        case ESM::REC_NPC_:
+                            updateBaseRecord<ESM::NPC>(ptr);
+                            break;
+                        case ESM::REC_CREA:
+                            updateBaseRecord<ESM::Creature>(ptr);
+                            break;
+                        case ESM::REC_NPC_4:
+                            updateBaseRecord<ESM4::Npc>(ptr);
+                            break;
+                        case ESM::REC_CREA4:
+                            updateBaseRecord<ESM4::Creature>(ptr);
+                            break;
+                        default:
+                            throw std::runtime_error("unsupported actor record type in resurrect");
+                    }
+>>>>>>> origin/main
                     if (wasOpen && !windowManager->containsMode(MWGui::GM_Container))
                     {
                         // Reopen the loot GUI if it was closed because we resurrected the actor we were looting
@@ -1268,8 +1297,13 @@ namespace MWScript
 
         public:
             OpGetMagicEffect(int positiveEffect, int negativeEffect)
+<<<<<<< HEAD
                 : mPositiveEffect(ESM::MagicEffect::indexToRefId(positiveEffect))
                 , mNegativeEffect(ESM::MagicEffect::indexToRefId(negativeEffect))
+=======
+                : mPositiveEffect(positiveEffect)
+                , mNegativeEffect(negativeEffect)
+>>>>>>> origin/main
             {
             }
 
@@ -1285,7 +1319,11 @@ namespace MWScript
 
                 const MWMechanics::MagicEffects& effects = ptr.getClass().getCreatureStats(ptr).getMagicEffects();
                 float currentValue = effects.getOrDefault(mPositiveEffect).getMagnitude();
+<<<<<<< HEAD
                 if (!mNegativeEffect.empty())
+=======
+                if (mNegativeEffect != -1)
+>>>>>>> origin/main
                     currentValue -= effects.getOrDefault(mNegativeEffect).getMagnitude();
 
                 // GetResist* should take in account elemental shields
@@ -1309,8 +1347,13 @@ namespace MWScript
 
         public:
             OpSetMagicEffect(int positiveEffect, int negativeEffect)
+<<<<<<< HEAD
                 : mPositiveEffect(ESM::MagicEffect::indexToRefId(positiveEffect))
                 , mNegativeEffect(ESM::MagicEffect::indexToRefId(negativeEffect))
+=======
+                : mPositiveEffect(positiveEffect)
+                , mNegativeEffect(negativeEffect)
+>>>>>>> origin/main
             {
             }
 
@@ -1326,7 +1369,11 @@ namespace MWScript
 
                 MWMechanics::MagicEffects& effects = ptr.getClass().getCreatureStats(ptr).getMagicEffects();
                 float currentValue = effects.getOrDefault(mPositiveEffect).getMagnitude();
+<<<<<<< HEAD
                 if (!mNegativeEffect.empty())
+=======
+                if (mNegativeEffect != -1)
+>>>>>>> origin/main
                     currentValue -= effects.getOrDefault(mNegativeEffect).getMagnitude();
 
                 // SetResist* should take in account elemental shields
@@ -1349,8 +1396,13 @@ namespace MWScript
 
         public:
             OpModMagicEffect(int positiveEffect, int negativeEffect)
+<<<<<<< HEAD
                 : mPositiveEffect(ESM::MagicEffect::indexToRefId(positiveEffect))
                 , mNegativeEffect(ESM::MagicEffect::indexToRefId(negativeEffect))
+=======
+                : mPositiveEffect(positiveEffect)
+                , mNegativeEffect(negativeEffect)
+>>>>>>> origin/main
             {
             }
 
@@ -1393,7 +1445,11 @@ namespace MWScript
                 auto& effects = player.getClass().getCreatureStats(player).getMagicEffects();
                 float delta = std::clamp(arg * 100.f, 0.f, 100.f)
                     - effects.getOrDefault(ESM::MagicEffect::NightEye).getMagnitude();
+<<<<<<< HEAD
                 effects.modifyBase(MWMechanics::EffectKey(ESM::MagicEffect::NightEye), static_cast<int>(delta));
+=======
+                effects.modifyBase(ESM::MagicEffect::NightEye, static_cast<int>(delta));
+>>>>>>> origin/main
             }
         };
 
@@ -1410,7 +1466,11 @@ namespace MWScript
                 float newBase = std::clamp(nightEye.getMagnitude() + arg * 100.f, 0.f, 100.f);
                 newBase -= nightEye.getModifier();
                 float delta = std::clamp(newBase, 0.f, 100.f) - nightEye.getMagnitude();
+<<<<<<< HEAD
                 effects.modifyBase(MWMechanics::EffectKey(ESM::MagicEffect::NightEye), static_cast<int>(delta));
+=======
+                effects.modifyBase(ESM::MagicEffect::NightEye, static_cast<int>(delta));
+>>>>>>> origin/main
             }
         };
 

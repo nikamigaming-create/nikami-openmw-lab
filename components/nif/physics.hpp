@@ -74,7 +74,11 @@ namespace Nif
         void read(NIFStream* nif);
     };
 
+<<<<<<< HEAD
     enum class HkResponseType : uint8_t
+=======
+    enum class hkResponseType : uint8_t
+>>>>>>> origin/main
     {
         Response_Invalid = 0,
         Response_SimpleContact = 1,
@@ -84,7 +88,11 @@ namespace Nif
 
     struct bhkEntityCInfo
     {
+<<<<<<< HEAD
         HkResponseType mResponseType;
+=======
+        hkResponseType mResponseType;
+>>>>>>> origin/main
         uint16_t mProcessContactDelay;
 
         void read(NIFStream* nif);
@@ -147,7 +155,11 @@ namespace Nif
         void read(NIFStream* nif);
     };
 
+<<<<<<< HEAD
     enum class HkMotionType : uint8_t
+=======
+    enum class hkMotionType : uint8_t
+>>>>>>> origin/main
     {
         Motion_Invalid = 0,
         Motion_Dynamic = 1,
@@ -161,14 +173,22 @@ namespace Nif
         Motion_Character = 9
     };
 
+<<<<<<< HEAD
     enum class HkDeactivatorType : uint8_t
+=======
+    enum class hkDeactivatorType : uint8_t
+>>>>>>> origin/main
     {
         Deactivator_Invalid = 0,
         Deactivator_Never = 1,
         Deactivator_Spatial = 2
     };
 
+<<<<<<< HEAD
     enum class HkSolverDeactivation : uint8_t
+=======
+    enum class hkSolverDeactivation : uint8_t
+>>>>>>> origin/main
     {
         SolverDeactivation_Invalid = 0,
         SolverDeactivation_Off = 1,
@@ -178,7 +198,11 @@ namespace Nif
         SolverDeactivation_Max = 5
     };
 
+<<<<<<< HEAD
     enum class HkQualityType : uint8_t
+=======
+    enum class hkQualityType : uint8_t
+>>>>>>> origin/main
     {
         Quality_Invalid = 0,
         Quality_Fixed = 1,
@@ -195,7 +219,11 @@ namespace Nif
     struct bhkRigidBodyCInfo
     {
         HavokFilter mHavokFilter;
+<<<<<<< HEAD
         HkResponseType mResponseType;
+=======
+        hkResponseType mResponseType;
+>>>>>>> origin/main
         uint16_t mProcessContactDelay;
         osg::Vec4f mTranslation;
         osg::Quat mRotation;
@@ -214,11 +242,19 @@ namespace Nif
         float mMaxLinearVelocity;
         float mMaxAngularVelocity;
         float mPenetrationDepth;
+<<<<<<< HEAD
         HkMotionType mMotionType;
         HkDeactivatorType mDeactivatorType;
         bool mEnableDeactivation{ true };
         HkSolverDeactivation mSolverDeactivation;
         HkQualityType mQualityType;
+=======
+        hkMotionType mMotionType;
+        hkDeactivatorType mDeactivatorType;
+        bool mEnableDeactivation{ true };
+        hkSolverDeactivation mSolverDeactivation;
+        hkQualityType mQualityType;
+>>>>>>> origin/main
         uint8_t mAutoRemoveLevel;
         uint8_t mResponseModifierFlags;
         uint8_t mNumContactPointShapeKeys;
@@ -244,7 +280,11 @@ namespace Nif
         void post(Reader& nif);
     };
 
+<<<<<<< HEAD
     enum class HkMotorType : uint8_t
+=======
+    enum class hkMotorType : uint8_t
+>>>>>>> origin/main
     {
         Motor_None = 0,
         Motor_Position = 1,
@@ -287,7 +327,11 @@ namespace Nif
 
     struct bhkConstraintMotorCInfo
     {
+<<<<<<< HEAD
         HkMotorType mType;
+=======
+        hkMotorType mType;
+>>>>>>> origin/main
         bhkPositionConstraintMotor mPositionMotor;
         bhkVelocityConstraintMotor mVelocityMotor;
         bhkSpringDamperConstraintMotor mSpringDamperMotor;
@@ -384,7 +428,11 @@ namespace Nif
         void read(NIFStream* nif);
     };
 
+<<<<<<< HEAD
     enum class HkConstraintType : uint32_t
+=======
+    enum class hkConstraintType : uint32_t
+>>>>>>> origin/main
     {
         BallAndSocket = 0,
         Hinge = 1,
@@ -397,7 +445,11 @@ namespace Nif
 
     struct bhkWrappedConstraintDataBase
     {
+<<<<<<< HEAD
         HkConstraintType mType;
+=======
+        hkConstraintType mType;
+>>>>>>> origin/main
         bhkConstraintCInfo mInfo;
         bhkBallAndSocketConstraintCInfo mBallAndSocketInfo;
         bhkHingeConstraintCInfo mHingeInfo;
@@ -730,7 +782,10 @@ namespace Nif
         std::vector<HavokFilter> mHavokFilters;
 
         void read(NIFStream* nif) override;
+<<<<<<< HEAD
         void post(Reader& nif) override;
+=======
+>>>>>>> origin/main
     };
 
     struct bhkCompressedMeshShape : public bhkShape
@@ -912,7 +967,11 @@ namespace Nif
 
     struct bhkRagdollTemplate : Extra
     {
+<<<<<<< HEAD
         bhkRagdollTemplateDataList mBones;
+=======
+        NiAVObjectList mBones;
+>>>>>>> origin/main
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;

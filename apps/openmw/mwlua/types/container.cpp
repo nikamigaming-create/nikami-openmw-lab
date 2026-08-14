@@ -5,7 +5,10 @@
 #include <components/esm3/loadcont.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
+<<<<<<< HEAD
 #include <components/misc/finitevalues.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 
@@ -19,6 +22,7 @@ namespace sol
     };
 }
 
+<<<<<<< HEAD
 namespace
 {
     ESM::Container tableToContainer(const sol::table& rec)
@@ -64,6 +68,8 @@ namespace
     }
 }
 
+=======
+>>>>>>> origin/main
 namespace MWLua
 {
 
@@ -81,7 +87,10 @@ namespace MWLua
             const MWWorld::Ptr& ptr = containerPtr(obj);
             return ptr.getClass().getEncumbrance(ptr);
         };
+<<<<<<< HEAD
         container["createRecordDraft"] = tableToContainer;
+=======
+>>>>>>> origin/main
         container["encumbrance"] = container["getEncumbrance"]; // for compatibility; should be removed later
         container["getCapacity"] = [](const Object& obj) -> float {
             const MWWorld::Ptr& ptr = containerPtr(obj);
@@ -99,8 +108,14 @@ namespace MWLua
             = sol::readonly_property([](const ESM::Container& rec) -> std::string { return rec.mId.serializeText(); });
         record["name"] = sol::readonly_property([](const ESM::Container& rec) -> std::string { return rec.mName; });
         addModelProperty(record);
+<<<<<<< HEAD
         record["mwscript"]
             = sol::readonly_property([](const ESM::Container& rec) -> ESM::RefId { return rec.mScript; });
+=======
+        record["mwscript"] = sol::readonly_property([](const ESM::Container& rec) -> sol::optional<std::string> {
+            return LuaUtil::serializeRefId(rec.mScript);
+        });
+>>>>>>> origin/main
         record["weight"] = sol::readonly_property([](const ESM::Container& rec) -> float { return rec.mWeight; });
         record["isOrganic"] = sol::readonly_property(
             [](const ESM::Container& rec) -> bool { return rec.mFlags & ESM::Container::Organic; });

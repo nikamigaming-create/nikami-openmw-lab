@@ -26,6 +26,7 @@ namespace
     {
         std::vector<T> ignore;
 
+<<<<<<< HEAD
         if (const auto& ignoreObj = options.get<sol::optional<sol::object>>("ignore"))
         {
             if (ignoreObj->is<MWLua::LObject>())
@@ -47,6 +48,20 @@ namespace
                         throw std::runtime_error("Table value is not a GameObject");
                 });
             }
+=======
+        if (const auto& ignoreObj = options.get<sol::optional<MWLua::LObject>>("ignore"))
+        {
+            ignore.push_back(ignoreObj->ptr());
+        }
+        else if (const auto& ignoreTable = options.get<sol::optional<sol::table>>("ignore"))
+        {
+            ignoreTable->for_each([&](const auto& _, const sol::object& value) {
+                if (value.is<MWLua::LObject>())
+                {
+                    ignore.push_back(value.as<MWLua::LObject>().ptr());
+                }
+            });
+>>>>>>> origin/main
         }
 
         return ignore;
@@ -365,9 +380,15 @@ namespace MWLua
             if (!searchAreaHalfExtents.has_value())
             {
                 const bool isEsm4 = MWBase::Environment::get().getWorldScene()->getCurrentCell()->getCell()->isEsm4();
+<<<<<<< HEAD
                 const float halfExtents = static_cast<float>(isEsm4
                         ? (1 + 2 * Constants::ESM4CellGridRadius) * Constants::ESM4CellSizeInUnits
                         : (1 + 2 * Constants::CellGridRadius) * Constants::CellSizeInUnits);
+=======
+                const float halfExtents = isEsm4
+                    ? (1 + 2 * Constants::ESM4CellGridRadius) * Constants::ESM4CellSizeInUnits
+                    : (1 + 2 * Constants::CellGridRadius) * Constants::CellSizeInUnits;
+>>>>>>> origin/main
                 searchAreaHalfExtents = osg::Vec3f(halfExtents, halfExtents, halfExtents);
             }
 

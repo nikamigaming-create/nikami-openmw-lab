@@ -94,10 +94,13 @@
 -- Creates a UI element from the given layout table
 -- @function [parent=#ui] create
 -- @param #Layout layout
+<<<<<<< HEAD
 -- @param #table options Optional table, can take the following options:
 --
 --   * `noWarnUnused` - if set to true this element will never generate warnings about unused properties.
 --
+=======
+>>>>>>> origin/main
 -- @return #Element
 
 ---

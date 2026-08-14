@@ -119,6 +119,10 @@ namespace MWGui
             messageBox->update(height);
             height += messageBox->getHeight();
         }
+//## VR_PATCH BEGIN
+// Make sure message boxes become visible to VR.
+        mMessageBoxes.back()->setVisible(true);
+//## VR_PATCH END
     }
 
     void MessageBoxManager::removeStaticMessageBox()
@@ -197,6 +201,17 @@ namespace MWGui
         mMessageWidget->setCaptionWithReplacing(mMessage);
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// Make sure message boxes are hidden from VR on destruction
+    MessageBox::~MessageBox()
+    {
+        setVisible(false);
+    }
+
+//## VR_PATCH END
+>>>>>>> origin/main
     void MessageBox::update(int height)
     {
         MyGUI::IntSize gameWindowSize = MyGUI::RenderManager::getInstance().getViewSize();
@@ -212,6 +227,7 @@ namespace MWGui
         return mMainWidget->getHeight() + mNextBoxPadding;
     }
 
+<<<<<<< HEAD
     void MessageBox::setVisible(bool value)
     {
         mMainWidget->setVisible(value);
@@ -228,6 +244,27 @@ namespace MWGui
         , mImmediate(immediate)
         , mControllerFocus(0)
     {
+=======
+//## VR_PATCH BEGIN
+// Do not override setVisible
+//    void MessageBox::setVisible(bool value)
+//    {
+//        mMainWidget->setVisible(value);
+//    }
+//## VR_PATCH END
+
+    InteractiveMessageBox::InteractiveMessageBox(MessageBoxManager& parMessageBoxManager, const std::string& message,
+        const std::vector<std::string>& buttons, bool immediate, size_t defaultFocus)
+        : WindowModal(MWBase::Environment::get().getWindowManager()->isGuiMode()
+                ? "openmw_interactive_messagebox_notransp.layout"
+                : "openmw_interactive_messagebox.layout")
+        , mMessageBoxManager(parMessageBoxManager)
+        , mButtonPressed(-1)
+        , mDefaultFocus(defaultFocus)
+        , mImmediate(immediate)
+        , mControllerFocus(0)
+    {
+>>>>>>> origin/main
         int textPadding = 10; // padding between text-widget and main-widget
         int textButtonPadding = 10; // padding between the text-widget und the button-widget
         int buttonLeftPadding = 10; // padding between the buttons if horizontal
@@ -417,11 +454,26 @@ namespace MWGui
         return nullptr;
     }
 
+<<<<<<< HEAD
     void InteractiveMessageBox::mousePressed(MyGUI::Widget* widget)
     {
         buttonActivated(widget);
     }
 
+=======
+    void InteractiveMessageBox::closeDefault() 
+    {
+        auto buttonIndex = std::max(size_t(0), std::min(mDefaultFocus, mButtons.size()));
+        auto button = mButtons[buttonIndex];
+        mousePressed(button);
+    }
+
+    void InteractiveMessageBox::mousePressed(MyGUI::Widget* widget)
+    {
+        buttonActivated(widget);
+    }
+
+>>>>>>> origin/main
     void InteractiveMessageBox::buttonActivated(MyGUI::Widget* widget)
     {
         mMarkedToDelete = true;
@@ -473,7 +525,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN || arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
@@ -484,7 +540,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mButtons, mControllerFocus, true);
         }
 

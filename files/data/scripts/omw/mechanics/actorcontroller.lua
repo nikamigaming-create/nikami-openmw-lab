@@ -28,7 +28,33 @@ return {
                     end
                 end
             elseif data.slot then
+<<<<<<< HEAD
                 equipment[data.slot] = nil
+=======
+                equipment[slot] = nil
+            end
+            Actor.setEquipment(self, equipment)
+        end,
+        ObScriptEquipItem = function(data)
+            local item = Actor.inventory(self):find(data.recordId)
+            if item == nil then
+                print('[obscript] EquipItem: item is not in actor inventory: ' .. tostring(data.recordId))
+                return
+            end
+            local equipment = Actor.getEquipment(self)
+            -- The engine redirects this request to the first authored slot
+            -- allowed by the item when CarriedRight is not valid (ammo and
+            -- apparel included).
+            equipment[Actor.EQUIPMENT_SLOT.CarriedRight] = item
+            Actor.setEquipment(self, equipment)
+        end,
+        ObScriptUnequipItem = function(data)
+            local equipment = Actor.getEquipment(self)
+            for slot, item in pairs(equipment) do
+                if item.recordId == data.recordId then
+                    equipment[slot] = nil
+                end
+>>>>>>> origin/main
             end
             Actor.setEquipment(self, equipment)
         end,

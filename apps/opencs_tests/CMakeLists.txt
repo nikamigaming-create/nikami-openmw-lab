@@ -17,10 +17,13 @@ target_link_libraries(openmw-cs-tests PRIVATE
     GMock::GMock
 )
 
+<<<<<<< HEAD
 if (WIN32)
     target_sources(openmw-cs-tests PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
 endif()
 
+=======
+>>>>>>> origin/main
 if (UNIX AND NOT APPLE)
     target_link_libraries(openmw-cs-tests PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 endif()
@@ -31,5 +34,11 @@ if (BUILD_WITH_CODE_COVERAGE)
 endif()
 
 if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
+<<<<<<< HEAD
     target_precompile_headers(openmw-cs-tests REUSE_FROM components)
+=======
+    target_precompile_headers(openmw-cs-tests PRIVATE
+        <gtest/gtest.h>
+    )
+>>>>>>> origin/main
 endif()

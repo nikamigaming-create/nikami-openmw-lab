@@ -8,6 +8,11 @@ GLOBAL: scripts/omw/settings/global.lua
 
 # Mechanics
 GLOBAL: scripts/omw/activationhandlers.lua
+<<<<<<< HEAD
+=======
+GLOBAL: scripts/omw/cellhandlers.lua
+GLOBAL: scripts/omw/obscript.lua
+>>>>>>> origin/main
 GLOBAL: scripts/omw/usehandlers.lua
 GLOBAL: scripts/omw/worldeventhandlers.lua
 GLOBAL: scripts/omw/crimes.lua
@@ -21,10 +26,20 @@ PLAYER: scripts/omw/camera/camera.lua
 PLAYER: scripts/omw/input/actionbindings.lua
 PLAYER: scripts/omw/input/smoothmovement.lua
 PLAYER: scripts/omw/input/gamepadcontrols.lua
+<<<<<<< HEAD
 NPC,CREATURE: scripts/omw/ai.lua
 GLOBAL: scripts/omw/mechanics/globalcontroller.lua
 CREATURE, NPC, PLAYER: scripts/omw/mechanics/actorcontroller.lua
 NPC,CREATURE,PLAYER: scripts/omw/combat/interface.lua
+=======
+PLAYER: scripts/omw/fnv/compat/jam_sprint.lua
+NPC,CREATURE: scripts/omw/ai.lua
+GLOBAL: scripts/omw/mechanics/globalcontroller.lua
+CREATURE, NPC, PLAYER: scripts/omw/mechanics/actorcontroller.lua
+GLOBAL: scripts/omw/combat/global.lua
+MENU: scripts/omw/combat/menu.lua
+NPC,CREATURE,PLAYER: scripts/omw/combat/local.lua
+>>>>>>> origin/main
 
 # User interface
 PLAYER: scripts/omw/ui.lua
@@ -36,4 +51,21 @@ GLOBAL: scripts/omw/console/global.lua
 CUSTOM: scripts/omw/console/local.lua
 
 # Music system
+<<<<<<< HEAD
 NPC,CREATURE: scripts/omw/music/actor.lua
+=======
+PLAYER: scripts/omw/music/music.lua
+MENU: scripts/omw/music/settings.lua
+NPC,CREATURE: scripts/omw/music/actor.lua
+
+# VR
+PLAYER, MENU: scripts/omw/vr/spaces.lua
+
+# VR Bindings
+MENU: scripts/omw/vr/inputs/menu.lua
+PLAYER: scripts/omw/vr/inputs/player.lua
+
+# VR UI
+MENU: scripts/omw/vr/ui/menu.lua
+PLAYER: scripts/omw/vr/ui/player.lua
+>>>>>>> origin/main

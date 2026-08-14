@@ -18,6 +18,10 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
+<<<<<<< HEAD
+=======
+    struct FormId;
+>>>>>>> origin/main
     class RefId;
 }
 
@@ -55,6 +59,7 @@ namespace MWBase
 
         virtual bool startDialogue(const MWWorld::Ptr& actor, ResponseCallback* callback) = 0;
 
+<<<<<<< HEAD
         virtual bool inJournal(const ESM::RefId& topicId, const ESM::RefId& infoId) const = 0;
 
         virtual void addTopic(const ESM::RefId& topic) = 0;
@@ -101,6 +106,60 @@ namespace MWBase
         virtual void applyBarterDispositionChange(int delta) = 0;
 
         virtual size_t countSavedGameRecords() const = 0;
+=======
+        /// Return the actor selected by the most recent successful startDialogue call.
+        /// Callers interested in direct dialogue must also check that GM_Dialogue is the active GUI mode.
+        virtual const MWWorld::Ptr& getActor() const = 0;
+
+        virtual bool inJournal(const ESM::RefId& topicId, const ESM::RefId& infoId) const = 0;
+
+        virtual void addTopic(const ESM::RefId& topic) = 0;
+
+        virtual void addChoice(std::string_view text, int choice) = 0;
+        virtual const std::vector<std::pair<std::string, int>>& getChoices() const = 0;
+
+        virtual bool isGoodbye() const = 0;
+
+        virtual void goodbye() = 0;
+
+        virtual bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) = 0;
+        virtual bool say(
+            const MWWorld::Ptr& actor, const MWWorld::Ptr& listener, const ESM::FormId& topic) = 0;
+
+        virtual void keywordSelected(std::string_view keyword, ResponseCallback* callback) = 0;
+        virtual void goodbyeSelected() = 0;
+        virtual void questionAnswered(int answer, ResponseCallback* callback) = 0;
+
+        enum TopicType
+        {
+            Specific = 1,
+            Exhausted = 2
+        };
+
+        enum ServiceType
+        {
+            Any = -1,
+            Barter = 1,
+            Repair = 2,
+            Spells = 3,
+            Training = 4,
+            Travel = 5,
+            Spellmaking = 6,
+            Enchanting = 7
+        };
+
+        virtual std::list<std::string> getAvailableTopics() = 0;
+        virtual int getTopicFlag(const ESM::RefId&) const = 0;
+
+        virtual bool checkServiceRefused(ResponseCallback* callback, ServiceType service = ServiceType::Any) = 0;
+
+        virtual void persuade(int type, ResponseCallback* callback) = 0;
+
+        /// @note Controlled by an option, gets discarded when dialogue ends by default
+        virtual void applyBarterDispositionChange(int delta) = 0;
+
+        virtual int countSavedGameRecords() const = 0;
+>>>>>>> origin/main
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& progress) const = 0;
 

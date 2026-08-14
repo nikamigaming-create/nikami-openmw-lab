@@ -39,6 +39,7 @@
 
 namespace MWClass
 {
+<<<<<<< HEAD
     class DoorCustomData : public MWWorld::TypedCustomData<DoorCustomData>
     {
     public:
@@ -48,6 +49,8 @@ namespace MWClass
         const DoorCustomData& asDoorCustomData() const override { return *this; }
     };
 
+=======
+>>>>>>> origin/main
     Door::Door()
         : MWWorld::RegisteredClass<Door>(ESM::Door::sRecordId)
     {
@@ -124,7 +127,11 @@ namespace MWClass
 
         // make door glow if player activates it with telekinesis
         if (actor == MWMechanics::getPlayer()
+<<<<<<< HEAD
             && MWBase::Environment::get().getWorld()->getDistanceToFocusObject()
+=======
+            && MWBase::Environment::get().getWorld()->getDistanceToFacedObject()
+>>>>>>> origin/main
                 > MWBase::Environment::get().getWorld()->getMaxActivationDistance())
         {
             MWRender::Animation* animation = MWBase::Environment::get().getWorld()->getAnimation(ptr);
@@ -184,7 +191,11 @@ namespace MWClass
             if (ptr.getCellRef().getTeleport())
             {
                 if (actor == MWMechanics::getPlayer()
+<<<<<<< HEAD
                     && MWBase::Environment::get().getWorld()->getDistanceToFocusObject()
+=======
+                    && MWBase::Environment::get().getWorld()->getDistanceToFacedObject()
+>>>>>>> origin/main
                         > MWBase::Environment::get().getWorld()->getMaxActivationDistance())
                 {
                     // player activated teleport door with telekinesis
@@ -215,14 +226,22 @@ namespace MWClass
                     MWBase::Environment::get().getSoundManager()->fadeOutSound3D(ptr, closeSound, 0.5f);
                     // Doors rotate at 90 degrees per second, so start the sound at
                     // where it would be at the current rotation.
+<<<<<<< HEAD
                     float offset = doorRot / (osg::PIf * 0.5f);
+=======
+                    float offset = doorRot / (osg::PI * 0.5f);
+>>>>>>> origin/main
                     action->setSoundOffset(offset);
                     action->setSound(openSound);
                 }
                 else
                 {
                     MWBase::Environment::get().getSoundManager()->fadeOutSound3D(ptr, openSound, 0.5f);
+<<<<<<< HEAD
                     float offset = 1.0f - doorRot / (osg::PIf * 0.5f);
+=======
+                    float offset = 1.0f - doorRot / (osg::PI * 0.5f);
+>>>>>>> origin/main
                     action->setSoundOffset(std::max(offset, 0.0f));
                     action->setSound(closeSound);
                 }

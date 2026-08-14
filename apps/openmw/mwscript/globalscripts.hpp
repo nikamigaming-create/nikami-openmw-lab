@@ -76,7 +76,11 @@ namespace MWScript
         void addStartup();
         ///< Add startup script
 
+<<<<<<< HEAD
         size_t countSavedGameRecords() const;
+=======
+        int countSavedGameRecords() const;
+>>>>>>> origin/main
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const;
 

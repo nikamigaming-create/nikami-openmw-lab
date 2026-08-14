@@ -6,8 +6,11 @@
 #include <numeric>
 #include <sstream>
 
+<<<<<<< HEAD
 #include <osg/Math>
 
+=======
+>>>>>>> origin/main
 #include <components/esm3/cellstate.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/misc/strings/conversion.hpp>
@@ -153,6 +156,7 @@ namespace
         int i = 0;
         for (const ESM::IndexedENAMstruct& effect : effects.mList)
         {
+<<<<<<< HEAD
             int effectIdx = ESM::MagicEffect::refIdToIndex(effect.mData.mEffectID);
             int skillIdx = ESM::Skill::refIdToIndex(effect.mData.mSkill);
             int attributeIdx = ESM::Attribute::refIdToIndex(effect.mData.mAttribute);
@@ -163,6 +167,16 @@ namespace
             if (attributeIdx != -1)
                 std::cout << "    Attribute: " << attributeLabel(attributeIdx) << " (" << attributeIdx << ")"
                           << std::endl;
+=======
+            std::cout << "  Effect[" << i << "]: " << magicEffectLabel(effect.mData.mEffectID) << " ("
+                      << effect.mData.mEffectID << ")" << std::endl;
+            if (effect.mData.mSkill != -1)
+                std::cout << "    Skill: " << skillLabel(effect.mData.mSkill) << " (" << (int)effect.mData.mSkill << ")"
+                          << std::endl;
+            if (effect.mData.mAttribute != -1)
+                std::cout << "    Attribute: " << attributeLabel(effect.mData.mAttribute) << " ("
+                          << (int)effect.mData.mAttribute << ")" << std::endl;
+>>>>>>> origin/main
             std::cout << "    Range: " << rangeTypeLabel(effect.mData.mRange) << " (" << effect.mData.mRange << ")"
                       << std::endl;
             // Area is always zero if range type is "Self"
@@ -178,11 +192,18 @@ namespace
     {
         for (const ESM::Transport::Dest& dest : transport)
         {
+<<<<<<< HEAD
             std::cout << std::format("  Destination Position: ({:12.3f}, {:12.3f}, {:12.3f})\n", dest.mPos.pos[0],
                 dest.mPos.pos[1], dest.mPos.pos[2]);
             std::cout << std::format("  Destination Rotation: ({:12.3f}, {:12.3f}, {:12.3f})\n",
                 osg::RadiansToDegrees(dest.mPos.rot[0]), osg::RadiansToDegrees(dest.mPos.rot[1]),
                 osg::RadiansToDegrees(dest.mPos.rot[2]));
+=======
+            std::cout << std::format("  Destination Position: ({:12.3f},{:12.3f},{:12.3f})\n", dest.mPos.pos[0],
+                dest.mPos.pos[1], dest.mPos.pos[2]);
+            std::cout << std::format("  Destination Rotation: ({:9.6f},{:9.6f},{:9.6f})\n", dest.mPos.rot[0],
+                dest.mPos.rot[1], dest.mPos.rot[2]);
+>>>>>>> origin/main
             if (!dest.mCellName.empty())
                 std::cout << "  Destination Cell: " << dest.mCellName << std::endl;
         }
@@ -665,8 +686,12 @@ namespace EsmTool
 
         std::cout << "  Attributes:" << std::endl;
         for (size_t i = 0; i < mData.mData.mAttributes.size(); ++i)
+<<<<<<< HEAD
             std::cout << "    " << ESM::Attribute::indexToRefId(static_cast<int>(i)) << ": "
                       << mData.mData.mAttributes[i] << std::endl;
+=======
+            std::cout << "    " << ESM::Attribute::indexToRefId(i) << ": " << mData.mData.mAttributes[i] << std::endl;
+>>>>>>> origin/main
 
         std::cout << "  Health: " << mData.mData.mHealth << std::endl;
         std::cout << "  Magicka: " << mData.mData.mMana << std::endl;
@@ -755,7 +780,11 @@ namespace EsmTool
                 std::cout << "    Attribute2 Requirement: " << mData.mData.mRankData[i].mAttribute2 << std::endl;
                 std::cout << "    One Skill at Level: " << mData.mData.mRankData[i].mPrimarySkill << std::endl;
                 std::cout << "    Two Skills at Level: " << mData.mData.mRankData[i].mFavouredSkill << std::endl;
+<<<<<<< HEAD
                 std::cout << "    Faction Reputation: " << mData.mData.mRankData[i].mFactReputation << std::endl;
+=======
+                std::cout << "    Faction Reaction: " << mData.mData.mRankData[i].mFactReaction << std::endl;
+>>>>>>> origin/main
             }
         for (const auto& reaction : mData.mReactions)
             std::cout << "  Reaction: " << reaction.second << " = " << reaction.first << std::endl;
@@ -845,6 +874,7 @@ namespace EsmTool
         std::cout << "  Value: " << mData.mData.mValue << std::endl;
         for (int i = 0; i != 4; i++)
         {
+<<<<<<< HEAD
             // A value of EmptyRefId means no effect
             if (mData.mData.mEffectID[i].empty())
                 continue;
@@ -855,6 +885,17 @@ namespace EsmTool
             std::cout << "  Effect: " << magicEffectLabel(effectIdx) << " (" << effectIdx << ")" << std::endl;
             std::cout << "  Skill: " << skillLabel(skillIdx) << " (" << skillIdx << ")" << std::endl;
             std::cout << "  Attribute: " << attributeLabel(attributeIdx) << " (" << attributeIdx << ")" << std::endl;
+=======
+            // A value of -1 means no effect
+            if (mData.mData.mEffectID[i] == -1)
+                continue;
+            std::cout << "  Effect: " << magicEffectLabel(mData.mData.mEffectID[i]) << " (" << mData.mData.mEffectID[i]
+                      << ")" << std::endl;
+            std::cout << "  Skill: " << skillLabel(mData.mData.mSkills[i]) << " (" << mData.mData.mSkills[i] << ")"
+                      << std::endl;
+            std::cout << "  Attribute: " << attributeLabel(mData.mData.mAttributes[i]) << " ("
+                      << mData.mData.mAttributes[i] << ")" << std::endl;
+>>>>>>> origin/main
         }
         std::cout << "  Deleted: " << mIsDeleted << std::endl;
     }
@@ -976,8 +1017,12 @@ namespace EsmTool
     template <>
     void Record<ESM::MagicEffect>::print()
     {
+<<<<<<< HEAD
         int effectIdx = ESM::MagicEffect::refIdToIndex(mData.mId);
         std::cout << "  Index: " << magicEffectLabel(effectIdx) << " (" << effectIdx << ")" << std::endl;
+=======
+        std::cout << "  Index: " << magicEffectLabel(mData.mIndex) << " (" << mData.mIndex << ")" << std::endl;
+>>>>>>> origin/main
         std::cout << "  Description: " << mData.mDescription << std::endl;
         std::cout << "  Icon: " << mData.mIcon << std::endl;
         std::cout << "  Flags: " << magicEffectFlags(mData.mData.mFlags) << std::endl;
@@ -1057,6 +1102,7 @@ namespace EsmTool
 
             std::cout << "  Attributes:" << std::endl;
             for (size_t i = 0; i != mData.mNpdt.mAttributes.size(); i++)
+<<<<<<< HEAD
                 std::cout << "    " << attributeLabel(static_cast<int>(i)) << ": " << int(mData.mNpdt.mAttributes[i])
                           << std::endl;
 
@@ -1064,6 +1110,13 @@ namespace EsmTool
             for (size_t i = 0; i != mData.mNpdt.mSkills.size(); i++)
                 std::cout << "    " << skillLabel(static_cast<int>(i)) << ": " << int(mData.mNpdt.mSkills[i])
                           << std::endl;
+=======
+                std::cout << "    " << attributeLabel(i) << ": " << int(mData.mNpdt.mAttributes[i]) << std::endl;
+
+            std::cout << "  Skills:" << std::endl;
+            for (size_t i = 0; i != mData.mNpdt.mSkills.size(); i++)
+                std::cout << "    " << skillLabel(i) << ": " << int(mData.mNpdt.mSkills[i]) << std::endl;
+>>>>>>> origin/main
 
             std::cout << "  Health: " << mData.mNpdt.mHealth << std::endl;
             std::cout << "  Magicka: " << mData.mNpdt.mMana << std::endl;
@@ -1315,8 +1368,12 @@ namespace EsmTool
         std::cout << "    Hour:" << mData.mCellState.mLastRespawn.mHour << std::endl;
         if (mData.mCellState.mHasFogOfWar)
         {
+<<<<<<< HEAD
             std::cout << "  North Marker Angle: " << osg::RadiansToDegrees(mData.mFogState.mNorthMarkerAngle)
                       << std::endl;
+=======
+            std::cout << "  North Marker Angle: " << mData.mFogState.mNorthMarkerAngle << std::endl;
+>>>>>>> origin/main
             std::cout << "  Bounds:" << std::endl;
             std::cout << "    Min X: " << mData.mFogState.mBounds.mMinX << std::endl;
             std::cout << "    Min Y: " << mData.mFogState.mBounds.mMinY << std::endl;

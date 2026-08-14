@@ -5,6 +5,10 @@
 
 #include <DbgHelp.h>
 
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+>>>>>>> origin/main
 #include <memory>
 #include <thread>
 
@@ -21,6 +25,18 @@ namespace Crash
 {
     std::unordered_map<HWINEVENTHOOK, CrashMonitor*> CrashMonitor::smEventHookOwners{};
 
+<<<<<<< HEAD
+=======
+    namespace
+    {
+        bool suppressFatalDialogs()
+        {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_SUPPRESS_FATAL_DIALOG");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }
+    }
+
+>>>>>>> origin/main
     using IsHungAppWindowFn = BOOL(WINAPI*)(HWND hwnd);
 
     // Obtains the pointer to user32.IsHungAppWindow, this function may be removed in the future.
@@ -221,7 +237,12 @@ namespace Crash
                 std::string message = "OpenMW has frozen.\nCrash dump saved to '"
                     + Misc::StringUtils::u8StringToString(getFreezeDumpPath(*mShm).u8string())
                     + "'.\nPlease report this to https://gitlab.com/OpenMW/openmw/issues !";
+<<<<<<< HEAD
                 SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
+=======
+                if (!suppressFatalDialogs())
+                    SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
+>>>>>>> origin/main
             }
         }
         catch (...)
@@ -242,7 +263,12 @@ namespace Crash
             shmLock();
             mShm->mMonitorStatus = CrashSHM::Status::FailedDumping;
             shmUnlock();
+<<<<<<< HEAD
             SDL_ShowSimpleMessageBox(0, "Failed to create crash dump", message.c_str(), nullptr);
+=======
+            if (!suppressFatalDialogs())
+                SDL_ShowSimpleMessageBox(0, "Failed to create crash dump", message.c_str(), nullptr);
+>>>>>>> origin/main
         };
 
         DWORD processId = GetProcessId(mAppProcessHandle);
@@ -275,6 +301,12 @@ namespace Crash
                 return;
             }
 
+<<<<<<< HEAD
+=======
+            if (utf16Path.length() > MAX_PATH)
+                utf16Path = LR"(\\?\)" + utf16Path;
+
+>>>>>>> origin/main
             HANDLE hCrashLog = CreateFileW(utf16Path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                 FILE_ATTRIBUTE_NORMAL, nullptr);
             if (hCrashLog == NULL || hCrashLog == INVALID_HANDLE_VALUE)
@@ -327,6 +359,12 @@ namespace Crash
 
     void CrashMonitor::showFreezeMessageBox()
     {
+<<<<<<< HEAD
+=======
+        if (suppressFatalDialogs())
+            return;
+
+>>>>>>> origin/main
         std::thread messageBoxThread([&]() {
             SDL_MessageBoxButtonData button = { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Abort" };
             SDL_MessageBoxData messageBoxData = { SDL_MESSAGEBOX_ERROR, nullptr, "OpenMW has frozen",

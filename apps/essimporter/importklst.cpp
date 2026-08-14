@@ -16,7 +16,11 @@ namespace ESSImport
         }
 
         mWerewolfKills = 0;
+<<<<<<< HEAD
         esm.getHNOT(mWerewolfKills, "VTNI");
+=======
+        esm.getHNOT(mWerewolfKills, "INTV");
+>>>>>>> origin/main
     }
 
 }

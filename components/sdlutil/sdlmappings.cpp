@@ -33,6 +33,7 @@ namespace SDLUtil
                 return "Left Shoulder";
             case SDL_CONTROLLER_BUTTON_LEFTSTICK:
                 return "Left Stick Button";
+<<<<<<< HEAD
             case SDL_CONTROLLER_BUTTON_MISC1:
                 return "Misc 1";
             case SDL_CONTROLLER_BUTTON_PADDLE1:
@@ -43,14 +44,19 @@ namespace SDLUtil
                 return "Paddle 3";
             case SDL_CONTROLLER_BUTTON_PADDLE4:
                 return "Paddle 4";
+=======
+>>>>>>> origin/main
             case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
                 return "Right Shoulder";
             case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
                 return "Right Stick Button";
             case SDL_CONTROLLER_BUTTON_START:
                 return "Start Button";
+<<<<<<< HEAD
             case SDL_CONTROLLER_BUTTON_TOUCHPAD:
                 return "Touchpad";
+=======
+>>>>>>> origin/main
             case SDL_CONTROLLER_BUTTON_X:
                 return "X Button";
             case SDL_CONTROLLER_BUTTON_Y:

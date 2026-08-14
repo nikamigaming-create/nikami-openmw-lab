@@ -1,9 +1,16 @@
 #include "creaturestats.hpp"
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <type_traits>
 
 #include <components/esm3/actoridconverter.hpp>
+=======
+#include <cmath>
+#include <type_traits>
+#include <utility>
+
+>>>>>>> origin/main
 #include <components/esm3/creaturestats.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -18,6 +25,99 @@
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
+=======
+    namespace
+    {
+        bool isValidFalloutActiveEffect(const ESM::FalloutActiveEffect& effect)
+        {
+            if (effect.mSpell.empty() || effect.mBaseEffect.empty() || !std::isfinite(effect.mMagnitude)
+                || !std::isfinite(effect.mDuration) || !std::isfinite(effect.mTimeLeft) || effect.mDuration <= 0.f
+                || effect.mTimeLeft <= 0.f || effect.mTimeLeft > effect.mDuration)
+                return false;
+            switch (effect.mKind)
+            {
+                case ESM::FalloutActiveEffectKind::HealthDamage:
+                    return effect.mMagnitude > 0.f && effect.mActorValue == 16;
+                case ESM::FalloutActiveEffectKind::ActorValueModifier:
+                    return effect.mMagnitude != 0.f && effect.mActorValue >= 0;
+                case ESM::FalloutActiveEffectKind::Paralysis:
+                    return effect.mMagnitude > 0.f;
+            }
+            return false;
+        }
+    }
+
+    bool addFalloutActiveEffect(
+        std::vector<ESM::FalloutActiveEffect>& effects, ESM::FalloutActiveEffect effect)
+    {
+        if (!isValidFalloutActiveEffect(effect))
+            return false;
+        effects.push_back(std::move(effect));
+        return true;
+    }
+
+    FalloutActiveEffectsAdvance advanceFalloutActiveEffects(
+        std::vector<ESM::FalloutActiveEffect>& effects, float duration)
+    {
+        FalloutActiveEffectsAdvance result;
+        if (!std::isfinite(duration) || duration < 0.f)
+        {
+            result.mRejected = effects.size();
+            return result;
+        }
+
+        for (auto effect = effects.begin(); effect != effects.end();)
+        {
+            if (!isValidFalloutActiveEffect(*effect))
+            {
+                effect = effects.erase(effect);
+                ++result.mRejected;
+                continue;
+            }
+
+            const float elapsed = std::min(duration, effect->mTimeLeft);
+            if (effect->mKind == ESM::FalloutActiveEffectKind::HealthDamage)
+                result.mHealthDamage += effect->mMagnitude * elapsed;
+            effect->mTimeLeft = std::max(0.f, effect->mTimeLeft - duration);
+            if (effect->mTimeLeft <= 0.f)
+            {
+                effect = effects.erase(effect);
+                ++result.mExpired;
+            }
+            else
+                ++effect;
+        }
+        if (!std::isfinite(result.mHealthDamage))
+        {
+            result.mHealthDamage = 0.f;
+            ++result.mRejected;
+        }
+        return result;
+    }
+
+    float getFalloutActorValueModifier(
+        const std::vector<ESM::FalloutActiveEffect>& effects, std::int32_t actorValue)
+    {
+        float result = 0.f;
+        for (const ESM::FalloutActiveEffect& effect : effects)
+            if (effect.mKind == ESM::FalloutActiveEffectKind::ActorValueModifier
+                && effect.mActorValue == actorValue && effect.mTimeLeft > 0.f && std::isfinite(effect.mMagnitude))
+                result += effect.mMagnitude;
+        return std::isfinite(result) ? result : 0.f;
+    }
+
+    bool hasFalloutParalysis(const std::vector<ESM::FalloutActiveEffect>& effects)
+    {
+        return std::any_of(effects.begin(), effects.end(), [](const auto& effect) {
+            return effect.mKind == ESM::FalloutActiveEffectKind::Paralysis && effect.mMagnitude > 0.f
+                && effect.mTimeLeft > 0.f;
+        });
+    }
+
+    int CreatureStats::sActorId = 0;
+
+>>>>>>> origin/main
     CreatureStats::CreatureStats()
     {
         for (const ESM::Attribute& attribute : MWBase::Environment::get().getESMStore()->get<ESM::Attribute>())
@@ -106,6 +206,47 @@ namespace MWMechanics
         return mDynamic[index];
     }
 
+<<<<<<< HEAD
+=======
+    float CreatureStats::getFalloutLimbDamage(std::int8_t actorValue) const
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size()))
+            return 0.f;
+        return mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)];
+    }
+
+    bool CreatureStats::setFalloutLimbDamage(std::int8_t actorValue, float damage)
+    {
+        constexpr std::int8_t first = 25;
+        if (actorValue < first || actorValue >= first + static_cast<std::int8_t>(mFalloutLimbDamage.size())
+            || !std::isfinite(damage) || damage < 0.f)
+            return false;
+        mFalloutLimbDamage[static_cast<std::size_t>(actorValue - first)] = damage;
+        return true;
+    }
+
+    bool CreatureStats::addFalloutActiveEffect(ESM::FalloutActiveEffect effect)
+    {
+        return MWMechanics::addFalloutActiveEffect(mFalloutActiveEffects, std::move(effect));
+    }
+
+    FalloutActiveEffectsAdvance CreatureStats::advanceFalloutActiveEffects(float duration)
+    {
+        return MWMechanics::advanceFalloutActiveEffects(mFalloutActiveEffects, duration);
+    }
+
+    float CreatureStats::getFalloutActorValueModifier(std::int32_t actorValue) const
+    {
+        return MWMechanics::getFalloutActorValueModifier(mFalloutActiveEffects, actorValue);
+    }
+
+    bool CreatureStats::isFalloutParalyzed() const
+    {
+        return hasFalloutParalysis(mFalloutActiveEffects);
+    }
+
+>>>>>>> origin/main
     Spells& CreatureStats::getSpells()
     {
         return mSpells;
@@ -211,7 +352,12 @@ namespace MWMechanics
         if (world->getGodModeState() && this == &player.getClass().getCreatureStats(player))
             return false;
 
+<<<<<<< HEAD
         return mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
+=======
+        return isFalloutParalyzed()
+            || mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
+>>>>>>> origin/main
     }
 
     bool CreatureStats::isDead() const
@@ -364,6 +510,7 @@ namespace MWMechanics
         return mLastHitAttemptObject;
     }
 
+<<<<<<< HEAD
     void CreatureStats::setHitAttemptActor(ESM::RefNum actor)
     {
         mHitAttemptActor = actor;
@@ -372,6 +519,16 @@ namespace MWMechanics
     ESM::RefNum CreatureStats::getHitAttemptActor() const
     {
         return mHitAttemptActor;
+=======
+    void CreatureStats::setHitAttemptActorId(int actorId)
+    {
+        mHitAttemptActorId = actorId;
+    }
+
+    int CreatureStats::getHitAttemptActorId() const
+    {
+        return mHitAttemptActorId;
+>>>>>>> origin/main
     }
 
     void CreatureStats::addToFallHeight(float height)
@@ -406,8 +563,13 @@ namespace MWMechanics
         else
             base = world->getStore().get<ESM::GameSetting>().find("fNPCbaseMagickaMult")->mValue.getFloat();
 
+<<<<<<< HEAD
         float magickaFactor = base
             + mMagicEffects.getOrDefault(EffectKey(ESM::MagicEffect::FortifyMaximumMagicka)).getMagnitude() * 0.1f;
+=======
+        double magickaFactor = base
+            + mMagicEffects.getOrDefault(EffectKey(ESM::MagicEffect::FortifyMaximumMagicka)).getMagnitude() * 0.1;
+>>>>>>> origin/main
 
         DynamicStat<float> magicka = getMagicka();
         float currentToBaseRatio = magicka.getBase() > 0 ? magicka.getCurrent() / magicka.getBase() : 0;
@@ -506,7 +668,11 @@ namespace MWMechanics
     void CreatureStats::writeState(ESM::CreatureStats& state) const
     {
         for (size_t i = 0; i < state.mAttributes.size(); ++i)
+<<<<<<< HEAD
             getAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i))).writeState(state.mAttributes[i]);
+=======
+            getAttribute(ESM::Attribute::indexToRefId(i)).writeState(state.mAttributes[i]);
+>>>>>>> origin/main
 
         for (size_t i = 0; i < state.mDynamic.size(); ++i)
             mDynamic[i].writeState(state.mDynamic[i]);
@@ -548,12 +714,21 @@ namespace MWMechanics
         mMagicEffects.writeState(state.mMagicEffects);
 
         state.mSummonedCreatures = mSummonedCreatures;
+<<<<<<< HEAD
+=======
+        state.mSummonGraveyard = mSummonGraveyard;
+>>>>>>> origin/main
 
         state.mHasAiSettings = true;
         for (size_t i = 0; i < state.mAiSettings.size(); ++i)
             mAiSettings[i].writeState(state.mAiSettings[i]);
 
         state.mMissingACDT = false;
+<<<<<<< HEAD
+=======
+        state.mFalloutLimbDamage = mFalloutLimbDamage;
+        state.mFalloutActiveEffects = mFalloutActiveEffects;
+>>>>>>> origin/main
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -561,7 +736,11 @@ namespace MWMechanics
         if (!state.mMissingACDT)
         {
             for (size_t i = 0; i < state.mAttributes.size(); ++i)
+<<<<<<< HEAD
                 mAttributes[ESM::Attribute::indexToRefId(static_cast<int>(i))].readState(state.mAttributes[i]);
+=======
+                mAttributes[ESM::Attribute::indexToRefId(i)].readState(state.mAttributes[i]);
+>>>>>>> origin/main
 
             for (size_t i = 0; i < state.mDynamic.size(); ++i)
                 mDynamic[i].readState(state.mDynamic[i]);
@@ -592,7 +771,11 @@ namespace MWMechanics
         mLevel = state.mLevel;
         mDeathAnimation = state.mDeathAnimation;
         mTimeOfDeath = MWWorld::TimeStamp(state.mTimeOfDeath);
+<<<<<<< HEAD
         // mHitAttemptActor = state.mHitAttemptActor;
+=======
+        // mHitAttemptActorId = state.mHitAttemptActorId;
+>>>>>>> origin/main
 
         mSpells.readState(state.mSpells, this);
         mActiveSpells.readState(state.mActiveSpells);
@@ -600,12 +783,17 @@ namespace MWMechanics
         mMagicEffects.readState(state.mMagicEffects);
 
         mSummonedCreatures = state.mSummonedCreatures;
+<<<<<<< HEAD
+=======
+        mSummonGraveyard = state.mSummonGraveyard;
+>>>>>>> origin/main
 
         if (state.mHasAiSettings)
             for (size_t i = 0; i < state.mAiSettings.size(); ++i)
                 mAiSettings[i].readState(state.mAiSettings[i]);
         if (state.mRecalcDynamicStats)
             recalculateMagicka();
+<<<<<<< HEAD
         if (state.mAiSequence.mActorIdConverter)
         {
             for (auto& [_, refNum] : mSummonedCreatures)
@@ -613,6 +801,10 @@ namespace MWMechanics
             auto& graveyard = state.mAiSequence.mActorIdConverter->mGraveyard;
             graveyard.insert(graveyard.end(), state.mSummonGraveyard.begin(), state.mSummonGraveyard.end());
         }
+=======
+        mFalloutLimbDamage = state.mFalloutLimbDamage;
+        mFalloutActiveEffects = state.mFalloutActiveEffects;
+>>>>>>> origin/main
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)
@@ -634,6 +826,39 @@ namespace MWMechanics
         return mGoldPool;
     }
 
+<<<<<<< HEAD
+=======
+    int CreatureStats::getActorId()
+    {
+        if (mActorId == -1)
+            mActorId = sActorId++;
+
+        return mActorId;
+    }
+
+    bool CreatureStats::matchesActorId(int id) const
+    {
+        return mActorId != -1 && id == mActorId;
+    }
+
+    void CreatureStats::cleanup()
+    {
+        sActorId = 0;
+    }
+
+    void CreatureStats::writeActorIdCounter(ESM::ESMWriter& esm)
+    {
+        esm.startRecord(ESM::REC_ACTC);
+        esm.writeHNT("COUN", sActorId);
+        esm.endRecord(ESM::REC_ACTC);
+    }
+
+    void CreatureStats::readActorIdCounter(ESM::ESMReader& esm)
+    {
+        esm.getHNT(sActorId, "COUN");
+    }
+
+>>>>>>> origin/main
     signed char CreatureStats::getDeathAnimation() const
     {
         return mDeathAnimation;
@@ -649,9 +874,33 @@ namespace MWMechanics
         return mTimeOfDeath;
     }
 
+<<<<<<< HEAD
     std::multimap<ESM::RefId, ESM::RefNum>& CreatureStats::getSummonedCreatureMap()
+=======
+    std::multimap<int, int>& CreatureStats::getSummonedCreatureMap()
+>>>>>>> origin/main
     {
         return mSummonedCreatures;
+    }
+
+    void CreatureStats::updateAwareness(float duration)
+    {
+        mAwarenessTimer += duration;
+        // Only reroll for awareness every 5 seconds
+        if (mAwarenessTimer >= 5.f)
+        {
+            mAwarenessTimer = 0.f;
+            mAwarenessRoll = -1;
+        }
+    }
+
+    int CreatureStats::getAwarenessRoll()
+    {
+        if (mAwarenessRoll >= 0)
+            return mAwarenessRoll;
+        auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+        mAwarenessRoll = Misc::Rng::roll0to99(prng);
+        return mAwarenessRoll;
     }
 
     void CreatureStats::updateAwareness(float duration)

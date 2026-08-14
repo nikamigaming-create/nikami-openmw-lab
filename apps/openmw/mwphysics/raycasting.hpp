@@ -1,6 +1,12 @@
 #ifndef OPENMW_MWPHYSICS_RAYCASTING_H
 #define OPENMW_MWPHYSICS_RAYCASTING_H
 
+<<<<<<< HEAD
+=======
+#include <string>
+#include <vector>
+
+>>>>>>> origin/main
 #include <osg/Vec3f>
 
 #include "../mwworld/ptr.hpp"
@@ -16,6 +22,10 @@ namespace MWPhysics
         osg::Vec3f mHitPos;
         osg::Vec3f mHitNormal;
         MWWorld::Ptr mHitObject;
+<<<<<<< HEAD
+=======
+        std::vector<std::string> mHitNodePath;
+>>>>>>> origin/main
     };
 
     class RayCastingInterface

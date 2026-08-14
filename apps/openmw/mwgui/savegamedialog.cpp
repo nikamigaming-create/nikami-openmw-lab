@@ -35,6 +35,11 @@
 
 #include "confirmationdialog.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwvr/vrlistbox.hpp"
+//## VR_PATCH END
+
 namespace MWGui
 {
     SaveGameDialog::SaveGameDialog()
@@ -52,6 +57,27 @@ namespace MWGui
         getWidget(mDeleteButton, "DeleteButton");
         getWidget(mSaveList, "SaveList");
         getWidget(mSaveNameEdit, "SaveNameEdit");
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// VR friendly save/load game dialog
+        getWidget(mCharacterSelectionButton, "SelectCharacterButton");
+
+        if (VR::getVR())
+        {
+            mCharacterSelectionListBox = new MWVR::VrListBox();
+            mCharacterSelection->setVisible(false);
+            mCharacterSelection->setUserString("Hidden", "true");
+        }
+        else
+        {
+            mCharacterSelectionButton->setVisible(false);
+            mCharacterSelectionButton->setUserString("Hidden", "true");
+        }
+        mCharacterSelectionButton->eventMouseButtonClick
+            += MyGUI::newDelegate(this, &SaveGameDialog::onCharacterSelectionButtonClicked);
+//## VR_PATCH END
+>>>>>>> origin/main
         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SaveGameDialog::onOkButtonClicked);
         mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SaveGameDialog::onCancelButtonClicked);
         mDeleteButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SaveGameDialog::onDeleteButtonClicked);
@@ -174,12 +200,26 @@ namespace MWGui
         }
         if (mSaving)
             MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mSaveNameEdit);
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// Sensible defaults in VR
+        else if (VR::getVR())
+            MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mCharacterSelectionButton);
+//## VR_PATCH END
+>>>>>>> origin/main
         else
             MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mSaveList);
 
         center();
 
         mCharacterSelection->setCaption({});
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        mCharacterSelectionButton->setCaption("");
+//## VR_PATCH END
+>>>>>>> origin/main
         mCharacterSelection->removeAllItems();
         mCurrentCharacter = nullptr;
         mCurrentSlot = nullptr;
@@ -251,7 +291,18 @@ namespace MWGui
         }
         mCharacterSelection->setIndexSelected(selectedIndex);
         if (selectedIndex == MyGUI::ITEM_NONE)
+<<<<<<< HEAD
             mCharacterSelection->setCaptionWithReplacing("#{OMWEngine:SelectCharacter}");
+=======
+//## VR_PATCH BEGIN
+        {
+            mCharacterSelection->setCaptionWithReplacing("#{OMWEngine:SelectCharacter}");
+            mCharacterSelectionButton->setCaptionWithReplacing("#{OMWEngine:SelectCharacter}");
+        }
+        else
+            mCharacterSelectionButton->setCaption(mCharacterSelection->getCaption());
+//## VR_PATCH END
+>>>>>>> origin/main
 
         fillSaveList();
     }
@@ -260,8 +311,24 @@ namespace MWGui
     {
         mSaving = !load;
         mSaveNameEdit->setVisible(!load);
+<<<<<<< HEAD
         mCharacterSelection->setUserString("Hidden", load ? "false" : "true");
         mCharacterSelection->setVisible(load);
+=======
+//## VR_PATCH BEGIN
+
+        if (VR::getVR())
+        {
+            mCharacterSelectionButton->setUserString("Hidden", load ? "false" : "true");
+            mCharacterSelectionButton->setVisible(load);
+        }
+        else
+        {
+            mCharacterSelection->setUserString("Hidden", load ? "false" : "true");
+            mCharacterSelection->setVisible(load);
+        }
+//## VR_PATCH END
+>>>>>>> origin/main
 
         mDeleteButton->setUserString("Hidden", load ? "false" : "true");
         mDeleteButton->setVisible(load);
@@ -285,6 +352,21 @@ namespace MWGui
             confirmDeleteSave();
     }
 
+//## VR_PATCH BEGIN
+    void SaveGameDialog::onCharacterSelectionButtonClicked(MyGUI::Widget* sender)
+    {
+        mCharacterSelectionListBox->open(mCharacterSelection, [this](std::size_t index) {
+            if (index != MyGUI::ITEM_NONE)
+            {
+                MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mSaveList);
+                auto caption = mCharacterSelection->getItemNameAt(index);
+                mCharacterSelectionButton->setCaption(caption);
+                onCharacterSelected(mCharacterSelection, index);
+            }
+        });
+    }
+
+//## VR_PATCH END
     void SaveGameDialog::onConfirmationGiven()
     {
         accept(true);
@@ -484,8 +566,12 @@ namespace MWGui
         // Reset the image for the case we're unable to recover a screenshot
         mScreenshotTexture.reset();
         mScreenshot->setRenderItemTexture(nullptr);
+<<<<<<< HEAD
         // The widget is Y-down, the screenshot is Y-up, so this UV is inverted
         mScreenshot->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+=======
+        mScreenshot->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+>>>>>>> origin/main
 
         // Decode screenshot
         const std::vector<char>& data = mCurrentSlot->mProfile.mScreenshot;
@@ -550,7 +636,11 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_Y)
         {
             size_t index = mCharacterSelection->getIndexSelected();
+<<<<<<< HEAD
             index = wrap(index, mCharacterSelection->getItemCount(), 1);
+=======
+            index = wrap(index + 1, mCharacterSelection->getItemCount());
+>>>>>>> origin/main
             mCharacterSelection->setIndexSelected(index);
             onCharacterSelected(mCharacterSelection, index);
             MWBase::Environment::get().getWindowManager()->playSound(ESM::RefId::stringRefId("Menu Click"));

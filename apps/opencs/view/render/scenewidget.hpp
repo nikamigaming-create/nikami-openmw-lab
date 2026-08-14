@@ -14,11 +14,21 @@
 #include <osg/ref_ptr>
 
 #include <osgViewer/CompositeViewer>
+<<<<<<< HEAD
 
 class QMouseEvent;
 class QWheelEvent;
 class QResizeEvent;
 class QShowEvent;
+=======
+
+#include "lightingbright.hpp"
+#include "lightingday.hpp"
+#include "lightingnight.hpp"
+
+class QMouseEvent;
+class QWheelEvent;
+>>>>>>> origin/main
 
 class osgQOpenGLWidget;
 class CompositeOsgRenderer;
@@ -33,7 +43,10 @@ namespace osg
     class Group;
     class Camera;
     class Geometry;
+<<<<<<< HEAD
     class Light;
+=======
+>>>>>>> origin/main
 }
 
 namespace osg
@@ -50,6 +63,7 @@ namespace CSVWidget
 namespace CSMPrefs
 {
     class Setting;
+<<<<<<< HEAD
 }
 
 namespace SceneUtil
@@ -57,6 +71,8 @@ namespace SceneUtil
     class PerViewUniformStateUpdater;
     class SharedUniformStateUpdater;
     class StateUpdater;
+=======
+>>>>>>> origin/main
 }
 
 namespace CSVRender
@@ -64,14 +80,22 @@ namespace CSVRender
     class CameraController;
     class FreeCameraController;
     class OrbitCameraController;
+<<<<<<< HEAD
+=======
+    class Lighting;
+>>>>>>> origin/main
 
     class RenderWidget : public QWidget
     {
         Q_OBJECT
 
     public:
+<<<<<<< HEAD
         RenderWidget(std::shared_ptr<Resource::ResourceSystem> resourceSystem, QWidget* parent = nullptr,
             Qt::WindowFlags f = Qt::WindowFlags());
+=======
+        RenderWidget(QWidget* parent = nullptr, Qt::WindowFlags f = Qt::WindowFlags());
+>>>>>>> origin/main
         virtual ~RenderWidget();
 
         /// Initiates a request to redraw the view
@@ -86,6 +110,7 @@ namespace CSVRender
         CompositeOsgRenderer* mRenderer;
         osg::ref_ptr<osgViewer::View> mView;
         osg::ref_ptr<osg::Group> mRootNode;
+<<<<<<< HEAD
         osg::ref_ptr<osg::Light> mSunLight;
 
         std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
@@ -177,6 +202,89 @@ namespace CSVRender
 
     signals:
 
+=======
+
+        void updateCameraParameters(double overrideAspect = -1.0);
+
+    protected slots:
+
+        void toggleRenderStats();
+    };
+
+    /// Extension of RenderWidget to support lighting mode selection & toolbar
+    class SceneWidget : public RenderWidget
+    {
+        Q_OBJECT
+    public:
+        SceneWidget(std::shared_ptr<Resource::ResourceSystem> resourceSystem, QWidget* parent = nullptr,
+            Qt::WindowFlags f = Qt::WindowFlags(), bool retrieveInput = true);
+        virtual ~SceneWidget();
+
+        CSVWidget::SceneToolMode* makeLightingSelector(CSVWidget::SceneToolbar* parent);
+        ///< \attention The created tool is not added to the toolbar (via addTool). Doing that
+        /// is the responsibility of the calling function.
+
+        void setDefaultAmbient(const osg::Vec4f& colour);
+        ///< \note The actual ambient colour may differ based on lighting settings.
+
+        void setExterior(bool isExterior);
+
+        void setSelectionMarkerRoot(osg::ref_ptr<osg::PositionAttitudeTransform> selectionMarker)
+        {
+            mSelectionMarkerNode = selectionMarker;
+        }
+
+    protected:
+        void setLighting(Lighting* lighting);
+        ///< \attention The ownership of \a lighting is not transferred to *this.
+
+        void setAmbient(const osg::Vec4f& ambient);
+
+        void mouseMoveEvent(QMouseEvent* event) override;
+        void wheelEvent(QWheelEvent* event) override;
+
+        osg::ref_ptr<osg::Geometry> createGradientRectangle(QColor& bgColour, QColor& gradientColour);
+        osg::ref_ptr<osg::Camera> createGradientCamera(QColor& bgColour, QColor& gradientColour);
+        void updateGradientCamera(QColor& bgColour, QColor& gradientColour);
+
+        std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
+
+        Lighting* mLighting;
+
+        osg::ref_ptr<osg::PositionAttitudeTransform> mSelectionMarkerNode;
+        osg::ref_ptr<osg::Camera> mGradientCamera;
+        osg::Vec4f mDefaultAmbient;
+        bool mHasDefaultAmbient;
+        bool mIsExterior;
+        LightingDay mLightingDay;
+        LightingNight mLightingNight;
+        LightingBright mLightingBright;
+
+        QPointF mPrevMouse;
+
+        /// Tells update that camera isn't set
+        bool mCamPositionSet;
+
+        FreeCameraController* mFreeCamControl;
+        OrbitCameraController* mOrbitCamControl;
+        CameraController* mCurrentCamControl;
+
+    public slots:
+        void update(double dt);
+
+    protected slots:
+
+        virtual void settingChanged(const CSMPrefs::Setting* setting);
+
+        void selectNavigationMode(const std::string& mode);
+
+    private slots:
+
+        void selectLightingMode(const std::string& mode);
+
+    signals:
+
+>>>>>>> origin/main
         void focusToolbarRequest();
     };
 }

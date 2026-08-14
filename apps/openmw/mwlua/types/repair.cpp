@@ -33,13 +33,24 @@ namespace MWLua
             = sol::readonly_property([](const ESM::Repair& rec) -> std::string { return rec.mId.serializeText(); });
         record["name"] = sol::readonly_property([](const ESM::Repair& rec) -> std::string { return rec.mName; });
         addModelProperty(record);
+<<<<<<< HEAD
         record["mwscript"] = sol::readonly_property([](const ESM::Repair& rec) -> ESM::RefId { return rec.mScript; });
         record["icon"] = sol::readonly_property([vfs](const ESM::Repair& rec) -> std::string {
             return Misc::ResourceHelpers::correctIconPath(VFS::Path::toNormalized(rec.mIcon), *vfs);
+=======
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::Repair& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
+        record["icon"] = sol::readonly_property([vfs](const ESM::Repair& rec) -> std::string {
+            return Misc::ResourceHelpers::correctIconPath(rec.mIcon, vfs);
+>>>>>>> origin/main
         });
         record["maxCondition"] = sol::readonly_property([](const ESM::Repair& rec) -> int { return rec.mData.mUses; });
         record["value"] = sol::readonly_property([](const ESM::Repair& rec) -> int { return rec.mData.mValue; });
         record["weight"] = sol::readonly_property([](const ESM::Repair& rec) -> float { return rec.mData.mWeight; });
         record["quality"] = sol::readonly_property([](const ESM::Repair& rec) -> float { return rec.mData.mQuality; });
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/main

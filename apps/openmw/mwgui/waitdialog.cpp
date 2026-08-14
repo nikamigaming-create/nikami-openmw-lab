@@ -239,7 +239,11 @@ namespace MWGui
     void WaitDialog::onHourSliderChangedPosition(MyGUI::ScrollBar* sender, size_t position)
     {
         mHourText->setCaptionWithReplacing(MyGUI::utility::toString(position + 1) + " #{sRestMenu2}");
+<<<<<<< HEAD
         mManualHours = static_cast<int>(position + 1);
+=======
+        mManualHours = position + 1;
+>>>>>>> origin/main
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mWaitButton);
     }
 

@@ -90,6 +90,7 @@ namespace MWClass
                 if (Settings::game().mRebalanceSoulGemValues)
                 {
                     // use the 'soul gem value rebalance' formula from the Morrowind Code Patch
+<<<<<<< HEAD
                     double soulValue = 0.0001 * std::pow(soul, 3) + 2 * soul;
 
                     // for Azura's star add the unfilled value
@@ -97,6 +98,15 @@ namespace MWClass
                         value += static_cast<int>(soulValue);
                     else
                         value = static_cast<int>(soulValue);
+=======
+                    float soulValue = 0.0001 * pow(soul, 3) + 2 * soul;
+
+                    // for Azura's star add the unfilled value
+                    if (ptr.getCellRef().getRefId() == "Misc_SoulGem_Azura")
+                        value += soulValue;
+                    else
+                        value = soulValue;
+>>>>>>> origin/main
                 }
                 else
                     value *= soul;
@@ -195,6 +205,7 @@ namespace MWClass
     {
         MWWorld::Ptr newPtr;
         if (isGold(ptr))
+<<<<<<< HEAD
         {
             newPtr = createGold(cell, getValue(ptr) * count);
             newPtr.getRefData() = ptr.getRefData();
@@ -205,6 +216,15 @@ namespace MWClass
             newPtr = MWWorld::Ptr(cell.insert(ref), &cell);
             newPtr.getCellRef().setCount(count);
         }
+=======
+            newPtr = createGold(cell, getValue(ptr) * count);
+        else
+        {
+            const MWWorld::LiveCellRef<ESM::Miscellaneous>* ref = ptr.get<ESM::Miscellaneous>();
+            newPtr = MWWorld::Ptr(cell.insert(ref), &cell);
+            newPtr.getCellRef().setCount(count);
+        }
+>>>>>>> origin/main
         newPtr.getCellRef().unsetRefNum();
         newPtr.getRefData().setLuaScripts(nullptr);
         MWBase::Environment::get().getWorldModel()->registerPtr(newPtr);

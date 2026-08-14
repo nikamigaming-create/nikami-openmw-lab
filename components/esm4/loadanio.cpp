@@ -63,6 +63,11 @@ void ESM4::AnimObject::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadanio"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::ANIO::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

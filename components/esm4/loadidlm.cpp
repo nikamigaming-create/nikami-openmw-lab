@@ -26,6 +26,10 @@
 */
 #include "loadidlm.hpp"
 
+<<<<<<< HEAD
+=======
+#include <algorithm>
+>>>>>>> origin/main
 #include <stdexcept>
 
 #include "reader.hpp"
@@ -50,6 +54,7 @@ void ESM4::IdleMarker::load(ESM4::Reader& reader)
                 reader.get(mIdleFlags);
                 break;
             case ESM::fourCC("IDLC"):
+<<<<<<< HEAD
                 if (subHdr.dataSize != 1) // FO3 can have 4?
                 {
                     reader.skipSubRecordData();
@@ -57,20 +62,41 @@ void ESM4::IdleMarker::load(ESM4::Reader& reader)
                 }
 
                 reader.get(mIdleCount);
+=======
+                if (subHdr.dataSize == 1)
+                    reader.get(mIdleCount);
+                else if (subHdr.dataSize == 4)
+                {
+                    std::uint32_t count = 0;
+                    reader.get(count);
+                    mIdleCount = static_cast<std::uint8_t>(std::min<std::uint32_t>(count, 0xff));
+                }
+                else
+                    reader.skipSubRecordData();
+>>>>>>> origin/main
                 break;
             case ESM::fourCC("IDLT"):
                 reader.get(mIdleTimer);
                 break;
             case ESM::fourCC("IDLA"):
             {
+<<<<<<< HEAD
                 bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
                 if (esmVer == ESM::VER_094 || isFONV) // FO3? 4 or 8 bytes
+=======
+                if (subHdr.dataSize % sizeof(ESM::FormId32) != 0)
+>>>>>>> origin/main
                 {
                     reader.skipSubRecordData();
                     break;
                 }
 
+<<<<<<< HEAD
                 mIdleAnim.resize(mIdleCount);
+=======
+                const std::size_t idleCount = subHdr.dataSize / sizeof(ESM::FormId32);
+                mIdleAnim.resize(idleCount);
+>>>>>>> origin/main
                 for (ESM::FormId& value : mIdleAnim)
                     reader.getFormId(value);
                 break;
@@ -89,6 +115,11 @@ void ESM4::IdleMarker::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadidlm"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::IDLM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

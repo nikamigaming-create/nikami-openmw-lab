@@ -1,5 +1,15 @@
 #include "sdlgraphicswindow.hpp"
 
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+#include <string_view>
+
+//## VR_PATCH BEGIN
+#include <osgViewer/Viewer>
+
+//## VR_PATCH END
+>>>>>>> origin/main
 #include <SDL_video.h>
 
 #ifdef OPENMW_GL4ES_MANUAL_INIT
@@ -180,7 +190,15 @@ namespace SDLUtil
         if (!mValid)
             return false;
 
+<<<<<<< HEAD
         SDL_ShowWindow(mWindow);
+=======
+        const char* backgroundSession = std::getenv("OPENMW_PLAYABLE_SESSION_BACKGROUND");
+        const bool keepHidden = backgroundSession != nullptr && *backgroundSession != '\0'
+            && std::string_view(backgroundSession) != "0";
+        if (!keepHidden)
+            SDL_ShowWindow(mWindow);
+>>>>>>> origin/main
 
         getEventQueue()->syncWindowRectangleWithGraphicsContext();
 
@@ -251,6 +269,29 @@ namespace SDLUtil
         SDL_GL_MakeCurrent(oldWin, oldCtx);
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: Is this still relevant? We still using slave cameras?
+    osg::GraphicsContext* GraphicsWindowSDL2::findContext(osgViewer::View& view)
+    {
+        view.getCamera();
+        if (view.getCamera()->getGraphicsContext())
+        {
+            return view.getCamera()->getGraphicsContext();
+        }
+
+        for (std::size_t i = 0; i < view.getNumSlaves(); i++)
+        {
+            if (view.getSlave(i)._camera->getGraphicsContext())
+                return view.getSlave(i)._camera->getGraphicsContext();
+        }
+
+        return nullptr;
+    }
+
+//## VR_PATCH END
+>>>>>>> origin/main
     void GraphicsWindowSDL2::setSwapInterval(VSyncMode mode)
     {
         mVSyncMode = mode;

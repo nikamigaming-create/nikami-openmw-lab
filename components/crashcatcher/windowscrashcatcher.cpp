@@ -1,6 +1,10 @@
 #include "windowscrashcatcher.hpp"
 
 #include <cassert>
+<<<<<<< HEAD
+=======
+#include <cstdlib>
+>>>>>>> origin/main
 #include <cwchar>
 #include <sstream>
 #include <thread>
@@ -17,6 +21,15 @@ namespace Crash
 {
     namespace
     {
+<<<<<<< HEAD
+=======
+        bool suppressFatalDialogs()
+        {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_SUPPRESS_FATAL_DIALOG");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }
+
+>>>>>>> origin/main
         template <class T, std::size_t N>
         void writePathToShm(T (&buffer)[N], const std::filesystem::path& path)
         {
@@ -178,7 +191,11 @@ namespace Crash
         {
             executablePath.resize(executablePath.size() + MAX_PATH);
             copied = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+<<<<<<< HEAD
         } while (GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+=======
+        } while (copied >= executablePath.size());
+>>>>>>> origin/main
         executablePath.resize(copied);
 
         writePathToShm(mShm->mStartup.mDumpDirectoryPath, dumpPath);
@@ -255,10 +272,21 @@ namespace Crash
             std::string message = "OpenMW has encountered a fatal error.\nCrash dump saved to '"
                 + Misc::StringUtils::u8StringToString(getCrashDumpPath(*mShm).u8string())
                 + "'.\nPlease report this to https://gitlab.com/OpenMW/openmw/issues !";
+<<<<<<< HEAD
             SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
         }
         else if (monitorStatus == CrashSHM::Status::Dumping)
             SDL_ShowSimpleMessageBox(0, "Fatal Error", "Timed out while creating crash dump", nullptr);
+=======
+            if (!suppressFatalDialogs())
+                SDL_ShowSimpleMessageBox(0, "Fatal Error", message.c_str(), nullptr);
+        }
+        else if (monitorStatus == CrashSHM::Status::Dumping)
+        {
+            if (!suppressFatalDialogs())
+                SDL_ShowSimpleMessageBox(0, "Fatal Error", "Timed out while creating crash dump", nullptr);
+        }
+>>>>>>> origin/main
     }
 
 } // namespace Crash

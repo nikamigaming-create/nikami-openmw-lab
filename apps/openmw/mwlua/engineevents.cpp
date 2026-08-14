@@ -54,17 +54,62 @@ namespace MWLua
                 scripts->onTeleported();
         }
 
+<<<<<<< HEAD
+=======
+        void operator()(const OnReset& event) const
+        {
+            if (auto* scripts = getLocalScripts(event.mObject))
+                scripts->onReset();
+        }
+
+>>>>>>> origin/main
         void operator()(const OnActivate& event) const
         {
             MWWorld::Ptr obj = getPtr(event.mObject);
             MWWorld::Ptr actor = getPtr(event.mActor);
             if (actor.isEmpty() || obj.isEmpty())
                 return;
+<<<<<<< HEAD
             mGlobalScripts.onActivate(GObject(obj), GObject(actor));
             if (auto* scripts = getLocalScripts(obj))
                 scripts->onActivated(LObject(actor));
         }
 
+=======
+            LocalScripts* scripts = getLocalScripts(obj);
+            if (scripts != nullptr && scripts->hasActivationHandlers())
+            {
+                // Retail OnActivate/OnOpen scripts own whether the native action
+                // proceeds. The global standard-action handler buffers here;
+                // an authored Activate command releases it exactly once.
+                obj.getRefData().onActivate();
+            }
+            mGlobalScripts.onActivate(GObject(obj), GObject(actor));
+            if (scripts != nullptr)
+                scripts->onActivated(LObject(actor));
+        }
+
+        void operator()(const OnTriggerEnter& event) const
+        {
+            MWWorld::Ptr obj = getPtr(event.mObject);
+            MWWorld::Ptr actor = getPtr(event.mActor);
+            if (actor.isEmpty() || obj.isEmpty())
+                return;
+            if (auto* scripts = getLocalScripts(obj))
+                scripts->onTriggerEnter(LObject(actor));
+        }
+
+        void operator()(const OnTriggerLeave& event) const
+        {
+            MWWorld::Ptr obj = getPtr(event.mObject);
+            MWWorld::Ptr actor = getPtr(event.mActor);
+            if (actor.isEmpty() || obj.isEmpty())
+                return;
+            if (auto* scripts = getLocalScripts(obj))
+                scripts->onTriggerLeave(LObject(actor));
+        }
+
+>>>>>>> origin/main
         void operator()(const OnUseItem& event) const
         {
             MWWorld::Ptr obj = getPtr(event.mObject);
@@ -95,6 +140,7 @@ namespace MWLua
                 scripts->onAnimationTextKey(event.mGroupname, event.mKey);
         }
 
+<<<<<<< HEAD
         void operator()(const OnAnimationEnded& event) const
         {
             MWWorld::Ptr actor = getPtr(event.mActor);
@@ -105,6 +151,8 @@ namespace MWLua
                     event.mGroupname, event.mStartKey, event.mStopKey, event.mTime, event.mCompletion);
         }
 
+=======
+>>>>>>> origin/main
         void operator()(const OnSkillUse& event) const
         {
             MWWorld::Ptr actor = getPtr(event.mActor);

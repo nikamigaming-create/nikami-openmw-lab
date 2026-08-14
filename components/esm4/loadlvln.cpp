@@ -101,6 +101,11 @@ void ESM4::LevelledNpc::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadlvln"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::LVLN::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

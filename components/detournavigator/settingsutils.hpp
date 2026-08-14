@@ -79,10 +79,15 @@ namespace DetourNavigator
     inline TileBounds makeTileBounds(const RecastSettings& settings, const TilePosition& tilePosition)
     {
         return TileBounds{
+<<<<<<< HEAD
             osg::Vec2f(static_cast<float>(tilePosition.x()), static_cast<float>(tilePosition.y()))
                 * getTileSize(settings),
             osg::Vec2f(static_cast<float>(tilePosition.x() + 1), static_cast<float>(tilePosition.y() + 1))
                 * getTileSize(settings),
+=======
+            osg::Vec2f(tilePosition.x(), tilePosition.y()) * getTileSize(settings),
+            osg::Vec2f(tilePosition.x() + 1, tilePosition.y() + 1) * getTileSize(settings),
+>>>>>>> origin/main
         };
     }
 
@@ -99,7 +104,11 @@ namespace DetourNavigator
 
     inline float getMaxNavmeshAreaRadius(const Settings& settings)
     {
+<<<<<<< HEAD
         return std::floor(std::sqrt(settings.mMaxTilesNumber / osg::PIf)) - 1;
+=======
+        return std::floor(std::sqrt(settings.mMaxTilesNumber / osg::PI)) - 1;
+>>>>>>> origin/main
     }
 
     // Returns tile bounds in real coordinates

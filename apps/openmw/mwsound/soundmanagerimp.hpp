@@ -1,6 +1,7 @@
 #ifndef GAME_SOUND_SOUNDMANAGER_H
 #define GAME_SOUND_SOUNDMANAGER_H
 
+<<<<<<< HEAD
 #include <map>
 #include <memory>
 #include <string>
@@ -8,6 +9,19 @@
 #include <utility>
 
 #include <components/fallback/fallback.hpp>
+=======
+#include <deque>
+#include <map>
+#include <memory>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include <components/fallback/fallback.hpp>
+#include <components/esm4/lip.hpp>
+>>>>>>> origin/main
 #include <components/misc/objectpool.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/settings/settings.hpp>
@@ -15,6 +29,10 @@
 #include "../mwbase/soundmanager.hpp"
 
 #include "regionsoundselector.hpp"
+<<<<<<< HEAD
+=======
+#include "saysequence.hpp"
+>>>>>>> origin/main
 #include "soundbuffer.hpp"
 #include "type.hpp"
 #include "watersoundupdater.hpp"
@@ -76,12 +94,29 @@ namespace MWSound
         {
             const MWWorld::CellStore* mCell;
             StreamPtr mStream;
+<<<<<<< HEAD
+=======
+            std::shared_ptr<const ESM4::LipAnimation> mLip;
+>>>>>>> origin/main
         };
 
         typedef std::map<const MWWorld::LiveCellRefBase*, SaySound> SaySoundMap;
         SaySoundMap mSaySoundsQueue;
         SaySoundMap mActiveSaySounds;
 
+<<<<<<< HEAD
+=======
+        struct ActorSaySequence
+        {
+            const MWWorld::CellStore* mCell = nullptr;
+            SaySequence mVoices;
+            std::deque<MWBase::FalloutDialogueVoiceMetadata> mMetadata;
+        };
+
+        typedef std::map<const MWWorld::LiveCellRefBase*, ActorSaySequence> SaySequenceMap;
+        SaySequenceMap mSaySequences;
+
+>>>>>>> origin/main
         typedef std::vector<StreamPtr> TrackList;
         TrackList mActiveTracks;
 
@@ -115,6 +150,12 @@ namespace MWSound
         // returns a decoder to start streaming, or nullptr if the sound was not found
         DecoderPtr loadVoice(VFS::Path::NormalizedView voicefile);
 
+<<<<<<< HEAD
+=======
+        bool startSay(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView filename, bool replace);
+        bool startNextSaySequence(const MWWorld::ConstPtr& reference);
+
+>>>>>>> origin/main
         SoundPtr getSoundRef();
         StreamPtr getStreamRef();
 
@@ -185,6 +226,14 @@ namespace MWSound
         ///< Make an actor say some text.
         /// \param filename name of a sound file in the VFS
 
+<<<<<<< HEAD
+=======
+        void saySequence(
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames,
+            std::span<const MWBase::FalloutDialogueVoiceMetadata> metadata = {}) override;
+        ///< Replace the actor's speech with an authored sequence of voice files.
+
+>>>>>>> origin/main
         void say(VFS::Path::NormalizedView filename) override;
         ///< Say some text, without an actor ref
         /// \param filename name of a sound file in the VFS
@@ -203,6 +252,12 @@ namespace MWSound
         /// and get an average loudness value (scale [0,1]) at the current time position.
         /// If the actor is not saying anything, returns 0.
 
+<<<<<<< HEAD
+=======
+        float getSaySoundFacialTrackValue(
+            const MWWorld::ConstPtr& reference, std::string_view trackName) const override;
+
+>>>>>>> origin/main
         Stream* playTrack(const DecoderPtr& decoder, Type type) override;
         ///< Play a 2D audio track, using a custom decoder
 
@@ -219,7 +274,11 @@ namespace MWSound
         ///< Play a sound, independently of 3D-position
         ///< @param offset Number of seconds into the sound to start playback.
 
+<<<<<<< HEAD
         Sound* playSound(VFS::Path::NormalizedView fileName, float volume, float pitch, Type type = Type::Sfx,
+=======
+        Sound* playSound(std::string_view fileName, float volume, float pitch, Type type = Type::Sfx,
+>>>>>>> origin/main
             PlayMode mode = PlayMode::Normal, float offset = 0) override;
         ///< Play a sound, independently of 3D-position
         ///< @param offset Number of seconds into the sound to start playback.
@@ -230,8 +289,13 @@ namespace MWSound
         ///< Play_NoTrack is specified.
         ///< @param offset Number of seconds into the sound to start playback.
 
+<<<<<<< HEAD
         Sound* playSound3D(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName, float volume,
             float pitch, Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0) override;
+=======
+        Sound* playSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName, float volume, float pitch,
+            Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0) override;
+>>>>>>> origin/main
         ///< Play a 3D sound attached to an MWWorld::Ptr. Will be updated automatically with the Ptr's position, unless
         ///< Play_NoTrack is specified.
         ///< @param offset Number of seconds into the sound to start playback.
@@ -249,7 +313,11 @@ namespace MWSound
         void stopSound3D(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) override;
         ///< Stop the given object from playing the given sound.
 
+<<<<<<< HEAD
         void stopSound3D(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName) override;
+=======
+        void stopSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName) override;
+>>>>>>> origin/main
         ///< Stop the given object from playing the given sound.
 
         void stopSound3D(const MWWorld::ConstPtr& reference) override;
@@ -267,7 +335,11 @@ namespace MWSound
         bool getSoundPlaying(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) const override;
         ///< Is the given sound currently playing on the given object?
 
+<<<<<<< HEAD
         bool getSoundPlaying(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName) const override;
+=======
+        bool getSoundPlaying(const MWWorld::ConstPtr& reference, std::string_view fileName) const override;
+>>>>>>> origin/main
         ///< Is the given sound currently playing on the given object?
 
         void pauseSounds(MWSound::BlockerType blocker, int types = int(Type::Mask)) override;

@@ -110,6 +110,7 @@ namespace MWMechanics
 
         void stopCombat(const MWWorld::Ptr& ptr) override;
 
+<<<<<<< HEAD
         /**
          * @note victim may be empty
          * @param arg Depends on \a type, e.g. for Theft, the value of the item that was stolen.
@@ -183,6 +184,94 @@ namespace MWMechanics
         void onClose(const MWWorld::Ptr& ptr) override;
 
         size_t countSavedGameRecords() const override;
+=======
+        bool playFalloutDialogueAnimation(
+            const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) override;
+
+        /**
+         * @note victim may be empty
+         * @param arg Depends on \a type, e.g. for Theft, the value of the item that was stolen.
+         * @param victimAware Is the victim already aware of the crime?
+         *                    If this parameter is false, it will be determined by a line-of-sight and awareness check.
+         * @return was the crime seen?
+         */
+        bool commitCrime(const MWWorld::Ptr& ptr, const MWWorld::Ptr& victim, OffenseType type,
+            const ESM::RefId& factionId = ESM::RefId(), int arg = 0, bool victimAware = false) override;
+        /// @return false if the attack was considered a "friendly hit" and forgiven
+        bool actorAttacked(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker) override;
+
+        /// Notify that actor was killed, add a murder bounty if applicable
+        /// @note No-op for non-player attackers
+        void actorKilled(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker) override;
+
+        /// Utility to check if taking this item is illegal and calling commitCrime if so
+        /// @param container The container the item is in; may be empty for an item in the world
+        void itemTaken(const MWWorld::Ptr& ptr, const MWWorld::Ptr& item, const MWWorld::Ptr& container, int count,
+            bool alarm = true) override;
+        /// Utility to check if unlocking this object is illegal and calling commitCrime if so
+        void unlockAttempted(const MWWorld::Ptr& ptr, const MWWorld::Ptr& item) override;
+        /// Attempt sleeping in a bed. If this is illegal, call commitCrime.
+        /// @return was it illegal, and someone saw you doing it? Also returns fail when enemies are nearby
+        bool sleepInBed(const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) override;
+
+        void forceStateUpdate(const MWWorld::Ptr& ptr) override;
+        bool reloadFalloutWeapon(const MWWorld::Ptr& actor) override;
+        bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) override;
+        bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) override;
+        bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) override;
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+            const FalloutProjectileImpactContract& impact) override;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) override;
+
+        /// Attempt to play an animation group
+        /// @return Success or error
+        bool playAnimationGroup(const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number,
+            bool scripted = false) override;
+        bool playAnimationGroupLua(const MWWorld::Ptr& ptr, std::string_view groupName, uint32_t loops, float speed,
+            std::string_view startKey, std::string_view stopKey, bool forceLoop) override;
+        void enableLuaAnimations(const MWWorld::Ptr& ptr, bool enable) override;
+        void skipAnimation(const MWWorld::Ptr& ptr) override;
+        bool checkAnimationPlaying(const MWWorld::Ptr& ptr, std::string_view groupName) override;
+        bool checkScriptedAnimationPlaying(const MWWorld::Ptr& ptr) const override;
+        void persistAnimationStates() override;
+        void clearAnimationQueue(const MWWorld::Ptr& ptr, bool clearScripted) override;
+
+        /// Update magic effects for an actor. Usually done automatically once per frame, but if we're currently
+        /// paused we may want to do it manually (after equipping permanent enchantment)
+        void updateMagicEffects(const MWWorld::Ptr& ptr) override;
+
+        void getObjectsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects) override;
+        void getActorsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects) override;
+
+        /// Check if there are actors in selected range
+        bool isAnyActorInRange(const osg::Vec3f& position, float radius) override;
+
+        std::vector<MWWorld::Ptr> getActorsSidingWith(const MWWorld::Ptr& actor) override;
+        std::vector<MWWorld::Ptr> getActorsFollowing(const MWWorld::Ptr& actor) override;
+        std::vector<int> getActorsFollowingIndices(const MWWorld::Ptr& actor) override;
+        std::map<int, MWWorld::Ptr> getActorsFollowingByIndex(const MWWorld::Ptr& actor) override;
+
+        std::vector<MWWorld::Ptr> getActorsFighting(const MWWorld::Ptr& actor) override;
+        std::vector<MWWorld::Ptr> getEnemiesNearby(const MWWorld::Ptr& actor) override;
+
+        /// Recursive version of getActorsFollowing
+        void getActorsFollowing(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) override;
+        /// Recursive version of getActorsSidingWith
+        void getActorsSidingWith(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) override;
+
+        bool toggleAI() override;
+        bool isAIActive() override;
+
+        void playerLoaded() override;
+
+        bool onOpen(const MWWorld::Ptr& ptr) override;
+        void onClose(const MWWorld::Ptr& ptr) override;
+
+        int countSavedGameRecords() const override;
+>>>>>>> origin/main
 
         void write(ESM::ESMWriter& writer, Loading::Listener& listener) const override;
 
@@ -227,7 +316,11 @@ namespace MWMechanics
         void setWerewolf(const MWWorld::Ptr& actor, bool werewolf) override;
         void applyWerewolfAcrobatics(const MWWorld::Ptr& actor) override;
 
+<<<<<<< HEAD
         void cleanupSummonedCreature(ESM::RefNum creature) override;
+=======
+        void cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId) override;
+>>>>>>> origin/main
 
         void confiscateStolenItemToOwner(
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count) override;
@@ -241,7 +334,12 @@ namespace MWMechanics
         int getGreetingTimer(const MWWorld::Ptr& ptr) const override;
         float getAngleToPlayer(const MWWorld::Ptr& ptr) const override;
         GreetingState getGreetingState(const MWWorld::Ptr& ptr) const override;
+<<<<<<< HEAD
         void fastForwardAi() const override;
+=======
+        bool isTurningToPlayer(const MWWorld::Ptr& ptr) const override;
+        bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) override;
+>>>>>>> origin/main
 
     private:
         bool canCommitCrimeAgainst(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker);

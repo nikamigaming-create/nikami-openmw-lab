@@ -2,7 +2,10 @@
 #define OPENMW_NAVMESHTOOL_WORLDSPACEDATA_H
 
 #include <components/bullethelpers/collisionobject.hpp>
+<<<<<<< HEAD
 #include <components/detournavigator/settings.hpp>
+=======
+>>>>>>> origin/main
 #include <components/detournavigator/tilecachedrecastmeshmanager.hpp>
 #include <components/esm3/loadland.hpp>
 #include <components/misc/convert.hpp>
@@ -13,8 +16,12 @@
 #include <LinearMath/btVector3.h>
 
 #include <memory>
+<<<<<<< HEAD
 #include <regex>
 #include <span>
+=======
+#include <string>
+>>>>>>> origin/main
 #include <vector>
 
 namespace ESM
@@ -38,12 +45,35 @@ namespace EsmLoader
     struct EsmData;
 }
 
+<<<<<<< HEAD
 namespace NavMeshTool
 {
     using DetourNavigator::ObjectTransform;
     using DetourNavigator::RecastSettings;
     using DetourNavigator::TileCachedRecastMeshManager;
 
+=======
+namespace DetourNavigator
+{
+    struct Settings;
+}
+
+namespace NavMeshTool
+{
+    using DetourNavigator::ObjectTransform;
+    using DetourNavigator::TileCachedRecastMeshManager;
+
+    struct WorldspaceNavMeshInput
+    {
+        ESM::RefId mWorldspace;
+        TileCachedRecastMeshManager mTileCachedRecastMeshManager;
+        btAABB mAabb;
+        bool mAabbInitialized = false;
+
+        explicit WorldspaceNavMeshInput(ESM::RefId worldspace, const DetourNavigator::RecastSettings& settings);
+    };
+
+>>>>>>> origin/main
     class BulletObject
     {
     public:
@@ -68,6 +98,7 @@ namespace NavMeshTool
         std::unique_ptr<btCollisionObject> mCollisionObject;
     };
 
+<<<<<<< HEAD
     struct TilesData
     {
         const RecastSettings mSettings;
@@ -100,6 +131,19 @@ namespace NavMeshTool
     WorldspaceData gatherWorldspaceData(const DetourNavigator::Settings& settings, ESM::ReadersCache& readers,
         const VFS::Manager& vfs, Resource::BulletShapeManager& bulletShapeManager, const EsmLoader::EsmData& esmData,
         bool writeBinaryLog, ESM::RefId worldspace, std::span<const std::size_t> cells);
+=======
+    struct WorldspaceData
+    {
+        std::vector<std::unique_ptr<WorldspaceNavMeshInput>> mNavMeshInputs;
+        std::vector<BulletObject> mObjects;
+        std::vector<std::unique_ptr<ESM::Land::LandData>> mLandData;
+        std::vector<std::vector<float>> mHeightfields;
+    };
+
+    WorldspaceData gatherWorldspaceData(const DetourNavigator::Settings& settings, ESM::ReadersCache& readers,
+        const VFS::Manager& vfs, Resource::BulletShapeManager& bulletShapeManager, const EsmLoader::EsmData& esmData,
+        bool processInteriorCells, bool writeBinaryLog);
+>>>>>>> origin/main
 }
 
 #endif

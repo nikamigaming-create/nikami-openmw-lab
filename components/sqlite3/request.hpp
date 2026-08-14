@@ -6,7 +6,10 @@
 
 #include <sqlite3.h>
 
+<<<<<<< HEAD
 #include <concepts>
+=======
+>>>>>>> origin/main
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -20,12 +23,15 @@
 
 namespace Sqlite3
 {
+<<<<<<< HEAD
     template <class T>
     concept StrongTypedef = requires(T v)
     {
         v.mValue;
     };
 
+=======
+>>>>>>> origin/main
     inline void bindParameter(sqlite3& db, sqlite3_stmt& stmt, int index, int value)
     {
         if (const int ec = sqlite3_bind_int(&stmt, index, value); ec != SQLITE_OK)
@@ -100,11 +106,19 @@ namespace Sqlite3
     {
         if (type != SQLITE_NULL)
             throw std::logic_error("Type of column " + std::to_string(index) + " is " + sqliteTypeToString(type)
+<<<<<<< HEAD
                 + " that does not match expected output type: SQLITE_NULL");
         value = nullptr;
     }
 
     template <std::integral T>
+=======
+                + " that does not match expected output type: SQLITE_INTEGER or SQLITE_FLOAT");
+        value = nullptr;
+    }
+
+    template <class T>
+>>>>>>> origin/main
     inline auto copyColumn(sqlite3& /*db*/, sqlite3_stmt& statement, int index, int type, T& value)
     {
         switch (type)
@@ -112,6 +126,7 @@ namespace Sqlite3
             case SQLITE_INTEGER:
                 value = static_cast<T>(sqlite3_column_int64(&statement, index));
                 return;
+<<<<<<< HEAD
             case SQLITE_NULL:
                 value = std::decay_t<T>{};
                 return;
@@ -125,6 +140,8 @@ namespace Sqlite3
     {
         switch (type)
         {
+=======
+>>>>>>> origin/main
             case SQLITE_FLOAT:
                 value = static_cast<T>(sqlite3_column_double(&statement, index));
                 return;
@@ -133,6 +150,7 @@ namespace Sqlite3
                 return;
         }
         throw std::logic_error("Type of column " + std::to_string(index) + " is " + sqliteTypeToString(type)
+<<<<<<< HEAD
             + " that does not match expected output type: SQLITE_FLOAT or SQLITE_NULL");
     }
 
@@ -140,6 +158,9 @@ namespace Sqlite3
     inline auto copyColumn(sqlite3& db, sqlite3_stmt& statement, int index, int type, T& value)
     {
         return copyColumn(db, statement, index, type, value.mValue);
+=======
+            + " that does not match expected output type: SQLITE_INTEGER or SQLITE_FLOAT or SQLITE_NULL");
+>>>>>>> origin/main
     }
 
     inline void copyColumn(sqlite3& db, sqlite3_stmt& statement, int index, int type, std::string& value)

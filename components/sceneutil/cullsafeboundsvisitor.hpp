@@ -26,14 +26,22 @@ namespace SceneUtil
             mBoundingBox.init();
         }
 
+<<<<<<< HEAD
         void apply(osg::Drawable& drawable) override
+=======
+        void apply(osg::Drawable& drawable)
+>>>>>>> origin/main
         {
             osg::BoundingBox bbox = drawable.getInitialBound();
             bbox.expandBy(drawable.computeBoundingBox());
             applyBoundingBox(bbox);
         }
 
+<<<<<<< HEAD
         void apply(osg::Transform& transform) override
+=======
+        void apply(osg::Transform& transform)
+>>>>>>> origin/main
         {
             osg::Matrix matrix;
             if (!mMatrixStack.empty())
@@ -63,4 +71,8 @@ namespace SceneUtil
         std::vector<osg::Matrix> mMatrixStack;
     };
 }
+<<<<<<< HEAD
 #endif // OPENMW_COMPONENTS_SCENEUTIL_CULLSAFEBOUNDSVISITOR_H
+=======
+#endif // OPENMW_COMPONENTS_SCENEUTIL_CULLSAFEBOUNDSVISITOR_H
+>>>>>>> origin/main

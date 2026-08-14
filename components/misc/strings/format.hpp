@@ -54,9 +54,15 @@ namespace Misc::StringUtils
             const int size = std::snprintf(nullptr, 0, fmt, argument(args)...);
             if (size < 0)
                 throw std::system_error(errno, std::generic_category(), "Failed to compute resulting string size");
+<<<<<<< HEAD
             // Note: snprintf also writes a trailing null character. We should remove it.
             std::string ret(static_cast<std::size_t>(size) + 1, '\0');
             if (std::snprintf(ret.data(), ret.size(), fmt, argument(args)...) < 0)
+=======
+            // Note: sprintf also writes a trailing null character. We should remove it.
+            std::string ret(static_cast<std::size_t>(size) + 1, '\0');
+            if (std::sprintf(ret.data(), fmt, argument(args)...) < 0)
+>>>>>>> origin/main
                 throw std::system_error(errno, std::generic_category(), "Failed to format string");
             ret.erase(static_cast<std::size_t>(size));
             return ret;

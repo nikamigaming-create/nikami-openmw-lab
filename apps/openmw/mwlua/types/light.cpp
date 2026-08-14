@@ -1,13 +1,24 @@
 #include "types.hpp"
 
+<<<<<<< HEAD
 #include "usertypeutil.hpp"
+=======
+#include "modelproperty.hpp"
+>>>>>>> origin/main
 
 #include <components/esm3/loadligh.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/util.hpp>
 #include <components/misc/color.hpp>
+<<<<<<< HEAD
 #include <components/misc/finitevalues.hpp>
 #include <components/misc/resourcehelpers.hpp>
+=======
+#include <components/misc/resourcehelpers.hpp>
+#include <components/resource/resourcesystem.hpp>
+
+#include "apps/openmw/mwbase/environment.hpp"
+>>>>>>> origin/main
 
 namespace sol
 {
@@ -19,7 +30,11 @@ namespace sol
 
 namespace
 {
+<<<<<<< HEAD
     void setRecordFlag(const sol::table& rec, std::string_view key, int flag, ESM::Light& record)
+=======
+    void setRecordFlag(const sol::table& rec, const std::string& key, int flag, ESM::Light& record)
+>>>>>>> origin/main
     {
         if (auto luaFlag = rec[key]; luaFlag != sol::nil)
         {
@@ -33,6 +48,7 @@ namespace
             }
         }
     }
+<<<<<<< HEAD
 }
 
 namespace MWLua
@@ -97,6 +113,16 @@ namespace MWLua
     ESM::Light tableToLight(const sol::table& rec)
     {
         auto light = Types::initFromTemplate<ESM::Light>(rec);
+=======
+    // Populates a light struct from a Lua table.
+    ESM::Light tableToLight(const sol::table& rec)
+    {
+        ESM::Light light;
+        if (rec["template"] != sol::nil)
+            light = LuaUtil::cast<ESM::Light>(rec["template"]);
+        else
+            light.blank();
+>>>>>>> origin/main
         if (rec["name"] != sol::nil)
             light.mName = rec["name"];
         if (rec["model"] != sol::nil)
@@ -109,7 +135,11 @@ namespace MWLua
             light.mScript = ESM::RefId::deserializeText(scriptId);
         }
         if (rec["weight"] != sol::nil)
+<<<<<<< HEAD
             light.mData.mWeight = rec["weight"].get<Misc::FiniteFloat>();
+=======
+            light.mData.mWeight = rec["weight"];
+>>>>>>> origin/main
         if (rec["value"] != sol::nil)
             light.mData.mValue = rec["value"];
         if (rec["duration"] != sol::nil)
@@ -136,6 +166,7 @@ namespace MWLua
 
         return light;
     }
+<<<<<<< HEAD
 
     void addMutableLightType(sol::state_view& lua)
     {
@@ -148,5 +179,56 @@ namespace MWLua
         light["createRecordDraft"] = tableToLight;
         sol::state_view lua = context.sol();
         addUserType<ESM::Light>(lua, "ESM3_Light");
+=======
+}
+
+namespace MWLua
+{
+    void addLightBindings(sol::table light, const Context& context)
+    {
+        auto vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+
+        addRecordFunctionBinding<ESM::Light>(light, context);
+        light["createRecordDraft"] = tableToLight;
+
+        sol::usertype<ESM::Light> record = context.sol().new_usertype<ESM::Light>("ESM3_Light");
+        record[sol::meta_function::to_string]
+            = [](const ESM::Light& rec) -> std::string { return "ESM3_Light[" + rec.mId.toDebugString() + "]"; };
+        record["id"]
+            = sol::readonly_property([](const ESM::Light& rec) -> std::string { return rec.mId.serializeText(); });
+        record["name"] = sol::readonly_property([](const ESM::Light& rec) -> std::string { return rec.mName; });
+        addModelProperty(record);
+        record["icon"] = sol::readonly_property([vfs](const ESM::Light& rec) -> std::string {
+            return Misc::ResourceHelpers::correctIconPath(rec.mIcon, vfs);
+        });
+        record["sound"]
+            = sol::readonly_property([](const ESM::Light& rec) -> std::string { return rec.mSound.serializeText(); });
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
+        record["weight"] = sol::readonly_property([](const ESM::Light& rec) -> float { return rec.mData.mWeight; });
+        record["value"] = sol::readonly_property([](const ESM::Light& rec) -> int { return rec.mData.mValue; });
+        record["duration"] = sol::readonly_property([](const ESM::Light& rec) -> int { return rec.mData.mTime; });
+        record["radius"] = sol::readonly_property([](const ESM::Light& rec) -> int { return rec.mData.mRadius; });
+        record["color"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> Misc::Color { return Misc::Color::fromRGB(rec.mData.mColor); });
+        record["isCarriable"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Carry; });
+        record["isDynamic"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Dynamic; });
+        record["isFire"]
+            = sol::readonly_property([](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Fire; });
+        record["isFlicker"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Flicker; });
+        record["isFlickerSlow"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::FlickerSlow; });
+        record["isNegative"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Negative; });
+        record["isOffByDefault"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::OffDefault; });
+        record["isPulse"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::Pulse; });
+        record["isPulseSlow"] = sol::readonly_property(
+            [](const ESM::Light& rec) -> bool { return rec.mData.mFlags & ESM::Light::PulseSlow; });
+>>>>>>> origin/main
     }
 }

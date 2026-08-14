@@ -88,5 +88,9 @@ void MWMechanics::AiAvoidDoor::adjustDirection()
 
 float MWMechanics::AiAvoidDoor::getAdjustedAngle() const
 {
+<<<<<<< HEAD
     return 2 * osg::PIf / MAX_DIRECTIONS * mDirection;
+=======
+    return 2 * osg::PI / MAX_DIRECTIONS * mDirection;
+>>>>>>> origin/main
 }

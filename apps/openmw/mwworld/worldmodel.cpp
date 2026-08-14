@@ -298,6 +298,7 @@ namespace MWWorld
             return cellStore;
 
         // try named exteriors
+<<<<<<< HEAD
         const ESM::Cell* cell = nullptr;
         const Store<ESM::Cell>& cells = mStore.get<ESM::Cell>();
         const Store<ESM::GameSetting>& gmsts = mStore.get<ESM::GameSetting>();
@@ -321,6 +322,27 @@ namespace MWWorld
                 cell = &(*it);
                 break;
             }
+=======
+        const ESM::Cell* cell = mStore.get<ESM::Cell>().searchExtByName(name);
+
+        if (cell == nullptr)
+        {
+            // treat "Wilderness" like an empty string
+            static const std::string& defaultName
+                = mStore.get<ESM::GameSetting>().find("sDefaultCellname")->mValue.getString();
+            if (Misc::StringUtils::ciEqual(name, defaultName))
+                cell = mStore.get<ESM::Cell>().searchExtByName({});
+        }
+
+        if (cell == nullptr)
+        {
+            // now check for regions
+            const Store<ESM::Region>& regions = mStore.get<ESM::Region>();
+            const auto region = std::find_if(regions.begin(), regions.end(),
+                [&](const ESM::Region& v) { return Misc::StringUtils::ciEqual(name, v.mName); });
+            if (region != regions.end())
+                cell = mStore.get<ESM::Cell>().searchExtByRegion(region->mId);
+>>>>>>> origin/main
         }
 
         if (cell != nullptr)
@@ -362,6 +384,15 @@ namespace MWWorld
 
 MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
 {
+<<<<<<< HEAD
+=======
+    if (const ESM::FormId* formId = name.getIf<ESM::FormId>())
+    {
+        if (Ptr ptr = mPtrRegistry.getOrEmpty(*formId); !ptr.isEmpty())
+            return ptr;
+    }
+
+>>>>>>> origin/main
     for (const auto& [cachedId, cellStore] : mIdCache)
     {
         if (cachedId != name || cellStore == nullptr)
@@ -388,6 +419,44 @@ MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
             return ptr;
     }
 
+<<<<<<< HEAD
+=======
+    // ESM4 placed references live in dedicated REFR/ACHR/ACRE stores rather
+    // than in the ESM3 cell record stream below.  Use the reference record to
+    // locate and load its owning cell before falling back to the legacy full
+    // cell scan.  Without this, an authored ESM4 reference can only be found
+    // when its cell happened to have been loaded already.
+    if (const ESM::FormId* formId = name.getIf<ESM::FormId>())
+    {
+        const auto findEsm4PlacedRef = [&](const auto& store) -> Ptr {
+            const auto* ref = store.search(*formId);
+            if (ref == nullptr || ref->mParent.empty())
+                return {};
+
+            CellStore* cellStore = findCell(ref->mParent, true);
+            if (cellStore == nullptr)
+                return {};
+            Ptr ptr;
+            cellStore->forEach([&](const Ptr& candidate) {
+                if (candidate.getCellRef().getRefNum() != *formId)
+                    return true;
+                ptr = candidate;
+                return false;
+            });
+            if (!ptr.isEmpty())
+                registerPtr(ptr);
+            return ptr;
+        };
+
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::Reference>()); !ptr.isEmpty())
+            return ptr;
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCharacter>()); !ptr.isEmpty())
+            return ptr;
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCreature>()); !ptr.isEmpty())
+            return ptr;
+    }
+
+>>>>>>> origin/main
     // Now try the other cells
     const MWWorld::Store<ESM::Cell>& cells = mStore.get<ESM::Cell>();
 
@@ -453,7 +522,11 @@ std::vector<MWWorld::Ptr> MWWorld::WorldModel::getAll(const ESM::RefId& id)
     return result;
 }
 
+<<<<<<< HEAD
 size_t MWWorld::WorldModel::countSavedGameRecords() const
+=======
+int MWWorld::WorldModel::countSavedGameRecords() const
+>>>>>>> origin/main
 {
     return std::count_if(mCells.begin(), mCells.end(), [](const auto& v) { return v.second.hasState(); });
 }

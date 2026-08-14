@@ -48,10 +48,13 @@ namespace Fx
                 mPasses.emplace_back(subpass, copyOp);
         }
 
+<<<<<<< HEAD
         ~DispatchNode() = default;
 
         DispatchNode& operator=(const DispatchNode&) = default;
 
+=======
+>>>>>>> origin/main
         struct SubPass
         {
             SubPass() = default;
@@ -74,10 +77,13 @@ namespace Fx
                 if (other.mRenderTexture)
                     mRenderTexture = new osg::Texture2D(*other.mRenderTexture, copyOp);
             }
+<<<<<<< HEAD
 
             ~SubPass() = default;
 
             SubPass& operator=(const SubPass&) = default;
+=======
+>>>>>>> origin/main
         };
 
         void compile()

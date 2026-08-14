@@ -90,7 +90,11 @@ namespace MWLua
         }
         else if (varType == 's' || varType == 'l')
         {
+<<<<<<< HEAD
             MWBase::Environment::get().getWorld()->setGlobalInt(globalId, static_cast<int>(value));
+=======
+            MWBase::Environment::get().getWorld()->setGlobalInt(globalId, value);
+>>>>>>> origin/main
         }
     }
 

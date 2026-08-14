@@ -38,10 +38,16 @@ namespace Nif
         T mValue{};
         T mInTan{};
         T mOutTan{};
+<<<<<<< HEAD
         float mA; // Coefficients based on the TCB parameters
         float mB; // Only used by tangent calculations
         float mC;
         float mD;
+=======
+        float mTension;
+        float mContinuity;
+        float mBias;
+>>>>>>> origin/main
     };
 
     template <typename T, T (NIFStream::*getValue)()>
@@ -77,7 +83,12 @@ namespace Nif
                 }
             }
 
+<<<<<<< HEAD
             const uint32_t count = nif->get<uint32_t>();
+=======
+            uint32_t count;
+            nif->read(count);
+>>>>>>> origin/main
 
             if (count == 0 && !morph)
                 return;
@@ -86,6 +97,7 @@ namespace Nif
 
             mKeys.reserve(count);
 
+<<<<<<< HEAD
             if (mInterpolationType == InterpolationType_Linear || mInterpolationType == InterpolationType_Constant)
             {
                 nif->readVectorOfRecords(count, readValuePair, mKeys);
@@ -101,6 +113,44 @@ namespace Nif
                 generateTCBTangents(tcbKeys);
                 for (TCBKey<T>& tcbKey : tcbKeys)
                     mKeys.emplace_back(tcbKey.mTime,
+=======
+            KeyType key = {};
+
+            if (mInterpolationType == InterpolationType_Linear || mInterpolationType == InterpolationType_Constant)
+            {
+                for (size_t i = 0; i < count; i++)
+                {
+                    float time;
+                    nif->read(time);
+                    readValue(*nif, key);
+                    mKeys.emplace_back(time, key);
+                }
+            }
+            else if (mInterpolationType == InterpolationType_Quadratic)
+            {
+                for (size_t i = 0; i < count; i++)
+                {
+                    float time;
+                    nif->read(time);
+                    readQuadratic(*nif, key);
+                    mKeys.emplace_back(time, key);
+                }
+            }
+            else if (mInterpolationType == InterpolationType_TCB)
+            {
+                std::vector<TCBKey<T>> tcbKeys(count);
+                for (TCBKey<T>& tcbKey : tcbKeys)
+                {
+                    nif->read(tcbKey.mTime);
+                    tcbKey.mValue = ((*nif).*getValue)();
+                    nif->read(tcbKey.mTension);
+                    nif->read(tcbKey.mContinuity);
+                    nif->read(tcbKey.mBias);
+                }
+                generateTCBTangents(tcbKeys);
+                for (TCBKey<T>& tcbKey : tcbKeys)
+                    mKeys.emplace_back(std::move(tcbKey.mTime),
+>>>>>>> origin/main
                         KeyType{ std::move(tcbKey.mValue), std::move(tcbKey.mInTan), std::move(tcbKey.mOutTan) });
             }
             else if (mInterpolationType == InterpolationType_XYZ)
@@ -122,6 +172,7 @@ namespace Nif
         }
 
     private:
+<<<<<<< HEAD
         static void readValue(NIFStream& nif, KeyType& key) { key.mValue = (nif.*getValue)(); }
 
         static void readValuePair(NIFStream& nif, std::pair<float, KeyType>& value)
@@ -230,6 +281,63 @@ namespace Nif
     using QuaternionKeyMap = KeyMapT<osg::Quat, &NIFStream::get<osg::Quat>>;
     using BoolKeyMap = KeyMapT<bool, &NIFStream::get<bool>>;
 
+=======
+        static void readValue(NIFStream& nif, KeyT<T>& key) { key.mValue = (nif.*getValue)(); }
+
+        template <typename U>
+        static void readQuadratic(NIFStream& nif, KeyT<U>& key)
+        {
+            readValue(nif, key);
+            key.mInTan = (nif.*getValue)();
+            key.mOutTan = (nif.*getValue)();
+        }
+
+        static void readQuadratic(NIFStream& nif, KeyT<osg::Quat>& key) { readValue(nif, key); }
+
+        template <typename U>
+        static void generateTCBTangents(std::vector<TCBKey<U>>& keys)
+        {
+            if (keys.size() <= 1)
+                return;
+
+            for (std::size_t i = 0; i < keys.size(); ++i)
+            {
+                TCBKey<U>& curr = keys[i];
+                const TCBKey<U>* prev = (i == 0) ? nullptr : &keys[i - 1];
+                const TCBKey<U>* next = (i == keys.size() - 1) ? nullptr : &keys[i + 1];
+                const float prevLen = prev != nullptr && next != nullptr ? curr.mTime - prev->mTime : 1.f;
+                const float nextLen = prev != nullptr && next != nullptr ? next->mTime - curr.mTime : 1.f;
+                if (prevLen + nextLen == 0.f)
+                    continue;
+                const float x = (1.f - curr.mTension) * (1.f - curr.mContinuity) * (1.f + curr.mBias);
+                const float y = (1.f - curr.mTension) * (1.f + curr.mContinuity) * (1.f - curr.mBias);
+                const float z = (1.f - curr.mTension) * (1.f + curr.mContinuity) * (1.f + curr.mBias);
+                const float w = (1.f - curr.mTension) * (1.f - curr.mContinuity) * (1.f - curr.mBias);
+                const U prevDelta = prev != nullptr ? curr.mValue - prev->mValue : next->mValue - curr.mValue;
+                const U nextDelta = next != nullptr ? next->mValue - curr.mValue : curr.mValue - prev->mValue;
+                curr.mInTan = (prevDelta * x + nextDelta * y) * prevLen / (prevLen + nextLen);
+                curr.mOutTan = (prevDelta * z + nextDelta * w) * nextLen / (prevLen + nextLen);
+            }
+        }
+
+        static void generateTCBTangents(std::vector<TCBKey<bool>>& keys)
+        {
+            // TODO: is this even legal?
+        }
+
+        static void generateTCBTangents(std::vector<TCBKey<osg::Quat>>& keys)
+        {
+            // TODO: implement TCB interpolation for quaternions
+        }
+    };
+
+    using FloatKeyMap = KeyMapT<float, &NIFStream::get<float>>;
+    using Vector3KeyMap = KeyMapT<osg::Vec3f, &NIFStream::get<osg::Vec3f>>;
+    using Vector4KeyMap = KeyMapT<osg::Vec4f, &NIFStream::get<osg::Vec4f>>;
+    using QuaternionKeyMap = KeyMapT<osg::Quat, &NIFStream::get<osg::Quat>>;
+    using BoolKeyMap = KeyMapT<bool, &NIFStream::get<bool>>;
+
+>>>>>>> origin/main
     using FloatKeyMapPtr = std::shared_ptr<FloatKeyMap>;
     using Vector3KeyMapPtr = std::shared_ptr<Vector3KeyMap>;
     using Vector4KeyMapPtr = std::shared_ptr<Vector4KeyMap>;

@@ -40,13 +40,21 @@ namespace Nif::Testing
     inline void init(NiTriShape& value)
     {
         init(static_cast<NiGeometry&>(value));
+<<<<<<< HEAD
         value.mRecordType = RC_NiTriShape;
+=======
+        value.recType = RC_NiTriShape;
+>>>>>>> origin/main
     }
 
     inline void init(NiTriStrips& value)
     {
         init(static_cast<NiGeometry&>(value));
+<<<<<<< HEAD
         value.mRecordType = RC_NiTriStrips;
+=======
+        value.recType = RC_NiTriStrips;
+>>>>>>> origin/main
     }
 
     inline void init(NiSkinInstance& value)

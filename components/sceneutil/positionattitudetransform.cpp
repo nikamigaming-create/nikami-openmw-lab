@@ -34,13 +34,21 @@ namespace SceneUtil
         {
             matrix.postMultTranslate(-_position);
             matrix.postMultRotate(_attitude.inverse());
+<<<<<<< HEAD
             matrix.postMultScale(osg::Vec3f(1.0f / _scale.x(), 1.0f / _scale.y(), 1.0f / _scale.z()));
+=======
+            matrix.postMultScale(osg::Vec3f(1.0 / _scale.x(), 1.0 / _scale.y(), 1.0 / _scale.z()));
+>>>>>>> origin/main
         }
         else // absolute
         {
             matrix.makeRotate(_attitude.inverse());
             matrix.preMultTranslate(-_position);
+<<<<<<< HEAD
             matrix.postMultScale(osg::Vec3f(1.0f / _scale.x(), 1.0f / _scale.y(), 1.0f / _scale.z()));
+=======
+            matrix.postMultScale(osg::Vec3f(1.0 / _scale.x(), 1.0 / _scale.y(), 1.0 / _scale.z()));
+>>>>>>> origin/main
         }
         return true;
     }

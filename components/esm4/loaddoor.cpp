@@ -95,6 +95,11 @@ void ESM4::Door::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loaddoor"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::DOOR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

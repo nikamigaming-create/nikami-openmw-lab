@@ -25,7 +25,22 @@ namespace CSMWorld
 
             std::string operator()(ESM::FormId value) const { return value.toString("FormId:"); }
 
+<<<<<<< HEAD
             std::string operator()(ESM::IndexRefId value) const { return value.toDebugString(); }
+=======
+            std::string operator()(ESM::IndexRefId value) const
+            {
+                switch (value.getRecordType())
+                {
+                    case ESM::REC_MGEF:
+                        return std::string(ESM::MagicEffect::sIndexNames[value.getValue()]);
+                    default:
+                        break;
+                }
+
+                return value.toDebugString();
+            }
+>>>>>>> origin/main
 
             template <class T>
             std::string operator()(const T& value) const
@@ -174,10 +189,14 @@ namespace CSMWorld
         const int size = Land::LAND_NUM_VERTS * 3;
         const Land& land = record.get();
 
+<<<<<<< HEAD
         // Missing VCLR should behave like default vertex colour (white),
         // not black. This avoids newly created/undefined edge land turning dark
         // when a single vertex edit writes the whole array back.
         DataType values(size, 255);
+=======
+        DataType values(size, 0);
+>>>>>>> origin/main
 
         if (land.isDataLoaded(Land::DATA_VCLR))
         {

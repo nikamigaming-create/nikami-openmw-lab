@@ -99,7 +99,11 @@ namespace Resource
         /// Re-create shaders for this node, need to call this if alpha testing, texture stages or vertex color mode
         /// have changed.
         void recreateShaders(osg::ref_ptr<osg::Node> node, const std::string& shaderPrefix = "objects",
+<<<<<<< HEAD
             const osg::Program* programTemplate = nullptr);
+=======
+            bool forceShadersForNode = false, const osg::Program* programTemplate = nullptr);
+>>>>>>> origin/main
 
         /// Applying shaders to a node may replace some fixed-function state.
         /// This restores it.
@@ -107,6 +111,16 @@ namespace Resource
         /// afterwards.
         void reinstateRemovedState(osg::ref_ptr<osg::Node> node);
 
+<<<<<<< HEAD
+=======
+        /// @see ShaderVisitor::setForceShaders
+        void setForceShaders(bool force);
+        bool getForceShaders() const;
+
+        void setClampLighting(bool clamp);
+        bool getClampLighting() const;
+
+>>>>>>> origin/main
         /// @see ShaderVisitor::setAutoUseNormalMaps
         void setAutoUseNormalMaps(bool use);
 
@@ -120,6 +134,11 @@ namespace Resource
 
         void setSpecularMapPattern(const std::string& pattern);
 
+<<<<<<< HEAD
+=======
+        void setApplyLightingToEnvMaps(bool apply);
+
+>>>>>>> origin/main
         void setSupportedLightingMethods(const SceneUtil::LightManager::SupportedMethods& supported);
         bool isSupportedLightingMethod(SceneUtil::LightingMethod method) const;
 
@@ -198,7 +217,11 @@ namespace Resource
         /// @warning It is unsafe to call this method while the draw thread is using textures! call
         /// Viewer::stopThreading first.
         void setFilterSettings(
+<<<<<<< HEAD
             const std::string& magfilter, const std::string& minfilter, const std::string& mipmap, float maxAnisotropy);
+=======
+            const std::string& magfilter, const std::string& minfilter, const std::string& mipmap, int maxAnisotropy);
+>>>>>>> origin/main
 
         /// Apply filter settings to the given texture. Note, when loading an object through this scene manager (i.e.
         /// calling getTemplate or createInstance) the filter settings are applied automatically. This method is
@@ -223,6 +246,11 @@ namespace Resource
 
         void setWeatherParticleOcclusion(bool value) { mWeatherParticleOcclusion = value; }
 
+<<<<<<< HEAD
+=======
+        void applyShaders(osg::Node& node, const std::string& shaderPrefix = "objects");
+
+>>>>>>> origin/main
     private:
         osg::ref_ptr<Shader::ShaderVisitor> createShaderVisitor(const std::string& shaderPrefix = "objects");
         osg::ref_ptr<osg::Node> loadErrorMarker();
@@ -247,13 +275,25 @@ namespace Resource
 
         osg::Texture::FilterMode mMinFilter;
         osg::Texture::FilterMode mMagFilter;
+<<<<<<< HEAD
         float mMaxAnisotropy;
+=======
+        int mMaxAnisotropy;
+>>>>>>> origin/main
 
         unsigned int mParticleSystemMask;
         SceneUtil::LightingMethod mLightingMethod;
         SceneUtil::LightManager::SupportedMethods mSupportedLightingMethods;
+<<<<<<< HEAD
         bool mAutoUseNormalMaps = false;
         bool mAutoUseSpecularMaps = false;
+=======
+        bool mForceShaders = false;
+        bool mClampLighting = true;
+        bool mAutoUseNormalMaps = false;
+        bool mAutoUseSpecularMaps = false;
+        bool mApplyLightingToEnvMaps = false;
+>>>>>>> origin/main
         bool mConvertAlphaTestToAlphaToCoverage = false;
         bool mAdjustCoverageForAlphaTest = false;
         bool mSupportsNormalsRT = false;

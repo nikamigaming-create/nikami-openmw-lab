@@ -8,12 +8,15 @@
 #include <components/esm3/refnum.hpp>
 #include <components/vfs/pathutil.hpp>
 
+<<<<<<< HEAD
 namespace ESM
 {
     class ESMReader;
     class ESMWriter;
 }
 
+=======
+>>>>>>> origin/main
 namespace LuaUtil
 {
     using ScriptIdsWithInitializationData = std::map<int, std::string_view>;
@@ -21,6 +24,7 @@ namespace LuaUtil
     class ScriptsConfiguration
     {
     public:
+<<<<<<< HEAD
         void init(ESM::LuaScriptsCfg, bool);
 
         size_t size() const { return mScripts.size(); }
@@ -28,12 +32,21 @@ namespace LuaUtil
 
         std::optional<int> findId(VFS::Path::NormalizedView path) const;
         std::optional<int> mapId(int savedId) const;
+=======
+        void init(ESM::LuaScriptsCfg);
+
+        size_t size() const { return mScripts.size(); }
+        const ESM::LuaScriptCfg& operator[](int id) const { return mScripts[id]; }
+
+        std::optional<int> findId(VFS::Path::NormalizedView path) const;
+>>>>>>> origin/main
 
         bool isCustomScript(int id) const { return mScripts[id].mFlags & ESM::LuaScriptCfg::sCustom; }
 
         ScriptIdsWithInitializationData getMenuConf() const { return getConfByFlag(ESM::LuaScriptCfg::sMenu); }
         ScriptIdsWithInitializationData getGlobalConf() const { return getConfByFlag(ESM::LuaScriptCfg::sGlobal); }
         ScriptIdsWithInitializationData getPlayerConf() const { return getConfByFlag(ESM::LuaScriptCfg::sPlayer); }
+<<<<<<< HEAD
         ScriptIdsWithInitializationData getLoadConf() const { return getConfByFlag(ESM::LuaScriptCfg::sLoad); }
         ScriptIdsWithInitializationData getLocalConf(
             uint32_t type, const ESM::RefId& recordId, ESM::RefNum refnum) const;
@@ -41,6 +54,11 @@ namespace LuaUtil
         void read(ESM::ESMReader&);
         void write(ESM::ESMWriter&) const;
 
+=======
+        ScriptIdsWithInitializationData getLocalConf(
+            uint32_t type, const ESM::RefId& recordId, ESM::RefNum refnum) const;
+
+>>>>>>> origin/main
     private:
         ScriptIdsWithInitializationData getConfByFlag(ESM::LuaScriptCfg::Flags flag) const;
 
@@ -56,7 +74,10 @@ namespace LuaUtil
         std::map<uint32_t, std::vector<int>> mScriptsPerType;
         std::map<ESM::RefId, std::vector<DetailedConf>, std::less<>> mScriptsPerRecordId;
         std::map<ESM::RefNum, std::vector<DetailedConf>> mScriptsPerRefNum;
+<<<<<<< HEAD
         std::map<int, int> mScriptIdMapping;
+=======
+>>>>>>> origin/main
     };
 
     // Parse ESM::LuaScriptsCfg from text and add to `cfg`.

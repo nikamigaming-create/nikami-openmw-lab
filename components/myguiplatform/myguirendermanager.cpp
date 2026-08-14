@@ -1,5 +1,11 @@
 #include "myguirendermanager.hpp"
 
+<<<<<<< HEAD
+=======
+#include <MyGUI_Enumerator.h>
+#include <MyGUI_LayerManager.h>
+#include <MyGUI_LayerNode.h>
+>>>>>>> origin/main
 #include <MyGUI_Timer.h>
 
 #include <osg/Drawable>
@@ -43,6 +49,11 @@
 namespace MyGUIPlatform
 {
 
+<<<<<<< HEAD
+=======
+    class GUICamera;
+
+>>>>>>> origin/main
     class Drawable : public osg::Drawable
     {
         MyGUIPlatform::RenderManager* mParent;
@@ -71,6 +82,7 @@ namespace MyGUIPlatform
         {
         public:
             CollectDrawCalls()
+<<<<<<< HEAD
                 : mRenderManager(nullptr)
             {
             }
@@ -81,6 +93,25 @@ namespace MyGUIPlatform
 
         private:
             MyGUIPlatform::RenderManager* mRenderManager;
+=======
+//## VR_PATCH BEGIN
+// Each collect should only draw layers matching the filter
+                : mCamera(nullptr)
+                , mFilter("")
+            {
+            }
+
+            void setCamera(MyGUIPlatform::GUICamera* camera) { mCamera = camera; }
+
+            void operator()(osg::Node*, osg::NodeVisitor*);
+
+            void setFilter(std::string filter) { mFilter = filter; }
+
+        private:
+            GUICamera* mCamera;
+            std::string mFilter;
+//## VR_PATCH END
+>>>>>>> origin/main
         };
 
         // Stage 2: execute the draw calls. Run during the Draw traversal. May run in parallel with the update traversal
@@ -114,7 +145,15 @@ namespace MyGUIPlatform
                 // A GUI element without an associated texture would be extremely rare.
                 // It is worth it to use a dummy 1x1 black texture sampler instead of either adding a conditional or
                 // relinking shaders.
+<<<<<<< HEAD
                 osg::Texture2D* texture = batch.mTexture;
+=======
+//## VR_PATCH BEGIN
+// Might be Texture2DArray
+// VR-TODO: Why not use Texture views and always have 2D?
+                osg::Texture* texture = batch.mTexture;
+//## VR_PATCH END
+>>>>>>> origin/main
                 if (texture)
                     state->applyTextureAttribute(0, texture);
                 else
@@ -141,7 +180,11 @@ namespace MyGUIPlatform
                         reinterpret_cast<const char*>(vbo->getArray(0)->getDataPointer()) + 16);
                 }
 
+<<<<<<< HEAD
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.mVertexCount));
+=======
+                glDrawArrays(GL_TRIANGLES, 0, batch.mVertexCount);
+>>>>>>> origin/main
 
                 if (batch.mStateSet)
                 {
@@ -162,14 +205,24 @@ namespace MyGUIPlatform
         }
 
     public:
+<<<<<<< HEAD
         Drawable(MyGUIPlatform::RenderManager* parent = nullptr)
             : mParent(parent)
+=======
+//## VR_PATCH BEGIN
+// In VR each filter/layer gets its own drawable and associated RTT camera
+        Drawable(std::string filter = "", osg::StateSet* stateset = nullptr, MyGUIPlatform::RenderManager* parent = nullptr,
+            MyGUIPlatform::GUICamera* camera = nullptr)
+            : mParent(parent)
+            , mStateSet(stateset)
+>>>>>>> origin/main
             , mWriteTo(0)
             , mReadFrom(0)
         {
             setSupportsDisplayList(false);
 
             osg::ref_ptr<CollectDrawCalls> collectDrawCalls = new CollectDrawCalls;
+<<<<<<< HEAD
             collectDrawCalls->setRenderManager(mParent);
             setCullCallback(collectDrawCalls);
 
@@ -181,12 +234,31 @@ namespace MyGUIPlatform
             mStateSet->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON);
             mStateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
             mStateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+=======
+            collectDrawCalls->setCamera(camera);
+            collectDrawCalls->setFilter(filter);
+            setCullCallback(collectDrawCalls);
+
+            if (mParent)
+            {
+                osg::ref_ptr<FrameUpdate> frameUpdate = new FrameUpdate;
+                frameUpdate->setRenderManager(mParent);
+                setUpdateCallback(frameUpdate);
+            }
+//## VR_PATCH END
+>>>>>>> origin/main
 
             mDummyTexture = new osg::Texture2D;
             mDummyTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
             mDummyTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
             mDummyTexture->setInternalFormat(GL_RGB);
             mDummyTexture->setTextureSize(1, 1);
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// State moved to the parent. Otherwise we would have a redundant stateset per Drawable.
+//## VR_PATCH END
+>>>>>>> origin/main
         }
         Drawable(const Drawable& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY)
             : osg::Drawable(copy, copyop)
@@ -202,7 +274,14 @@ namespace MyGUIPlatform
         struct Batch
         {
             // May be empty
+<<<<<<< HEAD
             osg::ref_ptr<osg::Texture2D> mTexture;
+=======
+//## VR_PATCH BEGIN
+// Might be Texture2DArray
+            osg::ref_ptr<osg::Texture> mTexture;
+//## VR_PATCH END
+>>>>>>> origin/main
 
             osg::ref_ptr<osg::VertexBufferObject> mVertexBuffer;
             // need to hold on to this too as the mVertexBuffer does not hold a ref to its own array
@@ -222,8 +301,14 @@ namespace MyGUIPlatform
             mBatchVector[mWriteTo].clear();
         }
 
+<<<<<<< HEAD
         osg::StateSet* getDrawableStateSet() { return mStateSet; }
 
+=======
+//## VR_PATCH BEGIN
+// State moved to the parent.
+//## VR_PATCH END
+>>>>>>> origin/main
         META_Object(osgMyGUI, Drawable)
 
     private:
@@ -321,8 +406,12 @@ namespace MyGUIPlatform
 
     osg::UByteArray* OSGVertexBuffer::create()
     {
+<<<<<<< HEAD
         mVertexArray[mCurrentBuffer]
             = new osg::UByteArray(static_cast<unsigned int>(mNeedVertexCount * sizeof(MyGUI::Vertex)));
+=======
+        mVertexArray[mCurrentBuffer] = new osg::UByteArray(mNeedVertexCount * sizeof(MyGUI::Vertex));
+>>>>>>> origin/main
 
         mBuffer[mCurrentBuffer] = new osg::VertexBufferObject;
         mBuffer[mCurrentBuffer]->setDataVariance(osg::Object::DYNAMIC);
@@ -344,10 +433,102 @@ namespace MyGUIPlatform
     }
 
     // ---------------------------------------------------------------------------
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// GuiCamera to draw a filtered portion of the UI
+// VR-TODO: I suspect there is a lot of redundancy in here. I was fairly new to OSG when I wrote this.
+// Could probably have just one instance of this class and do multiple cull passes with filter as a parameter.
+    class GuiCameraUpdate : public SceneUtil::NodeCallback<GuiCameraUpdate, GUICamera*>
+    {
+    public:
+        void operator()(GUICamera* camera, osg::NodeVisitor*);
+    };
+
+    /// Camera used to draw a MyGUI layer
+    class GUICamera : public osg::Camera, public StateInjectableRenderTarget
+    {
+    public:
+        GUICamera(osg::Camera::RenderOrder order, osg::StateSet* stateset, RenderManager* parent, std::string filter)
+            : mParent(parent)
+            , mUpdate(false)
+            , mFilter(filter)
+        {
+            setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+            setProjectionResizePolicy(osg::Camera::FIXED);
+            setProjectionMatrix(osg::Matrix::identity());
+            setViewMatrix(osg::Matrix::identity());
+            setRenderOrder(order);
+            setClearMask(GL_NONE);
+            setName("GUI Camera");
+            mDrawable = new Drawable(filter, stateset, parent, this);
+            mDrawable->setName("GUI Drawable");
+            mDrawable->setDataVariance(osg::Object::STATIC);
+            addChild(mDrawable.get());
+            mDrawable->setCullingActive(false);
+            setUpdateCallback(new GuiCameraUpdate);
+        }
+
+        ~GUICamera() {}
+        // Called by the cull traversal
+        /** @see IRenderTarget::begin */
+        void begin() override;
+        /** @see IRenderTarget::end */
+        void end() override;
+        /** @see IRenderTarget::doRender */
+        void doRender(MyGUI::IVertexBuffer* buffer, MyGUI::ITexture* texture, size_t count) override;
+
+        /** @see IRenderTarget::getInfo */
+        const MyGUI::RenderTargetInfo& getInfo() const override { return mInfo; }
+
+        void collectDrawCalls();
+        void collectDrawCalls(std::string filter);
+
+        void setViewSize(MyGUI::IntSize viewSize);
+
+        void update();
+
+        RenderManager* mParent;
+        osg::ref_ptr<Drawable> mDrawable;
+        MyGUI::RenderTargetInfo mInfo;
+        bool mUpdate;
+        std::string mFilter;
+    };
+
+    void GuiCameraUpdate::operator()(GUICamera* camera, osg::NodeVisitor* nv)
+    {
+        camera->update();
+        traverse(camera, nv);
+    }
+
+    void GUICamera::begin()
+    {
+        mDrawable->clear();
+        // variance will be recomputed based on textures being rendered in this frame
+        mDrawable->setDataVariance(osg::Object::STATIC);
+    }
+
+    void Drawable::CollectDrawCalls::operator()(osg::Node*, osg::NodeVisitor*)
+    {
+        {
+            if (!mCamera)
+                return;
+
+            mCamera->update();
+
+            if (mFilter.empty())
+                mCamera->collectDrawCalls();
+            else
+                mCamera->collectDrawCalls(mFilter);
+        }
+    }
+//## VR_PATCH END
+>>>>>>> origin/main
 
     RenderManager::RenderManager(
         osgViewer::Viewer* viewer, osg::Group* sceneroot, Resource::ImageManager* imageManager, float scalingFactor)
         : mViewer(viewer)
+<<<<<<< HEAD
         , mSceneRoot(sceneroot)
         , mImageManager(imageManager)
         , mUpdate(false)
@@ -357,15 +538,49 @@ namespace MyGUIPlatform
     {
         if (scalingFactor != 0.f)
             mInvScalingFactor = 1.f / scalingFactor;
+=======
+//## VR_PATCH BEGIN
+// State is handled at this level to avoid redundant StateSet instances
+        , mGuiStateSet(new osg::StateSet())
+//## VR_PATCH END
+        , mSceneRoot(sceneroot)
+        , mImageManager(imageManager)
+//## VR_PATCH BEGIN
+// Updating now handled by GUICamera 
+//        , mUpdate(false)
+//## VR_PATCH END
+        , mIsInitialise(false)
+        , mUseMissingTextureFallback(false)
+        , mInvScalingFactor(1.f)
+//## VR_PATCH BEGIN
+// State injection now handled by the layer needing it.
+//        , mInjectState(nullptr)
+//## VR_PATCH END
+    {
+        if (scalingFactor != 0.f)
+            mInvScalingFactor = 1.f / scalingFactor;
+//## VR_PATCH BEGIN
+// VR-TODO: Redundant?
+        osg::ref_ptr<osg::Viewport> vp = mViewer->getCamera()->getViewport();
+        setViewSize(vp->width(), vp->height());
+//## VR_PATCH END
+>>>>>>> origin/main
     }
 
     RenderManager::~RenderManager()
     {
         MYGUI_PLATFORM_LOG(Info, "* Shutdown: " << getClassTypeName());
 
+<<<<<<< HEAD
         if (mGuiRoot.valid())
             mSceneRoot->removeChild(mGuiRoot.get());
         mGuiRoot = nullptr;
+=======
+//## VR_PATCH BEGIN
+// GUICamera now acts as root
+// VR-TODO: Am i cleaning this up correctly? I don't see the camera being removed from scene root here.
+//## VR_PATCH END
+>>>>>>> origin/main
         mSceneRoot = nullptr;
         mViewer = nullptr;
 
@@ -380,6 +595,7 @@ namespace MyGUIPlatform
 
         mVertexFormat = MyGUI::VertexColourType::ColourABGR;
 
+<<<<<<< HEAD
         mUpdate = false;
 
         mDrawable = new Drawable(this);
@@ -399,23 +615,59 @@ namespace MyGUIPlatform
 
         osg::ref_ptr<osg::Viewport> vp = mViewer->getCamera()->getViewport();
         setViewSize(static_cast<int>(vp->width()), static_cast<int>(vp->height()));
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: State now handled here
+// Camera is its own GUICamera object
+        mGuiStateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+        mGuiStateSet->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON);
+        mGuiStateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+        mGuiStateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+        // need to flip tex coords since MyGUI uses DirectX convention of top left image origin
+        osg::Matrix flipMat;
+        flipMat.preMultTranslate(osg::Vec3f(0, 1, 0));
+        flipMat.preMultScale(osg::Vec3f(1, -1, 1));
+        mGuiStateSet->setTextureAttribute(0, new osg::TexMat(flipMat), osg::StateAttribute::ON);
+
+// VR-TODO: Nope, definitely not cleaning this up correctly
+        mSceneRoot->addChild(createGUICamera(osg::Camera::POST_RENDER, ""));
+//## VR_PATCH END
+>>>>>>> origin/main
 
         MYGUI_PLATFORM_LOG(Info, getClassTypeName() << " successfully initialized");
         mIsInitialise = true;
     }
 
+<<<<<<< HEAD
     void RenderManager::shutdown()
     {
         mGuiRoot->removeChildren(0, mGuiRoot->getNumChildren());
         mSceneRoot->removeChild(mGuiRoot);
     }
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: This is where i should be cleaning GUICamera up
+    void RenderManager::shutdown() {}
+//## VR_PATCH END
+>>>>>>> origin/main
 
     void RenderManager::enableShaders(Shader::ShaderManager& shaderManager)
     {
         auto program = shaderManager.getProgram("gui");
+<<<<<<< HEAD
 
         mDrawable->getDrawableStateSet()->setAttributeAndModes(program, osg::StateAttribute::ON);
         mDrawable->getDrawableStateSet()->addUniform(new osg::Uniform("diffuseMap", 0));
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: Is there a specific reason i am specifying GLSLVersion here, isn't that taken care of in the shaderManager.getProgram?
+        auto vertexShader = shaderManager.getShader("gui.vert", { { "GLSLVersion", "120" } }, osg::Shader::VERTEX);
+        auto fragmentShader = shaderManager.getShader("gui.frag", { { "GLSLVersion", "120" } }, osg::Shader::FRAGMENT);
+
+        mGuiStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+        mGuiStateSet->addUniform(new osg::Uniform("diffuseMap", 0));
+//## VR_PATCH END
+>>>>>>> origin/main
     }
 
     MyGUI::IVertexBuffer* RenderManager::createVertexBuffer()
@@ -428,6 +680,7 @@ namespace MyGUIPlatform
         delete buffer;
     }
 
+<<<<<<< HEAD
     void RenderManager::begin()
     {
         mDrawable->clear();
@@ -436,6 +689,11 @@ namespace MyGUIPlatform
     }
 
     void RenderManager::doRender(MyGUI::IVertexBuffer* buffer, MyGUI::ITexture* texture, size_t count)
+=======
+//## VR_PATCH BEGIN
+    void GUICamera::doRender(MyGUI::IVertexBuffer* buffer, MyGUI::ITexture* texture, size_t count)
+//## VR_PATCH END
+>>>>>>> origin/main
     {
         Drawable::Batch batch;
         batch.mVertexCount = count;
@@ -457,12 +715,22 @@ namespace MyGUIPlatform
         mDrawable->addBatch(batch);
     }
 
+<<<<<<< HEAD
     void RenderManager::setInjectState(osg::StateSet* stateSet)
+=======
+//## VR_PATCH BEGIN
+    void StateInjectableRenderTarget::setInjectState(osg::StateSet* stateSet)
+>>>>>>> origin/main
     {
         mInjectState = stateSet;
     }
 
+<<<<<<< HEAD
     void RenderManager::end() {}
+=======
+    void GUICamera::end() {}
+//## VR_PATCH END
+>>>>>>> origin/main
 
     void RenderManager::update()
     {
@@ -476,15 +744,77 @@ namespace MyGUIPlatform
         lastLime = nowTime;
     }
 
+<<<<<<< HEAD
     void RenderManager::collectDrawCalls()
     {
         begin();
         onRenderToTarget(this, mUpdate);
+=======
+//## VR_PATCH BEGIN
+// GUICamera collecting draw calls based on layer filter 
+    void GUICamera::collectDrawCalls()
+    {
+        begin();
+        MyGUI::LayerManager* myGUILayers = MyGUI::LayerManager::getInstancePtr();
+        if (myGUILayers != nullptr)
+        {
+            for (unsigned i = 0; i < myGUILayers->getLayerCount(); i++)
+            {
+                auto layer = myGUILayers->getLayer(i);
+                layer->renderToTarget(this, mUpdate);
+            }
+        }
+>>>>>>> origin/main
         end();
 
         mUpdate = false;
     }
 
+<<<<<<< HEAD
+=======
+    void GUICamera::collectDrawCalls(std::string filter)
+    {
+        begin();
+        MyGUI::LayerManager* myGUILayers = MyGUI::LayerManager::getInstancePtr();
+        if (myGUILayers != nullptr)
+        {
+            for (unsigned i = 0; i < myGUILayers->getLayerCount(); i++)
+            {
+                auto layer = myGUILayers->getLayer(i);
+                auto name = layer->getName();
+
+                if (filter.find(name) != std::string::npos)
+                {
+                    layer->renderToTarget(this, mUpdate);
+                }
+            }
+        }
+        end();
+
+        mUpdate = false;
+    }
+
+    void GUICamera::setViewSize(MyGUI::IntSize viewSize)
+    {
+        setViewport(0, 0, viewSize.width, viewSize.height);
+        mInfo.maximumDepth = 1;
+        mInfo.hOffset = 0;
+        mInfo.vOffset = 0;
+        mInfo.aspectCoef = float(viewSize.height) / float(viewSize.width);
+        mInfo.pixScaleX = 1.0f / float(viewSize.width);
+        mInfo.pixScaleY = 1.0f / float(viewSize.height);
+        mUpdate = true;
+    }
+
+    void GUICamera::update()
+    {
+        auto viewSize = mParent->getViewSize();
+        auto viewport = getViewport();
+        if (!viewport || viewport->width() != viewSize.width || viewport->height() != viewSize.height)
+            setViewSize(viewSize);
+    }
+
+>>>>>>> origin/main
     void RenderManager::setViewSize(int width, int height)
     {
         if (width < 1)
@@ -492,6 +822,7 @@ namespace MyGUIPlatform
         if (height < 1)
             height = 1;
 
+<<<<<<< HEAD
         mGuiRoot->setViewport(0, 0, width, height);
 
         mViewSize.set(static_cast<int>(width * mInvScalingFactor), static_cast<int>(height * mInvScalingFactor));
@@ -505,6 +836,16 @@ namespace MyGUIPlatform
 
         onResizeView(mViewSize);
         mUpdate = true;
+=======
+        mViewSize.set(width * mInvScalingFactor, height * mInvScalingFactor);
+        onResizeView(mViewSize);
+    }
+
+    osg::ref_ptr<osg::Camera> RenderManager::createGUICamera(int order, std::string layerFilter)
+    {
+        return new GUICamera(static_cast<osg::Camera::RenderOrder>(order), mGuiStateSet, this, layerFilter);
+//## VR_PATCH END
+>>>>>>> origin/main
     }
 
     bool RenderManager::isFormatSupported(MyGUI::PixelFormat /*format*/, MyGUI::TextureUsage /*usage*/)
@@ -514,7 +855,12 @@ namespace MyGUIPlatform
 
     MyGUI::ITexture* RenderManager::createTexture(const std::string& name)
     {
+<<<<<<< HEAD
         const auto it = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager)).first;
+=======
+        const auto it
+            = mTextures.insert_or_assign(name, OSGTexture(name, mImageManager, mUseMissingTextureFallback)).first;
+>>>>>>> origin/main
         return &it->second;
     }
 

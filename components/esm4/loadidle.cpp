@@ -92,6 +92,11 @@ void ESM4::IdleAnimation::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadidle"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::IDLE::load - Unknown subrecord " + std::to_string(subHdr.typeId) + " "
                     + ESM::printName(subHdr.typeId));
         }

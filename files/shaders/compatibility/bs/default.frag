@@ -1,5 +1,9 @@
 #version 120
+<<<<<<< HEAD
 #pragma import_defines(FORCE_OPAQUE, DISTORTION)
+=======
+#pragma import_defines(FORCE_OPAQUE, DISTORTION, IGNORE_DIFFUSE_ALPHA)
+>>>>>>> origin/main
 
 #if @useUBO
     #extension GL_ARB_uniform_buffer_object : require
@@ -26,6 +30,20 @@ uniform sampler2D normalMap;
 varying vec2 normalMapUV;
 #endif
 
+<<<<<<< HEAD
+=======
+#if @envMap
+uniform sampler2D envMap;
+varying vec2 envMapUV;
+uniform vec4 envMapColor;
+#endif
+
+#if @glossMap
+uniform sampler2D glossMap;
+varying vec2 glossMapUV;
+#endif
+
+>>>>>>> origin/main
 varying float euclideanDepth;
 varying float linearDepth;
 
@@ -39,6 +57,10 @@ uniform float emissiveMult;
 uniform float specStrength;
 uniform bool useTreeAnim;
 uniform float distortionStrength;
+<<<<<<< HEAD
+=======
+uniform int falloutSlsMode;
+>>>>>>> origin/main
 
 #include "lib/core/fragment.h.glsl"
 #include "lib/light/lighting.glsl"
@@ -50,6 +72,61 @@ uniform float distortionStrength;
 #include "compatibility/fog.glsl"
 #include "compatibility/normals.glsl"
 
+<<<<<<< HEAD
+=======
+vec3 falloutEnvMapEffect(vec3 viewNormal)
+{
+    vec3 envEffect = vec3(0.0);
+#if @envMap
+    vec2 envTexCoordGen = envMapUV;
+#if @normalMap
+    vec3 viewVec = normalize(passViewPos);
+    vec3 r = reflect(viewVec, viewNormal);
+    float m = 2.0 * sqrt(r.x * r.x + r.y * r.y + (r.z + 1.0) * (r.z + 1.0));
+    envTexCoordGen = vec2(r.x / m + 0.5, r.y / m + 0.5);
+#endif
+    envEffect = texture2D(envMap, envTexCoordGen).xyz * envMapColor.xyz;
+#if @glossMap
+    envEffect *= texture2D(glossMap, glossMapUV).xyz;
+#endif
+#endif
+    return envEffect;
+}
+
+float falloutSlsAttenuationLutTexel(vec2 texel)
+{
+    vec2 coordinate = 2.0 * clamp(texel, vec2(0.0), vec2(127.0)) / 127.0 - 1.0;
+    return floor(255.0 * min(1.0, dot(coordinate, coordinate))) / 255.0;
+}
+
+float sampleFalloutSlsAttenuationLut(vec2 uv)
+{
+    // Analytic replay of FalloutNV.exe's 128x128 X8R8G8B8 attenuation map,
+    // including D3D9 linear-clamp sampling of its independent 8-bit terms.
+    vec2 position = clamp(uv, vec2(0.0), vec2(1.0)) * 128.0 - 0.5;
+    vec2 lower = floor(position);
+    vec2 blend = position - lower;
+    float v00 = falloutSlsAttenuationLutTexel(lower);
+    float v10 = falloutSlsAttenuationLutTexel(lower + vec2(1.0, 0.0));
+    float v01 = falloutSlsAttenuationLutTexel(lower + vec2(0.0, 1.0));
+    float v11 = falloutSlsAttenuationLutTexel(lower + vec2(1.0, 1.0));
+    return mix(mix(v00, v10, blend.x), mix(v01, v11, blend.x), blend.y);
+}
+
+#if !@lightingMethodFFP
+float falloutSlsPointAttenuation(int lightIndex, vec3 pointVector)
+{
+    // Easy Pete's retail SLS2009 c26.w is 237.806595 for the authored
+    // radius-200 porch light.  This is the measured runtime conversion.
+    const float falloutRuntimeRadiusScale = 1.189032975;
+    float radius = max(lcalcRadius(lightIndex) * falloutRuntimeRadiusScale, 1e-6);
+    vec3 q = pointVector / radius * 0.5 + 0.5;
+    return clamp(1.0 - sampleFalloutSlsAttenuationLut(q.xy)
+        - sampleFalloutSlsAttenuationLut(vec2(q.z, 0.5)), 0.0, 1.0);
+}
+#endif
+
+>>>>>>> origin/main
 void main()
 {
 #if @diffuseMap
@@ -63,7 +140,15 @@ void main()
     return;
 #endif
 
+<<<<<<< HEAD
     gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
+=======
+#if defined(IGNORE_DIFFUSE_ALPHA) && IGNORE_DIFFUSE_ALPHA
+    gl_FragData[0].a = 1.0;
+#else
+    gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
+#endif
+>>>>>>> origin/main
 #else
     gl_FragData[0] = vec4(1.0);
 #endif
@@ -86,6 +171,76 @@ void main()
     vec3 viewNormal = normalize(gl_NormalMatrix * passNormal);
 #endif
 
+<<<<<<< HEAD
+=======
+    if (falloutSlsMode == 1)
+    {
+        // Bytecode translation of FNV SLS2011.pso.  Unlike OpenMW's generic
+        // path this shader has no specular, point ambient, or inverse-distance
+        // falloff: base * vertex/material diffuse * (ambient + sun + LUT point).
+        vec3 light = getAmbientColor().xyz * gl_LightModel.ambient.xyz;
+        vec3 sunDirection = normalize(lcalcPosition(0));
+        light += lcalcDiffuse(0) * clamp(dot(viewNormal, sunDirection), 0.0, 1.0);
+
+        for (int i = @startLight; i < @endLight; ++i)
+        {
+#if @lightingMethodUBO
+            int lightIndex = PointLightIndex[i];
+#else
+            int lightIndex = i;
+#endif
+            vec3 pointVector = lcalcPosition(lightIndex) - passViewPos;
+            float pointDistance = length(pointVector);
+            vec3 pointDirection = pointVector / max(pointDistance, 1e-6);
+#if @lightingMethodFFP
+            float attenuation = lcalcIllumination(lightIndex, pointDistance);
+#else
+            float attenuation = falloutSlsPointAttenuation(lightIndex, pointVector);
+#endif
+            light += lcalcDiffuse(lightIndex)
+                * clamp(dot(viewNormal, pointDirection), 0.0, 1.0) * attenuation;
+        }
+
+        gl_FragData[0].xyz *= diffuseColor.xyz * max(light, vec3(0.0));
+        gl_FragData[0].xyz += falloutEnvMapEffect(viewNormal);
+        gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
+
+#if defined(FORCE_OPAQUE) && FORCE_OPAQUE
+        gl_FragData[0].a = 1.0;
+#endif
+
+#if !defined(FORCE_OPAQUE) && !@disableNormals
+        gl_FragData[1].xyz = viewNormal * 0.5 + 0.5;
+#endif
+
+        applyShadowDebugOverlay();
+        return;
+    }
+
+    if (falloutSlsMode == 2)
+    {
+        // Bytecode translation of FNV SLS1009/1010.  This static directional
+        // variant has no material-diffuse modulation, shadow sample, point-light
+        // loop, environment/specular term or generic OpenMW lighting clamp.
+        vec3 light = getAmbientColor().xyz * gl_LightModel.ambient.xyz;
+        vec3 sunDirection = normalize(lcalcPosition(0));
+        light += lcalcDiffuse(0) * clamp(dot(viewNormal, sunDirection), 0.0, 1.0);
+        gl_FragData[0].xyz *= clamp(light, vec3(0.0), vec3(1.0));
+        gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
+
+#if defined(FORCE_OPAQUE) && FORCE_OPAQUE
+        gl_FragData[0].a = 1.0;
+#endif
+
+#if !defined(FORCE_OPAQUE) && !@disableNormals
+        gl_FragData[1].xyz = viewNormal * 0.5 + 0.5;
+#endif
+
+        applyShadowDebugOverlay();
+        return;
+    }
+
+>>>>>>> origin/main
     float shadowing = unshadowedLightRatio(linearDepth);
     vec3 diffuseLight, ambientLight, specularLight;
     doLighting(passViewPos, viewNormal, gl_FrontMaterial.shininess, shadowing, diffuseLight, ambientLight, specularLight);
@@ -101,6 +256,10 @@ void main()
     clampLightingResult(lighting);
 
     gl_FragData[0].xyz = gl_FragData[0].xyz * lighting + specular;
+<<<<<<< HEAD
+=======
+    gl_FragData[0].xyz += falloutEnvMapEffect(viewNormal);
+>>>>>>> origin/main
 
     gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
 

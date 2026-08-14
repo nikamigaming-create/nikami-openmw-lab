@@ -78,7 +78,11 @@ namespace MWInput
         set("playermagic", !controls.mSpellDrawingDisabled);
     }
 
+<<<<<<< HEAD
     size_t ControlSwitch::countSavedGameRecords() const
+=======
+    int ControlSwitch::countSavedGameRecords() const
+>>>>>>> origin/main
     {
         return 1;
     }

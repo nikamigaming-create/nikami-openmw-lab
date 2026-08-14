@@ -19,7 +19,11 @@ local function startPackage(args)
     elseif args.type == 'Escort' then
         if not args.target then error("target required") end
         if not args.destPosition then error("destPosition required") end
+<<<<<<< HEAD
         self:_startAiEscort(args.target, args.destCell or self.cell, args.duration or 0, args.destPosition, args.isRepeat or false, cancelOther)
+=======
+        self:_startAiEscort(args.target, args.destCell or self.cell, args.duration or 0, args.destPosition, cancelOther)
+>>>>>>> origin/main
     elseif args.type == 'Wander' then
         local key = "idle"
         local idle = {}
@@ -86,7 +90,11 @@ return {
         -- @return #boolean
         isFleeing = function() return self:_isFleeing() end,
 
+<<<<<<< HEAD
         --- Start a new AI package.
+=======
+        --- Start new AI package.
+>>>>>>> origin/main
         -- @function [parent=#AI] startPackage
         -- @param #table options See the "AI packages" page.
         startPackage = startPackage,
@@ -128,7 +136,11 @@ return {
             end
         end,
 
+<<<<<<< HEAD
         --- Get a list of targets from all packages of the given type.
+=======
+        --- Get list of targets of all packages of the given type.
+>>>>>>> origin/main
         -- @function [parent=#AI] getTargets
         -- @param #string packageType
         -- @return #list<openmw.core#GameObject>

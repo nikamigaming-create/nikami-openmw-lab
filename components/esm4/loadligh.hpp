@@ -98,7 +98,12 @@ namespace ESM4
         ESM::FormId mScriptId;
         ESM::FormId mSound;
 
+<<<<<<< HEAD
         float mFade;
+=======
+        // FO3/FNV use FNAM as an HDR light-color multiplier. Missing FNAM is neutral.
+        float mFade = 1.f;
+>>>>>>> origin/main
 
         Data mData;
 

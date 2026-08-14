@@ -2,12 +2,27 @@
 #define GAME_MWWORLD_WEATHER_H
 
 #include <cstdint>
+<<<<<<< HEAD
 #include <map>
+=======
+#include <array>
+#include <map>
+#include <optional>
+#include <span>
+>>>>>>> origin/main
 #include <string>
+#include <vector>
 
 #include <osg/Vec4f>
+<<<<<<< HEAD
 
 #include <components/esm/refid.hpp>
+=======
+#include <osg/Vec3f>
+
+#include <components/esm/refid.hpp>
+#include <components/esm/formid.hpp>
+>>>>>>> origin/main
 #include <components/fallback/fallback.hpp>
 
 #include "../mwbase/soundmanager.hpp"
@@ -20,6 +35,11 @@ namespace ESM
     struct RegionWeatherState;
     class ESMWriter;
     class ESMReader;
+}
+
+namespace ESM4
+{
+    struct Climate;
 }
 
 namespace MWRender
@@ -93,6 +113,19 @@ namespace MWWorld
         }
     };
 
+<<<<<<< HEAD
+=======
+    using FalloutWeatherColorSamples = std::array<osg::Vec4f, 6>;
+
+    osg::Vec4f sampleFalloutWeatherColor(
+        const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings,
+        float daytimeColorExtension = 0.5f);
+    osg::Vec3f falloutSunPosition(float orbit);
+    MWRender::MoonState::Phase falloutMoonPhase(int gameDay, std::uint8_t encodedMoonInfo);
+    MWRender::MoonState falloutMoonState(
+        float gameHour, MWRender::MoonState::Phase phase, bool visible);
+
+>>>>>>> origin/main
     /// Interpolates between 4 data points (sunrise, day, sunset, night) based on the time of day.
     /// The template value could be a floating point number, or a color.
     template <typename T>
@@ -141,10 +174,35 @@ namespace MWWorld
         TimeOfDayInterpolator<osg::Vec4f> mSkyColor;
         // Fog color
         TimeOfDayInterpolator<osg::Vec4f> mFogColor;
+<<<<<<< HEAD
+=======
+        // Fallout weather vertical sky colors
+        TimeOfDayInterpolator<osg::Vec4f> mSkyLowerColor;
+        TimeOfDayInterpolator<osg::Vec4f> mSkyHorizonColor;
+>>>>>>> origin/main
         // Ambient lighting color
         TimeOfDayInterpolator<osg::Vec4f> mAmbientColor;
         // Sun (directional) lighting color
         TimeOfDayInterpolator<osg::Vec4f> mSunColor;
+<<<<<<< HEAD
+=======
+
+        // FO3/FNV add high-noon (and, in FNV, serialized midnight) samples to the four legacy weather colors. FNV's
+        // executable uses one shared six-slot scheduler for every WTHR color and image-space modifier row.
+        std::optional<FalloutWeatherColorSamples> mFalloutSkyColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutFogColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSkyLowerColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutHorizonColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutAmbientColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSunlightColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSunDiscColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutStarColors;
+        std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
+        std::optional<std::array<float, 6>> mFalloutFogDistance;
+        std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
+        std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
+        std::optional<std::array<FalloutWeatherColorSamples, 4>> mFalloutCloudColors;
+>>>>>>> origin/main
 
         // Fog depth/density
         TimeOfDayInterpolator<float> mLandFogDepth;
@@ -246,7 +304,12 @@ namespace MWWorld
 
         operator ESM::RegionWeatherState() const;
 
+<<<<<<< HEAD
         void setChances(const std::vector<uint8_t>& chances);
+=======
+        void setChances(std::span<const uint8_t> chances);
+        std::span<const uint8_t> getChances() const;
+>>>>>>> origin/main
 
         void setWeather(int weatherID);
 
@@ -308,7 +371,12 @@ namespace MWWorld
          */
         void changeWeather(const ESM::RefId& regionID, const unsigned int weatherID);
         void changeWeather(const ESM::RefId& regionID, const ESM::RefId& weatherID);
+<<<<<<< HEAD
         void modRegion(const ESM::RefId& regionID, const std::vector<uint8_t>& chances);
+=======
+        void modRegion(const ESM::RefId& regionID, std::span<const uint8_t> chances);
+        std::span<const uint8_t> getRegionChances(const ESM::RefId& regionID) const;
+>>>>>>> origin/main
         void playerTeleported(const ESM::RefId& playerRegion, bool isExterior);
 
         /**
@@ -349,8 +417,16 @@ namespace MWWorld
 
         int getNextWeatherID() const { return mNextWeather; }
 
+<<<<<<< HEAD
         float getTransitionFactor() const { return mTransitionFactor; }
 
+=======
+        void forceWeather(const int weatherID);
+        bool forceWeather(const ESM::RefId& weatherID);
+
+        float getTransitionFactor() const { return mTransitionFactor; }
+
+>>>>>>> origin/main
         bool useTorches(float hour) const;
 
         float getSunPercentage(float hour) const;
@@ -361,6 +437,12 @@ namespace MWWorld
 
         bool readRecord(ESM::ESMReader& reader, uint32_t type);
 
+<<<<<<< HEAD
+=======
+        /// Start an authored Fallout IMAD instance. Each call owns an independent timer.
+        bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength);
+
+>>>>>>> origin/main
         void clear();
 
     private:
@@ -384,6 +466,21 @@ namespace MWWorld
         TimeOfDayInterpolator<float> mUnderwaterFog;
 
         std::vector<Weather> mWeatherSettings;
+<<<<<<< HEAD
+=======
+        const ESM4::Climate* mFalloutClimate;
+        float mFalloutDaytimeColorExtension;
+        std::size_t mFalloutWeatherStart;
+        bool mFalloutWeatherInitialized;
+        ESM::RefId mFalloutWeatherSource;
+        struct FalloutImageSpaceModifierInstance
+        {
+            ESM::FormId mModifier;
+            float mElapsed = 0.f;
+            float mStrength = 1.f;
+        };
+        std::vector<FalloutImageSpaceModifierInstance> mFalloutImageSpaceModifierInstances;
+>>>>>>> origin/main
         MoonModel mMasser;
         MoonModel mSecunda;
 
@@ -414,13 +511,22 @@ namespace MWWorld
         void addWeather(
             const std::string& name, float dlFactor, float dlOffset, const std::string& particleEffect = "");
 
+<<<<<<< HEAD
+=======
+        void importFalloutWeather();
+        void applyFalloutClimate(const ESM4::Climate* climate);
+
+>>>>>>> origin/main
         void importRegions();
 
         void regionalWeatherChanged(const ESM::RefId& regionID, RegionWeather& region);
         bool updateWeatherTime();
         bool updateWeatherRegion(const ESM::RefId& playerRegion);
         void updateWeatherTransitions(const float elapsedRealSeconds);
+<<<<<<< HEAD
         void forceWeather(const int weatherID);
+=======
+>>>>>>> origin/main
 
         bool inTransition() const;
         void addWeatherTransition(const int weatherID);

@@ -48,8 +48,12 @@ namespace Wizard
         MainWizard(Files::ConfigurationManager&& cfgMgr, QWidget* parent = nullptr);
         ~MainWizard() override;
 
+<<<<<<< HEAD
         static bool findFiles(const QString& name, const QString& path);
 
+=======
+        bool findFiles(const QString& name, const QString& path);
+>>>>>>> origin/main
         void addInstallation(const QString& path);
         void runSettingsImporter();
 
@@ -57,11 +61,23 @@ namespace Wizard
 
         Files::ConfigurationManager mCfgMgr;
 
+<<<<<<< HEAD
         std::unique_ptr<Process::ProcessInvoker> mImporterInvoker;
 
         bool mError{ false };
 
     private:
+=======
+        Process::ProcessInvoker* mImporterInvoker;
+
+        bool mError;
+
+    public slots:
+        void addLogText(const QString& text);
+
+    private:
+        void setupLog();
+>>>>>>> origin/main
         void setupGameSettings();
         void setupLauncherSettings();
         void setupInstallations();

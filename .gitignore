@@ -11,6 +11,10 @@ prebuilt
 ##windows build process
 /deps
 /MSVC*
+<<<<<<< HEAD
+=======
+.vs
+>>>>>>> origin/main
 
 ## doxygen
 Doxygen

@@ -53,7 +53,11 @@ namespace MWDialogue
 
         const TQuestContainer& getQuests() const override { return mQuests; }
 
+<<<<<<< HEAD
         size_t countSavedGameRecords() const override;
+=======
+        int countSavedGameRecords() const override;
+>>>>>>> origin/main
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const override;
 

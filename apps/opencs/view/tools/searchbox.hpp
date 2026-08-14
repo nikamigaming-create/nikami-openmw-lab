@@ -30,30 +30,47 @@ namespace CSVTools
         QGridLayout* mLayout;
         QComboBox mMode;
         bool mSearchEnabled;
+<<<<<<< HEAD
         bool mAllowReplace{ false };
+=======
+>>>>>>> origin/main
         QStackedWidget mReplaceInput;
         QLineEdit mReplaceText;
         QLabel mReplacePlaceholder;
         QPushButton mReplace;
 
     private:
+<<<<<<< HEAD
         int mSearchResultCount = 0;
 
         void updateSearchButtons();
+=======
+        void updateSearchButton();
+>>>>>>> origin/main
 
     public:
         SearchBox(QWidget* parent = nullptr);
 
+<<<<<<< HEAD
         void setEditLock(bool locked);
 
         void setSearchMode(bool enabled);
 
         void setSearchResultCount(int resultCount);
 
+=======
+        void setSearchMode(bool enabled);
+
+>>>>>>> origin/main
         CSMTools::Search getSearch() const;
 
         std::string getReplaceText() const;
 
+<<<<<<< HEAD
+=======
+        void setEditLock(bool locked);
+
+>>>>>>> origin/main
         void focus();
 
     private slots:

@@ -1,6 +1,10 @@
 ---
 -- Defines functions for specific types of game objects.
+<<<<<<< HEAD
 -- @context global|local|player
+=======
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module types
 -- @usage local types = require('openmw.types')
 
@@ -23,6 +27,7 @@
 -- @return #number
 
 ---
+<<<<<<< HEAD
 -- Get the actor's current barter gold.
 -- @function [parent=#Actor] getBarterGold
 -- @param openmw.core#GameObject actor
@@ -36,6 +41,8 @@
 -- @param #number amount
 
 ---
+=======
+>>>>>>> origin/main
 -- Check if the given actor is dead (health reached 0, so death process started).
 -- @function [parent=#Actor] isDead
 -- @param openmw.core#GameObject actor
@@ -206,7 +213,11 @@
 -- @param openmw.core#Spell spell Spell (can be nil)
 
 ---
+<<<<<<< HEAD
 -- Clears the actor's selected castable (spell or enchanted item)
+=======
+-- Clears the actor's selected castable(spell or enchanted item)
+>>>>>>> origin/main
 -- @function [parent=#Actor] clearSelectedCastable
 -- @param openmw.core#GameObject actor
 
@@ -264,7 +275,11 @@
 -- @param #string effectId effect ID
 -- @param #string extraParam Optional skill or attribute ID
 
+<<<<<<< HEAD
 --- (Note that using this function will override and conflict with all other sources of this effect. You probably want to use @{#ActorActiveEffects.modify} instead, this function is provided for mwscript parity only)
+=======
+--- (Note that using this function will override and conflict with all other sources of this effect, you probably want to use @{#ActorActiveEffects.modify} instead, this function is provided for mwscript parity only)
+>>>>>>> origin/main
 -- Permanently modifies the magnitude of an active effect to be exactly equal to the provided value.
 -- Note that although the modification is permanent, the magnitude will not stay equal to the value if any active spells with this effects are added/removed.
 -- Also see the notes on @{#ActorActiveEffects.modify}
@@ -330,6 +345,15 @@
 -- @return true if spell is active, false otherwise
 
 ---
+<<<<<<< HEAD
+=======
+-- If true, the actor has not used this power in the last 24h. Will return true for powers the actor does not have.
+-- @function [parent=#ActorActiveSpells] canUsePower
+-- @param self
+-- @param #any spellOrId A @{openmw.core#Spell} or string record id.
+
+---
+>>>>>>> origin/main
 -- Remove an active spell based on active spell ID (see @{openmw_core#ActiveSpell.activeSpellId}). Can only be used in global scripts or on self. Can only be used to remove spells with the temporary flag set (see @{openmw_core#ActiveSpell.temporary}).
 -- @function [parent=#ActorActiveSpells] remove
 -- @param self
@@ -378,7 +402,11 @@
 -- @param openmw.core#GameObject actor
 -- @return #ActorSpells
 
+<<<<<<< HEAD
 --- List of spells (modifications are only allowed in global scripts or on self).
+=======
+--- List of spells with additional functions add/remove/clear (modification are allowed only in global scripts or on self).
+>>>>>>> origin/main
 -- @type ActorSpells
 -- @usage -- print available spells
 -- local mySpells = types.Actor.spells(self)
@@ -416,12 +444,15 @@
 -- @function [parent=#ActorSpells] clear
 -- @param self
 
+<<<<<<< HEAD
 ---
 -- If true, the actor has not used this power in the last 24h. Will return true for powers the actor does not have.
 -- @function [parent=#ActorSpells] canUsePower
 -- @param self
 -- @param #any spellOrId A @{openmw.core#Spell} or string record ID.
 
+=======
+>>>>>>> origin/main
 --- Values affect how much each attribute can be increased at level up, and are all reset to 0 upon level up.
 -- @type SkillIncreasesForAttributeStats
 -- @field #number agility Number of contributions to agility for the next level up.
@@ -439,27 +470,43 @@
 -- @field #number magic Number of contributions to magic specialization for the next level up.
 -- @field #number stealth Number of contributions to stealth specialization for the next level up.
 
+<<<<<<< HEAD
 --- Value modification is delayed
+=======
+---
+>>>>>>> origin/main
 -- @type LevelStat
 -- @field #number current The actor's current level.
 -- @field #number progress The NPC's level progress.
 -- @field #SkillIncreasesForAttributeStats skillIncreasesForAttribute The NPC's attribute contributions towards the next level up. Values affect how much each attribute can be increased at level up.
 -- @field #SkillIncreasesForSpecializationStats skillIncreasesForSpecialization The NPC's attribute contributions towards the next level up. Values affect the graphic used on the level up screen.
 
+<<<<<<< HEAD
 --- Value modification is delayed
+=======
+---
+>>>>>>> origin/main
 -- @type DynamicStat
 -- @field #number base
 -- @field #number current
 -- @field #number modifier
 
+<<<<<<< HEAD
 --- Value modification is delayed
+=======
+---
+>>>>>>> origin/main
 -- @type AttributeStat
 -- @field #number base The actor's base attribute value.
 -- @field #number damage The amount the attribute has been damaged.
 -- @field #number modified The actor's current attribute value (read-only.)
 -- @field #number modifier The attribute's modifier.
 
+<<<<<<< HEAD
 --- Value modification is delayed
+=======
+---
+>>>>>>> origin/main
 -- @type SkillStat
 -- @field #number base The NPC's base skill value.
 -- @field #number damage The amount the skill has been damaged.
@@ -467,16 +514,23 @@
 -- @field #number modifier The skill's modifier.
 -- @field #number progress [0-1] The NPC's skill progress.
 
+<<<<<<< HEAD
 --- Value modification is delayed
+=======
+---
+>>>>>>> origin/main
 -- @type AIStat
 -- @field #number base The stat's base value.
 -- @field #number modifier The stat's modifier.
 -- @field #number modified The actor's current ai value (read-only.)
 
+<<<<<<< HEAD
 --- Value modification is delayed
 -- @type ReputationStat
 -- @field #number current Current reputation value.
 
+=======
+>>>>>>> origin/main
 ---
 -- @type DynamicStats
 
@@ -760,7 +814,10 @@
 -- @type NpcStats
 -- @extends #ActorStats
 -- @field #SkillStats skills
+<<<<<<< HEAD
 -- @field #ReputationStat reputation
+=======
+>>>>>>> origin/main
 
 
 --------------------------------------------------------------------------------
@@ -811,7 +868,11 @@
 
 ---
 -- @type ItemData
+<<<<<<< HEAD
 -- @field #number condition The item's current condition. Time remaining for lights (setting this to `-1` will make it last forever). Uses left for repairs, lockpicks and probes. Current health for weapons and armor.
+=======
+-- @field #number condition The item's current condition. Time remaining for lights. Uses left for repairs, lockpicks and probes. Current health for weapons and armor.
+>>>>>>> origin/main
 -- @field #number enchantmentCharge The item's current enchantment charge. Unenchanted items will always return a value of `nil`. Setting this to `nil` will reset the charge of the item.
 -- @field #string soul The recordId of the item's current soul. Items without soul will always return a value of `nil`. Setting this to `nil` will remove the soul from the item.
 
@@ -825,6 +886,7 @@
 -- @field #Actor baseType @{#Actor}
 
 ---
+<<<<<<< HEAD
 -- Creates a @{#CreatureRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Creature] createRecordDraft
@@ -837,6 +899,8 @@
 -- world.createObject(newRecord.id):teleport(playerCell, playerPosition)
 
 ---
+=======
+>>>>>>> origin/main
 -- A read-only list of all @{#CreatureRecord}s in the world database, may be indexed by recordId.
 -- Implements [iterables#List](iterables.html#List) of #CreatureRecord.
 -- @field [parent=#Creature] #list<#CreatureRecord> records
@@ -891,7 +955,11 @@
 -- @field #boolean canWalk whether the creature can walk
 -- @field #boolean canUseWeapons whether the creature can use weapons and shields
 -- @field #boolean isBiped whether the creature is a biped
+<<<<<<< HEAD
 -- @field #boolean isAutocalc If true, the actor's stats will be automatically calculated based on level and class.
+=======
+-- @field #boolean isAutocalc If true, the actors stats will be automatically calculated based on level and class.
+>>>>>>> origin/main
 -- @field #string primaryFaction Faction ID of the NPCs default faction. Nil if no faction
 -- @field #number primaryFactionRank Faction rank of the NPCs default faction. Nil if no faction
 -- @field #boolean isEssential whether the creature is essential
@@ -918,7 +986,11 @@
 ---
 -- A read-only list of all @{#NpcRecord}s in the world database, may be indexed by recordId.
 -- Implements [iterables#List](iterables.html#List) of #NpcRecord.
+<<<<<<< HEAD
 -- @field [parent=#NPC] #list<#NpcRecord> records
+=======
+-- @field [parent=#NPC] #map<#NpcRecord> records
+>>>>>>> origin/main
 -- @usage local npc = types.NPC.records['npc id']  -- get by id
 -- @usage local npc = types.NPC.records[1]  -- get by index
 
@@ -1030,7 +1102,11 @@
 ---
 -- Expel NPC from given faction.
 -- Throws an exception if there is no such faction.
+<<<<<<< HEAD
 -- Note: the expelled NPC still keeps their rank and reputation in the faction, they just get an additional flag for the given faction.
+=======
+-- Note: expelled NPC still keeps his rank and reputation in faction, he just get an additonal flag for given faction.
+>>>>>>> origin/main
 -- @function [parent=#NPC] expel
 -- @param openmw.core#GameObject actor NPC object
 -- @param #string faction Faction ID
@@ -1119,6 +1195,7 @@
 -- @return #boolean
 
 ---
+<<<<<<< HEAD
 -- Turn an NPC or player into werewolf form or back to normal form.
 -- Can only be used in global scripts or on self in local scripts.
 -- @function [parent=#NPC] setWerewolf
@@ -1130,6 +1207,8 @@
 -- self.type.setWerewolf(self, false)
 
 ---
+=======
+>>>>>>> origin/main
 -- Returns the read-only @{#NpcRecord} of an NPC
 -- @function [parent=#NPC] record
 -- @param #any objectOrRecordId
@@ -1180,8 +1259,13 @@
 -- @field #string class ID of the NPC's class (e.g. acrobat)
 -- @field #string model Path to the model associated with this NPC, used for animations.
 -- @field #string mwscript MWScript on this NPC (can be nil)
+<<<<<<< HEAD
 -- @field #string hair ID of the hair body part
 -- @field #string head ID of the head body part
+=======
+-- @field #string hair Path to the hair body part model
+-- @field #string head Path to the head body part model
+>>>>>>> origin/main
 -- @field #number baseGold The base barter gold of the NPC
 -- @field #number baseDisposition NPC's starting disposition
 -- @field #boolean isMale The gender setting of the NPC
@@ -1189,7 +1273,10 @@
 -- @field #list<#TravelDestination> travelDestinations A list of @{#TravelDestination}s for this NPC.
 -- @field #boolean isEssential whether the NPC is essential
 -- @field #boolean isRespawning whether the NPC respawns after death
+<<<<<<< HEAD
 -- @field #boolean isAutocalc If true, the actor's stats will be automatically calculated based on level and class.
+=======
+>>>>>>> origin/main
 -- @field #number bloodType integer representing the blood type of the NPC. Used to generate the correct blood vfx.
 
 ---
@@ -1350,7 +1437,11 @@
 -- @field [parent=#PlayerJournalTextEntry] #string id
 
 ---
+<<<<<<< HEAD
 -- @type PLAYERQuest
+=======
+-- @type PlayerQuest
+>>>>>>> origin/main
 -- @field #string id The quest id.
 -- @field #number stage The quest stage (global and player scripts can change it). Changing the stage starts the quest if it wasn't started.
 -- @field #boolean started Whether the quest is started.
@@ -1500,10 +1591,17 @@
 -- @field #number enchantCapacity
 
 ---
+<<<<<<< HEAD
 -- Creates an @{#ArmorRecord} without adding it to the world database, for the armor to appear correctly on the body, make sure to use a template as described below.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Armor] createRecordDraft
 -- @param #ArmorRecord armor A Lua table with the fields of an ArmorRecord, with an additional field `template` that accepts an @{#ArmorRecord} as a base.
+=======
+-- Creates a @{#ArmorRecord} without adding it to the world database, for the armor to appear correctly on the body, make sure to use a template as described below.
+-- Use @{openmw_world#(world).createRecord} to add the record to the world.
+-- @function [parent=#Armor] createRecordDraft
+-- @param #ArmorRecord armor A Lua table with the fields of a ArmorRecord, with an additional field `template` that accepts a @{#ArmorRecord} as a base.
+>>>>>>> origin/main
 -- @return #ArmorRecord A strongly typed Armor record.
 -- @usage local armorTemplate = types.Armor.record('orcish_cuirass')
 -- local armorTable = {name = "Better Orcish Cuirass",template = armorTemplate,baseArmor = armorTemplate.baseArmor + 10}
@@ -1926,7 +2024,10 @@
 -- @field #number weight
 -- @field #number value
 -- @field #list<openmw.core#MagicEffectWithParams> effects The effects (@{#list<openmw.core#MagicEffectWithParams>}) of the potion
+<<<<<<< HEAD
 -- @field #boolean isAutocalc If set, the gold value should be computed based on the effect list rather than read from the value field
+=======
+>>>>>>> origin/main
 
 
 
@@ -2106,6 +2207,7 @@
 -- @field #Item baseType @{#Item}
 
 ---
+<<<<<<< HEAD
 -- Creates a @{#ProbeRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Probe] createRecordDraft
@@ -2113,6 +2215,8 @@
 -- @return #ProbeRecord A strongly typed Probe record.
 
 ---
+=======
+>>>>>>> origin/main
 -- A read-only list of all @{#ProbeRecord}s in the world database.
 -- Implements [iterables#List](iterables.html#List) of #ProbeRecord.
 -- @field [parent=#Probe] #list<#ProbeRecord> records
@@ -2215,10 +2319,17 @@
 -- @field #string mwscript MWScript on this activator (can be nil)
 
 ---
+<<<<<<< HEAD
 -- Creates an @{#ActivatorRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Activator] createRecordDraft
 -- @param #ActivatorRecord activator A Lua table with the fields of an ActivatorRecord, with an optional field `template` that accepts an @{#ActivatorRecord} as a base.
+=======
+-- Creates a @{#ActivatorRecord} without adding it to the world database.
+-- Use @{openmw_world#(world).createRecord} to add the record to the world.
+-- @function [parent=#Activator] createRecordDraft
+-- @param #ActivatorRecord activator A Lua table with the fields of a ActivatorRecord, with an optional field `template` that accepts a @{#ActivatorRecord} as a base.
+>>>>>>> origin/main
 -- @return #ActivatorRecord A strongly typed Activator record.
 
 
@@ -2245,6 +2356,7 @@
 -- @return openmw.core#Inventory
 
 ---
+<<<<<<< HEAD
 -- Creates a @{#ContainerRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Container] createRecordDraft
@@ -2257,6 +2369,8 @@
 -- world.createObject(newRecord.id):teleport(playerCell, playerPosition)
 
 ---
+=======
+>>>>>>> origin/main
 -- Container content (same as `Container.content`, added for consistency with `Actor.inventory`).
 -- @function [parent=#Container] inventory
 -- @param openmw.core#GameObject object
@@ -2316,6 +2430,7 @@
 -- @usage local state = types.Door.STATE["Idle"]
 
 ---
+<<<<<<< HEAD
 -- Creates a @{#DoorRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Door] createRecordDraft
@@ -2323,6 +2438,8 @@
 -- @return #DoorRecord A strongly typed Door record.
 
 ---
+=======
+>>>>>>> origin/main
 -- A read-only list of all @{#DoorRecord}s in the world database.
 -- Implements [iterables#List](iterables.html#List) of #DoorRecord.
 -- @field [parent=#Door] #list<#DoorRecord> records
@@ -2411,6 +2528,7 @@
 -- @type Static
 
 ---
+<<<<<<< HEAD
 -- Creates a @{#StaticRecord} without adding it to the world database.
 -- Use @{openmw_world#(world).createRecord} to add the record to the world.
 -- @function [parent=#Static] createRecordDraft
@@ -2418,6 +2536,8 @@
 -- @return #StaticRecord A strongly typed Static record.
 
 ---
+=======
+>>>>>>> origin/main
 -- A read-only list of all @{#StaticRecord}s in the world database.
 -- Implements [iterables#List](iterables.html#List) of #StaticRecord.
 -- @field [parent=#Static] #list<#StaticRecord> records

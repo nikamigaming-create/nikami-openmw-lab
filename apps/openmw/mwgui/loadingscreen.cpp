@@ -27,6 +27,10 @@
 
 #include "backgroundimage.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/misc/callbackmanager.hpp>
+//## VR_PATCH END
+
 namespace MWGui
 {
 
@@ -65,6 +69,7 @@ namespace MWGui
                 && std::find(supportedExtensions.begin(), supportedExtensions.end(), ext) != supportedExtensions.end();
         };
 
+<<<<<<< HEAD
         constexpr VFS::Path::NormalizedView splash("splash/");
         for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
         {
@@ -73,6 +78,25 @@ namespace MWGui
         }
         if (mSplashScreens.empty())
             Log(Debug::Warning) << "Warning: no splash screens found!";
+=======
+        constexpr std::array<VFS::Path::NormalizedView, 2> splashRoots = {
+            VFS::Path::NormalizedView("textures/interface/loading/"),
+            VFS::Path::NormalizedView("splash/"),
+        };
+        for (const VFS::Path::NormalizedView splash : splashRoots)
+        {
+            for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
+            {
+                if (isSupportedExtension(Misc::getFileExtension(name)))
+                    mSplashScreens.push_back(name);
+            }
+        }
+        if (mSplashScreens.empty())
+            Log(Debug::Warning) << "Warning: no splash screens found!";
+        else
+            Log(Debug::Verbose) << "FNV/ESM4 diag: found " << mSplashScreens.size()
+                             << " candidate loading screen image(s)";
+>>>>>>> origin/main
     }
 
     void LoadingScreen::setLabel(const std::string& label, bool important)
@@ -109,6 +133,7 @@ namespace MWGui
             return mTargetFrameRate;
     }
 
+<<<<<<< HEAD
     class CopyFramebufferToTextureCallback : public osg::Camera::DrawCallback
     {
     public:
@@ -134,6 +159,34 @@ namespace MWGui
         mutable bool mOneshot;
         osg::ref_ptr<osg::Texture2D> mTexture;
     };
+=======
+//## VR_PATCH BEGIN
+// Ported to Misc::CallbackManager::MwDrawCallback
+    class CopyFramebufferToTextureCallback : public Misc::CallbackManager::MwDrawCallback
+    {
+    public:
+        CopyFramebufferToTextureCallback(osg::Texture2D* texture)
+            : mTexture(texture)
+        {
+        }
+
+        bool operator()(osg::RenderInfo& renderInfo, Misc::CallbackManager::View view) const override
+        {
+            if (view == Misc::CallbackManager::View::Right)
+                return false;
+
+            int w = renderInfo.getCurrentCamera()->getViewport()->width();
+            int h = renderInfo.getCurrentCamera()->getViewport()->height();
+            mTexture->copyTexImage2D(*renderInfo.getState(), 0, 0, w, h);
+
+            return true;
+        }
+
+    private:
+        osg::ref_ptr<osg::Texture2D> mTexture;
+    };
+//## VR_PATCH END
+>>>>>>> origin/main
 
     class DontComputeBoundCallback : public osg::Node::ComputeBoundingSphereCallback
     {
@@ -162,6 +215,7 @@ namespace MWGui
 
         setVisible(true);
 
+<<<<<<< HEAD
         mShowWallpaper = MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
 
         if (mShowWallpaper)
@@ -169,6 +223,14 @@ namespace MWGui
             changeWallpaper();
         }
 
+=======
+        mShowWallpaper = !mSplashScreens.empty()
+            || MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
+
+        if (mShowWallpaper)
+            changeWallpaper();
+
+>>>>>>> origin/main
         MWBase::Environment::get().getWindowManager()->pushGuiMode(mShowWallpaper ? GM_LoadingWallpaper : GM_Loading);
     }
 
@@ -260,10 +322,17 @@ namespace MWGui
             return false;
 
         // the minimal delay before a loading screen shows
+<<<<<<< HEAD
         constexpr float initialDelay = 0.05f;
 
         bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
         double diff = (mTimer.time_m() - mLoadingOnTime);
+=======
+        const float initialDelay = 0.05;
+
+        bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
+        float diff = (mTimer.time_m() - mLoadingOnTime);
+>>>>>>> origin/main
 
         if (!alreadyShown)
         {
@@ -299,19 +368,34 @@ namespace MWGui
 
         if (!mCopyFramebufferToTextureCallback)
         {
+<<<<<<< HEAD
             mCopyFramebufferToTextureCallback = new CopyFramebufferToTextureCallback(mTexture);
         }
 
         mViewer->getCamera()->removeInitialDrawCallback(mCopyFramebufferToTextureCallback);
         mViewer->getCamera()->addInitialDrawCallback(mCopyFramebufferToTextureCallback);
         mCopyFramebufferToTextureCallback->reset();
+=======
+//## VR_PATCH BEGIN
+// Ported to Misc::CallbackManager::MwDrawCallback
+            mCopyFramebufferToTextureCallback = std::make_shared<CopyFramebufferToTextureCallback>(mTexture);
+        }
+
+        Misc::CallbackManager::instance().addCallbackOneshot(
+            Misc::CallbackManager::DrawStage::Initial, mCopyFramebufferToTextureCallback);
+//## VR_PATCH END
+>>>>>>> origin/main
 
         mSplashImage->setBackgroundImage({});
         mSplashImage->setVisible(false);
 
         mSceneImage->setRenderItemTexture(mGuiTexture.get());
+<<<<<<< HEAD
         // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
         mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+=======
+        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+>>>>>>> origin/main
         mSceneImage->setVisible(true);
     }
 
@@ -348,9 +432,15 @@ namespace MWGui
         // at the time this function is called we are in the middle of a frame,
         // so out of order calls are necessary to get a correct frameNumber for the next frame.
         // refer to the advance() and frame() order in Engine::go()
+<<<<<<< HEAD
         mViewer->eventTraversal();
         mViewer->updateTraversal();
         mViewer->renderingTraversals();
+=======
+//## VR_PATCH BEGIN
+        MWBase::Environment::get().getWindowManager()->viewerTraversals();
+//## VR_PATCH END
+>>>>>>> origin/main
         mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
 
         mLastRenderTime = mTimer.time_m();

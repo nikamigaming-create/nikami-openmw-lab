@@ -14,6 +14,10 @@
 #include <components/compiler/lineparser.hpp>
 #include <components/compiler/locals.hpp>
 #include <components/compiler/scanner.hpp>
+<<<<<<< HEAD
+=======
+#include <components/debug/debuglog.hpp>
+>>>>>>> origin/main
 #include <components/files/conversion.hpp>
 #include <components/interpreter/interpreter.hpp>
 #include <components/misc/utf8stream.hpp>
@@ -219,6 +223,10 @@ namespace MWGui
 
     void Console::printError(const std::string& msg)
     {
+<<<<<<< HEAD
+=======
+        Log(Debug::Error) << "Console: " << msg;
+>>>>>>> origin/main
         print(msg + "\n", MWBase::WindowManager::sConsoleColor_Error);
     }
 
@@ -283,6 +291,14 @@ namespace MWGui
         resetReference();
     }
 
+<<<<<<< HEAD
+=======
+    bool isWhitespace(char c)
+    {
+        return c == ' ' || c == '\t';
+    }
+
+>>>>>>> origin/main
     void Console::commandBoxKeyPress(MyGUI::Widget* /*sender*/, MyGUI::KeyCode key, MyGUI::Char /*value*/)
     {
         if (MyGUI::InputManager::getInstance().isControlPressed())
@@ -700,7 +716,11 @@ namespace MWGui
 
         /* Is there still something in the input string? If not just display all commands and return the unchanged
          * input. */
+<<<<<<< HEAD
         if (tmp.empty())
+=======
+        if (tmp.length() == 0)
+>>>>>>> origin/main
         {
             matches = mNames;
             return input;
@@ -761,7 +781,12 @@ namespace MWGui
         /* Check if all matching strings match further than input. If yes complete to this match. */
         size_t i = tmp.length();
 
+<<<<<<< HEAD
         for (auto iter = matches.front().begin() + tmp.length(); iter < matches.front().end(); ++iter, ++i)
+=======
+        for (std::string::iterator iter = matches.front().begin() + tmp.length(); iter < matches.front().end();
+             ++iter, ++i)
+>>>>>>> origin/main
         {
             for (std::string& match : matches)
             {

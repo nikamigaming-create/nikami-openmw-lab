@@ -1,7 +1,14 @@
 #include "inventoryitemmodel.hpp"
 
+<<<<<<< HEAD
 #include <sstream>
 
+=======
+#include <components/debug/debuglog.hpp>
+
+#include <sstream>
+
+>>>>>>> origin/main
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 
@@ -37,7 +44,11 @@ namespace MWGui
 
     ItemModel::ModelIndex InventoryItemModel::getIndex(const ItemStack& item)
     {
+<<<<<<< HEAD
         ModelIndex i = 0;
+=======
+        size_t i = 0;
+>>>>>>> origin/main
         for (ItemStack& itemStack : mItems)
         {
             if (itemStack == item)
@@ -51,7 +62,11 @@ namespace MWGui
     {
         if (item.mBase.getContainerStore() == &mActor.getClass().getContainerStore(mActor))
             throw std::runtime_error("Item to add needs to be from a different container!");
+<<<<<<< HEAD
         return *mActor.getClass().getContainerStore(mActor).add(item.mBase, static_cast<int>(count), allowAutoEquip);
+=======
+        return *mActor.getClass().getContainerStore(mActor).add(item.mBase, count, allowAutoEquip);
+>>>>>>> origin/main
     }
 
     MWWorld::Ptr InventoryItemModel::copyItem(const ItemStack& item, size_t count, bool allowAutoEquip)
@@ -59,9 +74,14 @@ namespace MWGui
         if (item.mBase.getContainerStore() == &mActor.getClass().getContainerStore(mActor))
             throw std::runtime_error("Item to copy needs to be from a different container!");
 
+<<<<<<< HEAD
         MWWorld::ManualRef newRef(*MWBase::Environment::get().getESMStore(), item.mBase, static_cast<int>(count));
         return *mActor.getClass().getContainerStore(mActor).add(
             newRef.getPtr(), static_cast<int>(count), allowAutoEquip);
+=======
+        MWWorld::ManualRef newRef(*MWBase::Environment::get().getESMStore(), item.mBase, count);
+        return *mActor.getClass().getContainerStore(mActor).add(newRef.getPtr(), count, allowAutoEquip);
+>>>>>>> origin/main
     }
 
     void InventoryItemModel::removeItem(const ItemStack& item, size_t count)
@@ -71,12 +91,20 @@ namespace MWGui
         if (mActor.getClass().hasInventoryStore(mActor))
         {
             MWWorld::InventoryStore& store = mActor.getClass().getInventoryStore(mActor);
+<<<<<<< HEAD
             removed = store.remove(item.mBase, static_cast<int>(count), true);
+=======
+            removed = store.remove(item.mBase, count, true);
+>>>>>>> origin/main
         }
         else
         {
             MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
+<<<<<<< HEAD
             removed = store.remove(item.mBase, static_cast<int>(count));
+=======
+            removed = store.remove(item.mBase, count);
+>>>>>>> origin/main
         }
 
         std::stringstream error;
@@ -114,6 +142,17 @@ namespace MWGui
         for (MWWorld::ContainerStoreIterator it = store.begin(); it != store.end(); ++it)
         {
             MWWorld::Ptr item = *it;
+<<<<<<< HEAD
+=======
+            if (item.isEmpty())
+            {
+                Log(Debug::Warning)
+                    << "FNV/ESM4 inventory model skipped an unresolved empty save item";
+                continue;
+            }
+            if (item.getCellRef().getCount() <= 0)
+                continue;
+>>>>>>> origin/main
 
             if (!item.getClass().showsInInventory(item))
                 continue;

@@ -47,6 +47,11 @@ namespace ESM4
                 case ESM4::Grp_ExteriorCell:
                 case ESM4::Grp_ExteriorSubCell:
                     reader.enterGroup();
+<<<<<<< HEAD
+=======
+                    if (!reader.hasMoreRecs())
+                        return true;
+>>>>>>> origin/main
                     return readItem(reader, recordInvocable, groupInvocable);
                 case ESM4::Grp_WorldChild:
                 case ESM4::Grp_CellChild:
@@ -57,7 +62,11 @@ namespace ESM4
                     reader.adjustGRUPFormId();
                     reader.enterGroup();
                     if (!reader.hasMoreRecs())
+<<<<<<< HEAD
                         return false;
+=======
+                        return true;
+>>>>>>> origin/main
                     return readItem(reader, recordInvocable, groupInvocable);
             }
 

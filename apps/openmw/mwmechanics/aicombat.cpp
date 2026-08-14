@@ -36,18 +36,22 @@ namespace
 
     osg::Vec3f AimDirToMovingTarget(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& vLastTargetPos, float duration, int weapType, float strength);
+<<<<<<< HEAD
 
     bool hitAttemptMatchesTarget(const MWWorld::Ptr& actor, const MWWorld::Ptr& target)
     {
         ESM::RefNum hitNum = actor.getClass().getCreatureStats(actor).getHitAttemptActor();
         return hitNum.isSet() && target.getCellRef().getRefNum() == hitNum;
     }
+=======
+>>>>>>> origin/main
 }
 
 namespace MWMechanics
 {
     AiCombat::AiCombat(const MWWorld::Ptr& actor)
     {
+<<<<<<< HEAD
         mTargetActor = actor.getCellRef().getRefNum();
     }
 
@@ -55,6 +59,17 @@ namespace MWMechanics
     {
         mTargetActor = combat->mTargetActor;
     }
+=======
+        mTargetActorId = actor.getClass().getCreatureStats(actor).getActorId();
+    }
+
+    AiCombat::AiCombat(const ESM::AiSequence::AiCombat* combat)
+    {
+        mTargetActorId = combat->mTargetActorId;
+    }
+
+    void AiCombat::init() {}
+>>>>>>> origin/main
 
     void AiCombat::init() {}
 
@@ -104,6 +119,7 @@ namespace MWMechanics
      * Use the observer pattern to coordinate attacks, provide intelligence on
      * whether the target was hit, etc.
      */
+<<<<<<< HEAD
 
     bool AiCombat::execute(
         const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
@@ -111,15 +127,35 @@ namespace MWMechanics
         // Get or create temporary storage
         AiCombatStorage& storage = state.get<AiCombatStorage>();
 
+=======
+
+    bool AiCombat::execute(
+        const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
+    {
+        // Get or create temporary storage
+        AiCombatStorage& storage = state.get<AiCombatStorage>();
+
+>>>>>>> origin/main
         // No combat for dead creatures
         if (actor.getClass().getCreatureStats(actor).isDead())
             return true;
 
+<<<<<<< HEAD
         const MWWorld::Ptr target = getTarget(); // The target to follow
 
         // Stop if the target doesn't exist
         if (target.isEmpty() || !target.getCellRef().getCount() || !target.getRefData().isEnabled()
             || target.getClass().getCreatureStats(target).isDead() || !target.getRefData().getBaseNode())
+=======
+        MWWorld::Ptr target = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+        if (target.isEmpty())
+            return true;
+
+        if (!target.getCellRef().getCount()
+            || !target.getRefData().isEnabled() // Really we should be checking whether the target is currently
+                                                // registered with the MechanicsManager
+            || target.getClass().getCreatureStats(target).isDead())
+>>>>>>> origin/main
             return true;
 
         if (actor == target) // This should never happen.
@@ -197,7 +233,12 @@ namespace MWMechanics
                 = (std::find(playerFollowersAndEscorters.begin(), playerFollowersAndEscorters.end(), target)
                     != playerFollowersAndEscorters.end());
             if ((target == MWMechanics::getPlayer() || targetSidesWithPlayer)
+<<<<<<< HEAD
                 && (hitAttemptMatchesTarget(actor, target) || hitAttemptMatchesTarget(target, actor)))
+=======
+                && ((stats.getHitAttemptActorId() == target.getClass().getCreatureStats(target).getActorId())
+                    || (target.getClass().getCreatureStats(target).getHitAttemptActorId() == stats.getActorId())))
+>>>>>>> origin/main
                 forceFlee = true;
             else // Otherwise end combat
                 return true;
@@ -257,9 +298,18 @@ namespace MWMechanics
 
         if (isRangedCombat)
         {
+<<<<<<< HEAD
             // rotate actor taking into account target movement direction and projectile speed
             osg::Vec3f vAimDir = AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
                 (weapon ? weapon->mData.mType : 0), storage.mStrength);
+=======
+            // The current FNV delivery path preserves authored hitscan as an immediate ray. Do not apply
+            // Morrowind projectile lead to those actors; fireFalloutWeapon owns the exact target ray and spread.
+            osg::Vec3f vAimDir = isFalloutNewVegasActor(actor)
+                ? MWBase::Environment::get().getWorld()->aimToTarget(actor, target, true)
+                : AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
+                    (weapon ? weapon->mData.mType : 0), storage.mStrength);
+>>>>>>> origin/main
 
             storage.mMovement.mRotation[0] = getXAngleToDir(vAimDir);
             storage.mMovement.mRotation[2] = getZAngleToDir(vAimDir);
@@ -332,6 +382,16 @@ namespace MWMechanics
                     storage.mUseCustomDestination = false;
                     storage.stopAttack();
                     stats.setAttackingOrSpell(false);
+<<<<<<< HEAD
+=======
+                    if (isFalloutNewVegasActor(actor))
+                    {
+                        Log(Debug::Warning) << "FNV AI path fallback: actor=" << actor.toString()
+                                            << " target=" << target.toString() << " range=" << rangeAttack
+                                            << " distance=" << distToTarget << " los=" << storage.mLOS
+                                            << " result=flee";
+                    }
+>>>>>>> origin/main
                     currentAction = std::make_unique<ActionFlee>();
                     actionCooldown = currentAction->getActionCooldown();
                     storage.startFleeing();
@@ -434,7 +494,11 @@ namespace MWMechanics
                     storage.mFleeBlindRunTimer += duration;
 
                     storage.mMovement.mRotation[0] = -actor.getRefData().getPosition().rot[0];
+<<<<<<< HEAD
                     storage.mMovement.mRotation[2] = osg::PIf
+=======
+                    storage.mMovement.mRotation[2] = osg::PI
+>>>>>>> origin/main
                         + getZAngleToDir(
                             target.getRefData().getPosition().asVec3() - actor.getRefData().getPosition().asVec3());
                     storage.mMovement.mPosition[1] = 1;
@@ -479,6 +543,7 @@ namespace MWMechanics
         actorMovementSettings.mPosition[2] = storage.mMovement.mPosition[2];
 
         rotateActorOnAxis(actor, 2, actorMovementSettings, storage);
+<<<<<<< HEAD
         rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
     }
 
@@ -632,9 +697,27 @@ namespace MWMechanics
             {
                 stopCombatMove();
             }
+=======
+        const bool waitingForYaw = storage.mRotateMove;
+
+        // Grounded FNV actors aim firearms and melee strikes through the animated upper body and the explicit
+        // target ray. Their world transform does not consume pitch rotation, so waiting for root pitch here
+        // leaves them permanently ready-but-unable-to-attack. Flying and swimming actors still need full 3D
+        // steering. Also preserve both turn results for non-FNV actors instead of letting pitch overwrite yaw.
+        bool waitingForPitch = false;
+        if (!isFalloutNewVegasActor(actor) || canActorMoveByZAxis(actor))
+        {
+            rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
+            waitingForPitch = storage.mRotateMove;
+>>>>>>> origin/main
         }
+        else
+            actorMovementSettings.mRotation[0] = 0.f;
+
+        storage.mRotateMove = waitingForYaw || waitingForPitch;
     }
 
+<<<<<<< HEAD
     void AiCombatStorage::stopCombatMove()
     {
         mTimerCombatMove = 0;
@@ -681,6 +764,249 @@ namespace MWMechanics
             else
                 mAttackCooldown -= AI_REACTION_TIME;
         }
+=======
+    void AiCombat::rotateActorOnAxis(
+        const MWWorld::Ptr& actor, int axis, MWMechanics::Movement& actorMovementSettings, AiCombatStorage& storage)
+    {
+        actorMovementSettings.mRotation[axis] = 0;
+        bool isRangedCombat = false;
+        storage.mCurrentAction->getCombatRange(isRangedCombat);
+        float eps = isRangedCombat ? osg::DegreesToRadians(0.5) : osg::DegreesToRadians(3.f);
+        float targetAngleRadians = storage.mMovement.mRotation[axis];
+        storage.mRotateMove = !smoothTurn(actor, targetAngleRadians, axis, eps);
+>>>>>>> origin/main
+    }
+
+    void AiCombatStorage::updateAttack(const MWWorld::Ptr& actor, CharacterController& characterController)
+    {
+<<<<<<< HEAD
+        if (mAttack)
+        {
+            float attackStrength = characterController.calculateWindUp();
+            mAttack
+                = !characterController.readyToPrepareAttack() && attackStrength < mStrength && attackStrength != -1.f;
+        }
+        actor.getClass().getCreatureStats(actor).setAttackingOrSpell(mAttack);
+    }
+
+    void AiCombatStorage::stopAttack()
+    {
+        mMovement.mPosition[0] = 0;
+        mMovement.mPosition[1] = 0;
+        mMovement.mPosition[2] = 0;
+        mReadyToAttack = false;
+        mAttack = false;
+    }
+
+    void AiCombatStorage::startFleeing()
+    {
+        stopFleeing();
+        mFleeState = FleeState_Idle;
+    }
+
+=======
+        if (mCachedTarget.isEmpty() || mCachedTarget.mRef->isDeleted() || !mCachedTarget.getRefData().isEnabled())
+        {
+            mCachedTarget = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+        }
+        return mCachedTarget;
+    }
+
+    void AiCombat::writeState(ESM::AiSequence::AiSequence& sequence) const
+    {
+        auto combat = std::make_unique<ESM::AiSequence::AiCombat>();
+        combat->mTargetActorId = mTargetActorId;
+
+        ESM::AiSequence::AiPackageContainer package;
+        package.mType = ESM::AiSequence::Ai_Combat;
+        package.mPackage = std::move(combat);
+        sequence.mPackages.push_back(std::move(package));
+    }
+
+    AiCombatStorage::AiCombatStorage()
+        : mAttackCooldown(0.0f)
+        , mReaction(MWBase::Environment::get().getWorld()->getPrng())
+        , mTimerCombatMove(0.0f)
+        , mReadyToAttack(false)
+        , mAttack(false)
+        , mAttackRange(0.0f)
+        , mCombatMove(false)
+        , mRotateMove(false)
+        , mLastTargetPos(0, 0, 0)
+        , mCell(nullptr)
+        , mCurrentAction()
+        , mActionCooldown(0.0f)
+        , mStrength()
+        , mForceNoShortcut(false)
+        , mShortcutFailPos()
+        , mMovement()
+        , mFleeState(FleeState_None)
+        , mLOS(false)
+        , mUpdateLOSTimer(0.0f)
+        , mFleeBlindRunTimer(0.0f)
+        , mUseCustomDestination(false)
+        , mCustomDestination()
+    {
+    }
+
+    void AiCombatStorage::startCombatMove(bool isDistantCombat, float distToTarget, float rangeAttack,
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& target)
+    {
+        auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+
+        // get the range of the target's weapon
+        MWWorld::Ptr targetWeapon = MWWorld::Ptr();
+        const MWWorld::Class& targetClass = target.getClass();
+
+        if (targetClass.hasInventoryStore(target))
+        {
+            int weapType = ESM::Weapon::None;
+            MWWorld::ContainerStoreIterator weaponSlot = MWMechanics::getActiveWeapon(target, &weapType);
+            if (weapType > ESM::Weapon::None)
+                targetWeapon = *weaponSlot;
+        }
+
+        bool targetUsesRanged = false;
+        float rangeAttackOfTarget = 0.f;
+        if (isFalloutNewVegasActor(target))
+        {
+            const std::optional<float> falloutRange = getFalloutCombatRange(target, targetUsesRanged);
+            rangeAttackOfTarget = falloutRange.value_or(0.f);
+        }
+        else
+            rangeAttackOfTarget = ActionWeapon(targetWeapon).getCombatRange(targetUsesRanged);
+
+        if (mMovement.mPosition[0])
+        {
+            mTimerCombatMove = 0.1f + 0.1f * Misc::Rng::rollClosedProbability(prng);
+            mCombatMove = true;
+        }
+        // dodge movements (for NPCs and bipedal creatures)
+        // Note: do not use for ranged combat yet since in couple with back up behaviour can move actor out of cliff
+        else if (actor.getClass().isBipedal(actor) && !isDistantCombat)
+        {
+            float moveDuration = 0;
+            float angleToTarget
+                = Misc::normalizeAngle(mMovement.mRotation[2] - actor.getRefData().getPosition().rot[2]);
+            // Apply a big side step if enemy tries to get around and come from behind.
+            // Otherwise apply a random side step (kind of dodging) with some probability
+            // if actor is within range of target's weapon.
+            if (std::abs(angleToTarget) > osg::PI / 4)
+                moveDuration = 0.2f;
+            else if (distToTarget <= rangeAttackOfTarget && Misc::Rng::rollClosedProbability(prng) < 0.25)
+                moveDuration = 0.1f + 0.1f * Misc::Rng::rollClosedProbability(prng);
+            if (moveDuration > 0)
+            {
+                mMovement.mPosition[0] = Misc::Rng::rollProbability(prng) < 0.5 ? 1.0f : -1.0f; // to the left/right
+                mTimerCombatMove = moveDuration;
+                mCombatMove = true;
+            }
+        }
+
+        mMovement.mPosition[1] = 0;
+        if (isDistantCombat)
+        {
+            // Backing up behaviour
+            // Actor backs up slightly further away than opponent's weapon range
+            // (in vanilla - only as far as opponent's weapon range),
+            // or not at all if opponent is using a ranged weapon
+
+            if (targetUsesRanged
+                || distToTarget > rangeAttackOfTarget * 1.5) // Don't back up if the target is wielding ranged weapon
+                return;
+
+            // actor should not back up into water
+            if (MWBase::Environment::get().getWorld()->isUnderwater(MWWorld::ConstPtr(actor), 0.5f))
+                return;
+
+            int mask
+                = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door;
+
+            // Actor can not back up if there is no free space behind
+            // Currently we take the 35% of actor's height from the ground as vector height.
+            // This approach allows us to detect small obstacles (e.g. crates) and curved walls.
+            osg::Vec3f halfExtents = MWBase::Environment::get().getWorld()->getHalfExtents(actor);
+            osg::Vec3f pos = actor.getRefData().getPosition().asVec3();
+            osg::Vec3f source = pos + osg::Vec3f(0, 0, 0.75f * halfExtents.z());
+            osg::Vec3f fallbackDirection = actor.getRefData().getBaseNode()->getAttitude() * osg::Vec3f(0, -1, 0);
+            osg::Vec3f destination = source + fallbackDirection * (halfExtents.y() + 16);
+
+            const auto* rayCasting = MWBase::Environment::get().getWorld()->getRayCasting();
+            bool isObstacleDetected = rayCasting->castRay(source, destination, mask).mHit;
+            if (isObstacleDetected)
+                return;
+
+            // Check if there is nothing behind - probably actor is near cliff.
+            // A current approach: cast ray 1.5-yard ray down in 1.5 yard behind actor from 35% of actor's height.
+            // If we did not hit anything, there is a cliff behind actor.
+            source = pos + osg::Vec3f(0, 0, 0.75f * halfExtents.z()) + fallbackDirection * (halfExtents.y() + 96);
+            destination = source - osg::Vec3f(0, 0, 0.75f * halfExtents.z() + 96);
+            bool isCliffDetected = !rayCasting->castRay(source, destination, mask).mHit;
+            if (isCliffDetected)
+                return;
+
+            mMovement.mPosition[1] = -1;
+        }
+    }
+
+    void AiCombatStorage::updateCombatMove(float duration)
+    {
+        if (mCombatMove)
+        {
+            mTimerCombatMove -= duration;
+            if (mTimerCombatMove <= 0)
+            {
+                stopCombatMove();
+            }
+        }
+    }
+
+    void AiCombatStorage::stopCombatMove()
+    {
+        mTimerCombatMove = 0;
+        mMovement.mPosition[0] = 0;
+        mCombatMove = false;
+    }
+
+    void AiCombatStorage::startAttackIfReady(const MWWorld::Ptr& actor, CharacterController& characterController,
+        const ESM::Weapon* weapon, bool distantCombat, bool canShout)
+    {
+        if (mReadyToAttack && characterController.readyToStartAttack())
+        {
+            if (mAttackCooldown <= 0)
+            {
+                mAttack = true; // attack starts just now
+                actor.getClass().getCreatureStats(actor).setAttackingOrSpell(true);
+
+                if (!distantCombat)
+                    characterController.setAIAttackType(chooseBestAttack(weapon));
+
+                auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+                mStrength = Misc::Rng::rollClosedProbability(prng);
+
+                const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+
+                float baseDelay = store.get<ESM::GameSetting>().find("fCombatDelayCreature")->mValue.getFloat();
+                if (actor.getClass().isNpc())
+                {
+                    baseDelay = store.get<ESM::GameSetting>().find("fCombatDelayNPC")->mValue.getFloat();
+                }
+
+                if (canShout)
+                {
+                    // Say a provoking combat phrase
+                    const int iVoiceAttackOdds
+                        = store.get<ESM::GameSetting>().find("iVoiceAttackOdds")->mValue.getInteger();
+                    if (Misc::Rng::roll0to99(prng) < iVoiceAttackOdds)
+                    {
+                        MWBase::Environment::get().getDialogueManager()->say(actor, ESM::RefId::stringRefId("attack"));
+                    }
+                }
+                mAttackCooldown = std::min(baseDelay + 0.01 * Misc::Rng::roll0to99(prng), baseDelay + 0.9);
+            }
+            else
+                mAttackCooldown -= AI_REACTION_TIME;
+        }
     }
 
     void AiCombatStorage::updateAttack(const MWWorld::Ptr& actor, CharacterController& characterController)
@@ -709,6 +1035,7 @@ namespace MWMechanics
         mFleeState = FleeState_Idle;
     }
 
+>>>>>>> origin/main
     void AiCombatStorage::stopFleeing()
     {
         mMovement.mPosition[0] = 0;

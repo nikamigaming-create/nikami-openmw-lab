@@ -122,6 +122,11 @@ void ESM4::Ingredient::load(ESM4::Reader& reader)
                 break;
             }
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadingr"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::INGR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

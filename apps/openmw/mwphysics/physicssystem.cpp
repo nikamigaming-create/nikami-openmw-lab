@@ -1,10 +1,19 @@
 #include "physicssystem.hpp"
 
 #include <algorithm>
+<<<<<<< HEAD
+=======
+#include <cmath>
+#include <exception>
+>>>>>>> origin/main
 #include <memory>
 #include <vector>
 
 #include <osg/Group>
+<<<<<<< HEAD
+=======
+#include <osg/Array>
+>>>>>>> origin/main
 #include <osg/Stats>
 #include <osg/Timer>
 
@@ -22,12 +31,26 @@
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+<<<<<<< HEAD
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/conversion.hpp>
 #include <components/resource/bulletshapemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
+=======
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/misc/convert.hpp>
+#include <components/misc/resourcehelpers.hpp>
+#include <components/misc/strings/conversion.hpp>
+#include <components/resource/bulletshape.hpp>
+#include <components/resource/bulletshapemanager.hpp>
+#include <components/resource/resourcesystem.hpp>
+#include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
+>>>>>>> origin/main
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -49,6 +72,10 @@
 
 #include "closestnotmerayresultcallback.hpp"
 #include "contacttestresultcallback.hpp"
+<<<<<<< HEAD
+=======
+#include "deepestnotmecontacttestresultcallback.hpp"
+>>>>>>> origin/main
 #include "hasspherecollisioncallback.hpp"
 #include "heightfield.hpp"
 #include "movementsolver.hpp"
@@ -58,6 +85,52 @@
 
 namespace
 {
+<<<<<<< HEAD
+=======
+    osg::Vec3f getFallbackActorHalfExtents(const MWWorld::Ptr& ptr)
+    {
+        float radius = 32.f;
+        float halfHeight = 64.f;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            if (npc->mBoundRadius > 1.f)
+                radius = npc->mBoundRadius;
+
+            if (const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore())
+            {
+                if (const ESM4::Race* race = store->get<ESM4::Race>().search(npc->mRace))
+                {
+                    const bool female = npc->mIsFONV && (npc->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Female);
+                    const float height = female ? race->mHeightFemale : race->mHeightMale;
+                    if (std::isfinite(height) && height > 0.f)
+                        halfHeight *= height;
+                }
+            }
+        }
+        else if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            if (creature->mBoundRadius > 1.f)
+                // Class::adjustScale applies CREA BNAM uniformly when Actor builds its collision extents.
+                // Keep the synthetic source extent unscaled here so the base scale is applied exactly once.
+                radius = creature->mBoundRadius;
+            halfHeight = std::max(halfHeight, radius);
+        }
+
+        return osg::Vec3f(std::max(radius, 8.f), std::max(radius, 8.f), std::max(halfHeight, 24.f));
+    }
+
+    osg::ref_ptr<Resource::BulletShape> makeFallbackActorShape(const MWWorld::Ptr& ptr)
+    {
+        osg::ref_ptr<Resource::BulletShape> shape = new Resource::BulletShape;
+        shape->mCollisionBox.mExtents = getFallbackActorHalfExtents(ptr);
+        shape->mCollisionBox.mCenter = osg::Vec3f(0.f, 0.f, shape->mCollisionBox.mExtents.z());
+        return shape;
+    }
+
+>>>>>>> origin/main
     void handleJump(const MWWorld::Ptr& ptr)
     {
         if (!ptr.getClass().isActor())
@@ -191,6 +264,68 @@ namespace MWPhysics
         return true;
     }
 
+<<<<<<< HEAD
+=======
+    // ## VR_PATCH BEGIN
+    // VR still needs getHitContact for realistic combat
+    std::pair<MWWorld::Ptr, osg::Vec3f> PhysicsSystem::getHitContact(const MWWorld::ConstPtr& actor,
+        const osg::Vec3f& origin, const osg::Quat& orient, float queryDistance)
+    {
+        // First of all, try to hit where you aim to
+        int hitmask = CollisionType_World | CollisionType_Door | CollisionType_HeightMap | CollisionType_Actor;
+        RayCastingResult result = castRay(origin, origin + (orient * osg::Vec3f(0.0f, queryDistance, 0.0f)), { actor },
+            {}, hitmask, CollisionType_Actor);
+
+        if (result.mHit)
+        {
+            reportCollision(Misc::Convert::toBullet(result.mHitPos), Misc::Convert::toBullet(result.mHitNormal));
+            return std::make_pair(result.mHitObject, result.mHitPos);
+        }
+
+        // Use cone shape as fallback
+        const MWWorld::Store<ESM::GameSetting>& store
+            = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
+
+        btConeShape shape(osg::DegreesToRadians(store.find("fCombatAngleXY")->mValue.getFloat() / 2.0f), queryDistance);
+        shape.setLocalScaling(btVector3(
+            1, 1, osg::DegreesToRadians(store.find("fCombatAngleZ")->mValue.getFloat() / 2.0f) / shape.getRadius()));
+
+        // The shape origin is its center, so we have to move it forward by half the length. The
+        // real origin will be provided to getFilteredContact to find the closest.
+        osg::Vec3f center = origin + (orient * osg::Vec3f(0.0f, queryDistance * 0.5f, 0.0f));
+
+        btCollisionObject object;
+        object.setCollisionShape(&shape);
+        object.setWorldTransform(btTransform(Misc::Convert::toBullet(orient), Misc::Convert::toBullet(center)));
+
+        const btCollisionObject* me = nullptr;
+        std::vector<const btCollisionObject*> targetCollisionObjects;
+
+        const Actor* physactor = getActor(actor);
+        if (physactor)
+            me = physactor->getCollisionObject();
+
+        DeepestNotMeContactTestResultCallback resultCallback(
+            me, targetCollisionObjects, Misc::Convert::toBullet(origin));
+        resultCallback.m_collisionFilterGroup = CollisionType_Actor;
+        resultCallback.m_collisionFilterMask
+            = CollisionType_World | CollisionType_Door | CollisionType_HeightMap | CollisionType_Actor;
+        mTaskScheduler->contactTest(&object, resultCallback);
+
+        if (resultCallback.mObject)
+        {
+            PtrHolder* holder = static_cast<PtrHolder*>(resultCallback.mObject->getUserPointer());
+            if (holder)
+            {
+                reportCollision(resultCallback.mContactPoint, resultCallback.mContactNormal);
+                return std::make_pair(holder->getPtr(), Misc::Convert::toOsg(resultCallback.mContactPoint));
+            }
+        }
+        return std::make_pair(MWWorld::Ptr(), osg::Vec3f());
+    }
+    // ## VR_PATCH END
+
+>>>>>>> origin/main
     RayCastingResult PhysicsSystem::castRay(const osg::Vec3f& from, const osg::Vec3f& to,
         const std::vector<MWWorld::ConstPtr>& ignore, const std::vector<MWWorld::Ptr>& targets, int mask,
         int group) const
@@ -389,6 +524,17 @@ namespace MWPhysics
             = std::make_unique<HeightField>(heights, x, y, size, verts, minH, maxH, holdObject, mTaskScheduler.get());
     }
 
+<<<<<<< HEAD
+=======
+    void PhysicsSystem::addFlatHeightField(int x, int y, int size, float height)
+    {
+        osg::ref_ptr<osg::FloatArray> heights = new osg::FloatArray;
+        heights->resize(4);
+        std::fill(heights->begin(), heights->end(), height);
+        addHeightField(&(*heights)[0], x, y, size, 2, height - 1.f, height + 1.f, heights.get());
+    }
+
+>>>>>>> origin/main
     void PhysicsSystem::removeHeightField(int x, int y)
     {
         HeightFieldMap::iterator heightfield = mHeightFields.find(std::make_pair(x, y));
@@ -562,7 +708,31 @@ namespace MWPhysics
     {
         const VFS::Path::Normalized animationMesh
             = Misc::ResourceHelpers::correctActorModelPath(mesh, mResourceSystem->getVFS());
+<<<<<<< HEAD
         osg::ref_ptr<const Resource::BulletShape> shape = mShapeManager->getShape(animationMesh);
+=======
+        osg::ref_ptr<const Resource::BulletShape> shape;
+        const VFS::Manager* vfs = mResourceSystem->getVFS();
+        if (vfs != nullptr && !vfs->exists(animationMesh))
+        {
+            Log(Debug::Info) << "World viewer: using fallback actor physics for missing actor mesh "
+                             << animationMesh;
+            shape = makeFallbackActorShape(ptr);
+        }
+        else
+        {
+            try
+            {
+                shape = mShapeManager->getShape(animationMesh);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Info) << "World viewer: using fallback actor physics after mesh load failed for "
+                                 << animationMesh << ": " << e.what();
+                shape = makeFallbackActorShape(ptr);
+            }
+        }
+>>>>>>> origin/main
 
         // Try to get shape from basic model as fallback for creatures
         if (!ptr.getClass().isNpc() && shape && shape->mCollisionBox.mExtents.length2() == 0)
@@ -574,7 +744,13 @@ namespace MWPhysics
         }
 
         if (!shape)
+<<<<<<< HEAD
             return;
+=======
+            shape = makeFallbackActorShape(ptr);
+        else if (shape->mCollisionBox.mExtents.length2() == 0.f)
+            shape = makeFallbackActorShape(ptr);
+>>>>>>> origin/main
 
         // check if Actor should spawn above water
         const MWMechanics::MagicEffects& effects = ptr.getClass().getCreatureStats(ptr).getMagicEffects();
@@ -865,10 +1041,17 @@ namespace MWPhysics
 
     void PhysicsSystem::reportStats(unsigned int frameNumber, osg::Stats& stats) const
     {
+<<<<<<< HEAD
         stats.setAttribute(frameNumber, "Physics Actors", static_cast<double>(mActors.size()));
         stats.setAttribute(frameNumber, "Physics Objects", static_cast<double>(mObjects.size()));
         stats.setAttribute(frameNumber, "Physics Projectiles", static_cast<double>(mProjectiles.size()));
         stats.setAttribute(frameNumber, "Physics HeightFields", static_cast<double>(mHeightFields.size()));
+=======
+        stats.setAttribute(frameNumber, "Physics Actors", mActors.size());
+        stats.setAttribute(frameNumber, "Physics Objects", mObjects.size());
+        stats.setAttribute(frameNumber, "Physics Projectiles", mProjectiles.size());
+        stats.setAttribute(frameNumber, "Physics HeightFields", mHeightFields.size());
+>>>>>>> origin/main
     }
 
     void PhysicsSystem::reportCollision(const btVector3& position, const btVector3& normal)

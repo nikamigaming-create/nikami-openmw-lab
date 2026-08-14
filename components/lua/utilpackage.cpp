@@ -8,9 +8,12 @@
 
 #include <components/misc/color.hpp>
 #include <components/misc/mathutil.hpp>
+<<<<<<< HEAD
 #include <components/misc/strings/algorithm.hpp>
 
 #include <MyGUI_StringUtility.h>
+=======
+>>>>>>> origin/main
 
 #include "luastate.hpp"
 #include "util.hpp"
@@ -246,6 +249,7 @@ namespace LuaUtil
         color["rgba"] = [](float r, float g, float b, float a) { return Misc::Color(r, g, b, a); };
         color["rgb"] = [](float r, float g, float b) { return Misc::Color(r, g, b, 1); };
         color["hex"] = [](std::string_view hex) { return Misc::Color::fromHex(hex); };
+<<<<<<< HEAD
         color["commaString"] = [](std::string_view str) {
             auto wrongChars = std::count_if(
                 str.begin(), str.end(), [](unsigned char c) { return !std::isdigit(c) && c != ' ' && c != ','; });
@@ -268,6 +272,8 @@ namespace LuaUtil
             return Misc::Color(MyGUI::utility::parseInt(rgba[0]) / 255.f, MyGUI::utility::parseInt(rgba[1]) / 255.f,
                 MyGUI::utility::parseInt(rgba[2]) / 255.f, MyGUI::utility::parseInt(rgba[3]) / 255.f);
         };
+=======
+>>>>>>> origin/main
         util["color"] = LuaUtil::makeReadOnly(color);
 
         // Lua bindings for Transform

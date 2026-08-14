@@ -25,6 +25,10 @@
 #include "../mwmechanics/setbaseaisetting.hpp"
 
 #include "../mwbase/environment.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/inputmanager.hpp"
+>>>>>>> origin/main
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
@@ -132,8 +136,12 @@ namespace MWClass
 
             // creature stats
             for (size_t i = 0; i < ref->mBase->mData.mAttributes.size(); ++i)
+<<<<<<< HEAD
                 data->mCreatureStats.setAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i)),
                     static_cast<float>(ref->mBase->mData.mAttributes[i]));
+=======
+                data->mCreatureStats.setAttribute(ESM::Attribute::indexToRefId(i), ref->mBase->mData.mAttributes[i]);
+>>>>>>> origin/main
             data->mCreatureStats.setHealth(static_cast<float>(ref->mBase->mData.mHealth));
             data->mCreatureStats.setMagicka(static_cast<float>(ref->mBase->mData.mMana));
             data->mCreatureStats.setFatigue(static_cast<float>(ref->mBase->mData.mFatigue));
@@ -224,11 +232,19 @@ namespace MWClass
         return ptr.getRefData().getCustomData()->asCreatureCustomData().mCreatureStats;
     }
 
+<<<<<<< HEAD
     bool Creature::evaluateHit(const MWWorld::Ptr& ptr, MWWorld::Ptr& victim, osg::Vec3f& hitPosition) const
     {
         victim = MWWorld::Ptr();
         hitPosition = osg::Vec3f();
 
+=======
+    // ## VR_PATCH BEGIN
+    //  split evaluateHit into evaluateHit and findMeleeVictim so VR realistic combat can provide
+    //  its victim as a parameter.
+    std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> Creature::findMeleeVictim(const MWWorld::Ptr& ptr) const
+    {
+>>>>>>> origin/main
         // Get the weapon used (if hand-to-hand, weapon = inv.end())
         MWWorld::Ptr weapon;
         if (hasInventoryStore(ptr))
@@ -239,6 +255,7 @@ namespace MWClass
                 weapon = *weaponslot;
         }
 
+<<<<<<< HEAD
         MWBase::World* world = MWBase::Environment::get().getWorld();
 
         const float dist = MWMechanics::getMeleeWeaponReach(ptr, weapon);
@@ -257,6 +274,41 @@ namespace MWClass
 
     void Creature::hit(const MWWorld::Ptr& ptr, float attackStrength, int type, const MWWorld::Ptr& victim,
         const osg::Vec3f& hitPosition, bool success) const
+=======
+        const float dist = MWMechanics::getMeleeWeaponReach(ptr, weapon);
+        const std::pair<MWWorld::Ptr, osg::Vec3f> result = MWMechanics::getHitContact(ptr, dist);
+        if (result.first.isEmpty()) // Didn't hit anything
+            return std::nullopt;
+        return result;
+    }
+
+    MWWorld::MeleeHit Creature::evaluateHit(
+        const MWWorld::Ptr& ptr, std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> victim) const
+    {
+        MWWorld::MeleeHit result = {
+            .mVictim = MWWorld::Ptr(),
+            .mHitPosition = osg::Vec3f(),
+            .mSuccess = true
+        };
+        if (!victim)
+            victim = findMeleeVictim(ptr);
+        // Note that we return true in spite of an apparent failure to hit anything alive.
+        // This is because hitting nothing is not a "miss" and should be handled as such character-controller-side.
+        if (!victim)
+            return result;
+        result.mVictim = victim->first;
+        result.mHitPosition = victim->second;
+
+        float hitchance = MWMechanics::getHitChance(ptr, victim->first, ptr.get<ESM::Creature>()->mBase->mData.mCombat);
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        result.mSuccess = Misc::Rng::roll0to99(world->getPrng()) < hitchance;
+        return result;
+    }
+    // ## VR_PATCH END
+
+    void Creature::hit(const MWWorld::Ptr& ptr, float attackStrength, int type, const MWWorld::Ptr& victim,
+        const osg::Vec3f& hitPosition, bool success, bool ignoreReach) const
+>>>>>>> origin/main
     {
         MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
 
@@ -282,7 +334,11 @@ namespace MWClass
         if (otherstats.isDead()) // Can't hit dead actors
             return;
 
+<<<<<<< HEAD
         if (!MWMechanics::isInMeleeReach(ptr, victim, MWMechanics::getMeleeWeaponReach(ptr, weapon)))
+=======
+        if (!ignoreReach && !MWMechanics::isInMeleeReach(ptr, victim, MWMechanics::getMeleeWeaponReach(ptr, weapon)))
+>>>>>>> origin/main
             return;
 
         if (!success)
@@ -352,6 +408,10 @@ namespace MWClass
 
     void Creature::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
         const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const
+<<<<<<< HEAD
+=======
+//## VR_PATCH END
+>>>>>>> origin/main
     {
         MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
 
@@ -376,6 +436,7 @@ namespace MWClass
         {
             MWMechanics::CreatureStats& statsAttacker = attacker.getClass().getCreatureStats(attacker);
             // First handle the attacked actor
+<<<<<<< HEAD
             if (!stats.getHitAttemptActor().isSet()
                 && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
                 stats.setHitAttemptActor(attacker.getCellRef().getRefNum());
@@ -384,6 +445,16 @@ namespace MWClass
             if (!statsAttacker.getHitAttemptActor().isSet()
                 && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
                 statsAttacker.setHitAttemptActor(ptr.getCellRef().getRefNum());
+=======
+            if ((stats.getHitAttemptActorId() == -1)
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                stats.setHitAttemptActorId(statsAttacker.getActorId());
+
+            // Next handle the attacking actor
+            if ((statsAttacker.getHitAttemptActorId() == -1)
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                statsAttacker.setHitAttemptActorId(stats.getActorId());
+>>>>>>> origin/main
         }
 
         if (!object.empty())
@@ -454,6 +525,17 @@ namespace MWClass
                     stats.setHitRecovery(true); // Is this supposed to always occur?
             }
         }
+//## VR_PATCH BEGIN
+        // TODO: Port to lua
+        // if (successful)
+        // {
+        //     if (attacker == MWMechanics::getPlayer() && hitStrength > 0.f)
+        //     {
+        //         float hapticIntensity = std::max(0.25f, std::min(1.f, hitStrength));
+        //         MWBase::Environment::get().getInputManager()->applyHapticsRightHand(hapticIntensity);
+        //     }
+        // }
+//## VR_PATCH END
     }
 
     std::unique_ptr<MWWorld::Action> Creature::activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
@@ -758,11 +840,19 @@ namespace MWClass
         switch (skillRecord->mData.mSpecialization)
         {
             case ESM::Class::Combat:
+<<<<<<< HEAD
                 return static_cast<float>(ref->mBase->mData.mCombat);
             case ESM::Class::Magic:
                 return static_cast<float>(ref->mBase->mData.mMagic);
             case ESM::Class::Stealth:
                 return static_cast<float>(ref->mBase->mData.mStealth);
+=======
+                return ref->mBase->mData.mCombat;
+            case ESM::Class::Magic:
+                return ref->mBase->mData.mMagic;
+            case ESM::Class::Stealth:
+                return ref->mBase->mData.mStealth;
+>>>>>>> origin/main
             default:
                 throw std::runtime_error("invalid specialisation");
         }
@@ -888,7 +978,11 @@ namespace MWClass
 
     void Creature::setBaseAISetting(const ESM::RefId& id, MWMechanics::AiSetting setting, int value) const
     {
+<<<<<<< HEAD
         MWMechanics::setBaseAISetting<ESM::Creature>(id, setting, static_cast<unsigned char>(value));
+=======
+        MWMechanics::setBaseAISetting<ESM::Creature>(id, setting, value);
+>>>>>>> origin/main
     }
 
     void Creature::modifyBaseInventory(const ESM::RefId& actorId, const ESM::RefId& itemId, int amount) const

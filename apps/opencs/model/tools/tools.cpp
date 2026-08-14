@@ -47,11 +47,19 @@ CSMDoc::OperationHolder* CSMTools::Tools::get(int type)
     switch (type)
     {
         case CSMDoc::State_Verifying:
+<<<<<<< HEAD
             return mVerifier;
         case CSMDoc::State_Searching:
             return mSearch;
         case CSMDoc::State_Merging:
             return mMerge;
+=======
+            return &mVerifier;
+        case CSMDoc::State_Searching:
+            return &mSearch;
+        case CSMDoc::State_Merging:
+            return &mMerge;
+>>>>>>> origin/main
     }
 
     return nullptr;
@@ -64,8 +72,9 @@ const CSMDoc::OperationHolder* CSMTools::Tools::get(int type) const
 
 CSMDoc::OperationHolder* CSMTools::Tools::getVerifier()
 {
-    if (!mVerifier)
+    if (!mVerifierOperation)
     {
+<<<<<<< HEAD
         mVerifierOperation = new CSMDoc::Operation(CSMDoc::State_Verifying);
 
         std::vector<ESM::RefId> mandatoryRefIds;
@@ -106,6 +115,52 @@ CSMDoc::OperationHolder* CSMTools::Tools::getVerifier()
 
         mVerifierOperation->appendStage(new ScriptCheckStage(mDocument));
 
+=======
+        mVerifierOperation = new CSMDoc::Operation(CSMDoc::State_Verifying, false);
+
+        connect(&mVerifier, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
+        connect(&mVerifier, &CSMDoc::OperationHolder::done, this, &Tools::done);
+        connect(&mVerifier, &CSMDoc::OperationHolder::reportMessage, this, &Tools::verifierMessage);
+
+        std::vector<ESM::RefId> mandatoryRefIds;
+        {
+            auto mandatoryIds = { "Day", "DaysPassed", "GameHour", "Month", "PCRace" };
+            for (auto& id : mandatoryIds)
+                mandatoryRefIds.push_back(ESM::RefId::stringRefId(id));
+        }
+
+        mVerifierOperation->appendStage(new MandatoryIdStage(
+            mData.getGlobals(), CSMWorld::UniversalId(CSMWorld::UniversalId::Type_Globals), mandatoryRefIds));
+
+        mVerifierOperation->appendStage(new SkillCheckStage(mData.getSkills()));
+
+        mVerifierOperation->appendStage(new ClassCheckStage(mData.getClasses()));
+
+        mVerifierOperation->appendStage(new FactionCheckStage(mData.getFactions()));
+
+        mVerifierOperation->appendStage(new RaceCheckStage(mData.getRaces()));
+
+        mVerifierOperation->appendStage(
+            new SoundCheckStage(mData.getSounds(), mData.getResources(CSMWorld::UniversalId::Type_SoundsRes)));
+
+        mVerifierOperation->appendStage(new RegionCheckStage(mData.getRegions()));
+
+        mVerifierOperation->appendStage(
+            new BirthsignCheckStage(mData.getBirthsigns(), mData.getResources(CSMWorld::UniversalId::Type_Textures)));
+
+        mVerifierOperation->appendStage(new SpellCheckStage(mData.getSpells()));
+
+        mVerifierOperation->appendStage(
+            new ReferenceableCheckStage(mData.getReferenceables().getDataSet(), mData.getRaces(), mData.getClasses(),
+                mData.getFactions(), mData.getScripts(), mData.getResources(CSMWorld::UniversalId::Type_Meshes),
+                mData.getResources(CSMWorld::UniversalId::Type_Icons), mData.getBodyParts()));
+
+        mVerifierOperation->appendStage(new ReferenceCheckStage(mData.getReferences(), mData.getReferenceables(),
+            mData.getCells(), mData.getFactions(), mData.getBodyParts()));
+
+        mVerifierOperation->appendStage(new ScriptCheckStage(mDocument));
+
+>>>>>>> origin/main
         mVerifierOperation->appendStage(new StartScriptCheckStage(mData.getStartScripts(), mData.getScripts()));
 
         mVerifierOperation->appendStage(new BodyPartCheckStage(mData.getBodyParts(),
@@ -131,38 +186,79 @@ CSMDoc::OperationHolder* CSMTools::Tools::getVerifier()
 
         mVerifierOperation->appendStage(new EnchantmentCheckStage(mData.getEnchantments()));
 
+<<<<<<< HEAD
         mVerifier = new CSMDoc::OperationHolder(this, mVerifierOperation);
         connect(mVerifier, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
         connect(mVerifier, &CSMDoc::OperationHolder::done, this, &Tools::done);
         connect(mVerifier, &CSMDoc::OperationHolder::reportMessage, this, &Tools::verifierMessage);
+=======
+        mVerifier.setOperation(mVerifierOperation);
+>>>>>>> origin/main
     }
 
-    return mVerifier;
+    return &mVerifier;
 }
 
 CSMTools::Tools::Tools(CSMDoc::Document& document, ToUTF8::FromType encoding)
     : mDocument(document)
     , mData(document.getData())
     , mVerifierOperation(nullptr)
+<<<<<<< HEAD
     , mVerifier(nullptr)
     , mSearchOperation(nullptr)
     , mSearch(nullptr)
     , mMergeOperation(nullptr)
     , mMerge(nullptr)
+=======
+    , mSearchOperation(nullptr)
+    , mMergeOperation(nullptr)
+>>>>>>> origin/main
     , mNextReportNumber(0)
     , mEncoding(encoding)
 {
     // index 0: load error log
     mReports.insert(std::make_pair(mNextReportNumber++, new ReportModel));
     mActiveReports.insert(std::make_pair(CSMDoc::State_Loading, 0));
+<<<<<<< HEAD
+=======
+
+    connect(&mSearch, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
+    connect(&mSearch, &CSMDoc::OperationHolder::done, this, &Tools::done);
+    connect(&mSearch, &CSMDoc::OperationHolder::reportMessage, this, &Tools::verifierMessage);
+
+    connect(&mMerge, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
+    connect(&mMerge, &CSMDoc::OperationHolder::done, this, &Tools::done);
+    // don't need to connect report message, since there are no messages for merge
+>>>>>>> origin/main
 }
 
 CSMTools::Tools::~Tools()
 {
+<<<<<<< HEAD
     // OperationHolder destructors call quit(), which aborts the operation, waits
     // for the thread to finish, and deletes the operation. The holders are
     // QObject children of Tools and are destroyed automatically.
 
+=======
+    if (mVerifierOperation)
+    {
+        mVerifier.abortAndWait();
+        delete mVerifierOperation;
+    }
+
+    if (mSearchOperation)
+    {
+        mSearch.abortAndWait();
+        delete mSearchOperation;
+    }
+
+    if (mMergeOperation)
+    {
+        mMerge.abortAndWait();
+        delete mMergeOperation;
+    }
+
+>>>>>>> origin/main
     for (std::map<int, ReportModel*>::iterator iter(mReports.begin()); iter != mReports.end(); ++iter)
         delete iter->second;
 }
@@ -193,6 +289,7 @@ void CSMTools::Tools::runSearch(const CSMWorld::UniversalId& searchId, const Sea
 {
     mActiveReports[CSMDoc::State_Searching] = searchId.getIndex();
 
+<<<<<<< HEAD
     if (!mSearch)
     {
         mSearchOperation = new SearchOperation(mDocument);
@@ -200,23 +297,40 @@ void CSMTools::Tools::runSearch(const CSMWorld::UniversalId& searchId, const Sea
         connect(mSearch, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
         connect(mSearch, &CSMDoc::OperationHolder::done, this, &Tools::done);
         connect(mSearch, &CSMDoc::OperationHolder::reportMessage, this, &Tools::verifierMessage);
+=======
+    if (!mSearchOperation)
+    {
+        mSearchOperation = new SearchOperation(mDocument);
+        mSearch.setOperation(mSearchOperation);
+>>>>>>> origin/main
     }
 
     mSearchOperation->configure(search);
 
+<<<<<<< HEAD
     mSearch->start();
+=======
+    mSearch.start();
+>>>>>>> origin/main
 }
 
 void CSMTools::Tools::runMerge(std::unique_ptr<CSMDoc::Document> target)
 {
     // not setting an active report, because merge does not produce messages
 
+<<<<<<< HEAD
     if (!mMerge)
     {
         mMergeOperation = new MergeOperation(mDocument, mEncoding);
         mMerge = new CSMDoc::OperationHolder(this, mMergeOperation);
         connect(mMerge, &CSMDoc::OperationHolder::progress, this, &Tools::progress);
         connect(mMerge, &CSMDoc::OperationHolder::done, this, &Tools::done);
+=======
+    if (!mMergeOperation)
+    {
+        mMergeOperation = new MergeOperation(mDocument, mEncoding);
+        mMerge.setOperation(mMergeOperation);
+>>>>>>> origin/main
         connect(mMergeOperation, &MergeOperation::mergeDone, this, &Tools::mergeDone);
     }
 
@@ -224,7 +338,11 @@ void CSMTools::Tools::runMerge(std::unique_ptr<CSMDoc::Document> target)
 
     mMergeOperation->setTarget(std::move(target));
 
+<<<<<<< HEAD
     mMerge->start();
+=======
+    mMerge.start();
+>>>>>>> origin/main
 }
 
 void CSMTools::Tools::abortOperation(int type)

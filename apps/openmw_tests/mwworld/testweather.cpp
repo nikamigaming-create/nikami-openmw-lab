@@ -9,6 +9,106 @@ namespace MWWorld
 {
     namespace
     {
+<<<<<<< HEAD
+=======
+        TEST(MWWorldWeatherTest, samplesRetailFNVHighNoonToDayAfternoonSegment)
+        {
+            FalloutWeatherColorSamples ambient{};
+            ambient[1] = osg::Vec4f(87.f / 255.f, 105.f / 255.f, 138.f / 255.f, 1.f);
+            ambient[4] = osg::Vec4f(99.f / 255.f, 120.f / 255.f, 154.f / 255.f, 1.f);
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            const osg::Vec4f sampled = sampleFalloutWeatherColor(ambient, 14.4118919f, settings);
+
+            EXPECT_NEAR(sampled.r(), 0.369318515f, 0.000001f);
+            EXPECT_NEAR(sampled.g(), 0.4469423f, 0.000001f);
+            EXPECT_NEAR(sampled.b(), 0.578699231f, 0.000001f);
+        }
+
+        TEST(MWWorldWeatherTest, samplesAllRetailFNVTimeSlotsAndStrictBoundaries)
+        {
+            FalloutWeatherColorSamples samples{};
+            for (std::size_t slot = 0; slot < samples.size(); ++slot)
+                samples[slot] = osg::Vec4f(static_cast<float>(slot), 0.f, 0.f, 1.f);
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 2.f, settings).r(), 3.f); // Night
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 5.5f, settings).r(), 3.f); // inclusive Night edge
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 6.125f, settings).r(), 1.5f); // Night/Sunrise
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 6.75f, settings).r(), 0.f); // Sunrise apex
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 7.375f, settings).r(), 0.5f); // Sunrise/Day
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 8.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 10.f, settings).r(), 2.5f); // Day/HighNoon
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 12.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 15.f, settings).r(), 2.5f); // HighNoon/Day
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 18.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 18.625f, settings).r(), 1.5f); // Day/Sunset
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 19.25f, settings).r(), 2.f); // Sunset apex
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 19.875f, settings).r(), 2.5f); // Sunset/Night
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 20.5f, settings).r(), 3.f); // inclusive Night edge
+        }
+
+        TEST(MWWorldWeatherTest, mapsRetailFalloutSunOrbit)
+        {
+            const osg::Vec3f highNoon = falloutSunPosition(0.f);
+            EXPECT_FLOAT_EQ(highNoon.x(), 0.f);
+            EXPECT_FLOAT_EQ(highNoon.y(), -100.f);
+            EXPECT_FLOAT_EQ(highNoon.z(), 800.f);
+
+            // xNVSE retail capture at GameHour 14.4118919.
+            const osg::Vec3f captured = falloutSunPosition(-0.201698895f);
+            EXPECT_NEAR(captured.x(), -161.359116f, 0.0001f);
+            EXPECT_FLOAT_EQ(captured.y(), -100.f);
+            EXPECT_NEAR(captured.z(), 638.640869f, 0.0001f);
+        }
+
+        TEST(MWWorldWeatherTest, mapsSingleRetailFalloutMoonToOpenMWQuadAxis)
+        {
+            const MWRender::MoonState day
+                = falloutMoonState(14.4118919f, MWRender::MoonState::Phase::FirstQuarter, false);
+            // The retail angle accumulator is normalized to [0, 360). 306.17838 degrees is
+            // the same quad rotation as the legacy -53.82162 value, but preserves the domain
+            // used by the retail 20..160 degree phase-shadow window below.
+            EXPECT_NEAR(day.mRotationFromHorizon, 306.17838f, 0.0001f);
+            EXPECT_FLOAT_EQ(day.mRotationFromNorth, 35.f);
+            EXPECT_EQ(day.mPhase, MWRender::MoonState::Phase::FirstQuarter);
+            EXPECT_FLOAT_EQ(day.mShadowBlend, 0.f);
+            EXPECT_FLOAT_EQ(day.mMoonAlpha, 0.f);
+
+            const MWRender::MoonState night
+                = falloutMoonState(23.004034f, MWRender::MoonState::Phase::FirstQuarter, true);
+            EXPECT_NEAR(night.mRotationFromHorizon, 75.06051f, 0.0001f);
+            EXPECT_FLOAT_EQ(night.mShadowBlend, 1.f);
+            EXPECT_FLOAT_EQ(night.mMoonAlpha, 1.f);
+        }
+
+        TEST(MWWorldWeatherTest, advancesRetailFalloutMoonPhaseFromClimateData)
+        {
+            // FNV/FO3 default CLMT TNAM ends in 0x83: Masser, no Secunda,
+            // and three game-days per phase. xNVSE observed the runtime
+            // phase global advancing 2,3,4,5,6,7,0 at these boundaries.
+            constexpr std::uint8_t moonInfo = 0x83;
+            EXPECT_EQ(falloutMoonPhase(0, moonInfo), MWRender::MoonState::Phase::Full);
+            EXPECT_EQ(falloutMoonPhase(2, moonInfo), MWRender::MoonState::Phase::Full);
+            EXPECT_EQ(falloutMoonPhase(3, moonInfo), MWRender::MoonState::Phase::WaningGibbous);
+            EXPECT_EQ(falloutMoonPhase(6, moonInfo), MWRender::MoonState::Phase::ThirdQuarter);
+            EXPECT_EQ(falloutMoonPhase(9, moonInfo), MWRender::MoonState::Phase::WaningCrescent);
+            EXPECT_EQ(falloutMoonPhase(12, moonInfo), MWRender::MoonState::Phase::New);
+            EXPECT_EQ(falloutMoonPhase(15, moonInfo), MWRender::MoonState::Phase::WaxingCrescent);
+            EXPECT_EQ(falloutMoonPhase(18, moonInfo), MWRender::MoonState::Phase::FirstQuarter);
+            EXPECT_EQ(falloutMoonPhase(21, moonInfo), MWRender::MoonState::Phase::WaxingGibbous);
+            EXPECT_EQ(falloutMoonPhase(24, moonInfo), MWRender::MoonState::Phase::Full);
+        }
+
+>>>>>>> origin/main
         // MASSER PHASES
 
         TEST(MWWorldWeatherTest, masserPhasesFullToWaningGibbousAtCorrectTimes)

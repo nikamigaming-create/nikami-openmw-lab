@@ -87,6 +87,11 @@ void ESM4::LevelledCreature::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadlvlc"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::LVLC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

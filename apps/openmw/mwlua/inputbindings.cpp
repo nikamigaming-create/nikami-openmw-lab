@@ -264,6 +264,10 @@ namespace MWLua
         api["ACTION"] = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, MWInput::Actions>(lua,
             {
                 { "GameMenu", MWInput::A_GameMenu },
+<<<<<<< HEAD
+=======
+                { "Map", MWInput::A_Map },
+>>>>>>> origin/main
                 { "Screenshot", MWInput::A_Screenshot },
                 { "Inventory", MWInput::A_Inventory },
                 { "Console", MWInput::A_Console },
@@ -345,6 +349,7 @@ namespace MWLua
                     { "DPadDown", SDL_CONTROLLER_BUTTON_DPAD_DOWN },
                     { "DPadLeft", SDL_CONTROLLER_BUTTON_DPAD_LEFT },
                     { "DPadRight", SDL_CONTROLLER_BUTTON_DPAD_RIGHT },
+<<<<<<< HEAD
                     { "Misc1", SDL_CONTROLLER_BUTTON_MISC1 },
                     { "Paddle1", SDL_CONTROLLER_BUTTON_PADDLE1 },
                     { "Paddle2", SDL_CONTROLLER_BUTTON_PADDLE2 },
@@ -352,6 +357,8 @@ namespace MWLua
                     { "Paddle4", SDL_CONTROLLER_BUTTON_PADDLE4 },
                     { "Touchpad", SDL_CONTROLLER_BUTTON_TOUCHPAD },
                     { "Max", SDL_CONTROLLER_BUTTON_MAX },
+=======
+>>>>>>> origin/main
                 }));
 
         api["CONTROLLER_AXIS"] = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, int>(lua,

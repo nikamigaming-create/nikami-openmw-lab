@@ -1,5 +1,6 @@
 #!/bin/sh -ex
 
+<<<<<<< HEAD
 source ./CI/macos/deps_versions.sh
 
 brew tap --repair
@@ -28,4 +29,15 @@ echo "${HASH:?}  ${FILE:?}" | sha512sum
     mv /tmp/openmw-deps-pre/*/ /tmp/openmw-deps/ && \
     rmdir /tmp/openmw-deps-pre
 
+=======
+brew tap --repair
+brew update --quiet
+
+if [[ "${MACOS_AMD64}" ]]; then
+    ./CI/macos/before_install.amd64.sh
+else
+    ./CI/macos/before_install.arm64.sh
+fi
+
+>>>>>>> origin/main
 command -v cmake >/dev/null 2>&1 || brew install cmake

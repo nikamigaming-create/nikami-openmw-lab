@@ -1,4 +1,10 @@
 #include "sdlinputwrapper.hpp"
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+#include "sdlgraphicswindow.hpp"
+//## VR_PATCH END
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 #include <components/settings/values.hpp>
@@ -39,7 +45,11 @@ namespace SDLUtil
         _setWindowScale();
     }
 
+<<<<<<< HEAD
     InputWrapper::~InputWrapper() = default;
+=======
+    InputWrapper::~InputWrapper() {}
+>>>>>>> origin/main
 
     void InputWrapper::_setWindowScale()
     {
@@ -47,8 +57,13 @@ namespace SDLUtil
         SDL_GetWindowSize(mSDLWindow, &w, &h);
         int dw, dh;
         SDL_GL_GetDrawableSize(mSDLWindow, &dw, &dh);
+<<<<<<< HEAD
         mScaleX = static_cast<Uint16>(dw / w);
         mScaleY = static_cast<Uint16>(dh / h);
+=======
+        mScaleX = dw / w;
+        mScaleY = dh / h;
+>>>>>>> origin/main
     }
 
     void InputWrapper::capture(bool windowEventsOnly)
@@ -267,8 +282,19 @@ namespace SDLUtil
                 if (w == 0 && h == 0)
                     return;
 
+<<<<<<< HEAD
                 mViewer->getCamera()->getGraphicsContext()->resized(x, y, w, h);
 
+=======
+//## VR_PATCH BEGIN
+
+                // When rendering with stereo, the main camera might not have a GC set so we have to search
+                // slave cameras instead.
+                // TODO: Is this still true? We still using slave cameras for VR?
+                // mViewer->getCamera()->getGraphicsContext()->resized(x, y, w, h);
+                GraphicsWindowSDL2::findContext(*mViewer)->resized(x, y, w, h);
+//## VR_PATCH END
+>>>>>>> origin/main
                 mViewer->getEventQueue()->windowResize(x, y, w, h);
 
                 if (mWindowListener)
@@ -320,8 +346,13 @@ namespace SDLUtil
     {
         SDL_WarpMouseInWindow(mSDLWindow, x, y);
         mWarpCompensate = true;
+<<<<<<< HEAD
         mWarpX = static_cast<Uint16>(x);
         mWarpY = static_cast<Uint16>(y);
+=======
+        mWarpX = x;
+        mWarpY = y;
+>>>>>>> origin/main
     }
 
     /// \brief Locks the pointer to the window

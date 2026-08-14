@@ -80,6 +80,11 @@ void ESM4::LandTexture::load(ESM4::Reader& reader)
                 reader.get(mMaterialFlags);
                 break; // SSE
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadltex"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::LTEX::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

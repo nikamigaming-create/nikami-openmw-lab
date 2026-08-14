@@ -125,12 +125,21 @@ namespace ESM
         REC_ACTC = esm3Recname("ACTC"),
         REC_MPRJ = esm3Recname("MPRJ"),
         REC_PROJ = esm3Recname("PROJ"),
+<<<<<<< HEAD
+=======
+        REC_FPRJ = esm3Recname("FPRJ"), // Native Fallout projectile runtime state
+>>>>>>> origin/main
         REC_DCOU = esm3Recname("DCOU"),
         REC_MARK = esm3Recname("MARK"),
         REC_ENAB = esm3Recname("ENAB"),
         REC_CAM_ = esm3Recname("CAM_"),
         REC_STLN = esm3Recname("STLN"),
         REC_INPU = esm3Recname("INPU"),
+<<<<<<< HEAD
+=======
+        REC_FQST = esm3Recname("FQST"), // Fallout TES4-family quest runtime state
+        REC_FPLR = esm3Recname("FPLR"), // Fallout Player native actor-value runtime state
+>>>>>>> origin/main
 
         // format 1
         REC_FILT = esm3Recname("FILT"),
@@ -152,6 +161,10 @@ namespace ESM
         REC_ACTI4 = esm4Recname(ESM4::REC_ACTI), // Activator
         REC_ADDN4 = esm4Recname(ESM4::REC_ADDN), // Addon Node
         REC_ALCH4 = esm4Recname(ESM4::REC_ALCH), // Potion
+<<<<<<< HEAD
+=======
+        REC_AMEF4 = esm4Recname(ESM4::REC_AMEF), // Ammo Effect
+>>>>>>> origin/main
         REC_AMMO4 = esm4Recname(ESM4::REC_AMMO), // Ammo
         REC_ANIO4 = esm4Recname(ESM4::REC_ANIO), // Animated Object
         REC_APPA4 = esm4Recname(ESM4::REC_APPA), // Apparatus (probably unused)
@@ -243,7 +256,14 @@ namespace ESM
         REC_PROJ4 = esm4Recname(ESM4::REC_PROJ), // Projectile
         REC_QUST4 = esm4Recname(ESM4::REC_QUST), // Quest
         REC_RACE4 = esm4Recname(ESM4::REC_RACE), // Race / Creature type
+<<<<<<< HEAD
         REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
+=======
+        REC_RCCT4 = esm4Recname(ESM4::REC_RCCT), // Recipe Category
+        REC_RCPE4 = esm4Recname(ESM4::REC_RCPE), // Recipe
+        REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
+        REC_REPU4 = esm4Recname(ESM4::REC_REPU), // Reputation (Fallout: New Vegas)
+>>>>>>> origin/main
         REC_REGN4 = esm4Recname(ESM4::REC_REGN), // Region (Audio/Weather)
         REC_RELA4 = esm4Recname(ESM4::REC_RELA), // Relationship
         REC_REVB4 = esm4Recname(ESM4::REC_REVB), // Reverb Parameters

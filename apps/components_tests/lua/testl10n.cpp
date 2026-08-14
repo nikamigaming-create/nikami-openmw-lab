@@ -26,8 +26,11 @@ namespace
     constexpr VFS::Path::NormalizedView test3DePath("l10n/test3/de.yaml");
     constexpr VFS::Path::NormalizedView test4RuPath("l10n/test4/ru.yaml");
     constexpr VFS::Path::NormalizedView test4EnPath("l10n/test4/en.yaml");
+<<<<<<< HEAD
     constexpr VFS::Path::NormalizedView test5GmstPath("l10n/test5/gmst.yaml");
     constexpr VFS::Path::NormalizedView test5EnPath("l10n/test5/en.yaml");
+=======
+>>>>>>> origin/main
 
     VFSTestFile invalidScript("not a script");
     VFSTestFile incorrectScript(
@@ -85,6 +88,7 @@ stat_increase: "Your {stat} has increased to {value}"
 speed: "Speed"
 )X");
 
+<<<<<<< HEAD
     VFSTestFile test5(R"X(
 string: "sSimpleString"
 format_string: "sFormatString"
@@ -110,6 +114,8 @@ unnamed_string:
     pattern: "{gmst:sFormatString}"
 )X");
 
+=======
+>>>>>>> origin/main
     struct LuaL10nTest : Test
     {
         std::unique_ptr<VFS::Manager> mVFS = createTestVFS({
@@ -121,8 +127,11 @@ unnamed_string:
             { test3DePath, &test1De },
             { test4RuPath, &test4Ru },
             { test4EnPath, &test4En },
+<<<<<<< HEAD
             { test5GmstPath, &test5 },
             { test5EnPath, &test5 },
+=======
+>>>>>>> origin/main
         });
 
         LuaUtil::ScriptsConfiguration mCfg;
@@ -226,6 +235,7 @@ unnamed_string:
                 "Your Speed has increased to 100");
         });
     }
+<<<<<<< HEAD
 
     TEST_F(LuaL10nTest, L10nGMST)
     {
@@ -274,4 +284,6 @@ unnamed_string:
             EXPECT_EQ(get<std::string>(l, "t5('not_found')"), "sNoSuchString");
         });
     }
+=======
+>>>>>>> origin/main
 }

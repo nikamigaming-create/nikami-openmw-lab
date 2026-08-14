@@ -152,6 +152,7 @@ namespace MWInput
     std::string InputManager::getActionKeyBindingName(int action) const
     {
         return mBindingsManager->getActionKeyBindingName(action);
+<<<<<<< HEAD
     }
 
     std::string InputManager::getActionControllerBindingName(int action) const
@@ -284,6 +285,133 @@ namespace MWInput
 
     void InputManager::saveBindings()
     {
+=======
+    }
+
+    std::string InputManager::getActionControllerBindingName(int action) const
+    {
+        return mBindingsManager->getActionControllerBindingName(action);
+    }
+
+    bool InputManager::actionIsActive(int action) const
+    {
+        return mBindingsManager->actionIsActive(action);
+    }
+
+    float InputManager::getActionValue(int action) const
+    {
+        return mBindingsManager->getActionValue(action);
+    }
+
+    bool InputManager::isControllerButtonPressed(SDL_GameControllerButton button) const
+    {
+        return mControllerManager->isButtonPressed(button);
+    }
+
+    float InputManager::getControllerAxisValue(SDL_GameControllerAxis axis) const
+    {
+        return mControllerManager->getAxisValue(axis);
+    }
+
+    int InputManager::getMouseMoveX() const
+    {
+        return mMouseManager->getMouseMoveX();
+    }
+
+    int InputManager::getMouseMoveY() const
+    {
+        return mMouseManager->getMouseMoveY();
+    }
+
+    void InputManager::warpMouseToWidget(MyGUI::Widget* widget)
+    {
+        mMouseManager->warpMouseToWidget(widget);
+        mMouseManager->injectMouseMove(1, 0, 0);
+        MWBase::Environment::get().getWindowManager()->setCursorActive(true);
+    }
+
+    const std::initializer_list<int>& InputManager::getActionKeySorting()
+    {
+        return mBindingsManager->getActionKeySorting();
+    }
+
+    const std::initializer_list<int>& InputManager::getActionControllerSorting()
+    {
+        return mBindingsManager->getActionControllerSorting();
+    }
+
+    void InputManager::enableDetectingBindingMode(int action, bool keyboard)
+    {
+        mBindingsManager->enableDetectingBindingMode(action, keyboard);
+    }
+
+    int InputManager::countSavedGameRecords() const
+    {
+        return mControlSwitch->countSavedGameRecords();
+    }
+
+    void InputManager::write(ESM::ESMWriter& writer, Loading::Listener& progress)
+    {
+        mControlSwitch->write(writer, progress);
+    }
+
+    void InputManager::readRecord(ESM::ESMReader& reader, uint32_t type)
+    {
+        if (type == ESM::REC_INPU)
+        {
+            mControlSwitch->readRecord(reader, type);
+        }
+    }
+
+    void InputManager::resetToDefaultKeyBindings()
+    {
+        mBindingsManager->loadKeyDefaults(true);
+    }
+
+    void InputManager::resetToDefaultControllerBindings()
+    {
+        mBindingsManager->loadControllerDefaults(true);
+    }
+
+    void InputManager::setJoystickLastUsed(bool enabled)
+    {
+        mControllerManager->setJoystickLastUsed(enabled);
+    }
+
+    bool InputManager::joystickLastUsed()
+    {
+        return mControllerManager->joystickLastUsed();
+    }
+
+    std::string InputManager::getControllerButtonIcon(int button)
+    {
+        return mControllerManager->getControllerButtonIcon(button);
+    }
+
+    std::string InputManager::getControllerAxisIcon(int axis)
+    {
+        return mControllerManager->getControllerAxisIcon(axis);
+    }
+
+    void InputManager::executeAction(int action)
+    {
+        mActionManager->executeAction(action);
+    }
+
+    void InputManager::injectEscapeKey() 
+    {
+        SDL_KeyboardEvent arg = {};
+        arg.type = SDL_KEYDOWN;
+        arg.keysym.sym = SDLK_ESCAPE;
+        arg.keysym.scancode = SDL_SCANCODE_ESCAPE;
+        arg.repeat = false;
+        mKeyboardManager->keyPressed(arg);
+        mKeyboardManager->keyReleased(arg);
+    }
+
+    void InputManager::saveBindings()
+    {
+>>>>>>> origin/main
         mBindingsManager->saveBindings();
     }
 }

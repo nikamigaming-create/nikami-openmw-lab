@@ -1,8 +1,11 @@
 #include "translation.hpp"
 
 #include <fstream>
+<<<<<<< HEAD
 
 #include <components/misc/pathhelpers.hpp>
+=======
+>>>>>>> origin/main
 
 namespace Translation
 {
@@ -13,24 +16,43 @@ namespace Translation
 
     void Storage::loadTranslationData(const Files::Collections& dataFileCollections, std::string_view esmFileName)
     {
+<<<<<<< HEAD
         std::string_view esmNameNoExtension = Misc::stemFile(esmFileName);
+=======
+        std::string esmNameNoExtension(Misc::StringUtils::lowerCase(esmFileName));
+        // changing the extension
+        size_t dotPos = esmNameNoExtension.rfind('.');
+        if (dotPos != std::string::npos)
+            esmNameNoExtension.resize(dotPos);
+>>>>>>> origin/main
 
         loadData(mCellNamesTranslations, esmNameNoExtension, "cel", dataFileCollections);
         loadData(mPhraseForms, esmNameNoExtension, "top", dataFileCollections);
         loadData(mKeywords, esmNameNoExtension, "mrk", dataFileCollections);
     }
 
+<<<<<<< HEAD
     void Storage::loadData(ContainerType& container, std::string_view fileNameNoExtension, std::string_view extension,
         const Files::Collections& dataFileCollections)
+=======
+    void Storage::loadData(ContainerType& container, const std::string& fileNameNoExtension,
+        const std::string& extension, const Files::Collections& dataFileCollections)
+>>>>>>> origin/main
     {
         std::string fileName(fileNameNoExtension);
         fileName += '.';
         fileName += extension;
 
+<<<<<<< HEAD
         const Files::MultiDirCollection& collection = dataFileCollections.getCollection(extension);
         if (collection.doesExist(fileName))
         {
             std::ifstream stream(collection.getPath(fileName));
+=======
+        if (dataFileCollections.getCollection(extension).doesExist(fileName))
+        {
+            std::ifstream stream(dataFileCollections.getCollection(extension).getPath(fileName).c_str());
+>>>>>>> origin/main
 
             if (!stream.is_open())
                 throw std::runtime_error("failed to open translation file: " + fileName);
@@ -75,8 +97,26 @@ namespace Translation
         return entry->second;
     }
 
+<<<<<<< HEAD
     std::string_view Storage::topicStandardForm(std::string_view phrase) const
     {
+=======
+    std::string_view Storage::topicID(std::string_view phrase) const
+    {
+        std::string_view result = topicStandardForm(phrase);
+
+        // seeking for the topic ID
+        auto topicIDIterator = mTopicIDs.find(result);
+
+        if (topicIDIterator != mTopicIDs.end())
+            result = topicIDIterator->second;
+
+        return result;
+    }
+
+    std::string_view Storage::topicStandardForm(std::string_view phrase) const
+    {
+>>>>>>> origin/main
         auto phraseFormsIterator = mPhraseForms.find(phrase);
 
         if (phraseFormsIterator != mPhraseForms.end())
@@ -104,4 +144,12 @@ namespace Translation
     {
         mEncoder = encoder;
     }
+<<<<<<< HEAD
+=======
+
+    bool Storage::hasTranslation() const
+    {
+        return !mCellNamesTranslations.empty() || !mTopicIDs.empty() || !mPhraseForms.empty();
+    }
+>>>>>>> origin/main
 }

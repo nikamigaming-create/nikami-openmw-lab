@@ -68,7 +68,11 @@ namespace LuaUtil
         else
         {
             appendType(out, SerializedType::LONG_STRING);
+<<<<<<< HEAD
             appendValue<uint32_t>(out, static_cast<uint32_t>(str.size()));
+=======
+            appendValue<uint32_t>(out, str.size());
+>>>>>>> origin/main
         }
         out.append(str.data(), str.size());
     }
@@ -83,14 +87,24 @@ namespace LuaUtil
         assert(!typeName.empty() && typeName.size() <= 64);
         if (typeName.size() <= 8 && dataSize < 16)
         { // Compact form: 0b1SSSSTTT. SSSS = dataSize, TTT = (typeName size - 1).
+<<<<<<< HEAD
             auto t = static_cast<unsigned char>(CUSTOM_COMPACT_FLAG | (dataSize << 3) | (typeName.size() - 1));
+=======
+            unsigned char t = CUSTOM_COMPACT_FLAG | (dataSize << 3) | (typeName.size() - 1);
+>>>>>>> origin/main
             out.push_back(t);
         }
         else
         { // Full form: 0b01TTTTTT + 32bit dataSize.
+<<<<<<< HEAD
             auto t = static_cast<unsigned char>(CUSTOM_FULL_FLAG | (typeName.size() - 1));
             out.push_back(t);
             appendValue<uint32_t>(out, static_cast<uint32_t>(dataSize));
+=======
+            unsigned char t = CUSTOM_FULL_FLAG | (typeName.size() - 1);
+            out.push_back(t);
+            appendValue<uint32_t>(out, dataSize);
+>>>>>>> origin/main
         }
         out.append(typeName.data(), typeName.size());
         appendData(out, data, dataSize);
@@ -156,8 +170,13 @@ namespace LuaUtil
         {
             appendType(out, SerializedType::TRANSFORM_M);
             osg::Matrixf matrix = data.as<TransformM>().mM;
+<<<<<<< HEAD
             for (int i = 0; i < 4; i++)
                 for (int j = 0; j < 4; j++)
+=======
+            for (size_t i = 0; i < 4; i++)
+                for (size_t j = 0; j < 4; j++)
+>>>>>>> origin/main
                     appendValue<double>(out, matrix(i, j));
             return;
         }
@@ -165,7 +184,11 @@ namespace LuaUtil
         {
             appendType(out, SerializedType::TRANSFORM_Q);
             osg::Quat quat = data.as<TransformQ>().mQ;
+<<<<<<< HEAD
             for (int i = 0; i < 4; i++)
+=======
+            for (size_t i = 0; i < 4; i++)
+>>>>>>> origin/main
                 appendValue<double>(out, quat[i]);
             return;
         }
@@ -304,16 +327,27 @@ namespace LuaUtil
                 throw std::runtime_error("Unexpected end of table during deserialization.");
             case SerializedType::VEC2:
             {
+<<<<<<< HEAD
                 float x = static_cast<float>(getValue<double>(binaryData));
                 float y = static_cast<float>(getValue<double>(binaryData));
+=======
+                float x = getValue<double>(binaryData);
+                float y = getValue<double>(binaryData);
+>>>>>>> origin/main
                 sol::stack::push<osg::Vec2f>(lua, osg::Vec2f(x, y));
                 return;
             }
             case SerializedType::VEC3:
             {
+<<<<<<< HEAD
                 float x = static_cast<float>(getValue<double>(binaryData));
                 float y = static_cast<float>(getValue<double>(binaryData));
                 float z = static_cast<float>(getValue<double>(binaryData));
+=======
+                float x = getValue<double>(binaryData);
+                float y = getValue<double>(binaryData);
+                float z = getValue<double>(binaryData);
+>>>>>>> origin/main
                 sol::stack::push<osg::Vec3f>(lua, osg::Vec3f(x, y, z));
                 return;
             }
@@ -322,7 +356,11 @@ namespace LuaUtil
                 osg::Matrixf mat;
                 for (int i = 0; i < 4; i++)
                     for (int j = 0; j < 4; j++)
+<<<<<<< HEAD
                         mat(i, j) = static_cast<float>(getValue<double>(binaryData));
+=======
+                        mat(i, j) = getValue<double>(binaryData);
+>>>>>>> origin/main
                 sol::stack::push<TransformM>(lua, asTransform(mat));
                 return;
             }
@@ -336,10 +374,17 @@ namespace LuaUtil
             }
             case SerializedType::VEC4:
             {
+<<<<<<< HEAD
                 float x = static_cast<float>(getValue<double>(binaryData));
                 float y = static_cast<float>(getValue<double>(binaryData));
                 float z = static_cast<float>(getValue<double>(binaryData));
                 float w = static_cast<float>(getValue<double>(binaryData));
+=======
+                float x = getValue<double>(binaryData);
+                float y = getValue<double>(binaryData);
+                float z = getValue<double>(binaryData);
+                float w = getValue<double>(binaryData);
+>>>>>>> origin/main
                 sol::stack::push<osg::Vec4f>(lua, osg::Vec4f(x, y, z, w));
                 return;
             }

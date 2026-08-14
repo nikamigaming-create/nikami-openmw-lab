@@ -20,9 +20,15 @@ namespace LuaUi
         // mCoord could be zero, prevent division by 0
         // use arbitrary large numbers to prevent performance issues
         if (mTileSize.width <= 0)
+<<<<<<< HEAD
             mTileSize.width = 10000000;
         if (mTileSize.height <= 0)
             mTileSize.height = 10000000;
+=======
+            mTileSize.width = 1e7;
+        if (mTileSize.height <= 0)
+            mTileSize.height = 1e7;
+>>>>>>> origin/main
 
         MyGUI::TileRect::_updateView();
     }
@@ -68,6 +74,7 @@ namespace LuaUi
 
         WidgetExtension::updateProperties();
     }
+<<<<<<< HEAD
 
     const std::vector<std::string_view>& LuaImage::allUsedProperties() const
     {
@@ -79,4 +86,6 @@ namespace LuaUi
         });
         return usedProps;
     }
+=======
+>>>>>>> origin/main
 }

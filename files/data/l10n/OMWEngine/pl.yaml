@@ -12,7 +12,11 @@ PhysicsProfiler: "Profilowanie fizyki"
 
 # Messages
 
+<<<<<<< HEAD
 AskLoadLastSave: "Ostatni zapis to ''{save}''. Czy chcesz go wczytać?"
+=======
+AskLoadLastSave: "Ostatni zapis to '%s'. Czy chcesz go wczytać?"
+>>>>>>> origin/main
 BuildingNavigationMesh: "Tworzenie siatki nawigacyjnej"
 InitializingData: "Inicjalizacja..."
 LoadingExterior: "Wczytywanie obszaru zewnętrznego"
@@ -30,7 +34,11 @@ QuitGameConfirmation: "Wyjść z gry?"
 SaveGameDenied: "Gra nie może być teraz zapisana."
 SavingInProgress: "Zapisywanie..."
 ScreenshotFailed: "Nie udało się zapisać zrzutu ekranu"
+<<<<<<< HEAD
 ScreenshotMade: "{file} został zapisany"
+=======
+ScreenshotMade: "%s został zapisany"
+>>>>>>> origin/main
 
 
 # Save game menu
@@ -65,9 +73,13 @@ TimePlayed: "Czas gry"
 # Settings menu
 
 ActorsProcessingRange: "Zasięg przetwarzania postaci"
+<<<<<<< HEAD
 ActorsProcessingRangeValue: "Zasięg przetwarzania postaci ({value, number, :: group-off})"
 Anisotropy: "Anizotropia"
 AnisotropyValue: "Anizotropia ({value})"
+=======
+Anisotropy: "Anizotropia"
+>>>>>>> origin/main
 Audio: "Dźwięk"
 AudioEffects: "Efekty"
 AudioFootsteps: "Kroki"
@@ -80,10 +92,13 @@ CameraSensitivity: "Czułość kamery"
 CameraZoomIn: "Przybliż kamerę"
 CameraZoomOut: "Oddal kamerę"
 ChangeRequiresRestart: "Ta zmiana wymaga ponownego uruchomienia gry."
+<<<<<<< HEAD
 ClampLighting: "Ograniczenie oświetlenia"
 ClampLightingTooltip: |-
     Ogranicza jasność oświetlenia do (1, 1, 1), aby odwzorować renderowanie Morrowinda.
     Zapobiega zbyt jaskrawym lub przekłamanym kolorom, ale może przytłumić oświetlenie.
+=======
+>>>>>>> origin/main
 ClassicFalloff: "Klasyczne zanikanie"
 ClassicFalloffTooltip: |-
     Domyślnie: wyłączone
@@ -104,26 +119,40 @@ DelayLow: "Szybko"
 DelayHigh: "Wolno"
 DetailLevel: "Poziom szczegółowości"
 Difficulty: "Trudność"
+<<<<<<< HEAD
 DifficultyValue: "Trudność ({value})"
+=======
+>>>>>>> origin/main
 DifficultyEasy: "Łatwy"
 DifficultyHard: "Trudny"
 DistanceHigh: "Daleko"
 DistanceLow: "Blisko"
 EnableController: "Włącz kontroler"
 FieldOfView: "Pole widzenia"
+<<<<<<< HEAD
 FieldOfViewValue: "Pole widzenia ({value, number, ::.00})"
+=======
+>>>>>>> origin/main
 FieldOfViewHigh: "Szerokie"
 FieldOfViewLow: "Wąskie"
 ForcePerPixelLighting: "Oświetlenie per-piksel"
 ForcePerPixelLightingTooltip: |-
     Wymusza oświetlenie per-pikselowe. Domyślnie tylko obiekty z mapami wypukłości lub normalnymi używają tej metody.
 
+<<<<<<< HEAD
+=======
+    Dotyczy tylko obiektów renderowanych z użyciem shaderów.
+
+>>>>>>> origin/main
     Może powodować różnice wizualne względem oryginalnego silnika Morrowind.
 
     Shadery trawy i efekty cząsteczkowe ignorują to ustawienie.
 FrameRateHint: "Podpowiedź: naciśnij F3,\naby zobaczyć liczbę klatek na sekundę."
 GammaCorrection: "Korekcja gamma"
+<<<<<<< HEAD
 GammaCorrectionValue: "Korekcja gamma ({value, number, ::.00})"
+=======
+>>>>>>> origin/main
 GammaDark: "Ciemno"
 GammaLight: "Jasno"
 GmstOverridesL10n: "Teksty z plików ESM mają pierwszeństwo"
@@ -132,11 +161,16 @@ InvertYAxis: "Odwróć oś Y"
 Language: "Język"
 LanguageNote: "Uwaga: te ustawienia nie wpływają na teksty z plików ESM."
 LightingMethod: "Metoda oświetlenia"
+<<<<<<< HEAD
+=======
+LightingMethodLegacy: "Klasyczna"
+>>>>>>> origin/main
 LightingMethodShaders: "Shadery"
 LightingMethodShadersCompatibility: "Shadery (kompatybilne)"
 LightingResetToDefaults: "Przywrócić domyślne wartości? Zmiany w metodzie oświetlenia wymagają ponownego uruchomienia."
 Lights: "Światła"
 LightsBoundingSphereMultiplier: "Mnożnik sfery ograniczającej"
+<<<<<<< HEAD
 LightsBoundingSphereMultiplierValue: "Mnożnik sfery ograniczającej ({value, number, ::.00})"
 LightsBoundingSphereMultiplierTooltip: "Domyślnie: 1.65\nMnożnik sfery ograniczającej światła.\nWiększe wartości pozwalają na płynniejsze zanikanie,\nale wymagają zwiększenia liczby maksymalnych świateł.\n\nNie wpływa na siłę ani zasięg światła."
 LightsFadeStartMultiplier: "Mnożnik początku zanikania"
@@ -150,6 +184,18 @@ LightsMaximumDistanceValue: "Maksymalny zasięg światła ({value, number, :: gr
 LightsMaximumDistanceTooltip: "Domyślnie: 8192\nMaksymalna odległość wyświetlania świateł (w jednostkach).\n\n0 = brak ograniczenia."
 LightsMinimumInteriorBrightness: "Minimalna jasność wnętrz"
 LightsMinimumInteriorBrightnessValue: "Minimalna jasność wnętrz ({value, number, ::.00})"
+=======
+LightsBoundingSphereMultiplierTooltip: "Domyślnie: 1.65\nMnożnik sfery ograniczającej światła.\nWiększe wartości pozwalają na płynniejsze zanikanie,\nale wymagają zwiększenia liczby maksymalnych świateł.\n\nNie wpływa na siłę ani zasięg światła."
+LightsFadeStartMultiplier: "Mnożnik początku zanikania"
+LightsFadeStartMultiplierTooltip: "Domyślnie: 0.85\nProcent maksymalnego zasięgu, w którym światła zaczną zanikać.\n\nNiska wartość = wolniejsze przejścia.\nWysoka wartość = szybsze przejścia."
+LightsLightingMethodTooltip: "Ustawia wewnętrzne przetwarzanie źródeł światła.\n\n
+    \"Klasyczna\" zawsze używa 8 świateł na obiekt. Najbardziej przypomina oryginalne oświetlenie Morrowinda.\n\n
+    \"Shadery (kompatybilne)\" usuwa limit 8 świateł. Obsługuje również oświetlenie trawy. Zalecane dla starszego sprzętu.\n\n
+    \"Shadery\" oferuje te same zalety co wersja kompatybilna, ale działa nowocześnie i pozwala na więcej świateł bez dużych kosztów wydajności."
+LightsMaximumDistance: "Maksymalny zasięg światła"
+LightsMaximumDistanceTooltip: "Domyślnie: 8192\nMaksymalna odległość wyświetlania świateł (w jednostkach).\n\n0 = brak ograniczenia."
+LightsMinimumInteriorBrightness: "Minimalna jasność wnętrz"
+>>>>>>> origin/main
 LightsMinimumInteriorBrightnessTooltip: "Domyślnie: 0.08\nMinimalna jasność w pomieszczeniach.\n\nZwiększ to, jeśli wnętrza są zbyt ciemne.\n\nNie działa, gdy używana jest klasyczna metoda zanikania."
 MatchSunlightToSun: "Dopasuj światło słoneczne do pozycji słońca"
 MatchSunlightToSunTooltip: |-
@@ -158,8 +204,12 @@ MatchSunlightToSunTooltip: |-
 
     Ta opcja sprawia, że źródło światła słonecznego zgadza się z faktyczną pozycją słońca.
 MaxLights: "Maksymalna liczba świateł"
+<<<<<<< HEAD
 MaxLightsValue: "Maksymalna liczba świateł ({value, number, :: group-off})"
 MaxLightsTooltip: "Domyślnie: 8\nMaksymalna liczba świateł na obiekt.\n\nNiska wartość = efekt 'wyskakiwania' świateł, jak w Morrowind."
+=======
+MaxLightsTooltip: "Domyślnie: 8\nMaksymalna liczba świateł na obiekt.\n\nNiska wartość = efekt 'wyskakiwania' świateł, jak w klasycznym trybie."
+>>>>>>> origin/main
 MenuHelpDelay: "Opóźnienie pomocy w menu"
 MenuTransparency: "Przezroczystość menu"
 MouseAndKeyboard: "Mysz i klawiatura"
@@ -210,8 +260,11 @@ TransparencyFull: "Pełna"
 TransparencyNone: "Brak"
 Video: "Wideo"
 ViewDistance: "Zasięg widzenia"
+<<<<<<< HEAD
 ViewDistanceValue: "Zasięg widzenia ({value, number, ::.00})"
 ViewDistanceValueCells: "Zasięg widzenia (×{cells, number, ::.00})"
+=======
+>>>>>>> origin/main
 VSync: "Synchronizacja pionowa"
 VSyncAdaptive: "Adaptacyjna"
 Water: "Woda"

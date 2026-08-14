@@ -123,6 +123,7 @@ namespace MWWorld
 
         void disable();
 
+<<<<<<< HEAD
         void setPosition(const ESM::Position& pos);
         const ESM::Position& getPosition() const;
 
@@ -137,6 +138,26 @@ namespace MWWorld
 
         bool activate();
 
+=======
+        bool isDestroyed() const;
+
+        void setDestroyed(bool destroyed);
+
+        void setPosition(const ESM::Position& pos);
+        const ESM::Position& getPosition() const;
+
+        void setCustomData(std::unique_ptr<CustomData>&& value) noexcept;
+        ///< Set custom data (potentially replacing old custom data). The ownership of \a data is
+        /// transferred to this.
+
+        CustomData* getCustomData();
+        ///< May return a 0-pointer. The ownership of the return data object is not transferred.
+
+        const CustomData* getCustomData() const;
+
+        bool activate();
+
+>>>>>>> origin/main
         bool onActivate();
 
         bool activateByScript();

@@ -30,13 +30,25 @@
 #include <stdexcept>
 
 #include "reader.hpp"
+<<<<<<< HEAD
 //#include "writer.hpp"
+=======
+// #include "writer.hpp"
+>>>>>>> origin/main
 
 void ESM4::Quest::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
 
+<<<<<<< HEAD
+=======
+    QuestStage* currentStage = nullptr;
+    QuestStageEntry* currentStageEntry = nullptr;
+    QuestObjective* currentObjective = nullptr;
+    QuestObjectiveTarget* currentObjectiveTarget = nullptr;
+
+>>>>>>> origin/main
     while (reader.getSubRecordHeader())
     {
         const ESM4::SubRecordHeader& subHdr = reader.subRecordHeader();
@@ -46,7 +58,11 @@ void ESM4::Quest::load(ESM4::Reader& reader)
                 reader.getZString(mEditorId);
                 break;
             case ESM::fourCC("FULL"):
+<<<<<<< HEAD
                 reader.getZString(mQuestName);
+=======
+                reader.getLocalizedString(mQuestName);
+>>>>>>> origin/main
                 break;
             case ESM::fourCC("ICON"):
                 reader.getZString(mFileName);
@@ -71,6 +87,7 @@ void ESM4::Quest::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("CTDA"): // FIXME: how to detect if 1st/2nd param is a formid?
             {
+<<<<<<< HEAD
                 if (subHdr.dataSize == 24) // TES4
                 {
                     TargetCondition cond;
@@ -117,6 +134,97 @@ void ESM4::Quest::load(ESM4::Reader& reader)
             case ESM::fourCC("SLSD"): // FO3
             case ESM::fourCC("SCVR"): // FO3
             case ESM::fourCC("SCRV"): // FO3
+=======
+                TargetCondition condition;
+                if (!loadTargetCondition(reader, condition))
+                    break;
+
+                if (currentObjectiveTarget != nullptr)
+                    currentObjectiveTarget->mConditions.push_back(condition);
+                else if (currentStageEntry != nullptr)
+                    currentStageEntry->mConditions.push_back(condition);
+                else
+                    mTargetConditions.push_back(condition);
+
+                break;
+            }
+            case ESM::fourCC("INDX"):
+                if (subHdr.dataSize == sizeof(std::int16_t))
+                {
+                    currentStage = &mStages.emplace_back();
+                    reader.get(currentStage->mIndex);
+                    currentStageEntry = nullptr;
+                    currentObjective = nullptr;
+                    currentObjectiveTarget = nullptr;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("QSDT"):
+                if (subHdr.dataSize == sizeof(std::uint8_t) && currentStage != nullptr)
+                {
+                    currentStageEntry = &currentStage->mEntries.emplace_back();
+                    reader.get(currentStageEntry->mFlags);
+                    currentObjective = nullptr;
+                    currentObjectiveTarget = nullptr;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("CNAM"):
+                if (currentStageEntry != nullptr)
+                    reader.getLocalizedString(currentStageEntry->mLogEntry);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("NAM0"):
+                if (currentStageEntry != nullptr)
+                    reader.getFormId(currentStageEntry->mNextQuest);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("QOBJ"):
+                if (subHdr.dataSize == sizeof(std::int32_t))
+                {
+                    currentObjective = &mObjectives.emplace_back();
+                    reader.get(currentObjective->mIndex);
+                    currentObjectiveTarget = nullptr;
+                    currentStage = nullptr;
+                    currentStageEntry = nullptr;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("NNAM"):
+                if (currentObjective != nullptr)
+                    reader.getLocalizedString(currentObjective->mDescription);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("QSTA"):
+                if (subHdr.dataSize == 8 && currentObjective != nullptr)
+                {
+                    currentObjectiveTarget = &currentObjective->mTargets.emplace_back();
+                    reader.getFormId(currentObjectiveTarget->mTarget);
+                    reader.get(currentObjectiveTarget->mFlags);
+                    reader.skipSubRecordData(3);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("SCHR"):
+            case ESM::fourCC("SCDA"):
+            case ESM::fourCC("SCTX"):
+            case ESM::fourCC("SCRO"):
+            case ESM::fourCC("SLSD"):
+            case ESM::fourCC("SCVR"):
+            case ESM::fourCC("SCRV"):
+                if (currentStageEntry != nullptr)
+                    loadScriptSubRecord(reader, currentStageEntry->mScript);
+                else if (!loadScriptSubRecord(reader, mScript))
+                    reader.skipSubRecordData();
+                break;
+>>>>>>> origin/main
             case ESM::fourCC("ANAM"): // TES5
             case ESM::fourCC("DNAM"): // TES5
             case ESM::fourCC("ENAM"): // TES5
@@ -175,6 +283,11 @@ void ESM4::Quest::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadqust"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::QUST::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

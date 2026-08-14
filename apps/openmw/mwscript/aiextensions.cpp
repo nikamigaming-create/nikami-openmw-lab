@@ -26,6 +26,10 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwbase/soundmanager.hpp"
+>>>>>>> origin/main
 #include "../mwbase/world.hpp"
 
 #include "interpretercontext.hpp"
@@ -123,7 +127,11 @@ namespace MWScript
                 if (!ptr.getClass().isActor() || ptr == MWMechanics::getPlayer())
                     return;
 
+<<<<<<< HEAD
                 MWMechanics::AiEscort escortPackage(actorID, {}, static_cast<int>(duration), x, y, z, repeat);
+=======
+                MWMechanics::AiEscort escortPackage(actorID, static_cast<int>(duration), x, y, z, repeat);
+>>>>>>> origin/main
                 ptr.getClass().getCreatureStats(ptr).getAiSequence().stack(escortPackage, ptr);
 
                 Log(Debug::Info) << "AiEscort: " << x << ", " << y << ", " << z << ", " << duration;
@@ -225,7 +233,11 @@ namespace MWScript
                 {
                     if (!repeat)
                         repeat = true;
+<<<<<<< HEAD
                     auto idleValue = static_cast<unsigned char>(std::clamp(runtime[0].mInteger, 0, 255));
+=======
+                    Interpreter::Type_Integer idleValue = std::clamp(runtime[0].mInteger, 0, 255);
+>>>>>>> origin/main
                     idleList.push_back(idleValue);
                     runtime.pop();
                     --arg0;
@@ -352,7 +364,11 @@ namespace MWScript
                 if (!ptr.getClass().isActor() || ptr == MWMechanics::getPlayer())
                     return;
 
+<<<<<<< HEAD
                 MWMechanics::AiFollow followPackage(actorID, {}, duration, x, y, z, repeat);
+=======
+                MWMechanics::AiFollow followPackage(actorID, duration, x, y, z, repeat);
+>>>>>>> origin/main
                 ptr.getClass().getCreatureStats(ptr).getAiSequence().stack(followPackage, ptr);
 
                 Log(Debug::Info) << "AiFollow: " << actorID << ", " << x << ", " << y << ", " << z << ", " << duration;
@@ -482,6 +498,7 @@ namespace MWScript
                     if (creatureStats.getAiSequence().getCombatTarget(targetPtr))
                     {
                         if (!targetPtr.isEmpty() && targetPtr.getCellRef().getRefId() == testedTargetId)
+<<<<<<< HEAD
                             targetsAreEqual = true;
                     }
                     else if (testedTargetId == "Player") // Currently the player ID is hardcoded
@@ -490,6 +507,17 @@ namespace MWScript
                         if (mechMgr->getGreetingState(actor) == MWMechanics::GreetingState::InProgress)
                             targetsAreEqual = true;
                     }
+=======
+                            targetsAreEqual = true;
+                    }
+                    else if (testedTargetId == "Player") // Currently the player ID is hardcoded
+                    {
+                        MWBase::MechanicsManager* mechMgr = MWBase::Environment::get().getMechanicsManager();
+                        bool greeting = mechMgr->getGreetingState(actor) == MWMechanics::GreetingState::InProgress;
+                        bool sayActive = MWBase::Environment::get().getSoundManager()->sayActive(actor);
+                        targetsAreEqual = (greeting && sayActive) || mechMgr->isTurningToPlayer(actor);
+                    }
+>>>>>>> origin/main
                 }
                 runtime.push(targetsAreEqual);
             }

@@ -37,7 +37,11 @@ namespace OMW
         PhysicsWorker,
         World,
         Gui,
+<<<<<<< HEAD
         Focus,
+=======
+        WindowManager,
+>>>>>>> origin/main
         Lua,
         Number,
     };
@@ -73,7 +77,11 @@ namespace OMW
     inline const UserStats UserStatsValue<UserStatsType::World>::sValue{ "World", "world" };
 
     template <>
+<<<<<<< HEAD
     inline const UserStats UserStatsValue<UserStatsType::Gui>::sValue{ "GUI", "gui" };
+=======
+    inline const UserStats UserStatsValue<UserStatsType::Gui>::sValue{ "Gui", "gui" };
+>>>>>>> origin/main
 
     template <>
     inline const UserStats UserStatsValue<UserStatsType::Lua>::sValue{ "Lua", "lua" };
@@ -82,7 +90,11 @@ namespace OMW
     inline const UserStats UserStatsValue<UserStatsType::LuaSyncUpdate>::sValue{ "LuaSync", "luasyncupdate" };
 
     template <>
+<<<<<<< HEAD
     inline const UserStats UserStatsValue<UserStatsType::Focus>::sValue{ "Focus", "focusobject" };
+=======
+    inline const UserStats UserStatsValue<UserStatsType::WindowManager>::sValue{ "WindowManager", "windowmanager" };
+>>>>>>> origin/main
 
     template <UserStatsType type>
     struct ForEachUserStatsValue

@@ -46,6 +46,13 @@ namespace MWGui
         GM_Jail,
 
         GM_QuickKeysMenu
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        , GM_RadialMenu,
+        GM_VrMetaMenu
+//## VR_PATCH END
+>>>>>>> origin/main
     };
 
     // Windows shown in inventory mode

@@ -5,6 +5,11 @@
 
 #include <osgViewer/Viewer>
 
+<<<<<<< HEAD
+=======
+#include <memory>
+
+>>>>>>> origin/main
 namespace MWRender
 {
     class NotifyDrawCompletedCallback;
@@ -19,7 +24,13 @@ namespace MWRender
 
     private:
         osg::ref_ptr<osgViewer::Viewer> mViewer;
+<<<<<<< HEAD
         osg::ref_ptr<NotifyDrawCompletedCallback> mDrawCompleteCallback;
+=======
+//## VR_PATCH BEGIN
+        std::shared_ptr<NotifyDrawCompletedCallback> mDrawCompleteCallback;
+//## VR_PATCH END
+>>>>>>> origin/main
     };
 }
 

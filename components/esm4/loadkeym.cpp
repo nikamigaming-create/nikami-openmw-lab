@@ -92,6 +92,11 @@ void ESM4::Key::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadkeym"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::KEYM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

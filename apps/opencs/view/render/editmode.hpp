@@ -30,7 +30,10 @@ namespace CSVRender
 
     protected:
         WorldspaceWidget& getWorldspaceWidget();
+<<<<<<< HEAD
         const WorldspaceWidget& getWorldspaceWidget() const;
+=======
+>>>>>>> origin/main
 
     public:
         EditMode(WorldspaceWidget* worldspaceWidget, const QIcon& icon, unsigned int mask, const QString& tooltip = "",

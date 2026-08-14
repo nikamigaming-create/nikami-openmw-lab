@@ -50,28 +50,94 @@ namespace ESM4
     };
 #pragma pack(pop)
 
+<<<<<<< HEAD
     struct Quest
     {
         // NOTE: these values are for TES4
         enum QuestFlags
+=======
+    struct QuestStageEntry
+    {
+        enum Flag : std::uint8_t
+        {
+            Flag_CompleteQuest = 0x01,
+            Flag_FailQuest = 0x02,
+        };
+
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+        std::string mLogEntry;
+        ScriptDefinition mScript;
+        ESM::FormId mNextQuest{};
+    };
+
+    struct QuestStage
+    {
+        std::int16_t mIndex = 0;
+        std::vector<QuestStageEntry> mEntries;
+    };
+
+    struct QuestObjectiveTarget
+    {
+        enum Flag : std::uint8_t
+        {
+            Flag_CompassMarkerIgnoresLocks = 0x01,
+        };
+
+        ESM::FormId mTarget{};
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+    };
+
+    struct QuestObjective
+    {
+        std::int32_t mIndex = 0;
+        std::string mDescription;
+        std::vector<QuestObjectiveTarget> mTargets;
+    };
+
+    struct Quest
+    {
+        // NOTE: these values are for TES4
+        enum Quest_Flags
+>>>>>>> origin/main
         {
             Flag_StartGameEnabled = 0x01,
             Flag_AllowRepeatConvTopic = 0x04,
             Flag_AllowRepeatStages = 0x08
         };
 
+<<<<<<< HEAD
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+=======
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+>>>>>>> origin/main
 
         std::string mEditorId;
         std::string mQuestName;
         std::string mFileName; // texture file
+<<<<<<< HEAD
         ESM::FormId mQuestScript;
 
         QuestData mData;
 
         std::vector<TargetCondition> mTargetConditions;
 
+=======
+        ESM::FormId mQuestScript{};
+
+        QuestData mData{};
+
+        std::vector<TargetCondition> mTargetConditions;
+
+        std::vector<QuestStage> mStages;
+        std::vector<QuestObjective> mObjectives;
+
+        // Retained for source compatibility. QUST embedded scripts belong to individual
+        // stage log entries and are preserved in mStages[*].mEntries[*].mScript.
+>>>>>>> origin/main
         ScriptDefinition mScript;
 
         void load(ESM4::Reader& reader);

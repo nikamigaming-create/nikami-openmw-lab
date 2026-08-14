@@ -104,8 +104,12 @@ CSMWorld::RefIdCollection::RefIdCollection(const IdCollection<ESM::MagicEffect>&
     mColumns.emplace_back(Columns::ColumnId_EffectList, ColumnBase::Display_NestedHeader, ColumnBase::Flag_Dialogue);
     ingredientColumns.mEffects = &mColumns.back();
     std::map<UniversalId::Type, NestedRefIdAdapterBase*> ingredientEffectsMap;
+<<<<<<< HEAD
     ingredientEffectsMap.insert(
         std::make_pair(UniversalId::Type_Ingredient, new IngredEffectRefIdAdapter(magicEffects)));
+=======
+    ingredientEffectsMap.insert(std::make_pair(UniversalId::Type_Ingredient, new IngredEffectRefIdAdapter()));
+>>>>>>> origin/main
     mNestedAdapters.emplace_back(&mColumns.back(), ingredientEffectsMap);
     mColumns.back().addColumn(new NestedChildColumn(Columns::ColumnId_EffectId, ColumnBase::Display_IngredEffectId));
     mColumns.back().addColumn(new NestedChildColumn(Columns::ColumnId_Skill, ColumnBase::Display_EffectSkill));
@@ -116,8 +120,13 @@ CSMWorld::RefIdCollection::RefIdCollection(const IdCollection<ESM::MagicEffect>&
     mColumns.emplace_back(Columns::ColumnId_EffectList, ColumnBase::Display_NestedHeader, ColumnBase::Flag_Dialogue);
     potionColumns.mEffects = &mColumns.back(); // see refidadapterimp.hpp
     std::map<UniversalId::Type, NestedRefIdAdapterBase*> effectsMap;
+<<<<<<< HEAD
     effectsMap.insert(std::make_pair(
         UniversalId::Type_Potion, new EffectsRefIdAdapter<ESM::Potion>(UniversalId::Type_Potion, magicEffects)));
+=======
+    effectsMap.insert(
+        std::make_pair(UniversalId::Type_Potion, new EffectsRefIdAdapter<ESM::Potion>(UniversalId::Type_Potion)));
+>>>>>>> origin/main
     mNestedAdapters.emplace_back(&mColumns.back(), effectsMap);
     mColumns.back().addColumn(new NestedChildColumn(Columns::ColumnId_EffectId, ColumnBase::Display_EffectId));
     mColumns.back().addColumn(new NestedChildColumn(Columns::ColumnId_Skill, ColumnBase::Display_EffectSkill));

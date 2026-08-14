@@ -17,11 +17,14 @@ CSVRender::WorldspaceWidget& CSVRender::EditMode::getWorldspaceWidget()
     return *mWorldspaceWidget;
 }
 
+<<<<<<< HEAD
 const CSVRender::WorldspaceWidget& CSVRender::EditMode::getWorldspaceWidget() const
 {
     return *mWorldspaceWidget;
 }
 
+=======
+>>>>>>> origin/main
 CSVRender::EditMode::EditMode(
     WorldspaceWidget* worldspaceWidget, const QIcon& icon, unsigned int mask, const QString& tooltip, QWidget* parent)
     : ModeButton(icon, tooltip, parent)

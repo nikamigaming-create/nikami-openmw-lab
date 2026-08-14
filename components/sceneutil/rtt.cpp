@@ -25,7 +25,14 @@ namespace SceneUtil
         , mTextureHeight(textureHeight)
         , mSamples(samples)
         , mGenerateMipmaps(generateMipmaps)
+<<<<<<< HEAD
         , mColorBufferInternalFormat(Color::colorInternalFormat())
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: Why?
+        , mColorBufferInternalFormat(GL_RGB)
+//## VR_PATCH END
+>>>>>>> origin/main
         , mDepthBufferInternalFormat(SceneUtil::AutoDepth::depthInternalFormat())
         , mRenderOrderNum(renderOrderNum)
         , mStereoAwareness(stereoAwareness)
@@ -249,6 +256,7 @@ namespace SceneUtil
 
             // OSG appears not to properly initialize this metadata. So when multisampling is enabled, OSG will use
             // incorrect formats for the resolve buffers.
+<<<<<<< HEAD
             if (mSamples > 1)
             {
                 camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._internalFormat
@@ -259,6 +267,17 @@ namespace SceneUtil
                 camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._mipMapGeneration
                     = mGenerateMipmaps;
             }
+=======
+            // Note: This also affects the case where multisampling is disabled, but attachAlphaToCoverageFriendlyFramebuffer 
+            // is enabled.
+            camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._internalFormat
+                = mColorBufferInternalFormat;
+            camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._mipMapGeneration = mGenerateMipmaps;
+            camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._internalFormat
+                = mDepthBufferInternalFormat;
+            camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._mipMapGeneration
+                = mGenerateMipmaps;
+>>>>>>> origin/main
         }
 
         return mViewDependentDataMap[cv].get();

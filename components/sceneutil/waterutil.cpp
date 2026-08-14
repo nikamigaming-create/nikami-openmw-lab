@@ -39,9 +39,15 @@ namespace SceneUtil
                 verts->push_back(osg::Vec3f(x2, y2, 0.f));
 
                 float u1 = x * texCoordStep;
+<<<<<<< HEAD
                 float v1 = textureRepeats - y * texCoordStep;
                 float u2 = u1 + texCoordStep;
                 float v2 = v1 - texCoordStep;
+=======
+                float v1 = y * texCoordStep;
+                float u2 = u1 + texCoordStep;
+                float v2 = v1 + texCoordStep;
+>>>>>>> origin/main
 
                 texcoords->push_back(osg::Vec2f(u1, v2));
                 texcoords->push_back(osg::Vec2f(u1, v1));
@@ -58,8 +64,12 @@ namespace SceneUtil
         normal->push_back(osg::Vec3f(0, 0, 1));
         waterGeom->setNormalArray(normal, osg::Array::BIND_OVERALL);
 
+<<<<<<< HEAD
         waterGeom->addPrimitiveSet(
             new osg::DrawArrays(osg::PrimitiveSet::QUADS, 0, static_cast<GLsizei>(verts->size())));
+=======
+        waterGeom->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::QUADS, 0, verts->size()));
+>>>>>>> origin/main
         waterGeom->setComputeBoundingBoxCallback(new WaterBoundCallback);
         waterGeom->setCullingActive(false);
         return waterGeom;

@@ -20,6 +20,10 @@ Wizard::MethodSelectionPage::MethodSelectionPage(QWidget* parent)
 #ifndef OPENMW_USE_UNSHIELD
     retailDiscRadioButton->setEnabled(false);
     existingLocationRadioButton->setChecked(true);
+<<<<<<< HEAD
+=======
+    buyLinkButton->released();
+>>>>>>> origin/main
 #endif
 
     QFont font = existingLocationRadioButton->font();
@@ -27,17 +31,37 @@ Wizard::MethodSelectionPage::MethodSelectionPage(QWidget* parent)
     existingLocationRadioButton->setFont(font);
     retailDiscRadioButton->setFont(font);
 
+<<<<<<< HEAD
     registerField(QStringLiteral("installation.retailDisc"), retailDiscRadioButton);
+=======
+    registerField(QLatin1String("installation.retailDisc"), retailDiscRadioButton);
+>>>>>>> origin/main
 
     connect(buyLinkButton, &QPushButton::released, this, &MethodSelectionPage::handleBuyButton);
 }
 
 int Wizard::MethodSelectionPage::nextId() const
 {
+<<<<<<< HEAD
     if (field(QStringLiteral("installation.retailDisc")).toBool())
         return MainWizard::Page_InstallationTarget;
 
     return MainWizard::Page_ExistingInstallation;
+}
+
+void Wizard::MethodSelectionPage::handleBuyButton()
+{
+    QDesktopServices::openUrl(QUrl("https://openmw.org/faq/#do_i_need_morrowind"));
+=======
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true)
+    {
+        return MainWizard::Page_InstallationTarget;
+    }
+    else
+    {
+        return MainWizard::Page_ExistingInstallation;
+    }
+>>>>>>> origin/main
 }
 
 void Wizard::MethodSelectionPage::handleBuyButton()

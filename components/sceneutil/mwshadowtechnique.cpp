@@ -532,8 +532,12 @@ void MWShadowTechnique::LightData::setLightData(osg::RefMatrix* lm, const osg::L
 //
 MWShadowTechnique::ShadowData::ShadowData(MWShadowTechnique::ViewDependentData* vdd):
     _viewDependentData(vdd),
+<<<<<<< HEAD
     _textureUnit(0),
     _sm_i(0)
+=======
+    _textureUnit(0)
+>>>>>>> origin/main
 {
 
     const ShadowSettings* settings = vdd->getViewDependentShadowMap()->getShadowedScene()->getShadowSettings();
@@ -646,9 +650,12 @@ MWShadowTechnique::Frustum::Frustum(osgUtil::CullVisitor* cv, double minZNear, d
     {
         osg::Matrix::value_type zNear = osg::maximum<osg::Matrix::value_type>(cv->getCalculatedNearPlane(),minZNear);
         osg::Matrix::value_type zFar = osg::minimum<osg::Matrix::value_type>(cv->getCalculatedFarPlane(),maxZFar);
+<<<<<<< HEAD
         if (zFar < 0)
             zFar = minZNear;
         zNear = std::min(zNear, zFar);
+=======
+>>>>>>> origin/main
 
         cv->clampProjectionMatrix(projectionMatrix, zNear, zFar);
 
@@ -1377,11 +1384,14 @@ void MWShadowTechnique::cull(osgUtil::CullVisitor& cv)
                 pos_x += static_cast<unsigned int>(camera->getViewport()->width()) + 40;
             }
 
+<<<<<<< HEAD
             if (_useFrontFaceCulling)
                 camera->setCullingMode(camera->getCullingMode() | osg::CullSettings::CLUSTER_CULLING);
             else
                 camera->setCullingMode(camera->getCullingMode() & ~osg::CullSettings::CLUSTER_CULLING);
 
+=======
+>>>>>>> origin/main
             // transform polytope in model coords into light spaces eye coords.
             osg::Matrixd invertModelView;
             invertModelView.invert(camera->getViewMatrix());
@@ -2755,6 +2765,7 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
 
     convexHull.extendTowardsNegativeZ();
 
+<<<<<<< HEAD
     {
         // extendTowardsNegativeZ is too numerically unstable to do this first
         convexHull.clip(osg::Plane(-1.0,0.0,0.0,1.0));
@@ -2767,6 +2778,8 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
         convexHullUnextended.clip(osg::Plane(0.0,1.0,0.0,1.0));
     }
 
+=======
+>>>>>>> origin/main
 #if 0
     convexHull.output(osg::notify(osg::NOTICE));
 
@@ -3059,6 +3072,7 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
                                    0.0,  b,   0.0,  0.0 );
     osg::Matrixd light_persp = light_p * lightView * lightPerspective;
 
+<<<<<<< HEAD
     if (convexHull.valid())
     {
         convexHull.transform(lightView * lightPerspective);
@@ -3084,6 +3098,8 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
         }
     }
 
+=======
+>>>>>>> origin/main
 #if 0
     OSG_NOTICE<<"light_p = "<<light_p<<std::endl;
     OSG_NOTICE<<"lightView = "<<lightView<<std::endl;
@@ -3387,10 +3403,17 @@ void SceneUtil::MWShadowTechnique::DebugHUD::setFrustumVertices(osg::ref_ptr<osg
 
 void SceneUtil::MWShadowTechnique::DebugHUD::addAnotherShadowMap()
 {
+<<<<<<< HEAD
     size_t shadowMapNumber = mDebugCameras.size();
 
     mDebugCameras.push_back(new osg::Camera);
     mDebugCameras[shadowMapNumber]->setViewport(static_cast<int>(200 * shadowMapNumber), 0, 200, 200);
+=======
+    unsigned int shadowMapNumber = mDebugCameras.size();
+
+    mDebugCameras.push_back(new osg::Camera);
+    mDebugCameras[shadowMapNumber]->setViewport(200 * shadowMapNumber, 0, 200, 200);
+>>>>>>> origin/main
     mDebugCameras[shadowMapNumber]->setRenderOrder(osg::Camera::POST_RENDER);
     mDebugCameras[shadowMapNumber]->setClearColor(osg::Vec4(1.0, 1.0, 0.0, 1.0));
     mDebugCameras[shadowMapNumber]->getOrCreateStateSet()->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);

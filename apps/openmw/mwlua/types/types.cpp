@@ -53,6 +53,10 @@ namespace MWLua
         constexpr std::string_view ESM4Static = "ESM4Static";
         constexpr std::string_view ESM4StaticCollection = "ESM4StaticCollection";
         constexpr std::string_view ESM4Terminal = "ESM4Terminal";
+<<<<<<< HEAD
+=======
+        constexpr std::string_view ESM4TalkingActivator = "ESM4TalkingActivator";
+>>>>>>> origin/main
         constexpr std::string_view ESM4Tree = "ESM4Tree";
         constexpr std::string_view ESM4Weapon = "ESM4Weapon";
     }
@@ -74,6 +78,11 @@ namespace MWLua
             { ESM::REC_LIGH, ObjectTypeName::Light },
             { ESM::REC_MISC, ObjectTypeName::MiscItem },
             { ESM::REC_NPC_, ObjectTypeName::NPC },
+<<<<<<< HEAD
+=======
+            { ESM::REC_NPC_4, ObjectTypeName::NPC },
+            { ESM::REC_CREA4, ObjectTypeName::Creature },
+>>>>>>> origin/main
             { ESM::REC_ALCH, ObjectTypeName::Potion },
             { ESM::REC_STAT, ObjectTypeName::Static },
             { ESM::REC_WEAP, ObjectTypeName::Weapon },
@@ -100,6 +109,10 @@ namespace MWLua
             { ESM::REC_STAT4, ObjectTypeName::ESM4Static },
             { ESM::REC_SCOL4, ObjectTypeName::ESM4StaticCollection },
             { ESM::REC_TERM4, ObjectTypeName::ESM4Terminal },
+<<<<<<< HEAD
+=======
+            { ESM::REC_TACT4, ObjectTypeName::ESM4TalkingActivator },
+>>>>>>> origin/main
             { ESM::REC_TREE4, ObjectTypeName::ESM4Tree },
             { ESM::REC_WEAP4, ObjectTypeName::ESM4Weapon },
         };
@@ -195,8 +208,15 @@ namespace MWLua
             return table;
         };
 
+<<<<<<< HEAD
         addActorBindings(
             addType(ObjectTypeName::Actor, { ESM::REC_INTERNAL_PLAYER, ESM::REC_CREA, ESM::REC_NPC_ }), context);
+=======
+        addActorBindings(addType(ObjectTypeName::Actor,
+                             { ESM::REC_INTERNAL_PLAYER, ESM::REC_CREA, ESM::REC_NPC_, ESM::REC_CREA4,
+                                 ESM::REC_NPC_4 }),
+            context);
+>>>>>>> origin/main
         addItemBindings(
             addType(ObjectTypeName::Item,
                 { ESM::REC_ARMO, ESM::REC_BOOK, ESM::REC_CLOT, ESM::REC_INGR, ESM::REC_LIGH, ESM::REC_MISC,
@@ -205,9 +225,18 @@ namespace MWLua
         addLockableBindings(
             addType(ObjectTypeName::Lockable, { ESM::REC_CONT, ESM::REC_DOOR, ESM::REC_CONT4, ESM::REC_DOOR4 }));
 
+<<<<<<< HEAD
         addCreatureBindings(addType(ObjectTypeName::Creature, { ESM::REC_CREA }, ObjectTypeName::Actor), context);
         addNpcBindings(
             addType(ObjectTypeName::NPC, { ESM::REC_INTERNAL_PLAYER, ESM::REC_NPC_ }, ObjectTypeName::Actor), context);
+=======
+        addCreatureBindings(
+            addType(ObjectTypeName::Creature, { ESM::REC_CREA, ESM::REC_CREA4 }, ObjectTypeName::Actor), context);
+        addNpcBindings(addType(
+                           ObjectTypeName::NPC, { ESM::REC_INTERNAL_PLAYER, ESM::REC_NPC_, ESM::REC_NPC_4 },
+                           ObjectTypeName::Actor),
+            context);
+>>>>>>> origin/main
         addPlayerBindings(addType(ObjectTypeName::Player, { ESM::REC_INTERNAL_PLAYER }, ObjectTypeName::NPC), context);
 
         addLevelledCreatureBindings(addType(ObjectTypeName::LevelledCreature, { ESM::REC_LEVC }), context);
@@ -248,6 +277,10 @@ namespace MWLua
         addType(ObjectTypeName::ESM4Static, { ESM::REC_STAT4 });
         addType(ObjectTypeName::ESM4StaticCollection, { ESM::REC_SCOL4 });
         addESM4TerminalBindings(addType(ObjectTypeName::ESM4Terminal, { ESM::REC_TERM4 }), context);
+<<<<<<< HEAD
+=======
+        addType(ObjectTypeName::ESM4TalkingActivator, { ESM::REC_TACT4 });
+>>>>>>> origin/main
         addType(ObjectTypeName::ESM4Tree, { ESM::REC_TREE4 });
         addType(ObjectTypeName::ESM4Weapon, { ESM::REC_WEAP4 });
 

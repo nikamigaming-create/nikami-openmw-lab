@@ -15,8 +15,11 @@
 namespace MWLua
 {
     struct Context;
+<<<<<<< HEAD
     class LocalScripts;
     class LuaManager;
+=======
+>>>>>>> origin/main
 
     struct SelfObject : public LObject
     {
@@ -54,6 +57,7 @@ namespace MWLua
             , mIsActive(false)
         {
         }
+<<<<<<< HEAD
 
         const sol::main_object* getCachedStat(const CachedStat& key) const
         {
@@ -71,6 +75,11 @@ namespace MWLua
     private:
         friend class LocalScripts;
         std::map<CachedStat, sol::main_object> mStatsCache;
+=======
+        MWBase::LuaManager::ActorControls mControls;
+        std::map<CachedStat, sol::main_object> mStatsCache;
+        bool mIsActive;
+>>>>>>> origin/main
     };
 
     class LocalScripts : public LuaUtil::ScriptsContainer
@@ -84,9 +93,22 @@ namespace MWLua
 
         void setActive(bool active, bool callHandlers = true);
         bool isActive() const override { return mData.mIsActive; }
+<<<<<<< HEAD
         void onConsume(const LObject& consumable) { callEngineHandlers(mOnConsumeHandlers, consumable); }
         void onActivated(const LObject& actor) { callEngineHandlers(mOnActivatedHandlers, actor); }
         void onTeleported() { callEngineHandlers(mOnTeleportedHandlers); }
+=======
+        bool hasActivationHandlers()
+        {
+            return hasEngineHandlers(mOnActivatedHandlers);
+        }
+        void onConsume(const LObject& consumable) { callEngineHandlers(mOnConsumeHandlers, consumable); }
+        void onActivated(const LObject& actor) { callEngineHandlers(mOnActivatedHandlers, actor); }
+        void onTriggerEnter(const LObject& actor) { callEngineHandlers(mOnTriggerEnterHandlers, actor); }
+        void onTriggerLeave(const LObject& actor) { callEngineHandlers(mOnTriggerLeaveHandlers, actor); }
+        void onTeleported() { callEngineHandlers(mOnTeleportedHandlers); }
+        void onReset() { callEngineHandlers(mOnResetHandlers); }
+>>>>>>> origin/main
         void onAnimationTextKey(std::string_view groupname, std::string_view key)
         {
             callEngineHandlers(mOnAnimationTextKeyHandlers, groupname, key);
@@ -95,11 +117,14 @@ namespace MWLua
         {
             callEngineHandlers(mOnPlayAnimationHandlers, groupname, options);
         }
+<<<<<<< HEAD
         void onAnimationEnded(std::string_view groupname, std::string_view startKey, std::string_view stopKey,
             float time, float completion)
         {
             callEngineHandlers(mOnAnimationEndedHandlers, groupname, startKey, stopKey, time, completion);
         }
+=======
+>>>>>>> origin/main
         void onSkillUse(std::string_view skillId, int useType, float scale)
         {
             callEngineHandlers(mOnSkillUse, skillId, useType, scale);
@@ -133,10 +158,19 @@ namespace MWLua
         EngineHandlerList mOnInactiveHandlers{ "onInactive" };
         EngineHandlerList mOnConsumeHandlers{ "onConsume" };
         EngineHandlerList mOnActivatedHandlers{ "onActivated" };
+<<<<<<< HEAD
         EngineHandlerList mOnTeleportedHandlers{ "onTeleported" };
         EngineHandlerList mOnAnimationTextKeyHandlers{ "_onAnimationTextKey" };
         EngineHandlerList mOnPlayAnimationHandlers{ "_onPlayAnimation" };
         EngineHandlerList mOnAnimationEndedHandlers{ "_onAnimationEnded" };
+=======
+        EngineHandlerList mOnTriggerEnterHandlers{ "onTriggerEnter" };
+        EngineHandlerList mOnTriggerLeaveHandlers{ "onTriggerLeave" };
+        EngineHandlerList mOnTeleportedHandlers{ "onTeleported" };
+        EngineHandlerList mOnResetHandlers{ "onReset" };
+        EngineHandlerList mOnAnimationTextKeyHandlers{ "_onAnimationTextKey" };
+        EngineHandlerList mOnPlayAnimationHandlers{ "_onPlayAnimation" };
+>>>>>>> origin/main
         EngineHandlerList mOnSkillUse{ "_onSkillUse" };
         EngineHandlerList mOnSkillLevelUp{ "_onSkillLevelUp" };
         EngineHandlerList mOnJailTimeServed{ "_onJailTimeServed" };

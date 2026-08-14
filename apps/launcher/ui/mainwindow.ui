@@ -57,7 +57,11 @@
         </property>
        </spacer>
       </item>
+<<<<<<< HEAD
       <item alignment="Qt::AlignRight">
+=======
+      <item>
+>>>>>>> origin/main
        <widget class="QDialogButtonBox" name="buttonBox">
         <property name="standardButtons">
          <set>QDialogButtonBox::Close|QDialogButtonBox::Help|QDialogButtonBox::Ok</set>

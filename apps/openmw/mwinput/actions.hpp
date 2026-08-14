@@ -8,6 +8,10 @@ namespace MWInput
         // Action IDs are used in the configuration file input_v3.xml
 
         A_GameMenu = 0,
+<<<<<<< HEAD
+=======
+        A_Map = 1, // Open the Fallout map pane directly
+>>>>>>> origin/main
 
         A_Screenshot = 2, // Take a screenshot
 
@@ -68,6 +72,13 @@ namespace MWInput
 
         A_TogglePostProcessorHUD = 50,
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+        A_ToggleThumbstickAutoRun,
+
+//## VR_PATCH END
+>>>>>>> origin/main
         A_Last // Marker for the last item
     };
 }

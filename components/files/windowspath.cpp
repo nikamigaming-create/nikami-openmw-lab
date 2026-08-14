@@ -2,7 +2,10 @@
 
 #if defined(_WIN32) || defined(__WINDOWS__)
 
+<<<<<<< HEAD
 #include <algorithm>
+=======
+>>>>>>> origin/main
 #include <array>
 #include <cstring>
 
@@ -23,6 +26,7 @@
  */
 namespace Files
 {
+<<<<<<< HEAD
     namespace
     {
         struct RegistryKey
@@ -72,9 +76,59 @@ namespace Files
                 }
             }
             return {};
-        }
+=======
+
+    WindowsPath::WindowsPath(const std::string& application_name)
+        : mName(application_name)
+    {
     }
 
+    std::filesystem::path WindowsPath::getUserConfigPath() const
+    {
+        std::filesystem::path userPath = std::filesystem::current_path();
+
+        PWSTR cString;
+        HRESULT result = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &cString);
+        if (SUCCEEDED(result))
+            userPath = std::filesystem::path(cString);
+        else
+            Log(Debug::Error) << "Error " << result << " when getting Documents path";
+
+        CoTaskMemFree(cString);
+
+        return userPath / "My Games" / mName;
+    }
+
+    std::filesystem::path WindowsPath::getUserDataPath() const
+    {
+        // Have some chaos, windows people!
+        return getUserConfigPath();
+    }
+
+    std::filesystem::path WindowsPath::getGlobalConfigPath() const
+    {
+        // The concept of a global config path is absurd on Windows.
+        // Always use local config instead.
+        return {};
+    }
+
+    std::filesystem::path WindowsPath::getLocalPath() const
+    {
+        std::filesystem::path localPath = std::filesystem::current_path() / "";
+
+        WCHAR path[MAX_PATH + 1] = {};
+
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH + 1) > 0)
+        {
+            localPath = std::filesystem::path(path).parent_path() / "";
+>>>>>>> origin/main
+        }
+
+        // lookup exe path
+        return localPath;
+    }
+
+<<<<<<< HEAD
     WindowsPath::WindowsPath(const std::string& application_name)
         : mName(application_name)
     {
@@ -130,6 +184,8 @@ namespace Files
         return localPath;
     }
 
+=======
+>>>>>>> origin/main
     std::filesystem::path WindowsPath::getGlobalDataPath() const
     {
         return getGlobalConfigPath();
@@ -140,6 +196,7 @@ namespace Files
         return getUserConfigPath() / "cache";
     }
 
+<<<<<<< HEAD
     std::vector<std::filesystem::path> WindowsPath::getInstallPaths() const
     {
         std::vector<std::filesystem::path> paths;
@@ -164,6 +221,29 @@ namespace Files
         const auto [first, last] = std::ranges::unique(paths);
         paths.erase(first, last);
         return paths;
+=======
+    std::filesystem::path WindowsPath::getInstallPath() const
+    {
+        std::filesystem::path installPath{};
+
+        if (HKEY hKey; RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Bethesda Softworks\\Morrowind", 0,
+                           KEY_READ | KEY_WOW64_32KEY, &hKey)
+            == ERROR_SUCCESS)
+        {
+            // Key existed, let's try to read the install dir
+            std::array<wchar_t, 512> buf{};
+            DWORD len = static_cast<DWORD>(buf.size() * sizeof(wchar_t));
+
+            if (RegQueryValueExW(hKey, L"Installed Path", nullptr, nullptr, reinterpret_cast<LPBYTE>(buf.data()), &len)
+                == ERROR_SUCCESS)
+            {
+                installPath = std::filesystem::path(buf.data());
+            }
+            RegCloseKey(hKey);
+        }
+
+        return installPath;
+>>>>>>> origin/main
     }
 
 } /* namespace Files */

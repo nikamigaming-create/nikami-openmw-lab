@@ -19,6 +19,10 @@ namespace ESM
 {
     namespace AiSequence
     {
+<<<<<<< HEAD
+=======
+        struct AiWander;
+>>>>>>> origin/main
         struct AiSequence;
     }
 }
@@ -28,6 +32,13 @@ namespace MWMechanics
     class AiPackage;
     class CharacterController;
 
+<<<<<<< HEAD
+=======
+    /// Tagged WANDs are save placeholders for a record-driven FNV sandbox and must be rebuilt by the actor class.
+    /// Every ordinary WAND follows the existing runtime restore path unchanged.
+    bool shouldRestoreSavedAiWander(const ESM::AiSequence::AiWander& wander);
+
+>>>>>>> origin/main
     using AiPackages = std::vector<std::shared_ptr<AiPackage>>;
 
     /// \brief Sequence of AI-packages for a single actor
@@ -155,6 +166,14 @@ namespace MWMechanics
         /// Remove all packages.
         void clear();
 
+<<<<<<< HEAD
+=======
+        /// Remove every package and discard the transient state owned by the
+        /// current package. Unlike clear(), this also forgets pathing/wander
+        /// progress and the last-package bookkeeping.
+        void reset();
+
+>>>>>>> origin/main
         ///< Add \a package to the front of the sequence
         /** Suspends current package
             @param actor The actor that owns this AiSequence **/

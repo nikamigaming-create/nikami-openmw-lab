@@ -56,6 +56,11 @@ void ESM4::Music::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadmusc"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::MUSC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

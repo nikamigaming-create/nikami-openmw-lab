@@ -74,8 +74,13 @@ target_link_libraries(openmw-launcher
 
 target_link_libraries(openmw-launcher Qt::Widgets Qt::Core Qt::Svg)
 
+<<<<<<< HEAD
 if (WIN32)
     target_sources(openmw-launcher PRIVATE ${CMAKE_SOURCE_DIR}/files/windows/other-apps.manifest)
+=======
+if(BUILD_OPENMW_VR)
+    target_compile_definitions(openmw-launcher PRIVATE OPENMW_LAUNCHER_VR=1)
+>>>>>>> origin/main
 endif()
 
 if (BUILD_WITH_CODE_COVERAGE)

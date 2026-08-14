@@ -23,7 +23,11 @@ namespace Terrain
         ~CompositeMap();
         std::vector<osg::ref_ptr<osg::Drawable>> mDrawables;
         osg::ref_ptr<osg::Texture2D> mTexture;
+<<<<<<< HEAD
         size_t mCompiled;
+=======
+        unsigned int mCompiled;
+>>>>>>> origin/main
     };
 
     /**
@@ -52,7 +56,11 @@ namespace Terrain
         /// Mark this composite map to be required for the current frame
         void setImmediate(CompositeMap* map);
 
+<<<<<<< HEAD
         size_t getCompileSetSize() const;
+=======
+        unsigned int getCompileSetSize() const;
+>>>>>>> origin/main
 
     private:
         float mTargetFrameRate;

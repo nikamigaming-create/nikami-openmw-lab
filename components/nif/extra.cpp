@@ -2,6 +2,37 @@
 
 namespace Nif
 {
+<<<<<<< HEAD
+=======
+
+    void SkinAttach::read(NIFStream* nif)
+    {
+        Extra::read(nif);
+
+        nif->getSizedStrings(mBones, nif->get<uint32_t>());
+    }
+
+    void BoneTranslations::Translation::read(NIFStream* nif)
+    {
+        mBone = nif->getSizedString();
+        nif->read(mTranslation);
+    }
+
+    void BoneTranslations::read(NIFStream* nif)
+    {
+        Extra::read(nif);
+
+        mTranslations.resize(nif->get<uint32_t>());
+        for (Translation& translation : mTranslations)
+            translation.read(nif);
+    }
+
+    void StarfieldNamedRecord::read(NIFStream* nif)
+    {
+        nif->read(mName);
+    }
+
+>>>>>>> origin/main
     void NiExtraData::read(NIFStream* nif)
     {
         Extra::read(nif);
@@ -16,17 +47,31 @@ namespace Nif
         nif->getSizedStrings(mData, nif->get<uint32_t>());
     }
 
+<<<<<<< HEAD
     void NiTextKeyExtraData::TextKey::read(NIFStream* nif)
     {
         nif->read(mTime);
         nif->read(mText);
     }
 
+=======
+>>>>>>> origin/main
     void NiTextKeyExtraData::read(NIFStream* nif)
     {
         Extra::read(nif);
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mList);
+=======
+        uint32_t numKeys;
+        nif->read(numKeys);
+        mList.resize(numKeys);
+        for (TextKey& key : mList)
+        {
+            nif->read(key.mTime);
+            nif->read(key.mText);
+        }
+>>>>>>> origin/main
     }
 
     void NiVertWeightsExtraData::read(NIFStream* nif)
@@ -64,10 +109,27 @@ namespace Nif
     {
         Extra::read(nif);
 
+<<<<<<< HEAD
         if (nif->getBethVersion() <= NIFFile::BethVersion::BETHVER_FO3)
             nif->readVectorOfRecords<uint32_t>(mLegacyMarkers);
         else
             nif->readVectorOfRecords<uint32_t>(mMarkers);
+=======
+        uint32_t num;
+        nif->read(num);
+        if (nif->getBethVersion() <= NIFFile::BethVersion::BETHVER_FO3)
+        {
+            mLegacyMarkers.resize(num);
+            for (auto& marker : mLegacyMarkers)
+                marker.read(nif);
+        }
+        else
+        {
+            mMarkers.resize(num);
+            for (auto& marker : mMarkers)
+                marker.read(nif);
+        }
+>>>>>>> origin/main
     }
 
     void BSInvMarker::read(NIFStream* nif)
@@ -93,7 +155,13 @@ namespace Nif
     {
         Extra::read(nif);
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mData);
+=======
+        mData.resize(nif->get<uint32_t>());
+        for (BoneLOD& lod : mData)
+            lod.read(nif);
+>>>>>>> origin/main
     }
 
     void BSBoneLODExtraData::BoneLOD::read(NIFStream* nif)
@@ -106,7 +174,13 @@ namespace Nif
     {
         NiFloatExtraData::read(nif);
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint16_t>(mBlocks);
+=======
+        mBlocks.resize(nif->get<uint16_t>());
+        for (Block& block : mBlocks)
+            block.read(nif);
+>>>>>>> origin/main
     }
 
     void BSDecalPlacementVectorExtraData::Block::read(NIFStream* nif)
@@ -138,7 +212,13 @@ namespace Nif
     {
         NiExtraData::read(nif);
 
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mPoints);
+=======
+        mPoints.resize(nif->get<uint32_t>());
+        for (Point& point : mPoints)
+            point.read(nif);
+>>>>>>> origin/main
     }
 
     void BSConnectPoint::Children::read(NIFStream* nif)
@@ -172,7 +252,13 @@ namespace Nif
         nif->read(mLOD1TriOffset);
         nif->read(mLOD2TriCount);
         nif->read(mLOD2TriOffset);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mCombined);
+=======
+        mCombined.resize(nif->get<uint32_t>());
+        for (BSPackedGeomDataCombined& data : mCombined)
+            data.read(nif);
+>>>>>>> origin/main
         mVertexDesc.read(nif);
     }
 
@@ -185,8 +271,17 @@ namespace Nif
         nif->read(mNumTriangles);
         nif->read(mFlags1);
         nif->read(mFlags2);
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(mObjects);
         nif->readVectorOfRecords(mObjects.size(), mObjectData);
+=======
+        mObjects.resize(nif->get<uint32_t>());
+        for (BSPackedGeomObject& object : mObjects)
+            object.read(nif);
+        mObjectData.resize(mObjects.size());
+        for (BSPackedSharedGeomData& objectData : mObjectData)
+            objectData.read(nif);
+>>>>>>> origin/main
     }
 
 }

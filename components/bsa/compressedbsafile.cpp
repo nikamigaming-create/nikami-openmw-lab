@@ -27,6 +27,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+<<<<<<< HEAD
+=======
+#include <filesystem>
+>>>>>>> origin/main
 #include <format>
 #include <istream>
 #include <system_error>
@@ -37,8 +41,12 @@
 #include <components/files/constrainedfilestream.hpp>
 #include <components/files/conversion.hpp>
 #include <components/files/utils.hpp>
+<<<<<<< HEAD
 #include <components/misc/pathhelpers.hpp>
 #include <components/vfs/pathutil.hpp>
+=======
+#include <components/misc/strings/lower.hpp>
+>>>>>>> origin/main
 
 #include "memorystream.hpp"
 
@@ -218,17 +226,36 @@ namespace Bsa
             }
         }
 
+<<<<<<< HEAD
         const VFS::Path::Normalized path(str);
 
         const std::string_view stem = path.stem();
         const std::string_view folder = path.parent().value();
 
         std::uint64_t folderHash = generateHash(folder, {});
+=======
+#ifdef _WIN32
+        const auto& path = str;
+#else
+        // Force-convert the path into something UNIX can handle first
+        // to make sure std::filesystem::path doesn't think the entire path is the filename on Linux
+        // and subsequently purge it to determine the file folder.
+        std::string path(str);
+        std::replace(path.begin(), path.end(), '\\', '/');
+#endif
+
+        const auto p = std::filesystem::path{ path }; // Purposefully damage Unicode strings.
+        const auto stem = p.stem();
+        const auto ext = p.extension().string(); // Purposefully damage Unicode strings.
+
+        std::uint64_t folderHash = generateHash(p.parent_path(), {});
+>>>>>>> origin/main
 
         auto it = mFolders.find(folderHash);
         if (it == mFolders.end())
             return FileRecord();
 
+<<<<<<< HEAD
         const std::string_view file = path.filename().value();
         std::string_view ext;
         if (const std::size_t pos = Misc::findExtension(file); pos != std::string_view::npos)
@@ -238,6 +265,8 @@ namespace Bsa
             ext.remove_prefix(pos);
         }
 
+=======
+>>>>>>> origin/main
         std::uint64_t fileHash = generateHash(stem, ext);
         auto iter = it->second.mFiles.find(fileHash);
         if (iter == it->second.mFiles.end())
@@ -262,6 +291,19 @@ namespace Bsa
         fail("Add file is not implemented for compressed BSA: " + filename);
     }
 
+<<<<<<< HEAD
+=======
+    Files::IStreamPtr CompressedBSAFile::getFile(const char* file)
+    {
+        FileRecord fileRec = getFileRecord(file);
+        if (fileRec.mOffset == std::numeric_limits<uint32_t>::max())
+        {
+            fail("File not found: " + std::string(file));
+        }
+        return getFile(fileRec);
+    }
+
+>>>>>>> origin/main
     Files::IStreamPtr CompressedBSAFile::getFile(const FileRecord& fileRecord)
     {
         size_t size = fileRecord.mSize & (~FileSizeFlag_Compression);
@@ -327,6 +369,7 @@ namespace Bsa
         return std::make_unique<Files::StreamWithBuffer<MemoryInputStream>>(std::move(memoryStreamPtr));
     }
 
+<<<<<<< HEAD
     std::uint64_t CompressedBSAFile::generateHash(std::string_view str, std::string_view extension)
     {
         if (str.empty())
@@ -343,15 +386,38 @@ namespace Bsa
             result |= at(len - 2) << 8;
         result |= len << 16;
         result |= static_cast<uint32_t>(at(0) << 24);
+=======
+    std::uint64_t CompressedBSAFile::generateHash(const std::filesystem::path& stem, std::string extension)
+    {
+        auto str = stem.u8string();
+        size_t len = str.length();
+        if (len == 0)
+            return 0;
+        std::replace(str.begin(), str.end(), '/', '\\');
+        Misc::StringUtils::lowerCaseInPlace(str);
+        uint64_t result = str[len - 1];
+        if (len >= 3)
+            result |= str[len - 2] << 8;
+        result |= len << 16;
+        result |= static_cast<uint32_t>(str[0] << 24);
+>>>>>>> origin/main
         if (len >= 4)
         {
             uint32_t hash = 0;
             for (size_t i = 1; i <= len - 3; ++i)
+<<<<<<< HEAD
                 hash = hash * 0x1003f + at(i);
+=======
+                hash = hash * 0x1003f + str[i];
+>>>>>>> origin/main
             result += static_cast<uint64_t>(hash) << 32;
         }
         if (extension.empty())
             return result;
+<<<<<<< HEAD
+=======
+        Misc::StringUtils::lowerCaseInPlace(extension);
+>>>>>>> origin/main
         if (extension == ".kf")
             result |= 0x80;
         else if (extension == ".nif")
@@ -361,7 +427,11 @@ namespace Bsa
         else if (extension == ".wav")
             result |= 0x80000000;
         uint32_t hash = 0;
+<<<<<<< HEAD
         for (unsigned char c : extension)
+=======
+        for (const auto& c : extension)
+>>>>>>> origin/main
             hash = hash * 0x1003f + c;
         result += static_cast<uint64_t>(hash) << 32;
         return result;

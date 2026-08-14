@@ -22,6 +22,15 @@
 #include "bindingsmanager.hpp"
 #include "mousemanager.hpp"
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwvr/vrinputmanager.hpp"
+
+//## VR_PATCH END
+
+>>>>>>> origin/main
 namespace MWInput
 {
     ControllerManager::ControllerManager(BindingsManager* bindingsManager, MouseManager* mouseManager,
@@ -33,8 +42,14 @@ namespace MWInput
         , mGuiCursorEnabled(true)
         , mJoystickLastUsed(false)
         , mGamepadMousePressed(false)
+<<<<<<< HEAD
         , mLeftTriggerGuiPressed(false)
         , mRightTriggerGuiPressed(false)
+=======
+//## VR_PATCH BEGIN
+        , mThumbstickAutoRun(Settings::Manager::getBool("thumbstick auto run", "Input"))
+//## VR_PATCH END
+>>>>>>> origin/main
     {
         if (!controllerBindingsFile.empty())
         {
@@ -105,6 +120,10 @@ namespace MWInput
             float mouseWheelMove = -zAxis * dt * 1500.0f;
             if (xMove != 0 || yMove != 0 || mouseWheelMove != 0)
             {
+<<<<<<< HEAD
+=======
+                Log(Debug::Verbose) << "Injecting mouseWheelMove: [" << -zAxis << ", " << mouseWheelMove << "]";
+>>>>>>> origin/main
                 mMouseManager->injectMouseMove(xMove, yMove, mouseWheelMove);
                 mMouseManager->warpMouse();
                 MWBase::Environment::get().getWindowManager()->setCursorActive(true);
@@ -193,7 +212,11 @@ namespace MWInput
             if (mGamepadGuiCursorEnabled && (!Settings::gui().mControllerMenus || mGamepadMousePressed))
             {
                 // Temporary mouse binding until keyboard controls are available:
+<<<<<<< HEAD
                 if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
+=======
+                if (arg.button == SDL_CONTROLLER_BUTTON_A && !VR::getVR()) // We'll pretend that A is left click.
+>>>>>>> origin/main
                 {
                     bool mousePressSuccess = mMouseManager->injectMouseButtonRelease(SDL_BUTTON_LEFT);
                     mGamepadMousePressed = false;
@@ -204,6 +227,14 @@ namespace MWInput
                     mBindingsManager->setPlayerControlsEnabled(!mousePressSuccess);
                 }
             }
+<<<<<<< HEAD
+=======
+            if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
+            {
+                MWVR::VRInputManager::instance().pointerActivate(true);
+                return;
+            }
+>>>>>>> origin/main
         }
         else
             mBindingsManager->setPlayerControlsEnabled(true);
@@ -342,6 +373,7 @@ namespace MWInput
 
     bool ControllerManager::gamepadToGuiControl(const SDL_ControllerAxisEvent& arg)
     {
+<<<<<<< HEAD
         const int triggerPressThreshold = Settings::gui().mControllerTriggerPressThreshold;
         const int rawTriggerReleaseThreshold = Settings::gui().mControllerTriggerReleaseThreshold;
         const int triggerReleaseThreshold = std::clamp(rawTriggerReleaseThreshold, 0, triggerPressThreshold - 1);
@@ -358,6 +390,8 @@ namespace MWInput
             }
         };
 
+=======
+>>>>>>> origin/main
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
 
         if (Settings::gui().mControllerMenus)
@@ -365,14 +399,24 @@ namespace MWInput
             // Left and right triggers toggle through open GUI windows.
             if (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
             {
+<<<<<<< HEAD
                 handleTriggerPress(
                     arg.value, mRightTriggerGuiPressed, [&] { winMgr->cycleActiveControllerWindow(true); });
+=======
+                if (arg.value == 32767) // Treat like a button.
+                    winMgr->cycleActiveControllerWindow(true);
+>>>>>>> origin/main
                 return true;
             }
             else if (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT)
             {
+<<<<<<< HEAD
                 handleTriggerPress(
                     arg.value, mLeftTriggerGuiPressed, [&] { winMgr->cycleActiveControllerWindow(false); });
+=======
+                if (arg.value == 32767) // Treat like a button.
+                    winMgr->cycleActiveControllerWindow(false);
+>>>>>>> origin/main
                 return true;
             }
 
@@ -392,8 +436,20 @@ namespace MWInput
                     && (arg.axis == SDL_CONTROLLER_AXIS_LEFTX || arg.axis == SDL_CONTROLLER_AXIS_LEFTY))
                 {
                     // Treat the left stick like a cursor, which is the default behavior.
+<<<<<<< HEAD
                     winMgr->setControllerTooltipVisible(false);
                     winMgr->setCursorVisible(true);
+=======
+                    if (winMgr->getControllerTooltipVisible())
+                    {
+                        winMgr->setControllerTooltipVisible(false);
+                        winMgr->setCursorVisible(true);
+                    }
+                    else if (mGamepadGuiCursorEnabled)
+                    {
+                        winMgr->setCursorVisible(true);
+                    }
+>>>>>>> origin/main
                     return false;
                 }
 
@@ -420,12 +476,21 @@ namespace MWInput
         switch (arg.axis)
         {
             case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+<<<<<<< HEAD
                 handleTriggerPress(arg.value, mRightTriggerGuiPressed,
                     [&] { winMgr->injectKeyPress(MyGUI::KeyCode::Minus, 0, false); });
                 break;
             case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
                 handleTriggerPress(arg.value, mLeftTriggerGuiPressed,
                     [&] { winMgr->injectKeyPress(MyGUI::KeyCode::Equals, 0, false); });
+=======
+                if (arg.value == 32767) // Treat like a button.
+                    winMgr->injectKeyPress(MyGUI::KeyCode::Minus, 0, false);
+                break;
+            case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+                if (arg.value == 32767) // Treat like a button.
+                    winMgr->injectKeyPress(MyGUI::KeyCode::Equals, 0, false);
+>>>>>>> origin/main
                 break;
             case SDL_CONTROLLER_AXIS_LEFTX:
             case SDL_CONTROLLER_AXIS_LEFTY:
@@ -557,12 +622,15 @@ namespace MWInput
                     return "textures/omw_psx_button_triangle.dds";
                 return "textures/omw_steam_button_y.dds";
             case SDL_CONTROLLER_BUTTON_GUIDE:
+<<<<<<< HEAD
             case SDL_CONTROLLER_BUTTON_MISC1:
             case SDL_CONTROLLER_BUTTON_PADDLE1:
             case SDL_CONTROLLER_BUTTON_PADDLE2:
             case SDL_CONTROLLER_BUTTON_PADDLE3:
             case SDL_CONTROLLER_BUTTON_PADDLE4:
             case SDL_CONTROLLER_BUTTON_TOUCHPAD:
+=======
+>>>>>>> origin/main
             default:
                 return {};
         }
@@ -600,6 +668,17 @@ namespace MWInput
         }
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    void ControllerManager::setThumbstickAutoRun(bool enabled)
+    {
+        mThumbstickAutoRun = enabled;
+        Settings::Manager::setBool("thumbstick auto run", "Input", enabled);
+    }
+//## VR_PATCH END
+
+>>>>>>> origin/main
     void ControllerManager::touchpadMoved(int deviceId, const SDLUtil::TouchEvent& arg)
     {
         MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::TouchMoved, arg });

@@ -1,9 +1,12 @@
 #ifndef OPENMW_COMPONENTS_NIF_RECORDPTR_HPP
 #define OPENMW_COMPONENTS_NIF_RECORDPTR_HPP
 
+<<<<<<< HEAD
 #include <format>
 #include <stdexcept>
 #include <typeinfo>
+=======
+>>>>>>> origin/main
 #include <vector>
 
 #include "niffile.hpp"
@@ -19,6 +22,7 @@ namespace Nif
     template <class X>
     class RecordPtrT
     {
+<<<<<<< HEAD
 #ifndef NDEBUG
         enum class State
         {
@@ -32,27 +36,40 @@ namespace Nif
         union
         {
             intptr_t mIndex;
+=======
+        union
+        {
+            intptr_t index;
+>>>>>>> origin/main
             X* mPtr;
         };
 
     public:
         RecordPtrT()
+<<<<<<< HEAD
             :
 #ifndef NDEBUG
             mState(State::Index)
             ,
 #endif
             mIndex(-2)
+=======
+            : index(-2)
+>>>>>>> origin/main
         {
         }
 
         RecordPtrT(X* ptr)
+<<<<<<< HEAD
             :
 #ifndef NDEBUG
             mState(State::Ptr)
             ,
 #endif
             mPtr(ptr)
+=======
+            : mPtr(ptr)
+>>>>>>> origin/main
         {
         }
 
@@ -60,6 +77,7 @@ namespace Nif
         void read(NIFStream* nif)
         {
             // Can only read the index once
+<<<<<<< HEAD
 #ifndef NDEBUG
             assert(mState == State::Index);
 #endif
@@ -71,11 +89,19 @@ namespace Nif
                 throw std::runtime_error(std::format("Invalid index: {}", index));
 
             mIndex = index;
+=======
+            assert(index == -2);
+
+            // Store the index for later
+            index = nif->get<int32_t>();
+            assert(index >= -1);
+>>>>>>> origin/main
         }
 
         /// Resolve index to pointer
         void post(Reader& nif)
         {
+<<<<<<< HEAD
 #ifndef NDEBUG
             assert(mState == State::Index);
 #endif
@@ -98,11 +124,23 @@ namespace Nif
 #ifndef NDEBUG
             mState = State::Ptr;
 #endif
+=======
+            if (index < 0)
+                mPtr = nullptr;
+            else
+            {
+                Record* r = nif.getRecord(index);
+                // And cast it
+                mPtr = dynamic_cast<X*>(r);
+                assert(mPtr != nullptr);
+            }
+>>>>>>> origin/main
         }
 
         /// Look up the actual object from the index
         const X* getPtr() const
         {
+<<<<<<< HEAD
 #ifndef NDEBUG
             assert(mState == State::Ptr);
 #endif
@@ -115,10 +153,18 @@ namespace Nif
 #ifndef NDEBUG
             assert(mState == State::Ptr);
 #endif
+=======
+            assert(mPtr != nullptr);
+            return mPtr;
+        }
+        X* getPtr()
+        {
+>>>>>>> origin/main
             assert(mPtr != nullptr);
             return mPtr;
         }
 
+<<<<<<< HEAD
         const X& get() const
         {
             return *getPtr();
@@ -148,6 +194,17 @@ namespace Nif
 #endif
             return mPtr == nullptr;
         }
+=======
+        const X& get() const { return *getPtr(); }
+        X& get() { return *getPtr(); }
+
+        /// Syntactic sugar
+        const X* operator->() const { return getPtr(); }
+        X* operator->() { return getPtr(); }
+
+        /// Pointers are allowed to be empty
+        bool empty() const { return mPtr == nullptr; }
+>>>>>>> origin/main
     };
 
     /** A list of references to other records. These are read as a list,
@@ -160,7 +217,20 @@ namespace Nif
     template <class T>
     void readRecordList(NIFStream* nif, RecordListT<T>& list)
     {
+<<<<<<< HEAD
         nif->readVectorOfRecords<uint32_t>(list);
+=======
+        const std::uint32_t length = nif->get<std::uint32_t>();
+
+        // No reasonable list can hit this generous limit
+        if (length >= (1 << 24))
+            throw std::runtime_error("Record list too long: " + std::to_string(length));
+
+        list.resize(length);
+
+        for (auto& value : list)
+            value.read(nif);
+>>>>>>> origin/main
     }
 
     template <class T>
@@ -227,7 +297,10 @@ namespace Nif
     struct BSSkinBoneData;
     struct BSAnimNote;
     struct BSAnimNotes;
+<<<<<<< HEAD
     struct bhkRagdollTemplateData;
+=======
+>>>>>>> origin/main
 
     using NiAVObjectPtr = RecordPtrT<NiAVObject>;
     using ExtraPtr = RecordPtrT<Extra>;
@@ -296,7 +369,10 @@ namespace Nif
     using NiTriBasedGeomList = RecordListT<NiTriBasedGeom>;
     using BSAnimNoteList = RecordListT<BSAnimNote>;
     using BSAnimNotesList = RecordListT<BSAnimNotes>;
+<<<<<<< HEAD
     using bhkRagdollTemplateDataList = RecordListT<bhkRagdollTemplateData>;
+=======
+>>>>>>> origin/main
 
 } // Namespace
 #endif

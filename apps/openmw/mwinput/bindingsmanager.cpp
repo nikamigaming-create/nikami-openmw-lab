@@ -4,16 +4,29 @@
 
 #include <MyGUI_EditBox.h>
 
+<<<<<<< HEAD
 #include <oics/ICSChannelListener.h>
 #include <oics/ICSInputControlSystem.h>
+=======
+#include <extern/oics/ICSChannelListener.h>
+#include <extern/oics/ICSInputControlSystem.h>
+>>>>>>> origin/main
 
 #include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
+<<<<<<< HEAD
+=======
+#include <components/vr/vr.hpp>
+>>>>>>> origin/main
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwvr/vrinputmanager.hpp"
+>>>>>>> origin/main
 
 #include "actions.hpp"
 
@@ -55,6 +68,17 @@ namespace MWInput
         }
     };
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+// The VR input manager needs to forward XR inputs to ICS.
+    ICS::InputControlSystem& BindingsManager::ics()
+    {
+        return *mInputBinder;
+    }
+
+//## VR_PATCH END
+>>>>>>> origin/main
     class BindingsListener : public ICS::ChannelListener, public ICS::DetectingBindingListener
     {
     public:
@@ -272,7 +296,13 @@ namespace MWInput
         defaultKeyBindings[A_Jump] = SDL_SCANCODE_E;
         defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
         defaultKeyBindings[A_Rest] = SDL_SCANCODE_T;
+<<<<<<< HEAD
         defaultKeyBindings[A_GameMenu] = SDL_SCANCODE_ESCAPE;
+=======
+        defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
+        defaultKeyBindings[A_GameMenu] = SDL_SCANCODE_ESCAPE;
+        defaultKeyBindings[A_Map] = SDL_SCANCODE_M;
+>>>>>>> origin/main
         defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_TAB;
         defaultKeyBindings[A_QuickKey1] = SDL_SCANCODE_1;
         defaultKeyBindings[A_QuickKey2] = SDL_SCANCODE_2;
@@ -484,6 +514,11 @@ namespace MWInput
                 return "#{sRestKey}";
             case A_Inventory:
                 return "#{sInventory}";
+<<<<<<< HEAD
+=======
+            case A_Map:
+                return "#{sMap}";
+>>>>>>> origin/main
             case A_TogglePOV:
                 return "#{sTogglePOVCmd}";
             case A_QuickKeysMenu:
@@ -577,7 +612,11 @@ namespace MWInput
         static const std::initializer_list<int> actions{ A_MoveForward, A_MoveBackward, A_MoveLeft, A_MoveRight,
             A_TogglePOV, A_ZoomIn, A_ZoomOut, A_Run, A_AlwaysRun, A_Sneak, A_Activate, A_Use, A_ToggleWeapon,
             A_ToggleSpell, A_CycleSpellLeft, A_CycleSpellRight, A_CycleWeaponLeft, A_CycleWeaponRight, A_AutoMove,
+<<<<<<< HEAD
             A_Jump, A_Inventory, A_Journal, A_Rest, A_Console, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
+=======
+            A_Jump, A_Inventory, A_Map, A_Journal, A_Rest, A_Console, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
+>>>>>>> origin/main
             A_QuickKeysMenu, A_QuickKey1, A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7,
             A_QuickKey8, A_QuickKey9, A_QuickKey10, A_TogglePostProcessorHUD };
 
@@ -695,9 +734,20 @@ namespace MWInput
             else if (action == A_Jump && actionIsActive(A_ToggleSpell))
                 action = A_CycleSpellLeft;
         }
+<<<<<<< HEAD
 
         if (previousValue <= 0.6 && currentValue > 0.6)
             manager->executeAction(action);
+=======
+        auto onPress = previousValue <= 0.6 && currentValue > 0.6;
+
+        if (action == A_GameMenu && VR::getVR())
+            MWVR::VRInputManager::instance().gameMenuAction(onPress);
+        else if (onPress)
+        {
+            manager->executeAction(action);
+        }
+>>>>>>> origin/main
     }
 
     void BindingsManager::saveBindings()

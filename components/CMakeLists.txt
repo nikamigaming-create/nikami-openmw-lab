@@ -92,6 +92,10 @@ add_component_dir (settings
     categories/stereoview
     categories/terrain
     categories/video
+<<<<<<< HEAD
+=======
+    categories/vr
+>>>>>>> origin/main
     categories/water
     categories/windows
     gyroscopeaxis
@@ -124,7 +128,11 @@ add_component_dir (bullethelpers
     )
 
 add_component_dir (vfs
+<<<<<<< HEAD
     manager archive bsaarchive filesystemarchive pathutil registerarchives
+=======
+    manager archive bsaarchive filesystemarchive inmemoryarchive pathutil registerarchives
+>>>>>>> origin/main
     )
 
 add_component_dir (resource
@@ -137,7 +145,11 @@ add_component_dir (shader
     )
 
 add_component_dir (sceneutil
+<<<<<<< HEAD
     clone attach visitor util statesetupdater stateupdater controller skeleton riggeometry morphgeometry lightcontroller
+=======
+    clone attach visitor util statesetupdater controller skeleton riggeometry morphgeometry lightcontroller
+>>>>>>> origin/main
     lightmanager lightutil positionattitudetransform workqueue pathgridutil waterutil writescene serialize optimizer
     detourdebugdraw navmesh agentpath animblendrules shadow mwshadowtechnique recastmesh shadowsbin osgacontroller rtt
     screencapture depth color riggeometryosgaextension extradata unrefqueue lightcommon lightingmethod clearcolor
@@ -189,7 +201,11 @@ add_component_dir (esm3
     weatherstate quickkeys fogstate spellstate activespells creaturelevliststate doorstate projectilestate debugprofile
     aisequence magiceffects custommarkerstate stolenitems transport animationstate controlsstate mappings readerscache
     infoorder timestamp formatversion landrecorddata selectiongroup dialoguecondition
+<<<<<<< HEAD
     refnum actoridconverter
+=======
+    refnum
+>>>>>>> origin/main
     )
 
 add_component_dir (esmterrain
@@ -203,24 +219,44 @@ add_component_dir (esm4
     common
     dialogue
     effect
+<<<<<<< HEAD
+=======
+    fonvsavegame
+>>>>>>> origin/main
     grid
     grouptype
     inventory
     lighting
+<<<<<<< HEAD
+=======
+    lip
+>>>>>>> origin/main
     loadachr
     loadacti
     loadalch
     loadaloc
+<<<<<<< HEAD
+=======
+    loadamef
+>>>>>>> origin/main
     loadammo
     loadanio
     loadappa
     loadarma
     loadarmo
     loadaspc
+<<<<<<< HEAD
+=======
+    loadavif
+>>>>>>> origin/main
     loadbook
     loadbptd
     loadcell
     loadclas
+<<<<<<< HEAD
+=======
+    loadclmt
+>>>>>>> origin/main
     loadclfm
     loadclot
     loadcont
@@ -229,6 +265,12 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+<<<<<<< HEAD
+=======
+    loadexpl
+    loadfact
+    loadrepu
+>>>>>>> origin/main
     loadflor
     loadflst
     loadfurn
@@ -241,6 +283,11 @@ add_component_dir (esm4
     loadidle
     loadidlm
     loadimod
+<<<<<<< HEAD
+=======
+    loadipct
+    loadipds
+>>>>>>> origin/main
     loadinfo
     loadingr
     loadkeym
@@ -251,6 +298,11 @@ add_component_dir (esm4
     loadlvlc
     loadlvli
     loadlvln
+<<<<<<< HEAD
+=======
+    loadmgef
+    loadmesg
+>>>>>>> origin/main
     loadmato
     loadmisc
     loadmset
@@ -262,11 +314,23 @@ add_component_dir (esm4
     loadnpc
     loadotft
     loadpack
+<<<<<<< HEAD
     loadpgrd
     loadpgre
     loadpwat
     loadqust
     loadrace
+=======
+    loadperk
+    loadpgrd
+    loadpgre
+    loadpwat
+    loadproj
+    loadqust
+    loadrace
+    loadrcct
+    loadrcpe
+>>>>>>> origin/main
     loadrefr
     loadregn
     loadroad
@@ -278,6 +342,10 @@ add_component_dir (esm4
     loadslgm
     loadsndr
     loadsoun
+<<<<<<< HEAD
+=======
+    loadspel
+>>>>>>> origin/main
     loadstat
     loadtact
     loadterm
@@ -285,6 +353,13 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+<<<<<<< HEAD
+=======
+    loadwthr
+    loadimgs
+    loadimad
+    imagespacecomposition
+>>>>>>> origin/main
     loadwrld
     magiceffectid
     reader
@@ -296,6 +371,7 @@ add_component_dir (esm4
 )
 
 add_component_dir (misc
+<<<<<<< HEAD
     barrier budgetmeasurement color compression constants convert coordinateconverter display endianness float16 frameratelimiter
     guarded math mathutil messageformatparser notnullptr objectpool osgpluginchecker osguservalues progressreporter resourcehelpers
     rng strongtypedef thread timeconvert timer tuplehelpers tuplemeta utf8stream weakcache windows
@@ -311,8 +387,27 @@ add_component_dir (stereo
 
 add_component_dir (debug
     debugging debuglog gldebug debugdraw writeflags
+=======
+// MERGETODO: Duplicates?
+    barrier budgetmeasurement callbackmanager color compression constants convert coordinateconverter display endianness float16 frameratelimiter
+    guarded math mathutil messageformatparser notnullptr objectpool osgpluginchecker osguservalues progressreporter resourcehelpers
+    rng strongtypedef thread timeconvert timer tuplehelpers tuplemeta utf8stream weakcache windows
+>>>>>>> origin/main
     )
 
+add_component_dir (misc/strings
+    algorithm conversion format lower
+    )
+
+add_component_dir (stereo
+    frustum multiview stereomanager types
+    )
+
+add_component_dir (debug
+    debugging debuglog gldebug debugdraw writeflags
+    )
+
+add_definitions(-DMYGUI_DONT_USE_OBSOLETE=ON)
 IF(NOT WIN32 AND NOT APPLE)
     add_compile_definitions(GLOBAL_DATA_PATH="${GLOBAL_DATA_PATH}")
     add_compile_definitions(GLOBAL_CONFIG_PATH="${GLOBAL_CONFIG_PATH}")
@@ -357,7 +452,11 @@ add_component_dir (myguiplatform
     )
 
 add_component_dir (widgets
+<<<<<<< HEAD
     box fontwrapper imagebutton tags list numericeditbox sharedstatebutton windowcaption widgets
+=======
+    box fontwrapper imagebutton tags list numericeditbox sharedstatebutton virtualkeyboardmanager windowcaption widgets
+>>>>>>> origin/main
     )
 
 add_component_dir (fontloader
@@ -517,6 +616,49 @@ else ()
         )
 endif()
 
+<<<<<<< HEAD
+=======
+if(BUILD_OPENMW_VR)
+    add_component_dir(vr
+        actionmanager
+        actionset
+        constants
+        directx
+        frame
+        layer
+        rendertoswapchain
+        session
+        space
+        swapchain
+        trackinglistener
+        trackingmanager
+        trackingsource
+        trackingtransform
+        viewer
+        vr
+    )
+    add_component_dir(xr
+        action
+        actionset
+        debug
+        extensions
+        input
+        interactionprofiles
+        instance
+        platform
+        session
+        space
+        swapchain
+        tracking
+        typeconversion
+    )
+else()
+    add_component_dir(vr
+        flat
+    )
+endif()
+
+>>>>>>> origin/main
 add_component_dir(testing
     expecterror
     util
@@ -561,6 +703,7 @@ if (USE_QT)
         )
 
 endif()
+<<<<<<< HEAD
 
 if (MSVC)
     # these TUs take a lot of memory for codegen
@@ -583,6 +726,12 @@ if (OPENMW_USE_SYSTEM_SQLITE3)
         add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
     endif()
 endif()
+=======
+
+include_directories(${BULLET_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
+
+find_package(SQLite3 REQUIRED)
+>>>>>>> origin/main
 
 add_library(components STATIC ${COMPONENT_FILES})
 
@@ -590,10 +739,13 @@ if (ANDROID)
     set_property(TARGET components PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
+<<<<<<< HEAD
 if (APPLE)
     target_compile_definitions(components PUBLIC GL_SILENCE_DEPRECATION=1)
 endif()
 
+=======
+>>>>>>> origin/main
 target_link_libraries(components
     ${COLLADA_DOM_LIBRARIES}
 
@@ -626,7 +778,11 @@ target_link_libraries(components
     RecastNavigation::Recast
 
     Base64
+<<<<<<< HEAD
     SQLite3::SQLite3
+=======
+    SQLite::SQLite3
+>>>>>>> origin/main
     smhasher
     ${ICU_LIBRARIES}
     ZLIB::ZLIB
@@ -681,10 +837,15 @@ endif()
 # Make the variable accessible for other subdirectories
 set(COMPONENT_FILES ${COMPONENT_FILES} PARENT_SCOPE)
 
+<<<<<<< HEAD
 target_compile_definitions(components PUBLIC
     BT_USE_DOUBLE_PRECISION
     MYGUI_DONT_USE_OBSOLETE=ON
 )
+=======
+target_compile_definitions(components PUBLIC BT_USE_DOUBLE_PRECISION)
+target_compile_definitions(components PRIVATE OPENMW_DOC_BASEURL="${OPENMW_DOC_BASEURL}")
+>>>>>>> origin/main
 
 if(OSG_STATIC)
     unset(_osg_plugins_static_files)
@@ -748,3 +909,26 @@ if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
         <boost/program_options/options_description.hpp>
     )
 endif()
+<<<<<<< HEAD
+=======
+  
+if(BUILD_OPENMW_VR)
+    target_link_libraries(components openxr_loader)
+
+    # Preprocessor variables used to control code paths to vr code
+    if (WIN32)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_GRAPHICS_API_D3D11 -DXR_USE_PLATFORM_WIN32)
+    elseif(UNIX)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
+        target_link_libraries(components EGL)
+    endif()
+else()
+    target_link_libraries(components openmw_openxr_headers)
+endif()
+
+if (USE_SYSTEM_TINYXML)
+    target_link_libraries(components ${TinyXML_LIBRARIES})
+else()
+    target_link_libraries(components local_tinyxml)
+endif()
+>>>>>>> origin/main

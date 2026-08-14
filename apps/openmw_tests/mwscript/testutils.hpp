@@ -143,6 +143,7 @@ namespace
 
     class TestInterpreterContext : public Interpreter::Context
     {
+<<<<<<< HEAD
     public:
         using Message = std::pair<std::string, std::vector<std::string>>;
         using Messages = std::vector<Message>;
@@ -155,6 +156,12 @@ namespace
     public:
         const Messages& getMessages() { return mMessages; }
 
+=======
+        LocalVariables mLocals;
+        std::map<ESM::RefId, GlobalVariables> mMembers;
+
+    public:
+>>>>>>> origin/main
         ESM::RefId getTarget() const override { return ESM::RefId(); }
 
         int getLocalShort(int index) const override { return mLocals.getShort(index); }
@@ -169,10 +176,14 @@ namespace
 
         void setLocalFloat(int index, float value) override { mLocals.setFloat(index, value); }
 
+<<<<<<< HEAD
         void messageBox(std::string_view message, const std::vector<std::string>& buttons) override
         {
             mMessages.emplace_back(message, buttons);
         }
+=======
+        void messageBox(std::string_view message, const std::vector<std::string>& buttons) override {}
+>>>>>>> origin/main
 
         void report(const std::string& message) override {}
 

@@ -3,6 +3,10 @@
 
 #include <cstddef>
 #include <cstdint>
+<<<<<<< HEAD
+=======
+#include <stdexcept>
+>>>>>>> origin/main
 #include <variant>
 #include <vector>
 

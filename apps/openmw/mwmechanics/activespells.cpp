@@ -9,7 +9,10 @@
 #include <components/misc/strings/algorithm.hpp>
 
 #include <components/esm/generatedrefid.hpp>
+<<<<<<< HEAD
 #include <components/esm3/actoridconverter.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/loadench.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadstat.hpp>
@@ -31,7 +34,10 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/manualref.hpp"
+<<<<<<< HEAD
 #include "../mwworld/worldmodel.hpp"
+=======
+>>>>>>> origin/main
 
 namespace
 {
@@ -60,9 +66,15 @@ namespace
             effect.mEffectId = enam.mData.mEffectID;
             effect.mArg = MWMechanics::EffectKey(enam.mData).mArg;
             effect.mMagnitude = 0.f;
+<<<<<<< HEAD
             effect.mMinMagnitude = static_cast<float>(enam.mData.mMagnMin);
             effect.mMaxMagnitude = static_cast<float>(enam.mData.mMagnMax);
             effect.mEffectIndex = static_cast<int32_t>(enam.mIndex);
+=======
+            effect.mMinMagnitude = enam.mData.mMagnMin;
+            effect.mMaxMagnitude = enam.mData.mMagnMax;
+            effect.mEffectIndex = enam.mIndex;
+>>>>>>> origin/main
             effect.mFlags = ESM::ActiveEffect::Flag_None;
             if (ignoreResistances)
                 effect.mFlags |= ESM::ActiveEffect::Flag_Ignore_Resistances;
@@ -105,19 +117,31 @@ namespace MWMechanics
         const MWWorld::Ptr& caster, const ESM::RefId& id, std::string_view sourceName, ESM::RefNum item)
         : mSourceSpellId(id)
         , mDisplayName(sourceName)
+<<<<<<< HEAD
+=======
+        , mCasterActorId(-1)
+>>>>>>> origin/main
         , mItem(item)
         , mFlags()
         , mWorsenings(-1)
     {
         if (!caster.isEmpty() && caster.getClass().isActor())
+<<<<<<< HEAD
             mCaster = caster.getCellRef().getRefNum();
+=======
+            mCasterActorId = caster.getClass().getCreatureStats(caster).getActorId();
+>>>>>>> origin/main
     }
 
     ActiveSpells::ActiveSpellParams::ActiveSpellParams(
         const ESM::Spell* spell, const MWWorld::Ptr& actor, bool ignoreResistances)
         : mSourceSpellId(spell->mId)
         , mDisplayName(spell->mName)
+<<<<<<< HEAD
         , mCaster(actor.getCellRef().getRefNum())
+=======
+        , mCasterActorId(actor.getClass().getCreatureStats(actor).getActorId())
+>>>>>>> origin/main
         , mFlags()
         , mWorsenings(-1)
     {
@@ -132,7 +156,11 @@ namespace MWMechanics
         const MWWorld::ConstPtr& item, const ESM::Enchantment* enchantment, const MWWorld::Ptr& actor)
         : mSourceSpellId(item.getCellRef().getRefId())
         , mDisplayName(item.getClass().getName(item))
+<<<<<<< HEAD
         , mCaster(actor.getCellRef().getRefNum())
+=======
+        , mCasterActorId(actor.getClass().getCreatureStats(actor).getActorId())
+>>>>>>> origin/main
         , mItem(item.getCellRef().getRefNum())
         , mFlags()
         , mWorsenings(-1)
@@ -147,7 +175,11 @@ namespace MWMechanics
         , mSourceSpellId(params.mSourceSpellId)
         , mEffects(params.mEffects)
         , mDisplayName(params.mDisplayName)
+<<<<<<< HEAD
         , mCaster(params.mCaster)
+=======
+        , mCasterActorId(params.mCasterActorId)
+>>>>>>> origin/main
         , mItem(params.mItem)
         , mFlags(params.mFlags)
         , mWorsenings(params.mWorsenings)
@@ -158,7 +190,11 @@ namespace MWMechanics
     ActiveSpells::ActiveSpellParams::ActiveSpellParams(const ActiveSpellParams& params, const MWWorld::Ptr& actor)
         : mSourceSpellId(params.mSourceSpellId)
         , mDisplayName(params.mDisplayName)
+<<<<<<< HEAD
         , mCaster(actor.getCellRef().getRefNum())
+=======
+        , mCasterActorId(actor.getClass().getCreatureStats(actor).getActorId())
+>>>>>>> origin/main
         , mItem(params.mItem)
         , mFlags(params.mFlags)
         , mWorsenings(-1)
@@ -172,7 +208,11 @@ namespace MWMechanics
         params.mSourceSpellId = mSourceSpellId;
         params.mEffects = mEffects;
         params.mDisplayName = mDisplayName;
+<<<<<<< HEAD
         params.mCaster = mCaster;
+=======
+        params.mCasterActorId = mCasterActorId;
+>>>>>>> origin/main
         params.mItem = mItem;
         params.mFlags = mFlags;
         params.mWorsenings = mWorsenings;
@@ -358,7 +398,11 @@ namespace MWMechanics
 
         if (Settings::game().mClassicCalmSpellsBehavior)
         {
+<<<<<<< HEAD
             ESM::RefId effect
+=======
+            ESM::MagicEffect::Effects effect
+>>>>>>> origin/main
                 = ptr.getClass().isNpc() ? ESM::MagicEffect::CalmHumanoid : ESM::MagicEffect::CalmCreature;
             if (creatureStats.getMagicEffects().getOrDefault(effect).getMagnitude() > 0.f)
                 creatureStats.getAiSequence().stopCombat();
@@ -376,17 +420,25 @@ namespace MWMechanics
     bool ActiveSpells::updateActiveSpell(
         const MWWorld::Ptr& ptr, float duration, Collection::iterator& spellIt, UpdateContext& context)
     {
+<<<<<<< HEAD
         const auto caster = MWBase::Environment::get().getWorldModel()->getPtr(spellIt->mCaster);
+=======
+        const auto caster = MWBase::Environment::get().getWorld()->searchPtrViaActorId(
+            spellIt->mCasterActorId); // Maybe make this search outside active grid?
+>>>>>>> origin/main
         bool removedSpell = false;
         std::optional<ActiveSpellParams> reflected;
         for (auto it = spellIt->mEffects.begin(); it != spellIt->mEffects.end();)
         {
+<<<<<<< HEAD
             if (it->mFlags & ESM::ActiveEffect::Flag_Remove && it->mTimeLeft <= 0.f
                 && spellIt->hasFlag(ESM::ActiveSpells::Flag_Temporary))
             {
                 ++it;
                 continue;
             }
+=======
+>>>>>>> origin/main
             auto result = applyMagicEffect(ptr, caster, *spellIt, *it, duration, context.mPlayNonLooping);
             if (result.mType == MagicApplicationResult::Type::REFLECTED)
             {
@@ -432,7 +484,12 @@ namespace MWMechanics
             {
                 const VFS::Path::Normalized reflectStaticModel
                     = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(reflectStatic->mModel));
+<<<<<<< HEAD
                 animation->addEffect(reflectStaticModel, ESM::MagicEffect::Reflect.getValue(), false);
+=======
+                animation->addEffect(
+                    reflectStaticModel, ESM::MagicEffect::indexToName(ESM::MagicEffect::Reflect), false);
+>>>>>>> origin/main
             }
             caster.getClass().getCreatureStats(caster).getActiveSpells().addSpell(*reflected);
         }
@@ -489,6 +546,7 @@ namespace MWMechanics
         if (!spell.hasFlag(ESM::ActiveSpells::Flag_Stackable))
         {
             auto found = std::find_if(mSpells.begin(), mSpells.end(), [&](const auto& existing) {
+<<<<<<< HEAD
                 return spell.mSourceSpellId == existing.mSourceSpellId && spell.mCaster == existing.mCaster
                     && spell.mItem == existing.mItem;
             });
@@ -500,6 +558,19 @@ namespace MWMechanics
                     return;
                 for (auto& effect : found->mEffects)
                     effect.mTimeLeft = 0.f;
+=======
+                return spell.mSourceSpellId == existing.mSourceSpellId
+                    && spell.mCasterActorId == existing.mCasterActorId && spell.mItem == existing.mItem;
+            });
+            if (found != mSpells.end())
+            {
+                if (merge(found->mEffects, spell.mEffects))
+                    return;
+                auto params = *found;
+                mSpells.erase(found);
+                for (const auto& effect : params.mEffects)
+                    onMagicEffectRemoved(ptr, params, effect);
+>>>>>>> origin/main
             }
         }
         initParams(ptr, spell, context);
@@ -651,7 +722,11 @@ namespace MWMechanics
         purge([=](const ActiveSpellParams& params) { return params.mActiveSpellId == id; }, ptr);
     }
 
+<<<<<<< HEAD
     void ActiveSpells::purgeEffect(const MWWorld::Ptr& ptr, ESM::RefId effectId, ESM::RefId effectArg)
+=======
+    void ActiveSpells::purgeEffect(const MWWorld::Ptr& ptr, int effectId, ESM::RefId effectArg)
+>>>>>>> origin/main
     {
         purge(
             [=](const ActiveSpellParams&, const ESM::ActiveEffect& effect) {
@@ -664,9 +739,15 @@ namespace MWMechanics
             ptr);
     }
 
+<<<<<<< HEAD
     void ActiveSpells::purge(const MWWorld::Ptr& ptr, ESM::RefNum actor)
     {
         purge([=](const ActiveSpellParams& params) { return params.mCaster == actor; }, ptr);
+=======
+    void ActiveSpells::purge(const MWWorld::Ptr& ptr, int casterActorId)
+    {
+        purge([=](const ActiveSpellParams& params) { return params.mCasterActorId == casterActorId; }, ptr);
+>>>>>>> origin/main
     }
 
     void ActiveSpells::clear(const MWWorld::Ptr& ptr)
@@ -703,6 +784,7 @@ namespace MWMechanics
         }
         for (const ESM::ActiveSpells::ActiveSpellParams& spell : state.mQueue)
             mQueue.emplace_back(ActiveSpellParams{ spell });
+<<<<<<< HEAD
         if (state.mActorIdConverter)
         {
             const auto convertSummons = [converter = state.mActorIdConverter](auto& collection) {
@@ -719,6 +801,8 @@ namespace MWMechanics
             convertSummons(mSpells);
             convertSummons(mQueue);
         }
+=======
+>>>>>>> origin/main
     }
 
     void ActiveSpells::unloadActor(const MWWorld::Ptr& ptr)

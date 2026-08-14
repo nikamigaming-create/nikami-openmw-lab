@@ -32,10 +32,17 @@
                     <Property key="NeedMouse" value="true"/>
                     <UserString key="ToolTipType" value="Layout"/>
                     <UserString key="ToolTipLayout" value="HealthToolTip"/>
+<<<<<<< HEAD
                     <UserString key="ImageTexture_HealthImage" value="icons\k\magicka.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Magicka_str" align="Left Top HStretch">
                         <Property key="Caption" value="#{sMagic}"/>
+=======
+                    <UserString key="ImageTexture_HealthImage" value="icons\k\actions_points.dds"/>
+
+                    <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Magicka_str" align="Left Top HStretch">
+                        <Property key="Caption" value="AP"/>
+>>>>>>> origin/main
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -52,10 +59,17 @@
                     <Property key="NeedMouse" value="true"/>
                     <UserString key="ToolTipType" value="Layout"/>
                     <UserString key="ToolTipLayout" value="HealthToolTip"/>
+<<<<<<< HEAD
                     <UserString key="ImageTexture_HealthImage" value="icons\k\fatigue.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Fatigue_str" align="Left Top HStretch">
                         <Property key="Caption" value="#{sFatigue}"/>
+=======
+                    <UserString key="ImageTexture_HealthImage" value="icons\k\carry_weight.dds"/>
+
+                    <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Fatigue_str" align="Left Top HStretch">
+                        <Property key="Caption" value="WG"/>
+>>>>>>> origin/main
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -86,7 +100,11 @@
                 </Widget>
                 <Widget type="HBox" position="4 24 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Race_str" align="Left Top">
+<<<<<<< HEAD
                         <Property key="Caption" value="#{sRace}"/>
+=======
+                        <Property key="Caption" value="RACE"/>
+>>>>>>> origin/main
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="RaceToolTip"/>
                     </Widget>
@@ -99,7 +117,11 @@
                 </Widget>
                 <Widget type="HBox" position="4 42 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Class_str" align="Left Top">
+<<<<<<< HEAD
                         <Property key="Caption" value="#{sClass}"/>
+=======
+                        <Property key="Caption" value="KARMA"/>
+>>>>>>> origin/main
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="ClassToolTip"/>
                     </Widget>

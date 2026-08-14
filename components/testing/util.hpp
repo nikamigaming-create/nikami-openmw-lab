@@ -7,8 +7,11 @@
 #include <memory>
 #include <sstream>
 
+<<<<<<< HEAD
 #include <gtest/gtest.h>
 
+=======
+>>>>>>> origin/main
 #include <components/misc/strings/conversion.hpp>
 #include <components/vfs/archive.hpp>
 #include <components/vfs/file.hpp>
@@ -19,7 +22,12 @@ namespace TestingOpenMW
 {
     inline std::filesystem::path outputDir()
     {
+<<<<<<< HEAD
         static const std::string run = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+=======
+        static const std::string run
+            = std::to_string(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+>>>>>>> origin/main
         std::filesystem::path dir = std::filesystem::temp_directory_path() / "openmw" / "tests" / run;
         std::filesystem::create_directories(dir);
         return dir;
@@ -39,6 +47,7 @@ namespace TestingOpenMW
         return path;
     }
 
+<<<<<<< HEAD
     inline std::filesystem::path currentTestDirPath()
     {
         return outputDirPath(
@@ -46,6 +55,8 @@ namespace TestingOpenMW
                 ::testing::UnitTest::GetInstance()->current_test_info()->name()));
     }
 
+=======
+>>>>>>> origin/main
     inline std::filesystem::path outputFilePathWithSubDir(const std::filesystem::path& subpath)
     {
         std::filesystem::path path = outputDir();

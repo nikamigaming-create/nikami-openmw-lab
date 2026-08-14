@@ -40,7 +40,11 @@ namespace ESM
 
 namespace ESM
 {
+<<<<<<< HEAD
     const StringRefId Cell::sDefaultWorldspaceId("sys::default");
+=======
+    const StringRefId Cell::sDefaultWorldspaceId = StringRefId("sys::default");
+>>>>>>> origin/main
 
     template <Misc::SameAsWithoutCvref<Cell::DATAstruct> T>
     void decompose(T&& v, const auto& f)

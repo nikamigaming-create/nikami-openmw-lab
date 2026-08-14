@@ -19,6 +19,10 @@ namespace Settings
     {
         using WithIndex::WithIndex;
 
+<<<<<<< HEAD
+=======
+        SettingValue<bool> mForceShaders{ mIndex, "Shaders", "force shaders" };
+>>>>>>> origin/main
         SettingValue<bool> mForcePerPixelLighting{ mIndex, "Shaders", "force per pixel lighting" };
         SettingValue<bool> mClampLighting{ mIndex, "Shaders", "clamp lighting" };
         SettingValue<bool> mAutoUseObjectNormalMaps{ mIndex, "Shaders", "auto use object normal maps" };

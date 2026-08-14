@@ -155,9 +155,14 @@ namespace MWLua
         weatherT["cloudSpeed"] = sol::property([](const MWWorld::Weather& w) { return w.mCloudSpeed; },
             [](MWWorld::Weather& w, const FiniteFloat cloudSpeed) { w.mCloudSpeed = cloudSpeed; });
         weatherT["cloudTexture"] = sol::property(
+<<<<<<< HEAD
             [vfs](const MWWorld::Weather& w) -> std::string {
                 return Misc::ResourceHelpers::correctTexturePath(VFS::Path::toNormalized(w.mCloudTexture), *vfs);
             },
+=======
+            [vfs](
+                const MWWorld::Weather& w) { return Misc::ResourceHelpers::correctTexturePath(w.mCloudTexture, vfs); },
+>>>>>>> origin/main
             [](MWWorld::Weather& w, std::string_view cloudTexture) { w.mCloudTexture = cloudTexture; });
         weatherT["cloudsMaximumPercent"]
             = sol::property([](const MWWorld::Weather& w) { return w.mCloudsMaximumPercent; },
@@ -200,7 +205,11 @@ namespace MWLua
         weatherT["rainMinHeight"] = sol::property([](const MWWorld::Weather& w) { return w.mRainMinHeight; },
             [](MWWorld::Weather& w, const FiniteFloat rainMinHeight) { w.mRainMinHeight = rainMinHeight; });
         weatherT["rainLoopSoundID"]
+<<<<<<< HEAD
             = sol::property([](const MWWorld::Weather& w) -> ESM::RefId { return w.mRainLoopSoundID; },
+=======
+            = sol::property([](const MWWorld::Weather& w) { return LuaUtil::serializeRefId(w.mRainLoopSoundID); },
+>>>>>>> origin/main
                 [](MWWorld::Weather& w, sol::optional<std::string_view> rainLoopSoundID) {
                     w.mRainLoopSoundID = ESM::RefId::deserializeText(rainLoopSoundID.value_or(""));
                 });
@@ -210,7 +219,11 @@ namespace MWLua
                     w.mSunDiscSunsetColor = sunDiscSunsetColor.toVec();
                 });
         weatherT["ambientLoopSoundID"]
+<<<<<<< HEAD
             = sol::property([](const MWWorld::Weather& w) -> ESM::RefId { return w.mAmbientLoopSoundID; },
+=======
+            = sol::property([](const MWWorld::Weather& w) { return LuaUtil::serializeRefId(w.mAmbientLoopSoundID); },
+>>>>>>> origin/main
                 [](MWWorld::Weather& w, sol::optional<std::string_view> ambientLoopSoundId) {
                     w.mAmbientLoopSoundID = ESM::RefId::deserializeText(ambientLoopSoundId.value_or(""));
                 });

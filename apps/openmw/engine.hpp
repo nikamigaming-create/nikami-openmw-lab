@@ -9,6 +9,10 @@
 #include <components/files/collections.hpp>
 #include <components/settings/settings.hpp>
 #include <components/translation/translation.hpp>
+<<<<<<< HEAD
+=======
+#include <components/vfs/inmemoryarchive.hpp>
+>>>>>>> origin/main
 
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
@@ -68,6 +72,34 @@ namespace SceneUtil
     }
 }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+namespace Misc
+{
+    class CallbackManager;
+}
+
+namespace VR
+{
+    class Session;
+    class TrackingManager;
+    class Viewer;
+}
+
+namespace XR
+{
+    class Instance;
+    class Session;
+}
+
+namespace MWVR
+{
+    class VRGUIManager;
+}
+
+//## VR_PATCH END
+>>>>>>> origin/main
 namespace MWState
 {
     class StateManager;
@@ -127,6 +159,10 @@ namespace OMW
     {
         SDL_Window* mWindow;
         std::unique_ptr<VFS::Manager> mVFS;
+<<<<<<< HEAD
+=======
+        VFS::InMemoryArchive* mGeneratedFiles = nullptr;
+>>>>>>> origin/main
         std::unique_ptr<Resource::ResourceSystem> mResourceSystem;
         osg::ref_ptr<SceneUtil::WorkQueue> mWorkQueue;
         std::unique_ptr<SceneUtil::UnrefQueue> mUnrefQueue;
@@ -265,6 +301,25 @@ namespace OMW
         void setRandomSeed(unsigned int seed);
 
         void setRecastMaxLogLevel(Debug::Level value) { mMaxRecastLogLevel = value; }
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    public:
+        void configureVRGraphics(osg::GraphicsContext* gc);
+        void configureVRInputProfiles();
+        void configureVRPreScene(const std::filesystem::path& userFile, bool userFileExists,
+            const std::filesystem::path& userControllerBindingsFile,
+            const std::filesystem::path& controllerBindingsFile);
+        void configureVRScene();
+
+    private:
+        std::unique_ptr<Misc::CallbackManager> mCallbackManager;
+        std::unique_ptr<MWVR::VRGUIManager> mVrGUIManager;
+        std::unique_ptr<XR::Instance> mXrInstance;
+        std::shared_ptr<XR::Session> mXrSession;
+        std::unique_ptr<VR::Viewer> mVrViewer;
+//## VR_PATCH END
+>>>>>>> origin/main
     };
 }
 

@@ -8,8 +8,13 @@
 #include <components/debug/debuglog.hpp>
 #include <components/vfs/manager.hpp>
 
+<<<<<<< HEAD
 #include <osg-ffmpeg-videoplayer/libavformatdefines.hpp>
 #include <osg-ffmpeg-videoplayer/libavutildefines.hpp>
+=======
+#include <extern/osg-ffmpeg-videoplayer/libavformatdefines.hpp>
+#include <extern/osg-ffmpeg-videoplayer/libavutildefines.hpp>
+>>>>>>> origin/main
 
 #if OPENMW_FFMPEG_5_OR_GREATER
 #include <libavutil/channel_layout.h>

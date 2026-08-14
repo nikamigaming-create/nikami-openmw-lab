@@ -8,6 +8,10 @@
 
 #include <map>
 #include <mutex>
+<<<<<<< HEAD
+=======
+#include <set>
+>>>>>>> origin/main
 
 namespace Resource
 {
@@ -52,7 +56,12 @@ namespace MWPhysics
 
     private:
         osg::ref_ptr<Resource::BulletShapeInstance> mShapeInstance;
+<<<<<<< HEAD
         std::map<int, osg::NodePath> mRecordIndexToNodePath;
+=======
+        std::map<int, osg::NodePath> mRecIndexToNodePath;
+        std::set<int> mMissingAnimatedCollisionNodes;
+>>>>>>> origin/main
         bool mSolid;
         btVector3 mScale;
         osg::Vec3f mPosition;

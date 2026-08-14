@@ -12,8 +12,28 @@
 
 #include <LinearMath/btTransform.h>
 
+<<<<<<< HEAD
 namespace MWPhysics
 {
+=======
+#include <set>
+#include <string>
+
+namespace MWPhysics
+{
+    namespace
+    {
+        std::mutex sMissingAnimatedCollisionLogMutex;
+        std::set<std::pair<std::string, int>> sMissingAnimatedCollisionLogs;
+
+        bool shouldLogMissingAnimatedCollisionNode(const MWWorld::Ptr& ptr, int recIndex)
+        {
+            std::lock_guard<std::mutex> lock(sMissingAnimatedCollisionLogMutex);
+            return sMissingAnimatedCollisionLogs.emplace(ptr.getCellRef().getRefId().serializeText(), recIndex).second;
+        }
+    }
+
+>>>>>>> origin/main
     Object::Object(const MWWorld::Ptr& ptr, osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance,
         osg::Quat rotation, int collisionType, PhysicsTaskScheduler* scheduler)
         : PtrHolder(ptr, osg::Vec3f())
@@ -118,6 +138,7 @@ namespace MWPhysics
 
         btCompoundShape* compound = static_cast<btCompoundShape*>(mShapeInstance->mCollisionShape.get());
         bool result = false;
+<<<<<<< HEAD
         for (const auto& [recordIndex, shapeIndex] : mShapeInstance->mAnimatedShapes)
         {
             auto nodePathFound = mRecordIndexToNodePath.find(recordIndex);
@@ -137,6 +158,33 @@ namespace MWPhysics
                 osg::NodePath nodePath = visitor.mFoundPath;
                 nodePath.erase(nodePath.begin());
                 nodePathFound = mRecordIndexToNodePath.emplace(recordIndex, nodePath).first;
+=======
+        for (auto animatedShape = mShapeInstance->mAnimatedShapes.begin();
+             animatedShape != mShapeInstance->mAnimatedShapes.end();)
+        {
+            const int recIndex = animatedShape->first;
+            const int shapeIndex = animatedShape->second;
+            auto nodePathFound = mRecIndexToNodePath.find(recIndex);
+            if (nodePathFound == mRecIndexToNodePath.end())
+            {
+                NifOsg::FindGroupByRecIndex visitor(recIndex);
+                mPtr.getRefData().getBaseNode()->accept(visitor);
+                if (!visitor.mFound)
+                {
+                    if (mMissingAnimatedCollisionNodes.insert(recIndex).second
+                        && shouldLogMissingAnimatedCollisionNode(mPtr, recIndex))
+                        Log(Debug::Warning) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
+                                            << mPtr.getCellRef().getRefId() << "; keeping static collision child";
+
+                    // Fallout meshes sometimes carry animated collision entries for nodes that are absent from the
+                    // rendered scene graph. Keep their initial child transform as static collision and stop polling it.
+                    animatedShape = mShapeInstance->mAnimatedShapes.erase(animatedShape);
+                    continue;
+                }
+                osg::NodePath nodePath = visitor.mFoundPath;
+                nodePath.erase(nodePath.begin());
+                nodePathFound = mRecIndexToNodePath.emplace(recIndex, nodePath).first;
+>>>>>>> origin/main
             }
 
             osg::NodePath& nodePath = nodePathFound->second;
@@ -164,6 +212,11 @@ namespace MWPhysics
                 compound->updateChildTransform(shapeIndex, transform);
                 result = true;
             }
+<<<<<<< HEAD
+=======
+
+            ++animatedShape;
+>>>>>>> origin/main
         }
         return result;
     }

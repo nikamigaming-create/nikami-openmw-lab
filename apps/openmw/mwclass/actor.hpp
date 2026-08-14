@@ -57,11 +57,24 @@ namespace MWClass
 
         bool isActor() const override;
 
+<<<<<<< HEAD
+=======
+        void readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const override;
+        void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
+
+>>>>>>> origin/main
         /// Return current movement speed.
         float getCurrentSpeed(const MWWorld::Ptr& ptr) const override;
 
         bool consume(const MWWorld::Ptr& consumable, const MWWorld::Ptr& actor) const override;
 
+<<<<<<< HEAD
+=======
+        void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+            const MWWorld::Ptr& attacker, bool successful,
+            const MWMechanics::DamageSourceType sourceType) const override;
+
+>>>>>>> origin/main
         // not implemented
         Actor(const Actor&) = delete;
         Actor& operator=(const Actor&) = delete;

@@ -33,6 +33,10 @@
 
 void ESM4::ActorCharacter::load(ESM4::Reader& reader)
 {
+<<<<<<< HEAD
+=======
+    const bool isStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
+>>>>>>> origin/main
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
     mParent = reader.currCell();
@@ -82,6 +86,15 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
                 reader.getFormId(mEsp.parent);
                 reader.get(mEsp.flags);
                 break;
+<<<<<<< HEAD
+=======
+            case ESM::fourCC("XLKR"):
+                if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.getFormId(mLinkedReference);
+                else
+                    reader.skipSubRecordData();
+                break;
+>>>>>>> origin/main
             case ESM::fourCC("XCNT"):
             {
                 reader.get(mCount);
@@ -98,7 +111,10 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
             case ESM::fourCC("XHOR"):
             case ESM::fourCC("XLCM"): // levelled creature
             case ESM::fourCC("XLCN"): // location
+<<<<<<< HEAD
             case ESM::fourCC("XLKR"): // location route?
+=======
+>>>>>>> origin/main
             case ESM::fourCC("XLRT"): // location type
             //
             case ESM::fourCC("XPRD"):
@@ -132,9 +148,23 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
                 throw std::runtime_error("ESM4 ACHR/ACRE load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadachr"))
+                    break;
+                throw std::runtime_error("ESM4 ACHR/ACRE load - Unknown subrecord " + ESM::printName(subHdr.typeId));
+        }
+    }
+    if (isStarfield)
+    {
+        constexpr float starfieldWorldScale = 32.f;
+        for (float& value : mPos.pos)
+            value *= starfieldWorldScale;
+    }
+>>>>>>> origin/main
 }
 
 // void ESM4::ActorCharacter::save(ESM4::Writer& writer) const

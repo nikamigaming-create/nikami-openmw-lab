@@ -10,6 +10,10 @@
 
 #include <apps/opencs/model/doc/messages.hpp>
 
+#include <components/debug/debuglog.hpp>
+
+#include <apps/opencs/model/doc/messages.hpp>
+
 #include "../world/universalid.hpp"
 
 #include "stage.hpp"
@@ -55,18 +59,33 @@ void CSMDoc::Operation::prepareStages()
     }
 }
 
+<<<<<<< HEAD
 CSMDoc::Operation::Operation(State type, bool finalAlways)
+=======
+CSMDoc::Operation::Operation(State type, bool ordered, bool finalAlways)
+>>>>>>> origin/main
     : mType(type)
     , mStages(std::vector<std::pair<Stage*, int>>())
     , mCurrentStage(mStages.begin())
     , mCurrentStep(0)
     , mCurrentStepTotal(0)
     , mTotalSteps(0)
+<<<<<<< HEAD
     , mFinalAlways(finalAlways)
     , mError(false)
     , mPrepared(false)
     , mDefaultSeverity(Message::Severity_Error)
 {
+=======
+    , mOrdered(ordered)
+    , mFinalAlways(finalAlways)
+    , mError(false)
+    , mConnected(false)
+    , mPrepared(false)
+    , mDefaultSeverity(Message::Severity_Error)
+{
+    mTimer = new QTimer(this);
+>>>>>>> origin/main
 }
 
 CSMDoc::Operation::~Operation()
@@ -77,9 +96,24 @@ CSMDoc::Operation::~Operation()
 
 void CSMDoc::Operation::run()
 {
+<<<<<<< HEAD
     mPrepared = false;
     mStart = std::chrono::steady_clock::now();
     QMetaObject::invokeMethod(this, &Operation::executeStage, Qt::QueuedConnection);
+=======
+    mTimer->stop();
+
+    if (!mConnected)
+    {
+        connect(mTimer, &QTimer::timeout, this, &Operation::executeStage);
+        mConnected = true;
+    }
+
+    mPrepared = false;
+    mStart = std::chrono::steady_clock::now();
+
+    mTimer->start(0);
+>>>>>>> origin/main
 }
 
 void CSMDoc::Operation::appendStage(Stage* stage)
@@ -99,7 +133,11 @@ bool CSMDoc::Operation::hasError() const
 
 void CSMDoc::Operation::abort()
 {
+<<<<<<< HEAD
     if (!mStart.has_value())
+=======
+    if (!mTimer->isActive())
+>>>>>>> origin/main
         return;
 
     mError = true;
@@ -126,9 +164,12 @@ void CSMDoc::Operation::executeStage()
 
     Messages messages(mDefaultSeverity);
 
+<<<<<<< HEAD
     const auto batchStart = std::chrono::steady_clock::now();
     static constexpr auto batchBudget = std::chrono::milliseconds(33);
 
+=======
+>>>>>>> origin/main
     while (mCurrentStage != mStages.end())
     {
         if (mCurrentStep >= mCurrentStage->second)
@@ -172,18 +213,27 @@ void CSMDoc::Operation::executeStage()
         }
 
         operationDone();
+<<<<<<< HEAD
         return;
     }
 
     QMetaObject::invokeMethod(this, &Operation::executeStage, Qt::QueuedConnection);
+=======
+    }
+>>>>>>> origin/main
 }
 
 void CSMDoc::Operation::operationDone()
 {
+<<<<<<< HEAD
     emit done(mType, mError);
 }
 
 void CSMDoc::Operation::cleanup()
 {
     moveToThread(QCoreApplication::instance()->thread());
+=======
+    mTimer->stop();
+    emit done(mType, mError);
+>>>>>>> origin/main
 }

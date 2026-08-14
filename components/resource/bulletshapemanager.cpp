@@ -1,6 +1,12 @@
 #include "bulletshapemanager.hpp"
 
+<<<<<<< HEAD
 #include <cstring>
+=======
+#include <atomic>
+#include <cstring>
+#include <string_view>
+>>>>>>> origin/main
 
 #include <osg/Drawable>
 #include <osg/NodeVisitor>
@@ -9,7 +15,10 @@
 
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
+<<<<<<< HEAD
 #include <components/misc/convert.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/osguservalues.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/sceneutil/visitor.hpp>
@@ -27,6 +36,22 @@
 namespace Resource
 {
 
+<<<<<<< HEAD
+=======
+    namespace
+    {
+        bool isStarfieldWorldCollisionCandidate(VFS::Path::NormalizedView name)
+        {
+            const std::string_view path = name.value();
+            return path.find("meshes/actors/") == std::string_view::npos
+                && path.find("meshes/characters/") == std::string_view::npos
+                && path.find("meshes/clothes/") == std::string_view::npos
+                && path.find("meshes/armor/") == std::string_view::npos
+                && path.find("meshes/weapons/") == std::string_view::npos;
+        }
+    }
+
+>>>>>>> origin/main
     struct GetTriangleFunctor
     {
         GetTriangleFunctor()
@@ -38,12 +63,22 @@ namespace Resource
 
         void setMatrix(const osg::Matrixf& matrix) { mMatrix = matrix; }
 
+<<<<<<< HEAD
+=======
+        inline btVector3 toBullet(const osg::Vec3f& vec) { return btVector3(vec.x(), vec.y(), vec.z()); }
+
+>>>>>>> origin/main
         void inline operator()(const osg::Vec3& v1, const osg::Vec3& v2, const osg::Vec3& v3,
             bool /*temp*/ = false) // Note: unused temp argument left here for OSG versions less than 3.5.6
         {
             if (mTriMesh)
+<<<<<<< HEAD
                 mTriMesh->addTriangle(Misc::Convert::toBullet(mMatrix.preMult(v1)),
                     Misc::Convert::toBullet(mMatrix.preMult(v2)), Misc::Convert::toBullet(mMatrix.preMult(v3)));
+=======
+                mTriMesh->addTriangle(
+                    toBullet(mMatrix.preMult(v1)), toBullet(mMatrix.preMult(v2)), toBullet(mMatrix.preMult(v3)));
+>>>>>>> origin/main
         }
 
         btTriangleMesh* mTriMesh;
@@ -82,11 +117,19 @@ namespace Resource
             auto triangleMeshShape = std::make_unique<TriangleMeshShape>(mTriangleMesh.release(), true);
             btVector3 aabbMin = triangleMeshShape->getLocalAabbMin();
             btVector3 aabbMax = triangleMeshShape->getLocalAabbMax();
+<<<<<<< HEAD
             shape->mCollisionBox.mExtents[0] = static_cast<float>(aabbMax[0] - aabbMin[0]) / 2.0f;
             shape->mCollisionBox.mExtents[1] = static_cast<float>(aabbMax[1] - aabbMin[1]) / 2.0f;
             shape->mCollisionBox.mExtents[2] = static_cast<float>(aabbMax[2] - aabbMin[2]) / 2.0f;
             shape->mCollisionBox.mCenter = osg::Vec3f(static_cast<float>(aabbMax[0] + aabbMin[0]) / 2.0f,
                 static_cast<float>(aabbMax[1] + aabbMin[1]) / 2.0f, static_cast<float>(aabbMax[2] + aabbMin[2]) / 2.0f);
+=======
+            shape->mCollisionBox.mExtents[0] = (aabbMax[0] - aabbMin[0]) / 2.0f;
+            shape->mCollisionBox.mExtents[1] = (aabbMax[1] - aabbMin[1]) / 2.0f;
+            shape->mCollisionBox.mExtents[2] = (aabbMax[2] - aabbMin[2]) / 2.0f;
+            shape->mCollisionBox.mCenter = osg::Vec3f(
+                (aabbMax[0] + aabbMin[0]) / 2.0f, (aabbMax[1] + aabbMin[1]) / 2.0f, (aabbMax[2] + aabbMin[2]) / 2.0f);
+>>>>>>> origin/main
             shape->mCollisionShape.reset(triangleMeshShape.release());
 
             return shape;
@@ -117,7 +160,38 @@ namespace Resource
         if (Misc::getFileExtension(name.value()) == "nif")
         {
             NifBullet::BulletNifLoader loader;
+<<<<<<< HEAD
             shape = loader.load(*mNifFileManager->get(name));
+=======
+            const Nif::FileView nif = *mNifFileManager->get(name);
+            shape = loader.load(nif);
+
+            // Starfield moved render triangles into external .mesh streams and its NIFs often no longer expose
+            // legacy BSX/Havok triangles to BulletNifLoader. Reuse the already decoded render template as a
+            // conservative static collision fallback so exterior floors are walkable in the shared OpenMW world.
+            if (nif.getBethVersion() == Nif::NIFFile::BethVersion::BETHVER_STF
+                && isStarfieldWorldCollisionCandidate(name))
+            {
+                osg::ref_ptr<const osg::Node> constNode(mSceneManager->getTemplate(name));
+                osg::ref_ptr<osg::Node> node(const_cast<osg::Node*>(constNode.get()));
+                NodeToShapeVisitor visitor;
+                node->accept(visitor);
+                if (osg::ref_ptr<BulletShape> generated = visitor.getShape())
+                {
+                    generated->mFileName = name;
+                    constNode->getUserValue(Misc::OsgUserValues::sFileHash, generated->mFileHash);
+                    shape = std::move(generated);
+
+                    static std::atomic<int> generatedLogCount{ 0 };
+                    const int logIndex = generatedLogCount.fetch_add(1);
+                    if (logIndex < 40)
+                        Log(Debug::Info) << "World viewer: generated Starfield static collision from external render mesh "
+                                         << name;
+                    else if (logIndex == 40)
+                        Log(Debug::Info) << "World viewer: further generated Starfield collision logs suppressed";
+                }
+            }
+>>>>>>> origin/main
         }
         else
         {

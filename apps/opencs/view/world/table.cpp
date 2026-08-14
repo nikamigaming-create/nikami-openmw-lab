@@ -66,8 +66,14 @@ void CSVWorld::Table::contextMenuEvent(QContextMenuEvent* event)
 
     int currentRow = rowAt(event->y());
     int currentColumn = columnAt(event->x());
+<<<<<<< HEAD
     if (mEditIdAction->setCell(currentRow, currentColumn))
     {
+=======
+    if (mEditIdAction->isValidIdCell(currentRow, currentColumn))
+    {
+        mEditIdAction->setCell(currentRow, currentColumn);
+>>>>>>> origin/main
         menu.addAction(mEditIdAction);
         menu.addSeparator();
     }
@@ -411,7 +417,11 @@ CSVWorld::Table::Table(const CSMWorld::UniversalId& id, bool createAndDelete, bo
     CSMPrefs::Shortcut* extendedRevertShortcut = new CSMPrefs::Shortcut("table-extendedrevert", this);
     extendedRevertShortcut->associateAction(mExtendedRevertAction);
 
+<<<<<<< HEAD
     mEditIdAction = new TableEditIdAction(*this, mDocument.getData(), this);
+=======
+    mEditIdAction = new TableEditIdAction(*this, this);
+>>>>>>> origin/main
     connect(mEditIdAction, &QAction::triggered, this, &Table::editCell);
     addAction(mEditIdAction);
 

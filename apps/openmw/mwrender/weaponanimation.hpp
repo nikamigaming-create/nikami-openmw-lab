@@ -55,6 +55,11 @@ namespace MWRender
 
         /// Configure controllers, should be called every animation frame.
         void configureControllers(float characterPitchRadians);
+<<<<<<< HEAD
+=======
+
+        osg::Node* getEquippedWeaponNode() { return getWeaponNode(); }
+>>>>>>> origin/main
 
     protected:
         PartHolderPtr mAmmunition;

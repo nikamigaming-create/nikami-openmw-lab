@@ -43,8 +43,12 @@ namespace Compiler
         std::string mName;
         std::string mMemberName;
         bool mReferenceMember;
+<<<<<<< HEAD
         std::vector<std::string> mPotentialButtons;
         unsigned int mNumButtons{ 0 };
+=======
+        int mButtons;
+>>>>>>> origin/main
         std::string mExplicit;
         char mType;
         ExprParser mExprParser;
@@ -89,7 +93,11 @@ namespace Compiler
 
     protected:
         void visitedPlaceholder(
+<<<<<<< HEAD
             Placeholder placeholder, int flags, int width, int precision, Notation notation) override;
+=======
+            Placeholder placeholder, char padding, int width, int precision, Notation notation) override;
+>>>>>>> origin/main
         void visitedCharacter(char c) override {}
 
     public:

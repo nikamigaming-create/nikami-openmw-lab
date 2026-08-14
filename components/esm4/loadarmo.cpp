@@ -71,7 +71,14 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("INDX"): // FO4
             {
+<<<<<<< HEAD
                 reader.get(currentIndex);
+=======
+                if (subHdr.dataSize == sizeof(currentIndex))
+                    reader.get(currentIndex);
+                else
+                    reader.skipSubRecordData();
+>>>>>>> origin/main
                 break;
             }
             case ESM::fourCC("MODL"):
@@ -84,9 +91,23 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                     // FO4
                     else
                     {
+<<<<<<< HEAD
                         if (mAddOns.size() <= currentIndex)
                             mAddOns.resize(currentIndex + 1);
                         reader.getFormId(mAddOns[currentIndex]);
+=======
+                        ESM::FormId addon;
+                        reader.getFormId(addon);
+                        if (mAddOns.size() <= currentIndex)
+                        {
+                            mAddOns.resize(currentIndex + 1);
+                            mAddOns[currentIndex] = addon;
+                        }
+                        else if (mAddOns[currentIndex].isZeroOrUnset())
+                            mAddOns[currentIndex] = addon;
+                        else
+                            mAddOns.push_back(addon);
+>>>>>>> origin/main
                     }
                 }
                 else
@@ -164,6 +185,7 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 }
                 break;
             case ESM::fourCC("SCRI"):
+<<<<<<< HEAD
                 reader.getFormId(mScriptId);
                 break;
             case ESM::fourCC("ANAM"):
@@ -174,15 +196,68 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("MODB"):
                 reader.get(mBoundRadius);
+=======
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mScriptId);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("ANAM"):
+                if (subHdr.dataSize == sizeof(mEnchantmentPoints))
+                    reader.get(mEnchantmentPoints);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("ENAM"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mEnchantment);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("BIPL"): // FO3/FNV FLST of armor add-ons
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mBipedModelList);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("MODB"):
+                if (subHdr.dataSize == sizeof(mBoundRadius))
+                    reader.get(mBoundRadius);
+                else
+                    reader.skipSubRecordData();
+>>>>>>> origin/main
                 break;
             case ESM::fourCC("DESC"):
                 reader.getLocalizedString(mText);
                 break;
+<<<<<<< HEAD
             case ESM::fourCC("YNAM"):
                 reader.getFormId(mPickUpSound);
                 break;
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mDropSound);
+=======
+            case ESM::fourCC("DNAM"):
+                if (subHdr.dataSize == sizeof(mFalloutData))
+                {
+                    reader.get(mFalloutData);
+                    mHasFalloutData = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("YNAM"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mPickUpSound);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("ZNAM"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mDropSound);
+                else
+                    reader.skipSubRecordData();
+>>>>>>> origin/main
                 break;
             case ESM::fourCC("MODT"):
             case ESM::fourCC("MO2B"):
@@ -198,7 +273,10 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
             case ESM::fourCC("TNAM"):
+<<<<<<< HEAD
             case ESM::fourCC("DNAM"):
+=======
+>>>>>>> origin/main
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("ETYP"):
@@ -207,7 +285,10 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("EITM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("REPL"): // FO3
+<<<<<<< HEAD
             case ESM::fourCC("BIPL"): // FO3
+=======
+>>>>>>> origin/main
             case ESM::fourCC("MODD"): // FO3
             case ESM::fourCC("MOSD"): // FO3
             case ESM::fourCC("MODS"): // FO3
@@ -224,17 +305,39 @@ void ESM4::Armor::load(ESM4::Reader& reader)
             case ESM::fourCC("DSTD"):
             case ESM::fourCC("DSTF"): // Destructible end
             case ESM::fourCC("APPR"): // FO4
+<<<<<<< HEAD
             case ESM::fourCC("DAMA"): // FO4
             case ESM::fourCC("FNAM"): // FO4
             case ESM::fourCC("INRD"): // FO4
             case ESM::fourCC("PTRN"): // FO4
+=======
+            case ESM::fourCC("BFCB"): // Starfield
+            case ESM::fourCC("BFCE"): // Starfield
+            case ESM::fourCC("DAMA"): // FO4
+            case ESM::fourCC("FLLD"): // Starfield
+            case ESM::fourCC("FNAM"): // FO4
+            case ESM::fourCC("INRD"): // FO4
+            case ESM::fourCC("ODTY"): // Starfield
+            case ESM::fourCC("PTT2"): // Starfield
+            case ESM::fourCC("PTRN"): // FO4
+            case ESM::fourCC("REFL"): // Starfield
+>>>>>>> origin/main
             case ESM::fourCC("OBTE"): // FO4 object template start
             case ESM::fourCC("OBTF"):
             case ESM::fourCC("OBTS"):
             case ESM::fourCC("STOP"): // FO4 object template end
+<<<<<<< HEAD
                 reader.skipSubRecordData();
                 break;
             default:
+=======
+            case ESM::fourCC("XFLG"): // Starfield
+                reader.skipSubRecordData();
+                break;
+            default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadarmo"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::ARMO::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -8,6 +8,7 @@
 
 #include "../../model/tools/search.hpp"
 
+<<<<<<< HEAD
 void CSVTools::SearchBox::updateSearchButtons()
 {
     mReplace.setEnabled(false);
@@ -40,6 +41,30 @@ void CSVTools::SearchBox::updateSearchButtons()
     mText.setStyleSheet(style);
     mSearch.setEnabled(canSearch);
     mReplace.setEnabled(mAllowReplace && mSearchResultCount > 0);
+=======
+void CSVTools::SearchBox::updateSearchButton()
+{
+    if (!mSearchEnabled)
+        mSearch.setEnabled(false);
+    else
+    {
+        switch (mMode.currentIndex())
+        {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+
+                mSearch.setEnabled(!mText.text().isEmpty());
+                break;
+
+            case 4:
+
+                mSearch.setEnabled(true);
+                break;
+        }
+    }
+>>>>>>> origin/main
 }
 
 CSVTools::SearchBox::SearchBox(QWidget* parent)
@@ -86,7 +111,10 @@ CSVTools::SearchBox::SearchBox(QWidget* parent)
     mLayout->addWidget(&mReplaceInput, 1, 1);
 
     mLayout->addWidget(&mReplace, 1, 3);
+<<<<<<< HEAD
     mReplace.setEnabled(false);
+=======
+>>>>>>> origin/main
 
     // layout adjustments
     mLayout->setColumnMinimumWidth(2, 50);
@@ -99,6 +127,7 @@ CSVTools::SearchBox::SearchBox(QWidget* parent)
     // update
     modeSelected(0);
 
+<<<<<<< HEAD
     updateSearchButtons();
 }
 
@@ -106,11 +135,15 @@ void CSVTools::SearchBox::setEditLock(bool locked)
 {
     mAllowReplace = !locked;
     updateSearchButtons();
+=======
+    updateSearchButton();
+>>>>>>> origin/main
 }
 
 void CSVTools::SearchBox::setSearchMode(bool enabled)
 {
     mSearchEnabled = enabled;
+<<<<<<< HEAD
     updateSearchButtons();
 }
 
@@ -122,6 +155,9 @@ void CSVTools::SearchBox::setSearchResultCount(int resultCount)
     // Update search buttons only if we're changing between zero and non-zero
     if ((priorResultCount == 0) != (mSearchResultCount == 0))
         updateSearchButtons();
+=======
+    updateSearchButton();
+>>>>>>> origin/main
 }
 
 CSMTools::Search CSVTools::SearchBox::getSearch() const
@@ -173,6 +209,14 @@ std::string CSVTools::SearchBox::getReplaceText() const
     }
 }
 
+<<<<<<< HEAD
+=======
+void CSVTools::SearchBox::setEditLock(bool locked)
+{
+    mReplace.setEnabled(!locked);
+}
+
+>>>>>>> origin/main
 void CSVTools::SearchBox::focus()
 {
     mInput.currentWidget()->setFocus();
@@ -199,12 +243,20 @@ void CSVTools::SearchBox::modeSelected(int index)
 
     mInput.currentWidget()->setFocus();
 
+<<<<<<< HEAD
     updateSearchButtons();
+=======
+    updateSearchButton();
+>>>>>>> origin/main
 }
 
 void CSVTools::SearchBox::textChanged(const QString& text)
 {
+<<<<<<< HEAD
     updateSearchButtons();
+=======
+    updateSearchButton();
+>>>>>>> origin/main
 }
 
 void CSVTools::SearchBox::startSearch(bool checked)

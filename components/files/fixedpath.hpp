@@ -3,7 +3,10 @@
 
 #include <filesystem>
 #include <string>
+<<<<<<< HEAD
 #include <vector>
+=======
+>>>>>>> origin/main
 
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
 #ifndef ANDROID
@@ -57,16 +60,27 @@ namespace Files
         /**
          * \brief Path constructor.
          *
+<<<<<<< HEAD
          * \param [in] applicationName - Name of the application
          */
         FixedPath(const std::string& applicationName)
             : mPath(applicationName + "/")
+=======
+         * \param [in] application_name - Name of the application
+         */
+        FixedPath(const std::string& application_name)
+            : mPath(application_name + "/")
+>>>>>>> origin/main
             , mUserConfigPath(mPath.getUserConfigPath())
             , mUserDataPath(mPath.getUserDataPath())
             , mGlobalConfigPath(mPath.getGlobalConfigPath())
             , mLocalPath(mPath.getLocalPath())
             , mGlobalDataPath(mPath.getGlobalDataPath())
             , mCachePath(mPath.getCachePath())
+<<<<<<< HEAD
+=======
+            , mInstallPath(mPath.getInstallPath())
+>>>>>>> origin/main
         {
         }
 
@@ -87,7 +101,11 @@ namespace Files
          */
         const std::filesystem::path& getLocalPath() const { return mLocalPath; }
 
+<<<<<<< HEAD
         std::vector<std::filesystem::path> getInstallPaths() const { return mPath.getInstallPaths(); }
+=======
+        const std::filesystem::path& getInstallPath() const { return mInstallPath; }
+>>>>>>> origin/main
 
         const std::filesystem::path& getGlobalDataPath() const { return mGlobalDataPath; }
 
@@ -102,8 +120,15 @@ namespace Files
         std::filesystem::path mLocalPath; /**< It is the same directory where application was run */
 
         std::filesystem::path mGlobalDataPath; /**< Global application data path */
+<<<<<<< HEAD
 
         std::filesystem::path mCachePath;
+=======
+
+        std::filesystem::path mCachePath;
+
+        std::filesystem::path mInstallPath;
+>>>>>>> origin/main
     };
 
 } /* namespace Files */

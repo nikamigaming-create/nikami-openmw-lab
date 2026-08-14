@@ -73,7 +73,16 @@ namespace ESM4
                 case ESM::fourCC("DATA"):
                     mData = readData(mId, mEditorId, reader);
                     break;
+<<<<<<< HEAD
                 default:
+=======
+                case ESM::fourCC("XALG"): // Starfield
+                    reader.skipSubRecordData();
+                    break;
+                default:
+                    if (reader.skipUnknownStarfieldSubRecordData("loadgmst"))
+                        break;
+>>>>>>> origin/main
                     throw std::runtime_error(
                         "Unknown ESM4 GMST (" + mId.toString() + ") subrecord " + ESM::printName(subHdr.typeId));
             }

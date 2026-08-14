@@ -30,9 +30,15 @@ namespace MWGui
 
         DragAndDrop();
 
+<<<<<<< HEAD
         void startDrag(int index, SortFilterItemModel* sortModel, ItemModel* sourceModel, ItemView* sourceView,
             std::size_t count, bool playSound = true);
         void drop(ItemModel* targetModel, ItemView* targetView, bool playSound = true);
+=======
+        void startDrag(
+            int index, SortFilterItemModel* sortModel, ItemModel* sourceModel, ItemView* sourceView, std::size_t count);
+        void drop(ItemModel* targetModel, ItemView* targetView);
+>>>>>>> origin/main
         void update();
         void onFrame();
 

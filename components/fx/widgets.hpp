@@ -97,8 +97,13 @@ namespace Fx
                 if constexpr (std::is_fundamental_v<UType>)
                 {
                     mUniform->template setValue<UType>(mValue);
+<<<<<<< HEAD
                     range = static_cast<float>(mUniform->template getMax<UType>() - mUniform->template getMin<UType>());
                     min = static_cast<float>(mUniform->template getMin<UType>());
+=======
+                    range = mUniform->template getMax<UType>() - mUniform->template getMin<UType>();
+                    min = mUniform->template getMin<UType>();
+>>>>>>> origin/main
                 }
                 else
                 {
@@ -155,9 +160,15 @@ namespace Fx
             void notifyMouseWheel(MyGUI::Widget* /*sender*/, int rel)
             {
                 if (rel > 0)
+<<<<<<< HEAD
                     increment(static_cast<T>(mUniform->mStep));
                 else
                     increment(static_cast<T>(-mUniform->mStep));
+=======
+                    increment(mUniform->mStep);
+                else
+                    increment(-mUniform->mStep);
+>>>>>>> origin/main
             }
 
             void notifyMouseButtonDragged(MyGUI::Widget* /*sender*/, int left, int top, MyGUI::MouseButton id)
@@ -169,15 +180,24 @@ namespace Fx
 
                 // allow finer tuning when shift is pressed
                 constexpr double scaling = 20.0;
+<<<<<<< HEAD
                 T step = static_cast<T>(
                     MyGUI::InputManager::getInstance().isShiftPressed() ? mUniform->mStep / scaling : mUniform->mStep);
+=======
+                T step
+                    = MyGUI::InputManager::getInstance().isShiftPressed() ? mUniform->mStep / scaling : mUniform->mStep;
+>>>>>>> origin/main
 
                 if (step == 0)
                 {
                     if constexpr (std::is_integral_v<T>)
                         step = 1;
                     else
+<<<<<<< HEAD
                         step = static_cast<T>(mUniform->mStep);
+=======
+                        step = mUniform->mStep;
+>>>>>>> origin/main
                 }
 
                 if (delta > 0)
@@ -209,9 +229,15 @@ namespace Fx
             void notifyButtonClicked(MyGUI::Widget* sender)
             {
                 if (sender == mButtonDecrease)
+<<<<<<< HEAD
                     increment(static_cast<T>(-mUniform->mStep));
                 else if (sender == mButtonIncrease)
                     increment(static_cast<T>(mUniform->mStep));
+=======
+                    increment(-mUniform->mStep);
+                else if (sender == mButtonIncrease)
+                    increment(mUniform->mStep);
+>>>>>>> origin/main
             }
 
             MyGUI::Button* mButtonDecrease{ nullptr };

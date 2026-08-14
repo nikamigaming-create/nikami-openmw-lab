@@ -14,7 +14,10 @@ namespace ESM
     void ObjectState::load(ESMReader& esm)
     {
         mVersion = esm.getFormatVersion();
+<<<<<<< HEAD
         mActorIdConverter = esm.mActorIdConverter;
+=======
+>>>>>>> origin/main
 
         bool isDeleted;
         mRef.loadData(esm, isDeleted);

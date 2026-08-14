@@ -54,6 +54,7 @@ namespace MWGui
         center();
     }
 
+<<<<<<< HEAD
     bool ConfirmationDialog::exit()
     {
         setVisible(false);
@@ -61,6 +62,20 @@ namespace MWGui
         return true;
     }
 
+=======
+    void ConfirmationDialog::confirm()
+    {
+        onOkButtonClicked(mOkButton);
+    }
+
+    bool ConfirmationDialog::exit()
+    {
+        setVisible(false);
+        eventCancelClicked();
+        return true;
+    }
+
+>>>>>>> origin/main
     void ConfirmationDialog::onCancelButtonClicked(MyGUI::Widget* /*sender*/)
     {
         exit();

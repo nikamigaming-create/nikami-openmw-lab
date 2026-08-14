@@ -13,6 +13,7 @@ namespace Misc
         std::array<unsigned int, 4> mBudgetStepCount;
 
     public:
+<<<<<<< HEAD
         BudgetMeasurement(const float defaultExpense)
         {
             mBudgetHistory = { defaultExpense, defaultExpense, defaultExpense, defaultExpense };
@@ -22,16 +23,35 @@ namespace Misc
         void reset(const float defaultExpense)
         {
             mBudgetHistory = { defaultExpense, defaultExpense, defaultExpense, defaultExpense };
+=======
+        BudgetMeasurement(const float default_expense)
+        {
+            mBudgetHistory = { default_expense, default_expense, default_expense, default_expense };
+            mBudgetStepCount = { 1, 1, 1, 1 };
+        }
+
+        void reset(const float default_expense)
+        {
+            mBudgetHistory = { default_expense, default_expense, default_expense, default_expense };
+>>>>>>> origin/main
             mBudgetStepCount = { 1, 1, 1, 1 };
         }
 
         void update(double delta, unsigned int stepCount, size_t cursor)
         {
+<<<<<<< HEAD
             mBudgetHistory[cursor % 4] = static_cast<float>(delta);
             mBudgetStepCount[cursor % 4] = stepCount;
         }
 
         float get() const
+=======
+            mBudgetHistory[cursor % 4] = delta;
+            mBudgetStepCount[cursor % 4] = stepCount;
+        }
+
+        double get() const
+>>>>>>> origin/main
         {
             float sum = (mBudgetHistory[0] + mBudgetHistory[1] + mBudgetHistory[2] + mBudgetHistory[3]);
             unsigned int stepCountSum

@@ -3,13 +3,17 @@
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
 
+<<<<<<< HEAD
 #include <components/esm/attr.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadskil.hpp>
+=======
+>>>>>>> origin/main
 #include <components/misc/concepts.hpp>
 
 namespace ESM
 {
+<<<<<<< HEAD
     namespace
     {
         // IRDT format defined by Morrowind.esm
@@ -45,6 +49,9 @@ namespace ESM
     }
 
     template <Misc::SameAsWithoutCvref<EsmIRDTstruct> T>
+=======
+    template <Misc::SameAsWithoutCvref<Ingredient::IRDTstruct> T>
+>>>>>>> origin/main
     void decompose(T&& v, const auto& f)
     {
         f(v.mWeight, v.mValue, v.mEffectID, v.mSkills, v.mAttributes);
@@ -73,9 +80,13 @@ namespace ESM
                     mName = esm.getHString();
                     break;
                 case fourCC("IRDT"):
+<<<<<<< HEAD
                     EsmIRDTstruct bin;
                     esm.getSubComposite(bin);
                     fromBinary(bin, mData);
+=======
+                    esm.getSubComposite(mData);
+>>>>>>> origin/main
                     hasData = true;
                     break;
                 case fourCC("SCRI"):
@@ -102,6 +113,7 @@ namespace ESM
         // horrible hack to fix broken data in records
         for (int i = 0; i < 4; ++i)
         {
+<<<<<<< HEAD
             if (mData.mEffectID[i] != ESM::MagicEffect::AbsorbAttribute
                 && mData.mEffectID[i] != ESM::MagicEffect::DamageAttribute
                 && mData.mEffectID[i] != ESM::MagicEffect::DrainAttribute
@@ -119,6 +131,19 @@ namespace ESM
                 && mData.mEffectID[i] != ESM::MagicEffect::RestoreSkill)
             {
                 mData.mSkills[i] = ESM::RefId();
+=======
+            if (mData.mEffectID[i] != 85 && mData.mEffectID[i] != 22 && mData.mEffectID[i] != 17
+                && mData.mEffectID[i] != 79 && mData.mEffectID[i] != 74)
+            {
+                mData.mAttributes[i] = -1;
+            }
+
+            // is this relevant in cycle from 0 to 4?
+            if (mData.mEffectID[i] != 89 && mData.mEffectID[i] != 26 && mData.mEffectID[i] != 21
+                && mData.mEffectID[i] != 83 && mData.mEffectID[i] != 78)
+            {
+                mData.mSkills[i] = -1;
+>>>>>>> origin/main
             }
         }
     }
@@ -135,9 +160,13 @@ namespace ESM
 
         esm.writeHNCString("MODL", mModel);
         esm.writeHNOCString("FNAM", mName);
+<<<<<<< HEAD
         EsmIRDTstruct bin;
         toBinary(mData, bin);
         esm.writeNamedComposite("IRDT", bin);
+=======
+        esm.writeNamedComposite("IRDT", mData);
+>>>>>>> origin/main
         esm.writeHNOCRefId("SCRI", mScript);
         esm.writeHNOCString("ITEX", mIcon);
     }
@@ -149,9 +178,15 @@ namespace ESM
         mData.mValue = 0;
         for (int i = 0; i < 4; ++i)
         {
+<<<<<<< HEAD
             mData.mEffectID[i] = ESM::MagicEffect::WaterBreathing;
             mData.mSkills[i] = ESM::RefId();
             mData.mAttributes[i] = ESM::RefId();
+=======
+            mData.mEffectID[i] = 0;
+            mData.mSkills[i] = 0;
+            mData.mAttributes[i] = 0;
+>>>>>>> origin/main
         }
 
         mName.clear();

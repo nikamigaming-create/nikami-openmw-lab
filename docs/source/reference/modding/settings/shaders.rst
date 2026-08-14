@@ -2,17 +2,36 @@ Shaders Settings
 ################
 
 .. omw-setting::
+<<<<<<< HEAD
+=======
+   :title: force shaders
+   :type: boolean
+   :range: true, false
+   :default: false
+
+   Force rendering with shaders for all objects, even those that do not strictly need them.
+   Required if enhancements like shadows or reverse z are enabled.
+   May have a significant performance impact.
+
+.. omw-setting::
+>>>>>>> origin/main
    :title: force per pixel lighting
    :type: boolean
    :range: true, false
    :default: false
    :location: :bdg-info:`In Game > Settings > Options > Video > Lights`
 
+<<<<<<< HEAD
    Force the use of per-pixel lighting.
    By default, only bump- and normal-mapped objects use per-pixel lighting.
    Enabling per-pixel lighting results in visual differences to the original engine
    as certain lights in Morrowind rely on vertex lighting to look as intended.
    Note that groundcover shaders and particle effects ignore this setting.
+=======
+   Force per-pixel lighting on all shader objects.
+   Changes lighting behavior from the original MW engine.
+   Groundcover shaders and particles ignore this setting.
+>>>>>>> origin/main
 
 .. omw-setting::
    :title: clamp lighting
@@ -20,8 +39,14 @@ Shaders Settings
    :range: true, false
    :default: true
 
+<<<<<<< HEAD
    Cap lighting brightness at (1, 1, 1) to replicate Morrowind's rendering.
    Prevents overly bright or shifted colors but can dull lighting.
+=======
+   Restrict lighting to a maximum of (1,1,1) on shader objects.
+   Prevents overly bright or shifted colors but can dull lighting.
+   Terrain is always drawn with shaders to prevent seams.
+>>>>>>> origin/main
 
 .. omw-setting::
    :title: auto use object normal maps
@@ -102,12 +127,21 @@ Shaders Settings
 .. omw-setting::
    :title: lighting method
    :type: string
+<<<<<<< HEAD
    :range: shaders compatibility | shaders
+=======
+   :range: legacy | shaders compatibility | shaders
+>>>>>>> origin/main
    :default: shaders compatibility
    :location: :bdg-info:`In Game > Settings > Options > Video > Lights` :bdg-success:`Launcher > Settings > Visuals > Lighting`
 
    Controls internal light source handling:
+<<<<<<< HEAD
    - `shaders compatibility`: recommended for older hardware.
+=======
+   - `legacy`: fixed-function pipeline, max 8 lights per object.
+   - `shaders compatibility`: removes light limit, better attenuation, recommended for older hardware.
+>>>>>>> origin/main
    - `shaders`: modern lighting approach, higher light counts, better for modern GPUs.
 
 .. omw-setting::

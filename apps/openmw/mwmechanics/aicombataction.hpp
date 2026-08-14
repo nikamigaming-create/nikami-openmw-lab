@@ -2,6 +2,10 @@
 #define OPENMW_AICOMBAT_ACTION_H
 
 #include <memory>
+<<<<<<< HEAD
+=======
+#include <optional>
+>>>>>>> origin/main
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/ptr.hpp"
@@ -102,10 +106,22 @@ namespace MWMechanics
     std::unique_ptr<Action> prepareNextAction(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy);
     float getBestActionRating(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy);
 
+<<<<<<< HEAD
     float getDistanceMinusHalfExtents(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy, bool minusZDist = false);
     float getMaxAttackDistance(const MWWorld::Ptr& actor);
     bool canFight(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy);
 
+=======
+    /// Return the authored range for a live Fallout actor's currently equipped action. A null result means the
+    /// required FNV WEAP/GMST data is incomplete; callers must not substitute Morrowind combat constants.
+    std::optional<float> getFalloutCombatRange(const MWWorld::Ptr& actor, bool& isRanged);
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& actor);
+
+    float getDistanceMinusHalfExtents(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy, bool minusZDist = false);
+    float getMaxAttackDistance(const MWWorld::Ptr& actor);
+    bool canFight(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy);
+
+>>>>>>> origin/main
     float vanillaRateFlee(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy);
     bool makeFleeDecision(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy, float antiFleeRating);
 }

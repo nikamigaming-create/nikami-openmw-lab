@@ -1,7 +1,11 @@
 ---
 -- Provides read-only access to data directories via VFS.
 -- Interface is very similar to "io" library.
+<<<<<<< HEAD
 -- @context global|menu|local|player|load
+=======
+-- @context global|menu|local|player
+>>>>>>> origin/main
 -- @module vfs
 -- @usage local vfs = require('openmw.vfs')
 
@@ -19,8 +23,13 @@
 -- @return #nil, #string nil plus the error message in case of any error.
 
 ---
+<<<<<<< HEAD
 -- Get an iterator function to fetch the next line from a given file.
 -- Throws an exception if the file is closed.
+=======
+-- Get an iterator function to fetch the next line from given file.
+-- Throws an exception if file is closed.
+>>>>>>> origin/main
 --
 -- Hint: since garbage collection works once per frame,
 -- you will get the whole file in RAM if you read it in one frame.
@@ -36,8 +45,13 @@
 -- end
 
 ---
+<<<<<<< HEAD
 -- Set new position in a file.
 -- Throws an exception if the file is closed or seek base is incorrect.
+=======
+-- Set new position in file.
+-- Throws an exception if file is closed or seek base is incorrect.
+>>>>>>> origin/main
 -- @function [parent=#FileHandle] seek
 -- @param self
 -- @param #string whence Seek base (optional, "cur" by default). Can be:
@@ -59,8 +73,13 @@
 -- print(f:seek("end"));
 
 ---
+<<<<<<< HEAD
 -- Read data from a file to strings.
 -- Throws an exception if the file is closed, if there are too many arguments or if an invalid format is encountered.
+=======
+-- Read data from file to strings.
+-- Throws an exception if file is closed, if there is too many arguments or if an invalid format encountered.
+>>>>>>> origin/main
 --
 -- Hint: since garbage collection works once per frame,
 -- you will get the whole file in RAM if you read it in one frame.
@@ -94,7 +113,11 @@
 -- -- prints(1, nil)
 
 ---
+<<<<<<< HEAD
 -- Check if a file exists in VFS
+=======
+-- Check if file exists in VFS
+>>>>>>> origin/main
 -- @function [parent=#vfs] fileExists
 -- @param #string fileName Path to file in VFS
 -- @return #boolean (true - exists, false - does not exist)
@@ -115,9 +138,15 @@
 -- end
 
 ---
+<<<<<<< HEAD
 -- Get an iterator function to fetch the next line from a file with the given path.
 -- Throws an exception if the file is closed or the file with the given path does not exist.
 -- Closes the file automatically when it fails to read any more bytes.
+=======
+-- Get an iterator function to fetch the next line from file with given path.
+-- Throws an exception if file is closed or file with given path does not exist.
+-- Closes file automatically when it fails to read any more bytes.
+>>>>>>> origin/main
 --
 -- Hint: since garbage collection works once per frame,
 -- you will get the whole file in RAM if you read it in one frame.
@@ -132,7 +161,11 @@
 -- end
 
 ---
+<<<<<<< HEAD
 -- Get an iterator function to fetch file names with given path prefix from the VFS
+=======
+-- Get iterator function to fetch file names with given path prefix from VFS
+>>>>>>> origin/main
 -- @function [parent=#vfs] pathsWithPrefix
 -- @param #string path Path prefix
 -- @return #function Function to get next file name

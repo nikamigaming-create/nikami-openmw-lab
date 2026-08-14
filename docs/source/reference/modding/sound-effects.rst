@@ -161,7 +161,11 @@ Combat
    * - ``miss``
      - An attack misses
    * - ``weapon swish``
+<<<<<<< HEAD
      - Melee or thrown weapon attack. The sound is modulated based on attack strength.
+=======
+     - Melee weapon attack. The sound is modulated based on attack strength.
+>>>>>>> origin/main
 
 
 UI

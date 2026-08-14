@@ -10,6 +10,23 @@ local Player = require('openmw.types').Player
 local I = require('openmw.interfaces')
 
 local settings = storage.playerSection('SettingsOMWControls')
+<<<<<<< HEAD
+=======
+local falloutInputState = storage.playerSection('FNVInputState')
+local falloutNewVegas = core.contentFiles and core.contentFiles.has
+    and core.contentFiles.has('FalloutNV.esm') or false
+
+-- Existing OpenMW profiles predate FNV support and therefore persist the
+-- Morrowind walk-first default. Migrate each FNV player profile once so its
+-- normal W input matches retail Fallout's run-first control semantics; the
+-- Always Run trigger remains user-toggleable afterward.
+-- This must happen from onFrame, after the menu-context settings registry has
+-- installed defaults. Doing it while the player script loads can be overwritten
+-- later by that registry and silently leaves Fallout in the walk stance.
+local falloutRunDefaultPending = falloutNewVegas
+    and falloutInputState:get('runDefaultInitializedV2') ~= true
+local falloutRunStateAnnounced = false
+>>>>>>> origin/main
 
 do
     local rangeActions = {
@@ -87,7 +104,28 @@ local attemptToJump = false
 local function processMovement()
     local movement = input.getRangeActionValue('MoveForward') - input.getRangeActionValue('MoveBackward')
     local sideMovement = input.getRangeActionValue('MoveRight') - input.getRangeActionValue('MoveLeft')
+<<<<<<< HEAD
     local run = input.getBooleanActionValue('Run') ~= settings:get('alwaysRun')
+=======
+    local alwaysRun = settings:get('alwaysRun')
+    if falloutRunDefaultPending then
+        settings:set('alwaysRun', true)
+        alwaysRun = true
+        if settings:get('alwaysRun') == true then
+            falloutInputState:set('runDefaultInitializedV2', true)
+            falloutRunDefaultPending = false
+            print('FNV input: run-first profile migration applied alwaysRun=1 phase=frame')
+        end
+    end
+    local runAction = input.getBooleanActionValue('Run')
+    local run = runAction ~= alwaysRun
+    if falloutNewVegas and movement ~= 0 and not falloutRunStateAnnounced then
+        falloutRunStateAnnounced = true
+        print(string.format(
+            'FNV input: locomotion state movement=%.3f runAction=%d alwaysRun=%d run=%d',
+            movement, runAction and 1 or 0, alwaysRun and 1 or 0, run and 1 or 0))
+    end
+>>>>>>> origin/main
 
     if movement ~= 0 then
         autoMove = false
@@ -171,11 +209,19 @@ local function processAttacking()
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
     if Actor.getStance(self) == Actor.STANCE.Spell then
+<<<<<<< HEAD
         self.controls.use = startUse and self.ATTACK_TYPE.Any or self.ATTACK_TYPE.NoAttack
     elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') then
         self.controls.use = self.ATTACK_TYPE.Any
     else
         self.controls.use = self.ATTACK_TYPE.NoAttack
+=======
+        self.controls.use = startUse and 1 or 0
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') then
+        self.controls.use = 1
+    else
+        self.controls.use = 0
+>>>>>>> origin/main
     end
     startUse = false
 end
@@ -198,6 +244,12 @@ end))
 
 input.registerTriggerHandler('Journal', async:callback(function()
     if not uiAllowed() then return end
+<<<<<<< HEAD
+=======
+    -- FNV routes this trigger to its DATA / QUESTS pane in ActionManager.
+    -- Do not also open the Morrowind book journal after the native handler.
+    if core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm') then return end
+>>>>>>> origin/main
 
     if I.UI.getMode() == I.UI.MODE.Journal then
         I.UI.removeMode(I.UI.MODE.Journal)

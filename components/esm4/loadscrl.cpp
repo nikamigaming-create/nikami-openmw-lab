@@ -78,6 +78,11 @@ void ESM4::Scroll::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadscrl"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::SCRL::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

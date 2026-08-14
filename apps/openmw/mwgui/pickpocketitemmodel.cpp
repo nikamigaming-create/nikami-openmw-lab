@@ -34,7 +34,11 @@ namespace MWGui
             for (size_t i = 0; i < mSourceModel->getItemCount(); ++i)
             {
                 if (Misc::Rng::roll0to99(prng) > chance)
+<<<<<<< HEAD
                     mHiddenItems.push_back(mSourceModel->getItem(static_cast<ModelIndex>(i)));
+=======
+                    mHiddenItems.push_back(mSourceModel->getItem(i));
+>>>>>>> origin/main
             }
         }
     }
@@ -76,12 +80,26 @@ namespace MWGui
         }
     }
 
+<<<<<<< HEAD
     bool PickpocketItemModel::onDropItem(const MWWorld::Ptr& item, int count)
     {
         // don't allow "reverse pickpocket" (it will be handled by scripts after 1.0)
         return false;
     }
 
+=======
+    void PickpocketItemModel::removeItem(const ItemStack& item, size_t count)
+    {
+        ProxyItemModel::removeItem(item, count);
+    }
+
+    bool PickpocketItemModel::onDropItem(const MWWorld::Ptr& item, int count)
+    {
+        // don't allow "reverse pickpocket" (it will be handled by scripts after 1.0)
+        return false;
+    }
+
+>>>>>>> origin/main
     void PickpocketItemModel::onClose()
     {
         // Make sure we were actually closed, rather than just temporarily hidden (e.g. console or main menu opened)

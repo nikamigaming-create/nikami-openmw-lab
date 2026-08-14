@@ -258,7 +258,11 @@ return {
     TEST_F(LuaStateTest, SafeIndexMetamethod)
     {
         const VFS::Path::Normalized path("metaIndexError.lua");
+<<<<<<< HEAD
         sol::lua_table t = mLua.runInNewSandbox(path);
+=======
+        sol::table t = mLua.runInNewSandbox(path);
+>>>>>>> origin/main
         // without safe get we crash here
         EXPECT_ERROR(LuaUtil::safeGet(t, "any key"), "meta index error");
     }

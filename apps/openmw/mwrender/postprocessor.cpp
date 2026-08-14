@@ -39,6 +39,14 @@
 #include "transparentpass.hpp"
 #include "vismask.hpp"
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwvr/vrpingpongcallback.hpp"
+
+//## VR_PATCH END
+>>>>>>> origin/main
 namespace
 {
     struct ResizedCallback : osg::GraphicsContext::ResizedCallback
@@ -135,12 +143,20 @@ namespace MWRender
 
         mHUDCamera->setReferenceFrame(osg::Camera::ABSOLUTE_RF);
         mHUDCamera->setRenderOrder(osg::Camera::POST_RENDER);
+<<<<<<< HEAD
         mHUDCamera->setClearColor(osg::Vec4(0.45f, 0.45f, 0.14f, 1.f));
+=======
+        mHUDCamera->setClearColor(osg::Vec4(0.45, 0.45, 0.14, 1.0));
+>>>>>>> origin/main
         mHUDCamera->setClearMask(0);
         mHUDCamera->setProjectionMatrix(osg::Matrix::ortho2D(0, 1, 0, 1));
         mHUDCamera->setAllowEventFocus(false);
         mHUDCamera->setViewport(0, 0, mWidth, mHeight);
         mHUDCamera->setNodeMask(Mask_RenderToTexture);
+<<<<<<< HEAD
+=======
+        mHUDCamera->getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+>>>>>>> origin/main
         mHUDCamera->getOrCreateStateSet()->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
         mHUDCamera->addChild(mCanvases[0]);
         mHUDCamera->addChild(mCanvases[1]);
@@ -204,7 +220,11 @@ namespace MWRender
         else
             Log(Debug::Error) << "'glDisablei' unsupported, pass normals will not be available to shaders.";
 
+<<<<<<< HEAD
         mGLSLVersion = static_cast<int>(ext->glslLanguageVersion * 100);
+=======
+        mGLSLVersion = ext->glslLanguageVersion * 100;
+>>>>>>> origin/main
         mUBO = ext->isUniformBufferObjectSupported && mGLSLVersion >= 330;
         mStateUpdater = new Fx::StateUpdater(mUBO);
 
@@ -220,6 +240,18 @@ namespace MWRender
 
         if (mUsePostProcessing)
             enable();
+<<<<<<< HEAD
+=======
+
+        // ## VR_PATCH BEGIN
+        // VR needs to override the final output FBO
+        if (VR::getVR())
+        {
+            mCanvases[0]->setPingPongCallback(std::make_unique<MWVR::PingPongCallback>(this));
+            mCanvases[1]->setPingPongCallback(std::make_unique<MWVR::PingPongCallback>(this));
+        }
+        // ## VR_PATCH END
+>>>>>>> origin/main
     }
 
     PostProcessor::~PostProcessor()
@@ -272,9 +304,74 @@ namespace MWRender
         mRendering.getSkyManager()->setSunglare(true);
     }
 
+<<<<<<< HEAD
     void PostProcessor::traverse(osg::NodeVisitor& nv)
     {
         unsigned frameId = nv.getTraversalNumber() % 2;
+=======
+    void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+        const osg::Vec4f& tint, const osg::Vec4f& fade, float blurRadius)
+    {
+        if (!mFalloutImageSpaceTechnique)
+        {
+            mFalloutImageSpaceTechnique = loadTechnique("internal_fallout_imagespace");
+            mFalloutImageSpaceTechnique->setInternal(true);
+            mFalloutImageSpaceTechnique->setLocked(true);
+            mInternalTechniques.push_back(mFalloutImageSpaceTechnique);
+            enable();
+        }
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutImageSpaceLogs = 0;
+            if (falloutImageSpaceLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post technique status valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdr=" << (mFalloutImageSpaceTechnique->getHDR() ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
+
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutBlurRadius", std::max(0.f, blurRadius));
+    }
+
+    void PostProcessor::clearFalloutImageSpace()
+    {
+        // Do not create or enable the internal technique merely to clear state.
+        if (!mFalloutImageSpaceTechnique)
+            return;
+
+        // This reset must also take effect while post-processing is temporarily
+        // disabled, otherwise re-enabling it can resurrect the last exterior
+        // grade. The generic setUniform helper intentionally ignores updates
+        // while disabled, so write these identity values directly.
+        const auto setIdentityUniform = [&](const std::string& name, const auto& value) {
+            const auto it = mFalloutImageSpaceTechnique->findUniform(name);
+            if (it != mFalloutImageSpaceTechnique->getUniformMap().end() && !(*it)->mStatic)
+                (*it)->setValue(value);
+        };
+
+        setIdentityUniform("uFalloutHdr", osg::Vec4f(1.f, 0.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutCinematic", osg::Vec4f(1.f, 0.f, 1.f, 1.f));
+        setIdentityUniform("uFalloutTint", osg::Vec4f(1.f, 1.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutFade", osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        setIdentityUniform("uFalloutBlurRadius", 0.f);
+    }
+
+    void PostProcessor::traverse(osg::NodeVisitor& nv)
+    {
+        size_t frameId = nv.getTraversalNumber() % 2;
+>>>>>>> origin/main
 
         if (nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
             cull(frameId, static_cast<osgUtil::CullVisitor*>(&nv));
@@ -284,7 +381,11 @@ namespace MWRender
         osg::Group::traverse(nv);
     }
 
+<<<<<<< HEAD
     void PostProcessor::cull(unsigned frameId, osgUtil::CullVisitor* cv)
+=======
+    void PostProcessor::cull(size_t frameId, osgUtil::CullVisitor* cv)
+>>>>>>> origin/main
     {
         if (const auto& fbo = getFbo(FBO_Intercept, frameId))
         {
@@ -302,17 +403,38 @@ namespace MWRender
         mCanvases[frameId]->setTextureDepth(getTexture(Tex_OpaqueDepth, frameId));
         mCanvases[frameId]->setTextureDistortion(getTexture(Tex_Distortion, frameId));
 
+<<<<<<< HEAD
         mTransparentDepthPostPass->mFbo[frameId] = mFbos[frameId][FBO_Primary];
         mTransparentDepthPostPass->mMsaaFbo[frameId] = mFbos[frameId][FBO_Multisample];
         mTransparentDepthPostPass->mOpaqueFbo[frameId] = mFbos[frameId][FBO_OpaqueDepth];
 
+=======
+//## VR_PATCH BEGIN
+// VR-TODO: Why this change?
+        if (mTransparentDepthPostPass->mFbo[frameId] != mFbos[frameId][FBO_Primary])
+        {
+            mTransparentDepthPostPass->mFbo[frameId] = mFbos[frameId][FBO_Primary];
+            mTransparentDepthPostPass->mMsaaFbo[frameId] = mFbos[frameId][FBO_Multisample];
+            mTransparentDepthPostPass->mOpaqueFbo[frameId] = mFbos[frameId][FBO_OpaqueDepth];
+        }
+//## VR_PATCH END
+>>>>>>> origin/main
         mDistortionCallback->setFBO(mFbos[frameId][FBO_Distortion], frameId);
         mDistortionCallback->setOriginalFBO(mFbos[frameId][FBO_Primary], frameId);
 
         size_t frame = cv->getTraversalNumber();
 
+<<<<<<< HEAD
         mStateUpdater->setResolution(osg::Vec2f(
             static_cast<float>(cv->getViewport()->width()), static_cast<float>(cv->getViewport()->height())));
+=======
+// ## VR_PATCH BEGIN
+        if (VR::getVR())
+            mStateUpdater->setResolution(osg::Vec2f(renderWidth(), renderHeight()));
+        else
+// ## VR_PATCH END
+            mStateUpdater->setResolution(osg::Vec2f(cv->getViewport()->width(), cv->getViewport()->height()));
+>>>>>>> origin/main
 
         // per-frame data
         if (frame != mLastFrameNumber)
@@ -467,8 +589,13 @@ namespace MWRender
         textures[Tex_Distortion]->setSourceFormat(GL_RGB);
         textures[Tex_Distortion]->setInternalFormat(GL_RGB);
 
+<<<<<<< HEAD
         Stereo::setMultiviewCompatibleTextureSize(textures[Tex_Distortion], static_cast<int>(width * DistortionRatio),
             static_cast<int>(height * DistortionRatio));
+=======
+        Stereo::setMultiviewCompatibleTextureSize(
+            textures[Tex_Distortion], width * DistortionRatio, height * DistortionRatio);
+>>>>>>> origin/main
         textures[Tex_Distortion]->dirtyTextureObject();
 
         auto setupDepth = [](osg::Texture* tex) {
@@ -632,7 +759,11 @@ namespace MWRender
 
                 if (auto type = uniform->getType())
                     uniform->setUniform(node.mRootStateSet->getOrCreateUniform(
+<<<<<<< HEAD
                         uniform->mName, *type, static_cast<unsigned>(uniform->getNumElements())));
+=======
+                        uniform->mName.c_str(), *type, uniform->getNumElements()));
+>>>>>>> origin/main
             }
 
             for (const auto& pass : technique->getPasses())
@@ -646,9 +777,13 @@ namespace MWRender
 
                 if (!pass->getTarget().empty())
                 {
+<<<<<<< HEAD
                     // FIXME: https://gitlab.com/OpenMW/openmw/-/work_items/9034
                     std::string target = pass->getTarget();
                     auto& renderTarget = technique->getRenderTargetsMap()[target];
+=======
+                    auto& renderTarget = technique->getRenderTargetsMap()[pass->getTarget()];
+>>>>>>> origin/main
                     subPass.mSize = renderTarget.mSize;
                     subPass.mRenderTexture = renderTarget.mTarget;
                     subPass.mMipMap = renderTarget.mMipMap;
@@ -712,8 +847,12 @@ namespace MWRender
         if (auto hud = MWBase::Environment::get().getWindowManager()->getPostProcessorHud())
             hud->updateTechniques();
 
+<<<<<<< HEAD
         if (mUsePostProcessing)
             mRendering.getSkyManager()->setSunglare(sunglare);
+=======
+        mRendering.getSkyManager()->setSunglare(sunglare);
+>>>>>>> origin/main
 
         if (dirtyAttachments)
             mCanvases[frameId]->setDirtyAttachments(attachmentsToDirty);
@@ -727,7 +866,11 @@ namespace MWRender
 
         disableTechnique(technique, false);
 
+<<<<<<< HEAD
         size_t pos = std::min(location.value_or(mTechniques.size()) + mInternalTechniques.size(), mTechniques.size());
+=======
+        int pos = std::min<int>(location.value_or(mTechniques.size()) + mInternalTechniques.size(), mTechniques.size());
+>>>>>>> origin/main
 
         mTechniques.insert(mTechniques.begin() + pos, technique);
         dirtyTechniques(Settings::ShaderManager::get().getMode() == Settings::ShaderManager::Mode::Debug);
@@ -823,6 +966,26 @@ namespace MWRender
         }
 
         dirtyTechniques();
+<<<<<<< HEAD
+=======
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr && mFalloutImageSpaceTechnique)
+        {
+            static int falloutImageSpaceChainLogs = 0;
+            if (falloutImageSpaceChainLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post chain rebuilt valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdrEnabled=" << (mHDR ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
+>>>>>>> origin/main
     }
 
     void PostProcessor::saveChain()

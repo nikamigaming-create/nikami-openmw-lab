@@ -146,7 +146,10 @@ namespace MWClass
     {
         // Do not allow equip tools from inventory during attack
         if (MWBase::Environment::get().getMechanicsManager()->isAttackingOrSpell(npc)
+<<<<<<< HEAD
             && !MWBase::Environment::get().getMechanicsManager()->isCastingSpell(npc)
+=======
+>>>>>>> origin/main
             && MWBase::Environment::get().getWindowManager()->isGuiMode())
             return { 0, "#{sCantEquipWeapWarning}" };
 

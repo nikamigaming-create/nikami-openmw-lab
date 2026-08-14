@@ -1,6 +1,11 @@
 #include "mechanicsmanagerimp.hpp"
 
 #include <cassert>
+<<<<<<< HEAD
+=======
+#include <limits>
+#include <vector>
+>>>>>>> origin/main
 
 #include <osg/Stats>
 
@@ -12,11 +17,22 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/stolenitems.hpp>
+<<<<<<< HEAD
+=======
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+>>>>>>> origin/main
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwworld/class.hpp"
+<<<<<<< HEAD
 #include "../mwworld/esmstore.hpp"
+=======
+#include "../mwworld/cellstore.hpp"
+#include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
+>>>>>>> origin/main
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
@@ -29,8 +45,16 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+<<<<<<< HEAD
 #include "../mwsound/constants.hpp"
 
+=======
+#include "../mwclass/esm4creature.hpp"
+#include "../mwclass/esm4npc.hpp"
+
+#include "../mwsound/constants.hpp"
+
+>>>>>>> origin/main
 #include "actor.hpp"
 #include "actors.hpp"
 #include "actorutil.hpp"
@@ -38,12 +62,19 @@
 #include "aipursue.hpp"
 #include "autocalcspell.hpp"
 #include "combat.hpp"
+<<<<<<< HEAD
 #include "npcstats.hpp"
+=======
+#include "falloutcombat.hpp"
+#include "npcstats.hpp"
+#include "ownership.hpp"
+>>>>>>> origin/main
 #include "spellutil.hpp"
 
 namespace
 {
 
+<<<<<<< HEAD
     float getFightDispositionBias(float disposition)
     {
         static const float fFightDispMult = MWBase::Environment::get()
@@ -99,6 +130,124 @@ namespace
             const std::map<ESM::RefId, int>& factions = ptr.getClass().getNpcStats(ptr).getFactionRanks();
             auto found = factions.find(faction);
             if (found == factions.end() || found->second < cellref.getFactionRank())
+=======
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || store->getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return false;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            return npc != nullptr && npc->mIsFONV;
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            return creature != nullptr && creature->mIsFONV;
+        }
+        return false;
+    }
+
+    std::vector<ESM4::ActorFaction> getFalloutActorFactions(const MWWorld::Ptr& ptr)
+    {
+        // The gameplay player may also satisfy the ESM4 NPC type check, so resolve its runtime proxy before the
+        // generic NPC branch. The proxy preserves the winning Player NPC/template faction list.
+        if (ptr == MWMechanics::getPlayer())
+        {
+            const std::optional<MWWorld::FalloutPlayerState>& state
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getBaseState();
+            if (state)
+                return state->mFactions;
+        }
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* factions = MWClass::ESM4Npc::getFactionsRecord(ptr);
+            return factions != nullptr ? factions->mFactions : std::vector<ESM4::ActorFaction>{};
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* factions = MWClass::ESM4Creature::getFactionsRecord(ptr);
+            if (factions != nullptr && !factions->mFactions.empty())
+                return factions->mFactions;
+            if (factions != nullptr && factions->mFaction.faction != 0)
+                return { factions->mFaction }; // Compatibility for programmatically constructed records.
+            return {};
+        }
+        return {};
+    }
+
+    MWMechanics::ObjectOwnership getObjectOwnership(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::Cell* cell = ptr.isInCell() ? ptr.getCell()->getCell() : nullptr;
+        return MWMechanics::resolveObjectOwnership(
+            ptr.getCellRef(), cell, *MWBase::Environment::get().getESMStore());
+    }
+
+    float getFightDispositionBias(float disposition)
+    {
+        static const float fFightDispMult = MWBase::Environment::get()
+                                                .getESMStore()
+                                                ->get<ESM::GameSetting>()
+                                                .find("fFightDispMult")
+                                                ->mValue.getFloat();
+        return ((50.f - disposition) * fFightDispMult);
+    }
+
+    void getPersuasionRatings(
+        const MWMechanics::NpcStats& stats, float& rating1, float& rating2, float& rating3, bool player)
+    {
+        const MWWorld::Store<ESM::GameSetting>& gmst
+            = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
+
+        float persTerm = stats.getAttribute(ESM::Attribute::Personality).getModified()
+            / gmst.find("fPersonalityMod")->mValue.getFloat();
+        float luckTerm
+            = stats.getAttribute(ESM::Attribute::Luck).getModified() / gmst.find("fLuckMod")->mValue.getFloat();
+        float repTerm = stats.getReputation() * gmst.find("fReputationMod")->mValue.getFloat();
+        float fatigueTerm = stats.getFatigueTerm();
+        float levelTerm = stats.getLevel() * gmst.find("fLevelMod")->mValue.getFloat();
+
+        rating1 = (repTerm + luckTerm + persTerm + stats.getSkill(ESM::Skill::Speechcraft).getModified()) * fatigueTerm;
+
+        if (player)
+        {
+            rating2 = rating1 + levelTerm;
+            rating3 = (stats.getSkill(ESM::Skill::Mercantile).getModified() + luckTerm + persTerm) * fatigueTerm;
+        }
+        else
+        {
+            rating2
+                = (levelTerm + repTerm + luckTerm + persTerm + stats.getSkill(ESM::Skill::Speechcraft).getModified())
+                * fatigueTerm;
+            rating3
+                = (stats.getSkill(ESM::Skill::Mercantile).getModified() + repTerm + luckTerm + persTerm) * fatigueTerm;
+        }
+    }
+
+    bool isOwned(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, MWWorld::Ptr& victim)
+    {
+        const MWWorld::CellRef& cellref = target.getCellRef();
+
+        const MWMechanics::ObjectOwnership ownership = getObjectOwnership(target);
+
+        const ESM::RefId& owner = ownership.mOwner;
+        bool isOwned = !owner.empty() && owner != ESM::RefId::stringRefId("Player");
+
+        const ESM::RefId& faction = ownership.mFaction;
+        bool isFactionOwned = false;
+        if (!faction.empty() && isFalloutNewVegasActor(ptr))
+        {
+            const std::vector<ESM4::ActorFaction> factions = getFalloutActorFactions(ptr);
+            isFactionOwned = !MWMechanics::isFactionOwnershipAllowed(ownership, factions);
+        }
+        else if (!faction.empty() && ptr.getClass().isNpc())
+        {
+            const std::map<ESM::RefId, int>& factions = ptr.getClass().getNpcStats(ptr).getFactionRanks();
+            auto found = factions.find(faction);
+            if (found == factions.end() || found->second < ownership.mFactionRank)
+>>>>>>> origin/main
                 isFactionOwned = true;
         }
 
@@ -109,8 +258,13 @@ namespace
             isFactionOwned = false;
         }
 
+<<<<<<< HEAD
         if (!cellref.getOwner().empty())
             victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true, false);
+=======
+        if (!owner.empty())
+            victim = MWBase::Environment::get().getWorld()->searchPtr(owner, true, false);
+>>>>>>> origin/main
 
         return isOwned || isFactionOwned;
     }
@@ -135,10 +289,17 @@ namespace MWMechanics
         creatureStats.getActiveSpells().clear(ptr);
 
         for (size_t i = 0; i < player->mNpdt.mSkills.size(); ++i)
+<<<<<<< HEAD
             npcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i))).setBase(player->mNpdt.mSkills[i]);
 
         for (size_t i = 0; i < player->mNpdt.mAttributes.size(); ++i)
             npcStats.setAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i)), player->mNpdt.mSkills[i]);
+=======
+            npcStats.getSkill(ESM::Skill::indexToRefId(i)).setBase(player->mNpdt.mSkills[i]);
+
+        for (size_t i = 0; i < player->mNpdt.mAttributes.size(); ++i)
+            npcStats.setAttribute(ESM::Attribute::indexToRefId(i), player->mNpdt.mSkills[i]);
+>>>>>>> origin/main
 
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
 
@@ -150,8 +311,12 @@ namespace MWMechanics
             bool male = (player->mFlags & ESM::NPC::Female) == 0;
 
             for (const ESM::Attribute& attribute : esmStore.get<ESM::Attribute>())
+<<<<<<< HEAD
                 creatureStats.setAttribute(
                     attribute.mId, static_cast<float>(race->mData.getAttribute(attribute.mId, male)));
+=======
+                creatureStats.setAttribute(attribute.mId, race->mData.getAttribute(attribute.mId, male));
+>>>>>>> origin/main
 
             for (const ESM::Skill& skill : esmStore.get<ESM::Skill>())
             {
@@ -162,7 +327,11 @@ namespace MWMechanics
                 if (bonusIt != race->mData.mBonus.end())
                     bonus = bonusIt->mBonus;
 
+<<<<<<< HEAD
                 npcStats.getSkill(skill.mId).setBase(5.f + bonus);
+=======
+                npcStats.getSkill(skill.mId).setBase(5 + bonus);
+>>>>>>> origin/main
             }
 
             for (const ESM::RefId& power : race->mPowers.mList)
@@ -567,7 +736,11 @@ namespace MWMechanics
                  .getMagnitude();
 
         if (clamp)
+<<<<<<< HEAD
             return std::clamp(static_cast<int>(x), 0, 100); //, normally clamped to [0..100] when used
+=======
+            return std::clamp<int>(x, 0, 100); //, normally clamped to [0..100] when used
+>>>>>>> origin/main
         return static_cast<int>(x);
     }
 
@@ -760,9 +933,51 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+<<<<<<< HEAD
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {
+=======
+    bool MechanicsManager::reloadFalloutWeapon(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.reloadFalloutWeapon(actor);
+    }
+
+    bool MechanicsManager::prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.prepareFalloutVatsRangedAttack(actor);
+    }
+
+    bool MechanicsManager::consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.consumeFalloutVatsRangedAttackRelease(actor);
+    }
+
+    bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, action, targetHit);
+    }
+
+    bool MechanicsManager::executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutProjectileImpact(actor, target, segmentStart, hitPosition, impact);
+    }
+
+    bool MechanicsManager::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && mActors.executeFalloutExplosion(actor, position, impact);
+    }
+
+    bool MechanicsManager::playAnimationGroup(
+        const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
+    {
+>>>>>>> origin/main
         if (ptr.getClass().isActor())
             return mActors.playAnimationGroup(ptr, groupName, mode, number, scripted);
         else
@@ -912,7 +1127,15 @@ namespace MWMechanics
         if (target.getClass().isActivator() && !target.getClass().getScript(target).startsWith("Bed"))
             return true;
 
+<<<<<<< HEAD
         if (target.getClass().isNpc())
+=======
+        // ESM4 NPC/CREA classes intentionally do not expose Morrowind NpcStats through Class::isNpc(). They are
+        // still actors for interaction purposes. Letting a live Fallout actor fall through to isOwned() asks its
+        // ActorCharacter CellRef for a Morrowind faction rank, throws "Not applicable", and repeats that exception
+        // every tooltip frame (notably throughout V.A.T.S.).
+        if (target.getClass().isNpc() || isFalloutNewVegasActor(target))
+>>>>>>> origin/main
         {
             if (target.getClass().getCreatureStats(target).isDead())
                 return true;
@@ -952,7 +1175,12 @@ namespace MWMechanics
         if (isAllowedToUse(ptr, bed, victim))
             return false;
 
+<<<<<<< HEAD
         if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, bed.getCellRef().getFaction()))
+=======
+        const ObjectOwnership ownership = getObjectOwnership(bed);
+        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, ownership.mFaction))
+>>>>>>> origin/main
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage64}");
             return true;
@@ -970,7 +1198,11 @@ namespace MWMechanics
             // unlocked. Likewise, it's illegal to unlock something that has a trap but isn't otherwise locked.
             const auto& cellref = item.getCellRef();
             if (cellref.getLockLevel() || cellref.isLocked() || !cellref.getTrap().empty())
+<<<<<<< HEAD
                 commitCrime(ptr, victim, OT_Trespassing, item.getCellRef().getFaction());
+=======
+                commitCrime(ptr, victim, OT_Trespassing, getObjectOwnership(item).mFaction);
+>>>>>>> origin/main
         }
     }
 
@@ -1095,10 +1327,18 @@ namespace MWMechanics
         MWWorld::Ptr victim;
 
         bool isAllowed = true;
+<<<<<<< HEAD
+=======
+        const MWWorld::Ptr* ownerObject = &item;
+>>>>>>> origin/main
         const MWWorld::CellRef* ownerCellRef = &item.getCellRef();
         if (!container.isEmpty())
         {
             // Inherit the owner of the container
+<<<<<<< HEAD
+=======
+            ownerObject = &container;
+>>>>>>> origin/main
             ownerCellRef = &container.getCellRef();
             isAllowed = isAllowedToUse(ptr, container, victim);
         }
@@ -1112,6 +1352,10 @@ namespace MWMechanics
 
         Owner owner;
         owner.second = false;
+<<<<<<< HEAD
+=======
+        ObjectOwnership ownership;
+>>>>>>> origin/main
         if (!container.isEmpty() && container.getClass().isActor())
         {
             // "container" is an actor inventory, so just take actor's ID
@@ -1119,10 +1363,18 @@ namespace MWMechanics
         }
         else
         {
+<<<<<<< HEAD
             owner.first = ownerCellRef->getOwner();
             if (owner.first.empty())
             {
                 owner.first = ownerCellRef->getFaction();
+=======
+            ownership = getObjectOwnership(*ownerObject);
+            owner.first = ownership.mOwner;
+            if (owner.first.empty())
+            {
+                owner.first = ownership.mFaction;
+>>>>>>> origin/main
                 owner.second = true;
             }
         }
@@ -1140,7 +1392,11 @@ namespace MWMechanics
             int value = count;
             if (!isGold)
                 value *= item.getClass().getValue(item);
+<<<<<<< HEAD
             commitCrime(ptr, victim, OT_Theft, ownerCellRef->getFaction(), value);
+=======
+            commitCrime(ptr, victim, OT_Theft, ownership.mFaction, value);
+>>>>>>> origin/main
         }
     }
 
@@ -1454,7 +1710,11 @@ namespace MWMechanics
                     }
 
                     startCombat(actor, player, &playerFollowers);
+<<<<<<< HEAD
                     observerStats.setHitAttemptActor(player.getCellRef().getRefNum());
+=======
+                    observerStats.setHitAttemptActorId(player.getClass().getCreatureStats(player).getActorId());
+>>>>>>> origin/main
 
                     // Apply aggression value to the base Fight rating, so that the actor can continue fighting
                     // after a Calm spell wears off
@@ -1519,7 +1779,12 @@ namespace MWMechanics
     bool MechanicsManager::actorAttacked(const MWWorld::Ptr& target, const MWWorld::Ptr& attacker)
     {
         const MWWorld::Ptr& player = getPlayer();
+<<<<<<< HEAD
         if (target == player || !attacker.getClass().isActor())
+=======
+        if (target.isEmpty() || attacker.isEmpty() || target == player
+            || !target.getClass().isActor() || !attacker.getClass().isActor())
+>>>>>>> origin/main
             return false;
 
         if (canCommitCrimeAgainst(target, attacker))
@@ -1553,6 +1818,47 @@ namespace MWMechanics
                     SidingCache cachedAllies{ mActors, false };
                     const std::set<MWWorld::Ptr>& attackerAllies = cachedAllies.getActorsSidingWith(attacker);
                     startCombat(target, attacker, &attackerAllies);
+<<<<<<< HEAD
+=======
+                    if (attacker == player && isFalloutNewVegasActor(target))
+                    {
+                        std::vector<MWWorld::Ptr> nearbyActors;
+                        const float alarmRadius = MWBase::Environment::get()
+                                                      .getESMStore()
+                                                      ->get<ESM::GameSetting>()
+                                                      .find("fAlarmRadius")
+                                                      ->mValue.getFloat();
+                        getActorsInRange(target.getRefData().getPosition().asVec3(), alarmRadius, nearbyActors);
+                        const std::vector<ESM4::ActorFaction> victimFactions = getFalloutActorFactions(target);
+                        const MWWorld::Store<ESM4::Faction>& factionStore
+                            = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+                        std::size_t defendersStarted = 0;
+                        for (const MWWorld::Ptr& witness : nearbyActors)
+                        {
+                            if (witness.isEmpty() || witness == target || witness == attacker
+                                || !isFalloutNewVegasActor(witness) || !witness.getRefData().isEnabled()
+                                || witness.getClass().getCreatureStats(witness).isDead()
+                                || witness.getClass().getCreatureStats(witness).getAiSequence().isInCombat(attacker))
+                                continue;
+                            const std::vector<ESM4::ActorFaction> witnessFactions
+                                = getFalloutActorFactions(witness);
+                            const std::optional<ESM4::Faction::GroupCombatReaction> relation
+                                = resolveFalloutFactionReaction(witnessFactions, victimFactions,
+                                    [&](ESM::FormId faction) {
+                                        return factionStore.search(ESM::RefId(faction));
+                                    });
+                            if (!shouldFalloutActorDefendVictim(witnessFactions, victimFactions, relation))
+                                continue;
+                            startCombat(witness, attacker, &attackerAllies);
+                            ++defendersStarted;
+                        }
+                        Log(Debug::Info) << "FNV assault response: victim=" << target.toString()
+                                         << " attacker=" << attacker.toString()
+                                         << " radius=" << alarmRadius
+                                         << " nearby=" << nearbyActors.size()
+                                         << " defendersStarted=" << defendersStarted;
+                    }
+>>>>>>> origin/main
                     // Force friendly actors into combat to prevent infighting between followers
                     for (const auto& follower : cachedAllies.getActorsSidingWith(target))
                     {
@@ -1566,6 +1872,7 @@ namespace MWMechanics
         return true;
     }
 
+<<<<<<< HEAD
     bool MechanicsManager::canCommitCrimeAgainst(const MWWorld::Ptr& target, const MWWorld::Ptr& attacker)
     {
         const MWWorld::Class& cls = target.getClass();
@@ -1614,6 +1921,115 @@ namespace MWMechanics
         if (observer.getClass().getCreatureStats(observer).isDead() || !observer.getRefData().isEnabled())
             return false;
 
+=======
+    bool MechanicsManager::sendFalloutAssaultAlarm(
+        const MWWorld::Ptr& requestedVictim, const ESM::RefId& faction)
+    {
+        const MWWorld::Ptr player = getPlayer();
+        if (player.isEmpty() || !player.getClass().isActor())
+            return false;
+
+        MWWorld::Ptr victim = requestedVictim;
+        std::size_t candidates = 0;
+        if (!faction.empty())
+        {
+            const ESM::FormId* factionForm = faction.getIf<ESM::FormId>();
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (factionForm == nullptr || factionForm->isZeroOrUnset() || store == nullptr
+                || store->get<ESM4::Faction>().search(faction) == nullptr)
+                return false;
+
+            std::vector<MWWorld::Ptr> nearbyActors;
+            const float alarmRadius = store->get<ESM::GameSetting>().find("fAlarmRadius")->mValue.getFloat();
+            const osg::Vec3f origin = player.getRefData().getPosition().asVec3();
+            getActorsInRange(origin, alarmRadius, nearbyActors);
+
+            victim = MWWorld::Ptr{};
+            float nearestDistance2 = std::numeric_limits<float>::infinity();
+            for (const MWWorld::Ptr& actor : nearbyActors)
+            {
+                if (actor.isEmpty() || actor == player || !isFalloutNewVegasActor(actor)
+                    || !actor.getRefData().isEnabled() || actor.getClass().getCreatureStats(actor).isDead())
+                    continue;
+                const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(actor);
+                if (!isFalloutActorInFaction(actorFactions, *factionForm))
+                    continue;
+                ++candidates;
+                const float distance2 = (actor.getRefData().getPosition().asVec3() - origin).length2();
+                if (distance2 < nearestDistance2)
+                {
+                    nearestDistance2 = distance2;
+                    victim = actor;
+                }
+            }
+        }
+
+        if (victim.isEmpty() || victim == player || !isFalloutNewVegasActor(victim)
+            || !victim.getRefData().isEnabled() || victim.getClass().getCreatureStats(victim).isDead())
+        {
+            Log(Debug::Warning) << "FNV SendAssaultAlarm rejected: requestedVictim="
+                                << requestedVictim.toString() << " faction=" << faction
+                                << " candidates=" << candidates;
+            return false;
+        }
+
+        const bool handled = actorAttacked(victim, player);
+        Log(handled ? Debug::Info : Debug::Warning)
+            << "FNV SendAssaultAlarm: victim=" << victim.toString() << " faction=" << faction
+            << " candidates=" << candidates << " handled=" << handled;
+        return handled;
+    }
+
+    bool MechanicsManager::canCommitCrimeAgainst(const MWWorld::Ptr& target, const MWWorld::Ptr& attacker)
+    {
+        const MWWorld::Class& cls = target.getClass();
+        const MWMechanics::CreatureStats& stats = cls.getCreatureStats(target);
+        const MWMechanics::AiSequence& seq = stats.getAiSequence();
+        return cls.isNpc() && !attacker.isEmpty() && !seq.isInCombat(attacker) && !isAggressive(target, attacker)
+            && !seq.isEngagedWithActor() && !stats.getAiSequence().isInPursuit()
+            && !cls.getNpcStats(target).isWerewolf()
+            && stats.getMagicEffects().getOrDefault(ESM::MagicEffect::Vampirism).getMagnitude() <= 0;
+    }
+
+    void MechanicsManager::actorKilled(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker)
+    {
+        if (attacker.isEmpty() || victim.isEmpty())
+            return;
+
+        if (victim == attacker)
+            return; // known to happen
+
+        if (!victim.getClass().isNpc())
+            return; // TODO: implement animal rights
+
+        const MWMechanics::NpcStats& victimStats = victim.getClass().getNpcStats(victim);
+        const MWWorld::Ptr& player = getPlayer();
+        bool canCommit = attacker == player && canCommitCrimeAgainst(victim, attacker);
+
+        // For now we report only about crimes of player and player's followers
+        if (attacker != player)
+        {
+            std::set<MWWorld::Ptr> playerFollowers;
+            getActorsSidingWith(player, playerFollowers);
+            if (playerFollowers.find(attacker) == playerFollowers.end())
+                return;
+        }
+
+        if (!canCommit && victimStats.getCrimeId() == -1)
+            return;
+
+        // Simple check for who attacked first: if the player attacked first, a crimeId should be set
+        // Doesn't handle possible edge case where no one reported the assault, but in such a case,
+        // for bystanders it is not possible to tell who attacked first, anyway.
+        commitCrime(player, victim, MWBase::MechanicsManager::OT_Murder);
+    }
+
+    bool MechanicsManager::awarenessCheck(const MWWorld::Ptr& ptr, const MWWorld::Ptr& observer, bool useCache)
+    {
+        if (observer.getClass().getCreatureStats(observer).isDead() || !observer.getRefData().isEnabled())
+            return false;
+
+>>>>>>> origin/main
         const MWWorld::Store<ESM::GameSetting>& store
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
 
@@ -1728,14 +2144,31 @@ namespace MWMechanics
             }
         }
         stats.getAiSequence().stack(MWMechanics::AiCombat(target), ptr);
+<<<<<<< HEAD
+=======
+        if (isFalloutNewVegasActor(ptr))
+        {
+            // Authored FNV sandbox and furniture idles are queued as scripted animations. Combat must preempt
+            // those idles immediately; otherwise CharacterController rejects weapon updates and AiPackage::pathTo
+            // deliberately holds the actor stationary for as long as the ambient animation remains queued.
+            clearAnimationQueue(ptr, true);
+        }
+>>>>>>> origin/main
         if (target == getPlayer())
         {
             // if guard starts combat with player, guards pursuing player should do the same
             if (ptr.getClass().isClass(ptr, "Guard"))
             {
+<<<<<<< HEAD
                 const ESM::RefNum playerNum = target.getCellRef().getRefNum();
                 // Stops guard from ending combat if player is unreachable
                 stats.setHitAttemptActor(playerNum);
+=======
+                stats.setHitAttemptActorId(
+                    target.getClass()
+                        .getCreatureStats(target)
+                        .getActorId()); // Stops guard from ending combat if player is unreachable
+>>>>>>> origin/main
                 for (const Actor& actor : mActors)
                 {
                     if (actor.isInvalid())
@@ -1748,8 +2181,18 @@ namespace MWMechanics
                         {
                             aiSeq.stopPursuit();
                             aiSeq.stack(MWMechanics::AiCombat(target), ptr);
+<<<<<<< HEAD
                             // Stops guard from ending combat if player is unreachable
                             actor.getPtr().getClass().getCreatureStats(actor.getPtr()).setHitAttemptActor(playerNum);
+=======
+                            actor.getPtr()
+                                .getClass()
+                                .getCreatureStats(actor.getPtr())
+                                .setHitAttemptActorId(
+                                    target.getClass()
+                                        .getCreatureStats(target)
+                                        .getActorId()); // Stops guard from ending combat if player is unreachable
+>>>>>>> origin/main
                         }
                     }
                 }
@@ -1766,6 +2209,15 @@ namespace MWMechanics
         mActors.stopCombat(actor);
     }
 
+<<<<<<< HEAD
+=======
+    bool MechanicsManager::playFalloutDialogueAnimation(
+        const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)
+    {
+        return mActors.playFalloutDialogueAnimation(ptr, animationId);
+    }
+
+>>>>>>> origin/main
     void MechanicsManager::getObjectsInRange(
         const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects)
     {
@@ -1810,6 +2262,7 @@ namespace MWMechanics
     }
 
     std::vector<MWWorld::Ptr> MechanicsManager::getEnemiesNearby(const MWWorld::Ptr& actor)
+<<<<<<< HEAD
     {
         return mActors.getEnemiesNearby(actor);
     }
@@ -1830,6 +2283,28 @@ namespace MWMechanics
             + 1; // Stolen items
     }
 
+=======
+    {
+        return mActors.getEnemiesNearby(actor);
+    }
+
+    void MechanicsManager::getActorsFollowing(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out)
+    {
+        mActors.getActorsFollowing(actor, out);
+    }
+
+    void MechanicsManager::getActorsSidingWith(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out)
+    {
+        mActors.getActorsSidingWith(actor, out);
+    }
+
+    int MechanicsManager::countSavedGameRecords() const
+    {
+        return 1 // Death counter
+            + 1; // Stolen items
+    }
+
+>>>>>>> origin/main
     void MechanicsManager::write(ESM::ESMWriter& writer, Loading::Listener& listener) const
     {
         mActors.write(writer, listener);
@@ -1863,6 +2338,7 @@ namespace MWMechanics
 
     bool MechanicsManager::isAggressive(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target)
     {
+<<<<<<< HEAD
         // If already in combat with target, consider aggressive
         if (ptr.getClass().getCreatureStats(ptr).getAiSequence().isInCombat(target))
             return true;
@@ -1883,13 +2359,63 @@ namespace MWMechanics
                         .getOrDefault(ESM::MagicEffect::CalmCreature)
                         .getMagnitude()
                     > 0))
+=======
+        // Don't become aggressive if a calm effect is active, since it would cause combat to cycle on/off as
+        // combat is activated here and then canceled by the calm effect
+        if ((ptr.getClass().isNpc()
+                && ptr.getClass()
+                        .getCreatureStats(ptr)
+                        .getMagicEffects()
+                        .getOrDefault(ESM::MagicEffect::CalmHumanoid)
+                        .getMagnitude()
+                    > 0)
+            || (!ptr.getClass().isNpc()
+                && ptr.getClass()
+                        .getCreatureStats(ptr)
+                        .getMagicEffects()
+                        .getOrDefault(ESM::MagicEffect::CalmCreature)
+                        .getMagnitude()
+                    > 0))
+            return false;
+
+        // Creation Engine aggression is categorical, not Morrowind's 0..100 Fight score. FNV category 1 means
+        // "attack enemies", so feeding it through the proximity bias makes every nearby neutral dialogue actor
+        // hostile. Resolve the already-authored directional faction reaction and keep every Morrowind bias out of
+        // this path.
+        const bool isEsm4Actor
+            = ptr.getType() == ESM4::Npc::sRecordId || ptr.getType() == ESM4::Creature::sRecordId;
+        const Stat<int> fightStat = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight);
+        const int modifiedFight = fightStat.getModified();
+        if (isFalloutNewVegasActor(ptr))
+        {
+            // FNV AIDT aggression is the authored categorical value. Generic Fight modifiers must not promote an
+            // Enemy-only actor into Very Aggressive; Calm is handled explicitly above.
+            const int authoredAggression = fightStat.getBase();
+            if (authoredAggression < 0 || authoredAggression > 3)
+                return false;
+
+            const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(ptr);
+            const std::vector<ESM4::ActorFaction> targetFactions = getFalloutActorFactions(target);
+            const MWWorld::Store<ESM4::Faction>& factionStore
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+            const std::optional<ESM4::Faction::GroupCombatReaction> reaction = resolveFalloutFactionReaction(
+                actorFactions, targetFactions,
+                [&](ESM::FormId faction) { return factionStore.search(ESM::RefId(faction)); });
+            return shouldFalloutActorInitiateCombat(static_cast<std::uint8_t>(authoredAggression), reaction);
+        }
+        if (isEsm4Actor && modifiedFight <= 0)
+>>>>>>> origin/main
             return false;
 
         int disposition = 50;
         if (ptr.getClass().isNpc())
             disposition = getDerivedDisposition(ptr);
 
+<<<<<<< HEAD
         int fight = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight).getModified()
+=======
+        int fight = modifiedFight
+>>>>>>> origin/main
             + static_cast<int>(
                 getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition)));
 
@@ -2039,6 +2565,7 @@ namespace MWMechanics
             = MWBase::Environment::get().getESMStore()->get<ESM::Skill>().find(ESM::Skill::Acrobatics);
         MWMechanics::NpcStats& stats = actor.getClass().getNpcStats(actor);
         auto& skill = stats.getSkill(acrobatics->mId);
+<<<<<<< HEAD
         skill.setBase(skill.getBase(), true);
         skill.setModifier(acrobatics->mWerewolfValue - skill.getBase());
     }
@@ -2046,12 +2573,25 @@ namespace MWMechanics
     void MechanicsManager::cleanupSummonedCreature(ESM::RefNum creature)
     {
         mActors.cleanupSummonedCreature(creature);
+=======
+        skill.setModifier(acrobatics->mWerewolfValue - skill.getModified());
+    }
+
+    void MechanicsManager::cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId)
+    {
+        mActors.cleanupSummonedCreature(caster.getClass().getCreatureStats(caster), creatureActorId);
+>>>>>>> origin/main
     }
 
     void MechanicsManager::reportStats(unsigned int frameNumber, osg::Stats& stats) const
     {
+<<<<<<< HEAD
         stats.setAttribute(frameNumber, "Mechanics Actors", static_cast<double>(mActors.size()));
         stats.setAttribute(frameNumber, "Mechanics Objects", static_cast<double>(mObjects.size()));
+=======
+        stats.setAttribute(frameNumber, "Mechanics Actors", mActors.size());
+        stats.setAttribute(frameNumber, "Mechanics Objects", mObjects.size());
+>>>>>>> origin/main
     }
 
     int MechanicsManager::getGreetingTimer(const MWWorld::Ptr& ptr) const
@@ -2069,8 +2609,14 @@ namespace MWMechanics
         return mActors.getGreetingState(ptr);
     }
 
+<<<<<<< HEAD
     void MechanicsManager::fastForwardAi() const
     {
         mActors.fastForwardAi();
+=======
+    bool MechanicsManager::isTurningToPlayer(const MWWorld::Ptr& ptr) const
+    {
+        return mActors.isTurningToPlayer(ptr);
+>>>>>>> origin/main
     }
 }

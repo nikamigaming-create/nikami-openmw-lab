@@ -1,6 +1,11 @@
 #ifndef GAME_MWMECHANICS_WEAPONTYPE_H
 #define GAME_MWMECHANICS_WEAPONTYPE_H
 
+<<<<<<< HEAD
+=======
+#include <cstdint>
+#include <optional>
+>>>>>>> origin/main
 #include <string_view>
 #include <vector>
 
@@ -21,6 +26,19 @@ namespace MWWorld
 
 namespace MWMechanics
 {
+<<<<<<< HEAD
+=======
+    // FNV WEAP.DNAM animation types are deliberately kept outside the ESM3
+    // weapon enum.  Treating them as a Morrowind weapon family selects the
+    // wrong locomotion and attack groups.
+    bool isFalloutWeaponType(int weaponType);
+    std::optional<int> getFalloutWeaponType(std::uint8_t animationType);
+    std::optional<std::uint8_t> getFalloutWeaponAnimationType(int weaponType);
+    bool shouldUseFalloutWeaponState(int requestedWeaponType, int currentWeaponType);
+    bool shouldTransitionFalloutWeaponState(
+        int requestedWeaponType, int currentWeaponType, bool weaponChanged);
+
+>>>>>>> origin/main
     MWWorld::ContainerStoreIterator getActiveWeapon(const MWWorld::Ptr& actor, int* weaptype);
 
     const ESM::WeaponType* getWeaponType(const int weaponType);

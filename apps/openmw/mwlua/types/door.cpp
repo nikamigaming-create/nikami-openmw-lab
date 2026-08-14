@@ -1,5 +1,10 @@
 #include "types.hpp"
+<<<<<<< HEAD
 #include "usertypeutil.hpp"
+=======
+
+#include "modelproperty.hpp"
+>>>>>>> origin/main
 
 #include "../localscripts.hpp"
 
@@ -29,6 +34,7 @@ namespace sol
 
 namespace MWLua
 {
+<<<<<<< HEAD
     namespace
     {
         void addPropertyFromTable(const sol::table& rec, std::string_view key, ESM::RefId& value)
@@ -71,6 +77,8 @@ namespace MWLua
 
         return door;
     }
+=======
+>>>>>>> origin/main
 
     static const MWWorld::Ptr& doorPtr(const Object& o)
     {
@@ -82,11 +90,14 @@ namespace MWLua
         return verifyType(ESM::REC_DOOR4, o.ptr());
     }
 
+<<<<<<< HEAD
     void addMutableDoorType(sol::state_view& lua)
     {
         addUserType<MutableRecord<ESM::Door>>(lua, "ESM3_MutableDoor");
     }
 
+=======
+>>>>>>> origin/main
     void addDoorBindings(sol::table door, const Context& context)
     {
         sol::state_view lua = context.sol();
@@ -96,7 +107,10 @@ namespace MWLua
                 { "Opening", MWWorld::DoorState::Opening },
                 { "Closing", MWWorld::DoorState::Closing },
             }));
+<<<<<<< HEAD
         door["createRecordDraft"] = tableToDoor;
+=======
+>>>>>>> origin/main
         door["getDoorState"] = [](const Object& o) -> MWWorld::DoorState {
             const MWWorld::Ptr& ptr = doorPtr(o);
             return ptr.getClass().getDoorState(ptr);
@@ -116,7 +130,12 @@ namespace MWLua
             return doorIsIdle && !doorIsOpen;
         };
         door["activateDoor"] = [](const Object& o, sol::optional<bool> openState) {
+<<<<<<< HEAD
             bool allowChanges = o.isGObject() || o.isSelfObject();
+=======
+            bool allowChanges
+                = dynamic_cast<const GObject*>(&o) != nullptr || dynamic_cast<const SelfObject*>(&o) != nullptr;
+>>>>>>> origin/main
             if (!allowChanges)
                 throw std::runtime_error("Can only be used in global scripts or in local scripts on self.");
 
@@ -141,7 +160,11 @@ namespace MWLua
             if (!cellRef.getTeleport())
                 return sol::nil;
             MWWorld::CellStore& cell = MWBase::Environment::get().getWorldModel()->getCell(cellRef.getDestCell());
+<<<<<<< HEAD
             if (o.isGObject())
+=======
+            if (dynamic_cast<const GObject*>(&o))
+>>>>>>> origin/main
                 return sol::make_object(thisState, GCell{ &cell });
             else
                 return sol::make_object(thisState, LCell{ &cell });
@@ -149,11 +172,71 @@ namespace MWLua
 
         addRecordFunctionBinding<ESM::Door>(door, context);
 
+<<<<<<< HEAD
         addUserType<ESM::Door>(lua, "ESM3_Door");
+=======
+        sol::usertype<ESM::Door> record = lua.new_usertype<ESM::Door>("ESM3_Door");
+        record[sol::meta_function::to_string]
+            = [](const ESM::Door& rec) -> std::string { return "ESM3_Door[" + rec.mId.toDebugString() + "]"; };
+        record["id"]
+            = sol::readonly_property([](const ESM::Door& rec) -> std::string { return rec.mId.serializeText(); });
+        record["name"] = sol::readonly_property([](const ESM::Door& rec) -> std::string { return rec.mName; });
+        addModelProperty(record);
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::Door& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
+        record["openSound"] = sol::readonly_property(
+            [](const ESM::Door& rec) -> std::string { return rec.mOpenSound.serializeText(); });
+        record["closeSound"] = sol::readonly_property(
+            [](const ESM::Door& rec) -> std::string { return rec.mCloseSound.serializeText(); });
+>>>>>>> origin/main
     }
 
     void addESM4DoorBindings(sol::table door, const Context& context)
     {
+<<<<<<< HEAD
+=======
+        door["STATE"] = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, MWWorld::DoorState>(
+            context.sol(),
+            {
+                { "Idle", MWWorld::DoorState::Idle },
+                { "Opening", MWWorld::DoorState::Opening },
+                { "Closing", MWWorld::DoorState::Closing },
+            }));
+        door["getDoorState"] = [](const Object& o) -> MWWorld::DoorState {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            return ptr.getClass().getDoorState(ptr);
+        };
+        door["isOpen"] = [](const Object& o) {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            const bool doorIsIdle = ptr.getClass().getDoorState(ptr) == MWWorld::DoorState::Idle;
+            const bool doorIsOpen = ptr.getRefData().getPosition().rot[2] != ptr.getCellRef().getPosition().rot[2];
+
+            return doorIsIdle && doorIsOpen;
+        };
+        door["isClosed"] = [](const Object& o) {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            const bool doorIsIdle = ptr.getClass().getDoorState(ptr) == MWWorld::DoorState::Idle;
+            const bool doorIsOpen = ptr.getRefData().getPosition().rot[2] != ptr.getCellRef().getPosition().rot[2];
+
+            return doorIsIdle && !doorIsOpen;
+        };
+        door["activateDoor"] = [](const Object& o, sol::optional<bool> openState) {
+            bool allowChanges
+                = dynamic_cast<const GObject*>(&o) != nullptr || dynamic_cast<const SelfObject*>(&o) != nullptr;
+            if (!allowChanges)
+                throw std::runtime_error("Can only be used in global scripts or in local scripts on self.");
+
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            auto world = MWBase::Environment::get().getWorld();
+
+            if (!openState.has_value())
+                world->activateDoor(ptr);
+            else if (*openState)
+                world->activateDoor(ptr, MWWorld::DoorState::Opening);
+            else
+                world->activateDoor(ptr, MWWorld::DoorState::Closing);
+        };
+>>>>>>> origin/main
         door["isTeleport"] = [](const Object& o) { return door4Ptr(o).getCellRef().getTeleport(); };
         door["destPosition"]
             = [](const Object& o) -> osg::Vec3f { return door4Ptr(o).getCellRef().getDoorDest().asVec3(); };
@@ -165,7 +248,11 @@ namespace MWLua
             if (!cellRef.getTeleport())
                 return sol::nil;
             MWWorld::CellStore& cell = MWBase::Environment::get().getWorldModel()->getCell(cellRef.getDestCell());
+<<<<<<< HEAD
             if (o.isGObject())
+=======
+            if (dynamic_cast<const GObject*>(&o))
+>>>>>>> origin/main
                 return sol::make_object(lua, GCell{ &cell });
             else
                 return sol::make_object(lua, LCell{ &cell });

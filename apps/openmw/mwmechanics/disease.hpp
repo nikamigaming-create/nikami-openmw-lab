@@ -25,7 +25,11 @@ namespace MWMechanics
     /// @param carrier The disease carrier.
     inline void diseaseContact(const MWWorld::Ptr& actor, const MWWorld::Ptr& carrier)
     {
+<<<<<<< HEAD
         if (!carrier.getClass().isActor() || carrier == getPlayer())
+=======
+        if (!carrier.getClass().isActor() || actor != getPlayer())
+>>>>>>> origin/main
             return;
 
         float fDiseaseXferChance = MWBase::Environment::get()
@@ -71,6 +75,7 @@ namespace MWMechanics
                 creatureStats.getActiveSpells().addSpell(spell, actor, false);
                 MWBase::Environment::get().getWorld()->applyLoopingParticles(actor);
 
+<<<<<<< HEAD
                 if (actor == getPlayer())
                 {
                     std::string msg = MWBase::Environment::get()
@@ -81,6 +86,15 @@ namespace MWMechanics
                     msg = Misc::StringUtils::format(msg, spell->mName);
                     MWBase::Environment::get().getWindowManager()->messageBox(msg);
                 }
+=======
+                std::string msg = MWBase::Environment::get()
+                                      .getESMStore()
+                                      ->get<ESM::GameSetting>()
+                                      .find("sMagicContractDisease")
+                                      ->mValue.getString();
+                msg = Misc::StringUtils::format(msg, spell->mName);
+                MWBase::Environment::get().getWindowManager()->messageBox(msg);
+>>>>>>> origin/main
             }
         }
     }

@@ -28,6 +28,10 @@
 #include <istream>
 #include <map>
 #include <memory>
+<<<<<<< HEAD
+=======
+#include <string_view>
+>>>>>>> origin/main
 #include <unordered_map>
 
 #include "cellgrid.hpp"
@@ -167,7 +171,11 @@ namespace ESM4
 
         bool mIgnoreMissingLocalizedStrings = false;
 
+<<<<<<< HEAD
         void buildLStringIndex(LocalizedStringType stringType, std::string_view prefix);
+=======
+        void buildLStringIndex(LocalizedStringType stringType, const std::u8string& prefix);
+>>>>>>> origin/main
 
         void buildLStringIndex(LocalizedStringType stringType, std::istream& stream);
 
@@ -213,7 +221,21 @@ namespace ESM4
 
         inline std::filesystem::path getFileName() const { return mCtx.filename; } // not used
 
+<<<<<<< HEAD
         inline bool hasMoreRecs() const { return (mFileSize - mCtx.fileRead) > 0; }
+=======
+        inline bool hasMoreRecs() const
+        {
+            const std::streampos pos
+                = mSavedStream ? mSavedStream->tellg() : (mStream ? mStream->tellg() : std::streampos(-1));
+            if (pos != std::streampos(-1))
+            {
+                const std::streamoff offset = static_cast<std::streamoff>(pos);
+                return offset >= 0 && static_cast<std::size_t>(offset) < mFileSize;
+            }
+            return mCtx.fileRead < mFileSize;
+        }
+>>>>>>> origin/main
 
         // Methods added for updating loading progress bars
         inline std::size_t getFileSize() const { return mFileSize; }
@@ -270,6 +292,10 @@ namespace ESM4
         // The object setting up this reader needs to supply the file's load order index
         // so that the formId's in this file can be adjusted with the file (i.e. mod) index.
         void setModIndex(std::uint32_t index) { mCtx.modIndex = index; }
+<<<<<<< HEAD
+=======
+        std::uint32_t getModIndex() const { return mCtx.modIndex; }
+>>>>>>> origin/main
         void updateModIndices(const std::map<std::string, int>& fileToModIndex);
 
         // Maybe should throw an exception if called when not valid?
@@ -330,6 +356,11 @@ namespace ESM4
         // Note: assumes the header was read correctly and nothing else was read
         void skipSubRecordData();
 
+<<<<<<< HEAD
+=======
+        bool skipUnknownStarfieldSubRecordData(std::string_view owner);
+
+>>>>>>> origin/main
         // Special for a subrecord following a XXXX subrecord
         void skipSubRecordData(std::uint32_t size);
 

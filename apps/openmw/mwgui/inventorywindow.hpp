@@ -5,6 +5,10 @@
 #include "windowpinnablebase.hpp"
 
 #include "../mwrender/characterpreview.hpp"
+<<<<<<< HEAD
+=======
+#include "../mwworld/containerstore.hpp"
+>>>>>>> origin/main
 #include "../mwworld/ptr.hpp"
 
 #include <components/misc/notnullptr.hpp>
@@ -33,7 +37,7 @@ namespace MWGui
     class ItemModel;
     class ItemTransfer;
 
-    class InventoryWindow : public WindowPinnableBase
+    class InventoryWindow : public WindowPinnableBase, public MWWorld::ContainerStoreListener
     {
     public:
         explicit InventoryWindow(DragAndDrop& dragAndDrop, ItemTransfer& itemTransfer, osg::Group* parent,
@@ -68,7 +72,12 @@ namespace MWGui
 
         void setGuiMode(GuiMode mode);
 
+<<<<<<< HEAD
         void onInventoryUpdate(const MWWorld::Ptr& ptr) override;
+=======
+        void itemAdded(const MWWorld::ConstPtr& item, int count) override;
+        void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
+>>>>>>> origin/main
 
         /// Cycle to previous/next weapon
         void cycle(bool next);
@@ -117,6 +126,16 @@ namespace MWGui
 
         std::unique_ptr<MyGUI::ITexture> mPreviewTexture;
         std::unique_ptr<MWRender::InventoryPreview> mPreview;
+<<<<<<< HEAD
+=======
+        MyGUI::ImageBox* mProfileAvatarSide = nullptr;
+        MyGUI::ImageBox* mProfileAvatarTop = nullptr;
+        std::unique_ptr<MyGUI::ITexture> mProfilePreviewSideTexture;
+        std::unique_ptr<MyGUI::ITexture> mProfilePreviewTopTexture;
+        std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewSide;
+        std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewTop;
+        bool mPaperDollProfiler = false;
+>>>>>>> origin/main
 
         bool mTrading;
         bool mUpdateNextFrame;
@@ -142,9 +161,14 @@ namespace MWGui
         void dragItem(MyGUI::Widget* sender, std::size_t count);
         void transferItem(MyGUI::Widget* sender, std::size_t count);
         void dropItem(MyGUI::Widget* sender, std::size_t count);
+<<<<<<< HEAD
         void equipItem(std::size_t count);
 
         void onWindowResize(MyGUI::Window* sender);
+=======
+
+        void onWindowResize(MyGUI::Window* sender) override;
+>>>>>>> origin/main
         void onFilterChanged(MyGUI::Widget* sender);
         void onNameFilterChanged(MyGUI::EditBox* sender);
         void onAvatarClicked(MyGUI::Widget* sender);
@@ -155,9 +179,17 @@ namespace MWGui
         void dirtyPreview();
         void updatePreviewSize();
         void updateArmorRating();
+<<<<<<< HEAD
 
         MyGUI::IntSize getPreviewViewportSize() const;
         osg::Vec2i mapPreviewWindowToViewport(int x, int y) const;
+=======
+        void updateProfilerPreviews();
+        void rebuildProfilerPreviews();
+
+        MyGUI::IntSize getPreviewViewportSize() const;
+        osg::Vec2f mapPreviewWindowToViewport(int x, int y) const;
+>>>>>>> origin/main
 
         void adjustPanes();
 

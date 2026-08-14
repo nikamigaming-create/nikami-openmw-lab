@@ -127,6 +127,8 @@ namespace MWGui
 
         bool mConstantEffect;
 
+        bool mConstantEffect;
+
         std::vector<ESM::ENAMstruct> mEffects;
 
         void onEffectAdded(ESM::ENAMstruct effect);
@@ -153,9 +155,15 @@ namespace MWGui
     private:
         Type mType;
 
+<<<<<<< HEAD
         size_t mAvailableFocus = 0;
         size_t mEffectFocus = 0;
         bool mRightColumn = false;
+=======
+        int mAvailableFocus;
+        int mEffectFocus;
+        bool mRightColumn;
+>>>>>>> origin/main
         std::vector<MyGUI::Button*> mAvailableButtons;
         std::vector<std::pair<Widgets::MWSpellEffectPtr, MyGUI::Button*>> mEffectButtons;
     };

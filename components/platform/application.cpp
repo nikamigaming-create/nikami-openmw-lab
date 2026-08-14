@@ -1,7 +1,10 @@
 #include "application.hpp"
 
+<<<<<<< HEAD
 #include <string>
 
+=======
+>>>>>>> origin/main
 #include <QFile>
 #include <QOperatingSystemVersion>
 #include <QStyle>
@@ -12,6 +15,7 @@
 
 namespace Platform
 {
+<<<<<<< HEAD
     static void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
     {
         Debug::Level level;
@@ -44,6 +48,11 @@ namespace Platform
         : QApplication(argc, argv)
     {
         qInstallMessageHandler(qtMessageHandler);
+=======
+    Application::Application(int& argc, char* argv[])
+        : QApplication(argc, argv)
+    {
+>>>>>>> origin/main
 #if defined(WIN32) && QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
         init();
     }

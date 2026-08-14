@@ -14,7 +14,10 @@
 
 namespace ESM
 {
+<<<<<<< HEAD
     class ActorIdConverter;
+=======
+>>>>>>> origin/main
     class ESMReader;
     class ESMWriter;
     struct ContainerState;
@@ -30,6 +33,7 @@ namespace ESM
     {
         CellRef mRef;
 
+<<<<<<< HEAD
         Locals mLocals;
         LuaScripts mLuaScripts;
         Position mPosition;
@@ -42,6 +46,29 @@ namespace ESM
 
         // Is there any class-specific state following the ObjectState
         bool mHasCustomState = true;
+=======
+        unsigned char mHasLocals;
+        Locals mLocals;
+        LuaScripts mLuaScripts;
+        unsigned char mEnabled;
+        Position mPosition;
+        uint32_t mFlags;
+
+        // Is there any class-specific state following the ObjectState
+        bool mHasCustomState;
+
+        FormatVersion mVersion = DefaultFormatVersion;
+
+        AnimationState mAnimationState;
+
+        ObjectState()
+            : mHasLocals(0)
+            , mEnabled(0)
+            , mFlags(0)
+            , mHasCustomState(true)
+        {
+        }
+>>>>>>> origin/main
 
         /// @note Does not load the CellRef ID, it should already be loaded before calling this method
         virtual void load(ESMReader& esm);

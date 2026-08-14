@@ -51,7 +51,11 @@ end
 
 ---
 -- Run given function repeatedly.
+<<<<<<< HEAD
 -- Note that loading a save stops the evaluation. If it should always work, call it during the initialization of the script (i.e. not in a handler)
+=======
+-- Note that loading a save stops the evaluation. If it should work always, call it during initialization of the script (i.e. not in a handler)
+>>>>>>> origin/main
 -- @function [parent=#time] runRepeatedly
 -- @param #function fn the function that should be called
 -- @param #number period interval

@@ -123,7 +123,11 @@ namespace MWGui
             MyGUI::Button* button = mTrainingOptions->createWidget<MyGUI::Button>(price <= playerGold
                     ? "SandTextButton"
                     : "SandTextButtonDisabled", // can't use setEnabled since that removes tooltip
+<<<<<<< HEAD
                 MyGUI::IntCoord(4, static_cast<int>(3 + i * lineHeight), mTrainingOptions->getWidth() - 10, lineHeight),
+=======
+                MyGUI::IntCoord(4, 3 + i * lineHeight, mTrainingOptions->getWidth() - 10, lineHeight),
+>>>>>>> origin/main
                 MyGUI::Align::Default);
 
             button->setUserData(skills[i].first);
@@ -169,8 +173,13 @@ namespace MWGui
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
 
+<<<<<<< HEAD
         int price = static_cast<int>(pcStats.getSkill(skill->mId).getBase()
             * store.get<ESM::GameSetting>().find("iTrainingMod")->mValue.getInteger());
+=======
+        int price = pcStats.getSkill(skill->mId).getBase()
+            * store.get<ESM::GameSetting>().find("iTrainingMod")->mValue.getInteger();
+>>>>>>> origin/main
         price = MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mPtr, price, true);
 
         if (price > player.getClass().getContainerStore(player).count(MWWorld::ContainerStore::sGoldId))
@@ -263,7 +272,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mTrainingButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mTrainingButtons.size(), -1);
+=======
+            mControllerFocus = wrap(mControllerFocus - 1, mTrainingButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mTrainingButtons, mControllerFocus, true);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
@@ -272,7 +285,11 @@ namespace MWGui
                 return true;
 
             setControllerFocus(mTrainingButtons, mControllerFocus, false);
+<<<<<<< HEAD
             mControllerFocus = wrap(mControllerFocus, mTrainingButtons.size(), 1);
+=======
+            mControllerFocus = wrap(mControllerFocus + 1, mTrainingButtons.size());
+>>>>>>> origin/main
             setControllerFocus(mTrainingButtons, mControllerFocus, true);
         }
 

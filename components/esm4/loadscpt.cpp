@@ -29,7 +29,11 @@
 #include <stdexcept>
 
 #include "reader.hpp"
+<<<<<<< HEAD
 //#include "writer.hpp"
+=======
+// #include "writer.hpp"
+>>>>>>> origin/main
 
 void ESM4::Script::load(ESM4::Reader& reader)
 {
@@ -42,6 +46,7 @@ void ESM4::Script::load(ESM4::Reader& reader)
         switch (subHdr.typeId)
         {
             case ESM::fourCC("EDID"):
+<<<<<<< HEAD
             {
                 reader.getZString(mEditorId);
                 break;
@@ -142,6 +147,22 @@ void ESM4::Script::load(ESM4::Reader& reader)
                 break;
             }
             default:
+=======
+                reader.getZString(mEditorId);
+                break;
+            case ESM::fourCC("SCHR"):
+            case ESM::fourCC("SCDA"): // compiled script data
+            case ESM::fourCC("SCTX"):
+            case ESM::fourCC("SCRO"):
+            case ESM::fourCC("SLSD"):
+            case ESM::fourCC("SCVR"): // assumed always pair with SLSD
+            case ESM::fourCC("SCRV"):
+                loadScriptSubRecord(reader, mScript);
+                break;
+            default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadscpt"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::SCPT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

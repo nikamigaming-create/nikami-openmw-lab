@@ -11,6 +11,11 @@
 
 #include <components/files/qtconversion.hpp>
 
+<<<<<<< HEAD
+=======
+#include <apps/wizard/inisettings.hpp>
+
+>>>>>>> origin/main
 Wizard::UnshieldWorker::UnshieldWorker(qint64 expectedMorrowindBsaSize, QObject* parent)
     : QObject(parent)
     , mExpectedMorrowindBsaSize(expectedMorrowindBsaSize)
@@ -445,6 +450,7 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
     {
 
         case Wizard::Component_Morrowind:
+<<<<<<< HEAD
             name = QStringLiteral("Morrowind");
             break;
         case Wizard::Component_Tribunal:
@@ -452,6 +458,15 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
             break;
         case Wizard::Component_Bloodmoon:
             name = QStringLiteral("Bloodmoon");
+=======
+            name = QLatin1String("Morrowind");
+            break;
+        case Wizard::Component_Tribunal:
+            name = QLatin1String("Tribunal");
+            break;
+        case Wizard::Component_Bloodmoon:
+            name = QLatin1String("Bloodmoon");
+>>>>>>> origin/main
             break;
     }
 
@@ -523,7 +538,11 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
             else
             {
 
+<<<<<<< HEAD
                 if (findInCab(name + QStringLiteral(".bsa"), file))
+=======
+                if (findInCab(name + QLatin1String(".bsa"), file))
+>>>>>>> origin/main
                 {
                     cabFile = file;
                     found = true;
@@ -565,6 +584,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
     {
 
         case Wizard::Component_Morrowind:
+<<<<<<< HEAD
             name = QStringLiteral("Morrowind");
             break;
         case Wizard::Component_Tribunal:
@@ -572,6 +592,15 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
             break;
         case Wizard::Component_Bloodmoon:
             name = QStringLiteral("Bloodmoon");
+=======
+            name = QLatin1String("Morrowind");
+            break;
+        case Wizard::Component_Tribunal:
+            name = QLatin1String("Tribunal");
+            break;
+        case Wizard::Component_Bloodmoon:
+            name = QLatin1String("Bloodmoon");
+>>>>>>> origin/main
             break;
     }
 
@@ -630,9 +659,15 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     // Install extracted directories
     QStringList directories;
+<<<<<<< HEAD
     directories << QStringLiteral("BookArt") << QStringLiteral("Fonts") << QStringLiteral("Icons")
                 << QStringLiteral("Meshes") << QStringLiteral("Music") << QStringLiteral("Sound")
                 << QStringLiteral("Splash") << QStringLiteral("Textures") << QStringLiteral("Video");
+=======
+    directories << QLatin1String("BookArt") << QLatin1String("Fonts") << QLatin1String("Icons")
+                << QLatin1String("Meshes") << QLatin1String("Music") << QLatin1String("Sound")
+                << QLatin1String("Splash") << QLatin1String("Textures") << QLatin1String("Video");
+>>>>>>> origin/main
 
     for (const QString& dir : directories)
     {
@@ -657,7 +692,11 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     // Install translation files
     QStringList extensions;
+<<<<<<< HEAD
     extensions << QStringLiteral(".cel") << QStringLiteral(".top") << QStringLiteral(".mrk");
+=======
+    extensions << QLatin1String(".cel") << QLatin1String(".top") << QLatin1String(".mrk");
+>>>>>>> origin/main
 
     for (const QString& extension : extensions)
     {
@@ -671,7 +710,11 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
     if (component == Wizard::Component_Morrowind)
     {
         QStringList files;
+<<<<<<< HEAD
         files << QStringLiteral("Morrowind.esm") << QStringLiteral("Morrowind.bsa");
+=======
+        files << QLatin1String("Morrowind.esm") << QLatin1String("Morrowind.bsa");
+>>>>>>> origin/main
 
         for (const QString& file : files)
         {
@@ -683,10 +726,17 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
         }
 
         // Copy Morrowind configuration file
+<<<<<<< HEAD
         if (!installFile(QStringLiteral("Morrowind.ini"), temp.absolutePath()))
         {
             emit error(tr("Could not install Morrowind configuration file!"),
                 tr("Failed to install %1.").arg(QStringLiteral("Morrowind.ini")));
+=======
+        if (!installFile(QLatin1String("Morrowind.ini"), temp.absolutePath()))
+        {
+            emit error(tr("Could not install Morrowind configuration file!"),
+                tr("Failed to install %1.").arg(QLatin1String("Morrowind.ini")));
+>>>>>>> origin/main
             return false;
         }
 
@@ -714,7 +764,11 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
         }
 
         QStringList files;
+<<<<<<< HEAD
         files << QStringLiteral("Tribunal.esm") << QStringLiteral("Tribunal.bsa");
+=======
+        files << QLatin1String("Tribunal.esm") << QLatin1String("Tribunal.bsa");
+>>>>>>> origin/main
 
         for (const QString& file : files)
         {
@@ -732,16 +786,27 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
         if (original.exists())
         {
+<<<<<<< HEAD
             if (!installFile(QStringLiteral("Tribunal.esm"), temp.absolutePath()))
             {
                 emit error(tr("Could not find Tribunal patch file!"),
                     tr("Failed to find %1.").arg(QStringLiteral("Tribunal.esm")));
+=======
+            if (!installFile(QLatin1String("Tribunal.esm"), temp.absolutePath()))
+            {
+                emit error(tr("Could not find Tribunal patch file!"),
+                    tr("Failed to find %1.").arg(QLatin1String("Tribunal.esm")));
+>>>>>>> origin/main
                 return false;
             }
         }
 
         QStringList files;
+<<<<<<< HEAD
         files << QStringLiteral("Bloodmoon.esm") << QStringLiteral("Bloodmoon.bsa");
+=======
+        files << QLatin1String("Bloodmoon.esm") << QLatin1String("Bloodmoon.bsa");
+>>>>>>> origin/main
 
         for (const QString& file : files)
         {

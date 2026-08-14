@@ -5,7 +5,10 @@
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/defs.hpp>
+<<<<<<< HEAD
 #include <components/esm3/actoridconverter.hpp>
+=======
+>>>>>>> origin/main
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadbsgn.hpp>
@@ -35,6 +38,11 @@
 #include "class.hpp"
 #include "ptr.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/session.hpp>
+#include <components/vr/vr.hpp>
+
+//## VR_PATCH END
 namespace MWWorld
 {
     namespace
@@ -69,9 +77,15 @@ namespace MWWorld
         MWMechanics::NpcStats& stats = getPlayer().getClass().getNpcStats(getPlayer());
 
         for (size_t i = 0; i < mSaveSkills.size(); ++i)
+<<<<<<< HEAD
             mSaveSkills[i] = stats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i))).getModified();
         for (size_t i = 0; i < mSaveAttributes.size(); ++i)
             mSaveAttributes[i] = stats.getAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i))).getModified();
+=======
+            mSaveSkills[i] = stats.getSkill(ESM::Skill::indexToRefId(i)).getModified();
+        for (size_t i = 0; i < mSaveAttributes.size(); ++i)
+            mSaveAttributes[i] = stats.getAttribute(ESM::Attribute::indexToRefId(i)).getModified();
+>>>>>>> origin/main
     }
 
     void Player::restoreStats()
@@ -84,13 +98,21 @@ namespace MWWorld
         creatureStats.setHealth(health.getBase() / gmst.find("fWereWolfHealth")->mValue.getFloat());
         for (size_t i = 0; i < mSaveSkills.size(); ++i)
         {
+<<<<<<< HEAD
             auto& skill = npcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i)));
+=======
+            auto& skill = npcStats.getSkill(ESM::Skill::indexToRefId(i));
+>>>>>>> origin/main
             skill.restore(skill.getDamage());
             skill.setModifier(mSaveSkills[i] - skill.getBase());
         }
         for (size_t i = 0; i < mSaveAttributes.size(); ++i)
         {
+<<<<<<< HEAD
             auto id = ESM::Attribute::indexToRefId(static_cast<int>(i));
+=======
+            auto id = ESM::Attribute::indexToRefId(i);
+>>>>>>> origin/main
             auto attribute = npcStats.getAttribute(id);
             attribute.restore(attribute.getDamage());
             attribute.setModifier(mSaveAttributes[i] - attribute.getBase());
@@ -109,8 +131,12 @@ namespace MWWorld
         for (const auto& attribute : store->get<ESM::Attribute>())
         {
             MWMechanics::AttributeValue value = npcStats.getAttribute(attribute.mId);
+<<<<<<< HEAD
             value.setBase(value.getBase(), true);
             value.setModifier(attribute.mWerewolfValue - value.getBase());
+=======
+            value.setModifier(attribute.mWerewolfValue - value.getModified());
+>>>>>>> origin/main
             npcStats.setAttribute(attribute.mId, value);
         }
 
@@ -121,8 +147,12 @@ namespace MWWorld
                 continue;
 
             MWMechanics::SkillValue& value = npcStats.getSkill(skill.mId);
+<<<<<<< HEAD
             value.setBase(value.getBase(), true);
             value.setModifier(skill.mWerewolfValue - value.getBase());
+=======
+            value.setModifier(skill.mWerewolfValue - value.getModified());
+>>>>>>> origin/main
         }
     }
 
@@ -196,7 +226,11 @@ namespace MWWorld
         if (playerStats.isParalyzed() || playerStats.getKnockedDown() || playerStats.isDead())
             return;
 
+<<<<<<< HEAD
         MWWorld::Ptr toActivate = MWBase::Environment::get().getWorld()->getFocusObject();
+=======
+        MWWorld::Ptr toActivate = MWBase::Environment::get().getWorld()->getFacedObject();
+>>>>>>> origin/main
 
         if (toActivate.isEmpty())
             return;
@@ -232,6 +266,19 @@ namespace MWWorld
         return MWBase::Environment::get().getMechanicsManager()->getActorsFighting(getPlayer()).size() != 0;
     }
 
+<<<<<<< HEAD
+=======
+//## VR_PATCH BEGIN
+    bool Player::isDisabled()
+    {
+        auto ptr = getPlayer();
+        const MWWorld::Class& cls = ptr.getClass();
+        auto& stats = cls.getCreatureStats(ptr);
+        return stats.isParalyzed() || stats.getKnockedDown() || stats.isDead();
+    }
+
+//## VR_PATCH END
+>>>>>>> origin/main
     bool Player::enemiesNearby()
     {
         return MWBase::Environment::get().getMechanicsManager()->getEnemiesNearby(getPlayer()).size() != 0;
@@ -346,10 +393,13 @@ namespace MWWorld
 
             MWBase::Environment::get().getWorldModel()->deregisterLiveCellRef(mPlayer);
             mPlayer.load(player.mObject);
+<<<<<<< HEAD
             MWBase::Environment::get().getWorldModel()->registerPtr(getPlayer());
             if (reader.mActorIdConverter)
                 reader.mActorIdConverter->mMappings.emplace(
                     player.mObject.mCreatureStats.mActorId, mPlayer.mRef.getRefNum());
+=======
+>>>>>>> origin/main
 
             for (size_t i = 0; i < mSaveAttributes.size(); ++i)
                 mSaveAttributes[i] = player.mSaveAttributes[i];

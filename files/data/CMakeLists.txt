@@ -3,7 +3,10 @@ if (NOT DEFINED OPENMW_RESOURCES_ROOT)
 endif()
 
 set(BUILTIN_DATA_FILES
+<<<<<<< HEAD
     textures/omw_map_color_palette.dds
+=======
+>>>>>>> origin/main
     textures/omw_menu_scroll_down.dds
     textures/omw_menu_scroll_up.dds
     textures/omw_menu_scroll_left.dds
@@ -90,6 +93,13 @@ set(BUILTIN_DATA_FILES
     l10n/OMWControls/ru.yaml
     l10n/OMWControls/sv.yaml
     l10n/OMWControls/pl.yaml
+<<<<<<< HEAD
+=======
+    
+    l10n/OMWVRInput/en.yaml
+    l10n/OMWVRTutorial/en.yaml
+    l10n/OMWVRUI/en.yaml
+>>>>>>> origin/main
 
     # L10n for OpenMW menus and non-game-specific messages
     l10n/OMWEngine/de.yaml
@@ -120,28 +130,58 @@ set(BUILTIN_DATA_FILES
     openmw_aux/calendar.lua
     openmw_aux/calendarconfig.lua
     openmw_aux/ui.lua
+<<<<<<< HEAD
+=======
+    openmw_aux/lexer.lua
+    openmw_aux/obscript/bindings.lua
+    openmw_aux/obscript/compiler.lua
+    openmw_aux/obscript/parser.lua
+    openmw_aux/obscript/runtime.lua
+    openmw_aux/obscript/transpiler.lua
+    openmw_aux/obscript/ui_bridge.lua
+>>>>>>> origin/main
 
     builtin.omwscripts
 
     scripts/omw/activationhandlers.lua
     scripts/omw/ai.lua
+<<<<<<< HEAD
+=======
+    scripts/omw/cellhandlers.lua
+>>>>>>> origin/main
     scripts/omw/camera/camera.lua
     scripts/omw/camera/head_bobbing.lua
     scripts/omw/camera/third_person.lua
     scripts/omw/camera/settings.lua
     scripts/omw/camera/move360.lua
     scripts/omw/camera/first_person_auto_switch.lua
+<<<<<<< HEAD
+=======
+    scripts/omw/combat/common.lua
+    scripts/omw/combat/global.lua
+    scripts/omw/combat/local.lua
+    scripts/omw/combat/menu.lua
+>>>>>>> origin/main
     scripts/omw/console/global.lua
     scripts/omw/console/local.lua
     scripts/omw/console/player.lua
     scripts/omw/console/menu.lua
+<<<<<<< HEAD
     scripts/omw/combat/interface.lua
+=======
+>>>>>>> origin/main
     scripts/omw/mechanics/actorcontroller.lua
     scripts/omw/mechanics/animationcontroller.lua
     scripts/omw/mechanics/globalcontroller.lua
     scripts/omw/mechanics/playercontroller.lua
     scripts/omw/settings/menu.lua
     scripts/omw/music/actor.lua
+<<<<<<< HEAD
+=======
+    scripts/omw/music/helpers.lua
+    scripts/omw/music/music.lua
+    scripts/omw/music/settings.lua
+>>>>>>> origin/main
     scripts/omw/settings/player.lua
     scripts/omw/settings/global.lua
     scripts/omw/settings/common.lua
@@ -163,11 +203,30 @@ set(BUILTIN_DATA_FILES
     scripts/omw/input/actionbindings.lua
     scripts/omw/input/smoothmovement.lua
     scripts/omw/input/gamepadcontrols.lua
+<<<<<<< HEAD
+=======
+    scripts/omw/fnv/compat/directinput.lua
+    scripts/omw/fnv/compat/jam_sprint.lua
+    scripts/omw/obscript.lua
+    scripts/omw/vr/spaces.lua
+    scripts/omw/vr/ui/common.lua
+    scripts/omw/vr/ui/menu.lua
+    scripts/omw/vr/ui/player.lua
+    scripts/omw/vr/inputs/player.lua
+    scripts/omw/vr/inputs/common.lua
+    scripts/omw/vr/inputs/defaultBindingsLeftHanded.lua
+    scripts/omw/vr/inputs/defaultBindingsRightHanded.lua
+    scripts/omw/vr/inputs/menu.lua
+>>>>>>> origin/main
     
     shaders/adjustments.omwfx
     shaders/bloomlinear.omwfx
     shaders/debug.omwfx
     shaders/internal_distortion.omwfx
+<<<<<<< HEAD
+=======
+    shaders/internal_fallout_imagespace.omwfx
+>>>>>>> origin/main
 
     mygui/core.skin
     mygui/core.xml
@@ -228,6 +287,10 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_trade_window.layout
     mygui/openmw_spell_buying_window.layout
     mygui/openmw_windows.skin.xml
+<<<<<<< HEAD
+=======
+    mygui/openmw_windows_vr.skin.xml
+>>>>>>> origin/main
     mygui/openmw_quickkeys_menu.layout
     mygui/openmw_quickkeys_menu_assign.layout
     mygui/openmw_itemselection_dialog.layout
@@ -258,6 +321,28 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_jail_screen.layout
     mygui/OpenMWResourcePlugin.xml
     mygui/skins.xml
+<<<<<<< HEAD
+=======
+    mygui/skins_vr.xml
+	
+    mygui/core_vr.xml
+    mygui/openmw_alchemy_window_vr.layout
+    mygui/openmw_container_window_vr.layout
+    mygui/openmw_dialogue_window_vr.layout
+    mygui/openmw_hud_vr.layout
+    mygui/openmw_inventory_window_vr.layout
+    mygui/openmw_layers_vr.xml
+    mygui/openmw_map_window_vr.layout
+    mygui/openmw_settings_window_vr.layout
+    mygui/openmw_spell_window_vr.layout
+    mygui/openmw_stats_window_vr.layout
+    mygui/openmw_tooltips_vr.layout
+    mygui/openmw_trade_window_vr.layout
+    mygui/openmw_vr_listbox.layout
+    mygui/openmw_vr_metamenu.layout
+    mygui/openmw_vr_virtual_keyboard.layout
+    mygui/openmw_vr_radial_menu.layout
+>>>>>>> origin/main
 )
 
 foreach (f ${BUILTIN_DATA_FILES})

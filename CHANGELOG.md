@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 0.51.0
 ------
 
@@ -105,6 +106,8 @@
     Task #8718: Lua: Cell fields can still return empty strings instead of nil values
     Task #9001: Remove the exclusive FFP mode
 
+=======
+>>>>>>> origin/main
 0.50.0
 ------
 

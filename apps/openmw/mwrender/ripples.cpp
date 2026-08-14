@@ -43,7 +43,11 @@ namespace MWRender
         // we can not trust Apple :)
         mUseCompute = false;
 #else
+<<<<<<< HEAD
         constexpr float minimumGLVersionRequiredForCompute = 4.4f;
+=======
+        constexpr float minimumGLVersionRequiredForCompute = 4.4;
+>>>>>>> origin/main
         osg::GLExtensions& exts = SceneUtil::getGLExtensions();
         mUseCompute = exts.glVersion >= minimumGLVersionRequiredForCompute
             && exts.glslLanguageVersion >= minimumGLVersionRequiredForCompute;
@@ -183,7 +187,11 @@ namespace MWRender
                 - osg::Vec3f(mCurrentPlayerPos.x() * sWorldScaleFactor, mCurrentPlayerPos.y() * sWorldScaleFactor, 0.0)
                 + osg::Vec3f(sRTTSize * sWorldScaleFactor / 2, sRTTSize * sWorldScaleFactor / 2, 0.0);
             pos /= sWorldScaleFactor;
+<<<<<<< HEAD
             positions->setElement(static_cast<unsigned>(i), pos);
+=======
+            positions->setElement(i, pos);
+>>>>>>> origin/main
         }
         positions->dirty();
 
@@ -217,7 +225,11 @@ namespace MWRender
         }
 
         osg::GLExtensions& ext = *state.get<osg::GLExtensions>();
+<<<<<<< HEAD
         const unsigned contextID = state.getContextID();
+=======
+        const std::size_t contextID = state.getContextID();
+>>>>>>> origin/main
 
         const auto bindImage = [&](osg::Texture2D* texture, GLuint index, GLenum access) {
             osg::Texture::TextureObject* to = texture->getTextureObject(contextID);
@@ -315,6 +327,10 @@ namespace MWRender
         : osg::Camera()
         , mRipples(new RipplesSurface(resourceSystem))
     {
+<<<<<<< HEAD
+=======
+        getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+>>>>>>> origin/main
         getOrCreateStateSet()->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
         setRenderOrder(osg::Camera::PRE_RENDER);
         setReferenceFrame(osg::Camera::ABSOLUTE_RF);

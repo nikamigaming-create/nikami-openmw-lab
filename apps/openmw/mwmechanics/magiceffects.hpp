@@ -21,12 +21,20 @@ namespace MWMechanics
 {
     struct EffectKey
     {
+<<<<<<< HEAD
         ESM::RefId mId;
+=======
+        int mId;
+>>>>>>> origin/main
         ESM::RefId mArg; // skill or ability
 
         EffectKey();
 
+<<<<<<< HEAD
         EffectKey(ESM::RefId id, ESM::RefId arg = {})
+=======
+        EffectKey(int id, ESM::RefId arg = {})
+>>>>>>> origin/main
             : mId(id)
             , mArg(arg)
         {
@@ -107,7 +115,10 @@ namespace MWMechanics
         void modifyBase(const EffectKey& key, int diff);
 
         EffectParam getOrDefault(const EffectKey& key) const;
+<<<<<<< HEAD
         EffectParam getOrDefault(ESM::RefId effectId) const;
+=======
+>>>>>>> origin/main
         std::optional<EffectParam> get(const EffectKey& key) const;
         ///< This function can safely be used for keys that are not present.
     };

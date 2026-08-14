@@ -114,8 +114,13 @@ namespace SceneUtil
         osg::ref_ptr<osg::Material> material = new osg::Material;
         material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
 
+<<<<<<< HEAD
         const float polygonOffsetFactor = SceneUtil::AutoDepth::isReversed() ? 1.0f : -1.0f;
         const float polygonOffsetUnits = SceneUtil::AutoDepth::isReversed() ? 1.0f : -1.0f;
+=======
+        const float polygonOffsetFactor = SceneUtil::AutoDepth::isReversed() ? 1.0 : -1.0;
+        const float polygonOffsetUnits = SceneUtil::AutoDepth::isReversed() ? 1.0 : -1.0;
+>>>>>>> origin/main
         osg::ref_ptr<osg::PolygonOffset> polygonOffset
             = new osg::PolygonOffset(polygonOffsetFactor, polygonOffsetUnits);
 

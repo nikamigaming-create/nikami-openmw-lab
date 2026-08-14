@@ -10,7 +10,14 @@ namespace MyGUIPlatform
     /// the size of the virtual screen,
     /// which is then upscaled to the real screen size during rendering. The aspect ratio is kept intact, adding blanks
     /// to the sides when necessary.
+<<<<<<< HEAD
     class ScalingLayer final : public MyGUI::OverlappedLayer
+=======
+//## VR_PATCH BEGIN
+// Not final
+    class ScalingLayer : public MyGUI::OverlappedLayer
+//## VR_PATCH END
+>>>>>>> origin/main
     {
     public:
         MYGUI_RTTI_DERIVED(ScalingLayer)

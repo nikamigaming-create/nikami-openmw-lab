@@ -15,6 +15,7 @@ Wizard::ComponentSelectionPage::ComponentSelectionPage(QWidget* parent)
     setCommitPage(true);
     setButtonText(QWizard::CommitButton, tr("&Install"));
 
+<<<<<<< HEAD
     registerField(QStringLiteral("installation.installMorrowind"), morrowindCheckbox);
     registerField(QStringLiteral("installation.installTribunal"), tribunalCheckbox);
     registerField(QStringLiteral("installation.installBloodmoon"), bloodmoonCheckbox);
@@ -30,6 +31,34 @@ void Wizard::ComponentSelectionPage::updateButton()
         return;
 
     if (!morrowindCheckbox->isChecked() && !tribunalCheckbox->isChecked() && !bloodmoonCheckbox->isChecked())
+=======
+    registerField(QLatin1String("installation.components"), componentsList);
+
+    connect(componentsList, &ComponentListWidget::itemChanged, this, &ComponentSelectionPage::updateButton);
+}
+
+void Wizard::ComponentSelectionPage::updateButton(QListWidgetItem*)
+{
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true)
+        return; // Morrowind is always checked here
+
+    bool unchecked = true;
+
+    for (int i = 0; i < componentsList->count(); ++i)
+    {
+        QListWidgetItem* item = componentsList->item(i);
+
+        if (!item)
+            continue;
+
+        if (item->checkState() == Qt::Checked)
+        {
+            unchecked = false;
+        }
+    }
+
+    if (unchecked)
+>>>>>>> origin/main
     {
         setCommitPage(false);
         setButtonText(QWizard::NextButton, tr("&Skip"));
@@ -44,6 +73,7 @@ void Wizard::ComponentSelectionPage::initializePage()
 {
     const bool retailDisc = field(QStringLiteral("installation.retailDisc")).toBool();
 
+<<<<<<< HEAD
     bool hasMorrowind = false;
     bool hasTribunal = false;
     bool hasBloodmoon = false;
@@ -54,6 +84,72 @@ void Wizard::ComponentSelectionPage::initializePage()
         hasMorrowind = installation.hasMorrowind;
         hasTribunal = installation.hasTribunal;
         hasBloodmoon = installation.hasBloodmoon;
+=======
+    QString path(field(QLatin1String("installation.path")).toString());
+
+    QListWidgetItem* morrowindItem = new QListWidgetItem(QLatin1String("Morrowind"));
+    QListWidgetItem* tribunalItem = new QListWidgetItem(QLatin1String("Tribunal"));
+    QListWidgetItem* bloodmoonItem = new QListWidgetItem(QLatin1String("Bloodmoon"));
+
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true)
+    {
+        morrowindItem->setFlags((morrowindItem->flags() & ~Qt::ItemIsEnabled) | Qt::ItemIsUserCheckable);
+        morrowindItem->setData(Qt::CheckStateRole, Qt::Checked);
+        componentsList->addItem(morrowindItem);
+
+        tribunalItem->setFlags(tribunalItem->flags() | Qt::ItemIsUserCheckable);
+        tribunalItem->setData(Qt::CheckStateRole, Qt::Checked);
+        componentsList->addItem(tribunalItem);
+
+        bloodmoonItem->setFlags(bloodmoonItem->flags() | Qt::ItemIsUserCheckable);
+        bloodmoonItem->setData(Qt::CheckStateRole, Qt::Checked);
+        componentsList->addItem(bloodmoonItem);
+    }
+    else
+    {
+
+        if (mWizard->mInstallations[path].hasMorrowind)
+        {
+            morrowindItem->setText(tr("Morrowind\t\t(installed)"));
+            morrowindItem->setFlags((morrowindItem->flags() & ~Qt::ItemIsEnabled) | Qt::ItemIsUserCheckable);
+            morrowindItem->setData(Qt::CheckStateRole, Qt::Unchecked);
+        }
+        else
+        {
+            morrowindItem->setText(tr("Morrowind"));
+            morrowindItem->setData(Qt::CheckStateRole, Qt::Checked);
+        }
+
+        componentsList->addItem(morrowindItem);
+
+        if (mWizard->mInstallations[path].hasTribunal)
+        {
+            tribunalItem->setText(tr("Tribunal\t\t(installed)"));
+            tribunalItem->setFlags((tribunalItem->flags() & ~Qt::ItemIsEnabled) | Qt::ItemIsUserCheckable);
+            tribunalItem->setData(Qt::CheckStateRole, Qt::Unchecked);
+        }
+        else
+        {
+            tribunalItem->setText(tr("Tribunal"));
+            tribunalItem->setData(Qt::CheckStateRole, Qt::Checked);
+        }
+
+        componentsList->addItem(tribunalItem);
+
+        if (mWizard->mInstallations[path].hasBloodmoon)
+        {
+            bloodmoonItem->setText(tr("Bloodmoon\t\t(installed)"));
+            bloodmoonItem->setFlags((bloodmoonItem->flags() & ~Qt::ItemIsEnabled) | Qt::ItemIsUserCheckable);
+            bloodmoonItem->setData(Qt::CheckStateRole, Qt::Unchecked);
+        }
+        else
+        {
+            bloodmoonItem->setText(tr("Bloodmoon"));
+            bloodmoonItem->setData(Qt::CheckStateRole, Qt::Checked);
+        }
+
+        componentsList->addItem(bloodmoonItem);
+>>>>>>> origin/main
     }
 
     morrowindCheckbox->setText(hasMorrowind ? tr("Morrowind\t\t(installed)") : tr("Morrowind"));
@@ -72,6 +168,7 @@ bool Wizard::ComponentSelectionPage::validatePage()
     if (field(QStringLiteral("installation.retailDisc")).toBool())
         return true;
 
+<<<<<<< HEAD
     const QString path = field(QStringLiteral("installation.path")).toString();
     MainWizard::Installation& installation = mWizard->mInstallations[path];
 
@@ -99,6 +196,44 @@ bool Wizard::ComponentSelectionPage::validatePage()
             bloodmoonCheckbox->setText(tr("Bloodmoon"));
             bloodmoonCheckbox->setChecked(true);
             bloodmoonCheckbox->setEnabled(true);
+=======
+    if (field(QLatin1String("installation.retailDisc")).toBool() == false)
+    {
+        if (components.contains(QLatin1String("Tribunal")) && !components.contains(QLatin1String("Bloodmoon")))
+        {
+            if (mWizard->mInstallations[path].hasBloodmoon)
+            {
+                QMessageBox msgBox;
+                msgBox.setWindowTitle(tr("About to install Tribunal after Bloodmoon"));
+                msgBox.setIcon(QMessageBox::Information);
+                msgBox.setStandardButtons(QMessageBox::Cancel);
+                msgBox.setText(
+                    tr("<html><head/><body><p><b>You are about to install Tribunal</b></p>"
+                       "<p>Bloodmoon is already installed on your computer.</p>"
+                       "<p>However, it is recommended that you install Tribunal before Bloodmoon.</p>"
+                       "<p>Would you like to re-install Bloodmoon?</p></body></html>"));
+
+                QAbstractButton* reinstallButton
+                    = msgBox.addButton(tr("Re-install &Bloodmoon"), QMessageBox::ActionRole);
+                msgBox.exec();
+
+                if (msgBox.clickedButton() == reinstallButton)
+                {
+                    // Force reinstallation
+                    mWizard->mInstallations[path].hasBloodmoon = false;
+                    QList<QListWidgetItem*> items
+                        = componentsList->findItems(QLatin1String("Bloodmoon"), Qt::MatchStartsWith);
+
+                    for (QListWidgetItem* item : items)
+                    {
+                        item->setText(QLatin1String("Bloodmoon"));
+                        item->setCheckState(Qt::Checked);
+                    }
+
+                    return true;
+                }
+            }
+>>>>>>> origin/main
         }
     }
 
@@ -109,7 +244,20 @@ int Wizard::ComponentSelectionPage::nextId() const
 {
 #ifdef OPENMW_USE_UNSHIELD
     if (isCommitPage())
+<<<<<<< HEAD
         return MainWizard::Page_Installation;
 #endif
     return MainWizard::Page_Import;
+=======
+    {
+        return MainWizard::Page_Installation;
+    }
+    else
+    {
+        return MainWizard::Page_Import;
+    }
+#else
+    return MainWizard::Page_Import;
+#endif
+>>>>>>> origin/main
 }

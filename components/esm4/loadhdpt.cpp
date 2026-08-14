@@ -116,6 +116,11 @@ void ESM4::HeadPart::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+<<<<<<< HEAD
+=======
+                if (reader.skipUnknownStarfieldSubRecordData("loadhdpt"))
+                    break;
+>>>>>>> origin/main
                 throw std::runtime_error("ESM4::HDPT::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -220,7 +220,11 @@ namespace
                   return rec.mFaction.serializeText();
               });
         recordInfoBindingsClass["filterActorFactionRank"]
+<<<<<<< HEAD
             = sol::readonly_property([](const ESM::DialInfo& rec) -> sol::optional<int64_t> {
+=======
+            = sol::readonly_property([](const ESM::DialInfo& rec) -> sol::optional<int> {
+>>>>>>> origin/main
                   if (rec.mData.mType == ESM::Dialogue::Type::Journal || rec.mData.mRank == -1)
                   {
                       return sol::nullopt;
@@ -260,7 +264,11 @@ namespace
                   return rec.mPcFaction.serializeText();
               });
         recordInfoBindingsClass["filterPlayerFactionRank"]
+<<<<<<< HEAD
             = sol::readonly_property([](const ESM::DialInfo& rec) -> sol::optional<int64_t> {
+=======
+            = sol::readonly_property([](const ESM::DialInfo& rec) -> sol::optional<int> {
+>>>>>>> origin/main
                   if (rec.mData.mType == ESM::Dialogue::Type::Journal || rec.mData.mPCrank == -1)
                   {
                       return sol::nullopt;
@@ -283,6 +291,7 @@ namespace
                   }
                   return sol::optional<std::string_view>(rec.mResultScript);
               });
+<<<<<<< HEAD
         recordInfoBindingsClass["conditions"]
             = sol::readonly_property([lua = lua.lua_state()](const ESM::DialInfo& rec) -> sol::object {
                   if (rec.mData.mType == ESM::Dialogue::Type::Journal)
@@ -338,6 +347,8 @@ namespace
                       return condition.mVariable;
                   return {};
               });
+=======
+>>>>>>> origin/main
     }
 
     void prepareBindingsForDialogueRecords(sol::state_view& lua)
@@ -345,7 +356,10 @@ namespace
         prepareBindingsForDialogueRecord(lua);
         prepareBindingsForDialogueRecordInfoList(lua);
         prepareBindingsForDialogueRecordInfoListElement(lua);
+<<<<<<< HEAD
         prepareBindingsForDialogueConditions(lua);
+=======
+>>>>>>> origin/main
     }
 }
 
@@ -367,10 +381,13 @@ namespace sol
     struct is_automagical<ESM::DialInfo> : std::false_type
     {
     };
+<<<<<<< HEAD
     template <>
     struct is_automagical<ESM::DialogueCondition> : std::false_type
     {
     };
+=======
+>>>>>>> origin/main
 }
 
 namespace MWLua
@@ -398,6 +415,7 @@ namespace MWLua
 
         prepareBindingsForDialogueRecords(lua);
 
+<<<<<<< HEAD
         api["CONDITION_OPERATOR"] = LuaUtil::makeStrictReadOnly(
             lua.create_table_with("Equal", ESM::DialogueCondition::Comparison::Comp_Eq, "NotEqual",
                 ESM::DialogueCondition::Comparison::Comp_Ne, "Greater", ESM::DialogueCondition::Comparison::Comp_Gt,
@@ -488,6 +506,8 @@ namespace MWLua
             ESM::DialogueCondition::Function::Function_NotCell, "NotLocal",
             ESM::DialogueCondition::Function::Function_NotLocal));
 
+=======
+>>>>>>> origin/main
         return LuaUtil::makeReadOnly(api);
     }
 }

@@ -120,7 +120,11 @@ namespace CSVRender
         /// \return Drop handled?
         bool handleDrop(const std::vector<CSMWorld::UniversalId>& data, DropType type) override;
 
+<<<<<<< HEAD
         DropRequirements getDropRequirements(DropType type) const override;
+=======
+        dropRequirments getDropRequirements(DropType type) const override;
+>>>>>>> origin/main
 
         /// \attention The created tool is not added to the toolbar (via addTool). Doing
         /// that is the responsibility of the calling function.

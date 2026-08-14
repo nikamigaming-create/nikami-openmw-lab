@@ -15,6 +15,7 @@
 namespace LuaUtil
 {
     class ScriptTracker;
+<<<<<<< HEAD
     class ScriptsContainer;
     using ScriptsContainerLifetime = std::shared_ptr<ScriptsContainer*>;
 
@@ -50,6 +51,8 @@ namespace LuaUtil
     {
         return *lhs <=> rhs;
     }
+=======
+>>>>>>> origin/main
 
     // ScriptsContainer is a base class for all scripts containers (LocalScripts,
     // GlobalScripts, PlayerScripts, etc). Each script runs in a separate sandbox.
@@ -199,8 +202,11 @@ namespace LuaUtil
 
         virtual bool isActive() const { return false; }
 
+<<<<<<< HEAD
         ScriptsContainerWeakPtr getWeakPointer() const;
 
+=======
+>>>>>>> origin/main
     protected:
         // Call a function on an interface.
         template <typename T, typename... Args>
@@ -262,6 +268,15 @@ namespace LuaUtil
             }
         }
 
+<<<<<<< HEAD
+=======
+        bool hasEngineHandlers(EngineHandlerList& handlers)
+        {
+            ensureLoaded();
+            return !handlers.mList.empty();
+        }
+
+>>>>>>> origin/main
         // To add a new engine handler a derived class should register the corresponding EngineHandlerList and define
         // a public function (see how ScriptsContainer::update is implemented) that calls `callEngineHandlers`.
         void registerEngineHandlers(std::initializer_list<EngineHandlerList*> handlers);
@@ -323,7 +338,10 @@ namespace LuaUtil
         static void removeHandler(std::vector<Handler>& list, int scriptId);
         void insertInterface(int scriptId, const Script& script);
         void removeInterface(int scriptId, const Script& script);
+<<<<<<< HEAD
         void save(LuaView&, ESM::LuaScripts&);
+=======
+>>>>>>> origin/main
 
         ScriptIdsWithInitializationData mAutoStartScripts;
         const UserdataSerializer* mSerializer = nullptr;
@@ -355,7 +373,12 @@ namespace LuaUtil
         int64_t mTemporaryCallbackCounter = 0;
 
         std::map<int, int64_t> mRemovedScriptsMemoryUsage;
+<<<<<<< HEAD
         ScriptsContainerLifetime mThis; // used by LuaState to track ownership of memory allocations
+=======
+        using WeakPtr = std::shared_ptr<ScriptsContainer*>;
+        WeakPtr mThis; // used by LuaState to track ownership of memory allocations
+>>>>>>> origin/main
 
         ScriptTracker* mTracker;
         bool mRequiredLoading = false;
