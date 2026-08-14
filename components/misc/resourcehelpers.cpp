@@ -121,11 +121,11 @@ std::string Misc::ResourceHelpers::correctIconPath(std::string_view resPath, con
     // "interface/icons/pipboyimages/...") while TES3 icons are relative to
     // the top-level icons directory. Prefer the texture-relative form when
     // it exists, then retain the TES3 lookup contract.
-    const VFS::Path::Normalized textureRelative = correctResourcePath({ { textures } }, resPath, vfs, dds);
-    if (vfs.exists(textureRelative))
+    const std::string textureRelative = correctResourcePath({ { "textures" } }, resPath, vfs, ".dds");
+    if (vfs->exists(textureRelative))
         return textureRelative;
 
-    return correctResourcePath({ { icons } }, resPath, vfs, dds);
+    return correctResourcePath({ { "icons" } }, resPath, vfs, ".dds");
 }
 
 std::string Misc::ResourceHelpers::correctBookartPath(std::string_view resPath, const VFS::Manager* vfs)
