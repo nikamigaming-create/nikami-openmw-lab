@@ -5224,6 +5224,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvR2ChetContainerTransferPass = false;
     static bool fnvR2ChetBarterCancelPass = false;
     static bool fnvR2ChetTransactionPass = false;
+    static bool fnvR2ChetNativeSavePass = false;
+    static bool fnvR2ChetReloadPass = false;
     static ESM::RefId fnvR2ChetTransferredItem;
     static ESM::RefId fnvR2ChetPurchasedItem;
     static int fnvR2ChetTransferredPlayerBefore = 0;
@@ -12646,11 +12648,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // R2.0 observes Chet's actual merchant state. The opt-in R2.1 route additionally transfers
     // one existing unlocked-container item through ContainerWindow's production ItemTransfer path,
     // then uses TradeWindow's production cancellation path to prove no barter delta.
-    const bool fnvR2ChetTransactionRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_TRANSACTION");
+    const bool fnvR2ChetPersistenceSaveRequested
+        = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENCE_SAVE");
+    const bool fnvR2ChetPersistenceReloadRequested
+        = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENCE_RELOAD");
+    const bool fnvR2ChetTransactionRequested
+        = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_TRANSACTION") || fnvR2ChetPersistenceSaveRequested;
     const bool fnvR2ChetPersistentRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENT")
         || fnvR2ChetTransactionRequested;
     const bool fnvR2ChetRequested = proofEnvEnabled("OPENMW_FNV_R2_CHET_OBSERVATION")
-        || fnvR2ChetPersistentRequested;
+        || fnvR2ChetPersistentRequested || fnvR2ChetPersistenceReloadRequested;
     if (fnvR2ChetRequested && fnvR2ChetPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
         && mWindowManager != nullptr && mDialogueManager != nullptr)
     {
@@ -12722,13 +12729,75 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << " containerTransfer=" << (fnvR2ChetContainerTransferPass ? 1 : 0)
                 << " barterCancel=" << (fnvR2ChetBarterCancelPass ? 1 : 0)
                 << " transaction=" << (fnvR2ChetTransactionPass ? 1 : 0)
+                << " nativeSave=" << (fnvR2ChetNativeSavePass ? 1 : 0)
+                << " reload=" << (fnvR2ChetReloadPass ? 1 : 0)
                 << " cell=" << playerCellId().toDebugString() << " frame=" << frameNumber;
             fnvR2ChetPhase = -1;
             mStateManager->requestQuit();
         };
 
         const unsigned int elapsed = frameNumber - fnvR2ChetPhaseFrame;
-        if (fnvR2ChetPhase == 0 && proofWorldReadyFrames >= 300)
+        if (fnvR2ChetPersistenceReloadRequested && fnvR2ChetPhase == 0 && proofWorldReadyFrames >= 300)
+        {
+            const auto refFromEnv = [&](const char* name) {
+                const char* value = std::getenv(name);
+                if (value == nullptr || *value == '\0')
+                    return ESM::RefId();
+                const std::optional<ESM::FormId> formId = parseProofFormId(value);
+                return formId ? ESM::RefId::formIdRefId(*formId) : ESM::RefId();
+            };
+            const ESM::RefId transferItem = refFromEnv("OPENMW_FNV_R2_RELOAD_TRANSFER_ITEM");
+            const ESM::RefId purchasedItem = refFromEnv("OPENMW_FNV_R2_RELOAD_PURCHASE_ITEM");
+            const int expectedPlayerTransfer = readProofInt("OPENMW_FNV_R2_RELOAD_TRANSFER_PLAYER_COUNT", -1);
+            const int expectedContainerTransfer = readProofInt("OPENMW_FNV_R2_RELOAD_TRANSFER_CONTAINER_COUNT", -1);
+            const int expectedPlayerPurchase = readProofInt("OPENMW_FNV_R2_RELOAD_PURCHASE_PLAYER_COUNT", -1);
+            const int expectedMerchantPurchase = readProofInt("OPENMW_FNV_R2_RELOAD_PURCHASE_MERCHANT_COUNT", -1);
+            const int expectedPlayerCaps = readProofInt("OPENMW_FNV_R2_RELOAD_PLAYER_CAPS", -1);
+            const int expectedMerchantCaps = readProofInt("OPENMW_FNV_R2_RELOAD_MERCHANT_CAPS", -1);
+            const MWWorld::Ptr cashRegister = findActiveRef(0x110580d);
+            const MWWorld::Ptr chet = findActiveRef(0x1104c79);
+            const ESM::RefId caps = findEsm4EditorId<ESM4::MiscItem>(mWorld->getStore(), "Caps001");
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWWorld::InventoryStore& playerInventory = player.getClass().getInventoryStore(player);
+            const bool configured = !transferItem.empty() && !purchasedItem.empty() && expectedPlayerTransfer >= 0
+                && expectedContainerTransfer >= 0 && expectedPlayerPurchase >= 0 && expectedMerchantPurchase >= 0
+                && expectedPlayerCaps >= 0 && expectedMerchantCaps >= 0 && !cashRegister.isEmpty() && !chet.isEmpty()
+                && !caps.empty();
+            const int playerTransfer = configured ? playerInventory.count(transferItem) : -1;
+            const int containerTransfer = configured ? cashRegister.getClass().getContainerStore(cashRegister).count(transferItem) : -1;
+            const int playerPurchase = configured ? playerInventory.count(purchasedItem) : -1;
+            const int merchantPurchase = configured ? chet.getClass().getContainerStore(chet).count(purchasedItem) : -1;
+            const int playerCaps = configured ? playerInventory.count(caps) : -1;
+            const int merchantCaps = configured ? chet.getClass().getContainerStore(chet).count(caps) : -1;
+            fnvR2ChetReloadPass = configured && playerTransfer == expectedPlayerTransfer
+                && containerTransfer == expectedContainerTransfer && playerPurchase == expectedPlayerPurchase
+                && merchantPurchase == expectedMerchantPurchase && playerCaps == expectedPlayerCaps
+                && merchantCaps == expectedMerchantCaps;
+            Log(fnvR2ChetReloadPass ? Debug::Info : Debug::Error)
+                << "FNV R2 persistence reload: state=" << (fnvR2ChetReloadPass ? "pass" : "fail")
+                << " playerTransfer=" << playerTransfer << " containerTransfer=" << containerTransfer
+                << " playerPurchase=" << playerPurchase << " merchantPurchase=" << merchantPurchase
+                << " playerCaps=" << playerCaps << " merchantCaps=" << merchantCaps;
+            if (!fnvR2ChetReloadPass || !activate(cashRegister, "goodsprings-reload-cash-register"))
+                finish(false, "cold reload did not retain the expected Goodsprings state or ordinary container interaction");
+            else
+            {
+                capture("goodsprings-reload-state");
+                advance(9);
+            }
+        }
+        else if (fnvR2ChetPersistenceReloadRequested && fnvR2ChetPhase == 9 && elapsed >= 30)
+        {
+            const bool interactionPass = mWindowManager->containsMode(MWGui::GM_Container);
+            Log(interactionPass ? Debug::Info : Debug::Error)
+                << "FNV R2 persistence reload: result=" << (interactionPass ? "pass" : "fail")
+                << " state=" << (fnvR2ChetReloadPass ? 1 : 0) << " interaction=" << (interactionPass ? 1 : 0);
+            capture("goodsprings-reload-container-interaction");
+            finish(fnvR2ChetReloadPass && interactionPass,
+                fnvR2ChetReloadPass && interactionPass ? "cold reload retained R2 state and opened an ordinary container"
+                                                      : "cold reload container interaction failed");
+        }
+        else if (fnvR2ChetPhase == 0 && proofWorldReadyFrames >= 300)
         {
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             MWWorld::Ptr door = findActiveRef(0x1106373);
@@ -13014,8 +13083,30 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << " result=" << (fnvR2ChetTransactionPass ? "pass" : "fail");
             capture("goodsprings-chet-live-transaction");
             const bool pass = fnvR2ChetContainerTransferPass && fnvR2ChetBarterPass && fnvR2ChetTransactionPass;
-            finish(pass, pass ? "ordinary container transfer and authored Chet transaction complete"
-                              : "R2.2 container transfer or merchant transaction assertion failed");
+            if (!pass || !fnvR2ChetPersistenceSaveRequested)
+                finish(pass, pass ? "ordinary container transfer and authored Chet transaction complete"
+                                  : "R2.2 container transfer or merchant transaction assertion failed");
+            else
+            {
+                constexpr std::string_view saveName = "R2 Goodsprings Persistence";
+                Log(Debug::Info) << "FNV R2 persistence save: state=before-write transferItem="
+                                 << fnvR2ChetTransferredItem << " transferPlayer="
+                                 << playerInventory.count(fnvR2ChetTransferredItem) << " transferContainer="
+                                 << findActiveRef(0x110580d).getClass().getContainerStore(findActiveRef(0x110580d)).count(fnvR2ChetTransferredItem)
+                                 << " purchaseItem=" << fnvR2ChetPurchasedItem << " purchasePlayer=" << playerItemAfter
+                                 << " purchaseMerchant=" << merchantItemAfter << " playerCaps=" << playerCapsAfter
+                                 << " merchantCaps=" << merchantCapsAfter;
+                mStateManager->quickSave(std::string(saveName));
+                fnvR2ChetNativeSavePass = true;
+                capture("goodsprings-transaction-native-save-requested");
+                advance(8);
+            }
+        }
+        else if (fnvR2ChetPersistenceSaveRequested && fnvR2ChetPhase == 8 && elapsed >= 60)
+        {
+            Log(Debug::Info) << "FNV R2 persistence save: result=pass path=production-state-manager-quick-save cleanQuitRequested=1";
+            finish(fnvR2ChetTransactionPass && fnvR2ChetNativeSavePass,
+                "ordinary container transfer, authored Chet transaction, and native save complete");
         }
     }
 
