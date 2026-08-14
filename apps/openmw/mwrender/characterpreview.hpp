@@ -2,14 +2,17 @@
 #define MWRENDER_CHARACTERPREVIEW_H
 
 #include <memory>
+#include <string>
 #include <osg/ref_ptr>
 
 #include <osg/PositionAttitudeTransform>
 
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/resource/resourcesystem.hpp>
 
+#include "../mwworld/livecellref.hpp"
 #include "../mwworld/ptr.hpp"
 
 namespace osg
@@ -25,6 +28,7 @@ namespace MWRender
 {
 
     class NpcAnimation;
+    class Animation;
     class DrawOnceCallback;
     class CharacterPreviewRTTNode;
 
@@ -41,6 +45,7 @@ namespace MWRender
         void redraw();
 
         void rebuild();
+        void updateLive(double simulationTime = 0.0);
 
         osg::ref_ptr<osg::Texture2D> getTexture();
         /// Get the osg::StateSet required to render the texture correctly, if any.
@@ -53,7 +58,9 @@ namespace MWRender
     protected:
         virtual bool renderHeadOnly() { return false; }
         void setBlendMode();
+        void setRedrawSimulationTime(double simulationTime);
         virtual void onSetup();
+        virtual osg::ref_ptr<Animation> createAnimation();
 
         osg::ref_ptr<osg::Group> mParent;
         Resource::ResourceSystem* mResourceSystem;
@@ -66,7 +73,7 @@ namespace MWRender
 
         MWWorld::Ptr mCharacter;
 
-        osg::ref_ptr<MWRender::NpcAnimation> mAnimation;
+        osg::ref_ptr<MWRender::Animation> mAnimation;
         osg::ref_ptr<osg::PositionAttitudeTransform> mNode;
         std::string mCurrentAnimGroup;
 
@@ -77,7 +84,15 @@ namespace MWRender
     class InventoryPreview : public CharacterPreview
     {
     public:
-        InventoryPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character);
+        enum class ViewMode
+        {
+            Front,
+            Profile,
+            Top,
+        };
+
+        InventoryPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
+            ViewMode viewMode = ViewMode::Front);
 
         void updatePtr(const MWWorld::Ptr& ptr);
 
@@ -88,7 +103,10 @@ namespace MWRender
 
     protected:
         osg::ref_ptr<osg::Viewport> mViewport;
+        std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPreviewRef;
+        ViewMode mViewMode;
 
+        osg::ref_ptr<Animation> createAnimation() override;
         void onSetup() override;
     };
 
@@ -117,6 +135,38 @@ namespace MWRender
         osg::ref_ptr<UpdateCameraCallback> mUpdateCameraCallback;
 
         float mPitchRadians;
+    };
+
+    class FalloutActorPreview : public CharacterPreview
+    {
+    public:
+        enum class ViewMode
+        {
+            Front,
+            FrontLeft,
+            FrontRight,
+            Left,
+            Right,
+            Top,
+            Back,
+            IsoNW,
+            IsoSW,
+        };
+
+        FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
+            ViewMode viewMode, float cameraDistanceMultiplier = 1.f, std::string profileOverride = {},
+            osg::Vec3f editorRotation = osg::Vec3f(), float editorScale = 1.f);
+
+    protected:
+        osg::ref_ptr<Animation> createAnimation() override;
+        void onSetup() override;
+
+    private:
+        ViewMode mViewMode;
+        float mCameraDistanceMultiplier;
+        std::string mProfileOverride;
+        osg::Vec3f mEditorRotation;
+        float mEditorScale;
     };
 
 }

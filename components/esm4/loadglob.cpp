@@ -57,6 +57,8 @@ void ESM4::GlobalVariable::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadglob"))
+                    break;
                 throw std::runtime_error("ESM4::GLOB::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

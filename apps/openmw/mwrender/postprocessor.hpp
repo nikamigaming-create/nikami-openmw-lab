@@ -122,6 +122,8 @@ namespace MWRender
 
         osg::ref_ptr<osg::Camera> getHUDCamera() { return mHUDCamera; }
 
+        osg::Group* getSceneRoot() { return mRootNode; }
+
         osg::ref_ptr<Fx::StateUpdater> getStateUpdater() { return mStateUpdater; }
 
         const TechniqueList& getTechniques() { return mTechniques; }
@@ -173,6 +175,9 @@ namespace MWRender
         void setExteriorFlag(bool exterior) { mExteriorFlag = exterior; }
 
         void setUnderwaterFlag(bool underwater) { mUnderwater = underwater; }
+
+        void setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+            const osg::Vec4f& tint, const osg::Vec4f& fade);
 
         void toggleMode();
 
@@ -232,6 +237,7 @@ namespace MWRender
         TechniqueList mTemplates;
         TechniqueList mQueuedTemplates;
         TechniqueList mInternalTechniques;
+        std::shared_ptr<Fx::Technique> mFalloutImageSpaceTechnique;
 
         std::unordered_set<VFS::Path::Normalized, VFS::Path::Hash, std::equal_to<>> mTechniqueFiles;
 

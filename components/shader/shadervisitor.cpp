@@ -1,5 +1,8 @@
 #include "shadervisitor.hpp"
 
+#include <array>
+#include <cstdlib>
+#include <filesystem>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -12,7 +15,10 @@
 #include <osg/Material>
 #include <osg/Multisample>
 #include <osg/Texture>
+#include <osg/Texture2D>
 #include <osg/ValueObject>
+
+#include <osgDB/ReadFile>
 
 #include <osgParticle/ParticleSystem>
 
@@ -282,7 +288,10 @@ namespace Shader
     // shader defines. Normal maps and normal height maps both get sent to the shader as a normal map, so the latter
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
-        "specularMap", "decalMap", "bumpMap", "glossMap" };
+        "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1",
+        "hairPaletteMap", "poreNormalMap", "daoTintMask", "daoAgeDiffuseMap", "daoAgeNormalMap",
+        "daoEmotionMask0", "daoEmotionMask1", "daoEmotionNormalMap", "daoBrowStubbleMap",
+        "daoBrowStubbleNormalMap", "daoTattooMask", "daoBeckmannLut" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))
@@ -559,6 +568,10 @@ namespace Shader
         else
             mRequirements.push_back(mRequirements.back());
         mRequirements.back().mNode = &node;
+
+        std::string shaderPrefix;
+        if (node.getUserValue("shaderPrefix", shaderPrefix))
+            mRequirements.back().mShaderPrefix = std::move(shaderPrefix);
     }
 
     void ShaderVisitor::popRequirements()
@@ -722,12 +735,82 @@ namespace Shader
 
         Stereo::shaderStereoDefines(defineMap);
 
-        std::string shaderPrefix;
-        if (!node.getUserValue("shaderPrefix", shaderPrefix))
-            shaderPrefix = mDefaultShaderPrefix;
+        std::string shaderPrefix = reqs.mShaderPrefix.empty() ? mDefaultShaderPrefix : reqs.mShaderPrefix;
+        const char* daoFaceEnabledValue = std::getenv("OPENMW_DAO_FACE_SHADER");
+        const bool daoFaceEnabled = daoFaceEnabledValue && *daoFaceEnabledValue != '\0'
+            && std::string_view(daoFaceEnabledValue) != "0";
+        bool daoFaceSelected = false;
+        if (daoFaceEnabled)
+        {
+            std::string surfaceName = node.getName() + " " + writableStateSet->getName();
+            if (const auto* material = dynamic_cast<const osg::Material*>(
+                    writableStateSet->getAttribute(osg::StateAttribute::MATERIAL)))
+                surfaceName += " " + material->getName();
+            const std::string lowerSurfaceName = Misc::StringUtils::lowerCase(surfaceName);
+            if (lowerSurfaceName.find("face") != std::string::npos
+                || lowerSurfaceName.find("_hed_") != std::string::npos
+                || lowerSurfaceName.find("uh_hed") != std::string::npos)
+            {
+                daoFaceSelected = true;
+                shaderPrefix = "bs/dao_face";
+                // This capture path is the neutral Leliana face material.  Keep
+                // the age/tattoo layers disabled; character-specific profiles
+                // can opt into those later without corrupting this baseline.
+                writableStateSet->addUniform(new osg::Uniform("daoAgeAmount", 0.0f));
+                addedState->addUniform("daoAgeAmount");
+                writableStateSet->addUniform(new osg::Uniform("daoTattooAmount", 0.0f));
+                addedState->addUniform("daoTattooAmount");
+                writableStateSet->addUniform(
+                    new osg::Uniform("daoTattooChannelWeights", osg::Vec4f(1.f, 0.f, 0.f, 0.f)));
+                addedState->addUniform("daoTattooChannelWeights");
+                writableStateSet->addUniform(
+                    new osg::Uniform("daoTattooTint", osg::Vec3f(0.6f, 0.47f, 0.8f)));
+                addedState->addUniform("daoTattooTint");
 
+                if (const char* directory = std::getenv("OPENMW_DAO_FACE_MATERIAL_DIR"); directory && *directory)
+                {
+                    // A canonical glTF face already occupies the regular PBR
+                    // samplers.  Bind only the three active DAO layers here so
+                    // GLSL 1.20 hardware does not reject the program for
+                    // exceeding the fragment sampler budget.
+                    const std::array<std::pair<const char*, const char*>, 3> textures = { {
+                        { "daoTintMask", "uh_hed_maka_0t.dds" },
+                        { "daoBeckmannLut", "beckmann.dds" },
+                        { "poreNormalMap", "skin_micro_nrm_ao.png" },
+                    } };
+                    unsigned int textureUnit = static_cast<unsigned int>(
+                        writableStateSet->getTextureAttributeList().size());
+                    for (const auto& [semantic, fileName] : textures)
+                    {
+                        const std::filesystem::path path = std::filesystem::path(directory) / fileName;
+                        osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile(path.string());
+                        if (!image)
+                            continue;
+                        osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(image);
+                        texture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+                        texture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                        texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+                        texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                        writableStateSet->setTextureAttributeAndModes(textureUnit, texture, osg::StateAttribute::ON);
+                        addedState->setTextureAttributeAndModes(textureUnit, texture);
+                        writableStateSet->addUniform(new osg::Uniform(semantic, static_cast<int>(textureUnit)));
+                        addedState->addUniform(semantic);
+                        defineMap[semantic] = "1";
+                        defineMap[std::string(semantic) + "UV"] = "0";
+                        ++textureUnit;
+                    }
+                }
+                Log(Debug::Info) << "DAO face shader selected: surface='" << surfaceName << "'";
+            }
+        }
+        if (daoFaceEnabled && std::getenv("OPENMW_DAO_FACE_ONLY") != nullptr && !daoFaceSelected)
+            return;
         auto program = mShaderManager.getProgram(shaderPrefix, defineMap, mProgramTemplate);
-        writableStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
+        osg::StateAttribute::OverrideValue programMode = osg::StateAttribute::ON;
+        if (shaderPrefix == "bs/dao_face")
+            programMode = static_cast<osg::StateAttribute::OverrideValue>(
+                programMode | osg::StateAttribute::PROTECTED);
+        writableStateSet->setAttributeAndModes(program, programMode);
         addedState->setAttributeAndModes(std::move(program));
 
         for (const auto& [unit, name] : reqs.mTextures)
@@ -787,11 +870,20 @@ namespace Shader
 
             if (generateTangents)
             {
-                osg::ref_ptr<osgUtil::TangentSpaceGenerator> generator(new osgUtil::TangentSpaceGenerator);
-                generator->generate(&sourceGeometry, reqs.mTexStageRequiringTangents);
+                const osg::Vec4Array* authoredTangents
+                    = dynamic_cast<const osg::Vec4Array*>(sourceGeometry.getTexCoordArray(7));
+                const osg::Array* vertices = sourceGeometry.getVertexArray();
+                const bool validAuthoredTangents = authoredTangents != nullptr && vertices != nullptr
+                    && authoredTangents->getBinding() == osg::Array::BIND_PER_VERTEX
+                    && authoredTangents->getNumElements() == vertices->getNumElements();
+                if (!validAuthoredTangents)
+                {
+                    osg::ref_ptr<osgUtil::TangentSpaceGenerator> generator(new osgUtil::TangentSpaceGenerator);
+                    generator->generate(&sourceGeometry, reqs.mTexStageRequiringTangents);
 
-                sourceGeometry.setTexCoordArray(7, generator->getTangentArray(), osg::Array::BIND_PER_VERTEX);
-                changed = true;
+                    sourceGeometry.setTexCoordArray(7, generator->getTangentArray(), osg::Array::BIND_PER_VERTEX);
+                    changed = true;
+                }
             }
         }
         return changed;

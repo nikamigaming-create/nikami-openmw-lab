@@ -28,6 +28,8 @@
 #include <istream>
 #include <map>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include "cellgrid.hpp"
@@ -213,7 +215,17 @@ namespace ESM4
 
         inline std::filesystem::path getFileName() const { return mCtx.filename; } // not used
 
-        inline bool hasMoreRecs() const { return (mFileSize - mCtx.fileRead) > 0; }
+        inline bool hasMoreRecs() const
+        {
+            const std::streampos pos
+                = mSavedStream ? mSavedStream->tellg() : (mStream ? mStream->tellg() : std::streampos(-1));
+            if (pos != std::streampos(-1))
+            {
+                const std::streamoff offset = static_cast<std::streamoff>(pos);
+                return offset >= 0 && static_cast<std::size_t>(offset) < mFileSize;
+            }
+            return mCtx.fileRead < mFileSize;
+        }
 
         // Methods added for updating loading progress bars
         inline std::size_t getFileSize() const { return mFileSize; }
@@ -250,7 +262,18 @@ namespace ESM4
         // NOTE: must be called before calling getRecordHeader()
         void setRecHeaderSize(const std::size_t size);
 
-        inline unsigned int esmVersion() const { return mHeader.mData.version.ui; }
+        inline unsigned int esmVersion() const
+        {
+            // TTW's converted Capital Wasteland masters carry a New Vegas-era
+            // header but retain Fallout 3 record layouts.  Expose their
+            // effective record format to individual loaders without changing
+            // the source files or the on-disk header.
+            const std::string fileName = mCtx.filename.filename().string();
+            if (fileName == "Fallout3.esm" || fileName == "Anchorage.esm" || fileName == "ThePitt.esm"
+                || fileName == "BrokenSteel.esm" || fileName == "PointLookout.esm" || fileName == "Zeta.esm")
+                return ESM::VER_094;
+            return mHeader.mData.version.ui;
+        }
         inline float esmVersionF() const { return mHeader.mData.version.f; }
         inline unsigned int numRecords() const { return mHeader.mData.records; }
 
@@ -270,6 +293,7 @@ namespace ESM4
         // The object setting up this reader needs to supply the file's load order index
         // so that the formId's in this file can be adjusted with the file (i.e. mod) index.
         void setModIndex(std::uint32_t index) { mCtx.modIndex = index; }
+        std::uint32_t getModIndex() const { return mCtx.modIndex; }
         void updateModIndices(const std::map<std::string, int>& fileToModIndex);
 
         // Maybe should throw an exception if called when not valid?
@@ -329,6 +353,8 @@ namespace ESM4
         // Skip the data part of a subrecord
         // Note: assumes the header was read correctly and nothing else was read
         void skipSubRecordData();
+
+        bool skipUnknownStarfieldSubRecordData(std::string_view owner);
 
         // Special for a subrecord following a XXXX subrecord
         void skipSubRecordData(std::uint32_t size);

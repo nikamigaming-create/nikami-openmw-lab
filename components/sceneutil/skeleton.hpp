@@ -60,6 +60,10 @@ namespace SceneUtil
 
         void markDirty();
 
+        // Fallout procedural pose code changes bone transforms after the normal
+        // animation traversal and must request a skinning refresh explicitly.
+        void markBoneMatriceDirty() { mNeedToUpdateBoneMatrices = true; }
+
         void childInserted(unsigned int) override;
         void childRemoved(unsigned int, unsigned int) override;
 

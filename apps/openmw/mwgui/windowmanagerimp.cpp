@@ -3,18 +3,27 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <thread>
 
 #include <osgViewer/Viewer>
+#include <osgViewer/ViewerEventHandlers>
 
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_LayerManager.h>
 #include <MyGUI_PointerManager.h>
+#include <MyGUI_RenderManager.h>
 #include <MyGUI_UString.h>
+#include <MyGUI_Window.h>
 
 // For BT_NO_PROFILE
 #include <LinearMath/btQuickprof.h>
@@ -145,6 +154,152 @@ namespace MWGui
                     return nullptr;
             }
         }
+
+        bool isFalloutContentLoaded()
+        {
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (std::string file : world->getContentFiles())
+            {
+                std::transform(file.begin(), file.end(), file.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                constexpr std::string_view falloutNv = "falloutnv.esm";
+                const bool suffixMatch = file.size() >= falloutNv.size()
+                    && file.compare(file.size() - falloutNv.size(), falloutNv.size(), falloutNv) == 0;
+                if (suffixMatch)
+                    return true;
+            }
+
+            return false;
+        }
+
+        std::optional<float> authoredDefaultChoiceDelaySeconds()
+        {
+            const char* const value = std::getenv("OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS");
+            if (value == nullptr || *value == '\0')
+                return std::nullopt;
+
+            char* end = nullptr;
+            const float seconds = std::strtof(value, &end);
+            if (end == value || (end != nullptr && *end != '\0') || !std::isfinite(seconds))
+                return std::nullopt;
+            return std::max(0.f, seconds);
+        }
+
+        bool equalNoCase(std::string_view left, std::string_view right)
+        {
+            if (left.size() != right.size())
+                return false;
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                const auto lhs = static_cast<unsigned char>(left[index]);
+                const auto rhs = static_cast<unsigned char>(right[index]);
+                if (std::tolower(lhs) != std::tolower(rhs))
+                    return false;
+            }
+            return true;
+        }
+
+        double readPositiveVideoCaptureSeconds(const char* variable)
+        {
+            const char* const text = std::getenv(variable);
+            if (text == nullptr || *text == '\0')
+                return 0.0;
+            char* end = nullptr;
+            const double value = std::strtod(text, &end);
+            return end != text && end != nullptr && *end == '\0' && std::isfinite(value) && value > 0.0 ? value : 0.0;
+        }
+
+        std::chrono::milliseconds readNativeVideoCaptureInterval()
+        {
+            const char* const text = std::getenv("OPENMW_CAPTURE_VIDEO_NATIVE_FRAME_INTERVAL_MS");
+            if (text == nullptr || *text == '\0')
+                return {};
+            char* end = nullptr;
+            const long value = std::strtol(text, &end, 10);
+            if (end == text || end == nullptr || *end != '\0' || value < 50 || value > 1000)
+                return {};
+            return std::chrono::milliseconds(value);
+        }
+
+        bool queueNativeVideoFrame(osgViewer::Viewer& viewer)
+        {
+            for (const osg::ref_ptr<osgGA::EventHandler>& handler : viewer.getEventHandlers())
+            {
+                if (auto* const capture = dynamic_cast<osgViewer::ScreenCaptureHandler*>(handler.get()))
+                {
+                    capture->setFramesToCapture(1);
+                    capture->captureNextFrame(viewer);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool isCaptureVideoTarget(std::string_view asset)
+        {
+            const char* const configuredAsset = std::getenv("OPENMW_CAPTURE_VIDEO_MATCH");
+            return configuredAsset != nullptr && *configuredAsset != '\0' && equalNoCase(asset, configuredAsset);
+        }
+
+        bool writeVideoCaptureReadyMarker(std::string_view asset)
+        {
+            const char* const markerPath = std::getenv("OPENMW_CAPTURE_VIDEO_READY_PATH");
+            if (markerPath == nullptr || *markerPath == '\0')
+                return false;
+
+            std::ofstream marker(markerPath, std::ios::trunc);
+            if (!marker)
+            {
+                Log(Debug::Warning) << "OpenNV capture: unable to write video-ready marker path=\"" << markerPath
+                                    << "\"";
+                return false;
+            }
+            marker << "asset=" << asset << '\n';
+            marker.flush();
+            Log(Debug::Info) << "OpenNV capture: video gate ready asset=\"" << asset << "\"";
+            return true;
+        }
+
+        void waitForVideoCaptureGate(std::string_view asset)
+        {
+            const char* const goPath = std::getenv("OPENMW_CAPTURE_VIDEO_GO_PATH");
+            if (goPath == nullptr || *goPath == '\0')
+                return;
+
+            const double timeout = readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_GATE_TIMEOUT_SECONDS");
+            const auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(static_cast<long long>(std::max(1.0, timeout > 0.0 ? timeout : 30.0) * 1000.0));
+            std::error_code error;
+            while (std::chrono::steady_clock::now() < deadline
+                && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+            {
+                if (std::filesystem::exists(goPath, error))
+                {
+                    Log(Debug::Info) << "OpenNV capture: video gate opened asset=\"" << asset << "\"";
+                    return;
+                }
+                error.clear();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            Log(Debug::Warning) << "OpenNV capture: timed out waiting for video gate asset=\"" << asset << "\"";
+        }
+
+        constexpr bool isVr = false;
+
+        void setWindowCoord(WindowBase* window, const MyGUI::IntCoord& coord)
+        {
+            if (window == nullptr || window->mMainWidget == nullptr)
+                return;
+
+            MyGUI::Window* guiWindow = window->mMainWidget->castType<MyGUI::Window>(false);
+            if (guiWindow == nullptr)
+                return;
+
+            guiWindow->setCoord(coord);
+        }
     }
 
     WindowManager::WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot,
@@ -190,6 +345,7 @@ namespace MWGui
         , mTranslationDataStorage(translationDataStorage)
         , mInputBlocker(nullptr)
         , mHudEnabled(true)
+        , mGameplayOverlaySuppressed(false)
         , mCursorVisible(true)
         , mCursorActive(true)
         , mPlayerBounty(-1)
@@ -645,8 +801,9 @@ namespace MWGui
         if (!mMap)
             return; // UI not created yet
 
-        mHud->setVisible(mHudEnabled && !loading);
-        mToolTips->setVisible(mHudEnabled && !loading);
+        const bool gameplayOverlayVisible = mHudEnabled && !loading && !mGameplayOverlaySuppressed;
+        mHud->setVisible(gameplayOverlayVisible);
+        mToolTips->setVisible(gameplayOverlayVisible);
 
         bool gameMode = !isGuiMode();
 
@@ -662,12 +819,25 @@ namespace MWGui
         if (gameMode)
             setKeyFocusWidget(nullptr);
 
-        // Icons of forced hidden windows are displayed
-        setMinimapVisibility((mAllowed & GW_Map) && (!mMap->pinned() || (mForceHidden & GW_Map)));
-        setWeaponVisibility(
-            (mAllowed & GW_Inventory) && (!mInventoryWindow->pinned() || (mForceHidden & GW_Inventory)));
-        setSpellVisibility((mAllowed & GW_Magic) && (!mSpellWindow->pinned() || (mForceHidden & GW_Magic)));
-        setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
+        const bool falloutContent = isFalloutContentLoaded();
+
+        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
+        if (falloutContent)
+        {
+            setMinimapVisibility(false);
+            setWeaponVisibility(false);
+            setSpellVisibility(false);
+            setHMSVisibility(false);
+        }
+        else
+        {
+            // Icons of forced hidden windows are displayed
+            setMinimapVisibility((mAllowed & GW_Map) && (!mMap->pinned() || (mForceHidden & GW_Map)));
+            setWeaponVisibility(
+                (mAllowed & GW_Inventory) && (!mInventoryWindow->pinned() || (mForceHidden & GW_Inventory)));
+            setSpellVisibility((mAllowed & GW_Magic) && (!mSpellWindow->pinned() || (mForceHidden & GW_Magic)));
+            setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
+        }
 
         mInventoryWindow->setGuiMode(getMode());
 
@@ -682,13 +852,10 @@ namespace MWGui
             mSpellWindow->setVisible(
                 mSpellWindow->pinned() && !isConsoleMode() && !(mForceHidden & GW_Magic) && (mAllowed & GW_Magic));
 
-            if (Settings::gui().mControllerMenus)
-            {
-                if (mControllerButtonsOverlay)
-                    mControllerButtonsOverlay->setVisible(false);
-                if (mInventoryTabsOverlay)
-                    mInventoryTabsOverlay->setVisible(false);
-            }
+            if (mControllerButtonsOverlay)
+                mControllerButtonsOverlay->setVisible(false);
+            if (mInventoryTabsOverlay)
+                mInventoryTabsOverlay->setVisible(false);
             return;
         }
         else if (getMode() != GM_Inventory)
@@ -712,13 +879,145 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
-            mMap->setVisible(eff & GW_Map);
-            mInventoryWindow->setVisible(eff & GW_Inventory);
-            mSpellWindow->setVisible(eff & GW_Magic);
-            mStatsWindow->setVisible(eff & GW_Stats);
+            const bool flatPaperDollProfiler = falloutContent
+                && std::getenv("OPENMW_FNV_PAPER_DOLL_PROFILER") != nullptr;
+            if (flatPaperDollProfiler)
+            {
+                eff = GW_Inventory;
+                static bool loggedPaperDollProfiler = false;
+                if (!loggedPaperDollProfiler)
+                {
+                    Log(Debug::Info)
+                        << "FNV/ESM4 proof: flat paper doll profiler owns inventory mode full-screen";
+                    loggedPaperDollProfiler = true;
+                }
+            }
+            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            {
+                const int activeIndex = std::clamp(static_cast<int>(mActiveControllerWindows[GM_Inventory]), 0, 3);
+                eff = GW_Map | GW_Inventory | GW_Magic | GW_Stats;
+                static bool loggedPipBoySurface = false;
+                if (!loggedPipBoySurface)
+                {
+                    Log(Debug::Info)
+                        << "FNV/ESM4 proof: Fallout inventory mode opens all native panes map=1 items=1 aid=1 data=1";
+                    loggedPipBoySurface = true;
+                }
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
+                                 << activeIndex << " visibleMask=0x"
+                                 << std::hex << eff << std::dec;
+            }
+            auto setWindowVisibleIfChanged = [](WindowBase* window, bool visible) {
+                if (window != nullptr && window->isVisible() != visible)
+                    window->setVisible(visible);
+            };
+            setWindowVisibleIfChanged(mMap, eff & GW_Map);
+            setWindowVisibleIfChanged(mInventoryWindow, eff & GW_Inventory);
+            setWindowVisibleIfChanged(mSpellWindow, eff & GW_Magic);
+            setWindowVisibleIfChanged(mStatsWindow, eff & GW_Stats);
+
+            if (flatPaperDollProfiler)
+            {
+                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+                setWindowCoord(mInventoryWindow, MyGUI::IntCoord(0, 0, viewSize.width, viewSize.height));
+                if (mInventoryWindow->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryWindow->mMainWidget);
+                Log(Debug::Info) << "FNV/ESM4 proof: flat paper doll profiler fullscreen rect=0,0,"
+                                 << viewSize.width << "," << viewSize.height;
+            }
+            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            {
+                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+                const int margin = 24;
+                const int top = std::min(std::max(88, viewSize.height / 8), 128);
+                const int bottom = 36;
+                const int gap = 8;
+                const int activeIndex = std::clamp(static_cast<int>(mActiveControllerWindows[GM_Inventory]), 0, 3);
+                const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
+                const int availableWidth = viewSize.width - margin * 2;
+                const int availableHeight = viewSize.height - top - bottom;
+                const int activeWidth = std::max(640, availableWidth);
+                const int activeHeight = std::max(360, availableHeight);
+                int loggedActiveWidth = activeWidth;
+                int loggedActiveHeight = activeHeight;
+                int loggedActiveLeft = margin;
+                int loggedActiveTop = top;
+                const int shelfLeft = viewSize.width - margin - shelfWidth;
+                const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
+
+                WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
+                if (isVr)
+                {
+                    const int mapActiveWidth = std::clamp(availableWidth, 860, 1080);
+                    const int mapActiveHeight = std::clamp(availableHeight, 520, 680);
+                    const int inactiveWidth = std::clamp(activeWidth / 2, 320, 440);
+                    const int inactiveHeight = std::clamp(activeHeight / 2, 240, 340);
+                    const int inactiveLeft = margin + std::max(0, (std::max(activeWidth, mapActiveWidth) - inactiveWidth) / 2);
+                    const int inactiveTop = top + std::max(0, (std::max(activeHeight, mapActiveHeight) - inactiveHeight) / 2);
+
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? mapActiveWidth : activeWidth;
+                            const int paneHeight = i == 0 ? mapActiveHeight : activeHeight;
+                            const int paneLeft = std::max(margin, (viewSize.width - paneWidth) / 2);
+                            const int paneTop = std::max(top, (viewSize.height - paneHeight) / 2);
+                            loggedActiveLeft = paneLeft;
+                            loggedActiveTop = paneTop;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(paneLeft, paneTop, paneWidth, paneHeight));
+                        }
+                        else
+                            setWindowCoord(
+                                windows[i], MyGUI::IntCoord(inactiveLeft, inactiveTop, inactiveWidth, inactiveHeight));
+                    }
+                }
+                else
+                {
+                    int shelfSlot = 0;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? std::max(activeWidth, 920) : activeWidth;
+                            const int paneHeight = i == 0 ? std::max(activeHeight, 560) : activeHeight;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
+                            continue;
+                        }
+
+                        const int shelfTop = top + shelfSlot * (shelfHeight + gap);
+                        setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
+                        ++shelfSlot;
+                    }
+                }
+
+                if (WindowBase* activeWindow = windows[activeIndex])
+                {
+                    if (activeWindow->mMainWidget != nullptr)
+                        MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
+                }
+                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out active="
+                                 << activeIndex << " activeRect=" << loggedActiveLeft << "," << loggedActiveTop
+                                 << "," << loggedActiveWidth << "," << loggedActiveHeight << " vrFullPanels="
+                                 << isVr
+                                 << " shelfWidth=" << shelfWidth;
+            }
         }
 
         updateControllerButtonsOverlay();
+        if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr) && getMode() == GM_Inventory
+            && mInventoryTabsOverlay != nullptr)
+        {
+            mInventoryTabsOverlay->setVisible(true);
+            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
+        }
+        else if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            && getMode() == GM_Inventory && isVr && mInventoryTabsOverlay != nullptr)
+            mInventoryTabsOverlay->setVisible(false);
 
         switch (mode)
         {
@@ -782,6 +1081,7 @@ namespace MWGui
         std::string_view message, const std::vector<std::string>& buttons, bool block, int defaultFocus)
     {
         mMessageBoxManager->createInteractiveMessageBox(message, buttons, block, defaultFocus);
+        mAuthoredDefaultChoiceDelay = authoredDefaultChoiceDelaySeconds().value_or(-1.f);
         updateVisible();
 
         if (block)
@@ -821,6 +1121,21 @@ namespace MWGui
 
     void WindowManager::messageBox(std::string_view message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        // An authored cinematic or character-generation sequence may deliberately
+        // own the screen. Quest-stage notifications are delivered through this
+        // path on a later frame, so merely hiding the MessageBoxManager at the
+        // moment the sequence begins is not enough: a queued notification can
+        // otherwise re-create a visible HUD element during the presentation.
+        // Keep interactive character-generation dialogs on their dedicated path;
+        // this applies only to passive gameplay notifications.
+        if (mGameplayOverlaySuppressed)
+        {
+            Log(Debug::Info) << "OpenNV UI: suppressed passive message while authored gameplay overlay is hidden";
+            return;
+        }
+
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+            Log(Debug::Info) << "FNV interaction audit: rendered notification text=\"" << message << "\"";
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
         {
             MyGUI::UString text = MyGUI::LanguageManager::getInstance().replaceTags(MyGUI::UString(message));
@@ -834,6 +1149,12 @@ namespace MWGui
 
     void WindowManager::scheduleMessageBox(std::string message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        if (mGameplayOverlaySuppressed)
+        {
+            Log(Debug::Info) << "OpenNV UI: suppressed scheduled passive message while authored gameplay overlay is hidden";
+            return;
+        }
+
         mScheduledMessageBoxes.lock()->emplace_back(std::move(message), showInDialogueMode);
     }
 
@@ -921,11 +1242,15 @@ namespace MWGui
 
     void WindowManager::cycleActiveControllerWindow(bool next)
     {
-        if (!Settings::gui().mControllerMenus || mGuiModes.empty())
+        if (mGuiModes.empty())
             return;
 
         GuiMode mode = mGuiModes.back();
-        size_t winCount = mGuiModeStates[mode].mWindows.size();
+        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+            return;
+
+        int winCount = mGuiModeStates[mode].mWindows.size();
 
         size_t activeIndex = 0;
         if (winCount > 1)
@@ -966,7 +1291,8 @@ namespace MWGui
 
     void WindowManager::setActiveControllerWindow(GuiMode mode, size_t activeIndex)
     {
-        if (!Settings::gui().mControllerMenus)
+        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
             return;
 
         size_t winCount = mGuiModeStates[mode].mWindows.size();
@@ -975,6 +1301,42 @@ namespace MWGui
 
         activeIndex = std::clamp<size_t>(activeIndex, 0, winCount - 1);
         mActiveControllerWindows[mode] = activeIndex;
+
+        if (falloutInventoryTabs && !Settings::gui().mControllerMenus)
+        {
+            updateVisible();
+            for (int i = 0; i < winCount; ++i)
+            {
+                if (i != activeIndex)
+                    mGuiModeStates[mode].mWindows[i]->setActiveControllerWindow(false);
+            }
+            if (WindowBase* activeWindow = mGuiModeStates[mode].mWindows[activeIndex])
+            {
+                activeWindow->setActiveControllerWindow(true);
+                if (activeWindow->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
+                Log(Debug::Info) << "FNV/ESM4 proof: Pip-Boy input activated pane index=" << activeIndex
+                                 << " gamepadCursorAllowed=" << activeWindow->isGamepadCursorAllowed();
+            }
+            MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
+                mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());
+            updateControllerButtonsOverlay();
+            setCursorActive(false);
+            if (mInventoryTabsOverlay != nullptr)
+            {
+                mInventoryTabsOverlay->setVisible(true);
+                mInventoryTabsOverlay->setTab(activeIndex);
+                if (mInventoryTabsOverlay->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
+            }
+            else if (mInventoryTabsOverlay != nullptr)
+                mInventoryTabsOverlay->setVisible(false);
+
+            if (winCount > 1)
+                playSound(ESM::RefId::stringRefId("Menu Size"));
+
+            return;
+        }
 
         reapplyActiveControllerWindow();
 
@@ -994,6 +1356,35 @@ namespace MWGui
 
     void WindowManager::update(float frameDuration)
     {
+        if (mPostVideoNativeCaptureRemaining > 0.f)
+        {
+            // This is a capture-only wall-clock interval.  Game time may be
+            // paused by the authored name/message dialogs in the opening; if
+            // the capture used frameDuration here, it could never reach its
+            // documented completion marker while the proof was exercising
+            // exactly those UI callbacks.
+            const auto now = std::chrono::steady_clock::now();
+            float elapsed = std::chrono::duration<float>(now - mPostVideoNativeCaptureLastUpdate).count();
+            mPostVideoNativeCaptureLastUpdate = now;
+            elapsed = std::max(0.f, elapsed);
+            if (mViewer != nullptr)
+            {
+                mPostVideoNativeCaptureRemaining -= elapsed;
+                mPostVideoNativeCaptureUntilNextFrame -= elapsed;
+                if (mPostVideoNativeCaptureUntilNextFrame <= 0.f)
+                {
+                    queueNativeVideoFrame(*mViewer);
+                    mPostVideoNativeCaptureUntilNextFrame = mPostVideoNativeCaptureInterval;
+                }
+                if (mPostVideoNativeCaptureRemaining <= 0.f)
+                {
+                    Log(Debug::Info) << "OpenNV capture: post-video native scene frames complete";
+                    mPostVideoNativeCaptureRemaining = 0.f;
+                    mPostVideoNativeCaptureUntilNextFrame = -1.f;
+                }
+            }
+        }
+
         handleScheduledMessageBoxes();
 
         bool gameRunning
@@ -1041,6 +1432,24 @@ namespace MWGui
 
         if (mMessageBoxManager)
             mMessageBoxManager->onFrame(frameDuration);
+
+        if (mAuthoredDefaultChoiceDelay >= 0.f)
+        {
+            if (!mMessageBoxManager || !mMessageBoxManager->isInteractiveMessageBox())
+                mAuthoredDefaultChoiceDelay = -1.f;
+            else
+            {
+                mAuthoredDefaultChoiceDelay -= std::max(0.f, frameDuration);
+                if (mAuthoredDefaultChoiceDelay <= 0.f)
+                {
+                    // This uses the same default-button callback as ordinary UI selection.
+                    // It is opt-in proof automation and never drives a Windows window or input device.
+                    closeInteractiveMessageBoxWithDefaultButton();
+                    mAuthoredDefaultChoiceDelay = -1.f;
+                    Log(Debug::Info) << "OpenNV authored automation: selected default interactive message button";
+                }
+            }
+        }
 
         mToolTips->onFrame(frameDuration);
 
@@ -1220,12 +1629,12 @@ namespace MWGui
 
     void WindowManager::setCursorVisible(bool visible)
     {
-        mCursorVisible = visible;
+        mCursorVisible = visible && !mGameplayOverlaySuppressed;
     }
 
     void WindowManager::setCursorActive(bool active)
     {
-        mCursorActive = active;
+        mCursorActive = active && !mGameplayOverlaySuppressed;
     }
 
     void WindowManager::onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result)
@@ -1383,6 +1792,29 @@ namespace MWGui
     void WindowManager::pushGuiMode(GuiMode mode)
     {
         pushGuiMode(mode, MWWorld::Ptr());
+    }
+
+    void WindowManager::showAuthoredRaceMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Race))
+            return;
+
+        // Set the handoff mode before pushGuiMode causes CharacterCreation to
+        // instantiate the modal. Completion then returns to the requesting
+        // ESM4 script instead of entering the Morrowind chargen sequence.
+        mCharGen->beginAuthoredRaceMenu();
+        pushGuiMode(GM_Race);
+        Log(Debug::Info) << "FNV/ESM4 behavior: ShowRaceMenu opened authored character appearance menu";
+    }
+
+    void WindowManager::showAuthoredNameMenu()
+    {
+        if (mCharGen == nullptr || containsMode(GM_Name))
+            return;
+
+        mCharGen->beginAuthoredNameMenu();
+        pushGuiMode(GM_Name);
+        Log(Debug::Info) << "FNV/ESM4 behavior: GetPlayerName opened authored name menu";
     }
 
     void WindowManager::pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg)
@@ -1607,7 +2039,7 @@ namespace MWGui
     {
         mSelectedWeapon = MWWorld::Ptr();
         mHud->unsetSelectedWeapon();
-        mInventoryWindow->setTitle("#{sSkillHandtohand}");
+        mInventoryWindow->setTitle(isFalloutContentLoaded() ? "Unarmed" : "#{sSkillHandtohand}");
     }
 
     void WindowManager::getMousePosition(int& x, int& y)
@@ -1755,6 +2187,16 @@ namespace MWGui
         return mMessageBoxManager && mMessageBoxManager->isInteractiveMessageBox();
     }
 
+    void WindowManager::closeInteractiveMessageBoxWithDefaultButton()
+    {
+        if (mMessageBoxManager && mMessageBoxManager->isInteractiveMessageBox()
+            && !mCurrentModals.empty()
+            && mCurrentModals.back() == mMessageBoxManager->getInteractiveMessageBox())
+        {
+            static_cast<MWGui::InteractiveMessageBox*>(mCurrentModals.back())->closeDefault();
+        }
+    }
+
     MWGui::GuiMode WindowManager::getMode() const
     {
         if (mGuiModes.empty())
@@ -1789,7 +2231,7 @@ namespace MWGui
     void WindowManager::showCrosshair(bool show)
     {
         if (mHud)
-            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair);
+            mHud->setCrosshairVisible(show && Settings::hud().mCrosshair && !mGameplayOverlaySuppressed);
     }
 
     void WindowManager::updateActivatedQuickKey()
@@ -1806,8 +2248,29 @@ namespace MWGui
     {
         mHudEnabled = show;
         updateVisible();
-        mMessageBoxManager->setVisible(mHudEnabled);
+        mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
         return mHudEnabled;
+    }
+
+    void WindowManager::setGameplayOverlaySuppressed(bool suppressed)
+    {
+        if (mGameplayOverlaySuppressed == suppressed)
+            return;
+
+        mGameplayOverlaySuppressed = suppressed;
+        if (suppressed)
+        {
+            mCursorVisible = false;
+            mCursorActive = false;
+            if (mHud)
+                mHud->setCrosshairVisible(false);
+        }
+
+        updateVisible();
+        if (mMessageBoxManager)
+            mMessageBoxManager->setVisible(mHudEnabled && !mGameplayOverlaySuppressed);
+
+        Log(Debug::Info) << "OpenNV UI: gameplay overlay suppression=" << mGameplayOverlaySuppressed;
     }
 
     bool WindowManager::getRestEnabled()
@@ -2077,8 +2540,33 @@ namespace MWGui
 
         mVideoBackground->setVisible(true);
 
-        bool cursorWasVisible = mCursorVisible;
-        setCursorVisible(false);
+        const bool hudWasVisible = mHudEnabled;
+        const bool cursorWasVisible = mCursorVisible;
+        const bool cursorWasActive = mCursorActive;
+        const bool overlayWasSuppressed = mGameplayOverlaySuppressed;
+        setGameplayOverlaySuppressed(true);
+        setHudVisibility(false);
+        showCrosshair(false);
+
+        const bool captureVideoTarget = isCaptureVideoTarget(name);
+        const double captureVideoLimitSeconds = captureVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_MAX_SECONDS")
+            : 0.0;
+        const std::chrono::milliseconds nativeCaptureInterval = captureVideoTarget
+            ? readNativeVideoCaptureInterval()
+            : std::chrono::milliseconds{};
+        const double postVideoCaptureSeconds = captureVideoTarget
+            ? readPositiveVideoCaptureSeconds("OPENMW_CAPTURE_VIDEO_POST_SCENE_SECONDS")
+            : 0.0;
+        if (captureVideoTarget && writeVideoCaptureReadyMarker(name))
+        {
+            mVideoWidget->pause();
+            waitForVideoCaptureGate(name);
+            mVideoWidget->resume();
+        }
+        const auto captureVideoStart = std::chrono::steady_clock::now();
+        auto nextNativeCapture = captureVideoStart;
+        std::size_t queuedNativeFrames = 0;
 
         if (overrideSounds && mVideoWidget->hasAudioStream())
             MWBase::Environment::get().getSoundManager()->pauseSounds(
@@ -2088,6 +2576,16 @@ namespace MWGui
             = Misc::makeFrameRateLimiter(MWBase::Environment::get().getFrameRateLimit());
         while (mVideoWidget->update() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
         {
+            if (captureVideoLimitSeconds > 0.0
+                && std::chrono::duration<double>(std::chrono::steady_clock::now() - captureVideoStart).count()
+                    >= captureVideoLimitSeconds)
+            {
+                Log(Debug::Info) << "OpenNV capture: limiting authored video asset=\"" << name
+                                 << "\" seconds=" << captureVideoLimitSeconds;
+                mVideoWidget->stop();
+                break;
+            }
+
             const float dt
                 = std::chrono::duration_cast<std::chrono::duration<float>>(frameRateLimiter.getLastFrameDuration())
                       .count();
@@ -2104,6 +2602,14 @@ namespace MWGui
                 if (mVideoWidget->isPaused())
                     mVideoWidget->resume();
 
+                const auto now = std::chrono::steady_clock::now();
+                if (nativeCaptureInterval.count() > 0 && now >= nextNativeCapture)
+                {
+                    if (queueNativeVideoFrame(*mViewer))
+                        ++queuedNativeFrames;
+                    nextNativeCapture = now + nativeCaptureInterval;
+                }
+
                 mViewer->eventTraversal();
                 mViewer->updateTraversal();
                 mViewer->renderingTraversals();
@@ -2117,16 +2623,35 @@ namespace MWGui
         }
         mVideoWidget->stop();
 
+        if (captureVideoTarget && nativeCaptureInterval.count() > 0)
+        {
+            Log(Debug::Info) << "OpenNV capture: queued native source frames asset=\"" << name << "\" count="
+                             << queuedNativeFrames << " intervalMilliseconds=" << nativeCaptureInterval.count();
+        }
+
         MWBase::Environment::get().getSoundManager()->resumeSounds(MWSound::VideoPlayback);
 
         setKeyFocusWidget(oldKeyFocus);
 
+        setGameplayOverlaySuppressed(overlayWasSuppressed);
+        setHudVisibility(hudWasVisible);
+        showCrosshair(hudWasVisible);
         setCursorVisible(cursorWasVisible);
+        setCursorActive(cursorWasActive);
 
         // Restore normal rendering
         updateVisible();
 
         mVideoBackground->setVisible(false);
+        if (captureVideoTarget && nativeCaptureInterval.count() > 0 && postVideoCaptureSeconds > 0.0)
+        {
+            mPostVideoNativeCaptureRemaining = static_cast<float>(postVideoCaptureSeconds);
+            mPostVideoNativeCaptureUntilNextFrame = 0.f;
+            mPostVideoNativeCaptureInterval = static_cast<float>(nativeCaptureInterval.count()) / 1000.f;
+            mPostVideoNativeCaptureLastUpdate = std::chrono::steady_clock::now();
+            Log(Debug::Info) << "OpenNV capture: post-video native scene frame capture seconds="
+                             << postVideoCaptureSeconds << " intervalMilliseconds=" << nativeCaptureInterval.count();
+        }
     }
 
     void WindowManager::sizeVideo(int screenWidth, int screenHeight)

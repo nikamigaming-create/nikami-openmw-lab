@@ -50,6 +50,46 @@ namespace ESM4
     };
 #pragma pack(pop)
 
+    struct QuestStageEntry
+    {
+        enum Flag : std::uint8_t
+        {
+            Flag_CompleteQuest = 0x01,
+            Flag_FailQuest = 0x02,
+        };
+
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+        std::string mLogEntry;
+        ScriptDefinition mScript;
+        ESM::FormId mNextQuest{};
+    };
+
+    struct QuestStage
+    {
+        std::int16_t mIndex = 0;
+        std::vector<QuestStageEntry> mEntries;
+    };
+
+    struct QuestObjectiveTarget
+    {
+        enum Flag : std::uint8_t
+        {
+            Flag_CompassMarkerIgnoresLocks = 0x01,
+        };
+
+        ESM::FormId mTarget{};
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+    };
+
+    struct QuestObjective
+    {
+        std::int32_t mIndex = 0;
+        std::string mDescription;
+        std::vector<QuestObjectiveTarget> mTargets;
+    };
+
     struct Quest
     {
         // NOTE: these values are for TES4
@@ -60,18 +100,23 @@ namespace ESM4
             Flag_AllowRepeatStages = 0x08
         };
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mQuestName;
         std::string mFileName; // texture file
-        ESM::FormId mQuestScript;
+        ESM::FormId mQuestScript{};
 
-        QuestData mData;
+        QuestData mData{};
 
         std::vector<TargetCondition> mTargetConditions;
 
+        std::vector<QuestStage> mStages;
+        std::vector<QuestObjective> mObjectives;
+
+        // Retained for source compatibility. QUST embedded scripts belong to individual
+        // stage log entries and are preserved in mStages[*].mEntries[*].mScript.
         ScriptDefinition mScript;
 
         void load(ESM4::Reader& reader);

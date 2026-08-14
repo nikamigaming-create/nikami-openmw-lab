@@ -761,9 +761,45 @@ if (WIN32)
             set_target_properties(openmw PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
         endif()
 
+        # TODO: properties and link targets should be copied from openmw to openmw_vr instead of duplicating every line
+        if (USE_DEBUG_CONSOLE AND BUILD_OPENMW_VR)
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+          if(TARGET openmw_vr_swg_lab)
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE")
+          endif()
+          #set_target_properties(openmw_vr PROPERTIES COMPILE_DEFINITIONS $<$<CONFIG:Debug>:_CONSOLE>)
+        elseif (BUILD_OPENMW_VR)
+          # Turn off debug console, debug output will be written to visual studio output instead
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:WINDOWS")
+          set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS")
+          if(TARGET openmw_vr_swg_lab)
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:WINDOWS")
+            set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:WINDOWS")
+          endif()
+        endif()
+
+        if (BUILD_OPENMW_VR)
+            # Release builds don't use the debug console
+            set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+            set_target_properties(openmw_vr PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+            if(TARGET openmw_vr_swg_lab)
+                set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+                set_target_properties(openmw_vr_swg_lab PROPERTIES LINK_FLAGS_MINSIZEREL "/SUBSYSTEM:WINDOWS")
+            endif()
+        endif()
+
         if (MSVC_VERSION GREATER_EQUAL 1915 AND MSVC_VERSION LESS 1920)
             target_compile_definitions(components INTERFACE _ENABLE_EXTENDED_ALIGNED_STORAGE)
         endif()
+        if (BUILD_OPENMW_VR)
+            target_compile_options(openmw_vr PRIVATE ${WARNINGS})
+            if(TARGET openmw_vr_swg_lab)
+                target_compile_options(openmw_vr_swg_lab PRIVATE ${WARNINGS})
+            endif()
+        endif()
+
     endif(MSVC)
 
     # TODO: At some point release builds should not use the console but rather write to a log file

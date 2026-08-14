@@ -182,6 +182,12 @@ namespace Compiler
         const int opcodeGetFactionReaction = 0x2000243;
         const int opcodeClearInfoActor = 0x2000245;
         const int opcodeClearInfoActorExplicit = 0x2000246;
+        const int opcodeSetStage = 0x2000400;
+        const int opcodeGetStage = 0x2000401;
+        const int opcodeStartQuest = 0x2000402;
+        const int opcodeSetObjectiveDisplayed = 0x2000403;
+        const int opcodeSetObjectiveCompleted = 0x2000404;
+        const int opcodeForceActiveQuest = 0x2000405;
     }
 
     namespace Gui

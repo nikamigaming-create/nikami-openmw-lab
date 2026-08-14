@@ -116,9 +116,22 @@ namespace Nif
 
         NiAVObjectList mChildren;
         NiAVObjectList mEffects;
+        // NiNode::read historically clears the sole non-Bip01 root transform.
+        // Retain the parsed value for consumers that must reconstruct the
+        // original Bethesda actor-part scene graph without changing the
+        // legacy transform-discard behaviour for ordinary meshes.
+        NiTransform mDiscardedRootTransform = NiTransform::getIdentity();
+        bool mHasDiscardedRootTransform{ false };
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;
+    };
+
+    struct BSFaceGenNiNode : NiNode
+    {
+        uint16_t mUnknown{ 0 };
+
+        void read(NIFStream* nif) override;
     };
 
     struct NiGeometry : NiAVObject
@@ -378,6 +391,14 @@ namespace Nif
 
     struct BSTriShape : NiAVObject
     {
+        struct BSGeometryMeshRef
+        {
+            uint32_t mTriangleIndexCount{ 0 };
+            uint32_t mVertexCount{ 0 };
+            uint32_t mFlags{ 0 };
+            std::string mMeshPath;
+        };
+
         osg::BoundingSpheref mBoundingSphere;
         std::array<float, 6> mBoundMinMax;
         RecordPtrT<Record> mSkin;
@@ -392,6 +413,7 @@ namespace Nif
         std::vector<Misc::float16_t> mParticleVerts;
         std::vector<Misc::float16_t> mParticleNormals;
         std::vector<unsigned short> mParticleTriangles;
+        std::vector<BSGeometryMeshRef> mExternalGeometry;
 
         void read(NIFStream* nif) override;
         void post(Reader& nif) override;

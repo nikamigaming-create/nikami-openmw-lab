@@ -46,6 +46,7 @@ namespace SceneUtil
         void updateRigGeometry(OsgaRigGeometry* geom, osg::NodeVisitor* nv);
 
         OsgaRigGeometry* getGeometry(int geometry);
+        void forceNextUpdate();
 
         void accept(osg::NodeVisitor& nv) override;
         void accept(osg::PrimitiveFunctor&) const override;

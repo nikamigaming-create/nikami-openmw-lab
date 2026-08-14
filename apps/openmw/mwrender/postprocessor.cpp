@@ -272,6 +272,41 @@ namespace MWRender
         mRendering.getSkyManager()->setSunglare(true);
     }
 
+    void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+        const osg::Vec4f& tint, const osg::Vec4f& fade)
+    {
+        if (!mFalloutImageSpaceTechnique)
+        {
+            mFalloutImageSpaceTechnique = loadTechnique("internal_fallout_imagespace");
+            mFalloutImageSpaceTechnique->setInternal(true);
+            mFalloutImageSpaceTechnique->setLocked(true);
+            mInternalTechniques.push_back(mFalloutImageSpaceTechnique);
+            enable();
+        }
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutImageSpaceLogs = 0;
+            if (falloutImageSpaceLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post technique status valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdr=" << (mFalloutImageSpaceTechnique->getHDR() ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
+
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
+    }
+
     void PostProcessor::traverse(osg::NodeVisitor& nv)
     {
         unsigned frameId = nv.getTraversalNumber() % 2;
@@ -299,7 +334,15 @@ namespace MWRender
         mCanvases[frameId]->setCalculateAvgLum(mHDR);
 
         mCanvases[frameId]->setTextureScene(getTexture(Tex_Scene, frameId));
-        mCanvases[frameId]->setTextureDepth(getTexture(Tex_OpaqueDepth, frameId));
+        // Imported OpenDAO portrait scenes are rendered directly into the
+        // primary scene FBO. They do not participate in OpenMW's native
+        // opaque-depth snapshot at the same lifecycle point, so that copied
+        // texture can remain at its clear value even while the primary depth
+        // attachment contains correct actor/set geometry. Use the real scene
+        // attachment for the explicitly isolated proof pipeline.
+        mCanvases[frameId]->setTextureDepth(getTexture(
+            std::getenv("OPENMW_PROOF_CAPTURE_POSTPROCESS") != nullptr ? Tex_Depth : Tex_OpaqueDepth,
+            frameId));
         mCanvases[frameId]->setTextureDistortion(getTexture(Tex_Distortion, frameId));
 
         mTransparentDepthPostPass->mFbo[frameId] = mFbos[frameId][FBO_Primary];
@@ -823,6 +866,23 @@ namespace MWRender
         }
 
         dirtyTechniques();
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr && mFalloutImageSpaceTechnique)
+        {
+            static int falloutImageSpaceChainLogs = 0;
+            if (falloutImageSpaceChainLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post chain rebuilt valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdrEnabled=" << (mHDR ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
     }
 
     void PostProcessor::saveChain()

@@ -7,6 +7,7 @@
    and retrieving information from the Gui.
 **/
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -166,6 +167,9 @@ namespace MWGui
         bool isPostProcessorHudVisible() const override;
         bool isSettingsWindowVisible() const override;
         bool isInteractiveMessageBoxActive() const override;
+        void closeInteractiveMessageBoxWithDefaultButton() override;
+        void showAuthoredRaceMenu() override;
+        void showAuthoredNameMenu() override;
 
         void toggleVisible(GuiWindow wnd) override;
 
@@ -253,6 +257,7 @@ namespace MWGui
         /// Turn visibility of HUD on or off
         bool setHudVisibility(bool show) override;
         bool isHudVisible() const override { return mHudEnabled; }
+        void setGameplayOverlaySuppressed(bool suppressed) override;
 
         void disallowMouse() override;
         void allowMouse() override;
@@ -486,8 +491,21 @@ namespace MWGui
         MyGUI::Widget* mInputBlocker;
 
         bool mHudEnabled;
+        bool mGameplayOverlaySuppressed;
         bool mCursorVisible;
         bool mCursorActive;
+
+        // Enabled only by the canonical native-frame capture environment; it
+        // retains the authored post-Bink scene without changing normal play.
+        float mPostVideoNativeCaptureRemaining = 0.f;
+        float mPostVideoNativeCaptureUntilNextFrame = -1.f;
+        float mPostVideoNativeCaptureInterval = 0.f;
+        std::chrono::steady_clock::time_point mPostVideoNativeCaptureLastUpdate;
+
+        // Enabled only by OPENMW_AUTHORED_DEFAULT_CHOICE_DELAY_SECONDS. It advances
+        // the existing message-box callback for unattended compatibility proof without
+        // desktop keyboard or mouse injection.
+        float mAuthoredDefaultChoiceDelay = -1.f;
 
         int mPlayerBounty;
 

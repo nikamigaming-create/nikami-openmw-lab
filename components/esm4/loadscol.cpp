@@ -64,6 +64,8 @@ void ESM4::StaticCollection::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadscol"))
+                    break;
                 throw std::runtime_error("ESM4::SCOL::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

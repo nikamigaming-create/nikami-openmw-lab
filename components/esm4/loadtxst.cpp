@@ -96,6 +96,8 @@ void ESM4::TextureSet::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadtxst"))
+                    break;
                 throw std::runtime_error("ESM4::TXST::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

@@ -1,5 +1,6 @@
 #include "transparentpass.hpp"
 
+#include <cstdlib>
 #include <osg/AlphaFunc>
 #include <osg/BlendFunc>
 #include <osg/Material>
@@ -8,6 +9,7 @@
 
 #include <osgUtil/RenderStage>
 
+#include <components/debug/debuglog.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/shader/shadermanager.hpp>
 #include <components/stereo/multiview.hpp>
@@ -65,6 +67,18 @@ namespace MWRender
             && (bin->getStage()->getFrameBufferObject() == fbo || bin->getStage()->getFrameBufferObject() == msaaFbo))
             validFbo = true;
 
+        if (std::getenv("OPENMW_PROOF_CAPTURE_POSTPROCESS") != nullptr)
+        {
+            static int depthCopyLogs = 0;
+            if (depthCopyLogs++ < 12)
+                Log(Debug::Info) << "OpenDAO depth snapshot callback: frame="
+                                 << state.getFrameStamp()->getFrameNumber()
+                                 << " leaves=" << bin->getRenderLeafList().size()
+                                 << " validFbo=" << (validFbo ? 1 : 0)
+                                 << " fbo=" << (bin->getStage()->getFrameBufferObject() == fbo ? 1 : 0)
+                                 << " msaa=" << (bin->getStage()->getFrameBufferObject() == msaaFbo ? 1 : 0);
+        }
+
         if (!validFbo)
         {
             bin->drawImplementation(renderInfo, previous);
@@ -120,7 +134,12 @@ namespace MWRender
             osgUtil::RenderLeaf* rl = *rit;
             const osg::StateSet* ss = rl->_parent->getStateSet();
 
-            if (rl->_drawable->getNodeMask() == Mask_ParticleSystem)
+            // World-space VR GUI is already composited with its own alpha and must never populate the opaque
+            // post-process depth texture. Doing so lets an otherwise transparent HUD/menu quad erase the world.
+            if (rl->_drawable->getName() == "VRGUILayer")
+                continue;
+
+            if (rl->_drawable->getNodeMask() == Mask_ParticleSystem || rl->_drawable->getNodeMask() == Mask_Effect)
                 continue;
 
             if (ss->getAttribute(osg::StateAttribute::MATERIAL))

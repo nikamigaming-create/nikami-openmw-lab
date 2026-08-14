@@ -10,6 +10,7 @@
 #include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadbody.hpp>
@@ -437,23 +438,33 @@ namespace MWClass
     std::string_view Npc::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
-        const VFS::Path::NormalizedView model = [&]() -> VFS::Path::NormalizedView {
-            const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
-            if (race->mData.mFlags & ESM::Race::Beast)
-                return Settings::models().mBaseanimkna.get();
-            return Settings::models().mBaseanim.get();
-        }();
+        if (!ref->mBase->mModel.empty())
+        {
+            constexpr std::string_view prefix = "meshes/";
+            std::string_view model = ref->mBase->mModel;
+            if (model.size() > prefix.size() && Misc::StringUtils::ciStartsWith(model, prefix))
+                return model.substr(prefix.size());
+            return model;
+        }
+
+        const VFS::Path::Normalized* modelPath = &Settings::models().mBaseanim.get();
+        const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
+        if (race->mData.mFlags & ESM::Race::Beast)
+            modelPath = &Settings::models().mBaseanimkna.get();
         // Base animations should be in the meshes dir
-        constexpr VFS::Path::NormalizedView prefix("meshes/");
-        if (!model.value().starts_with(prefix.value()))
+        constexpr std::string_view prefix = "meshes/";
+        const std::string_view model = modelPath->view();
+        if (!Misc::StringUtils::ciStartsWith(model, prefix))
             throw std::runtime_error(std::format("NPC {} model path does not start with \"{}\": {}",
-                ref->mRef.getRefId().toDebugString(), prefix.value(), model.value()));
-        return model.value().substr(prefix.value().size());
+                ref->mRef.getRefId().toDebugString(), prefix, model));
+        return model.substr(prefix.size());
     }
 
     VFS::Path::Normalized Npc::getCorrectedModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
+        if (!ref->mBase->mModel.empty())
+            return Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(ref->mBase->mModel));
 
         const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
         if (race->mData.mFlags & ESM::Race::Beast)

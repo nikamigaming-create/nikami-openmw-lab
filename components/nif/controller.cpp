@@ -6,6 +6,8 @@
 #include "particle.hpp"
 #include "texture.hpp"
 
+#include <limits>
+
 namespace Nif
 {
     namespace
@@ -13,6 +15,30 @@ namespace Nif
         void readSkinnedShapeGroup(NIFStream& stream, std::vector<NiBoneLODController::SkinInfo>& value)
         {
             stream.readVectorOfRecords<uint32_t>(value);
+        }
+
+        std::string getStringPaletteValue(const NiStringPalettePtr& palette, uint32_t offset)
+        {
+            if (palette.empty() || offset == std::numeric_limits<uint32_t>::max())
+                return {};
+
+            const std::string& text = palette->mPalette;
+            if (offset >= text.size())
+                return {};
+
+            const std::size_t end = text.find('\0', offset);
+            if (end == std::string::npos)
+                return text.substr(offset);
+
+            return text.substr(offset, end - offset);
+        }
+
+        void fillStringPaletteValue(std::string& value, const NiStringPalettePtr& palette, uint32_t offset)
+        {
+            if (!value.empty())
+                return;
+
+            value = getStringPaletteValue(palette, offset);
         }
     }
 
@@ -80,7 +106,11 @@ namespace Nif
         mController.post(nif);
         mBlendInterpolator.post(nif);
         mStringPalette.post(nif);
-        // TODO: probably should fill the strings with string palette contents here
+        fillStringPaletteValue(mNodeName, mStringPalette, mNodeNameOffset);
+        fillStringPaletteValue(mPropertyType, mStringPalette, mPropertyTypeOffset);
+        fillStringPaletteValue(mControllerType, mStringPalette, mControllerTypeOffset);
+        fillStringPaletteValue(mControllerId, mStringPalette, mControllerIdOffset);
+        fillStringPaletteValue(mInterpolatorId, mStringPalette, mInterpolatorIdOffset);
     }
 
     void NiSequence::read(NIFStream* nif)

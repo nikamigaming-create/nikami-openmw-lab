@@ -63,7 +63,7 @@ namespace MWWorld
 
     void LiveCellRefBase::loadImp(const ESM::ObjectState& state)
     {
-        mRef = CellRef(state.mRef);
+        mRef.loadState(state.mRef);
         mData = RefData(state, mData.isDeletedByContentFile());
 
         Ptr ptr(this);

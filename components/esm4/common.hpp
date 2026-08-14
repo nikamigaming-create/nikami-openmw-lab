@@ -131,6 +131,8 @@ namespace ESM4
         REC_PROJ = fourCC("PROJ"), // Projectile
         REC_QUST = fourCC("QUST"), // Quest
         REC_RACE = fourCC("RACE"), // Race / Creature type
+        REC_RCCT = fourCC("RCCT"), // Recipe Category
+        REC_RCPE = fourCC("RCPE"), // Recipe
         REC_REFR = fourCC("REFR"), // Object Reference
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship
@@ -170,6 +172,7 @@ namespace ESM4
         REC_IMOD = fourCC("IMOD"), // Item Mod
         REC_PWAT = fourCC("PWAT"), // Placeable Water
         REC_SCOL = fourCC("SCOL"), // Static Collection
+        REC_PKIN = fourCC("PKIN"), // Starfield Pack-In (authored storage-cell set piece)
         REC_CCRD = fourCC("CCRD"), // Caravan Card
         REC_CMNY = fourCC("CMNY"), // Caravan Money
         REC_ALOC = fourCC("ALOC"), // Audio Location Controller

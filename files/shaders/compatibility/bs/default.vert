@@ -25,6 +25,14 @@ varying vec2 normalMapUV;
 varying vec4 passTangent;
 #endif
 
+#if @envMap
+varying vec2 envMapUV;
+#endif
+
+#if @glossMap
+varying vec2 glossMapUV;
+#endif
+
 varying float euclideanDepth;
 varying float linearDepth;
 
@@ -55,6 +63,14 @@ void main(void)
     normalToViewMatrix *= generateTangentSpace(gl_MultiTexCoord7.xyzw, passNormal);
 #endif
 
+#if @envMap
+    vec3 envViewNormal = normalize(gl_NormalMatrix * passNormal);
+    vec3 viewVec = normalize(viewPos.xyz);
+    vec3 r = reflect(viewVec, envViewNormal);
+    float m = 2.0 * sqrt(r.x * r.x + r.y * r.y + (r.z + 1.0) * (r.z + 1.0));
+    envMapUV = vec2(r.x / m + 0.5, r.y / m + 0.5);
+#endif
+
 #if @diffuseMap
     diffuseMapUV = (gl_TextureMatrix[@diffuseMapUV] * gl_MultiTexCoord@diffuseMapUV).xy;
 #endif
@@ -67,6 +83,9 @@ void main(void)
     normalMapUV = (gl_TextureMatrix[@normalMapUV] * gl_MultiTexCoord@normalMapUV).xy;
 #endif
 
+#if @glossMap
+    glossMapUV = (gl_TextureMatrix[@glossMapUV] * gl_MultiTexCoord@glossMapUV).xy;
+#endif
 
 #if @shadows_enabled
     vec3 viewNormal = normalize(gl_NormalMatrix * passNormal);

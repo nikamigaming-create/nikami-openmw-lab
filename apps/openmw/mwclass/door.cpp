@@ -39,15 +39,6 @@
 
 namespace MWClass
 {
-    class DoorCustomData : public MWWorld::TypedCustomData<DoorCustomData>
-    {
-    public:
-        MWWorld::DoorState mDoorState = MWWorld::DoorState::Idle;
-
-        DoorCustomData& asDoorCustomData() override { return *this; }
-        const DoorCustomData& asDoorCustomData() const override { return *this; }
-    };
-
     Door::Door()
         : MWWorld::RegisteredClass<Door>(ESM::Door::sRecordId)
     {

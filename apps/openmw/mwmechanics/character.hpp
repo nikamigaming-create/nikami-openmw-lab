@@ -1,6 +1,7 @@
 #ifndef GAME_MWMECHANICS_CHARACTER_HPP
 #define GAME_MWMECHANICS_CHARACTER_HPP
 
+#include <cstdint>
 #include <deque>
 
 #include <components/esm3/loadweap.hpp>
@@ -8,6 +9,11 @@
 #include "../mwworld/ptr.hpp"
 
 #include "../mwrender/animation.hpp"
+
+namespace ESM4
+{
+    struct Weapon;
+}
 
 namespace MWWorld
 {
@@ -17,6 +23,7 @@ namespace MWWorld
 namespace MWRender
 {
     class Animation;
+    enum class FonvWeaponAction : std::uint8_t;
 }
 
 namespace MWMechanics
@@ -129,6 +136,7 @@ namespace MWMechanics
     {
         MWWorld::Ptr mPtr;
         MWWorld::Ptr mWeapon;
+        const ESM4::Weapon* mFalloutWeapon = nullptr;
         MWRender::Animation* mAnimation;
 
         struct AnimationQueueEntry
@@ -148,9 +156,11 @@ namespace MWMechanics
 
         CharacterState mIdleState{ CharState_None };
         std::string mCurrentIdle;
+        std::string mLastMissingIdleAnimation;
 
         CharacterState mMovementState{ CharState_None };
         std::string mCurrentMovement;
+        std::string mLastMissingMovementAnimation;
         float mMovementAnimSpeed{ 0.f };
         bool mAdjustMovementAnimSpeed{ false };
         bool mMovementAnimationHasMovement{ false };
@@ -216,10 +226,14 @@ namespace MWMechanics
         void refreshIdleAnims(CharacterState idle, bool force = false);
 
         bool updateWeaponState();
+        bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
+            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon);
+        bool fireFalloutWeapon();
         void updateIdleStormState(bool inwater) const;
 
         std::string chooseRandomAttackAnimation() const;
         static bool isRandomAttackAnimation(std::string_view group);
+        bool isLegacyRandomAttackAnimation(std::string_view group) const;
 
         bool isMovementAnimationControlled() const;
 
@@ -243,8 +257,12 @@ namespace MWMechanics
         std::string fallbackShortWeaponGroup(
             const std::string& baseGroupName, MWRender::Animation::BlendMask* blendMask = nullptr) const;
 
-        std::string_view getWeaponAnimation(int weaponType) const;
+        std::string_view getWeaponAnimation(int weaponType);
         std::string_view getWeaponShortGroup(int weaponType) const;
+        std::string_view getFalloutWeaponActionGroup(int weaponType, MWRender::FonvWeaponAction action);
+        bool playFalloutWeaponAction(
+            int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon);
+        bool restoreFalloutPrimaryWeaponGroup(int weaponType);
 
         bool getAttackingOrSpell() const;
         void setAttackingOrSpell(bool attackingOrSpell) const;
@@ -287,6 +305,9 @@ namespace MWMechanics
         bool playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted = false);
         bool playGroupLua(std::string_view groupname, float speed, std::string_view startKey, std::string_view stopKey,
             uint32_t loops, bool forceLoop);
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+        bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup);
         void enableLuaAnimations(bool enable);
         void skipAnim();
         bool isAnimPlaying(std::string_view groupName) const;
@@ -335,6 +356,9 @@ namespace MWMechanics
 
         /// Make this character turn its head towards \a target. To turn off head tracking, pass an empty Ptr.
         void setHeadTrackTarget(const MWWorld::ConstPtr& target);
+
+        /// Apply the current target while gameplay simulation is paused by dialogue.
+        void updateDialogueHeadTracking(float duration);
 
         void playSwishSound() const;
 

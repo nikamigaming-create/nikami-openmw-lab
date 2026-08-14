@@ -1,12 +1,16 @@
 #include "pingpongcanvas.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdlib>
 
 #include <components/shader/shadermanager.hpp>
 #include <components/stereo/multiview.hpp>
 #include <components/stereo/stereomanager.hpp>
 
 #include <osg/Texture2DArray>
+#include <osg/Image>
+#include <osgDB/WriteFile>
 
 #include "postprocessor.hpp"
 
@@ -89,6 +93,22 @@ namespace MWRender
                 continue;
 
             filtered.push_back(i);
+        }
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr
+            || std::getenv("OPENMW_PROOF_CAPTURE_POSTPROCESS") != nullptr)
+        {
+            static int falloutCanvasLogs = 0;
+            if (falloutCanvasLogs++ < 24)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: post canvas draw frame="
+                                 << state.getFrameStamp()->getFrameNumber()
+                                 << " postprocessing=" << (mPostprocessing ? 1 : 0)
+                                 << " passes=" << mPasses.size()
+                                 << " filtered=" << filtered.size()
+                                 << " mask=" << mMask
+                                 << " fallback=" << ((filtered.empty() || !mPostprocessing) ? 1 : 0);
+            }
         }
 
         auto* resolveViewport = state.getCurrentViewport();
@@ -350,6 +370,29 @@ namespace MWRender
         if (lastApplied != destinationHandle)
         {
             bindDestinationFbo();
+        }
+
+        if (const char* capturePath = std::getenv("OPENMW_PROOF_POSTPROCESS_SCREENSHOT_PATH"))
+        {
+            static bool captured = false;
+            const char* frameText = std::getenv("OPENMW_PROOF_SCREENSHOT_FRAME");
+            const unsigned targetFrame
+                = frameText != nullptr ? static_cast<unsigned>(std::max(0, std::atoi(frameText))) : 0u;
+            const unsigned currentFrame = state.getFrameStamp()->getFrameNumber();
+            if (!captured && currentFrame >= targetFrame)
+            {
+                captured = true;
+                glReadBuffer(GL_BACK);
+                osg::ref_ptr<osg::Image> image = new osg::Image;
+                image->readPixels(static_cast<int>(resolveViewport->x()),
+                    static_cast<int>(resolveViewport->y()), static_cast<int>(resolveViewport->width()),
+                    static_cast<int>(resolveViewport->height()), GL_RGB, GL_UNSIGNED_BYTE);
+                if (osgDB::writeImageFile(*image, capturePath))
+                    Log(Debug::Info) << "OpenDAO portrait postprocess: wrote final canvas path=" << capturePath
+                                     << " frame=" << currentFrame;
+                else
+                    Log(Debug::Error) << "OpenDAO portrait postprocess: failed final canvas path=" << capturePath;
+            }
         }
 
         mDirtyAttachments.clear();

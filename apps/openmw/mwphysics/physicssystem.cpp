@@ -1,10 +1,13 @@
 #include "physicssystem.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <exception>
 #include <memory>
 #include <vector>
 
 #include <osg/Group>
+#include <osg/Array>
 #include <osg/Stats>
 #include <osg/Timer>
 
@@ -22,12 +25,17 @@
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/conversion.hpp>
+#include <components/resource/bulletshape.hpp>
 #include <components/resource/bulletshapemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -58,6 +66,49 @@
 
 namespace
 {
+    osg::Vec3f getFallbackActorHalfExtents(const MWWorld::Ptr& ptr)
+    {
+        float radius = 32.f;
+        float halfHeight = 64.f;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            if (npc->mBoundRadius > 1.f)
+                radius = npc->mBoundRadius;
+
+            if (const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore())
+            {
+                if (const ESM4::Race* race = store->get<ESM4::Race>().search(npc->mRace))
+                {
+                    const bool female = npc->mIsFONV && (npc->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Female);
+                    const float height = female ? race->mHeightFemale : race->mHeightMale;
+                    if (std::isfinite(height) && height > 0.f)
+                        halfHeight *= height;
+                }
+            }
+        }
+        else if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            if (creature->mBoundRadius > 1.f)
+                // Class::adjustScale applies CREA BNAM uniformly when Actor builds its collision extents.
+                // Keep the synthetic source extent unscaled here so the base scale is applied exactly once.
+                radius = creature->mBoundRadius;
+            halfHeight = std::max(halfHeight, radius);
+        }
+
+        return osg::Vec3f(std::max(radius, 8.f), std::max(radius, 8.f), std::max(halfHeight, 24.f));
+    }
+
+    osg::ref_ptr<Resource::BulletShape> makeFallbackActorShape(const MWWorld::Ptr& ptr)
+    {
+        osg::ref_ptr<Resource::BulletShape> shape = new Resource::BulletShape;
+        shape->mCollisionBox.mExtents = getFallbackActorHalfExtents(ptr);
+        shape->mCollisionBox.mCenter = osg::Vec3f(0.f, 0.f, shape->mCollisionBox.mExtents.z());
+        return shape;
+    }
+
     void handleJump(const MWWorld::Ptr& ptr)
     {
         if (!ptr.getClass().isActor())
@@ -389,6 +440,14 @@ namespace MWPhysics
             = std::make_unique<HeightField>(heights, x, y, size, verts, minH, maxH, holdObject, mTaskScheduler.get());
     }
 
+    void PhysicsSystem::addFlatHeightField(int x, int y, int size, float height)
+    {
+        osg::ref_ptr<osg::FloatArray> heights = new osg::FloatArray;
+        heights->resize(4);
+        std::fill(heights->begin(), heights->end(), height);
+        addHeightField(&(*heights)[0], x, y, size, 2, height - 1.f, height + 1.f, heights.get());
+    }
+
     void PhysicsSystem::removeHeightField(int x, int y)
     {
         HeightFieldMap::iterator heightfield = mHeightFields.find(std::make_pair(x, y));
@@ -562,7 +621,27 @@ namespace MWPhysics
     {
         const VFS::Path::Normalized animationMesh
             = Misc::ResourceHelpers::correctActorModelPath(mesh, mResourceSystem->getVFS());
-        osg::ref_ptr<const Resource::BulletShape> shape = mShapeManager->getShape(animationMesh);
+        osg::ref_ptr<const Resource::BulletShape> shape;
+        const VFS::Manager* vfs = mResourceSystem->getVFS();
+        if (vfs != nullptr && !vfs->exists(animationMesh))
+        {
+            Log(Debug::Info) << "World viewer: using fallback actor physics for missing actor mesh "
+                             << animationMesh;
+            shape = makeFallbackActorShape(ptr);
+        }
+        else
+        {
+            try
+            {
+                shape = mShapeManager->getShape(animationMesh);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Info) << "World viewer: using fallback actor physics after mesh load failed for "
+                                 << animationMesh << ": " << e.what();
+                shape = makeFallbackActorShape(ptr);
+            }
+        }
 
         // Try to get shape from basic model as fallback for creatures
         if (!ptr.getClass().isNpc() && shape && shape->mCollisionBox.mExtents.length2() == 0)
@@ -574,7 +653,9 @@ namespace MWPhysics
         }
 
         if (!shape)
-            return;
+            shape = makeFallbackActorShape(ptr);
+        else if (shape->mCollisionBox.mExtents.length2() == 0.f)
+            shape = makeFallbackActorShape(ptr);
 
         // check if Actor should spawn above water
         const MWMechanics::MagicEffects& effects = ptr.getClass().getCreatureStats(ptr).getMagicEffects();

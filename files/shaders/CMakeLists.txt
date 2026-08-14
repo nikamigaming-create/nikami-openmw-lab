@@ -28,6 +28,7 @@ set(SHADER_FILES
     lib/sky/passes.glsl
     lib/material/parallax.glsl
     lib/material/alpha.glsl
+    compatibility/fnvxrliveframe_fragment.glsl
     compatibility/ripples_blobber.frag
     compatibility/ripples_simulate.frag
     compatibility/fog.glsl
@@ -63,6 +64,8 @@ set(SHADER_FILES
     compatibility/fullscreen_tri.frag
     compatibility/bs/default.vert
     compatibility/bs/default.frag
+    compatibility/bs/skin.vert
+    compatibility/bs/skin.frag
     compatibility/bs/nolighting.vert
     compatibility/bs/nolighting.frag
     compatibility/luminance/resolve.frag

@@ -33,6 +33,7 @@
 
 #include "cellstore.hpp"
 #include "class.hpp"
+#include "esm4questruntime.hpp"
 #include "ptr.hpp"
 
 namespace MWWorld
@@ -204,6 +205,11 @@ namespace MWWorld
         if (!toActivate.getClass().hasToolTip(toActivate))
             return;
 
+        // ESM4 reference scripts observe the same ordinary player activation
+        // that Lua and the standard activation action already receive.  The
+        // runtime only handles an authored OnActivate block; this does not
+        // replace or synthesize the object's normal action.
+        (void)MWBase::Environment::get().getWorld()->getESM4QuestRuntime().onReferenceActivated(toActivate, player);
         MWBase::Environment::get().getLuaManager()->objectActivated(toActivate, player);
     }
 
@@ -262,6 +268,7 @@ namespace MWWorld
         mMarkedCell = nullptr;
         mTeleported = false;
         mJumping = false;
+        mFalloutFurnitureRef = ESM::FormId();
         mCurrentCrimeId = -1;
         mPaidCrimeId = -1;
         mPreviousItems.clear();

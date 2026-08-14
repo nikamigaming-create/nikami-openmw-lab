@@ -1,0 +1,16 @@
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        float depth = omw_GetLinearDepth(omw_TexCoord);
+        omw_FragColor = vec4(vec3(clamp(depth / 20.0, 0.0, 1.0)), 1.0);
+    }
+}
+
+technique {
+    passes = main;
+    description = "OpenDAO linear-depth validation";
+    author = "OpenDAO";
+    version = "1.0";
+}

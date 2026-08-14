@@ -1,14 +1,21 @@
 #include "renderingmanager.hpp"
 
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <optional>
+#include <sstream>
+#include <string_view>
 
 #include <osg/ClipControl>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/Fog>
 #include <osg/Group>
 #include <osg/Light>
 #include <osg/Material>
 #include <osg/Matrix>
+#include <osg/PolygonMode>
 #include <osg/UserDataContainer>
 
 #include <osgUtil/LineSegmentIntersector>
@@ -31,12 +38,15 @@
 
 #include <components/settings/values.hpp>
 
+#include <components/vfs/manager.hpp>
+
 #include <components/sceneutil/cullsafeboundsvisitor.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/occlusionculling.hpp>
 #include <components/occlusionculling/occlusionstorage.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/stateupdater.hpp>
 #include <components/sceneutil/visitor.hpp>
@@ -44,6 +54,7 @@
 #include <components/sceneutil/writescene.hpp>
 
 #include <components/misc/constants.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 
 #include <components/terrain/quadtreeworld.hpp>
@@ -51,7 +62,12 @@
 #include <components/terrain/terrainoccluder.hpp>
 
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/debug/debugdraw.hpp>
 #include <components/detournavigator/navigator.hpp>
@@ -59,19 +75,28 @@
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/groundcoverstore.hpp"
+#include "../mwworld/inventorystore.hpp"
+#include "../mwworld/livecellref.hpp"
 #include "../mwworld/scene.hpp"
 
 #include "../mwgui/postprocessorhud.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/movement.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "actorspaths.hpp"
+#include "playervisualpolicy.hpp"
 #include "camera.hpp"
+#include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
 #include "fogmanager.hpp"
 #include "groundcover.hpp"
@@ -91,6 +116,662 @@
 
 namespace MWRender
 {
+    namespace
+    {
+        bool envFlagEnabled(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && std::string(value) != "0";
+        }
+
+        float envFloatOr(const char* name, float fallback)
+        {
+            const char* value = std::getenv(name);
+            if (value == nullptr || *value == '\0')
+                return fallback;
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            return end != value && std::isfinite(parsed) ? parsed : fallback;
+        }
+
+        const ESM4::Npc* findEsm4PlayerVisualRecord()
+        {
+            if (envFlagEnabled("OPENMW_ESM4_DISABLE_PLAYER_VISUAL_PROXY")
+                || envFlagEnabled("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY"))
+            {
+                Log(Debug::Info)
+                    << "ESM4 player visual proxy disabled by runtime environment";
+                return nullptr;
+            }
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return nullptr;
+
+            const char* env = std::getenv("OPENMW_ESM4_PLAYER_NPC");
+            if (env == nullptr || *env == '\0')
+                env = std::getenv("OPENMW_FNV_PLAYER_NPC");
+            const std::string_view wanted = env != nullptr && *env != '\0' ? std::string_view(env) : "Player";
+            const ESM4::Npc* fallback = nullptr;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (Misc::StringUtils::ciEqual(npc.mEditorId, wanted))
+                    return &npc;
+                if (fallback == nullptr && Misc::StringUtils::ciEqual(npc.mEditorId, "Player"))
+                    fallback = &npc;
+            }
+
+            return fallback;
+        }
+
+        const ESM4::Npc* findFalloutPlayerVisualRecord()
+        {
+            const ESM4::Npc* player = findEsm4PlayerVisualRecord();
+            return player != nullptr && player->mIsFONV ? player : nullptr;
+        }
+
+        bool hasFalloutNvContentLoaded()
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return false;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (npc.mIsFONV)
+                    return true;
+            }
+
+            return false;
+        }
+
+        const ESM4::Armor* findFalloutArmorByEditorId(const std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Armor& armor : store->get<ESM4::Armor>())
+            {
+                if (Misc::StringUtils::ciEqual(armor.mEditorId, editorId))
+                    return &armor;
+            }
+
+            return nullptr;
+        }
+
+        const ESM4::Weapon* findFalloutWeaponByEditorId(const std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Weapon& weapon : store->get<ESM4::Weapon>())
+            {
+                if (Misc::StringUtils::ciEqual(weapon.mEditorId, editorId))
+                    return &weapon;
+            }
+
+            return nullptr;
+        }
+
+        void applyFalloutPlayerProxyConfiguredEquipment(const MWWorld::Ptr& visualPtr, const char* context)
+        {
+            const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
+                std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
+                std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_ESM4_PLAYER_WEAPON"), std::getenv("OPENMW_FNV_PLAYER_WEAPON"),
+                std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty() && policy.mWeapon.empty())
+                return;
+
+            const auto addArmor = [&](std::string_view editorId, std::string_view role) {
+                if (editorId.empty())
+                    return;
+                const ESM4::Armor* armor = findFalloutArmorByEditorId(editorId);
+                if (armor == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 proof: " << context << " player proxy " << role << " "
+                                        << editorId << " not found";
+                    return;
+                }
+
+                const std::size_t armorBefore = MWClass::ESM4Npc::getEquippedArmor(visualPtr).size();
+                const std::size_t clothingBefore = MWClass::ESM4Npc::getEquippedClothing(visualPtr).size();
+                const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                const std::size_t armorAfter = MWClass::ESM4Npc::getEquippedArmor(visualPtr).size();
+                const std::size_t clothingAfter = MWClass::ESM4Npc::getEquippedClothing(visualPtr).size();
+                Log(Debug::Info) << "ESM4 proof: " << context << " player proxy " << role << " "
+                                 << armor->mEditorId << " model="
+                                 << MWClass::ESM4Npc::chooseEquipmentModel(
+                                        armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                                 << " added=" << added << " replacedArmor="
+                                 << (armorBefore + (added ? 1 : 0) - armorAfter) << " replacedClothing="
+                                 << (clothingBefore - clothingAfter);
+            };
+
+            addArmor(policy.mOutfit, "outfit");
+            addArmor(policy.mHeadgear, "headgear");
+            if (!policy.mWeapon.empty())
+            {
+                const ESM4::Weapon* weapon = findFalloutWeaponByEditorId(policy.mWeapon);
+                if (weapon == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 proof: " << context << " player proxy weapon "
+                                        << policy.mWeapon << " not found";
+                }
+                else
+                {
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "ESM4 proof: " << context << " player proxy weapon "
+                                     << weapon->mEditorId << " model=" << weapon->mModel
+                                     << " changed=" << changed << " drawn=1";
+                }
+            }
+        }
+
+        uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
+        {
+            uint32_t covered = 0;
+            for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(ptr))
+                covered |= armor->mArmorFlags;
+            for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(ptr))
+                covered |= clothing->mClothingFlags;
+            return covered;
+        }
+
+        std::string formatHex32(uint32_t value)
+        {
+            std::ostringstream stream;
+            stream << "0x" << std::hex << value;
+            return stream.str();
+        }
+
+        bool falloutModelMentionsHand(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("lefthand") != std::string::npos || lowered.find("righthand") != std::string::npos
+                || lowered.find("hand") != std::string::npos || lowered.find("pipboy") != std::string::npos
+                || lowered.find("glove") != std::string::npos;
+        }
+
+// VR hand surfaces belong to the separately-built VR runtime.  This 0.51
+// Fallout candidate is intentionally a flat-screen build, so keep the
+// diagnostic implementation out of this target rather than linking stale VR
+// interfaces into the player renderer.
+#if 0
+        void logFalloutVrHandSourceCandidates(const MWWorld::Ptr& actorPtr, std::string_view label)
+        {
+            if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly source " << label
+                                 << " is not ESM4 NPC; ptr=" << actorPtr.toString();
+                return;
+            }
+
+            const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(actorPtr);
+            const ESM4::Npc* modelRecord = MWClass::ESM4Npc::getModelRecord(actorPtr);
+            const ESM4::Race* race = MWClass::ESM4Npc::getRace(actorPtr);
+            const bool isFemale = MWClass::ESM4Npc::isFemale(actorPtr);
+            const uint32_t coveredSlots = getFalloutActorCoveredBodySlots(actorPtr);
+            const bool coversLeft = (coveredSlots & ESM4::Armor::FO3_LeftHand) != 0;
+            const bool coversRight = (coveredSlots & ESM4::Armor::FO3_RightHand) != 0;
+            const bool coversPipBoy = (coveredSlots & ESM4::Armor::FO3_PipBoy) != 0;
+
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly source " << label
+                             << " ptr=" << actorPtr.toString()
+                             << " traits=" << (traits != nullptr ? traits->mEditorId : std::string_view{})
+                             << " traitsForm=" << (traits != nullptr ? ESM::RefId(traits->mId) : ESM::RefId())
+                             << " modelRecord=" << (modelRecord != nullptr ? modelRecord->mEditorId : std::string_view{})
+                             << " race=" << (race != nullptr ? race->mEditorId : std::string_view{})
+                             << " female=" << isFemale
+                             << " coveredSlots=" << formatHex32(coveredSlots)
+                             << " coversLeftHand=" << coversLeft
+                             << " coversRightHand=" << coversRight
+                             << " coversPipBoy=" << coversPipBoy;
+
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly intended attach leftBone=Bip01 L Hand rightBone=Bip01 R Hand";
+
+            if (race != nullptr)
+            {
+                const std::vector<ESM4::Race::BodyPart>& bodyParts
+                    = isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale;
+                for (const ESM4::Race::BodyPart& bodyPart : bodyParts)
+                {
+                    if (!falloutModelMentionsHand(bodyPart.mesh))
+                        continue;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly race hand candidate source=" << label
+                                     << " mesh=" << bodyPart.mesh
+                                     << " texture=" << bodyPart.texture
+                                     << " skippedByLeftCoverage="
+                                     << (coversLeft && Misc::StringUtils::lowerCase(bodyPart.mesh).find("lefthand")
+                                             != std::string::npos)
+                                     << " skippedByRightCoverage="
+                                     << (coversRight && Misc::StringUtils::lowerCase(bodyPart.mesh).find("righthand")
+                                             != std::string::npos);
+                }
+            }
+
+            for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(actorPtr))
+            {
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+                const bool handSlots = armor != nullptr
+                    && ((armor->mArmorFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand
+                                                | ESM4::Armor::FO3_PipBoy))
+                        != 0);
+                if (handSlots || falloutModelMentionsHand(model))
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped armor candidate source=" << label
+                                     << " editor=" << (armor != nullptr ? armor->mEditorId : std::string_view{})
+                                     << " form=" << (armor != nullptr ? ESM::RefId(armor->mId) : ESM::RefId())
+                                     << " flags="
+                                     << (armor != nullptr ? formatHex32(armor->mArmorFlags) : std::string("0x0"))
+                                     << " model=" << model
+                                     << " handSlots=" << handSlots;
+            }
+
+            for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(actorPtr))
+            {
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(clothing, isFemale);
+                const bool handSlots = clothing != nullptr
+                    && ((clothing->mClothingFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand
+                                                     | ESM4::Armor::FO3_PipBoy))
+                        != 0);
+                if (handSlots || falloutModelMentionsHand(model))
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped clothing candidate source=" << label
+                                     << " editor=" << (clothing != nullptr ? clothing->mEditorId : std::string_view{})
+                                     << " form=" << (clothing != nullptr ? ESM::RefId(clothing->mId) : ESM::RefId())
+                                     << " flags="
+                                     << (clothing != nullptr ? formatHex32(clothing->mClothingFlags) : std::string("0x0"))
+                                     << " model=" << model
+                                     << " handSlots=" << handSlots;
+            }
+
+            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actorPtr))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
+                                 << " editor=" << weapon->mEditorId
+                                 << " form=" << ESM::RefId(weapon->mId)
+                                 << " model=" << weapon->mModel
+                                 << " worldModel=" << ESM::RefId(weapon->mWorldModel)
+                                 << " type=" << weapon->mData.type
+                                 << " intendedAttach=Weapon/Bip01 R Hand";
+            }
+            else
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly equipped weapon candidate source=" << label
+                                 << " editor=<none>";
+        }
+
+        bool appendFalloutVrWeaponSurface(
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface>& surfaces, const MWWorld::Ptr& actorPtr,
+            std::string_view label)
+        {
+            if (actorPtr.isEmpty())
+                return false;
+
+            const auto addWeaponSurface = [&](const ESM4::Weapon* weapon, std::string source) {
+                if (weapon == nullptr || weapon->mModel.empty())
+                    return false;
+                surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
+                    weapon->mModel, {}, std::move(source), false });
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
+                                 << surfaces.back().source << " editor=" << weapon->mEditorId
+                                 << " model=" << weapon->mModel;
+                return true;
+            };
+
+            const MWWorld::Class& actorClass = actorPtr.getClass();
+            if (actorClass.hasInventoryStore(actorPtr))
+            {
+                const MWWorld::InventoryStore& inventory = actorClass.getInventoryStore(actorPtr);
+                const MWWorld::ConstContainerStoreIterator weaponSlot
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (weaponSlot != inventory.end() && weaponSlot->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* weapon = weaponSlot->get<ESM4::Weapon>()->mBase;
+                    if (addWeaponSurface(weapon, std::string(label) + ":live-weapon:" + weapon->mEditorId))
+                        return true;
+                }
+            }
+
+            if (actorPtr.getType() == ESM4::Npc::sRecordId)
+            {
+                const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actorPtr);
+                if (weapon != nullptr)
+                    return addWeaponSurface(weapon, std::string(label) + ":npc-weapon:" + weapon->mEditorId);
+            }
+
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly no right-hand weapon surface source=" << label;
+            return false;
+        }
+
+        std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfaces(
+            const MWWorld::Ptr& actorPtr, std::string_view label, bool includeWeapon = true)
+        {
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces;
+            if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
+                return surfaces;
+
+            const ESM4::Race* race = MWClass::ESM4Npc::getRace(actorPtr);
+            const bool isFemale = MWClass::ESM4Npc::isFemale(actorPtr);
+            const uint32_t coveredSlots = getFalloutActorCoveredBodySlots(actorPtr);
+            const bool coversLeft = (coveredSlots & ESM4::Armor::FO3_LeftHand) != 0;
+            const bool coversRight = (coveredSlots & ESM4::Armor::FO3_RightHand) != 0;
+
+            const auto addSurface = [&](std::string_view model, std::string_view texture, std::string source, bool left) {
+                if (model.empty())
+                    return;
+                surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
+                    std::string(model), std::string(texture), std::move(source), left });
+            };
+
+            if (race != nullptr)
+            {
+                const std::vector<ESM4::Race::BodyPart>& bodyParts
+                    = isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale;
+                for (const ESM4::Race::BodyPart& bodyPart : bodyParts)
+                {
+                    if (!falloutModelMentionsHand(bodyPart.mesh))
+                        continue;
+                    const std::string lowered = Misc::StringUtils::lowerCase(bodyPart.mesh);
+                    const bool left = lowered.find("lefthand") != std::string::npos;
+                    const bool right = lowered.find("righthand") != std::string::npos;
+                    if ((left && coversLeft) || (right && coversRight))
+                        continue;
+                    addSurface(bodyPart.mesh, bodyPart.texture, std::string(label) + ":race", left && !right);
+                }
+            }
+
+            for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(actorPtr))
+            {
+                if (armor == nullptr)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+                const uint32_t handFlags = armor->mArmorFlags
+                    & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand | ESM4::Armor::FO3_PipBoy);
+                if (handFlags == 0 && !falloutModelMentionsHand(model))
+                    continue;
+                const std::string lowered = Misc::StringUtils::lowerCase(model);
+                const bool left = (handFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_PipBoy)) != 0
+                    || lowered.find("left") != std::string::npos || lowered.find("pipboy") != std::string::npos;
+                addSurface(model, {}, std::string(label) + ":armor:" + armor->mEditorId, left);
+            }
+
+            for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(actorPtr))
+            {
+                if (clothing == nullptr)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(clothing, isFemale);
+                const uint32_t handFlags = clothing->mClothingFlags
+                    & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand | ESM4::Armor::FO3_PipBoy);
+                if (handFlags == 0 && !falloutModelMentionsHand(model))
+                    continue;
+                const std::string lowered = Misc::StringUtils::lowerCase(model);
+                const bool left = (handFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_PipBoy)) != 0
+                    || lowered.find("left") != std::string::npos || lowered.find("pipboy") != std::string::npos;
+                addSurface(model, {}, std::string(label) + ":clothing:" + clothing->mEditorId, left);
+            }
+
+            if (includeWeapon)
+                appendFalloutVrWeaponSurface(surfaces, actorPtr, label);
+            return surfaces;
+        }
+
+        std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfacesForVisualRecord(
+            const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
+        {
+            if (visualRecord == nullptr)
+                return {};
+
+            ESM::CellRef visualRef;
+            visualRef.blank();
+            visualRef.mRefID = ESM::RefId(visualRecord->mId);
+            MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
+            liveVisualRef.mData.setPosition(player.getRefData().getPosition());
+            MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
+                = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
+            const bool rightPipBoyCalibration = [] {
+                if (const char* value = std::getenv("OPENMW_FNV_RIGHT_PIPBOY_CALIBRATION"))
+                    return *value != '\0' && std::string_view(value) != "0";
+                return false;
+            }();
+            if (rightPipBoyCalibration)
+            {
+                std::optional<MWVR::VRAnimation::FalloutVrHandSurface> rightPipBoySurface;
+                for (const MWVR::VRAnimation::FalloutVrHandSurface& surface : surfaces)
+                {
+                    const std::string lowered = Misc::StringUtils::lowerCase(surface.model);
+                    if (lowered.find("pipboyarm") == std::string::npos)
+                        continue;
+                    rightPipBoySurface = MWVR::VRAnimation::FalloutVrHandSurface{
+                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false };
+                    break;
+                }
+                if (rightPipBoySurface)
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right PipBoy calibration model="
+                                     << rightPipBoySurface->model;
+                    surfaces.push_back(std::move(*rightPipBoySurface));
+                }
+            }
+            appendFalloutVrWeaponSurface(surfaces, player, "save-loaded-vr-player-ptr");
+            return surfaces;
+        }
+
+        void logFalloutVrHandSelectionDiagnostic(const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly diagnostic begin playerPtr=" << player.toString()
+                             << " playerType=" << player.getTypeDescription()
+                             << " visualRecord="
+                             << (visualRecord != nullptr ? visualRecord->mEditorId : std::string_view{})
+                             << " visualForm="
+                             << (visualRecord != nullptr ? ESM::RefId(visualRecord->mId) : ESM::RefId());
+
+            logFalloutVrHandSourceCandidates(player, "vr-player-ptr");
+
+            if (visualRecord == nullptr)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly diagnostic no Fallout visual record available";
+                return;
+            }
+
+            ESM::CellRef visualRef;
+            visualRef.blank();
+            visualRef.mRefID = ESM::RefId(visualRecord->mId);
+            MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
+            liveVisualRef.mData.setPosition(player.getRefData().getPosition());
+            MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-diagnostic");
+            logFalloutVrHandSourceCandidates(visualPtr, "fallout-visual-record");
+        }
+#endif
+    }
+
+    class PerViewUniformStateUpdater final : public SceneUtil::StateSetUpdater
+    {
+    public:
+        PerViewUniformStateUpdater(Resource::SceneManager* sceneManager)
+            : mSceneManager(sceneManager)
+        {
+            mOpaqueTextureUnit = mSceneManager->getShaderManager().reserveGlobalTextureUnits(
+                Shader::ShaderManager::Slot::OpaqueDepthTexture);
+        }
+
+        void setDefaults(osg::StateSet* stateset) override
+        {
+            stateset->addUniform(new osg::Uniform("projectionMatrix", osg::Matrixf{}));
+            if (mSkyRTT)
+                stateset->addUniform(new osg::Uniform("sky", mSkyTextureUnit));
+        }
+
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override
+        {
+            stateset->getUniform("projectionMatrix")->set(mProjectionMatrix);
+            if (mSkyRTT && nv->getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+            {
+                osg::Texture* skyTexture = mSkyRTT->getColorTexture(static_cast<osgUtil::CullVisitor*>(nv));
+                stateset->setTextureAttribute(
+                    mSkyTextureUnit, skyTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            }
+
+            stateset->setTextureAttribute(mOpaqueTextureUnit,
+                mSceneManager->getOpaqueDepthTex(nv->getTraversalNumber()), osg::StateAttribute::ON);
+        }
+
+        void applyLeft(osg::StateSet* stateset, osgUtil::CullVisitor* nv) override
+        {
+            stateset->getUniform("projectionMatrix")->set(getEyeProjectionMatrix(0));
+        }
+
+        void applyRight(osg::StateSet* stateset, osgUtil::CullVisitor* nv) override
+        {
+            stateset->getUniform("projectionMatrix")->set(getEyeProjectionMatrix(1));
+        }
+
+        void setProjectionMatrix(const osg::Matrixf& projectionMatrix) { mProjectionMatrix = projectionMatrix; }
+
+        const osg::Matrixf& getProjectionMatrix() const { return mProjectionMatrix; }
+
+        void enableSkyRTT(int skyTextureUnit, SceneUtil::RTTNode* skyRTT)
+        {
+            mSkyTextureUnit = skyTextureUnit;
+            mSkyRTT = skyRTT;
+        }
+
+    private:
+        osg::Matrixf getEyeProjectionMatrix(int view)
+        {
+            return Stereo::Manager::instance().computeEyeProjection(view, SceneUtil::AutoDepth::isReversed());
+        }
+
+        osg::Matrixf mProjectionMatrix;
+        int mSkyTextureUnit = -1;
+        SceneUtil::RTTNode* mSkyRTT = nullptr;
+
+        Resource::SceneManager* mSceneManager;
+        int mOpaqueTextureUnit = -1;
+    };
+
+    class SharedUniformStateUpdater : public SceneUtil::StateSetUpdater
+    {
+    public:
+        SharedUniformStateUpdater()
+            : mNear(0.f)
+            , mFar(0.f)
+            , mWindSpeed(0.f)
+            , mSkyBlendingStartCoef(Settings::fog().mSkyBlendingStart)
+        {
+        }
+
+        void setDefaults(osg::StateSet* stateset) override
+        {
+            stateset->addUniform(new osg::Uniform("near", 0.f));
+            stateset->addUniform(new osg::Uniform("far", 0.f));
+            stateset->addUniform(new osg::Uniform("skyBlendingStart", 0.f));
+            stateset->addUniform(new osg::Uniform("screenRes", osg::Vec2f{}));
+            stateset->addUniform(new osg::Uniform("isReflection", false));
+            stateset->addUniform(new osg::Uniform("windSpeed", 0.0f));
+            stateset->addUniform(new osg::Uniform("playerPos", osg::Vec3f(0.f, 0.f, 0.f)));
+            stateset->addUniform(new osg::Uniform("useTreeAnim", false));
+        }
+
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override
+        {
+            stateset->getUniform("near")->set(mNear);
+            stateset->getUniform("far")->set(mFar);
+            stateset->getUniform("skyBlendingStart")->set(mFar * mSkyBlendingStartCoef);
+            stateset->getUniform("screenRes")->set(mScreenRes);
+            stateset->getUniform("windSpeed")->set(mWindSpeed);
+            stateset->getUniform("playerPos")->set(mPlayerPos);
+        }
+
+        void setNear(float near) { mNear = near; }
+
+        void setFar(float far) { mFar = far; }
+
+        void setScreenRes(float width, float height) { mScreenRes = osg::Vec2f(width, height); }
+
+        void setWindSpeed(float windSpeed) { mWindSpeed = windSpeed; }
+
+        void setPlayerPos(osg::Vec3f playerPos) { mPlayerPos = playerPos; }
+
+    private:
+        float mNear;
+        float mFar;
+        float mWindSpeed;
+        float mSkyBlendingStartCoef;
+        osg::Vec3f mPlayerPos;
+        osg::Vec2f mScreenRes;
+    };
+
+    class StateUpdater : public SceneUtil::StateSetUpdater
+    {
+    public:
+        StateUpdater()
+            : mFogStart(0.f)
+            , mFogEnd(0.f)
+            , mWireframe(false)
+        {
+        }
+
+        void setDefaults(osg::StateSet* stateset) override
+        {
+            osg::LightModel* lightModel = new osg::LightModel;
+            stateset->setAttribute(lightModel, osg::StateAttribute::ON);
+            osg::Fog* fog = new osg::Fog;
+            fog->setMode(osg::Fog::LINEAR);
+            stateset->setAttributeAndModes(fog, osg::StateAttribute::ON);
+            if (mWireframe)
+            {
+                osg::PolygonMode* polygonmode = new osg::PolygonMode;
+                polygonmode->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
+                stateset->setAttributeAndModes(polygonmode, osg::StateAttribute::ON);
+            }
+            else
+                stateset->removeAttribute(osg::StateAttribute::POLYGONMODE);
+        }
+
+        void apply(osg::StateSet* stateset, osg::NodeVisitor*) override
+        {
+            osg::LightModel* lightModel
+                = static_cast<osg::LightModel*>(stateset->getAttribute(osg::StateAttribute::LIGHTMODEL));
+            lightModel->setAmbientIntensity(mAmbientColor);
+            osg::Fog* fog = static_cast<osg::Fog*>(stateset->getAttribute(osg::StateAttribute::FOG));
+            fog->setColor(mFogColor);
+            fog->setStart(mFogStart);
+            fog->setEnd(mFogEnd);
+        }
+
+        void setAmbientColor(const osg::Vec4f& col) { mAmbientColor = col; }
+
+        void setFogColor(const osg::Vec4f& col) { mFogColor = col; }
+
+        void setFogStart(float start) { mFogStart = start; }
+
+        void setFogEnd(float end) { mFogEnd = end; }
+
+        void setWireframe(bool wireframe)
+        {
+            if (mWireframe != wireframe)
+            {
+                mWireframe = wireframe;
+                reset();
+            }
+        }
+
+        bool getWireframe() const { return mWireframe; }
+
+    private:
+        osg::Vec4f mAmbientColor;
+        osg::Vec4f mFogColor;
+        float mFogStart;
+        float mFogEnd;
+        bool mWireframe;
+    };
+
     class PreloadCommonAssetsWorkItem : public SceneUtil::WorkItem
     {
     public:
@@ -141,6 +822,7 @@ namespace MWRender
         , mViewDistance(Settings::camera().mViewingDistance)
         , mFieldOfViewOverridden(false)
         , mFieldOfViewOverride(0.f)
+        , mProjectionMatrixOverridden(false)
         , mFieldOfView(Settings::camera().mFieldOfView)
         , mFirstPersonFieldOfView(Settings::camera().mFirstPersonFieldOfView)
         , mGroundCoverStore(groundcoverStore)
@@ -414,6 +1096,8 @@ namespace MWRender
 
     RenderingManager::~RenderingManager()
     {
+        clearLiveObjectsForShutdown();
+
         // let background loading thread finish before we delete anything else
         mWorkQueue = nullptr;
     }
@@ -449,15 +1133,24 @@ namespace MWRender
         mSky->listAssetsToPreload(workItem->mModels, workItem->mTextures);
         mWater->listAssetsToPreload(workItem->mTextures);
 
-        workItem->mModels.push_back(Settings::models().mXbaseanim);
-        workItem->mModels.push_back(Settings::models().mXbaseanim1st);
-        workItem->mModels.push_back(Settings::models().mXbaseanimfemale);
-        workItem->mModels.push_back(Settings::models().mXargonianswimkna);
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        const bool hasMorrowindCommonActors = vfs != nullptr && vfs->exists(Settings::models().mXbaseanim)
+            && vfs->exists(Settings::models().mXbaseanimkf);
 
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanimkf);
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanim1stkf);
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanimfemalekf);
-        workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
+        if (hasMorrowindCommonActors)
+        {
+            workItem->mModels.push_back(Settings::models().mXbaseanim);
+            workItem->mModels.push_back(Settings::models().mXbaseanim1st);
+            workItem->mModels.push_back(Settings::models().mXbaseanimfemale);
+            workItem->mModels.push_back(Settings::models().mXargonianswimkna);
+
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanimkf);
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanim1stkf);
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanimfemalekf);
+            workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
+        }
+        else
+            Log(Debug::Info) << "World viewer: skipped Morrowind common actor preloads because xbase assets are absent";
 
         workItem->mTextures.emplace_back("textures/_land_default.dds");
 
@@ -572,6 +1265,18 @@ namespace MWRender
 
         mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);
         mPostProcessor->getStateUpdater()->setSunVec(osg::Vec4f(-sunlightPos, 0.f));
+    }
+
+    void RenderingManager::setSunPosition(const osg::Vec3f& position)
+    {
+        setSunPosition(position, position);
+    }
+
+    void RenderingManager::setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition)
+    {
+        mSunLight->setPosition(osg::Vec4f(lightingPosition, 0.f));
+        mSky->setSunDirection(skyPosition);
+        mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(skyPosition, 0.f), mNight);
     }
 
     void RenderingManager::addCell(const MWWorld::CellStore* store)
@@ -721,6 +1426,102 @@ namespace MWRender
             float windSpeed = mSky->getBaseWindSpeed();
             mSharedUniformStateUpdater->setWindSpeed(windSpeed);
             mSharedUniformStateUpdater->setPlayerPos(playerPos);
+
+            if (mFalloutPlayerVisualAnimation)
+            {
+                const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+                std::string requestedGroup = "idle";
+                const std::string driverGroup(mPlayerAnimation->getActiveGroup(BoneGroup_LowerBody));
+                const auto mapDriverLocomotionGroup = [](std::string_view group) -> std::string_view {
+                    if (group.find("forward") != std::string_view::npos)
+                        return "walkforward";
+                    if (group.find("back") != std::string_view::npos)
+                        return "walkback";
+                    if (group.find("left") != std::string_view::npos)
+                        return "walkleft";
+                    if (group.find("right") != std::string_view::npos)
+                        return "walkright";
+                    return {};
+                };
+                const std::string_view driverLocomotionGroup = mapDriverLocomotionGroup(driverGroup);
+                if (!driverLocomotionGroup.empty())
+                    requestedGroup = driverLocomotionGroup;
+                else if (std::abs(movement.mPosition[0]) > 0.01f || std::abs(movement.mPosition[1]) > 0.01f)
+                {
+                    if (std::abs(movement.mPosition[1]) >= std::abs(movement.mPosition[0]))
+                        requestedGroup = movement.mPosition[1] >= 0.f ? "walkforward" : "walkback";
+                    else
+                        requestedGroup = movement.mPosition[0] >= 0.f ? "walkright" : "walkleft";
+                }
+
+                osg::Vec2f horizontalDelta;
+                if (mFalloutPlayerVisualPreviousPositionValid)
+                {
+                    horizontalDelta.set(playerPos.x() - mFalloutPlayerVisualPreviousPosition.x(),
+                        playerPos.y() - mFalloutPlayerVisualPreviousPosition.y());
+                    if (requestedGroup == "idle" && horizontalDelta.length2() > 0.0001f)
+                        requestedGroup = "walkforward";
+                }
+                mFalloutPlayerVisualPreviousPosition = playerPos;
+                mFalloutPlayerVisualPreviousPositionValid = true;
+                const std::string movementRequestedGroup = requestedGroup;
+                const bool authoredGroupAvailable = mFalloutPlayerVisualAnimation->hasAnimation(requestedGroup);
+                ESM4NpcAnimation* esm4PlayerVisual
+                    = dynamic_cast<ESM4NpcAnimation*>(mFalloutPlayerVisualAnimation.get());
+                const bool useProcedural = !authoredGroupAvailable && esm4PlayerVisual != nullptr
+                    && esm4PlayerVisual->supportsProceduralHumanoidLocomotion();
+                if (!authoredGroupAvailable && !useProcedural)
+                    requestedGroup = "idle";
+
+                const bool groupChanged = requestedGroup != mFalloutPlayerVisualGroup;
+                if (groupChanged)
+                {
+                    if (!mFalloutPlayerVisualGroup.empty()
+                        && mFalloutPlayerVisualAnimation->hasAnimation(mFalloutPlayerVisualGroup))
+                        mFalloutPlayerVisualAnimation->disable(mFalloutPlayerVisualGroup);
+                    mFalloutPlayerVisualGroup = std::move(requestedGroup);
+                    if (!useProcedural && mFalloutPlayerVisualAnimation->hasAnimation(mFalloutPlayerVisualGroup))
+                    {
+                        mFalloutPlayerVisualAnimation->play(mFalloutPlayerVisualGroup, Animation::AnimPriority(1),
+                            BlendMask_All, false, 1.f, "start", "stop", 0.f,
+                            std::numeric_limits<std::uint32_t>::max(), true);
+                    }
+                    mFalloutPlayerVisualGroupElapsed = 0.f;
+                    mFalloutPlayerVisualCycleLogged = false;
+                }
+                mFalloutPlayerVisualAnimation->runAnimation(dt);
+                bool proceduralApplied = false;
+                if (useProcedural)
+                {
+                    proceduralApplied = esm4PlayerVisual->applyProceduralHumanoidLocomotion(
+                        mFalloutPlayerVisualGroup, mFalloutPlayerVisualGroupElapsed + dt);
+                }
+                const bool selectedGroupAvailable = authoredGroupAvailable || proceduralApplied;
+                if (groupChanged)
+                {
+                    Log(Debug::Info) << "ESM4 player visual locomotion: phase=selected requested=\""
+                                     << movementRequestedGroup << "\" selected=\"" << mFalloutPlayerVisualGroup
+                                     << "\" available=" << selectedGroupAvailable
+                                     << " authoredAvailable=" << authoredGroupAvailable
+                                     << " driver=\"" << (useProcedural ? "procedural-humanoid-ik" : driverGroup)
+                                     << "\" side=" << movement.mPosition[0]
+                                     << " forward=" << movement.mPosition[1] << " horizontalDelta=("
+                                     << horizontalDelta.x() << "," << horizontalDelta.y() << ")";
+                }
+                mFalloutPlayerVisualGroupElapsed += dt;
+                if (!mFalloutPlayerVisualCycleLogged && mFalloutPlayerVisualGroupElapsed >= 0.25f)
+                {
+                    mFalloutPlayerVisualCycleLogged = true;
+                    const float animationTime = useProcedural
+                        ? mFalloutPlayerVisualGroupElapsed
+                        : mFalloutPlayerVisualAnimation->getCurrentTime(mFalloutPlayerVisualGroup);
+                    Log(Debug::Info) << "ESM4 player visual locomotion: phase=advanced selected=\""
+                                     << mFalloutPlayerVisualGroup << "\" elapsed="
+                                     << mFalloutPlayerVisualGroupElapsed << " animationTime=" << animationTime
+                                     << " driver=\"" << (useProcedural ? "procedural-humanoid-ik" : driverGroup)
+                                     << "\" available=" << selectedGroupAvailable;
+                }
+            }
         }
 
         updateNavMesh();
@@ -732,6 +1533,22 @@ namespace MWRender
             updateProjectionMatrix();
         }
         mCamera->update(dt, paused);
+
+        if (mFalloutPlayerVisualAnimation)
+        {
+            const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
+                || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
+            const bool showThirdPersonPlayer = !proofHidePlayerVisual && mCamera->getMode() != Camera::Mode::FirstPerson;
+            if (osg::Group* playerVisualRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+            {
+                // The native Fallout proxy supplies the player-facing Camera1st target as well as its visible body.
+                // Hiding it with node mask 0 prevents OSG's update traversal from reaching its authored KF
+                // controllers, leaving first-person cinematics frozen at the skeleton bind pose. The dedicated
+                // update-only mask keeps the proxy out of every cull traversal while allowing its data-owned
+                // animation and camera targets to advance.
+                playerVisualRoot->setNodeMask(showThirdPersonPlayer ? Mask_Player : Mask_UpdateVisitor);
+            }
+        }
 
         bool isUnderwater = mWater->isUnderwater(mCamera->getPosition());
 
@@ -1086,6 +1903,45 @@ namespace MWRender
             mObjectPaging->clear();
     }
 
+    void RenderingManager::clearLiveObjectsForShutdown()
+    {
+        if (mCamera)
+        {
+            mCamera->setAnimation(nullptr);
+            mCamera->attachTo(MWWorld::Ptr());
+        }
+
+        if (mFalloutPlayerVisualAnimation)
+        {
+            mFalloutPlayerVisualAnimation->removeFromScene();
+            mFalloutPlayerVisualAnimation = nullptr;
+        }
+        mFalloutPlayerVisualGroup.clear();
+        mFalloutPlayerVisualGroupElapsed = 0.f;
+        mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerVisualPreviousPositionValid = false;
+        mFalloutPlayerVisualRef.reset();
+
+        if (mPlayerAnimation)
+        {
+            mPlayerAnimation->removeFromScene();
+            mPlayerAnimation = nullptr;
+        }
+
+        if (mPlayerNode)
+        {
+            if (mPlayerNode->getNumParents() > 0)
+                mPlayerNode->getParent(0)->removeChild(mPlayerNode);
+            mPlayerNode = nullptr;
+        }
+
+        if (mObjects)
+            mObjects->clear();
+
+        if (mWater)
+            mWater->clearRipples();
+    }
+
     MWRender::Animation* RenderingManager::getAnimation(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr())
@@ -1100,6 +1956,54 @@ namespace MWRender
             return mPlayerAnimation.get();
 
         return mObjects->getAnimation(ptr);
+    }
+
+    MWRender::Animation* RenderingManager::getESM4ScriptPackageAnimation(const MWWorld::Ptr& ptr)
+    {
+        if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr() && mFalloutPlayerVisualAnimation)
+            return mFalloutPlayerVisualAnimation.get();
+
+        return getAnimation(ptr);
+    }
+
+    bool RenderingManager::setESM4ScriptPackageCamera(const MWWorld::Ptr& ptr, bool active)
+    {
+        if (!mPlayerAnimation || !mCamera || ptr != mPlayerAnimation->getPtr())
+            return false;
+
+        Animation* cameraAnimation = mPlayerAnimation.get();
+        bool usingAuthoredTarget = false;
+        if (active && mFalloutPlayerVisualAnimation && mFalloutPlayerVisualAnimation->hasFalloutScriptPackageCameraTarget())
+        {
+            cameraAnimation = mFalloutPlayerVisualAnimation.get();
+            usingAuthoredTarget = true;
+        }
+
+        // A package that carries an authored Camera1st controller is explicitly a first-person presentation.
+        // Preserve the player's selected view while it runs, then restore it when the package releases the camera.
+        // The decision is based solely on the loaded package/KF target and therefore applies to every Fallout-family
+        // cinematic package rather than naming an opening quest or cell.
+        if (usingAuthoredTarget)
+        {
+            if (!mESM4ScriptPackagePreviousCameraMode)
+                mESM4ScriptPackagePreviousCameraMode = static_cast<int>(mCamera->getMode());
+            mCamera->setMode(Camera::Mode::FirstPerson);
+        }
+        else if (mESM4ScriptPackagePreviousCameraMode)
+        {
+            const Camera::Mode restoreMode = static_cast<Camera::Mode>(*mESM4ScriptPackagePreviousCameraMode);
+            mESM4ScriptPackagePreviousCameraMode.reset();
+            mCamera->setMode(restoreMode);
+        }
+
+        mCamera->setAnimation(cameraAnimation);
+        mCamera->attachTo(ptr);
+        mCamera->processViewChange();
+        mCamera->instantTransition();
+        Log(Debug::Info) << "FNV/ESM4 scripted package: camera actor=" << ptr.getCellRef().getRefId()
+                         << " authoredTarget=" << usingAuthoredTarget
+                         << " mode=" << static_cast<int>(mCamera->getMode());
+        return usingAuthoredTarget;
     }
 
     PostProcessor* RenderingManager::getPostProcessor()
@@ -1128,11 +2032,85 @@ namespace MWRender
 
     void RenderingManager::renderPlayer(const MWWorld::Ptr& player)
     {
+        mFalloutPlayerVisualAnimation = nullptr;
+        mFalloutPlayerVisualRef.reset();
+        mFalloutPlayerVisualGroup.clear();
+        mFalloutPlayerVisualGroupElapsed = 0.f;
+        mFalloutPlayerVisualCycleLogged = false;
+        mFalloutPlayerVisualPreviousPositionValid = false;
+        const ESM4::Npc* falloutPlayerVisualRecord = findEsm4PlayerVisualRecord();
+        const bool falloutFlatProfile = falloutPlayerVisualRecord != nullptr;
+
         mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
             NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
 
+        const bool hideLocalPlayerVisual = false;
+        const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
+            || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
+        const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || proofHidePlayerVisual;
+        if (proofHidePlayerVisual)
+            Log(Debug::Info) << "FNV/ESM4: skipped Fallout NPC player visual proxy for hidden player capture";
+        if (const ESM4::Npc* falloutPlayerVisual
+            = suppressFalloutPlayerProxy ? nullptr : falloutPlayerVisualRecord)
+        {
+            ESM::CellRef proxyRef;
+            proxyRef.blank();
+            proxyRef.mRefID = ESM::RefId::stringRefId("Player");
+            mFalloutPlayerVisualRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
+            mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
+            MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
+
+            Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
+                             << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
+                             << ") on player root; hiding legacy ESM3 body";
+
+            mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(
+                visualPtr, osg::ref_ptr<osg::Group>(player.getRefData().getBaseNode()), mResourceSystem);
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                falloutRoot->setNodeMask(Mask_Player);
+        }
+
+        if (falloutFlatProfile || proofHidePlayerVisual)
+        {
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (proofHidePlayerVisual && mFalloutPlayerVisualAnimation)
+            {
+                if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                    falloutRoot->setNodeMask(0);
+            }
+            Log(Debug::Info) << "ESM4: hidden legacy player render root";
+        }
+
         mCamera->setAnimation(mPlayerAnimation.get());
         mCamera->attachTo(player);
+
+        if (falloutFlatProfile)
+        {
+            // The hidden legacy Morrowind rig tracks its camera at roughly 124 units,
+            // while the native ESM4 human head/eye anchor is about 110 units above
+            // the authored floor. Compensate for that rig mismatch so first person
+            // does not intersect Bethesda's 128-unit ceilings and exterior awnings.
+            const float profileEyeOffsetZ
+                = envFloatOr("OPENMW_ESM4_FIRST_PERSON_EYE_OFFSET_Z", -40.f);
+            mCamera->setFirstPersonProfileOffset(osg::Vec3f(0.f, 0.f, profileEyeOffsetZ));
+            Log(Debug::Info) << "ESM4: persistent first-person eye offset z=" << profileEyeOffsetZ;
+        }
+
+        if (falloutFlatProfile || proofHidePlayerVisual)
+        {
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (proofHidePlayerVisual && mFalloutPlayerVisualAnimation)
+            {
+                if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                    falloutRoot->setNodeMask(0);
+            }
+            Log(Debug::Info) << "ESM4: hidden legacy player render root after camera attachment";
+        }
     }
 
     void RenderingManager::rebuildPtr(const MWWorld::Ptr& ptr)
@@ -1181,27 +2159,23 @@ namespace MWRender
         const double aspect = (height == 0) ? 1.0 : static_cast<double>(width) / height;
         const float fov = mFieldOfViewOverridden ? mFieldOfViewOverride : mFieldOfView;
 
-        osg::Matrix unreversedProjectionMatrix = osg::Matrix::perspective(fov, aspect, mNearClip, mViewDistance);
-
-        osg::Matrix projectionMatrix = SceneUtil::AutoDepth::isReversed()
-            ? SceneUtil::getReversedZProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance)
-            : unreversedProjectionMatrix;
-
-        if (width != 0 && height != 0)
+        if (mProjectionMatrixOverridden)
         {
-            double offsetX = (mProjectionOffset.x() / width) * 2.0;
-            double offsetY = (mProjectionOffset.y() / height) * 2.0;
-
-            const osg::Matrix translation = osg::Matrix::translate(offsetX, offsetY, 0.0);
-
-            projectionMatrix.postMult(translation);
-            unreversedProjectionMatrix.postMult(translation);
+            mViewer->getCamera()->setProjectionMatrix(mProjectionMatrixOverride);
+            mPerViewUniformStateUpdater->setProjectionMatrix(mProjectionMatrixOverride);
         }
+        else
+        {
+            mViewer->getCamera()->setProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance);
 
-        // We always set the cameras projection matrix to the un-reversed variant for correct frustum culling.
-        mViewer->getCamera()->setProjectionMatrix(unreversedProjectionMatrix);
-
-        mPerViewUniformStateUpdater->setProjectionMatrix(projectionMatrix);
+            if (SceneUtil::AutoDepth::isReversed())
+            {
+                mPerViewUniformStateUpdater->setProjectionMatrix(
+                    SceneUtil::getReversedZProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance));
+            }
+            else
+                mPerViewUniformStateUpdater->setProjectionMatrix(mViewer->getCamera()->getProjectionMatrix());
+        }
 
         mSharedUniformStateUpdater->setNear(mNearClip);
         mSharedUniformStateUpdater->setFar(mViewDistance);
@@ -1483,6 +2457,33 @@ namespace MWRender
         }
     }
 
+    void RenderingManager::overrideProjectionMatrix(
+        const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip)
+    {
+        if (!(fieldOfView > 0.f) || !(nearClip > 0.f) || !(farClip > nearClip))
+            throw std::runtime_error("Invalid explicit projection override contract");
+
+        const bool changed = !mProjectionMatrixOverridden || mProjectionMatrixOverride != matrix
+            || !mFieldOfViewOverridden || mFieldOfViewOverride != fieldOfView || mNearClip != nearClip
+            || mViewDistance != farClip;
+        mProjectionMatrixOverridden = true;
+        mProjectionMatrixOverride = matrix;
+        mFieldOfViewOverridden = true;
+        mFieldOfViewOverride = fieldOfView;
+        mNearClip = nearClip;
+        mViewDistance = farClip;
+        if (changed)
+            updateProjectionMatrix();
+    }
+
+    void RenderingManager::resetProjectionMatrixOverride()
+    {
+        if (!mProjectionMatrixOverridden)
+            return;
+        mProjectionMatrixOverridden = false;
+        updateProjectionMatrix();
+    }
+
     void RenderingManager::setFieldOfView(float val)
     {
         mFieldOfView = val;
@@ -1491,7 +2492,7 @@ namespace MWRender
 
     float RenderingManager::getFieldOfView() const
     {
-        return mFieldOfViewOverridden ? mFieldOfViewOverridden : mFieldOfView;
+        return mFieldOfViewOverridden ? mFieldOfViewOverride : mFieldOfView;
     }
 
     osg::Vec3f RenderingManager::getHalfExtents(const MWWorld::ConstPtr& object) const

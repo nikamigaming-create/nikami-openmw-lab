@@ -55,6 +55,11 @@ namespace MWMechanics
         const bool mHidden;
 
         float mDestinationTimer;
+
+        // Route diagnostics only.  Keep per-package rather than global state so
+        // an unattended compatibility trace can establish whether the actual
+        // one-shot package is being executed without flooding the log.
+        unsigned int mRouteTraceExecutions = 0;
     };
 
     struct AiInternalTravel final : public AiTravel

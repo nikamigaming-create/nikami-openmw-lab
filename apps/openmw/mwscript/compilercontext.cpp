@@ -24,6 +24,7 @@
 #include <components/esm3/loadscpt.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm3/loadweap.hpp>
+#include <components/esm4/records.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/scriptmanager.hpp"
@@ -79,6 +80,10 @@ namespace MWScript
     bool CompilerContext::isId(const ESM::RefId& name) const
     {
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const ESM::FormId* formId = name.getIf<ESM::FormId>();
+        const bool isEsm4PlacedReference = formId != nullptr
+            && (store.get<ESM4::ActorCharacter>().search(*formId)
+                || store.get<ESM4::ActorCreature>().search(*formId) || store.get<ESM4::Reference>().search(*formId));
 
         return store.get<ESM::Activator>().search(name) || store.get<ESM::Potion>().search(name)
             || store.get<ESM::Apparatus>().search(name) || store.get<ESM::Armor>().search(name)
@@ -90,6 +95,17 @@ namespace MWScript
             || store.get<ESM::Miscellaneous>().search(name) || store.get<ESM::NPC>().search(name)
             || store.get<ESM::Probe>().search(name) || store.get<ESM::Repair>().search(name)
             || store.get<ESM::Static>().search(name) || store.get<ESM::Weapon>().search(name)
-            || store.get<ESM::Script>().search(name);
+            || store.get<ESM::Script>().search(name) || store.get<ESM4::Activator>().search(name)
+            || store.get<ESM4::Ammunition>().search(name) || store.get<ESM4::Armor>().search(name)
+            || store.get<ESM4::Book>().search(name) || store.get<ESM4::Clothing>().search(name)
+            || store.get<ESM4::Container>().search(name) || store.get<ESM4::Creature>().search(name)
+            || store.get<ESM4::Door>().search(name) || store.get<ESM4::Flora>().search(name)
+            || store.get<ESM4::Furniture>().search(name) || store.get<ESM4::Ingredient>().search(name)
+            || store.get<ESM4::ItemMod>().search(name) || store.get<ESM4::Light>().search(name)
+            || store.get<ESM4::MiscItem>().search(name) || store.get<ESM4::MovableStatic>().search(name)
+            || store.get<ESM4::Npc>().search(name) || store.get<ESM4::Potion>().search(name)
+            || store.get<ESM4::Static>().search(name) || store.get<ESM4::StaticCollection>().search(name)
+            || store.get<ESM4::Terminal>().search(name) || store.get<ESM4::Tree>().search(name)
+            || store.get<ESM4::Weapon>().search(name) || isEsm4PlacedReference;
     }
 }

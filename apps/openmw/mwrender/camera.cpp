@@ -1,5 +1,7 @@
 #include "camera.hpp"
 
+#include "animation.hpp"
+
 #include <osg/Camera>
 
 #include <components/misc/mathutil.hpp>
@@ -79,6 +81,11 @@ namespace MWRender
         mCamera->addUpdateCallback(mUpdateCallback);
     }
 
+    float Camera::getLodScale() const
+    {
+        return mCamera.valid() ? mCamera->getLODScale() : 1.f;
+    }
+
     Camera::~Camera()
     {
         mCamera->removeUpdateCallback(mUpdateCallback);
@@ -92,10 +99,10 @@ namespace MWRender
         if (nodepaths.empty())
             return osg::Vec3d();
         osg::Matrix worldMat = osg::computeLocalToWorld(nodepaths[0]);
-        osg::Vec3d res = worldMat.getTrans();
-        if (mMode != Mode::FirstPerson)
-            res.z() += mHeight * mHeightScale;
-        return res;
+        osg::Vec3d result = worldMat.getTrans();
+        if (mMode != Mode::FirstPerson || mFirstPersonUsesTrackingRoot)
+            result.z() += mHeight * mHeightScale;
+        return result;
     }
 
     osg::Vec3d Camera::getFocalPointOffset() const
@@ -149,11 +156,12 @@ namespace MWRender
     osg::Vec3d Camera::calculateFirstPersonPosition(const osg::Vec3d& trackedPosition) const
     {
         osg::Vec3d res = trackedPosition;
+        const osg::Vec3f totalOffset = mFirstPersonOffset + mFirstPersonProfileOffset;
         osg::Vec2f horizontalOffset
-            = Misc::rotateVec2f(osg::Vec2f(mFirstPersonOffset.x(), mFirstPersonOffset.y()), mYaw);
+            = Misc::rotateVec2f(osg::Vec2f(totalOffset.x(), totalOffset.y()), mYaw);
         res.x() += horizontalOffset.x();
         res.y() += horizontalOffset.y();
-        res.z() += mFirstPersonOffset.z();
+        res.z() += totalOffset.z();
         return res;
     }
 
@@ -309,7 +317,8 @@ namespace MWRender
 
     void Camera::setSneakOffset(float offset)
     {
-        mAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
+        if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+            npcAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
     }
 
     void Camera::setYaw(float angle, bool force)
@@ -337,7 +346,7 @@ namespace MWRender
         mPosition = pos;
     }
 
-    void Camera::setAnimation(NpcAnimation* anim)
+    void Camera::setAnimation(Animation* anim)
     {
         mAnimation = anim;
         mProcessViewChange = true;
@@ -347,17 +356,35 @@ namespace MWRender
     {
         if (mTrackingPtr.isEmpty())
             return;
+
+        if (mAnimation == nullptr)
+        {
+            mTrackingNode = nullptr;
+            mProcessViewChange = false;
+            return;
+        }
+
+        mFirstPersonUsesTrackingRoot = false;
         if (mMode == Mode::FirstPerson)
         {
-            mAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
-            mTrackingNode = mAnimation->getNode("Camera");
+            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+                npcAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
+            mTrackingNode = mAnimation->getNode("Camera1st");
+            if (!mTrackingNode)
+                mTrackingNode = mAnimation->getNode("Camera");
             if (!mTrackingNode)
                 mTrackingNode = mAnimation->getNode("Head");
+            if (!mTrackingNode)
+            {
+                mTrackingNode = mTrackingPtr.getRefData().getBaseNode();
+                mFirstPersonUsesTrackingRoot = mTrackingNode != nullptr;
+            }
             mHeightScale = 1.f;
         }
         else
         {
-            mAnimation->setViewMode(NpcAnimation::VM_Normal);
+            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
+                npcAnimation->setViewMode(NpcAnimation::VM_Normal);
             SceneUtil::PositionAttitudeTransform* transform = mTrackingPtr.getRefData().getBaseNode();
             mTrackingNode = transform;
             if (transform)

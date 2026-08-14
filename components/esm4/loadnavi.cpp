@@ -361,6 +361,8 @@ void ESM4::Navigation::load(ESM4::Reader& reader)
             }
             default:
             {
+                if (reader.skipUnknownStarfieldSubRecordData("loadnavi"))
+                    break;
                 throw std::runtime_error("ESM4::NAVI::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
             }
         }

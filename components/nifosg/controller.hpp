@@ -1,10 +1,18 @@
 #ifndef COMPONENTS_NIFOSG_CONTROLLER_H
 #define COMPONENTS_NIFOSG_CONTROLLER_H
 
+#include <array>
+#include <limits>
+#include <memory>
+#include <optional>
 #include <set>
+#include <string>
 #include <type_traits>
+#include <vector>
 
+#include <osg/Matrixf>
 #include <osg/Texture2D>
+#include <osg/observer_ptr>
 
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
@@ -33,6 +41,10 @@ namespace NifOsg
 {
 
     class MatrixTransform;
+
+    osg::Matrixf makeTextureTransformMatrix(const Nif::NiTextureTransform& transform);
+    void setTextureTransformDefaults(
+        osg::StateSet* stateset, unsigned int textureUnit, const Nif::NiTextureTransform& transform);
 
     // interpolation of keyframes
     template <typename MapT>
@@ -126,6 +138,11 @@ namespace NifOsg
         }
 
         bool empty() const { return !mKeys || mKeys->mKeys.empty(); }
+        uint32_t getInterpolationType() const
+        {
+            return mKeys ? mKeys->mInterpolationType : Nif::InterpolationType_Unknown;
+        }
+        size_t getKeyCount() const { return mKeys ? mKeys->mKeys.size() : 0; }
 
     private:
         template <typename ValueType>
@@ -200,6 +217,8 @@ namespace NifOsg
 
     public:
         ControllerFunction(const Nif::NiTimeController* ctrl);
+        ControllerFunction(float frequency, float phase, float startTime, float stopTime,
+            Nif::NiTimeController::ExtrapolationMode mode);
 
         float calculate(float value) const override;
 
@@ -238,6 +257,10 @@ namespace NifOsg
         KeyframeController();
         KeyframeController(const KeyframeController& copy, const osg::CopyOp& copyop);
         KeyframeController(const Nif::NiKeyframeController* keyctrl);
+        KeyframeController(const Nif::NiTransformInterpolator* interp);
+        KeyframeController(const Nif::NiBSplineTransformInterpolator* interp);
+        KeyframeController(const Nif::NiBlendTransformInterpolator* interp);
+        ~KeyframeController() override;
 
         META_Object(NifOsg, KeyframeController)
 
@@ -245,10 +268,32 @@ namespace NifOsg
         osg::Callback* getAsCallback() override { return this; }
 
         KfTransform getCurrentTransformation(osg::NodeVisitor* nv) override;
+        KfTransform getCurrentTransformationWithoutFalloutActorBasis(osg::NodeVisitor* nv);
 
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
+        void setFalloutActorTransformBasis(
+            const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation,
+            float bindScale);
+        uint32_t getRotationInterpolationType() const { return mRotations.getInterpolationType(); }
+        size_t getRotationKeyCount() const { return mRotations.getKeyCount(); }
+        uint32_t getTranslationInterpolationType() const { return mTranslations.getInterpolationType(); }
+        size_t getTranslationKeyCount() const { return mTranslations.getKeyCount(); }
+        bool usesBSplineTransform() const { return mBSplineTransform.has_value(); }
+        bool hasTransformChannels() const;
+        bool hasPropertyChannels() const;
+        bool addMaterialColorChannel(
+            Nif::NiMaterialColorController::TargetColor target, const Nif::NiInterpolator* interpolator);
+        bool addTextureTransformChannel(bool shaderMap, unsigned int textureSlot, unsigned int transformMember,
+            const Nif::NiInterpolator* interpolator);
+        void applyPropertyChannels(NifOsg::MatrixTransform* node, osg::NodeVisitor* nv);
+        void restorePropertyState();
 
     private:
+        void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
+        void setDefaultTransformChannels(const Nif::NiQuatTransform& transform);
+        bool initFromInterpolator(const Nif::NiInterpolator* interp);
+        KfTransform getCurrentTransformation(osg::NodeVisitor* nv, bool applyFalloutActorBasis);
+
         QuaternionInterpolator mRotations;
 
         FloatInterpolator mXRotations;
@@ -259,8 +304,90 @@ namespace NifOsg
         FloatInterpolator mScales;
 
         Nif::NiKeyframeData::AxisOrder mAxisOrder{ Nif::NiKeyframeData::AxisOrder::Order_XYZ };
+        bool mHasDefaultTranslation{ false };
+        bool mHasDefaultRotation{ false };
+        bool mHasDefaultScale{ false };
+        bool mUseFalloutActorRotationBasis{ false };
+        bool mPinFalloutActorBindRotation{ false };
+        std::string mFalloutLowerBone;
+        osg::Vec3f mFalloutBindTranslation;
+        osg::Quat mFalloutBindRotation;
+        float mFalloutBindScale{ 1.f };
+
+    public:
+        struct BSplineTransform
+        {
+            float mStartTime = 0.f;
+            float mStopTime = 0.f;
+            Nif::NiQuatTransform mDefaultValue;
+            std::vector<float> mFloatControlPoints;
+            std::vector<int16_t> mCompactControlPoints;
+            uint32_t mNumControlPoints = 0;
+            uint32_t mTranslationHandle = std::numeric_limits<uint32_t>::max();
+            uint32_t mRotationHandle = std::numeric_limits<uint32_t>::max();
+            uint32_t mScaleHandle = std::numeric_limits<uint32_t>::max();
+            bool mCompressed = false;
+            float mTranslationOffset = 0.f;
+            float mTranslationHalfRange = 1.f;
+            float mRotationOffset = 0.f;
+            float mRotationHalfRange = 1.f;
+            float mScaleOffset = 0.f;
+            float mScaleHalfRange = 1.f;
+        };
+
+        // Public so the shared B-spline evaluator can sample both transform and property tracks.
+        struct BSplineChannel
+        {
+            float mStartTime = 0.f;
+            float mStopTime = 0.f;
+            std::vector<float> mFloatControlPoints;
+            std::vector<int16_t> mCompactControlPoints;
+            uint32_t mNumControlPoints = 0;
+            uint32_t mHandle = std::numeric_limits<uint32_t>::max();
+            bool mCompressed = false;
+            float mOffset = 0.f;
+            float mHalfRange = 1.f;
+        };
+
+    private:
+        struct ScalarChannel
+        {
+            FloatInterpolator mData;
+            std::optional<float> mConstant;
+            std::optional<BSplineChannel> mBSpline;
+            bool mEnabled = false;
+        };
+
+        struct VectorChannel
+        {
+            Vec3Interpolator mData;
+            std::optional<osg::Vec3f> mConstant;
+            std::optional<BSplineChannel> mBSpline;
+            bool mEnabled = false;
+        };
+
+        struct TextureTransformGroup
+        {
+            bool mShaderMap = false;
+            unsigned int mTextureSlot = 0;
+            std::array<ScalarChannel, 5> mChannels;
+        };
+
+        std::optional<BSplineTransform> mBSplineTransform;
+        std::array<VectorChannel, 4> mMaterialChannels;
+        std::vector<TextureTransformGroup> mTextureTransforms;
+        osg::observer_ptr<NifOsg::MatrixTransform> mPropertyTarget;
+        osg::ref_ptr<osg::StateSet> mPropertyBaseStateSet;
+        bool mPropertyHadBaseStateSet = false;
 
         osg::Quat getXYZRotation(float time) const;
+        static bool initScalarChannel(ScalarChannel& channel, const Nif::NiInterpolator* interpolator);
+        static bool initVectorChannel(VectorChannel& channel, const Nif::NiInterpolator* interpolator);
+        static float sampleScalarChannel(const ScalarChannel& channel, float time);
+        static osg::Vec3f sampleVectorChannel(const VectorChannel& channel, float time);
+        static unsigned int resolveTextureUnit(
+            const osg::StateSet& stateset, bool shaderMap, unsigned int textureSlot);
+        void applyPropertyChannelsAtTime(NifOsg::MatrixTransform* node, float time);
     };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -286,6 +413,33 @@ namespace NifOsg
         std::set<unsigned int> mTextureUnits;
     };
 
+    class TextureTransformController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller
+    {
+    public:
+        TextureTransformController();
+        TextureTransformController(const TextureTransformController&, const osg::CopyOp&);
+        TextureTransformController(const std::vector<const Nif::NiTextureTransformController*>& controllers,
+            unsigned int textureUnit, const Nif::NiTextureTransform* defaultTransform = nullptr);
+
+        META_Object(NifOsg, TextureTransformController)
+
+        void setDefaults(osg::StateSet* stateset) override;
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;
+
+    private:
+        struct Channel
+        {
+            FloatInterpolator mData;
+            std::shared_ptr<SceneUtil::ControllerFunction> mFunction;
+            std::optional<float> mConstant;
+            bool mEnabled = false;
+        };
+
+        Nif::NiTextureTransform mDefaultTransform;
+        std::array<Channel, 5> mChannels;
+        unsigned int mTextureUnit = 0;
+    };
+
     class VisController : public SceneUtil::NodeCallback<VisController>, public SceneUtil::Controller
     {
     private:
@@ -297,6 +451,7 @@ namespace NifOsg
 
     public:
         VisController(const Nif::NiVisController* ctrl, unsigned int mask);
+        VisController(const Nif::NiBoolInterpolator* interpolator, unsigned int mask);
         VisController();
         VisController(const VisController& copy, const osg::CopyOp& copyop);
 
@@ -359,6 +514,25 @@ namespace NifOsg
             Nif::NiMaterialColorController::TargetColor::Ambient
         };
         osg::ref_ptr<const osg::Material> mBaseMaterial;
+    };
+
+    class MaterialEmittanceMultController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller
+    {
+    public:
+        MaterialEmittanceMultController(const Nif::NiFloatInterpController* ctrl, const osg::Material* baseMaterial);
+        MaterialEmittanceMultController();
+        MaterialEmittanceMultController(const MaterialEmittanceMultController& copy, const osg::CopyOp& copyop);
+
+        META_Object(NifOsg, MaterialEmittanceMultController)
+
+        void setDefaults(osg::StateSet* stateset) override;
+
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;
+
+    private:
+        FloatInterpolator mData;
+        osg::ref_ptr<const osg::Material> mBaseMaterial;
+        osg::Vec4f mBaseEmission;
     };
 
     class FlipController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller

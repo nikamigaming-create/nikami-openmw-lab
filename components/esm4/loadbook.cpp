@@ -132,6 +132,8 @@ void ESM4::Book::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadbook"))
+                    break;
                 throw std::runtime_error("ESM4::BOOK::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

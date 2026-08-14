@@ -34,6 +34,8 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "script.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -72,32 +74,37 @@ namespace ESM4
             std::int32_t distance;
         };
 
-        // NOTE: param1/param2 can be FormId or number, but assume FormId so that adjustFormId
-        // can be called
-        struct CTDA
-        {
-            std::uint8_t condition;
-            std::uint8_t unknown1; // probably padding
-            std::uint8_t unknown2; // probably padding
-            std::uint8_t unknown3; // probably padding
-            float compValue;
-            std::int32_t fnIndex;
-            ESM::FormId32 param1;
-            ESM::FormId32 param2;
-            std::uint32_t unknown4; // probably padding
-        };
 #pragma pack(pop)
 
         ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
 
-        PKDT mData;
-        PSDT mSchedule;
-        PLDT mLocation;
-        PTDT mTarget;
-        std::vector<CTDA> mConditions;
+        PKDT mData{};
+        PSDT mSchedule{};
+        PLDT mLocation{};
+        PTDT mTarget{};
+        std::vector<PLDT> mExtraLocations;
+        std::vector<PTDT> mExtraTargets;
+        std::vector<float> mExtraTargetUnknowns;
+        std::vector<TargetCondition> mConditions;
+        std::uint32_t mFo3PackageFlags = 0;
+        std::uint16_t mFo3ProcedureFlags = 0;
+        std::uint16_t mFo3TypeSpecificFlags = 0;
+        float mFo3TargetUnknown = 0.f;
+        std::uint8_t mIdleFlags = 0;
+        std::uint32_t mIdleCount = 0;
+        float mIdleTimer = 0.f;
+        std::vector<ESM::FormId> mIdleAnim;
+
+        // Fallout 3/New Vegas PACK records carry three embedded script slots:
+        // On Begin, On End, and On Change.  Retain them losslessly so the
+        // normal AI lifecycle can execute authored package transitions rather
+        // than treating a package as movement data only.
+        ScriptDefinition mOnBeginScript;
+        ScriptDefinition mOnEndScript;
+        ScriptDefinition mOnChangeScript;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

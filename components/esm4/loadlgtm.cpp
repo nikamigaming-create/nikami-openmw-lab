@@ -64,6 +64,8 @@ void ESM4::LightingTemplate::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadlgtm"))
+                    break;
                 throw std::runtime_error("ESM4::LGTM::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

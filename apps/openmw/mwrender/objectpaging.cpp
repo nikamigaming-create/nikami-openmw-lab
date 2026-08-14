@@ -29,6 +29,7 @@
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -54,6 +55,12 @@
 namespace MWRender
 {
 
+    bool isObjectPagingChunkInsideActiveGrid(const osg::Vec2f& center, const osg::Vec4i& activeGrid)
+    {
+        return center.x() > activeGrid.x() && center.y() > activeGrid.y() && center.x() < activeGrid.z()
+            && center.y() < activeGrid.w();
+    }
+
     namespace
     {
         bool typeFilter(int type, bool far)
@@ -71,6 +78,7 @@ namespace MWRender
                 case ESM::REC_ACTI4:
                 case ESM::REC_CONT4:
                 case ESM::REC_FURN4:
+                case ESM::REC_TACT4:
                     return !far;
 
                 default:
@@ -107,6 +115,8 @@ namespace MWRender
                     return getEsm4Model(store.get<ESM4::Tree>().searchStatic(id));
                 case ESM::REC_ACTI4:
                     return getEsm4Model(store.get<ESM4::Activator>().searchStatic(id));
+                case ESM::REC_TACT4:
+                    return getEsm4Model(store.get<ESM4::TalkingActivator>().searchStatic(id));
                 case ESM::REC_CONT4:
                     return getEsm4Model(store.get<ESM4::Container>().searchStatic(id));
                 case ESM::REC_FURN4:
@@ -114,6 +124,29 @@ namespace MWRender
                 default:
                     return {};
             }
+        }
+
+        VFS::Path::Normalized correctEsm4StaticModelPath(
+            int type, VFS::Path::NormalizedView model, const VFS::Manager& vfs)
+        {
+            if (type == ESM::REC_TREE4 && Misc::getFileExtension(model.value()) == "spt")
+            {
+                if (vfs.exists(model))
+                    return VFS::Path::Normalized(model);
+
+                const std::string_view value = model.value();
+                const std::size_t pos = value.find_last_of('/');
+                const std::string_view filename = pos == std::string_view::npos ? value : value.substr(pos + 1);
+                std::string treePathValue("trees/");
+                treePathValue.append(filename);
+                const VFS::Path::Normalized treePath(treePathValue);
+                if (vfs.exists(treePath))
+                    return treePath;
+
+                return VFS::Path::Normalized(model);
+            }
+
+            return Misc::ResourceHelpers::correctMeshPath(model);
         }
     }
 
@@ -753,13 +786,12 @@ namespace MWRender
             VFS::Path::Normalized model(getModel(type, ref.mRefId, store));
             if (model.empty())
                 continue;
-            model = Misc::ResourceHelpers::correctMeshPath(model);
+            model = correctEsm4StaticModelPath(type, model, *mSceneManager->getVFS());
 
             if (activeGrid && type != ESM::REC_STAT && type != ESM::REC_STAT4)
             {
                 model = Misc::ResourceHelpers::correctActorModelPath(model, mSceneManager->getVFS());
-                constexpr VFS::Path::ExtensionView nif("nif");
-                if (model.extension() == nif)
+                if (Misc::getFileExtension(model.value()) == "nif")
                 {
                     VFS::Path::Normalized kfname = model;
                     constexpr VFS::Path::ExtensionView kf("kf");
@@ -1178,8 +1210,7 @@ namespace MWRender
                 if (!std::get<2>(chunkId))
                     return;
                 const osg::Vec2f& center = std::get<0>(chunkId);
-                const bool activeGrid = (center.x() > mActiveGrid.x() || center.y() > mActiveGrid.y()
-                    || center.x() < mActiveGrid.z() || center.y() < mActiveGrid.w());
+                const bool activeGrid = isObjectPagingChunkInsideActiveGrid(center, mActiveGrid);
                 if (!activeGrid)
                     return;
 

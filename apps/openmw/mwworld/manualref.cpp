@@ -1,6 +1,20 @@
 #include "manualref.hpp"
 #include <components/esm/records.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "esmstore.hpp"
 
@@ -77,8 +91,36 @@ namespace
                 return func(store.get<ESM::BodyPart>());
             case ESM::REC_STAT4:
                 return func(store.get<ESM4::Static>());
+            case ESM::REC_TACT4:
+                return func(store.get<ESM4::TalkingActivator>());
             case ESM::REC_TERM4:
                 return func(store.get<ESM4::Terminal>());
+            case ESM::REC_ALCH4:
+                return func(store.get<ESM4::Potion>());
+            case ESM::REC_AMMO4:
+                return func(store.get<ESM4::Ammunition>());
+            case ESM::REC_ARMO4:
+                return func(store.get<ESM4::Armor>());
+            case ESM::REC_BOOK4:
+                return func(store.get<ESM4::Book>());
+            case ESM::REC_CLOT4:
+                return func(store.get<ESM4::Clothing>());
+            case ESM::REC_CREA4:
+                return func(store.get<ESM4::Creature>());
+            case ESM::REC_IMOD4:
+                return func(store.get<ESM4::ItemMod>());
+            case ESM::REC_INGR4:
+                return func(store.get<ESM4::Ingredient>());
+            case ESM::REC_KEYM4:
+                return func(store.get<ESM4::Key>());
+            case ESM::REC_LIGH4:
+                return func(store.get<ESM4::Light>());
+            case ESM::REC_MISC4:
+                return func(store.get<ESM4::MiscItem>());
+            case ESM::REC_NPC_4:
+                return func(store.get<ESM4::Npc>());
+            case ESM::REC_WEAP4:
+                return func(store.get<ESM4::Weapon>());
             case 0:
                 throw std::logic_error(
                     "failed to create manual cell ref for " + name.toDebugString() + " (unknown ID)");
