@@ -12739,28 +12739,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             fnvR2ChetDoorPass = authoredPair && activate(door, "goodsprings-general-store-exterior-door");
             if (!fnvR2ChetDoorPass)
                 finish(false, "authored Goodsprings General Store door activation failed");
-            else if (fnvR2ChetTransactionRequested)
-            {
-                MWGui::TradeWindow* const tradeWindow = mWindowManager->getTradeWindow();
-                if (tradeWindow == nullptr
-                    || !tradeWindow->purchaseFirstAffordableMerchantItem(fnvR2ChetPurchasedItem,
-                        fnvR2ChetPurchasePrice, fnvR2ChetPurchasedPlayerBefore,
-                        fnvR2ChetPurchasedMerchantBefore, fnvR2ChetPurchasedPlayerCapsBefore,
-                        fnvR2ChetPurchasedMerchantCapsBefore))
-                {
-                    finish(false, "no affordable authored Chet merchant item completed a production transaction");
-                }
-                else
-                {
-                    Log(Debug::Info) << "FNV R2 Chet: transaction-offer item=" << fnvR2ChetPurchasedItem
-                                     << " price=" << fnvR2ChetPurchasePrice
-                                     << " playerItemBefore=" << fnvR2ChetPurchasedPlayerBefore
-                                     << " merchantItemBefore=" << fnvR2ChetPurchasedMerchantBefore
-                                     << " playerCapsBefore=" << fnvR2ChetPurchasedPlayerCapsBefore
-                                     << " merchantCapsBefore=" << fnvR2ChetPurchasedMerchantCapsBefore;
-                    advance(7);
-                }
-            }
             else
             {
                 capture("goodsprings-general-store-exterior-door");
